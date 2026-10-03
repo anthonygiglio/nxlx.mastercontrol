@@ -163,6 +163,8 @@ class Api:
                                                   networks_in_use=self._support_clash_networks)
         self.dmx = None           # DmxManager or None
         self.midi = None          # MidiManager or None
+        from . import boxcare as boxcare_mod
+        self.boxcare = boxcare_mod.BoxCare(self)                   # settings export and import, diagnostics, factory reset
 
     # --- helpers -------------------------------------------------------
     def _apply_opacity(self, percent):
@@ -1027,7 +1029,10 @@ class Api:
                     inbox.append({"version": m.group(1), "signed": os.path.isfile(os.path.join(self._update_inbox(), n + ".sig"))})
         except OSError:
             pass
-        return {"version": __version__, "usb": usb, "inbox": inbox, "last": self._update_result()}
+        last = self._update_result()
+        if last and last.get("state") == "done" and last.get("version") not in (None, __version__):
+            last = None         # it says "updated to X", but X is not what runs now (a rollback from a terminal)
+        return {"version": __version__, "usb": usb, "inbox": inbox, "last": last}
 
     def start_update(self, body, device, client):
         """{"source": "usb" | "inbox", "version": "N.N.N", "confirm": "update"}: pvj-sysd starts a fixed update unit
@@ -1904,6 +1909,11 @@ class Api:
 
     # --- routing -------------------------------------------------------
     def routes(self):
+        out = self._routes()
+        out.update(self.boxcare.routes())      # /api/system/settings/*, /api/system/diagnostics, /api/system/factory-reset
+        return out
+
+    def _routes(self):
         # (method, path) -> (minimum role or None, handler)
         return {
             ("GET", "/api/hello"): (None, self.hello),

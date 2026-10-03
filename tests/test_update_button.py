@@ -189,6 +189,39 @@ class CommandLineTest(unittest.TestCase):
         finally:
             held.close()
 
+    def test_a_rollback_from_a_terminal_replaces_the_last_update_line(self):
+        # The Updates card went on saying "Last update: updated to 2.0.0" after `sudo pvj-update rollback`.
+        with open(self.result, "w") as f:
+            json.dump({"state": "done", "message": "updated to 2.0.0", "version": "2.0.0", "at": 1}, f)
+
+        class Fake:
+            def rollback(self):
+                return "1.0.0"
+
+            def apply(self, bundle, sha256=None, allow_unsigned=False, force=False):
+                return "3.0.0"
+        os.environ["PVJ_UPDATE_RESULT"] = self.result
+        self.addCleanup(os.environ.pop, "PVJ_UPDATE_RESULT", None)
+        with mock.patch.object(update, "Updater", Fake):
+            self.assertEqual(update.main(["rollback"]), 0)
+            self.assertEqual(self.read(), dict(self.read(), state="done", version="1.0.0", message="rolled back to 1.0.0"))
+            self.assertEqual(update.main(["apply", "pvj-3.0.0.tar.gz"]), 0)
+            self.assertEqual(self.read(), dict(self.read(), state="done", version="3.0.0", message="updated to 3.0.0"))
+            # where the update units never ran there is no folder, and none is made
+            os.environ["PVJ_UPDATE_RESULT"] = os.path.join(os.path.dirname(self.result), "missing", "result.json")
+            self.assertEqual(update.main(["rollback"]), 0)
+            self.assertFalse(os.path.exists(os.path.dirname(os.environ["PVJ_UPDATE_RESULT"])))
+
+    def test_a_failed_rollback_from_a_terminal_is_reported(self):
+        class Fake:
+            def rollback(self):
+                raise UpdateError("there is no previous release to go back to")
+        os.environ["PVJ_UPDATE_RESULT"] = self.result
+        self.addCleanup(os.environ.pop, "PVJ_UPDATE_RESULT", None)
+        with mock.patch.object(update, "Updater", Fake):
+            self.assertEqual(update.main(["rollback"]), 1)
+        self.assertEqual(self.read()["state"], "failed")
+
     def test_finish_marks_an_interrupted_update(self):
         with open(self.result, "w") as f:
             json.dump({"state": "running", "message": "installing", "at": 1}, f)
@@ -263,6 +296,19 @@ class ApiTest(ServerBase):
         self.assertEqual(self.start({"source": "inbox", "version": "0.3", "confirm": "update"})[0], 400)
         self.assertEqual(self.start({"source": "inbox", "version": "0.3.0", "confirm": "update"})[0], 200)
         self.assertEqual(self.asked, [{"cmd": "update", "source": "inbox", "version": "0.3.0"}])
+
+    def test_a_done_line_for_another_version_is_not_shown(self):
+        # A box rolled back by an older pvj-update (which wrote nothing): "updated to 9.9.9" is no longer true.
+        from pvj import __version__
+        with open(self.result, "w") as f:
+            json.dump({"state": "done", "message": "updated to 9.9.9", "version": "9.9.9", "at": 5}, f)
+        self.assertIsNone(self.call("GET", "/api/system/update", token=self.full)[1]["last"])
+        for record in ({"state": "done", "message": "rolled back to " + __version__, "version": __version__, "at": 5},
+                       {"state": "failed", "message": "signature check failed", "version": None, "at": 5},
+                       {"state": "running", "message": "installing 9.9.9", "version": None, "at": 5}):
+            with open(self.result, "w") as f:
+                json.dump(record, f)
+            self.assertEqual(self.call("GET", "/api/system/update", token=self.full)[1]["last"], record)
 
     def test_usb_bundles_are_listed(self):
         usb = tempfile.mkdtemp()

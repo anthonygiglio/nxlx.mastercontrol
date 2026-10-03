@@ -16,8 +16,8 @@ How it works for the people involved:
   deadline (the helper enforces it), on Stop, on a restart or a reboot; support's logins end with it. They are never
   saved as devices.
 * Over the tunnel support cannot: change these settings, start, extend or restart a session, pair or invite devices,
-  make guest or presenter codes, change the PIN or lift its lockout, or power the box off (a reboot is allowed; it
-  ends the session).
+  make guest or presenter codes, change the PIN or lift its lockout, import settings, reset the box to factory
+  settings, export settings with their passwords, or power the box off (a reboot is allowed; it ends the session).
 
 All of this is logged (the journal, and the last sessions in the panel).
 """
@@ -49,6 +49,8 @@ REMOTE_DENY = {
     ("POST", "/api/support/config"), ("POST", "/api/support/start"), ("POST", "/api/support/extend"),
     ("POST", "/api/pair"), ("POST", "/api/session"), ("POST", "/api/devices/invite"), ("POST", "/api/devices/revoke"),
     ("POST", "/api/pin/rotate"), ("POST", "/api/pin/unlock"), ("POST", "/api/system/poweroff"), ("GET", "/api/qr.svg"),
+    # an import can switch on OSC, DMX or MIDI (new ways in); a reset removes every device (see boxcare.py)
+    ("POST", "/api/system/settings/import"), ("POST", "/api/system/factory-reset"),
 }
 REMOTE_DENY_PREFIX = ("/api/access",)
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}

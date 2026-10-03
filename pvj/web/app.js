@@ -974,6 +974,7 @@
     cards.push(modulesCard(full), audioCard(full), autostartCard(full), streamsCard(full), projectorsCard(full), syncCard());
     if (full || (S.device && S.device.remote)) cards.push(supportCard());
     if (full) cards.push(updateCard());
+    if (full) cards.push.apply(cards, boxCareCards());
     if (full) cards.push(scheduleCard(), networkCard(), oscCard(), dmxCard(), midiCard(), appearanceCard(), accessCard(), h('div', { class: 'card' }, h('h2', { text: 'Player' }),
       h('button', { class: 'btn', text: 'Restart player now', onclick: function () { act('POST', '/api/player/restart', {}, function () { say('Player restarting. The service brings it straight back.'); }); } })));
     cards.push(h('button', { class: 'btn', text: 'Forget this device', onclick: function () {
@@ -1440,6 +1441,104 @@
     }
     refresh();
     return card;
+  }
+
+  // ---- box care: settings export and import, diagnostics, factory reset (pvj/boxcare.py) ----
+  var careForm = { passwords: false, media: '' };   // survives redraws
+  function saveFile(name, data) {
+    var url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2) + '\n'], { type: 'application/json' }));
+    var a = h('a', { href: url, download: name, hidden: true });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }
+  function boxCareCards() {
+    var pw = document.getElementById('exportpw'), md = document.getElementById('resetmedia');
+    if (pw) careForm.passwords = pw.checked;       // read from the page before it is rebuilt (an event can be lost)
+    if (md) careForm.media = md.value;
+    var remote = !!(S.device && S.device.remote);
+    var cards = [];
+
+    // settings
+    var tick = h('input', { type: 'checkbox', id: 'exportpw', checked: careForm.passwords });
+    tick.addEventListener('change', function () { careForm.passwords = tick.checked; });
+    var result = h('div', { class: 'k', id: 'importresult', role: 'status' });
+    var pick = h('input', { type: 'file', id: 'importpick', accept: '.json,application/json', hidden: true });
+    pick.addEventListener('change', function () {
+      var f = pick.files && pick.files[0];
+      pick.value = '';
+      if (!f) return;
+      if (!window.confirm('Replace this box\'s settings with ' + f.name + '? The PIN, the paired devices and remote support stay as they are. A copy of the present settings is kept on the box.')) return;
+      say('Importing ' + f.name + '...');
+      fetch('/api/system/settings/import?confirm=import', { method: 'POST', credentials: 'same-origin',
+        headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/json' }, body: f })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, data: j }; }); },
+          function () { return { ok: false, status: 0, data: { error: 'no connection' } }; })
+        .then(function (r) {
+          if (!r.ok) return say(r.data.error || 'The import failed (HTTP ' + r.status + ')', true);
+          var lines = (r.data.problems || []).map(function (t) { return 'Check: ' + t; }).concat(r.data.notes || []);
+          if (!r.data.passwords_in_file) lines.push('The file holds no passwords; ' + r.data.passwords_kept + ' already on this box were kept.');
+          loadAll().then(function () {
+            render();
+            say('Settings imported.' + (r.data.problems && r.data.problems.length ? ' Some parts need a look (see the Settings file card).' : ''));
+            var el = document.getElementById('importresult');
+            if (el) el.textContent = lines.join(' · ');
+          });
+        });
+    });
+    cards.push(h('div', { class: 'card', id: 'settingscard' }, h('h2', { text: 'Settings file' }),
+      h('div', { class: 'list' },
+        h('div', { class: 'k', text: 'Save this box\'s settings as one file, or load them from one. The PIN, the paired devices and remote support are never in the file.' }),
+        remote ? null : h('label', { class: 'row', for: 'exportpw' }, tick, h('span', { text: 'Include projector passwords and stream logins (keep that file private)' })),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn small grow', id: 'exportbtn', text: 'Export settings', onclick: function () {
+            act('POST', '/api/system/settings/export', { passwords: !remote && tick.checked }, function (d) {
+              saveFile(d.name, d.file);
+              say('Settings saved as ' + d.name + (d.file.passwords_included ? ' (with passwords).' : ' (no passwords in it).'));
+            });
+          } }),
+          remote ? null : h('button', { class: 'btn small grow', id: 'importbtn', text: 'Import settings...', onclick: function () { pick.click(); } })),
+        pick, result)));
+
+    // diagnostics
+    var note = h('div', { class: 'k', id: 'diagnote', role: 'status' });
+    cards.push(h('div', { class: 'card', id: 'diagcard' }, h('h2', { text: 'Diagnostics' }),
+      h('div', { class: 'list' },
+        h('div', { class: 'k', text: 'One file to send to whoever is helping you: versions, the board, modules, health and the settings. No PIN, password, code or key is in it.' }),
+        h('button', { class: 'btn small', id: 'diagbtn', text: 'Download diagnostics file', onclick: function () {
+          act('GET', '/api/system/diagnostics', null, function (d) {
+            saveFile(d.name, d.file);
+            say('Diagnostics saved as ' + d.name + '.');
+            note.textContent = d.file.log && d.file.log.note ? 'Log: ' + d.file.log.note : '';
+          });
+        } }),
+        note)));
+
+    // factory reset: never through remote support
+    if (!remote) {
+      var media = h('select', { class: 'text-input', id: 'resetmedia', 'aria-label': 'What happens to the clips' },
+        [['', 'What happens to the clips?'], ['keep', 'Keep the clips on the box'], ['delete', 'Delete the clips too']].map(function (o) {
+          return h('option', { value: o[0], text: o[1], selected: o[0] === careForm.media });
+        }));
+      media.addEventListener('change', function () { careForm.media = media.value; });
+      cards.push(h('div', { class: 'card', id: 'resetcard' }, h('h2', { text: 'Factory reset' }),
+        h('div', { class: 'list' },
+          h('div', { class: 'k', text: 'Every setting goes back to how a new box starts, and every phone, tablet and guest is unpaired. You pair again with the new PIN on the box\'s display.' }),
+          media,
+          h('button', { class: 'btn small', id: 'resetbtn', text: 'Reset to factory settings', onclick: function () {
+            if (!media.value) return say('Choose what happens to the clips first.', true);
+            var clips = media.value === 'delete' ? 'ALL CLIPS ON THE BOX ARE DELETED.' : 'The clips stay.';
+            if (!window.confirm('Reset this box to factory settings? All settings are lost and every device is unpaired, this one too. ' + clips + ' This cannot be undone.')) return;
+            act('POST', '/api/system/factory-reset', { confirm: 'factory-reset', media: media.value }, function () {
+              careForm = { passwords: false, media: '' };
+              S.device = null;
+              S.msg = '';
+              render();
+            });
+          } }))));
+    }
+    return cards;
   }
 
   // ---- multi-box sync and video wall -----------------------------------

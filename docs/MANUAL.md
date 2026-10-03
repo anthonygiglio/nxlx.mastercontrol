@@ -169,6 +169,31 @@ Check the box clock before relying on the schedule: a Pi has no battery clock, a
 
 System > Health says in plain words whether the box is well: the power supply (a Pi warns when the voltage drops; any drop is remembered until the next reboot, because it is the most common cause of odd stutters, network drops and damaged SD cards: use the official supply, 5 V 3 A for a Pi 4), the temperature (above 80 C a Pi slows down), the player (decoded in hardware or software, and dropped frames a second while playing), the load, and whether the helpers are running. It also lists the addresses to open the panel from another device, and a full-access device can put the address on the display for 2 minutes.
 
+## Settings file, diagnostics and factory reset
+
+Three cards in System, for full-access devices only.
+
+**Settings file.** *Export settings* saves the box's settings as one file (`nxlx-settings-<box>-<date>.json`): pads, modules, theme, mix, OSC, schedule, streams, DMX and MIDI, autostart, sound output, the picture over the video, projectors, the mapping and sync. *Import settings* loads such a file: it is checked first (a file from a newer version is refused, one from an older version is brought up to date, and every value goes through the same checks as the panel's own forms), a copy of the present settings is kept on the box (`settings.json.before-import-<time>` beside the settings file, the last three), and only then are the settings replaced. One wrong value stops the whole import and nothing changes. The clips themselves are not in the file: pads and the schedule refer to them by name.
+
+What happens to secrets:
+
+| | Export | Import |
+| --- | --- | --- |
+| The PIN, paired devices and their tokens | never in the file | the box keeps its own; a file that holds any is refused |
+| Remote support (server, keys, address, history) | never in the file | the box keeps its own |
+| Guest, presenter and support codes | never in the file (they are not saved anywhere) | not affected |
+| Projector passwords, stream logins (name and password in the address, or an SRT passphrase) | left out, unless you tick *Include projector passwords and stream logins* | a file without them keeps the password the box already has for the same projector or stream at the same address; otherwise type it in again |
+
+A stream address that is itself the secret (an RTMP stream key in the path, or an SRT stream id) stays in the export exactly as written, because the stream would be useless without it: treat every export as private if you use those. A file with passwords holds them in plain text.
+
+**Diagnostics.** *Download diagnostics file* saves one file to send to whoever is helping you: the version, the board, the screens, module states, the Health card's data, the last update, and the settings with every secret removed (no PIN, token, code, key, password or stream login; a stream is shown only as where it comes from). The panel runs without system rights and is not allowed to read the system log, so the file says so instead of holding log lines; on the box, `sudo journalctl -b -u 'pvj-*'` prints them. If a box is set up so that the panel can read the log, the lines are included with PINs, codes and logins removed.
+
+**Factory reset.** Choose whether the clips stay or are deleted, then *Reset to factory settings* and confirm. Playback stops, every setting goes back to how a new box starts, every phone, tablet and guest is unpaired (this one too), codes and a running support session end, and the box makes a new PIN, so the PIN screen is back on the display (`sudo pvj-pin` also prints it). Deleting the clips removes the media files in the box's own media folder and nothing else; a USB drive is never emptied, and if the box keeps its clips on a USB drive (`PVJ_MEDIA_DIR`) the reset refuses to delete them. What a reset does not touch: the wired network settings (System > Network changes the system's own configuration), your own themes, anything in `/etc/pvj` (the signing key, fleet support details), and the settings backups that updates keep for a rollback (`/var/lib/pvj/backups`, readable by root only). Those backups still hold the old devices: after a reset, do not run `sudo pvj-update rollback` unless you mean to bring the old settings back, or remove them first with `sudo rm -r /var/lib/pvj/backups`.
+
+Through a remote support session, the settings can be exported without passwords and the diagnostics file downloaded; importing, exporting with passwords and factory reset are refused.
+
+Not tested on a real box yet (2026-10-03): the three cards were tested with the automatic tests and a browser test only.
+
 ## 7. Troubleshooting
 
 | Symptom | Try |
@@ -185,6 +210,8 @@ System > Health says in plain words whether the box is well: the power supply (a
 | A projector does not answer | PJLink must be switched on in the projector's network menu; check its address and password; a projector that is warming up or cooling down answers "busy" |
 | The mapped picture stutters | Map at 1920x1080 or less on a Pi 4, and leave Edit on the display when you are done (editing costs more) |
 | Schedule fires at the wrong time | Check the box clock shown on the Schedule card and the time zone |
+| Someone is helping you from far away | System > Diagnostics > Download diagnostics file, and send it; it holds no PIN or password |
+| The box should go to someone else, or start over | System > Factory reset |
 
 ## 8. Not built yet
 

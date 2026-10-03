@@ -263,6 +263,36 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 self.close_connection = True
                 self._json(500, {"error": "internal error"})
 
+        def _settings_import(self):
+            """POST /api/system/settings/import?confirm=import: the body is the exported file itself. It is read
+            here as bytes (larger than MAX_BODY allows) and parsed once, strictly, by boxcare."""
+            from . import boxcare
+            try:
+                device = self._who("POST", "/api/system/settings/import")
+                api.require(device, "full")
+                if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                    raise ApiError(415, "send application/json")
+                if self.headers.get("Transfer-Encoding"):
+                    raise ApiError(501, "chunked bodies are not supported; send Content-Length")
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    raise ApiError(411, "Content-Length required")
+                if length < 0 or length > boxcare.MAX_IMPORT:
+                    raise ApiError(413, "the file is too large for a settings file")
+                raw = self.rfile.read(length)
+                confirm = (parse_qs(urlsplit(self.path).query).get("confirm") or [""])[0]
+                self._json(200, api.boxcare.import_settings(raw, confirm, device, self.client_address[0]))
+            except ApiError as e:
+                self.close_connection = True  # an unread body must not be parsed as the next request
+                self._json(e.status, {"error": e.message})
+            except OSError:
+                self.close_connection = True
+            except Exception:
+                traceback.print_exc()
+                self.close_connection = True
+                self._json(500, {"error": "internal error"})
+
         def do_POST(self):
             if not self._host_ok():
                 return
@@ -275,6 +305,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._upload()
             if path == "/api/system/update/upload":
                 return self._upload(update=True)
+            if path == "/api/system/settings/import":
+                return self._settings_import()
             body, err = self._body()
             if err:
                 return self._json(err[0], {"error": err[1]})

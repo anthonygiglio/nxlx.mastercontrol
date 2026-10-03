@@ -33,6 +33,7 @@ NAMESPACE = "pvj-release"
 MAX_BUNDLE_BYTES = 300 * 1024 * 1024
 MAX_FILES = 5000
 KEEP_BACKUPS = 5
+DEFAULT_RESULT = "/run/pvj-update/result.json"     # what the panel's Updates card reads (pvj-update-*@.service)
 _VERSION = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 
 
@@ -513,6 +514,10 @@ def main(argv=None):
         return 1
     u = Updater()
     result = getattr(args, "result", None)
+    if result is None and args.cmd in ("apply", "rollback"):
+        # Run from a terminal: the panel's Updates card reads this file, and it would go on saying "updated to X"
+        # after a rollback. It is only written where it can already be (the folder is made by the update units).
+        result = os.environ.get("PVJ_UPDATE_RESULT", DEFAULT_RESULT)
 
     def report(state, message, version=None):
         if not result:
@@ -552,7 +557,8 @@ def main(argv=None):
             shutil.rmtree(scratch, ignore_errors=True)
             print("ok: version %s, settings schema %d" % (info["version"], info["schema"]))
         elif args.cmd == "apply":
-            u.apply(args.bundle, args.sha256, args.allow_unsigned, args.force)
+            version = u.apply(args.bundle, args.sha256, args.allow_unsigned, args.force)
+            report("done", "updated to %s" % version, version)
         elif args.cmd in ("usb", "inbox"):
             report("running", "looking for an update")
             if args.version is not None and not _VERSION.match(args.version):
@@ -576,7 +582,8 @@ def main(argv=None):
                     u.clear_inbox(inbox)
                     os.close(inbox)
         elif args.cmd == "rollback":
-            u.rollback()
+            version = u.rollback()
+            report("done", "rolled back to %s" % version, version)
     except UpdateError as e:
         print("pvj-update: %s" % e, file=sys.stderr)
         report("failed", str(e))
