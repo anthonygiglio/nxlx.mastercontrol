@@ -14,5 +14,5 @@
   ],
   "status": "ready",
   "default_enabled": false,
-  "description": "Generator shaders in the ISF format drawn by the player's GPU in place of a clip, and Vibes: one tap plays them endlessly for ambience, shuffled and varied each round. Ten bundled shaders; upload your own .fs files. Speed is not measured on any board yet; not offered on a Pi 3."
+  "description": "Generator shaders in the ISF format drawn by the player's GPU in place of a clip, and Vibes: one tap plays them endlessly for ambience, shuffled and varied each round. Ten bundled shaders; upload your own .fs files. Measured on a Pi 4 only; not offered on a Pi 3."
 }
