@@ -467,6 +467,41 @@ class ValuesTest(Live):
             self.pump()
         self.assertEqual(taps, [])
 
+    def test_a_choice_the_gpu_refused_is_not_sent_to_it_again(self):
+        """mode=5 was refused six times out of six, each a trip to the GPU with the lock held and a black flash; a
+        MIDI pad that toggles it would repeat that for ever."""
+        self.player.vo = "gpu"
+        self.engine.play("all.fs")
+        taps, test = [], self
+
+        class Tap(FakeTap):                                           # listening takes time on the fake clock too
+            def drain(self, seconds):
+                test.now[0] += seconds
+                return FakeTap.drain(self, seconds)
+        FakeTap.lines = REFUSAL
+        self.engine._tap = lambda path: taps.append(path) or Tap(path)
+        self.engine.change({"values": {"mode": 5}})
+        self.pump()
+        self.assertEqual(len(taps), 1)
+        swaps = len([c for c in self.player.calls if c[0] == "swap_source"])
+        for _ in range(5):
+            with self.assertRaises(ApiError) as c:                    # the same wish again: answered from memory
+                self.engine.change({"values": {"mode": 5}})
+            self.assertEqual(c.exception.status, 422)
+            self.assertIn("oops", c.exception.message)
+            self.pump()
+        self.engine.changer.submit(self.engine.playing, {"mode": 5})   # and one that got past the request (two wishes merged)
+        self.pump()
+        self.assertEqual((len(taps), len([c for c in self.player.calls if c[0] == "swap_source"])), (1, swaps))
+        self.assertEqual(self.engine.state()["error"]["message"], "line 12: `oops' undeclared")
+        FakeTap.lines = []
+        self.engine.change({"values": {"mode": 0}})                   # another choice is tried as before
+        self.pump()
+        self.assertEqual((len(taps), self.engine.state()["playing"]["values"]["mode"]), (2, 0))
+        self.engine.change({"values": {"level": 0.3}})               # and a plain number never was the trouble
+        self.pump()
+        self.assertEqual(self.engine.state()["playing"]["values"]["level"], 0.3)
+
     def test_a_change_during_vibes_does_not_end_the_rotation(self):
         vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=lambda: self.now[0], sleep=lambda s: None, rng=random.Random(1), thread=False, log=lambda *_: None)
         vibes.start()
@@ -658,6 +693,38 @@ class PresetTest(Live):
         self.settings.data["shaders"]["presets"] = {"all.fs": [{"name": "x", "values": {"level; //!HOOK": 1}}]}      # edited by hand: as if not there
         self.assertNotIn("presets", self.engine.config())
         self.engine.play("all.fs")
+
+    def test_one_damaged_row_does_not_cost_the_rest(self):
+        """One bad row dropped the whole key on read, and the next save wrote the section without it: every preset
+        and every set was gone."""
+        self.save("good", level=1.0)
+        self.save("also good", level=0.2)
+        self.engine.api_set({"action": "set", "op": "add", "name": "Show", "shaders": ["all.fs"]}, None, "t")
+        self.engine.api_set({"action": "heavy", "id": "nxlx-nebula.fs", "on": True}, None, "t")
+        data = self.settings.data["shaders"]
+        data["presets"]["all.fs"].insert(1, {"name": "", "values": {}})                       # damaged by hand
+        data["presets"]["all.fs"].append({"name": "GOOD", "values": {}})                      # the same name twice
+        data["presets"]["../x"] = [{"name": "a"}]
+        data["presets"]["nxlx-tide.fs"] = "not a list"
+        data["sets"].insert(0, {"id": "zz", "name": "broken"})
+        data["sets"].append({"id": data["sets"][1]["id"], "name": "same id"})
+        data["heavy"]["bad.fs"] = "nonsense"
+        cfg = self.engine.config()
+        self.assertEqual([p["name"] for p in cfg["presets"]["all.fs"]], ["good", "also good"])
+        self.assertEqual((sorted(cfg["presets"]), [e["name"] for e in cfg["sets"]], sorted(cfg["heavy"])), (["all.fs"], ["Ambient", "Show"], ["nxlx-nebula.fs"]))
+        self.engine.api_set({"action": "config", "dwell": 33}, None, "t")                     # any save
+        saved = self.settings.data["shaders"]
+        self.assertEqual(([p["name"] for p in saved["presets"]["all.fs"]], [e["name"] for e in saved["sets"]], sorted(saved["heavy"])),
+                         (["good", "also good"], ["Ambient", "Show"], ["nxlx-nebula.fs"]))
+        # a key that cannot be read at all is left as it is, not written over with nothing
+        for key, junk in (("presets", "all of them"), ("sets", {"not": "a list"}), ("heavy", ["a.fs"])):
+            self.settings.data["shaders"][key] = junk
+        self.assertEqual([k for k in ("presets", "heavy") if k in self.engine.config()], [])
+        self.engine.api_set({"action": "config", "dwell": 34}, None, "t")
+        self.assertEqual((self.settings.data["shaders"]["presets"], self.settings.data["shaders"]["heavy"]), ("all of them", ["a.fs"]))
+        # more marks than the cap: the first ones are read, none is an error
+        self.settings.data["shaders"]["heavy"] = {"s%d.fs" % n: {"at": "x", "drops": 3, "height": 720} for n in range(S.MAX_UPLOADS + 80)}
+        self.assertEqual(len(self.engine.config()["heavy"]), S.MAX_UPLOADS + 64)
 
     def test_deleting_a_shader_takes_its_presets_and_its_place_in_the_sets(self):
         self.save("mine", level=1.0)
@@ -863,6 +930,65 @@ class GuardTest(Live):
         st = self.engine.api_set({"action": "heavy", "id": bad, "on": False}, None, "t")        # until someone puts it back
         self.assertIn(bad, self.engine.vibes_ids())
         self.assertIsNone(next(s for s in st["shaders"] if s["id"] == bad)["heavy"])
+
+    def test_a_box_that_drops_frames_whatever_plays_does_not_mark_every_shader(self):
+        """Three dropped frames a second from any cause marked all eight shaders in 73 seconds, for good, and Vibes
+        ended saying no shader was switched on."""
+        self.vibes.start()
+        self.vibes.tick()
+        for _ in range(200):
+            self.second(3)
+            self.vibes.tick()
+            if not self.vibes.running:
+                break
+        self.assertFalse(self.vibes.running)
+        self.assertEqual(self.vibes.status()["last"]["message"], "ended: the box is dropping frames whatever plays: check the picture detail")
+        self.assertEqual((self.engine.config().get("heavy"), len(self.engine.vibes_ids())), (None, 8))     # the two marks were taken back
+        self.assertIsNotNone(self.engine.state()["playing"])          # the shader that was on stays on
+        self.vibes.start()                                            # and it starts again
+        self.assertTrue(self.vibes.tick())
+        # one heavy shader between healthy ones is still marked
+        bad = self.vibes.current
+        for _ in range(12):
+            self.second(3)
+            if self.vibes.tick():
+                break
+        for _ in range(12):
+            self.second(0)
+            self.vibes.tick()
+        self.assertEqual(sorted(self.engine.config()["heavy"]), [bad])
+        self.vibes.stop()
+
+    def test_a_heavy_mark_belongs_to_its_height_and_board(self):
+        self.engine.note_heavy("nxlx-tide.fs", {"drops_per_second": 3.3})
+        mark = self.settings.data["shaders"]["heavy"]["nxlx-tide.fs"]
+        self.assertEqual((mark["height"], mark["board"], mark["drops"]), (720, "x86", 3.3))
+        self.assertNotIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.engine.api_set({"action": "config", "height": 540}, None, "t")        # fewer lines: it gets another chance
+        self.assertIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.assertIsNone(self.row("nxlx-tide.fs")["heavy"])
+        self.engine.api_set({"action": "config", "height": 1080}, None, "t")       # more lines: the mark holds
+        self.assertNotIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.assertEqual(self.row("nxlx-tide.fs")["heavy"]["height"], 720)
+        self.api.board = {"kind": "pi5", "model": "t"}                # the settings on another kind of board: not its mark
+        self.assertIn("nxlx-tide.fs", self.engine.vibes_ids())
+        saved = json.loads(json.dumps(self.settings.data["shaders"]))
+
+        class Care:
+            api = self.api
+        self.assertEqual(boxcare.check_shaders(saved, Care)["heavy"], {})          # and an import does not bring it along
+        self.api.board = {"kind": "x86", "model": "t"}
+        self.assertEqual(sorted(boxcare.check_shaders(saved, Care)["heavy"]), ["nxlx-tide.fs"])
+        self.assertEqual(sorted(boxcare.check_shaders(dict(saved, heavy={"a.fs": {"at": "x"}}), Care)["heavy"]), ["a.fs"])     # a mark of the first kind, with no board
+        with self.assertRaises(ValueError):
+            boxcare.check_shaders(dict(saved, heavy={"a.fs": {"board": "pi4; rm"}}), Care)
+        # every shader of a set left out: the start says so, not that nothing is switched on
+        for sid in self.engine.vibes_ids():
+            self.engine.note_heavy(sid)
+        with self.assertRaises(ApiError) as c:
+            self.vibes.start()
+        self.assertEqual(c.exception.status, 409)
+        self.assertIn("left out on this box", c.exception.message)
 
     def test_a_short_burst_or_a_change_is_not_taken_for_a_heavy_shader(self):
         self.vibes.start()

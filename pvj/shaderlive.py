@@ -30,6 +30,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 
 from . import shaders as S
 from .api import ApiError
@@ -42,6 +43,13 @@ MAX_SET_ENTRIES = 128
 NAME = re.compile(r"[^\x00-\x1f\x7f]{1,40}")
 SET_ID = re.compile(r"[0-9a-f]{8}")
 DEFAULT_PRESET = "default"
+
+
+def name_key(name):
+    """What two names are compared by: the same letters however they were typed (composed or not, any letter case)."""
+    return unicodedata.normalize("NFC", name).casefold()
+
+
 FIRST_SET = "00000000"
 ORDERS = ("shuffle", "listed")
 APPLY_GAP = 0.2                 # seconds between two compiles: at most five a second
@@ -198,8 +206,66 @@ def check_heavy(v):
         for key in ("drops", "height"):
             n = note.get(key)
             row[key] = round(float(n), 1) if isinstance(n, (int, float)) and not isinstance(n, bool) and n == n and 0 <= n <= 1e5 else 0
+        if note.get("board") is not None:               # the board it was seen on; a mark without one is this box's own
+            if not isinstance(note["board"], str) or not re.fullmatch(r"[a-z0-9-]{1,20}", note["board"]):
+                raise ValueError("the board of a heavy mark is not a board name")
+            row["board"] = note["board"]
         out[sid] = row
     return out
+
+
+# ---- reading settings a person may have damaged: bad rows are dropped one by one ------------------------------------------
+def read_presets(v):
+    """{shader: [preset]} with every row that does not pass left out; None if it is not that kind of thing at all."""
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    for sid, rows in list(v.items())[:MAX_PRESET_SHADERS]:
+        if not isinstance(sid, str) or not S.FILE.fullmatch(sid) or not isinstance(rows, list):
+            continue
+        clean, names = [], set()
+        for p in rows[:MAX_PRESETS]:
+            try:
+                p = check_preset(p)
+            except (ValueError, TypeError):
+                continue
+            if name_key(p["name"]) not in names:
+                names.add(name_key(p["name"]))
+                clean.append(p)
+        if clean:
+            out[sid] = clean
+    return out
+
+
+def read_sets(v):
+    if not isinstance(v, list):
+        return None
+    out, ids, names = [], set(), set()
+    for e in v:
+        try:
+            e = check_set(e)
+        except (ValueError, TypeError):
+            continue
+        if e["id"] not in ids and name_key(e["name"]) not in names and len(out) < MAX_SETS:
+            ids.add(e["id"])
+            names.add(name_key(e["name"]))
+            out.append(e)
+    return out
+
+
+def read_heavy(v):
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    for sid, note in list(v.items())[:S.MAX_UPLOADS + 64]:
+        try:
+            out.update(check_heavy({sid: note}))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+READ = (("presets", read_presets), ("sets", read_sets), ("heavy", read_heavy))
 
 
 # The keys this version adds to the "shaders" settings, each with its check (also used by settings import, boxcare.py).
@@ -454,6 +520,7 @@ class LiveEngine(S.Engine):
         # Settings are edited under this lock, never under the engine's own: that one is held while the GPU looks at a
         # shader (up to four seconds), and a dwell knob, a preset or a set must not wait for it.
         self._cfg = threading.RLock()
+        self._bad = {}                              # (source hash, shape of the values) -> what the GPU said about it
 
     def board(self):
         return (getattr(self.api, "board", None) or {}).get("kind")
@@ -468,12 +535,11 @@ class LiveEngine(S.Engine):
         saved, board = self._saved() or {}, self.board()
         if saved.get("height") not in S.heights_for(board) or isinstance(saved.get("height"), bool):
             cfg["height"] = S.default_height(board)                 # also a height this board is not offered (1080 on a Pi 4)
-        for key, check in EXTRA:
+        for key, read in READ:
             if key in saved:
-                try:
-                    cfg[key] = check(saved[key])
-                except (ValueError, TypeError):
-                    pass                                            # damaged by hand: as if it were not there
+                rows = read(saved[key])         # damaged by hand: the rows that still pass are kept, one bad row is only itself
+                if rows:
+                    cfg[key] = rows
         if isinstance(saved.get("active"), str) and SET_ID.fullmatch(saved["active"]):
             cfg["active"] = saved["active"]
         if isinstance(saved.get("guard"), bool):
@@ -487,10 +553,14 @@ class LiveEngine(S.Engine):
     def _save(self, cfg):
         """Save the section. The first save by this version turns the first version's list (everything but the
         switched-off shaders) into a set of its own, so nothing that was in the rotation drops out unnoticed."""
+        saved = self._saved()
         if cfg.get("v") != 2:
-            if self._saved() is not None and "sets" not in cfg:
+            if saved is not None and "sets" not in cfg:
                 cfg["sets"] = self.sets(cfg)
             cfg["v"] = 2
+        for key, read in READ:                  # a key that could not be read at all is left as it is, never written over
+            if saved and key in saved and key not in cfg and read(saved[key]) is None:
+                cfg[key] = saved[key]
         super()._save(cfg)
 
     # -- the library --
@@ -513,11 +583,12 @@ class LiveEngine(S.Engine):
         cfg = cfg or self.config()
         rows = super().library()
         members = {e["id"] for e in self.rotation(None, cfg, rows)["shaders"]}
+        heavy = self.heavy_here(cfg)
         on = self.on_screen() if self.enabled() else None
         for s in rows:
             sid = s["id"]
             s["weight"], s["measured"] = weight_of(sid, s["cost"]), measured(sid)
-            s["heavy"] = cfg.get("heavy", {}).get(sid)
+            s["heavy"] = heavy.get(sid)
             s["presets"] = [p["name"] for p in cfg.get("presets", {}).get(sid, [])]
             s["refused"] = None
             if not s["error"]:
@@ -679,7 +750,7 @@ class LiveEngine(S.Engine):
         cfg = self.config()
         rows = {s["id"]: s for s in S.Engine.library(self)}
         e = self.rotation(set_id, cfg, list(rows.values()))
-        heavy = cfg.get("heavy", {})
+        heavy = self.heavy_here(cfg)
         keep = [r for r in e["shaders"] if r["id"] in rows and not rows[r["id"]]["error"] and r["id"] not in heavy
                 and self._digest(r["id"]) not in self._refusals]
         return dict(e, shaders=keep)
@@ -753,16 +824,37 @@ class LiveEngine(S.Engine):
             self._save(cfg)
 
     # -- the guard --
-    def note_heavy(self, sid, verdict):
-        """The guard found this shader too heavy in a rotation: remember it, so no rotation shows it until someone
-        puts it back."""
+    def heavy_here(self, cfg=None):
+        """The heavy marks that count on this box now: made on this board (a mark with no board is this box's own),
+        at the drawing height that is set now or a lower one. A mark made at a greater height says nothing about a
+        lower one, so lowering the picture detail gives every marked shader another chance; raising it keeps them."""
+        cfg = cfg or self.config()
+        board = self.board()
+        return {sid: m for sid, m in cfg.get("heavy", {}).items() if m.get("board") in (None, board) and m.get("height", 0) <= cfg["height"]}
+
+    def note_heavy(self, sid, verdict=None):
+        """The guard found this shader too heavy in a rotation (or someone marked it by hand): remember it, with the
+        drawing height and the board, so no rotation shows it until someone puts it back."""
+        drops = (verdict or {}).get("drops_per_second") or 0
         with self._cfg:
             cfg = self.config()
-            size = (self.playing or {}).get("size") or (0, cfg["height"])
-            cfg.setdefault("heavy", {})[sid] = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": verdict["drops_per_second"] or 0, "height": size[1]}
+            mark = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": drops, "height": cfg["height"]}
+            if self.board():
+                mark["board"] = self.board()
+            cfg.setdefault("heavy", {})[sid] = mark
             self._save(cfg)
-        self.log("pvj-web: shader %s drops %s frames a second at %d lines: too heavy on this box, left out of rotations"
-                 % (sid, verdict["drops_per_second"], size[1]))
+        if verdict:
+            self.log("pvj-web: shader %s drops %s frames a second at %d lines: too heavy on this box, left out of rotations"
+                     % (sid, drops, cfg["height"]))
+
+    def unmark(self, ids):
+        """Take heavy marks back."""
+        with self._cfg:
+            cfg = self.config()
+            if any(sid in cfg.get("heavy", {}) for sid in ids):
+                for sid in ids:
+                    cfg["heavy"].pop(sid, None)
+                self._save(cfg)
 
     def watch(self):
         """What the guard sees for the shader on screen, or None while it is switched off or nothing is on."""
@@ -806,6 +898,9 @@ class LiveEngine(S.Engine):
             except (ShaderError, ApiError) as e:
                 self.error = {"id": p["id"], "message": str(getattr(e, "message", e)), "at": time.strftime("%Y-%m-%d %H:%M:%S")}
                 return False
+            if key in self._bad:                    # the GPU has refused exactly this before: it is not asked again
+                self.error = {"id": p["id"], "message": self._bad[key], "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+                return False
             player = self.api.player
             try:
                 out = self._write(text)
@@ -837,6 +932,9 @@ class LiveEngine(S.Engine):
                     pass
                 self._cleanup({p["path"]})
                 self.error = {"id": p["id"], "message": message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+                if len(self._bad) >= 256:
+                    self._bad.clear()
+                self._bad[key] = message
                 self.log("pvj-web: shader %s refused with new values: %s" % (p["id"], message))
                 return False
             if verdict == "ok":
@@ -959,6 +1057,12 @@ class LiveEngine(S.Engine):
         events = {i["name"] for i in parsed["inputs"] if i["type"] == "event"}
         held = {n: True for n, v in values.items() if n in events and v}
         values = {n: v for n, v in values.items() if n not in events}
+        if self._bad and (values or held):          # a switch or choice the GPU refused before is refused here, at once
+            wish = self.changer.pending() or {}
+            after = dict(on["values"], **(wish.get("values", {}) if wish.get("epoch") == on["epoch"] else {}))
+            said = self._bad.get((self._digest(on["id"]), S.shape_of(parsed, dict(after, **dict(values, **held)))))
+            if said:
+                raise ApiError(422, "the GPU refused these values before (%s); they were not sent again" % said)
         if values or controls or held:
             self.changer.submit(on, values, controls, held)
         wish = self.changer.pending() or {}
@@ -1111,14 +1215,10 @@ class LiveEngine(S.Engine):
             self._path(sid)
             if not isinstance(on, bool):
                 raise ApiError(400, "on must be true or false")
-            with self._cfg:
-                cfg = self.config()
-                heavy = cfg.setdefault("heavy", {})
-                if on:
-                    heavy[sid] = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": 0, "height": cfg["height"]}
-                else:
-                    heavy.pop(sid, None)
-                self._save(cfg)
+            if on:
+                self.note_heavy(sid)
+            else:
+                self.unmark([sid])
         elif action == "vibes":                     # in or out of the active set
             sid, on = body.get("id"), body.get("on")
             self._path(sid)
