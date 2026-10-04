@@ -1198,7 +1198,7 @@
       if (d.pending) return st('active', 'A change is waiting for your confirmation');
       var addr = [];
       d.interfaces.forEach(function (i) { if (i.kind === 'wired') addr = addr.concat(i.addresses || []); });
-      var ports = (d.wifi && d.wifi.ports) || {}, air = Object.keys(ports).map(function (k) { return (ports[k].hotspot ? 'Own hotspot: ' : 'Wi-Fi: ') + ports[k].ssid; });
+      var ports = (d.wifi && d.wifi.ports) || {}, air = Object.keys(ports).filter(function (k) { return ports[k] && ports[k].ssid; }).map(function (k) { return (ports[k].hotspot ? 'Own hotspot: ' : 'Wi-Fi: ') + ports[k].ssid; });
       return st('ready', air.concat(addr.length ? ['wired: ' + addr.join(', ')] : []).join(', ') || 'No wired address');
     },
     updates: function (d) { return st(null, 'Version ' + d.version); },
@@ -1221,7 +1221,7 @@
     if (!row.url) return row.module ? st('ready', 'On') : st(null, row.fact ? row.fact() : '');
     var d = S.sysData[row.id];
     if (!d) return st(null, '');              // not asked yet, or not for this device to ask
-    return SYS_STATE[row.id](d.now, d.before);
+    try { return SYS_STATE[row.id](d.now, d.before); } catch (e) { return st(null, ''); }   // an answer in a shape not foreseen: say nothing, never break the screen
   }
   function showState(chip, text, state, words) {
     chip.className = 'chip' + (state.chip ? ' chip-' + state.chip : '');
@@ -1281,6 +1281,7 @@
     if (!old || !S.device || S.tab !== 'system') return render();
     stopTimers();
     keepNetForm();
+    keepSyncForm();
     old.parentNode.replaceChild(system(), old);
   }
   function openSys(id) {
