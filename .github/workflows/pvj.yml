@@ -38,7 +38,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck the installer and image scripts (strict)
-        run: shellcheck install/install.sh tools/make-release.sh image/stage-pvj/prerun.sh image/stage-pvj/00-install-pvj/01-run.sh
+        run: shellcheck install/install.sh tools/make-release.sh image/stage-pvj/prerun.sh image/stage-pvj/00-install-pvj/01-run.sh tests/real_install_test.sh
+
+  real-install:
+    # The installer run for real, as root, under the runner's systemd: who owns what in /run/pvj after an upgrade
+    # over an old shared folder, restarts, a crash and a reinstall (D45). The runner is thrown away afterwards.
+    # Not a test of a Raspberry Pi: no display, and not the box's systemd.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mpv
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
+      - name: Real install as root and the owners of the runtime folders
+        run: sudo PVJ_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
 
   panel-ui:
     runs-on: ubuntu-latest

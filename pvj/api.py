@@ -21,6 +21,7 @@ import unicodedata
 
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
+from . import paths
 from .auth import Auth, AuthError
 from .modules import ModuleError
 from .player import AUDIO_EXTENSIONS, ENDINGS, IMAGE_EXTENSIONS, PlayerError, VIDEO_EXTENSIONS
@@ -159,7 +160,7 @@ class Api:
         self.shaders = shaders_mod.LiveEngine(self)                 # ISF shader sources (see shaders.py, shaderlive.py)
         self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
         from . import health as health_mod
-        self.health = health_mod.Health(self, getattr(player, "rundir", "/run/pvj"))     # checks start in server.build
+        self.health = health_mod.Health(self, getattr(player, "rundir", paths.WEB_DIR))     # checks start in server.build
         from . import sync as sync_mod
         self.sync = sync_mod.SyncManager(self, settings)            # started by server.build
         from . import support as support_mod
@@ -305,17 +306,30 @@ class Api:
                 if isinstance(cached[1], ApiError):
                     raise ApiError(cached[1].status, cached[1].message)
                 return cached[1]
-            path = os.path.join(self.player.rundir, "preview.jpg")
+            # mpv writes the picture, so it is in the player's own folder, where nobody else can leave a link.
+            path = getattr(self.player, "preview_path", None) or os.path.join(self.player.rundir, paths.PREVIEW)
+            ours = os.path.dirname(os.path.abspath(path)) == os.path.abspath(self.player.rundir)
             try:
-                try:
-                    os.unlink(path)               # never write through a link someone left there
-                except FileNotFoundError:
-                    pass
+                before = None
+                if ours:                          # one folder for everything (a desk, the tests): start clean
+                    try:
+                        os.unlink(path)
+                    except FileNotFoundError:
+                        pass
+                else:
+                    # On a box the picture is in the player's folder, which the panel must not touch and cannot:
+                    # its sandbox mounts everything but its own folder read-only, so even trying to remove the
+                    # file fails ("Read-only file system"). mpv writes over the old picture instead, and the
+                    # panel tells a new one from the one that was there by what the file looks like now.
+                    before = self._preview_mark(path)
                 self._player_call(self.player.screenshot, path, 60, with_text)
                 fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
                 try:
-                    if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    st = os.fstat(fd)
+                    if not stat.S_ISREG(st.st_mode):
                         raise ApiError(500, "preview file is not a regular file")
+                    if before is not None and before == (st.st_ino, st.st_mtime_ns, st.st_ctime_ns):
+                        raise ApiError(503, "the player did not produce a picture")     # the old one: never served again
                     with os.fdopen(fd, "rb", closefd=False) as f:
                         data = f.read(PREVIEW_MAX_BYTES + 1)
                 finally:
@@ -331,6 +345,17 @@ class Api:
                 raise err
             self._preview = (time.monotonic(), data, with_text)
             return data
+
+    @staticmethod
+    def _preview_mark(path):
+        """What tells one written preview file from the next: which file it is and when it was last written or
+        changed. Compared for "the same", never for "newer", so a clock that was set back does no harm. None if
+        there is no file."""
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return None
+        return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
 
     def _public_player_status(self):
         """Player status with stream passwords hidden and the saved stream's name added."""
@@ -1017,7 +1042,7 @@ class Api:
         return os.path.join(os.path.dirname(self.settings.path), "update-inbox")
 
     def _update_result(self):
-        path = os.environ.get("PVJ_UPDATE_RESULT", "/run/pvj-update/result.json")
+        path = paths.update_result()
         try:
             with open(path) as f:
                 data = json.load(f)
@@ -1346,7 +1371,7 @@ class Api:
         size = self._player_call(player.osd_size)
         if size is None:
             raise ApiError(503, "the player has no screen size yet")
-        out = os.path.join(player.rundir, "overlay.bgra")
+        out = paths.overlay_file(player.rundir)
         try:
             overlay_mod.convert(src, size[0], size[1], out, getattr(player, "mpv_bin", "mpv"))
         except overlay_mod.OverlayError as e:
