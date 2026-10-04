@@ -108,4 +108,4 @@ Network settings (wired and Wi-Fi) always revert by themselves unless you confir
 | --- | --- | --- |
 | ![OSC card](images/ui/control-osc.png) | ![Appearance card](images/ui/appearance.png) | ![Access card with a guest and a presenter code and their QR codes](images/ui/access.png) |
 
-The Access card shows a guest code and a presenter code, each with its QR code, how long it lasts and how many uses are left.
+The "Let someone in" card of People and codes shows a guest code and a presenter code, each with its QR code, how long it still works and how many uses are left. The picture above may be older than this: the roles are now named Guest (can watch), Presenter (can play and mix) and Owner (everything), and a presenter gets this card with the guest code only.
