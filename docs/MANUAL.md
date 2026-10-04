@@ -226,7 +226,9 @@ On a laptop (from about 900 px wide) the page is a workspace: the list of shader
 
 No page sends you to another one for its controls: System > Projection mapping holds the mapping controls (they are also on Mix), and System > Room holds the Room screen's scenes, walls and set-up under its switch.
 
-**Not measured, and not seen on a screen yet.** How smoothly each shader runs on a Pi 4, a Pi 5 or a PC has not been measured on any board, and nobody has watched this on a display: so far it has only run in automated tests on a software graphics chip. Watch the screen the first time; if the picture stutters, choose fewer lines under Advanced or take the heavier shaders out of the Vibes rotation (each shader says how much work it is). Details: [pvj/SHADERS.md](../pvj/SHADERS.md).
+**What the box can already do that the page does not show yet.** Every input of a shader can be changed while it plays (switches, choices, colours, points and buttons as well as numbers); every shader has a speed (0 freezes it, up to 4 times), a colour shift and a brightness trim; values can be kept as named presets, and the one called default is what Play and Vibes use; Vibes can have several named sets of shaders with their own time, order and variation; a MIDI controller can drive the shader's first eight inputs, its speed, the next and the previous shader and eight presets. These work through the box's API today; the page gets its controls for them next.
+
+**Measured on one Raspberry Pi 4** (2560 x 1440 at 75 Hz): the six light shaders run without dropped frames at 720 lines, Tide and Aurora at 540, Drift and Nebula only at 360. So a Pi 4 draws 540 lines unless you choose otherwise and is not offered 1080, and Drift and Nebula are not in the rotation until you put them in. While Vibes runs the box watches for dropped frames: a shader that keeps dropping them is passed over and left out until you put it back. A Pi 5 and a PC have not been measured. Watch the screen the first time; if the picture stutters, choose fewer lines under Advanced. Details: [pvj/SHADERS.md](../pvj/SHADERS.md).
 
 ## 6. Keep it safe and recoverable
 

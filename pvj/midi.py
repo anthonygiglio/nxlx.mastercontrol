@@ -12,8 +12,9 @@ Limits:
 * Off until switched on. Only paths of the form /dev/snd/midiC<n>D<n> are ever opened (never an arbitrary file),
   and only if they are character devices.
 * Receive only; nothing is written to a device.
-* Only play (pads), stop, pause, fade, blackout, reset, opacity, size, position, speed, volume and the shader
-  rotation (Vibes on or off, next shader, dwell time) are reachable.
+* Only play (pads), stop, pause, fade, blackout, reset, opacity, size, position, speed, volume, the shader
+  rotation (Vibes on or off, next shader, dwell time) and the shader on screen (its first eight inputs, its speed,
+  the shader before and after it in the active set, its first eight presets) are reachable.
 * No more than 50 commands a second reach the player, whatever the controllers send.
 * The web service needs the `audio` group and read access to ALSA devices (the systemd unit has both).
 """
@@ -50,7 +51,16 @@ ACTIONS = {
     # The shader rotation (the Shaders and Vibes module): a press switches it on or off, another goes to the next
     # shader, and a knob or fader chooses how long each shader stays from VIBES_DWELLS.
     "vibes": ("trigger", None, None), "vibes_next": ("trigger", None, None), "vibes_dwell": ("level", None, None),
+    # Performing with the shader on screen (shaderlive.py). A "control" follows the shader's n-th input whatever it
+    # is: from a knob or fader a number spreads over MIN to MAX, a switch is on from 64 up, a choice is picked by
+    # position; from a pad or button a switch toggles, a choice steps on, an event fires, a number goes back to its
+    # default. The speed is 0 (frozen) to 4 times, 1 at a quarter of the way.
+    "shader_speed": ("level", 0.0, 4.0), "shader_prev": ("trigger", None, None), "shader_next": ("trigger", None, None),
 }
+SHADER_SLOTS = 8
+for _n in range(1, SHADER_SLOTS + 1):
+    ACTIONS["shader_control_%d" % _n] = ("control", _n, None)
+    ACTIONS["shader_preset_%d" % _n] = ("trigger", _n, None)
 VIBES_DWELLS = (15, 30, 45, 60, 90, 120, 180, 240, 300, 420, 600, 900, 1200, 1800, 3600)      # seconds, bottom to top
 KINDS = ("note", "cc", "program")
 
@@ -222,6 +232,12 @@ class MidiMapper:
             return [("/api/vibes", {"on": None})]              # a toggle too
         if a == "vibes_next":
             return [("/api/vibes", {"next": True})]
+        if a in ("shader_next", "shader_prev"):
+            return [("/api/shaders/step", {"dir": 1 if a == "shader_next" else -1})]
+        if a.startswith("shader_preset_"):
+            return [("/api/shaders/preset", {"index": ACTIONS[a][1]})]
+        if a.startswith("shader_control_"):
+            return [("/api/shaders/values", {"control": ACTIONS[a][1], "press": True})]
         return []
 
     @staticmethod
@@ -231,7 +247,11 @@ class MidiMapper:
             return [("/api/blackout", {"on": value >= 64})]
         if a == "vibes_dwell":
             return [("/api/vibes", {"dwell": VIBES_DWELLS[min(len(VIBES_DWELLS) - 1, value * len(VIBES_DWELLS) // 128)]})]
+        if a.startswith("shader_control_"):
+            return [("/api/shaders/values", {"control": ACTIONS[a][1], "level": value})]
         _, lo, hi = ACTIONS[a]
+        if a == "shader_speed":
+            return [("/api/shaders/values", {"controls": {"speed": round(lo + (hi - lo) * value / 127.0, 2)}})]
         return [("/api/control", {"action": a, "value": round(lo + (hi - lo) * value / 127.0, 2)})]
 
     def plan(self, source, msg):
@@ -248,6 +268,8 @@ class MidiMapper:
         for e in self.matching(source, kind, channel, d1):
             key = (e["id"] if "id" in e else e["action"], source, kind, d1)
             kind_of, _, _ = ACTIONS[e["action"]]
+            if kind_of == "control":                    # a knob or fader is followed; a pad or button is a press
+                kind_of = "level" if kind == "cc" else "trigger"
             if kind_of == "trigger":
                 down = d2 >= 64 if kind == "cc" else (d2 > 0 or kind == "program")
                 was = self._pressed.get(key, False)
@@ -388,7 +410,7 @@ class MidiHub:
         if not self.calls.allow("all"):
             self._note("too many commands a second; some were dropped")
             return False
-        if path == "/api/vibes":                           # only with the Shaders and Vibes module on; said once
+        if path == "/api/vibes" or path.startswith("/api/shaders/"):   # only with the Shaders and Vibes module on; said once
             if not self.api.registry.enabled("shaders"):
                 if not self._vibes_off_said:
                     self._vibes_off_said = True

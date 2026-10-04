@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "medium to high: 3 clouds of 2 octaves, 24 lattice values a pixel",
+    "COST": "high: 3 clouds of 2 octaves, 24 lattice values a pixel",
     "INPUTS": [
         {
             "NAME": "speed",

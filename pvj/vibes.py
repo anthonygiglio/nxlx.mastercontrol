@@ -36,13 +36,16 @@ TICK = 1.0
 FADE_STEPS_PER_SECOND = 20
 
 
-def vary(inputs, rng):
-    """{name: value} for the float inputs: a value between MIN and MAX, pulled towards the default."""
+def vary(inputs, rng, centre=None):
+    """{name: value} for the float inputs: a value between MIN and MAX, pulled towards the default (or towards the
+    value in `centre`, a preset's). An input marked "varies": False is left alone: its value changes how much the
+    GPU has to do, and a round must not be heavier than the shader was when it was tried."""
     out = {}
     for i in inputs:
-        if i["type"] == "float" and i["max"] > i["min"]:
+        if i["type"] == "float" and i["max"] > i["min"] and i.get("varies", True):
+            middle = (centre or {}).get(i["name"], i["default"])
             pick = rng.uniform(i["min"], i["max"])
-            out[i["name"]] = round(i["default"] + (pick - i["default"]) * SPREAD, 4)
+            out[i["name"]] = round(middle + (pick - middle) * SPREAD, 4)
     return out
 
 
@@ -66,13 +69,25 @@ class Vibes:
         self.due = 0.0
         self.shown_at = 0.0         # when the shader now on screen came up
         self.rounds = 0
-        self.refused = set()        # shaders the GPU refused in this run: not tried again
+        self.refused = set()        # shaders that could not be shown in this run (the engine remembers what the GPU refused)
         self.last = None            # {"at", "message"}: why it ended, or what went wrong
+        self.set_id = None          # the set this run rotates through; None follows the active set
+        self.history = []           # the shaders this run has shown, the newest last (for "the one before")
+        self._want = None           # the shader to show next whatever the order says
+        self._tight = set()         # shaders seen dropping a few frames in this run: shown without the palette turn
+        self._marked = []           # shaders the guard marked heavy one after another, with no healthy one between
 
     # -- state --
     def status(self):
         left = max(0, int(round(self.due - self._clock()))) if self.running and self.started else None
-        return {"running": self.running, "current": self.current, "next_in": left, "rounds": self.rounds, "last": self.last}
+        out = {"running": self.running, "current": self.current, "next_in": left, "rounds": self.rounds, "last": self.last}
+        if self.running:
+            try:
+                e = self.engine.rotation(self.set_id)
+                out["set"] = {"id": e["id"], "name": e["name"]}
+            except Exception:
+                out["set"] = None
+        return out
 
     def _note(self, message):
         self.last = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "message": message}
@@ -90,12 +105,18 @@ class Vibes:
                 self._end(message)
 
     # -- start and stop: quick, they never wait for a change in progress --
-    def start(self):
-        """Begin the rotation. Returns at once; the first shader goes on at the next tick (within a second), so a cue
-        from OSC or the schedule never waits for the GPU to take a shader."""
+    def start(self, set_id=None):
+        """Begin the rotation through the active set, or through the set named (by id or name). Returns at once; the
+        first shader goes on at the next tick (within a second), so a cue from OSC or the schedule never waits for
+        the GPU to take a shader."""
         if not self.engine.enabled():
             raise ApiError(409, "turn on the Shaders and Vibes module in System first")
-        if not self.engine.vibes_ids():
+        if set_id is not None:
+            set_id = self.engine.rotation(set_id)["id"]         # 404 for a set that is not there
+        if not self.engine.vibes_ids(set_id):
+            if getattr(self.engine, "rotation", None) and self.engine.rotation(set_id)["shaders"]:
+                raise ApiError(409, "every shader of this set is left out on this box (refused by the GPU, or found too heavy): "
+                                    "put one back on the Shaders page")
             raise ApiError(409, "no shader is switched on for Vibes")
         with self._state:
             # Started again while it still has the screen (it was running, or a stop is not carried out yet): it keeps
@@ -105,6 +126,10 @@ class Vibes:
             if not carry:
                 self.epoch = self.api.player.source_epoch
             self.order, self.current, self.rounds, self.refused = [], None, 0, set()
+            self.set_id, self.history, self._want, self._tight, self._marked = set_id, [], None, set(), []
+        changer = getattr(self.engine, "changer", None)
+        if changer:
+            changer.clear()             # a step or a preset that was still waiting must not take the screen from this run
             self.due = self._clock()
             self.last = None
             self._clear = None
@@ -119,7 +144,11 @@ class Vibes:
                 if self.started:
                     self._clear = self.epoch
                 self._end("stopped")
-        self._settle()
+        # The screen is cleared by the rotation's own thread when it has one (it ends at once and settles): clearing
+        # takes the engine's lock, which is held while the GPU looks at a shader, and a Stop from a controller or the
+        # schedule must not wait for that.
+        if not (self._use_thread and self._thread is not None):
+            self._settle()
         self._wake.set()
         return self.status()
 
@@ -127,11 +156,14 @@ class Vibes:
         """The operator is about to show one shader by hand: the rotation ends, the screen is left alone."""
         self._finish("ended: a shader was chosen by hand")
 
-    def skip(self):
-        """Go to the next shader now."""
+    def skip(self, direction=1):
+        """Go to the next shader now, or (-1) back to the one before."""
         with self._state:
             if not self.running:
                 raise ApiError(409, "Vibes is not running")
+            if direction == -1 and len(self.history) >= 2:
+                self._want = self.history[-2]
+                del self.history[-2:]
             self.due = self._clock()
         self._kick()
         return self.status()
@@ -145,13 +177,12 @@ class Vibes:
             raise ApiError(400, "each shader stays %d to %d seconds" % (shaders_mod.DWELL_MIN, shaders_mod.DWELL_MAX))
         if not self.engine.enabled():
             raise ApiError(409, "turn on the Shaders and Vibes module in System first")
-        cfg = self.engine.config()
-        if cfg["dwell"] != int(seconds):
-            cfg["dwell"] = int(seconds)
-            self.engine._save(cfg)
+        target = self.set_id if self.running else None      # the set that is running, else the active one
+        if self.engine.rotation(target)["dwell"] != int(seconds):
+            self.engine.tune_set(target, dwell=int(seconds))
         with self._state:
             if self.running and self.started:
-                self.due = self.shown_at + cfg["dwell"]
+                self.due = self.shown_at + int(seconds)
         self._kick()
         return dict(self.status(), dwell=int(seconds))
 
@@ -233,12 +264,17 @@ class Vibes:
 
     def _fade(self, start, up, seconds):
         """Our own fade, in steps: down from `start` to black, or up from black to the mix opacity. Every step is set
-        through the player only while the epoch is still ours. False when the screen was lost or Vibes was stopped."""
+        through the player only while the epoch is still ours. False when the screen was lost or Vibes was stopped.
+        The steps are paced against the clock, so the fade takes `seconds` whatever the round trips to the player
+        cost (measured on a Pi 4: sleeping a full step each time made a 1.0 s dip take 1.15 to 1.49 s)."""
         steps = max(1, int(seconds * FADE_STEPS_PER_SECOND))
         if not up:
             self._dipped = True
+        began = self._clock()
         for i in range(1, steps + 1):
-            self._sleep(seconds / steps)
+            wait = began + seconds * i / steps - self._clock()
+            if wait > 0:
+                self._sleep(wait)
             if not self.running:
                 return False
             if self.api.mix["blackout"]:
@@ -253,12 +289,19 @@ class Vibes:
             self._dipped = False
         return True
 
-    def _next_id(self):
-        """The next shader of the shuffled order; a new shuffle when it runs out (never the same one twice in a row
-        when there is another)."""
-        usable = [s for s in self.engine.vibes_ids() if s not in self.refused]
+    def _next_id(self, rotation):
+        """The next shader of the set: in a shuffled order (a new shuffle when it runs out, never the same one twice
+        in a row when there is another), or in the set's own order. A step back names its shader itself."""
+        usable = [e["id"] for e in rotation["shaders"] if e["id"] not in self.refused]
         if not usable:
             return None
+        want, self._want = self._want, None
+        if want in usable:
+            return want
+        if rotation["order"] == "listed":
+            self.order = []
+            at = usable.index(self.current) if self.current in usable else -1
+            return usable[(at + 1) % len(usable)]
         self.order = [s for s in self.order if s in usable]
         if not self.order:
             self.order = list(usable)
@@ -289,9 +332,41 @@ class Vibes:
         if not self._ours():
             self._finish("ended: something else was played or stopped")
             return False
+        if self.started and self.current:
+            verdict = self._guard()
+            if verdict == "box":
+                return False
+            if verdict:
+                return self._change()
         if self._clock() < self.due:
             return False
         return self._change()
+
+    def _guard(self):
+        """Ask the engine's guard about the shader that is on. True when it is too heavy for this box: it is noted
+        (no rotation shows it again until someone puts it back) and the rotation moves on now. A shader that drops
+        a few frames only is shown without the palette turn for the rest of this run."""
+        watch = getattr(self.engine, "watch", None)
+        seen = watch() if watch else None
+        if not seen or not seen["state"]:
+            return False
+        if seen["state"] == "tight":
+            self._tight.add(self.current)
+            return False
+        if seen["state"] != "heavy":
+            self._marked = []                       # this one keeps up: whatever was marked before it was the shader's fault
+            return False
+        if len(self._marked) >= 2:
+            # Three in a row, none of them healthy: it is not the shaders. The two marks are taken back, nothing more
+            # is marked, and the rotation ends with the shader that is on left on the screen.
+            self.engine.unmark(self._marked)
+            self._marked = []
+            self._finish("ended: the box is dropping frames whatever plays: check the picture detail")
+            return "box"
+        self._marked.append(self.current)
+        self.engine.note_heavy(self.current, seen)
+        self._note("%s left out: it dropped %s frames a second (too heavy on this box at this drawing size)" % (self.current, seen["drops_per_second"]))
+        return True
 
     def _lost(self):
         """The screen went to someone else, or Vibes was stopped, in the middle of a change."""
@@ -304,6 +379,7 @@ class Vibes:
     def _change(self):
         api = self.api
         half = api.settings.data["mix"]["duration"] / 2.0
+        began = self._clock()
         level = self._level()
         busy = self.started or bool(self._path())
         # A screen that is already dark (Blackout, or the operator's Fade out) stays dark: no dip, and no fade up
@@ -312,24 +388,38 @@ class Vibes:
         dip = busy and not dark
         if dip and (not self._fade(level, False, half) or not self._ours()):
             return self._lost()
-        cfg = self.engine.config()
         shown = False
         while not shown:
-            sid = self._next_id()
+            try:
+                rotation = self.engine.playable(self.set_id)
+            except ApiError:                        # the set this run was started with has been deleted
+                self._finish("ended: the set it was running has been deleted")
+                if self.started:
+                    self.engine.off(self.epoch)
+                self._undip()
+                return False
+            sid = self._next_id(rotation)
             if sid is None:
                 self._finish("ended: the player refused every shader" if self.refused else "ended: no shader is switched on for Vibes")
                 if self.started:
                     self.engine.off(self.epoch)
                 self._undip()
                 return False
-            values, hue, offset = {}, 0.0, 0.0
-            if cfg["vary"]:
-                inputs = next((s["inputs"] for s in self.engine.library() if s["id"] == sid), [])
-                values = vary(inputs, self._rng)
-                hue = round(self._rng.uniform(-HUE_RANGE, HUE_RANGE), 1)
-                offset = round(self._rng.uniform(0.0, OFFSET_MAX), 1)
+            values, hue, offset, controls, preset = {}, 0.0, 0.0, None, None
             try:
-                result = self.engine.show(sid, values, hue, offset, epoch=self.epoch, cut=False)
+                wanted = next((e.get("preset") for e in rotation["shaders"] if e["id"] == sid), None)
+                inputs = next((s["inputs"] for s in self.engine.library() if s["id"] == sid), [])
+                try:
+                    values, controls, preset = self.engine.entry_values(sid, wanted)
+                except ApiError:                    # the set names a preset that is gone: the shader's own start
+                    values, controls, preset = self.engine.entry_values(sid, None)
+                if rotation["vary"]:
+                    values = dict(values, **vary(inputs, self._rng, values))
+                    # A palette turn is one more multiplication for every pixel. A shader that was seen dropping
+                    # frames in this run goes without it (on a Pi 4 it was what pushed nxlx-pulse over the edge).
+                    hue = 0.0 if sid in self._tight else round(self._rng.uniform(-HUE_RANGE, HUE_RANGE), 1)
+                    offset = round(self._rng.uniform(0.0, OFFSET_MAX), 1)
+                result = self.engine.show(sid, values, hue, offset, epoch=self.epoch, cut=False, controls=controls, preset=preset)
             except ApiError as e:
                 if e.status == 503:                 # the player is down: nothing to rotate on
                     self._finish("ended: %s" % e.message)
@@ -355,11 +445,14 @@ class Vibes:
             shown = True
         with self._state:
             self.current = sid
+            self.history = (self.history + [sid])[-64:]
             self.rounds += 1
             self.shown_at = self._clock()
-            self.due = self.shown_at + cfg["dwell"]
+            self.due = self.shown_at + rotation["dwell"]
         if dip:
-            if not self._fade(0, True, half):
+            # The whole dip takes the Mix duration: the way up gets what the way down and the change have left of it,
+            # but never less than half its share (the first time the GPU takes a shader can take a second or more).
+            if not self._fade(0, True, max(half / 2.0, began + 2 * half - self._clock())):
                 self._undip()
         elif not dark:
             try:
@@ -370,13 +463,18 @@ class Vibes:
 
     # -- requests --
     def api_vibes(self, body, device, client):
-        """{"on": true} starts the rotation, {"on": false} stops it, {"next": true} goes to the next shader,
+        """{"on": true, "set"?: id or name} starts the rotation (through the active set, or the one named),
+        {"on": false} stops it, {"next": true} goes to the next shader, {"previous": true} back to the one before,
         {"dwell": seconds} sets how long each shader stays."""
         if body.get("next") is True:
             return self.skip()
+        if body.get("previous") is True:
+            return self.skip(-1)
         if "dwell" in body:
             return self.set_dwell(body["dwell"])
         on = body.get("on")
         if not isinstance(on, bool):
             raise ApiError(400, "on must be true or false")
-        return self.start() if on else self.stop()
+        if on and body.get("set") is not None and not isinstance(body["set"], str):
+            raise ApiError(400, "set must be the id or the name of a set")
+        return self.start(body.get("set")) if on else self.stop()

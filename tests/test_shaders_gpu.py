@@ -3,7 +3,8 @@
 """Shaders on a real mpv that really draws: mpv's GPU output in a window on a virtual display (xvfb), with Mesa's
 software GPU. The other tests run mpv with --vo=null, which never compiles a shader, so "no error in the log" would
 pass there whatever the shader held. Here every claim is checked on the picture itself (a screenshot of the window),
-once on OpenGL ES (what a Raspberry Pi uses; the stricter shader language) and once on desktop OpenGL.
+once on OpenGL ES (the stricter shader language) and once on desktop OpenGL (what mpv made on a real Pi 4: a
+desktop OpenGL 3.1 context with GLSL 1.40; tests/test_shaderlive_gpu.py also runs with Mesa told to be one).
 
 Run:  PVJ_GPU_TEST=1 xvfb-run -a python3 -m tests.test_shaders_gpu
 Run that way (as CI does), a skipped test is a failure, so a missing display or GPU cannot pass as green. Under the

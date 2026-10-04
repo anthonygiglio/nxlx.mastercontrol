@@ -44,7 +44,7 @@ from urllib.parse import unquote
 
 from . import dmx as dmx_mod, midi as midi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
-from . import autostart as autostart_mod, room as room_mod, shaders as shaders_mod
+from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 from .settings import SettingsError, default_control, default_settings, migrate
 
@@ -391,6 +391,11 @@ def check_shaders(v, care):
     files themselves are not part of a settings file). The section is in the settings only once something was changed."""
     _obj(v)
     out = shaders_mod.default_config()
+    del out["height"]                       # not chosen: the box that reads it uses the default for its own board
+    out.update(shaderlive_mod.check_extra(v))       # presets, rotation sets, what the guard noted, the clock
+    board = (getattr(getattr(care, "api", None), "board", None) or {}).get("kind")
+    if board and "heavy" in out:            # what was too heavy for another kind of board says nothing about this one
+        out["heavy"] = {sid: m for sid, m in out["heavy"].items() if m.get("board") in (None, board)}
     if "dwell" in v:
         d = v["dwell"]
         if isinstance(d, bool) or not isinstance(d, (int, float)) or d != d or not shaders_mod.DWELL_MIN <= d <= shaders_mod.DWELL_MAX:

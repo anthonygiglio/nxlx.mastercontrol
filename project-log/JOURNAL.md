@@ -35,6 +35,50 @@ The Room screen's "Let someone in" is not drawn for a remote support login, and 
 
 Still open for the owner: "any presenter" includes one who came in by a presenter code ten minutes ago; the "Remove" buttons on the Paired devices list still do not ask first (the audit's item); the owner's own codes have no hourly limit.
 
+## 2026-10-04 (the shader engine: first hardware numbers, and performing with shaders)
+
+Pull request #72 (D46), backend only: Python, API, tests, docs. The owner's words: "a more robust shader playback and control system. i want to have more shaders available to perform with or have as auto-playing vibes." The Shaders page (#69) and the ISF pack (#70) are other sessions' work.
+
+**The first hardware numbers for shaders** (the owner's Pi 4, 2026-10-04, the run described in the hand-off entry below; mpv 0.40, 2560 x 1440 at 75 Hz, the ten bundled shaders, the first version of the module):
+
+- All ten compile and draw correctly. mpv makes a **desktop OpenGL 3.1 context** (GLSL 1.40, V3D, Mesa 26), not OpenGL ES; CI's `--opengl-es=yes` path is not what the Pi uses.
+- The GPU is the only bottleneck (CPU 2 to 4 percent). Each frame pays two fixed passes: scaling to the screen, 12.9 ms at 1440p, and a remainder pass of 1.0, 2.3, 4.0, 8.9 ms at 360, 540, 720, 1080 lines. That leaves about 16 ms for the shader at 720 lines in a 33.3 ms frame.
+- Dropped frames a second at 720 lines: silk, lattice, horizon, prism, pulse, ember 0 (pass 7.5 to 11.2 ms; pulse at the edge, and Vibes variation pushed it to about 1 a second); tide 3.3 (15.1 ms); aurora 6.7 (20.6 ms); drift 10.1 (30 ms); nebula 11 (32.7 ms). At 540: tide and aurora 0, drift 2.1, nebula 3.9. At 360: drift and nebula 0. At 1080 even silk and lattice drop 7 to 8.
+- A slider change answers in 0.10 to 0.15 s; first play of a shader 0.62 to 0.78 s including the GPU check. A Vibes change takes 1.15 to 1.49 s against a Mix duration of 1.0 s. After 7 h 43 min TIME was still fine.
+- A snapshot costs about 0.3 to 0.4 s of undrawn frames, which mpv's drop counter and /api/health do not see. The kernel's `/sys/devices/platform/v3dbus/*/gpu_stats` shows GPU busy and render jobs a second and agreed with the drop counter.
+
+**What the measurement found, fixed with tests:** the default detail depends on the board (540 on a Pi 4 and unknown boards; 1080 never offered on a Pi 4; a Pi 5 and x86 keep 720 and 1080, unmeasured); the default rotation leaves out nebula and drift, keeps aurora and tide (0 drops at the Pi's default 540); every shader has a `weight` (light, medium, heavy) and the bundled ones the measured numbers in `GET /api/shaders`, and the cost table in SHADERS.md is the measured one; drift's look (two palettes side by side instead of a grey blend, turned octaves; not seen on the Pi again); `pass_ms` is the playing shader's own pass; deleting a shader clears its refusal; compiler warnings about `pvj_` names are not passed on and no line of the generated text reaches a message; uploads start in the library only; a GPU refusal is remembered until the file changes; the Vibes dip takes the Mix duration; the docs no longer say a Pi uses the ES language, and CI has a run on desktop GL 3.1 with GLSL 1.40.
+
+**Built** (`pvj/shaderlive.py` on top of `pvj/shaders.py`):
+
+1. Every input type adjustable live (bool, long with VALUES and LABELS or a range, color, point2D, event, float), described fully in `GET /api/shaders`, checked strictly per type.
+2. Changes are coalesced by one worker: at most five compiles a second, the newest value wins, within 0.2 s of the last change. Only the shader file is exchanged (no reload, no epoch change, Vibes goes on). `//!PARAM` and `glsl-shader-opts` do not exist under `--vo=gpu` in mpv 0.37 and 0.40 (read in the source; CI checks its 0.37 refuses a `//!PARAM` shader), so a change stays a compile.
+3. Common controls: speed 0 to 4 with continuous TIME, hue shift, brightness trim.
+4. Presets per shader (save, list, apply, rename, delete; "default" is used by Play and Vibes).
+5. Rotation sets for Vibes (shaders with optional presets, dwell, variation, order; one active; a start can name one; schedule and OSC can too). No schema change: the first set is a default on read.
+6. MIDI: shader control 1 to 8, shader speed, previous and next shader, preset 1 to 8, through the same API calls.
+7. A guard: more than 2 dropped frames a second for 6 seconds is too heavy; Vibes notes it, moves on and leaves the shader out until someone puts it back; a shader chosen by hand is only reported; switchable. Variation leaves alone the inputs that sit in a loop head or a condition, and a shader seen dropping frames goes without the palette turn.
+8. Tests for the safety properties of the new surfaces, and CI's real mpv checks each input type on the picture, TIME across a value and a speed change, a preset, and that no screenshot is dark during 100 changes.
+
+**The one design change underneath: the carrier counts its own frames.** A speed change without a jump needs the frame number the shader is at, and mpv's `frame` (it is `frames_uploaded` in the source: every picture uploaded since the player started) cannot be read from outside. So each carrier frame is painted with its number (a `geq` filter in the same lavfi address) and the shader reads it from the picture; the panel reads the same number as `time-pos`. CI found the one thing this broke: after a refused shader with none before it the screen showed the bare carrier, dark red, not black. A shader that draws black is put on there now.
+
+**The independent review of #72 and what it changed** (two high, three medium, several low; nothing injected into the shader text or the lavfi address; every finding reproduced and fixed with a test):
+
+- H1: a queued step or preset carried no epoch, so the worker put the shader over a clip played meanwhile, brought it back after a Stop, and ended a Vibes run started in between. The job now carries the player's epoch of its request; the rotation is ended at the request only; what waits is dropped when the module goes off or Vibes starts.
+- H2: the MIDI dwell knob took the engine's lock, which is held across the GPU's look at a shader (3.99 s measured). Settings are edited under a lock of their own, a Vibes stop leaves the clearing to the rotation's thread, and one test now makes every call a controller, OSC, DMX or the schedule can make while that lock is held.
+- M1: the guard marked every shader, for good, when the box dropped frames from any cause. After two marks in a row with no healthy shader between it stops, takes the two back and ends Vibes with its own message. A mark carries its height and board, counts at that height or above on that board, and an import leaves marks of another board behind.
+- M2: a refused switch or choice value went to the GPU every time. The refused shape is remembered and answered 422.
+- M3: one damaged row plus any save wiped all presets and sets. Rows are read one by one, and a key that cannot be read at all is never written over.
+- Low: names without unseen characters, compared on NFC and casefold, a set not named like an id; magnitudes below 1e-30 written as 0; the frames since the anchor counted in whole numbers and a new anchor every two days, so 30 days at speed 4 comes out at 10,368,000 s; a screen of no size falls back to 1920 x 1080; a set deleted while it runs ends Vibes with its own message and the schedule's last run says the set is gone.
+
+**After the 30 new shaders (#74) landed:** a box now starts with two sets, Ambient (active: the calm shaders without the heavy two) and Show (the Performance shaders), so no way of starting Vibes shows a Performance shader unless a set was chosen. The speed control is kept at 1 or below for Performance shaders, because their flash cap (3 a second, 6 with Fast) is counted in TIME and speed multiplies TIME; a full-access switch (`faster`, off by default, documented as a photosensitivity risk) lifts it. `weight` for the new families comes from the first word of their cost note. CI's GLSL 1.40 run draws every bundled shader at its defaults and with each switch, choice and point varied. Changing a shader's own rate input makes its picture jump in its cycle; that is documented, not fixed (it needs each shader's code).
+
+**One case the migration does not cover:** a box where shaders were uploaded under the first version but no shader setting was ever saved has no `"shaders"` section, so it cannot be told from a new box; its uploads leave the rotation and have to be put in once.
+
+**Not run on hardware, any of it.** The Pi numbers above are the first version's. First on the Pi: play each bundled shader and watch TIME (the carrier's clock on V3D; `clock: frame` is the way back), drag a slider and turn the speed while watching for a hitch, look at drift, run Vibes at 720 lines and see the guard take tide and aurora out, and check the kernel's gpu_stats line in `GET /api/shaders`.
+
+**For the Shaders page** (not in this PR): controls for the input types other than float, speed, hue and brightness, presets, sets, the guard's notes (`heavy`, `refused`, `playing.load`), and the new MIDI actions in its teach rows. The browser test's "Light work" example moved from tide to silk (tide is medium by measurement); that is the only line of the page's files this PR touches.
+
 ## 2026-10-04 (more shaders: an Ambient and a Performance family)
 
 The owner: "more shaders available to perform with or have as auto-playing vibes". Pull request #74 (branch `more-shaders`), not merged. Written in six batches of five, each pushed by itself so that CI's real mpv judged it before the next.

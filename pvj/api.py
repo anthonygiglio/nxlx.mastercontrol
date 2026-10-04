@@ -156,8 +156,8 @@ class Api:
         self._care_busy = None    # "an import" or "a factory reset" while boxcare runs one (set and read under _import_lock)
         from . import mapper as mapper_mod
         self.mapper = mapper_mod.Engine(self)
-        from . import shaders as shaders_mod, vibes as vibes_mod
-        self.shaders = shaders_mod.Engine(self)                     # ISF shader sources (see shaders.py)
+        from . import shaderlive as shaders_mod, vibes as vibes_mod
+        self.shaders = shaders_mod.LiveEngine(self)                 # ISF shader sources (see shaders.py, shaderlive.py)
         self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
         from . import health as health_mod
         self.health = health_mod.Health(self, getattr(player, "rundir", paths.WEB_DIR))     # checks start in server.build
@@ -2223,6 +2223,10 @@ class Api:
             ("GET", "/api/shaders"): ("view", self.shaders.api_get),
             ("POST", "/api/shaders"): ("full", self.shaders.api_set),
             ("POST", "/api/shaders/play"): ("live", self.shaders.api_play),
+            ("POST", "/api/shaders/values"): ("live", self.shaders.api_values),
+            ("POST", "/api/shaders/step"): ("live", self.shaders.api_step),
+            ("POST", "/api/shaders/preset"): ("live", self.shaders.api_preset),
+            ("POST", "/api/shaders/presets"): ("full", self.shaders.api_presets),
             ("POST", "/api/vibes"): ("live", self.vibes.api_vibes),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
