@@ -571,7 +571,9 @@ function startServer() {
     await page.waitForSelector(`${rowOf('Room')} .navstate:has-text("No groups or scenes yet")`);
     await sys('Room');
     await page.click('nav >> text=Room');
-    await page.waitForSelector('#roomsetup #roomgname');
+    // The System page holds the same set-up card, so wait for the Room tab's own screen: typing into the page that is
+    // about to be replaced lost the group's name (one CI run in three).
+    await page.waitForSelector('#roomscreen.screen #roomsetup #roomgname');
     for (const [wall, member] of [['Main wall', 'Main'], ['Painting wall', 'Painting']]) {
       await page.fill('#roomgname', wall);
       await page.click(`#roomgmembers >> button:has-text("${member}")`);
