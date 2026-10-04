@@ -6,7 +6,8 @@ SPDX-PackageName = "nxlx.mastercontrol"
 path = [
   "pvj/modules.d/**",
   "pvj/themes.d/**",
-  "pvj/shaders.d/**",
+  "pvj/shaders.d/*.fs",
+  "pvj/shaders.d/isf-files/SHA256SUMS",
   "pvj/*.md",
   "install/README.md",
   "image/README.md",
@@ -23,3 +24,15 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 NXLX.Systems and contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Third-party shader pack: generators from Vidvox ISF-Files (https://github.com/Vidvox/ISF-Files), unchanged, under
+# the MIT licence of that repository. Its LICENSE names no copyright holder ("Copyright (c) 2018"); each file names its
+# author in its CREDIT field. See THIRD_PARTY_LICENSES.md for the commit, the file list and the notices.
+[[annotations]]
+path = [
+  "pvj/shaders.d/isf-files/*.fs",
+  "pvj/shaders.d/isf-files/LICENSE",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2018 the authors of ISF-Files (VIDVOX and the people named in each file's CREDIT)"
+SPDX-License-Identifier = "MIT"
