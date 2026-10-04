@@ -767,7 +767,7 @@ class NetworkApiTest(ServerBase):
 
     def test_wifi_scan(self):
         self.enable()
-        self.nm.scan_text = " :Leyline Staff:60:WPA2:36\n"
+        self.nm.scan_text = "Leyline Staff:60:WPA2:36\n"
         st, body, _ = self.call("POST", "/api/network/scan", {"iface": "wlan0"}, token=self.token)
         self.assertEqual((st, body["networks"][0]["ssid"]), (200, "Leyline Staff"))
         self.assertEqual(self.call("POST", "/api/network/scan", {"iface": "eth0"}, token=self.token)[0], 409)
