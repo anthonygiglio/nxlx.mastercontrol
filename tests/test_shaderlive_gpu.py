@@ -100,6 +100,39 @@ class LiveCase(GpuCase):
         self.assertIsNone(self.engine.error)
         print("a change of one value took %s ms (write, exchange, GPU check where the shape was new)" % ", ".join("%.0f" % (c * 1000) for c in costs))
 
+    def test_every_bundled_shader_draws_at_its_defaults_and_with_each_switch_choice_and_point_varied(self):
+        """The project's own shaders and the third-party pack, as a panel can now set them: every switch the other
+        way, every choice at each of its values, every point somewhere else. Each is a text of another shape, so the
+        GPU's compiler is asked each time (this is the run that stands for the Pi's GLSL 1.40 in CI)."""
+        rows = [s for s in self.engine.library() if s["source"] == "bundled" and not s["error"]]
+        self.assertGreaterEqual(len(rows), 47)
+        shapes = 0
+        for s in rows:
+            variants = [{}]
+            longs = [i for i in s["inputs"] if i["type"] == "long"]
+            rounds = max([len(i["values"]) - 1 for i in longs if "values" in i] + [1])
+            for k in range(1, rounds + 1):
+                v = {}
+                for i in s["inputs"]:
+                    if i["type"] == "bool":
+                        v[i["name"]] = (not i["default"]) if k % 2 else i["default"]
+                    elif i["type"] == "long" and "values" in i:
+                        v[i["name"]] = i["values"][(i["values"].index(i["default"]) + k) % len(i["values"])]
+                    elif i["type"] == "long":
+                        v[i["name"]] = i["max"] if k % 2 else i["min"]
+                    elif i["type"] == "point2D":
+                        lo, hi = i.get("min", [0.0, 0.0]), i.get("max", [1.0, 1.0])
+                        v[i["name"]] = [lo[0] + (hi[0] - lo[0]) * 0.2 * k % 1.0, lo[1] + (hi[1] - lo[1]) * 0.8]
+                if v:
+                    variants.append(v)
+            for v in variants:
+                r = self.engine.show(s["id"], v)
+                self.assertTrue(r["ok"], (s["id"], v, r.get("error")))
+                self.assertIs(self.engine.playing["checked"], True, (s["id"], v))
+                shapes += 1
+            self.assertIsNone(self.engine.error, s["id"])
+        print("%d bundled shaders drawn in %d shapes" % (len(rows), shapes))
+
     def time_now(self):
         """(TIME in seconds, modulo 64, as the picture shows it; the wall clock; blue)."""
         r, g, b = self.shot()[H // 2][W // 2]

@@ -95,6 +95,9 @@ _INPUT_RENAMED = ("color",)             # as an input's name, in any letter case
 
 
 HIDDEN = ("Cc", "Cf", "Zl", "Zp", "Cs")      # Unicode categories no name or label may hold
+# A bundled shader with this category is made to be performed with (strong, rhythmic): it is in the library but not in
+# the Vibes rotation until someone puts it there. Everything else is in until it is taken out.
+PERFORMANCE = "performance"
 
 
 class ShaderError(ValueError):
@@ -248,6 +251,12 @@ def _no_repeats(pairs):
     return out
 
 
+def default_in_vibes(parsed):
+    """Whether a bundled shader is in the Vibes rotation before anyone chose: all but those of the category
+    "Performance", which would not suit a room's ambience."""
+    return PERFORMANCE not in (c.lower() for c in parsed.get("categories", ()))
+
+
 def strip_comments(body):
     """The code without its comments (each replaced by a space, line breaks kept so line numbers stay true). The
     checks below read what the compiler will read: a directive hidden behind /**/ is a directive."""
@@ -355,8 +364,10 @@ def parse(source):
         if ident(i["name"]) != i["name"]:
             code = re.sub(r"\b%s\b" % i["name"], ident(i["name"]), code)
     code = _MAIN.sub("void pvj_main()", code).rstrip()
+    cats = head.get("CATEGORIES")
+    cats = [c for c in (_text(c, 40) for c in (cats if isinstance(cats, list) else [])[:16]) if c]
     return {"description": _text(head.get("DESCRIPTION")), "credit": _text(head.get("CREDIT")), "cost": _text(head.get("COST")),
-            "inputs": clean, "body": body, "code": code, "line": source.count("\n", 0, end + 2) + 1}
+            "categories": cats, "inputs": clean, "body": body, "code": code, "line": source.count("\n", 0, end + 2) + 1}
 
 
 def clean_value(i, v):
@@ -698,7 +709,7 @@ class Engine:
                 cfg["height"] = saved["height"]
             if isinstance(saved.get("disabled"), list):
                 cfg["disabled"] = [n for n in saved["disabled"] if isinstance(n, str) and FILE.fullmatch(n)][:MAX_UPLOADS + 64]
-            if isinstance(saved.get("included"), list):         # third-party pack shaders that were put into Vibes
+            if isinstance(saved.get("included"), list):         # shaders that are out of Vibes by default and were put in
                 cfg["included"] = [n for n in saved["included"] if isinstance(n, str) and FILE.fullmatch(n)][:MAX_UPLOADS + 64]
         return cfg
 
@@ -786,9 +797,10 @@ class Engine:
         return hit[1]
 
     def library(self):
-        """[{"id", "name", "source", "pack", "description", "credit", "cost", "vibes", "inputs", "error"}], bundled
-        first: the project's own, then each third-party pack, then the uploads. The project's shaders and uploads are in
-        Vibes until they are taken out; a third-party pack's shaders are in the library but not in Vibes until put in."""
+        """[{"id", "name", "source", "pack", "description", "credit", "cost", "categories", "vibes", "inputs", "error"}],
+        bundled first: the project's own, then each third-party pack, then the uploads. The project's shaders and uploads
+        are in Vibes until they are taken out ("disabled"). Two kinds are in the library but not in Vibes until put in
+        ("included"): a third-party pack's shaders, and the project's own of the category "Performance"."""
         cfg = self.config()
         disabled, included = set(cfg["disabled"]), set(cfg.get("included", ()))
         out = []
@@ -804,13 +816,15 @@ class Engine:
                 seen.add(n)
                 vibes = n in included if pack not in (PACK_OWN, PACK_UPLOADS) else n not in disabled
                 item = {"id": n, "name": n[:-3], "source": source, "pack": pack, "vibes": vibes, "description": "", "credit": "",
-                        "cost": "", "inputs": [], "error": None}
+                        "cost": "", "categories": [], "inputs": [], "error": None}
                 if source == "bundled" and self._hidden_upload(n):
                     item["hides_upload"] = True     # an older upload of this name lies unused; delete by this id removes it
                 try:
                     p = self._parsed(path)[0]
-                    item.update(description=p["description"], credit=p["credit"], cost=p["cost"],
+                    item.update(description=p["description"], credit=p["credit"], cost=p["cost"], categories=list(p["categories"]),
                                 inputs=[dict(i) for i in p["inputs"]])
+                    if pack == PACK_OWN and not default_in_vibes(p):
+                        item["vibes"] = n in included
                 except ShaderError as e:
                     item["error"] = str(e)
                     item["vibes"] = False
@@ -820,6 +834,18 @@ class Engine:
     def vibes_ids(self):
         """The shaders Vibes may pick from."""
         return [s["id"] for s in self.library() if s["vibes"] and not s["error"]]
+
+    def _opt_in(self, sid):
+        """True for a bundled shader that is out of Vibes until it is put in (see library)."""
+        hit = self._bundled(sid)
+        if not hit:
+            return False
+        if hit[1] != PACK_OWN:
+            return True
+        try:
+            return not default_in_vibes(self._parsed(hit[0])[0])
+        except ShaderError:
+            return False
 
     # -- files for the player --
     def _write(self, text):
@@ -968,7 +994,7 @@ class Engine:
                 events = {i["name"] for i in parsed["inputs"] if i["type"] == "event"}
                 state = {"values": {n: v for n, v in clean.items() if n not in events},        # an event is never kept
                          "held": {n: True for n in clean if n in events and clean[n]},
-                         "hue": _num(hue, "hue", 360.0), "offset": _num(offset, "offset", 1e9), "controls": clean_controls(controls),
+                         "hue": _num(hue, "hue", 360.0), "offset": _num(offset, "offset", 1e9), "controls": self.limit(parsed, clean_controls(controls)),
                          "anchor": self.frame_now(carrier) if cfg.get("clock", CLOCKS[0]) == "carrier" else None}
                 text = self.compose(parsed, size, state, desc)
                 clean, key = state["values"], (digest, shape_of(parsed, clean))
@@ -1033,6 +1059,10 @@ class Engine:
 
     def refused(self, sid, digest, message):
         """The GPU refused this file (see shaderlive.py, which remembers it until the file changes)."""
+
+    def limit(self, parsed, controls):
+        """The controls as this shader may have them (see shaderlive.py: the flash limit of Performance shaders)."""
+        return controls
 
     def off(self, epoch=None):
         """The module was switched off, or Vibes was stopped: take the shader off the screen if one is on. With
@@ -1192,8 +1222,7 @@ class Engine:
             if not isinstance(on, bool):
                 raise ApiError(400, "on must be true or false")
             cfg = self.config()
-            hit = self._bundled(sid)
-            if hit and hit[1] != PACK_OWN:          # a third-party pack's shader: out until it is put in
+            if self._opt_in(sid):                   # a third-party pack's shader, or one of ours made for performing
                 cfg["included"] = [n for n in cfg.get("included", []) if n != sid] + ([sid] if on else [])
             else:
                 cfg["disabled"] = [n for n in cfg["disabled"] if n != sid] + ([] if on else [sid])
