@@ -407,6 +407,12 @@ def check_shaders(v, care):
                 or not all(isinstance(n, str) and shaders_mod.FILE.fullmatch(n) for n in names)):
             raise ValueError("disabled must be a list of shader file names, each once")
         out["disabled"] = list(names)
+    if "included" in v:                     # shaders of a third-party pack that were put into the rotation
+        names = v["included"]
+        if (not isinstance(names, list) or len(names) > shaders_mod.MAX_UPLOADS + 64 or len(set(map(str, names))) != len(names)
+                or not all(isinstance(n, str) and shaders_mod.FILE.fullmatch(n) for n in names)):
+            raise ValueError("included must be a list of shader file names, each once")
+        out["included"] = list(names)
     return out
 
 

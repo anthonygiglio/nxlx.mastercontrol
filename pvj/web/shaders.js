@@ -184,10 +184,16 @@
     function entry(d, s) {
       var on = !!(d.playing && d.playing.id === s.id), name = nice(s.name);
       var facts = [work(s.cost), s.source === 'uploaded' ? 'your upload' : '', full ? '' : (s.vibes ? 'in the Vibes rotation' : 'not in the rotation')].filter(Boolean).join(' · ');
-      var row = h('div', { class: 'item shader-entry' + (on ? ' on' : ''), 'data-shader': s.id, 'data-name': name.toLowerCase(), 'data-work': weight(s) },
+      // Somebody else's work says so: the pack it came with and the author's own credit line (plain text, as written
+      // in the file). The project's own ten need neither.
+      var third = s.pack && s.pack !== 'nxlx' && s.pack !== 'uploads';
+      var from = third ? 'From the ' + s.pack + ' pack. Credit: ' + (s.credit || 'none given in the file')
+        : (s.source === 'uploaded' && s.credit ? 'Credit: ' + s.credit : '');
+      var row = h('div', { class: 'item shader-entry' + (on ? ' on' : ''), 'data-shader': s.id, 'data-pack': s.pack || '', 'data-name': name.toLowerCase(), 'data-work': weight(s) },
         h('span', {}, h('b', { text: name }), on ? ' ' : null, on ? h('span', { class: 'chip chip-active', text: 'Playing' }) : null,
           s.description ? h('br') : null, s.description ? h('span', { class: 'hint', text: s.description }) : null,
-          facts ? h('br') : null, facts ? h('span', { class: 'hint shaderfacts', text: facts }) : null));
+          facts ? h('br') : null, facts ? h('span', { class: 'hint shaderfacts', text: facts }) : null,
+          from ? h('br') : null, from ? h('span', { class: 'hint shadercredit', text: from }) : null));
       if (s.error) row.appendChild(h('div', { class: 'msg err shaderproblem', text: 'Cannot be shown: ' + s.error }));
       else if (d.error && d.error.id === s.id) row.appendChild(h('div', { class: 'msg err shaderproblem', text: 'The GPU refused it: ' + d.error.message }));
       if (!live) return row;

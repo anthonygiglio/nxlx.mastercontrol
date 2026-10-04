@@ -121,7 +121,7 @@ class GpuCase:
 
     # -- the bundled set --
     def test_every_bundled_shader_compiles_and_draws_a_picture(self):
-        ids = [s["id"] for s in self.engine.library() if s["source"] == "bundled"]
+        ids = [s["id"] for s in self.engine.library() if s["pack"] == "nxlx"]      # the project's own ten
         self.assertEqual(len(ids), 10)
         rng = random.Random(11)
         for sid in ids:
@@ -136,6 +136,42 @@ class GpuCase:
                 self.assertGreater(len(colours), 40, "%s drew a flat picture (%d colours)" % (sid, len(colours)))
                 self.assertGreater(max(max(c) for c in colours), 60, "%s drew a dark picture" % sid)
         self.assertEqual(self.shaders_in_player(), ["shader-%d-20.glsl" % os.getpid()])
+
+    def test_every_shader_of_the_third_party_pack_compiles_and_draws_a_picture(self):
+        """The pack from Vidvox's ISF-Files (pvj/shaders.d/isf-files), held to what the project's own ten are held to:
+        the player takes the shader, draws a frame with it, and the picture is varied and not dark. Every file is
+        tried before anything fails, so one run names all that do not draw; a line per file is printed as the record."""
+        pack = [s for s in self.engine.library() if s["source"] == "bundled" and s["pack"] != "nxlx"]
+        self.assertEqual([s["id"] for s in pack], ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs",
+                                                  "isf-radial-gradient.fs", "isf-ridgelines.fs", "isf-simplex-noise.fs",
+                                                  "isf-sine-warp-gradient.fs"])
+        failed = []
+        for s in pack:
+            sid = s["id"]
+            rng = random.Random("isf " + sid)          # each file's varied values are its own: they do not move when
+            for varied in (False, True):                # another file joins or leaves the pack
+                self.engine._checked.clear()
+                kw = {"values": V.vary(s["inputs"], rng), "hue": 77.0, "offset": 321.5} if varied else {}
+                r = self.engine.show(sid, **kw)
+                what = "varied" if varied else "defaults"
+                if not r["ok"]:
+                    failed.append("%s (%s): refused: %s" % (sid, what, r["error"]))
+                    print("isf pack, ES %s: %-28s %-8s REFUSED %s" % (self.ES, sid, what, r["error"]))
+                    continue
+                rows = self.shot()
+                colours = {rows[y][x] for y in range(2, H, 5) for x in range(2, W, 5)}
+                brightest = max(max(c) for c in colours)
+                print("isf pack, ES %s: %-28s %-8s drawn=%s colours=%d brightest=%d" % (
+                    self.ES, sid, what, self.engine.playing["checked"], len(colours), brightest))
+                if self.engine.playing["checked"] is not True:
+                    failed.append("%s (%s): the player never drew a frame with it" % (sid, what))
+                if self.engine.error is not None and self.engine.error["id"] == sid:
+                    failed.append("%s (%s): %s" % (sid, what, self.engine.error))
+                if len(colours) <= 40:
+                    failed.append("%s (%s): a flat picture (%d colours)" % (sid, what, len(colours)))
+                if brightest <= 60:
+                    failed.append("%s (%s): a dark picture" % (sid, what))
+        self.assertEqual(failed, [])
 
     # -- where things are, and what TIME does --
     def test_coordinates_follow_isf_with_the_origin_at_the_bottom_left(self):

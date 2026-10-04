@@ -6,7 +6,8 @@ SPDX-PackageName = "nxlx.mastercontrol"
 path = [
   "pvj/modules.d/**",
   "pvj/themes.d/**",
-  "pvj/shaders.d/**",
+  "pvj/shaders.d/*.fs",
+  "pvj/shaders.d/isf-files/SHA256SUMS",
   "pvj/*.md",
   "install/README.md",
   "image/README.md",
@@ -23,3 +24,31 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 NXLX.Systems and contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Third-party shader pack: generators from Vidvox ISF-Files (https://github.com/Vidvox/ISF-Files), unchanged, under
+# the MIT licence of that repository. Its LICENSE names no copyright holder ("Copyright (c) 2018"); each file names its
+# author in its CREDIT field. See THIRD_PARTY_LICENSES.md for the commit, the file list and the notices.
+[[annotations]]
+path = [
+  "pvj/shaders.d/isf-files/*.fs",
+  "pvj/shaders.d/isf-files/LICENSE",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2018 the authors of ISF-Files (VIDVOX and the people named in each file's CREDIT)"
+SPDX-License-Identifier = "MIT"
+
+# The two noise shaders also hold the simplex noise of https://github.com/ashima/webgl-noise (MIT), whose notice is
+# kept beside them. This annotation comes last, so it is the one that counts for these three files.
+[[annotations]]
+path = [
+  "pvj/shaders.d/isf-files/isf-simplex-noise.fs",
+  "pvj/shaders.d/isf-files/isf-ridgelines.fs",
+  "pvj/shaders.d/isf-files/LICENSE.webgl-noise",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = [
+  "2018 the authors of ISF-Files (VIDVOX and the people named in each file's CREDIT)",
+  "2011 Ashima Arts",
+  "2011-2016 Stefan Gustavson",
+]
+SPDX-License-Identifier = "MIT"

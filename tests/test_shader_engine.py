@@ -222,6 +222,31 @@ class BoardTest(Live):
         self.assertEqual(self.engine.vibes_ids(), ids)
         self.assertEqual(SCHEMA, 13)                                  # no settings migration
 
+    def test_a_pack_shader_has_everything_the_projects_own_have(self):
+        """Weight, presets, sets, the guard's note and live values work for a third-party pack's shader too; it stays
+        out of every rotation until someone puts it in."""
+        pack = [s for s in self.engine.state()["shaders"] if s.get("pack") not in ("nxlx", "uploads")]
+        self.assertTrue(pack)
+        self.assertFalse(any(s["vibes"] for s in pack))
+        self.assertTrue(all(s["weight"] in ("light", "medium", "heavy", "") and s["measured"] is None for s in pack))
+        s = next(x for x in pack if any(i["type"] != "float" for i in x["inputs"]) and any(i["type"] == "float" and i["max"] > i["min"] for i in x["inputs"]))
+        sid = s["id"]
+        self.assertTrue(all("value" in i and "varies" in i for i in s["inputs"]))
+        self.engine.play(sid)
+        f = next(i for i in s["inputs"] if i["type"] == "float" and i["max"] > i["min"])
+        self.assertEqual(self.engine.change({"values": {f["name"]: f["max"]}})["values"][f["name"]], f["max"])
+        self.pump()
+        self.engine.api_presets({"action": "save", "name": "default"}, None, "t")
+        show = self.engine.api_set({"action": "set", "op": "add", "name": "Pack", "shaders": [{"id": sid, "preset": "default"}]}, None, "t")["sets"][-1]
+        self.assertEqual(self.engine.vibes_ids(show["id"]), [sid])
+        self.assertNotIn(sid, self.engine.vibes_ids())                # the active set does not have it
+        self.engine.api_set({"action": "heavy", "id": sid, "on": True}, None, "t")
+        self.assertEqual(self.engine.vibes_ids(show["id"]), [])       # the guard's note keeps it out of every set
+        st = self.engine.api_set({"action": "vibes", "id": sid, "on": True}, None, "t")          # put in by hand: the note goes
+        row = next(x for x in st["shaders"] if x["id"] == sid)
+        self.assertEqual((row["vibes"], row["heavy"], row["presets"]), (True, None, ["default"]))
+        self.assertIn(sid, self.engine.vibes_ids())
+
     def test_a_refusal_is_remembered_until_the_file_changes(self):
         self.player.vo = "gpu"
         self.engine.upload("mine.fs", GOOD)
