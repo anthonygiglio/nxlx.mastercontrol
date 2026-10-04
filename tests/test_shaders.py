@@ -713,9 +713,9 @@ class EngineTest(Base):
             row = [s for s in out["shaders"] if s["id"] == "mine-%d.fs" % n][0]
             self.assertEqual((row["error"], row["pack"], row["vibes"]), (None, "uploads", True), name)
             self.assertLessEqual(len(row["inputs"]), S.MAX_INPUTS)
-        # the three things real files do that the first translator refused, each present in the files that stand in
+        # two of the three things real files do that the first translator refused are present in the files that stand
+        # in (the third, an input called `color`, is in upstream files that are not bundled; it has its own test above)
         self.assertTrue(any(re.search(r"\bout_color\b", t) for t in texts.values()))
-        self.assertTrue(any(re.search(r'"NAME"\s*:\s*"[Cc]olor"', t) for t in texts.values()))
         self.assertTrue(any(not t.isascii() for t in texts.values()))
 
     def test_only_plain_folders_with_a_plain_name_are_packs_and_none_can_stand_in_for_the_projects_own(self):

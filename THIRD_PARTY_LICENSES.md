@@ -33,32 +33,16 @@ How the files were chosen (2026-10-04): of the 327 `.fs` files upstream, only ge
 
 | File here | Upstream name | CREDIT in the file |
 | --- | --- | --- |
-| `isf-basic-shape.fs` | Basic Shape.fs | by VIDVOX |
-| `isf-bordered-box.fs` | Bordered Box.fs | VIDVOX |
-| `isf-checkerboard.fs` | Checkerboard.fs | by VIDVOX |
 | `isf-color-bars.fs` | Color Bars.fs | VIDVOX |
-| `isf-color-schemes.fs` | Color Schemes.fs | by VIDVOX |
 | `isf-color-test-grid.fs` | Color Test Grid.fs | VIDVOX |
 | `isf-corner-colors.fs` | Corner Colors.fs | VIDVOX |
-| `isf-graph-paper.fs` | Graph Paper.fs | VIDVOX |
-| `isf-grid-warp.fs` | Grid Warp.fs | by VIDVOX |
-| `isf-line-group.fs` | Line Group.fs | VIDVOX |
 | `isf-linear-gradient.fs` | Linear Gradient.fs | by Carter Rosenberg |
-| `isf-lines.fs` | Lines.fs | by VIDVOX |
-| `isf-noise.fs` | Noise.fs | by VIDVOX |
-| `isf-poly-star.fs` | Poly Star.fs | (none given) |
 | `isf-radial-gradient.fs` | Radial Gradient.fs | by Carter Rosenberg |
-| `isf-random-checkerboard.fs` | Random Checkerboard.fs | VIDVOX |
 | `isf-random-lines.fs` | Random Lines.fs | VIDVOX |
-| `isf-random-shape.fs` | Random Shape.fs | by VIDVOX |
-| `isf-random-stripes.fs` | Random Stripes.fs | VIDVOX |
 | `isf-ridgelines.fs` | Ridgelines.fs | by VIDVOX (simplex by Ashima Arts / Stefan Gustavson) |
 | `isf-simplex-noise.fs` | Simplex Noise.fs | by VIDVOX (simplex by Ashima Arts / Stefan Gustavson) |
 | `isf-sine-warp-gradient.fs` | Sine Warp Gradient.fs | by VIDVOX |
-| `isf-solid-color.fs` | Solid Color.fs | by Carter Rosenberg |
 | `isf-spiral.fs` | Spiral.fs | by VIDVOX |
-| `isf-stripes.fs` | Stripes.fs | VIDVOX |
-| `isf-vu-meter.fs` | VU Meter.fs | VIDVOX |
 | `isf-worley-cells.fs` | Worley Cells.fs | by VIDVOX |
 
 ### The licence of ISF-Files (verbatim)
@@ -89,7 +73,7 @@ SOFTWARE.
 
 ### Notices of code inside those files
 
-Three files say they contain code from other MIT projects and only name the licence. The notices those projects ask to be kept:
+Two files say they contain code from another MIT project and only name the licence. The notice that project asks to be kept:
 
 `isf-simplex-noise.fs` and `isf-ridgelines.fs` hold the 2D simplex noise of https://github.com/ashima/webgl-noise (its `LICENSE`, read 2026-10-04):
 
@@ -116,29 +100,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-`isf-line-group.fs` holds a dither "based on https://github.com/hughsk/glsl-dither" (author Hugh Kennedy; `package.json` says MIT; its `LICENSE.md`, read 2026-10-04, names no holder):
-
-```
-This software is released under the MIT license:
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
 ### Not bundled, although the box can run them: the origin is not clear enough
 
 These generators translate, and the repository they are in is MIT, but their own comments point to code from elsewhere. Vidvox's licence can only cover what Vidvox had the right to license, so they are left for the owner to add to a box by hand (Shaders > Upload), which is use, not redistribution by this project.
@@ -155,3 +116,7 @@ These generators translate, and the repository they are in is MIT, but their own
 | Color Scales.fs, Color Organ Polyphonic.fs | "Color Scales via http://rhythmiclight.com/archives/ideas/colorscales.html" | tables of colours taken from a web page whose terms were not read |
 
 The sources outside GitHub were not opened (this work was limited to GitHub), so "unknown" here means not established, not that anything is wrong with them.
+
+### Not bundled for another reason: the licence is clear, the picture check was not passed
+
+Sixteen more generators are VIDVOX's own under the same MIT licence (Line Group.fs also holds a dither based on https://github.com/hughsk/glsl-dither, MIT, by Hugh Kennedy). They were tried on the real player in CI and did not pass the check every bundled shader must pass (taken by the player on OpenGL ES and on desktop OpenGL, a varied picture of more than 40 colours, not dark), so they are not in the pack. Nothing about their licence stands in the way of adding them later or of uploading them. The list and what CI saw are in [pvj/SHADERS.md](pvj/SHADERS.md).

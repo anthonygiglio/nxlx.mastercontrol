@@ -847,7 +847,11 @@ function startServer() {
     assert(await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running)), 'and still playing');
     await page.click('nav >> text=Mix');
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
-    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10, 'the ten bundled shaders are listed');
+    assert.strictEqual(await page.locator('#shadercard [data-shader^="nxlx-"]').count(), 10, 'the ten bundled shaders are listed');
+    // and the third-party pack (Vidvox ISF-Files): every one the API lists, and none of them in the Vibes rotation
+    const packed = await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.shaders.filter((s) => s.pack === 'isf-files')));
+    assert(packed.length >= 8 && packed.every((s) => s.source === 'bundled' && !s.vibes && !s.error), 'the ISF-Files pack is listed, out of Vibes');
+    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10 + packed.length, 'the pack is listed after the ten');
     await page.waitForFunction(() => /Vibes is on/.test((document.getElementById('shaderline') || {}).textContent));
     // By its label, not its text: when the rotation happens to be showing this very shader (1 time in 10) the button
     // reads "On screen", and a click on "Play" then waited for 30 seconds and failed.
