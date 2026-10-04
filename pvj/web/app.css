@@ -120,6 +120,25 @@ canvas.mapcanvas { display: block; width: 100%; margin: 8px 0; border: 1px solid
 canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 .row.nudge .btn { min-width: 44px; min-height: 44px; font-size: 18px; }
 .list .item.map-entry.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 8px; }
+/* MIDI controllers: one card per controller, the whole width of the page, with its layout drawn as a grid of its
+   controls. A wide controller scrolls sideways inside its card on a phone; the page itself never does. */
+.ctlwrap { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.ctlscroll { overflow-x: auto; max-width: 100%; padding-bottom: 4px; }
+.ctlgrid { display: grid; gap: 4px; grid-auto-rows: minmax(44px, auto); }
+.ctl { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; min-height: 44px; padding: 3px 4px; border: 1.5px solid var(--ln); border-radius: 6px; background: var(--cd); color: inherit; font: inherit; font-size: 11px; line-height: 1.2; text-align: center; cursor: pointer; overflow: hidden; }
+.ctl-fader { min-height: 88px; }
+.ctl-knob { border-radius: 22px; }
+.ctl .ctlname { color: var(--mu); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctl .ctlwhat { font-weight: 600; overflow-wrap: anywhere; }
+.ctl .ctlval { color: var(--mu); font-size: 10px; }
+.ctl.spare .ctlwhat { font-weight: 400; color: var(--mu); }
+.ctl.mine { border-style: dashed; border-color: var(--ac); }
+.ctl.wait { border-style: dotted; border-color: var(--ac); }
+.ctl.sel { box-shadow: inset 0 0 0 2px var(--ac); }
+.ctl.lit { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.ctl.lit .ctlname, .ctl.lit .ctlwhat, .ctl.lit .ctlval { color: var(--on); }
+.ctl:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.ctldetail { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--ln); padding-top: 8px; }
 button.linkish { background: none; border: 0; padding: 4px 0; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 /* Remote support: impossible to miss while a session is open */
 .support-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; margin: 0 0 8px; border-radius: 8px; background: var(--ac); color: var(--on); font-weight: 600; }

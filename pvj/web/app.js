@@ -1043,9 +1043,9 @@
         confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other boxes stop following.' : null); }); },
         body: function () { return [syncCard()]; } },
       { id: 'midi', group: 'show', name: 'MIDI controller', role: 'full', module: 'control-midi', url: '/api/midi', urlRole: 'full',
-        blurb: 'Play pads, fade and mix from a USB pad controller, keyboard or fader box. The box only listens; it sends nothing back.',
+        blurb: 'Play pads, fade and mix from a USB pad controller, keyboard or fader box. A controller the box knows works as soon as it is plugged in. The box only listens; it sends nothing back.',
         steps: [flagStep('midi', '/api/midi', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
-        body: function () { return [midiCard()]; } },
+        body: function () { return [midiControllers(), midiCard()]; } },
       { id: 'dmx', group: 'show', name: 'DMX lighting desk', role: 'full', module: 'control-dmx', url: '/api/dmx', urlRole: 'full',
         blurb: 'Control the box from a lighting desk or lighting software over the network (Art-Net or sACN): opacity, size, position, speed, volume, blackout and pads. The box only listens.',
         steps: [flagStep('dmx', '/api/dmx', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
@@ -1630,9 +1630,156 @@
   var MIDI_ACTIONS = [['pad', 'Play a pad'], ['stop', 'Stop'], ['pause', 'Pause / resume'], ['blackout', 'Blackout on / off'], ['fadeout', 'Fade out'],
     ['reset', 'Reset mix'], ['opacity', 'Opacity (fader)'], ['size', 'Size (fader)'], ['position', 'Position X (fader)'], ['speed', 'Speed (fader)'],
     ['volume', 'Volume (fader)'], ['blackout_hold', 'Blackout while held up (fader)'],
-    ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)']];
+    ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)'],
+    ['bank_pad', 'Play a pad of the controllers\' bank'], ['bank_prev', 'Controllers\' bank: the one before'], ['bank_next', 'Controllers\' bank: the next'],
+    ['clip_prev', 'Previous clip'], ['clip_next', 'Next clip'], ['fadein', 'Fade in'],
+    ['shader_prev', 'Previous shader'], ['shader_next', 'Next shader'], ['shader_speed', 'Shader speed (fader)'],
+    ['shader_hue', 'Shader colour turn (fader)'], ['shader_brightness', 'Shader brightness (fader)']]
+    .concat(midiEight('shader_control_', 'Shader control '), midiEight('shader_preset_', 'Shader preset '), midiEight('scene_', 'Room scene '));
+  // the actions that follow a fader or knob; a shader control does both (a knob sets it, a button steps or toggles it)
+  var MIDI_LEVELS = ['opacity', 'size', 'position', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness'];
+  function midiEight(id, label) { return [1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return [id + n, label + n]; }); }
+  // What an action is called on the drawn layout of a controller: short, since a control is a small box.
+  function midiWhat(a) {
+    if (!a) return 'Spare';
+    if (a.action === 'none') return 'Nothing';
+    if (a.action === 'pad') return 'Pad ' + 'ABC'[a.bank] + (a.index + 1);
+    if (a.action === 'bank_pad') return 'Pad ' + (a.index + 1);
+    if (a.action === 'scene') return 'Room scene';
+    var found = MIDI_ACTIONS.filter(function (x) { return x[0] === a.action; })[0];
+    return found ? found[1].replace(' (fader)', '') : a.action;
+  }
   var midiForm = { action: 'opacity', bank: 0, index: 0 };  // survives redraws
-  var midiTimer = null;
+  var midiTimer = null, midiLightTimer = null;
+  var midiSel = null;            // { ctl, id }: the control whose chooser is open on a controller's card
+  var midiDrawCard = null;       // redraws the mappings card after a change made on a controller's card
+  // One card per connected controller. A recognised one gets its layout drawn from its profile: every control shows
+  // what it does now, lights up while it is moved, and a tap opens its chooser. Everything is textContent.
+  function midiControllers() {
+    var wrap = h('div', { class: 'ctlwrap', id: 'midictls', hidden: true });
+    var sig = null;
+    function signature(d) {
+      return JSON.stringify([d.enabled, d.bank, (d.controllers || []).map(function (c) {
+        return [c.name, c.connected, c.standard, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin]; })];
+      })]);
+    }
+    function lights(d) {
+      var cards = wrap.querySelectorAll('.ctlcard');
+      (d.controllers || []).forEach(function (c, i) {
+        var card = cards[i];
+        if (!card || card.getAttribute('data-ctl') !== c.name) return;
+        c.controls.forEach(function (x) {
+          var el = card.querySelector('.ctl[data-id="' + x.id + '"]');
+          if (!el) return;
+          el.classList.toggle('lit', x.ago !== null && x.ago < 1.5);
+          el.classList.toggle('wait', !!x.waiting);
+          var val = el.querySelector('.ctlval');
+          if (val) val.textContent = x.value !== null && (x.kind === 'fader' || x.kind === 'knob') ? String(x.value) : '';
+        });
+      });
+    }
+    function changed(data) { sig = signature(data); draw(data); if (midiDrawCard && document.getElementById('midicard')) midiDrawCard(data); }
+    function detail(c, x) {
+      var box = h('div', { class: 'ctldetail', id: 'ctldetail' });
+      box.appendChild(h('div', { id: 'ctlnow', text: x.name + ': ' + midiWhat(x.action) +
+        (x.origin === 'yours' ? ' (your choice' + (x.standard ? '; the standard is ' + midiWhat(x.standard) : '') + ')' : x.origin === 'standard' ? ' (standard layout)' : '') }));
+      box.appendChild(h('p', { class: 'hint', text: 'Sends ' + (x.send.type === 'cc' ? 'CC ' : 'note ') + x.send.number +
+        (x.unverified ? ' (from a list that the maker\'s document does not confirm)' : '') + '.' +
+        (x.guard ? ' Press it twice within a second; one press does nothing.' : '') +
+        (x.pickup ? ' It picks up: nothing changes until it reaches the value the box has, so nothing jumps.' : '') +
+        (x.waiting ? ' It has not reached that value yet.' : '') }));
+      if (!can('full')) return box;
+      var level = x.kind === 'fader' || x.kind === 'knob';
+      var choices = [['none', 'Nothing (switch this control off)']].concat(MIDI_ACTIONS.filter(function (a) {
+        return a[0].indexOf('shader_control_') === 0 || (MIDI_LEVELS.indexOf(a[0]) >= 0) === level;
+      }));
+      var now = x.action ? x.action.action : (x.standard ? x.standard.action : choices[1][0]);
+      var action = h('select', { class: 'text-input', id: 'ctlaction', 'aria-label': 'What ' + x.name + ' does' },
+        choices.map(function (a) { return h('option', { value: a[0], text: a[1], selected: a[0] === now }); }));
+      var have = x.action || {};
+      var bank = h('select', { class: 'text-input', id: 'ctlbank', 'aria-label': 'Bank' },
+        ['A', 'B', 'C'].map(function (n, i) { return h('option', { value: i, text: 'Bank ' + n, selected: i === (have.bank || 0) }); }));
+      var index = h('select', { class: 'text-input', id: 'ctlindex', 'aria-label': 'Pad' },
+        Array.apply(null, Array(12)).map(function (_, i) { return h('option', { value: i, text: 'Pad ' + (i + 1), selected: i === (have.index || 0) }); }));
+      function show() { bank.hidden = action.value !== 'pad'; index.hidden = action.value !== 'pad' && action.value !== 'bank_pad'; }
+      action.addEventListener('change', show);
+      show();
+      box.appendChild(action); box.appendChild(bank); box.appendChild(index);
+      var buttons = h('div', { class: 'row wrap' }, h('button', { class: 'btn on small', id: 'ctlsave', text: 'Save', onclick: function () {
+        var a = { action: action.value };
+        if (a.action === 'pad') a.bank = parseInt(bank.value, 10);
+        if (a.action === 'pad' || a.action === 'bank_pad') a.index = parseInt(index.value, 10);
+        act('POST', '/api/midi/map', { set: { controller: c.name, control: x.id, action: a } }, function (data) { say(x.name + ' now does: ' + midiWhat(a)); changed(data); });
+      } }));
+      if (x.origin === 'yours') buttons.appendChild(h('button', { class: 'btn small', id: 'ctlback', text: 'Back to the standard', onclick: function () {
+        act('POST', '/api/midi/map', { reset: { controller: c.name, control: x.id } }, function (data) { say(x.name + ' is back to the standard'); changed(data); });
+      } }));
+      box.appendChild(buttons);
+      return box;
+    }
+    function draw(d) {
+      wrap.textContent = '';
+      var list = d.enabled ? (d.controllers || []) : [];
+      wrap.hidden = !list.length;
+      list.forEach(function (c) {
+        var card = h('div', { class: 'card ctlcard', 'data-ctl': c.name }, h('h2', { text: c.profile ? c.profile.name : c.name }));
+        wrap.appendChild(card);
+        var reading = c.connected ? '' : ' (not reading)';
+        if (!c.profile) {
+          card.appendChild(h('p', { class: 'hint ctlline', role: 'status', text: c.name + reading + ': No built-in layout for this one yet. Teach it below.' }));
+          return;
+        }
+        var mine = c.controls.filter(function (x) { return x.origin === 'yours'; }).length;
+        card.appendChild(h('p', { class: 'hint ctlline', role: 'status', text: c.profile.name + reading + ': recognised, standard layout ' + (c.standard ? 'on' : 'off') +
+          (mine ? ', ' + plural(mine, 'control') + ' changed by you' : '') + '.' }));
+        if (can('full')) {
+          var sw = h('button', { class: 'switch ctlstd', role: 'switch', 'aria-checked': c.standard ? 'true' : 'false', 'aria-label': 'Standard layout of ' + c.profile.name,
+            onclick: function () { act('POST', '/api/midi', { controller: c.name, standard: !c.standard }, changed); } });
+          card.appendChild(h('div', { class: 'row' }, h('span', { class: 'grow', text: 'Standard layout' }), h('span', { class: 'switchlabel', text: c.standard ? 'On' : 'Off' }), sw));
+        }
+        var grid = h('div', { class: 'ctlgrid', role: 'group', 'aria-label': 'The controls of ' + c.profile.name });
+        grid.style.gridTemplateColumns = 'repeat(' + c.profile.cols + ', minmax(58px, 1fr))';
+        var open = null;
+        c.controls.forEach(function (x) {
+          var chosen = !!midiSel && midiSel.ctl === c.name && midiSel.id === x.id;
+          if (chosen) open = x;
+          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : ''), type: 'button',
+            'data-id': x.id, 'aria-pressed': chosen ? 'true' : 'false', 'aria-label': x.name + ': ' + midiWhat(x.action),
+            onclick: function () { midiSel = chosen ? null : { ctl: c.name, id: x.id }; draw(d); } },
+            h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }), h('span', { class: 'ctlval' }));
+          b.style.gridRow = String(x.row + 1);
+          b.style.gridColumn = String(x.col + 1);
+          grid.appendChild(b);
+        });
+        card.appendChild(h('div', { class: 'ctlscroll' }, grid));
+        if (open) card.appendChild(detail(c, open));
+        card.appendChild(h('p', { class: 'hint', text: 'Move a control and it lights up here. Tap one to see' + (can('full') ? ' or change' : '') + ' what it does.' +
+          (c.controls.some(function (x) { return x.guard; }) ? ' 2x: press twice within a second.' : '') +
+          (c.controls.some(function (x) { return x.action && x.action.action === 'bank_pad'; }) ? ' The pad buttons play bank ' + 'ABC'[d.bank || 0] + ' now.' : '') }));
+        card.appendChild(h('p', { class: 'hint ctlnote', text: c.profile.note || c.profile.description }));
+        if (mine && can('full')) card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small ctlreset', text: 'Back to the standard for the whole controller', onclick: function (ev) {
+          confirmRow('Put the ' + plural(mine, 'control') + ' you changed on ' + c.profile.name + ' back to the standard?', 'Back to the standard', 'Keep mine', function () {
+            act('POST', '/api/midi/map', { reset: { controller: c.name } }, function (data) { say(c.profile.name + ' is back to the standard'); changed(data); });
+          }, ev.currentTarget);
+        } })));
+      });
+      lights(d);
+    }
+    function load() {
+      api('GET', '/api/midi').then(function (r) {
+        if (!document.getElementById('midictls')) return;         // the page was left: stop asking
+        if (r.ok) {
+          var now = signature(r.data);
+          if (now !== sig && !document.getElementById('confirmrow')) { sig = now; draw(r.data); } else lights(r.data);
+        } else { sig = null; wrap.textContent = ''; wrap.hidden = true; }
+        clearTimeout(midiLightTimer);
+        midiLightTimer = setTimeout(load, r.ok ? 700 : 3000);
+      });
+    }
+    clearTimeout(midiLightTimer);
+    midiLightTimer = setTimeout(load, 0);
+    return wrap;
+  }
   function midiCard() {
     var card = h('div', { class: 'card', id: 'midicard' }, h('h2', { text: 'MIDI controllers' }));
     var body = h('div', { class: 'list', id: 'midibody' });
@@ -1640,7 +1787,7 @@
     function describe(e) {
       var what = MIDI_ACTIONS.filter(function (a) { return a[0] === e.action; })[0];
       var ctl = (e.kind === 'note' ? 'note ' : e.kind === 'cc' ? 'CC ' : 'program ') + e.number + (e.channel ? ' ch ' + e.channel : '');
-      var pad = e.action === 'pad' ? ' ' + 'ABC'[e.bank] + (e.index + 1) : '';
+      var pad = e.action === 'pad' ? ' ' + 'ABC'[e.bank] + (e.index + 1) : e.action === 'bank_pad' ? ' ' + (e.index + 1) : '';
       return (e.source === '*' ? 'any controller' : e.source) + ' · ' + ctl + ' → ' + (what ? what[1] : e.action) + pad;
     }
     function poll() {
@@ -1662,7 +1809,8 @@
     }
     function save(c) {
       var entry = { source: c.source, kind: c.kind, channel: 0, number: c.number, action: midiForm.action };
-      if (midiForm.action === 'pad') { entry.bank = midiForm.bank; entry.index = midiForm.index; }
+      if (midiForm.action === 'pad') entry.bank = midiForm.bank;
+      if (midiForm.action === 'pad' || midiForm.action === 'bank_pad') entry.index = midiForm.index;
       act('POST', '/api/midi/map', { add: entry }, function (data) { say('Mapped: ' + describe(entry)); draw(data); });
     }
     function draw(d) {
@@ -1673,7 +1821,7 @@
         h('button', { class: 'btn small' + (d.builtin ? ' on' : ''), id: 'midibuiltin', 'aria-pressed': d.builtin ? 'true' : 'false',
           text: 'Built-in map: ' + (d.builtin ? 'on' : 'off'),
           onclick: function () { act('POST', '/api/midi', { builtin: !d.builtin }, function (data) { draw(data); }); } })));
-      body.appendChild(h('div', { class: 'k', text: 'Your own mappings win over the built-in map (notes 36 to 71 are pads, CC 20 to 25 are levels; see MIDI.md).' }));
+      body.appendChild(h('div', { class: 'k', text: 'Your own mappings win over a controller\'s standard layout and over the built-in map (notes 36 to 71 are pads, CC 20 to 25 are levels; see MIDI.md). The built-in map is not used for a controller that has a standard layout.' }));
       body.appendChild(h('div', { class: 'k', text: 'Mappings' }));
       if (!d.map.length) body.appendChild(h('div', { class: 'k', id: 'midinomap', text: 'None yet. Choose an action below, tap Learn, then move or press a control.' }));
       d.map.forEach(function (e) {
@@ -1682,9 +1830,11 @@
             act('POST', '/api/midi/map', { remove: e.id }, function (data) { draw(data); });
           } })));
       });
-      if (d.map.length) body.appendChild(h('button', { class: 'btn small', id: 'midiclear', text: 'Remove all mappings', onclick: function () {
-        if (window.confirm('Remove all mappings?')) act('POST', '/api/midi/map', { clear: true }, function (data) { draw(data); });
-      } }));
+      if (d.map.length) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'midiclear', text: 'Remove all mappings', onclick: function (ev) {
+        confirmRow('Remove all ' + plural(d.map.length, 'mapping') + '?', 'Remove all', 'Keep them', function () {
+          act('POST', '/api/midi/map', { clear: true }, function (data) { draw(data); });
+        }, ev.currentTarget);
+      } })));
       if (!d.enabled) return;
       var action = h('select', { class: 'text-input', id: 'midiaction', 'aria-label': 'Action to assign' },
         MIDI_ACTIONS.map(function (a) { return h('option', { value: a[0], text: a[1], selected: a[0] === midiForm.action }); }));
@@ -1692,7 +1842,12 @@
         ['A', 'B', 'C'].map(function (n, i) { return h('option', { value: i, text: 'Bank ' + n, selected: i === midiForm.bank }); }));
       var index = h('select', { class: 'text-input', id: 'midiindex', 'aria-label': 'Pad', hidden: midiForm.action !== 'pad' },
         Array.apply(null, Array(12)).map(function (_, i) { return h('option', { value: i, text: 'Pad ' + (i + 1), selected: i === midiForm.index }); }));
-      function remember() { midiForm = { action: action.value, bank: parseInt(bank.value, 10), index: parseInt(index.value, 10) }; bank.hidden = index.hidden = action.value !== 'pad'; }
+      index.hidden = midiForm.action !== 'pad' && midiForm.action !== 'bank_pad';
+      function remember() {
+        midiForm = { action: action.value, bank: parseInt(bank.value, 10), index: parseInt(index.value, 10) };
+        bank.hidden = action.value !== 'pad';
+        index.hidden = action.value !== 'pad' && action.value !== 'bank_pad';
+      }
       [action, bank, index].forEach(function (el) { el.addEventListener('change', remember); });
       body.appendChild(h('div', { class: 'k', text: 'Add a mapping' }));
       body.appendChild(action); body.appendChild(bank); body.appendChild(index);
@@ -1709,6 +1864,7 @@
         } }));
       }
     }
+    midiDrawCard = draw;
     api('GET', '/api/midi').then(function (r) {
       if (!document.getElementById('midicard')) return;
       if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'midimsg', text: r.data.error || 'Not available' })); return; }
@@ -2758,7 +2914,7 @@
   // The Room screen lives in room.js; it borrows these helpers.
   function roomCtx() { return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S }; }
   function stopTimers() {
-    [netTimer, midiTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer].forEach(clearTimeout);
+    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer].forEach(clearTimeout);
   }
   function render() {
     stopTimers();

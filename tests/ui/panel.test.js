@@ -421,6 +421,70 @@ function startServer() {
     await page.waitForSelector('#midilearn');
     await page.click('#midibuiltin');
     await page.waitForFunction(() => /Built-in map: off/.test(document.getElementById('midibuiltin').textContent));
+    // Controller profiles: the harness's fake Korg nanoKONTROL2 (pipes, no hardware) is plugged in while the page is
+    // open. It is recognised and its layout is drawn; a moved control lights up; a tap changes what a control does.
+    const fs = require('fs');
+    const midiPlug = path.join(info.midi_dir, 'plug'), midiIn = path.join(info.midi_dir, 'in');
+    const nano = '.ctlcard[data-ctl="nanoKONTROL2"]';
+    assert.strictEqual(await page.locator('.ctlcard').count(), 0, 'no controller card before one is plugged in');
+    fs.writeFileSync(midiPlug, '');
+    await page.waitForSelector(nano + ' .ctlline:has-text("Korg nanoKONTROL2: recognised, standard layout on.")', { timeout: 15000 });
+    await page.waitForSelector('.ctlcard[data-ctl="keys"] .ctlline:has-text("No built-in layout for this one yet. Teach it below.")');
+    assert.strictEqual(await page.locator(nano + ' .ctl').count(), 51, 'every control of the nanoKONTROL2 is drawn');
+    assert.strictEqual(await page.locator('.ctlcard[data-ctl="keys"] .ctl').count(), 0, 'an unknown controller has no drawn layout');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader1"] .ctlwhat'), 'Opacity');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob3"] .ctlwhat'), 'Shader control 3');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r8"] .ctlwhat'), 'Blackout on / off 2x');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader8"] .ctlwhat'), 'Spare');
+    assert.strictEqual(await page.locator(nano + ' .ctl.lit').count(), 0, 'nothing is lit before a control is moved');
+    fs.appendFileSync(midiIn, 'B0 10 40\n');                                    // knob 1 is turned
+    await page.waitForSelector(nano + ' .ctl[data-id="knob1"].lit');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob1"] .ctlval'), '64');
+    await page.waitForSelector(nano + ' .ctl[data-id="knob1"]:not(.lit)', { timeout: 8000 });      // and goes dark again
+    fs.appendFileSync(midiIn, 'B0 00 05\n');                                    // fader 1, far below the box's 100 percent: it waits (pickup)
+    await page.waitForSelector(nano + ' .ctl[data-id="fader1"].wait');
+    assert.strictEqual((await get('/api/midi')).controllers[0].controls.filter((x) => x.id === 'fader1')[0].pickup, true);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), 'the drawn layout made the page scroll sideways');
+    // a tap opens the chooser; the choice is saved as this person's mapping, and "Back to the standard" undoes it
+    await page.click(nano + ' .ctl[data-id="rec"]');
+    await page.waitForSelector('#ctldetail #ctlnow:has-text("Rec: Spare")');
+    assert.strictEqual(await page.locator('#ctlaction option[value="opacity"]').count(), 0, 'a button is not offered a fader\'s action');
+    await page.selectOption('#ctlaction', 'pad');
+    await page.selectOption('#ctlbank', '1');
+    await page.selectOption('#ctlindex', '2');
+    await page.click('#ctlsave');
+    await page.waitForSelector(nano + ' .ctl[data-id="rec"].mine:has-text("Pad B3")');
+    await page.waitForSelector(nano + ' .ctlline:has-text("1 control changed by you")');
+    let midiMap = (await get('/api/midi')).map;
+    assert.deepStrictEqual(midiMap.map((e) => [e.source, e.kind, e.number, e.action, e.bank, e.index]), [['nanoKONTROL2', 'cc', 45, 'pad', 1, 2]]);
+    await page.waitForSelector('#midicard .midi-entry:has-text("nanoKONTROL2")');       // and it is listed with the other mappings
+    await page.click('#ctlback');
+    await page.waitForSelector(nano + ' .ctl[data-id="rec"]:not(.mine):has-text("Spare")');
+    assert.strictEqual((await get('/api/midi')).map.length, 0, 'Back to the standard removed the mapping');
+    // the whole controller, with the question in place
+    await page.click(nano + ' .ctl[data-id="stop"]');
+    await page.selectOption('#ctlaction', 'none');
+    await page.click('#ctlsave');
+    await page.waitForSelector(nano + ' .ctl[data-id="stop"].mine:has-text("Nothing")');
+    await page.click(nano + ' .ctlreset');
+    await page.waitForSelector('#confirmrow:has-text("back to the standard?")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/midi')).map.length, 1, 'answering no keeps the mapping');
+    await page.click(nano + ' .ctlreset');
+    await page.click('#confirmyes');
+    await page.waitForSelector(nano + ' .ctl[data-id="stop"]:not(.mine):has-text("Stop")');
+    assert.strictEqual((await get('/api/midi')).map.length, 0);
+    // the switch per controller: a real switch, and the layout is off without unplugging
+    assert.strictEqual(await page.getAttribute(nano + ' .ctlstd', 'role'), 'switch');
+    await page.click(nano + ' .ctlstd');
+    await page.waitForSelector(nano + ' .ctlline:has-text("standard layout off")');
+    await page.waitForSelector(nano + ' .ctlstd[aria-checked="false"]');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader1"] .ctlwhat'), 'Spare');
+    assert.deepStrictEqual((await get('/api/midi')).controllers.map((c) => [c.name, c.standard]), [['nanoKONTROL2', false], ['keys', true]]);
+    await page.click(nano + ' .ctlstd');
+    await page.waitForSelector(nano + ' .ctlstd[aria-checked="true"]');
+    fs.unlinkSync(midiPlug);                                                    // unplugged: the cards go
+    await page.waitForFunction(() => document.querySelectorAll('.ctlcard').length === 0, null, { timeout: 15000 });
     await onPage('MIDI controller');
     await switchOff('MIDI controller');
     assert(!(await moduleIsOn('control-midi')), 'switching off switches the MIDI module off');
