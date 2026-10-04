@@ -10,7 +10,7 @@
 #   --user NAME      account that owns the screen and sound card (default: the
 #                    user who ran sudo, else a new system user "pvj-player")
 #   --web-user NAME  optional: add another account (a separate web app) to group "pvj"; NOT needed for
-#                    the built-in panel, which has its own pvj-web account. Members can read the PIN.
+#                    the built-in panel, which has its own pvj-web account. Members can reach the player's socket.
 #   --media DIR      video folder (default /var/lib/pvj/video)
 #   --offline        never touch the network; fail if a dependency is missing
 #   --no-start       install and enable the service but do not start it
@@ -88,6 +88,7 @@ UPD_USB_UNIT="$ROOT/etc/systemd/system/pvj-update-usb@.service"
 UPD_INBOX_UNIT="$ROOT/etc/systemd/system/pvj-update-inbox@.service"
 WG_LOAD="$ROOT/etc/modules-load.d/pvj-wireguard.conf"
 USB_RULE="$ROOT/etc/udev/rules.d/99-pvj-usb.rules"
+TMPFILES="$ROOT/etc/tmpfiles.d/pvj.conf"
 BIN_LINKS="$ROOT/usr/local/bin"
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/pvj/__init__.py")"
 [ -n "$VERSION" ] || die "cannot read version from pvj/__init__.py"
@@ -98,7 +99,7 @@ uninstall() {
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 		systemctl disable --now pvj-player.service 2>/dev/null || true
 	fi
-	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF"
+	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
@@ -272,7 +273,51 @@ if [ "$DRY" = 0 ]; then
 	# The system log survives restarts (capped at 64 MB), so an unexpected restart can be explained afterwards.
 	mkdir -p "$(dirname "$JOURNAL_CONF")"
 	cp "$SRC/install/50-pvj-persistent-log.conf" "$JOURNAL_CONF"
+	# The parent of the services' runtime folders belongs to root, at every boot (D44).
+	mkdir -p "$(dirname "$TMPFILES")"
+	cp "$SRC/install/pvj-tmpfiles.conf" "$TMPFILES"
 fi
+
+# Runtime folders (D44). Older versions shared one RuntimeDirectory, /run/pvj, between the player, the panel and the
+# root network helper, and systemd gave it to whichever started last; it stays like that until the next boot unless
+# it is put right here. On a running system call this only AFTER daemon-reload: until then a player or panel that
+# restarts by itself still runs its old unit and takes the folder back. With --stage it works on DIR/run/pvj and
+# leaves owners alone (the tests).
+fix_run_folder() {
+	local dir="$ROOT/run/pvj" note="" have want="root:root 755"
+	if [ -L "$dir" ]; then rm -f "$dir"; fi
+	if [ -d "$dir" ]; then
+		have="$(stat -c '%U:%G %a' "$dir")"
+		if [ "$REAL" = 0 ]; then have="${have##* }"; want=755; fi
+		if [ "$have" != "$want" ]; then
+			log "moving the runtime files to a folder per service ($dir now belongs to root)"
+			# First take the folder away from its owner, then empty it: the old sockets, the PIN, and anything an
+			# account that owned the folder may have left, also under the names of the new folders. Every service
+			# that had a file here is restarted below, or by pvj-update, and makes its own again in its own folder.
+			if [ "$REAL" = 1 ]; then chown root:root "$dir"; fi
+			chmod 0755 "$dir"
+			if [ -f "$dir/undervoltage-seen" ] && [ ! -L "$dir/undervoltage-seen" ]; then
+				note="$(head -c 64 "$dir/undervoltage-seen" | tr -cd '0-9')"     # when low power was first seen since this boot
+			fi
+			find "$dir" -mindepth 1 -delete
+			if [ "$START" = 0 ]; then log "services that were running have lost their sockets: restart them (or the box)"; fi
+		else
+			find "$dir" -mindepth 1 -maxdepth 1 ! -type d -delete     # nothing but the services' folders belongs here
+		fi
+	fi
+	if [ "$REAL" = 1 ]; then
+		systemd-tmpfiles --create "$TMPFILES" || log "systemd-tmpfiles failed; /run/pvj is set up at the next boot"
+	elif [ -d "$dir" ]; then
+		mkdir -p "$dir/web"
+		chmod 0750 "$dir/web"
+	fi
+	if [ -n "$note" ] && [ -d "$dir/web" ] && [ ! -L "$dir/web" ] && [ ! -e "$dir/web/undervoltage-seen" ]; then
+		printf '%s' "$note" > "$dir/web/undervoltage-seen"
+		if [ "$REAL" = 1 ]; then chown pvj-web:pvj "$dir/web/undervoltage-seen"; fi
+		chmod 0640 "$dir/web/undervoltage-seen"
+	fi
+}
+if [ "$REAL" = 0 ] && [ "$DRY" = 0 ]; then fix_run_folder; fi
 # USB automount: udev starts pvj-usb@<partition>.service, which mounts by label.
 run mkdir -p "$(dirname "$USB_RULE")"
 if [ "$DRY" = 0 ]; then
@@ -282,6 +327,7 @@ fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	systemctl daemon-reload
+	fix_run_folder
 	if systemctl restart systemd-journald.service 2>/dev/null; then journalctl --flush 2>/dev/null || true; fi
 	systemctl enable pvj-player.service pvj-web.service pvj-sysd.service pvj-supportd.service
 	modprobe wireguard 2>/dev/null || log "the WireGuard kernel module is not available: remote support stays unavailable"
@@ -289,7 +335,9 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	# The network helper only makes sense with NetworkManager (Raspberry Pi OS, most desktops).
 	if command -v nmcli >/dev/null; then
 		systemctl enable pvj-netd.service
-		if [ "$START" = 1 ]; then systemctl restart pvj-netd.service; fi
+		# Even with --no-start (an update from the panel, which then restarts the player and the panel itself): a
+		# helper that is running must move to the socket the new panel looks for. try-restart starts nothing.
+		if [ "$START" = 1 ]; then systemctl restart pvj-netd.service; else systemctl try-restart pvj-netd.service || true; fi
 	else
 		log "NetworkManager not found: network settings in the panel stay unavailable"
 	fi

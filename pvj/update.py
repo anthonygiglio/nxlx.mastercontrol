@@ -28,12 +28,14 @@ import tempfile
 import time
 import urllib.request
 
+from . import paths
+
 PRINCIPAL = "pvj-release"
 NAMESPACE = "pvj-release"
 MAX_BUNDLE_BYTES = 300 * 1024 * 1024
 MAX_FILES = 5000
 KEEP_BACKUPS = 5
-DEFAULT_RESULT = "/run/pvj-update/result.json"     # what the panel's Updates card reads (pvj-update-*@.service)
+DEFAULT_RESULT = paths.UPDATE_RESULT     # what the panel's Updates card reads (pvj-update-*@.service)
 _VERSION = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 
 
@@ -459,6 +461,10 @@ class Updater:
 
     def _systemd_restart(self):
         if os.path.isdir("/run/systemd/system") and self.root == "":
+            # The network helper too, only if it is running (try-restart starts nothing): its socket's place is
+            # part of a release (pvj/paths.py), and the panel must find the helper that matches it. Not pvj-sysd
+            # (it started this update) and not pvj-supportd (a support session may be the one updating).
+            self.run(["systemctl", "try-restart", "pvj-netd.service"], capture_output=True)
             self.run(["systemctl", "restart", "pvj-player.service", "pvj-web.service"], capture_output=True)
 
     def configured_port(self):

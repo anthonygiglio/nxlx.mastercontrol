@@ -17,6 +17,8 @@ import subprocess
 import threading
 import time
 
+from . import paths
+
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".ts", ".wmv")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".opus")
@@ -28,22 +30,11 @@ class PlayerError(Exception):
 
 
 def runtime_dir():
-    """Private per-user directory for the IPC socket and pid file."""
-    base = os.environ.get("PVJ_RUNTIME_DIR")
-    if not base:
-        xdg = os.environ.get("XDG_RUNTIME_DIR")
-        base = os.path.join(xdg, "pvj") if xdg else "/tmp/pvj-%d" % os.getuid()
-    os.makedirs(base, mode=0o700, exist_ok=True)
-    st = os.stat(base)
-    mode = stat.S_IMODE(st.st_mode)
-    if mode & 0o007:
-        raise PlayerError("unsafe runtime directory %s (world accessible)" % base)
-    if st.st_uid != os.getuid():
-        # Shared service directory (e.g. /run/pvj, mode 0770): allowed only
-        # for members of its group.
-        if not (mode & 0o070 and st.st_gid in os.getgroups()):
-            raise PlayerError("unsafe runtime directory %s (not yours and not in its group)" % base)
-    return base
+    """The folder this process writes into (pvj/paths.py): created if missing, refused if it is not private."""
+    try:
+        return paths.own_dir()
+    except paths.UnsafeDirectory as e:
+        raise PlayerError(str(e))
 
 
 def expand_media(paths, extensions=VIDEO_EXTENSIONS + IMAGE_EXTENSIONS):
@@ -144,9 +135,14 @@ class Player:
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
         self.mpv_bin = mpv_bin
         self.extra_args = list(extra_args or [])
+        # rundir is the folder THIS process writes (in the panel: the panel's own folder, where it puts the files it
+        # hands to the player). The socket and the preview picture are in the player's folder, which only the
+        # player creates; with an explicit rundir, or on a desk, that is the same folder (pvj/paths.py).
         self.rundir = rundir or runtime_dir()
-        self.socket_path = os.path.join(self.rundir, "player.sock")
-        self.pid_path = os.path.join(self.rundir, "player.pid")
+        peer = rundir or paths.player_dir()
+        self.socket_path = os.path.join(peer, paths.PLAYER_SOCKET)
+        self.preview_path = os.path.join(peer, paths.PREVIEW)
+        self.pid_path = os.path.join(self.rundir, paths.PLAYER_PID)
         self.ipc = Ipc(self.socket_path)
         self._proc = None
         # The player's shader list has two layers: a shader source (a generator drawn in place of a clip, see
@@ -420,9 +416,9 @@ class Player:
         if not (isinstance(oid, int) and 0 <= oid < 64) or len(pixels) != width * height * 4:
             raise PlayerError("bad overlay")
         path = os.path.join(self.rundir, "overlay-%d.bgra" % oid)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o660)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
         with os.fdopen(fd, "wb") as f:
-            os.fchmod(f.fileno(), 0o660)          # on the open file: a name swapped for a link cannot redirect it
+            os.fchmod(f.fileno(), 0o640)          # on the open file: a name swapped for a link cannot redirect it
             f.write(pixels)
         self.ipc.request("overlay-add", oid, int(x), int(y), path, 0, "bgra", int(width), int(height), int(width) * 4)
 

@@ -28,6 +28,7 @@ import subprocess
 import threading
 import time
 
+from . import paths
 from .netd import NetServer  # the same small, reviewed socket server
 
 IFACE = "wg-pvj"
@@ -354,7 +355,7 @@ class SupportdClient:
 def main(argv=None):
     import grp
     import pwd
-    rundir = os.environ.get("PVJ_SUPPORTD_DIR", "/run/pvj-supportd")
+    rundir = paths.supportd_dir()
     keydir = os.environ.get("PVJ_SUPPORT_KEYS", "/var/lib/pvj-support")
     os.makedirs(rundir, exist_ok=True)
     allowed = {0}
@@ -364,7 +365,7 @@ def main(argv=None):
         pass
     service = SupportService(keydir, log=lambda m: print(m, flush=True))
     service.teardown("the helper started")      # fail closed: nothing from an earlier run stays open
-    server = NetServer(os.path.join(rundir, "supportd.sock"), service, lambda uid: uid in allowed)
+    server = NetServer(os.path.join(rundir, paths.SUPPORTD_SOCKET), service, lambda uid: uid in allowed)
     try:
         os.chown(server.server_address, 0, grp.getgrnam("pvj").gr_gid, follow_symlinks=False)
     except (KeyError, OSError):

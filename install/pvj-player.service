@@ -15,13 +15,15 @@ StartLimitIntervalSec=0
 User=@PVJ_USER@
 Group=pvj
 SupplementaryGroups=video render audio input
-# Control socket for the web panel and OSC: /run/pvj, group-writable by "pvj".
-RuntimeDirectory=pvj
-RuntimeDirectoryMode=0770
-RuntimeDirectoryPreserve=yes
+# Its own folder for the control socket and the preview picture: only this account can create, replace or remove
+# anything in it; group "pvj" (the panel) can reach the socket. No other unit may name this folder: systemd gives
+# a RuntimeDirectory to the unit that starts, so a shared one ends up owned by whoever started last (D44).
+# The parent /run/pvj stays root's (systemd creates it root:root 0755; see pvj-tmpfiles.conf).
+RuntimeDirectory=pvj/player
+RuntimeDirectoryMode=0750
 UMask=0007
 EnvironmentFile=-/etc/pvj/pvj.env
-Environment=PVJ_RUNTIME_DIR=/run/pvj
+Environment=PVJ_RUNTIME_DIR=/run/pvj/player
 ExecStart=@PVJ_DIR@/bin/pvj-player serve
 # A crashed or wedged player comes back on its own, mid-gig.
 Restart=always
