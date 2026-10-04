@@ -544,7 +544,7 @@ class PresenterGuestCodeTest(AccessApiTest):
             self.as_live(path, body)
         self.assertEqual(len(lines), n)                                  # a refusal did nothing, so it says nothing
         for line in lines:
-            self.assertNotRegex(line, r"[0-9]{6}")                       # never a code's digits
+            self.assertNotRegex(line.replace(did, ""), r"[0-9]{6}")      # never a code's digits (the device id is hex, and is not one)
 
     def test_never_a_presenter_code(self):
         for body in ({"role": "live"}, {"role": "live", "minutes": 15}, {"role": "full"}, {"role": ["view", "live"]}, {"role": "LIVE"}, {}, {"role": None},
