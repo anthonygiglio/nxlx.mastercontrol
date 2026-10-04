@@ -1671,7 +1671,7 @@
     var sig = null;
     function signature(d) {
       return JSON.stringify([d.enabled, d.bank, (d.controllers || []).map(function (c) {
-        return [c.name, c.connected, c.standard, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin]; })];
+        return [c.name, c.connected, c.standard, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin, x.guard]; })];
       })]);
     }
     function lights(d) {
@@ -1679,6 +1679,8 @@
       (d.controllers || []).forEach(function (c, i) {
         var card = cards[i];
         if (!card || card.getAttribute('data-ctl') !== c.name) return;
+        var quiet = card.querySelector('.ctlquiet');
+        if (quiet) quiet.hidden = c.messages > 0;
         c.controls.forEach(function (x) {
           var el = card.querySelector('.ctl[data-id="' + x.id + '"]');
           if (!el) return;
@@ -1714,16 +1716,40 @@
         ['A', 'B', 'C'].map(function (n, i) { return h('option', { value: i, text: 'Bank ' + n, selected: i === (have.bank || 0) }); }));
       var index = h('select', { class: 'text-input', id: 'ctlindex', 'aria-label': 'Pad' },
         Array.apply(null, Array(12)).map(function (_, i) { return h('option', { value: i, text: 'Pad ' + (i + 1), selected: i === (have.index || 0) }); }));
-      function show() { bank.hidden = action.value !== 'pad'; index.hidden = action.value !== 'pad' && action.value !== 'bank_pad'; }
-      action.addEventListener('change', show);
-      show();
-      box.appendChild(action); box.appendChild(bank); box.appendChild(index);
-      var buttons = h('div', { class: 'row wrap' }, h('button', { class: 'btn on small', id: 'ctlsave', text: 'Save', onclick: function () {
+      // "Press twice" for what darkens the screen or changes the room: on unless the person switches it off here
+      function guardable(name) { return name === 'blackout' || name.indexOf('scene_') === 0; }
+      var twiceOn = x.action && guardable(x.action.action) ? !!x.guard : true;
+      var twice = h('button', { class: 'switch', id: 'ctltwice', role: 'switch', 'aria-checked': twiceOn ? 'true' : 'false', 'aria-label': 'Press twice',
+        onclick: function () { twiceOn = !twiceOn; twice.setAttribute('aria-checked', twiceOn ? 'true' : 'false'); twiceLabel.textContent = twiceOn ? 'On' : 'Off'; show(); } });
+      var twiceLabel = h('span', { class: 'switchlabel', text: twiceOn ? 'On' : 'Off' });
+      var twiceRow = h('div', { class: 'row', id: 'ctltwicerow' }, h('span', { class: 'grow', text: 'Press twice within a second (one press does nothing)' }), twiceLabel, twice);
+      function chosen() {
         var a = { action: action.value };
         if (a.action === 'pad') a.bank = parseInt(bank.value, 10);
         if (a.action === 'pad' || a.action === 'bank_pad') a.index = parseInt(index.value, 10);
+        if (guardable(a.action)) a.guard = twiceOn;
+        return a;
+      }
+      // Save only when something would change: saving what is there already must not quietly store a mapping
+      function unchanged() {
+        var a = chosen(), now = x.action;
+        if (!now) return false;
+        return a.action === now.action && a.bank === now.bank && a.index === now.index && (!guardable(a.action) || a.guard === !!x.guard);
+      }
+      var save = h('button', { class: 'btn on small', id: 'ctlsave', text: 'Save', onclick: function () {
+        var a = chosen();
         act('POST', '/api/midi/map', { set: { controller: c.name, control: x.id, action: a } }, function (data) { say(x.name + ' now does: ' + midiWhat(a)); changed(data); });
-      } }));
+      } });
+      function show() {
+        bank.hidden = action.value !== 'pad';
+        index.hidden = action.value !== 'pad' && action.value !== 'bank_pad';
+        twiceRow.hidden = !guardable(action.value);
+        save.disabled = unchanged();
+      }
+      [action, bank, index].forEach(function (el) { el.addEventListener('change', show); });
+      show();
+      box.appendChild(action); box.appendChild(bank); box.appendChild(index); box.appendChild(twiceRow);
+      var buttons = h('div', { class: 'row wrap' }, save);
       if (x.origin === 'yours') buttons.appendChild(h('button', { class: 'btn small', id: 'ctlback', text: 'Back to the standard', onclick: function () {
         act('POST', '/api/midi/map', { reset: { controller: c.name, control: x.id } }, function (data) { say(x.name + ' is back to the standard'); changed(data); });
       } }));
@@ -1745,6 +1771,9 @@
         var mine = c.controls.filter(function (x) { return x.origin === 'yours'; }).length;
         card.appendChild(h('p', { class: 'hint ctlline', role: 'status', text: c.profile.name + reading + ': recognised, standard layout ' + (c.standard ? 'on' : 'off') +
           (mine ? ', ' + plural(mine, 'control') + ' changed by you' : '') + '.' }));
+        // a controller that has sent nothing may be in another mode: say so before anyone thinks the layout is wrong
+        card.appendChild(h('p', { class: 'hint ctlquiet', hidden: c.messages > 0, text: 'Nothing received yet. Move a control.' +
+          (c.profile.id === 'korg-nanokontrol2' ? ' If this is a nanoKONTROL2, hold SET MARKER and CYCLE while plugging it in (it starts in the mode it was last used in).' : '') }));
         if (can('full')) {
           var sw = h('button', { class: 'switch ctlstd', role: 'switch', 'aria-checked': c.standard ? 'true' : 'false', 'aria-label': 'Standard layout of ' + c.profile.name,
             onclick: function () { act('POST', '/api/midi', { controller: c.name, standard: !c.standard }, changed); } });

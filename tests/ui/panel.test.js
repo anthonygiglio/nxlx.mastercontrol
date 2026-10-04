@@ -438,9 +438,11 @@ function startServer() {
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r8"] .ctlwhat'), 'Blackout on / off 2x');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader8"] .ctlwhat'), 'Spare');
     assert.strictEqual(await page.locator(nano + ' .ctl.lit').count(), 0, 'nothing is lit before a control is moved');
+    await page.waitForSelector(nano + ' .ctlquiet:has-text("Nothing received yet. Move a control. If this is a nanoKONTROL2, hold SET MARKER and CYCLE while plugging it in")');
     fs.appendFileSync(midiIn, 'B0 10 40\n');                                    // knob 1 is turned
     await page.waitForSelector(nano + ' .ctl[data-id="knob1"].lit');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob1"] .ctlval'), '64');
+    assert.strictEqual(await page.locator(nano + ' .ctlquiet').isHidden(), true, 'the "nothing received" line goes with the first message');
     await page.waitForSelector(nano + ' .ctl[data-id="knob1"]:not(.lit)', { timeout: 8000 });      // and goes dark again
     fs.appendFileSync(midiIn, 'B0 00 05\n');                                    // fader 1, far below the box's 100 percent: it waits (pickup)
     await page.waitForSelector(nano + ' .ctl[data-id="fader1"].wait');
@@ -462,6 +464,20 @@ function startServer() {
     await page.click('#ctlback');
     await page.waitForSelector(nano + ' .ctl[data-id="r5"]:not(.mine):has-text("Spare")');
     assert.strictEqual((await get('/api/midi')).map.length, 0, 'Back to the standard removed the mapping');
+    // Save on a guarded control that was not changed is not offered, so the press-twice guard cannot be saved away
+    await page.click(nano + ' .ctl[data-id="r8"]');
+    await page.waitForSelector('#ctldetail #ctlnow:has-text("R 8: Blackout on / off (standard layout)")');
+    assert.strictEqual(await page.isDisabled('#ctlsave'), true, 'Save is off until the choice differs');
+    assert.strictEqual(await page.getAttribute('#ctltwice', 'aria-checked'), 'true', 'press twice is on');
+    assert.strictEqual(await post('/api/midi/map', { set: { controller: 'nanoKONTROL2', control: 'r8', action: { action: 'blackout' } } }), 200);
+    assert.strictEqual((await get('/api/midi')).map.length, 0, 'saving the standard through the API stores nothing either');
+    await page.click('#ctltwice');
+    assert.strictEqual(await page.isDisabled('#ctlsave'), false, 'switching press twice off is a change');
+    await page.click('#ctltwice');
+    assert.strictEqual(await page.isDisabled('#ctlsave'), true);
+    await page.selectOption('#ctlaction', 'stop');
+    assert.strictEqual(await page.locator('#ctltwicerow').isHidden(), true, 'press twice is only for blackout and Room scenes');
+    assert.strictEqual(await page.isDisabled('#ctlsave'), false);
     // the whole controller, with the question in place
     await page.click(nano + ' .ctl[data-id="stop"]');
     await page.selectOption('#ctlaction', 'none');

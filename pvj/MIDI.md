@@ -17,28 +17,29 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 ### How it behaves
 
 - **What wins.** For each control: a mapping you made (by Learn, or by tapping the control on its card) wins; else the controller's standard layout; else the built-in map. The built-in map is **not** used for a controller whose standard layout is on (otherwise knob 5 of a nanoKONTROL2, which sends CC 20, would also be the built-in map's opacity). A mapping made for "any controller" also wins over a standard layout for that control. If a control has both, the controller's own mapping is the one that runs.
-- **Standard layout: on or off**, a switch on the controller's card, per controller and kept in the settings. Off leaves your own mappings and the built-in map, without unplugging anything.
+- **Standard layout: on or off**, a switch on the controller's card, per controller and kept in the settings. Off leaves your own mappings and the built-in map, without unplugging anything. Only a controller that is or was plugged in since the panel started can be switched.
+- **Unplugged or switched off means silent.** A message still on its way from a controller that has gone, or after MIDI was switched off, is dropped; it is never handed to the built-in map.
 - **Several controllers at once** each use their own layout. A second controller of the same model (ALSA calls it `Mini_1`) uses the same layout; its switch and your mappings are its own.
-- **Matching** is by the ALSA card id (the last word of the product name: `nanoKONTROL2`, `Mix`, `Mini`) and, because other products end in the same word, by the product name ALSA shows in `/proc/asound/cards` ("Launchpad Mini", so a Launchkey Mini is not taken for one). Both are matched as a whole against the patterns in the file.
-- **Pickup (soft takeover).** Some levels would visibly jump if a fader took effect where it happens to stand, so on a recognised controller they wait: nothing changes until the fader or knob reaches (or passes) the value the box has, and from then on it is followed. The card shows such a control with a dotted edge while it waits. If the value is changed elsewhere while the control rests, it waits again.
+- **Matching.** The surest key is the USB id (`/proc/asound/card<n>/usbid`, such as `1235:0036`): a controller whose USB id a profile lists is that controller. Otherwise the ALSA card id must be one the profile lists (it is only the last word of the product name: `nanoKONTROL2`, `Mix`, `Mini`; ALSA adds `_1` for a second unit) **and** the product name in `/proc/asound/cards` must be one the profile lists ("Launchpad Mini", so a Launchkey Mini is not taken for one). Names are compared exactly; a profile holds no patterns. The card list is read as bytes and only the row with the card's own number and id counts. If the list could be read but gives no usable name (odd characters, too long), the controller is **not** matched by its card id alone; only where there is no card list at all does the id decide. The ids and names in the three files are what the owner's Pi shows (2026-10-05).
+- **Pickup (soft takeover).** Some levels would visibly jump if a fader took effect where it happens to stand, so on a recognised controller they wait: nothing changes until the fader or knob reaches (or passes) the value the box has, and from then on it is followed. The card shows such a control with a dotted edge while it waits. If the value is changed elsewhere while the control rests, it waits again. The last few steps at each end count as the end, so a worn fader that tops out at 122 still reaches 100 percent.
 
   | Level | Pickup | Why |
   | --- | --- | --- |
   | Opacity | yes | a fader left at the bottom would black the screen out |
-  | Volume, clip speed | yes | a jump is heard or seen. The box does not keep these two in memory, so the value a controller last set is used, and 100 percent and 1x before that: after a change in the panel the first move may still jump |
+  | Volume, clip speed | yes | a jump is heard or seen. The box remembers what was last set through it (the panel, OSC, a controller); before anything was set it takes the player's own start values, 100 percent and 1x |
   | Shader speed, shader brightness | yes | a jump to frozen or to black. For a shader of the category Performance the box keeps the speed at 1 or below unless "faster" is switched on; the fader then does nothing above a quarter of its way |
   | Shader control 1 to 8, shader colour turn | no | a jump is part of playing a shader, and a knob that waits feels broken |
   | Size, position, Vibes time | no | not in a standard layout's faders; they follow at once |
 
   Mappings you make on a recognised controller pick up the same way. Plain Learn mappings on a controller with no profile behave as before (no pickup).
-- **The same press twice.** Blackout and the Room scenes need two presses of the same button within a second (and at least a quarter of a second apart); one press does nothing. They are marked "2x" on the card. A Room scene can switch projectors off for the whole room, so it is treated like blackout. This guard belongs to the standard layout: if you put blackout on a control yourself, one press is enough.
+- **The same press twice.** Blackout and the Room scenes need two presses of the same button within a second (and at least a quarter of a second apart); one press does nothing. They are marked "2x" on the card. A Room scene can switch projectors off for the whole room, so it is treated like blackout. If you put blackout or a Room scene on a control yourself (on its card), it is guarded too: the chooser shows a switch **Press twice**, on unless you switch it off. Saving a control without changing it stores nothing, so the guard cannot be lost by pressing Save. A mapping made with plain Learn is not guarded, as before.
 - **The controllers' bank.** A nanoKONTROL2 and a MIDI Mix have one row of eight pad buttons, so the box keeps a bank for controllers (A at start, not saved): the row plays pads 1 to 8 of that bank and two buttons step it. Pads 9 to 12 are not on these two layouts. The Launchpad Mini has room for all three banks and needs no bank button.
 - **Same path as everything else.** A profile only chooses which API call a control makes; the call goes through the API as a presenter, so the module switches, every check and the 50 commands a second apply, and no control waits for the shader engine (tested with the engine's lock held, for every control of every layout).
 - **Lights are not built.** See "Not built yet".
 
 ### Korg nanoKONTROL2 (`korg-nanokontrol2`)
 
-**Unverified.** Korg's nanoKONTROL2 Parameter Guide describes every parameter of CC mode but prints no table of the factory numbers. The numbers below are the factory assignments as widely reported and as used by the Mixxx project's mapping for this controller. The controller must be in **CC mode**: hold SET MARKER and CYCLE while plugging it in. In a DAW mode its faders send pitch bend, which the box does not read, and the layout looks dead. Factory reset (Parameter Guide p. 13): hold PREV TRACK, NEXT TRACK and CYCLE while plugging it in.
+**Unverified.** Korg's nanoKONTROL2 Parameter Guide describes every parameter of CC mode but prints no table of the factory numbers. The numbers below are the factory assignments as widely reported and as used by the Mixxx project's mapping for this controller. The controller must be in **CC mode**: hold SET MARKER and CYCLE while plugging it in. It starts in the mode it was last used in, so one that came from a DAW set-up stays in that DAW's mode until you do this once. In a DAW mode its faders send pitch bend, which the box does not read, and the layout looks dead (the card then says "Nothing received yet"). In Korg's editor a button can be set to Toggle instead of Momentary; a toggling button then acts on every other press only. The layout expects the factory setting, Momentary. Factory reset (Parameter Guide p. 13): hold PREV TRACK, NEXT TRACK and CYCLE while plugging it in.
 
 | Control | Sends | Does |
 | --- | --- | --- |
@@ -102,6 +103,15 @@ The **original** Launchpad Mini, not the MK3 (which sends other numbers and has 
 | G | Note 104 | Stop |
 | H | Note 120 | Blackout on / off (press twice) |
 
+### What changes when you update
+
+A box that already had MIDI switched on behaves differently for these three controllers once this version is on it. Mappings you learned keep working and still win. What is new:
+
+- **Every control you never mapped now does something** (the tables above). Before, most did nothing.
+- **Learned opacity, volume, clip speed, shader speed and shader brightness on these three controllers now wait for pickup**: the fader does nothing until it reaches the value the box has.
+- **The built-in map no longer applies to them.** On the Launchpad Mini notes 36 to 71 used to be the built-in pads 1 to 36; now note 36 is bank B pad 5, notes 38 and 39 are spare, and so on by the grid; note 72 was the built-in Stop and is now "Vibes: start the set Ambient" (button E); notes 73 to 76 (pause, blackout, fade out, reset) are not on its grid. On the nanoKONTROL2 CC 20 to 23 were the built-in opacity, size, position and speed and are now knobs 5 to 8 (shader controls 5 to 8). On the MIDI Mix CC 20 to 25 change the same way.
+- To have the old behaviour back for one controller, switch its **Standard layout** off.
+
 ### The two-minute check, per controller
 
 With the controller plugged in, open System > MIDI controller and look at its card.
@@ -113,7 +123,7 @@ With the controller plugged in, open System > MIDI controller and look at its ca
 
 ### On the page
 
-Each connected controller has a card: its name and state line, the switch "Standard layout", the drawn layout (a grid built from the profile's positions; on a phone a wide controller scrolls sideways inside its card), and under it the profile's note. A control shows what it does now; it lights while it is moved; a dashed edge means "changed by you"; a dotted edge means it waits for pickup. Tap a control to see what it sends and to choose another action (Save), or "Nothing" to switch it off; "Back to the standard" undoes that for the control, and "Back to the standard for the whole controller" for all of them, after a question in place. Both remove only that controller's own mappings on the controls of its layout; a mapping made for any controller is shown on the control as such and is removed in the list of mappings. A controller with no profile gets a card that says "No built-in layout for this one yet. Teach it below."
+Each connected controller has a card: its name and state line, the switch "Standard layout", the drawn layout (a grid built from the profile's positions; on a phone a wide controller scrolls sideways inside its card), and under it the profile's note. A control shows what it does now; it lights while it is moved; a dashed edge means "changed by you"; a dotted edge means it waits for pickup. Tap a control to see what it sends and to choose another action (Save), or "Nothing" to switch it off; Save is offered only when the choice differs from what the control does now. "Back to the standard" undoes that for the control, and "Back to the standard for the whole controller" for all of them, after a question in place. Both remove only that controller's own mappings on the controls of its layout; a mapping made for any controller is shown on the control as such and is removed in the list of mappings. A recognised controller that has sent nothing yet says "Nothing received yet", with the CC mode hint for a nanoKONTROL2. A controller with no profile gets a card that says "No built-in layout for this one yet. Teach it below." The page is shown to full-access devices; a presenter can read the same through `GET /api/midi` but has no page for it yet.
 
 ### Writing a profile for another controller
 
@@ -123,7 +133,7 @@ Add one file, `pvj/controllers.d/<id>.json`; nothing else changes. All keys are 
 {
   "id": "maker-model",
   "name": "Maker Model",
-  "match": {"card_ids": ["Model(_[0-9]+)?"], "card_names": ["Maker Model( [0-9]+)?"]},
+  "match": {"card_ids": ["Model"], "card_names": ["Maker Model"], "usb_ids": ["1234:abcd"]},
   "description": "What it is and which mode it must be in.",
   "note": "(optional) what is and is not verified, shown on the card",
   "sources": ["The document the numbers come from, with its version"],
@@ -139,7 +149,7 @@ Add one file, `pvj/controllers.d/<id>.json`; nothing else changes. All keys are 
 }
 ```
 
-- `id` is the file's name: small letters, digits, dashes. `match.card_ids` (one to eight) and `match.card_names` (none to eight) are patterns matched against the whole card id and the whole product name (`cat /proc/asound/cards` on the box shows both: ` 2 [Mini ]: USB-Audio - Launchpad Mini`). Allow the `_1` that ALSA adds for a second unit.
+- `id` is the file's name: small letters, digits, dashes. `match.card_ids` (one to eight) and `match.card_names` (none to eight) are exact names, not patterns: `cat /proc/asound/cards` on the box shows both (` 2 [Mini ]: USB-Audio - Launchpad Mini`: the id in brackets, the name after the dash). The `_1` that ALSA adds for a second unit is allowed for by the box. `match.usb_ids` (optional, none to eight) are the USB ids from `cat /proc/asound/card2/usbid` (`1235:0036`, small letters); list every revision you know, because one that matches decides alone.
 - `layout` is the grid of the drawing (up to 16 by 16); each control has its own `row` and `col` from 0, a `name` as printed on the hardware (up to 24 characters), and a `kind`: `fader`, `knob`, `button` or `pad`.
 - `send`: `type` is `note` or `cc`, `number` 0 to 127, `channel` 1 to 16 or 0 for any (use 0 unless two controls differ only by channel).
 - `action` is `null` for a spare control, or an action from the table below with its fields (`pad` needs `bank` 0 to 2 and `index` 0 to 11, `bank_pad` needs `index`). A fader or knob needs an action that follows it; a button or pad one that is pressed. A scene by id and `none` are not allowed in a profile.
@@ -210,4 +220,4 @@ On unless you turn it off (System > MIDI controller > Built-in map). It exists s
 
 Verified on a real Raspberry Pi 4 (2026-09-30): the module reads a controller through the systemd sandbox and handled 112 messages in a few seconds from a Launchpad Mini. Three controllers (Korg nanoKONTROL2, Akai MIDI Mix, Novation Launchpad Mini) enumerate. **Learn, the multi-controller hub and the new map have only run against pipes standing in for controllers and the browser test, not yet against the real hardware.** The Vibes and shader actions have run only in unit tests with a fake player and a fake clock: no real controller has sent them.
 
-**Controller profiles (2026-10-04): not tried on any real controller.** The three layouts are from the documents named above and one recording of the Launchpad Mini; the nanoKONTROL2's and the MIDI Mix's numbers are not confirmed by a manufacturer's document at all. Matching by `/proc/asound/cards` was written from the format of that file and tested against a made-up copy, not read on the Pi. Pickup, the double press, hot-plug and the drawn layout ran against pipes, a fake clock and the browser test's fake controller. Please run the two-minute check.
+**Controller profiles (2026-10-04): not tried on any real controller.** The three layouts are from the documents named above and one recording of the Launchpad Mini; the nanoKONTROL2's and the MIDI Mix's numbers are not confirmed by a manufacturer's document at all. Matching uses the card ids, product names and USB ids reported from the owner's Pi and is tested against a copy of that card list, but the code has not run on the Pi. Pickup, the double press, hot-plug and the drawn layout ran against pipes, a fake clock and the browser test's fake controller. Please run the two-minute check.
