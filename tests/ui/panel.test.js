@@ -1553,15 +1553,21 @@ function startServer() {
     assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
     await page.click('nav >> text=Live');
     await page.waitForSelector('#shaderslink');
-    await page.waitForSelector('#liveshader:visible', { timeout: 20000 });
-    await fitsPhone('Live at 1366 px');
     {
-      const live = await page.evaluate(() => {
+      // The strip follows the box's answer, which may say "nothing on" for a moment right after a Play: wait for the
+      // layout to hold, and say what it was if it never does.
+      const measure = () => {
         const r = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top }; };
-        return { pads: r('pads'), strip: r('liveshader'), vibes: r('vibes'), vw: window.innerWidth };
-      });
-      assert(live.pads.right <= live.strip.left && live.vibes.right <= live.strip.left && live.strip.right <= live.vw, 'on a laptop Live has the pads and the transport on the left and the shader strip on the right: ' + JSON.stringify(live));
+        return { pads: r('pads'), strip: r('liveshader'), vibes: r('vibes'), name: (document.getElementById('livename') || {}).textContent, vw: window.innerWidth };
+      };
+      const ok = await page.waitForFunction(() => {
+        const g = (id) => document.getElementById(id).getBoundingClientRect(), strip = g('liveshader');
+        return strip.width > 0 && (document.getElementById('livename') || {}).textContent === 'Tide' && g('pads').right <= strip.left && g('vibes').right <= strip.left && strip.right <= window.innerWidth;
+      }, null, { timeout: 20000 }).then(() => true, () => false);
+      assert(ok, 'on a laptop Live has the pads and the transport on the left and the shader strip on the right: ' + JSON.stringify(await page.evaluate(measure)) +
+        ' box: ' + JSON.stringify(await get('/api/shaders').then((d) => [d.playing && d.playing.id, d.vibes])));
     }
+    await fitsPhone('Live at 1366 px');
     await page.click('#shaderslink');
     await page.waitForSelector('#shadercontrols #shin-speed');
     await page.waitForSelector('#shaderdmxline');
