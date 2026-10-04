@@ -392,6 +392,9 @@ def check_shaders(v, care):
     out = shaders_mod.default_config()
     del out["height"]                       # not chosen: the box that reads it uses the default for its own board
     out.update(shaderlive_mod.check_extra(v))       # presets, rotation sets, what the guard noted, the clock
+    board = (getattr(getattr(care, "api", None), "board", None) or {}).get("kind")
+    if board and "heavy" in out:            # what was too heavy for another kind of board says nothing about this one
+        out["heavy"] = {sid: m for sid, m in out["heavy"].items() if m.get("board") in (None, board)}
     if "dwell" in v:
         d = v["dwell"]
         if isinstance(d, bool) or not isinstance(d, (int, float)) or d != d or not shaders_mod.DWELL_MIN <= d <= shaders_mod.DWELL_MAX:
@@ -409,7 +412,7 @@ def check_shaders(v, care):
                 or not all(isinstance(n, str) and shaders_mod.FILE.fullmatch(n) for n in names)):
             raise ValueError("disabled must be a list of shader file names, each once")
         out["disabled"] = list(names)
-    if "included" in v:                     # shaders of a third-party pack that were put into the rotation
+    if "included" in v:                     # shaders that are out of the rotation by default and were put into it
         names = v["included"]
         if (not isinstance(names, list) or len(names) > shaders_mod.MAX_UPLOADS + 64 or len(set(map(str, names))) != len(names)
                 or not all(isinstance(n, str) and shaders_mod.FILE.fullmatch(n) for n in names)):

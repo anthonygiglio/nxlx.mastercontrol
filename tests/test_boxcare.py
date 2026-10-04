@@ -324,7 +324,7 @@ class ImportTest(Base):
         self.assertIn("is not in the file", " ".join(self.send(self.export())[1]["notes"]))
         d = self.settings.data
         d["shaders"] = {"dwell": 45, "vary": False, "height": 540, "disabled": ["Plasma.fs", "My own 2.fs"],
-                        "included": ["isf-ridgelines.fs"]}                            # a third-party pack's shader, put into Vibes
+                        "included": ["isf-ridgelines.fs", "nxlx-bars.fs"]}           # a pack's shader and a performance one, put into Vibes
         d["autostart"] = dict(d["autostart"], mode="vibes")
         d["schedule"] = scheduler.validate({"enabled": True, "entries": [{"time": "20:00", "days": [0, 6], "action": "vibes"}]})
         d["control"]["dmx"] = dict(d["control"]["dmx"], enabled=True)

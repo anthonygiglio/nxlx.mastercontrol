@@ -75,6 +75,7 @@ class Vibes:
         self.history = []           # the shaders this run has shown, the newest last (for "the one before")
         self._want = None           # the shader to show next whatever the order says
         self._tight = set()         # shaders seen dropping a few frames in this run: shown without the palette turn
+        self._marked = []           # shaders the guard marked heavy one after another, with no healthy one between
 
     # -- state --
     def status(self):
@@ -113,6 +114,9 @@ class Vibes:
         if set_id is not None:
             set_id = self.engine.rotation(set_id)["id"]         # 404 for a set that is not there
         if not self.engine.vibes_ids(set_id):
+            if getattr(self.engine, "rotation", None) and self.engine.rotation(set_id)["shaders"]:
+                raise ApiError(409, "every shader of this set is left out on this box (refused by the GPU, or found too heavy): "
+                                    "put one back on the Shaders page")
             raise ApiError(409, "no shader is switched on for Vibes")
         with self._state:
             # Started again while it still has the screen (it was running, or a stop is not carried out yet): it keeps
@@ -122,7 +126,7 @@ class Vibes:
             if not carry:
                 self.epoch = self.api.player.source_epoch
             self.order, self.current, self.rounds, self.refused = [], None, 0, set()
-            self.set_id, self.history, self._want, self._tight = set_id, [], None, set()
+            self.set_id, self.history, self._want, self._tight, self._marked = set_id, [], None, set(), []
         changer = getattr(self.engine, "changer", None)
         if changer:
             changer.clear()             # a step or a preset that was still waiting must not take the screen from this run
@@ -328,8 +332,12 @@ class Vibes:
         if not self._ours():
             self._finish("ended: something else was played or stopped")
             return False
-        if self.started and self.current and self._guard():
-            return self._change()
+        if self.started and self.current:
+            verdict = self._guard()
+            if verdict == "box":
+                return False
+            if verdict:
+                return self._change()
         if self._clock() < self.due:
             return False
         return self._change()
@@ -346,7 +354,16 @@ class Vibes:
             self._tight.add(self.current)
             return False
         if seen["state"] != "heavy":
+            self._marked = []                       # this one keeps up: whatever was marked before it was the shader's fault
             return False
+        if len(self._marked) >= 2:
+            # Three in a row, none of them healthy: it is not the shaders. The two marks are taken back, nothing more
+            # is marked, and the rotation ends with the shader that is on left on the screen.
+            self.engine.unmark(self._marked)
+            self._marked = []
+            self._finish("ended: the box is dropping frames whatever plays: check the picture detail")
+            return "box"
+        self._marked.append(self.current)
         self.engine.note_heavy(self.current, seen)
         self._note("%s left out: it dropped %s frames a second (too heavy on this box at this drawing size)" % (self.current, seen["drops_per_second"]))
         return True
@@ -376,7 +393,11 @@ class Vibes:
             try:
                 rotation = self.engine.playable(self.set_id)
             except ApiError:                        # the set this run was started with has been deleted
-                rotation = {"shaders": [], "order": "shuffle", "vary": False, "dwell": 0}
+                self._finish("ended: the set it was running has been deleted")
+                if self.started:
+                    self.engine.off(self.epoch)
+                self._undip()
+                return False
             sid = self._next_id(rotation)
             if sid is None:
                 self._finish("ended: the player refused every shader" if self.refused else "ended: no shader is switched on for Vibes")

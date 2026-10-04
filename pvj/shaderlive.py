@@ -30,6 +30,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 
 from . import shaders as S
 from .api import ApiError
@@ -39,12 +40,27 @@ MAX_PRESETS = 16                # per shader
 MAX_PRESET_SHADERS = 128
 MAX_SETS = 16
 MAX_SET_ENTRIES = 128
-NAME = re.compile(r"[^\x00-\x1f\x7f]{1,40}")
 SET_ID = re.compile(r"[0-9a-f]{8}")
 DEFAULT_PRESET = "default"
+
+
+def name_ok(name):
+    """A name for a preset or a set: 1 to 40 characters, no space at either end, and none of the characters that are
+    not seen but change what is seen (controls, direction overrides, zero-width marks, line separators)."""
+    return (isinstance(name, str) and 1 <= len(name) <= 40 and name == name.strip()
+            and not any(unicodedata.category(ch) in S.HIDDEN for ch in name))
+
+
+def name_key(name):
+    """What two names are compared by: the same letters however they were typed (composed or not, any letter case)."""
+    return unicodedata.normalize("NFC", name).casefold()
+
+
 FIRST_SET = "00000000"
+SHOW_SET = "00000001"
 ORDERS = ("shuffle", "listed")
 APPLY_GAP = 0.2                 # seconds between two compiles: at most five a second
+REANCHOR = 2 * 86400.0          # seconds after which a shader that nobody touched gets a new anchor (see LiveEngine.time_of)
 EVENT_HOLD = 0.25               # how long a pressed event stays true
 MAX_CONTROLS = 8
 V3D_STATS = "/sys/devices/platform/v3dbus/*/gpu_stats"
@@ -61,6 +77,10 @@ PI4 = {
 }
 LIGHT_RANGE = (7.5, 11.2)
 RETUNED = ("nxlx-drift.fs",)    # its look was changed after it was measured; the work per pixel was meant to stay
+
+
+def performance(categories):
+    return any(isinstance(c, str) and c.lower() == S.PERFORMANCE for c in (categories or ()))
 
 
 def weight_of(sid, cost):
@@ -118,7 +138,7 @@ def _value_ok(v):
 def check_preset(p):
     """One stored preset, checked by its form (the values are checked against the shader when they are used): raises
     ValueError."""
-    if not isinstance(p, dict) or not isinstance(p.get("name"), str) or not NAME.fullmatch(p["name"]) or p["name"] != p["name"].strip():
+    if not isinstance(p, dict) or not name_ok(p.get("name")):
         raise ValueError("a preset needs a name of 1 to 40 characters")
     values = p.get("values", {})
     if (not isinstance(values, dict) or len(values) > S.MAX_INPUTS
@@ -140,7 +160,7 @@ def check_presets(v):
         if not isinstance(sid, str) or not S.FILE.fullmatch(sid) or not isinstance(rows, list) or len(rows) > MAX_PRESETS:
             raise ValueError("presets are kept per shader file, at most %d each" % MAX_PRESETS)
         clean = [check_preset(p) for p in rows]
-        if len({p["name"].lower() for p in clean}) != len(clean):
+        if len({name_key(p["name"]) for p in clean}) != len(clean):
             raise ValueError("two presets of %s have the same name" % sid)
         if clean:
             out[sid] = clean
@@ -152,8 +172,8 @@ def check_set(e):
     if not isinstance(e, dict) or not isinstance(e.get("id"), str) or not SET_ID.fullmatch(e["id"]):
         raise ValueError("a set needs an id of 8 hex digits")
     name = e.get("name")
-    if not isinstance(name, str) or not NAME.fullmatch(name) or name != name.strip():
-        raise ValueError("a set needs a name of 1 to 40 characters")
+    if not name_ok(name) or SET_ID.fullmatch(name):      # a name that reads like an id would be taken for one
+        raise ValueError("a set needs a name of 1 to 40 characters that is not 8 hex digits")
     rows = e.get("shaders", [])
     if not isinstance(rows, list) or len(rows) > MAX_SET_ENTRIES:
         raise ValueError("a set holds at most %d shaders" % MAX_SET_ENTRIES)
@@ -165,7 +185,7 @@ def check_set(e):
         seen.add(r["id"])
         row = {"id": r["id"]}
         if r.get("preset") is not None:
-            if not isinstance(r["preset"], str) or not NAME.fullmatch(r["preset"]):
+            if not name_ok(r["preset"]):
                 raise ValueError("the preset of %s is not a preset name" % r["id"])
             row["preset"] = r["preset"]
         entries.append(row)
@@ -182,7 +202,7 @@ def check_sets(v):
     if not isinstance(v, list) or not 1 <= len(v) <= MAX_SETS:
         raise ValueError("sets must be a list of 1 to %d rotation sets" % MAX_SETS)
     out = [check_set(e) for e in v]
-    if len({e["id"] for e in out}) != len(out) or len({e["name"].lower() for e in out}) != len(out):
+    if len({e["id"] for e in out}) != len(out) or len({name_key(e["name"]) for e in out}) != len(out):
         raise ValueError("two sets have the same id or name")
     return out
 
@@ -198,8 +218,66 @@ def check_heavy(v):
         for key in ("drops", "height"):
             n = note.get(key)
             row[key] = round(float(n), 1) if isinstance(n, (int, float)) and not isinstance(n, bool) and n == n and 0 <= n <= 1e5 else 0
+        if note.get("board") is not None:               # the board it was seen on; a mark without one is this box's own
+            if not isinstance(note["board"], str) or not re.fullmatch(r"[a-z0-9-]{1,20}", note["board"]):
+                raise ValueError("the board of a heavy mark is not a board name")
+            row["board"] = note["board"]
         out[sid] = row
     return out
+
+
+# ---- reading settings a person may have damaged: bad rows are dropped one by one ------------------------------------------
+def read_presets(v):
+    """{shader: [preset]} with every row that does not pass left out; None if it is not that kind of thing at all."""
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    for sid, rows in list(v.items())[:MAX_PRESET_SHADERS]:
+        if not isinstance(sid, str) or not S.FILE.fullmatch(sid) or not isinstance(rows, list):
+            continue
+        clean, names = [], set()
+        for p in rows[:MAX_PRESETS]:
+            try:
+                p = check_preset(p)
+            except (ValueError, TypeError):
+                continue
+            if name_key(p["name"]) not in names:
+                names.add(name_key(p["name"]))
+                clean.append(p)
+        if clean:
+            out[sid] = clean
+    return out
+
+
+def read_sets(v):
+    if not isinstance(v, list):
+        return None
+    out, ids, names = [], set(), set()
+    for e in v:
+        try:
+            e = check_set(e)
+        except (ValueError, TypeError):
+            continue
+        if e["id"] not in ids and name_key(e["name"]) not in names and len(out) < MAX_SETS:
+            ids.add(e["id"])
+            names.add(name_key(e["name"]))
+            out.append(e)
+    return out
+
+
+def read_heavy(v):
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    for sid, note in list(v.items())[:S.MAX_UPLOADS + 64]:
+        try:
+            out.update(check_heavy({sid: note}))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+READ = (("presets", read_presets), ("sets", read_sets), ("heavy", read_heavy))
 
 
 # The keys this version adds to the "shaders" settings, each with its check (also used by settings import, boxcare.py).
@@ -217,10 +295,11 @@ def check_extra(v):
         if not isinstance(v["active"], str) or not SET_ID.fullmatch(v["active"]):
             raise ValueError("active must be the id of a set")
         out["active"] = v["active"]
-    if "guard" in v:
-        if not isinstance(v["guard"], bool):
-            raise ValueError("guard must be true or false")
-        out["guard"] = v["guard"]
+    for key in ("guard", "faster"):
+        if key in v:
+            if not isinstance(v[key], bool):
+                raise ValueError("%s must be true or false" % key)
+            out[key] = v[key]
     if "clock" in v:
         if v["clock"] not in S.CLOCKS:
             raise ValueError("clock must be carrier or frame")
@@ -336,6 +415,7 @@ class Changer:
         self._show = None                           # {"id", "values", "controls", "preset"}: a whole shader to put on
         self._last = -1e9                           # when the last change was applied
         self._release = None                        # when a pressed event is to be let go
+        self._refresh = None                        # when the shader on screen is due for a new anchor
         self._thread = None
         self.applied = 0                            # how many times the GPU was given a new text (for tests and curiosity)
 
@@ -370,7 +450,14 @@ class Changer:
     def clear(self):
         """Forget what is waiting (the module went off, Vibes was started, the box was reset)."""
         with self._cond:
-            self._show = self._adjust = self._release = None
+            self._show = self._adjust = self._release = self._refresh = None
+
+    def keep(self):
+        """A shader has just come on or been changed: come back in two days to give it a new anchor, if nobody has
+        touched it by then."""
+        with self._cond:
+            self._refresh = self._clock() + REANCHOR
+            self._wake()
 
     def _wake(self):
         if self._use_thread and self._thread is None:
@@ -396,6 +483,12 @@ class Changer:
                 return None, wait
             self._release = None
             return ("release", None), 0.0
+        if self._refresh is not None:
+            wait = self._refresh - now
+            if wait > 0:
+                return None, wait
+            self._refresh = None
+            return ("refresh", "anchor"), 0.0
         return None, None
 
     def pump(self):
@@ -431,13 +524,15 @@ class Changer:
                         self._cond.wait(1.0)
                         idle += 1.0
                     else:
-                        self._cond.wait(min(wait, 1.0))
+                        self._cond.wait(min(wait, 30.0))
                     continue
                 # put it back for pump(), which takes it again outside the lock
                 if job[0] == "show":
                     self._show = job[1]
                 elif job[0] == "adjust":
                     self._adjust = job[1]
+                elif job[0] == "refresh":
+                    self._refresh = self._clock()
                 else:
                     self._release = self._clock()
             idle = 0.0
@@ -454,6 +549,7 @@ class LiveEngine(S.Engine):
         # Settings are edited under this lock, never under the engine's own: that one is held while the GPU looks at a
         # shader (up to four seconds), and a dwell knob, a preset or a set must not wait for it.
         self._cfg = threading.RLock()
+        self._bad = {}                              # (source hash, shape of the values) -> what the GPU said about it
 
     def board(self):
         return (getattr(self.api, "board", None) or {}).get("kind")
@@ -468,16 +564,16 @@ class LiveEngine(S.Engine):
         saved, board = self._saved() or {}, self.board()
         if saved.get("height") not in S.heights_for(board) or isinstance(saved.get("height"), bool):
             cfg["height"] = S.default_height(board)                 # also a height this board is not offered (1080 on a Pi 4)
-        for key, check in EXTRA:
+        for key, read in READ:
             if key in saved:
-                try:
-                    cfg[key] = check(saved[key])
-                except (ValueError, TypeError):
-                    pass                                            # damaged by hand: as if it were not there
+                rows = read(saved[key])         # damaged by hand: the rows that still pass are kept, one bad row is only itself
+                if rows:
+                    cfg[key] = rows
         if isinstance(saved.get("active"), str) and SET_ID.fullmatch(saved["active"]):
             cfg["active"] = saved["active"]
-        if isinstance(saved.get("guard"), bool):
-            cfg["guard"] = saved["guard"]
+        for key in ("guard", "faster"):
+            if isinstance(saved.get(key), bool):
+                cfg[key] = saved[key]
         if saved.get("clock") in S.CLOCKS:
             cfg["clock"] = saved["clock"]
         if saved.get("v") == 2:
@@ -485,12 +581,18 @@ class LiveEngine(S.Engine):
         return cfg
 
     def _save(self, cfg):
-        """Save the section. The first save by this version turns the first version's list (everything but the
-        switched-off shaders) into a set of its own, so nothing that was in the rotation drops out unnoticed."""
+        """Save the section. The first save by this version of a section the first version wrote turns that box's
+        list into the set Ambient: everything that was not switched off, uploads included, without the two heavy
+        shaders (see _first_set). A box with no saved section has nothing to turn: its first set stays computed
+        until someone edits a set. A key that could not be read at all is left in the file as it is."""
+        saved = self._saved()
         if cfg.get("v") != 2:
-            if self._saved() is not None and "sets" not in cfg:
+            if saved is not None and "sets" not in cfg:
                 cfg["sets"] = self.sets(cfg)
             cfg["v"] = 2
+        for key, read in READ:                  # a key that could not be read at all is left as it is, never written over
+            if saved and key in saved and key not in cfg and read(saved[key]) is None:
+                cfg[key] = saved[key]
         super()._save(cfg)
 
     # -- the library --
@@ -513,11 +615,12 @@ class LiveEngine(S.Engine):
         cfg = cfg or self.config()
         rows = super().library()
         members = {e["id"] for e in self.rotation(None, cfg, rows)["shaders"]}
+        heavy = self.heavy_here(cfg)
         on = self.on_screen() if self.enabled() else None
         for s in rows:
             sid = s["id"]
             s["weight"], s["measured"] = weight_of(sid, s["cost"]), measured(sid)
-            s["heavy"] = cfg.get("heavy", {}).get(sid)
+            s["heavy"] = heavy.get(sid)
             s["presets"] = [p["name"] for p in cfg.get("presets", {}).get(sid, [])]
             s["refused"] = None
             if not s["error"]:
@@ -526,6 +629,7 @@ class LiveEngine(S.Engine):
                 except (ShaderError, ApiError):
                     parsed, digest = None, None
                 s["refused"] = self._refusals.get(digest)
+                s["speed_max"] = 1.0 if (performance(s.get("categories")) and not cfg.get("faster", False)) else S.SPEED_MAX
                 work = work_inputs(parsed) if parsed else set()
                 now = {} if not parsed else (self.current_values(parsed, on) if (on and on["id"] == sid) else self.start_values(parsed, cfg, sid)[0])
                 for i in s["inputs"]:
@@ -544,8 +648,8 @@ class LiveEngine(S.Engine):
         """(values, controls, preset name) a shader starts with: the named preset, else the one called "default",
         else the file's own defaults. A stored value the file no longer takes is left out, not an error."""
         rows = cfg.get("presets", {}).get(sid, [])
-        want = (preset or DEFAULT_PRESET).lower()
-        hit = next((p for p in rows if p["name"].lower() == want), None)
+        want = name_key(preset or DEFAULT_PRESET) if isinstance(preset or DEFAULT_PRESET, str) else None
+        hit = next((p for p in rows if name_key(p["name"]) == want), None)
         if hit is None:
             if preset is not None:
                 raise ApiError(404, "%s has no preset called %s" % (sid, S._text(str(preset), 40)))
@@ -581,7 +685,7 @@ class LiveEngine(S.Engine):
     def preset_save(self, name, sid=None):
         """Keep the values and controls that are on the screen as a preset of that shader (a new one, or over the one
         of that name)."""
-        if not isinstance(name, str) or not NAME.fullmatch(name) or name != name.strip():
+        if not name_ok(name):
             raise ApiError(400, "a preset needs a name of 1 to 40 characters")
         on = self.on_screen()
         if on is None or (sid is not None and sid != on["id"]):
@@ -592,7 +696,7 @@ class LiveEngine(S.Engine):
             wish = wish if (wish.get("epoch"), wish.get("id")) == (on["epoch"], on["id"]) else {}
             entry = {"name": name, "values": dict(on["values"], **wish.get("values", {})),
                      "controls": dict(on["controls"], **wish.get("controls", {}))}
-            at = next((n for n, p in enumerate(rows) if p["name"].lower() == name.lower()), None)
+            at = next((n for n, p in enumerate(rows) if name_key(p["name"]) == name_key(name)), None)
             if at is None:
                 if len(rows) >= MAX_PRESETS:
                     raise ApiError(409, "at most %d presets for one shader; delete one first" % MAX_PRESETS)
@@ -607,18 +711,18 @@ class LiveEngine(S.Engine):
 
     def preset_rename(self, sid, name, to):
         self._path(sid)
-        if not isinstance(to, str) or not NAME.fullmatch(to) or to != to.strip():
+        if not name_ok(to):
             raise ApiError(400, "a preset needs a name of 1 to 40 characters")
         with self._cfg:
             cfg, rows = self._presets_of(sid)
-            hit = next((p for p in rows if isinstance(name, str) and p["name"].lower() == name.lower()), None)
+            hit = next((p for p in rows if isinstance(name, str) and name_key(p["name"]) == name_key(name)), None)
             if hit is None:
                 raise ApiError(404, "no such preset")
-            if any(p is not hit and p["name"].lower() == to.lower() for p in rows):
+            if any(p is not hit and name_key(p["name"]) == name_key(to) for p in rows):
                 raise ApiError(409, "a preset with that name already exists")
             for e in cfg.get("sets", []):                           # a set that names it follows the new name
                 for row in e["shaders"]:
-                    if row["id"] == sid and row.get("preset", "").lower() == hit["name"].lower():
+                    if row["id"] == sid and name_key(row.get("preset", "")) == name_key(hit["name"]):
                         row["preset"] = to
             hit["name"] = to
             cfg["presets"][sid] = rows
@@ -628,7 +732,7 @@ class LiveEngine(S.Engine):
         self._path(sid)
         with self._cfg:
             cfg, rows = self._presets_of(sid)
-            keep = [p for p in rows if not (isinstance(name, str) and p["name"].lower() == name.lower())]
+            keep = [p for p in rows if not (isinstance(name, str) and name_key(p["name"]) == name_key(name))]
             if len(keep) == len(rows):
                 raise ApiError(404, "no such preset")
             cfg["presets"][sid] = keep
@@ -650,17 +754,29 @@ class LiveEngine(S.Engine):
                 continue
             if s["source"] == "uploaded":
                 keep = old
-            elif s.get("pack", "nxlx") != "nxlx":
-                keep = sid in cfg.get("included", ())
+            elif s.get("pack", "nxlx") != "nxlx" or performance(s.get("categories")):
+                keep = sid in cfg.get("included", ())       # a pack's shader, or one of ours made to perform with: only if put in
             else:
                 keep = weight_of(sid, s["cost"]) != "heavy"
             if keep:
                 out.append({"id": sid})
-        return {"id": FIRST_SET, "name": "Ambient", "shaders": out, "dwell": cfg["dwell"], "vary": cfg["vary"], "order": ORDERS[0]}
+        first = {"id": FIRST_SET, "name": "Ambient", "shaders": out, "dwell": cfg["dwell"], "vary": cfg["vary"], "order": ORDERS[0]}
+        # The second set a box has from the start: the project's shaders made to perform with. It is not the active one.
+        show = [{"id": s["id"]} for s in rows if s["source"] == "bundled" and s.get("pack", "nxlx") == "nxlx" and performance(s.get("categories"))
+                and not s["error"] and s["id"] not in cfg["disabled"] and weight_of(s["id"], s["cost"]) != "heavy"]
+        return [first] + ([{"id": SHOW_SET, "name": "Show", "shaders": show, "dwell": S.DWELL_DEFAULT, "vary": True, "order": ORDERS[0]}] if show else [])
 
     def sets(self, cfg=None, rows=None):
         cfg = cfg or self.config()
-        return [dict(e, shaders=[dict(r) for r in e["shaders"]]) for e in cfg["sets"]] if cfg.get("sets") else [self._first_set(cfg, rows)]
+        return [dict(e, shaders=[dict(r) for r in e["shaders"]]) for e in cfg["sets"]] if cfg.get("sets") else self._first_set(cfg, rows)
+
+    def limit(self, parsed, controls):
+        """The flash limit. Every shader of the category "Performance" caps its own flashing at 3 a second (6 with its
+        Fast switch) by its TIME. The speed control multiplies TIME, so it would multiply the cap: for these shaders
+        the speed stays at 1 or below, unless a full-access device has switched "faster" on for the box."""
+        if controls["speed"] > 1.0 and performance(parsed.get("categories")) and not self.config().get("faster", False):
+            return dict(controls, speed=1.0)
+        return controls
 
     def rotation(self, set_id=None, cfg=None, rows=None):
         """One set, by its id or its name (any letter case); with nothing named, the active one."""
@@ -669,17 +785,18 @@ class LiveEngine(S.Engine):
         if set_id is None:
             return next((e for e in every if e["id"] == cfg.get("active")), every[0])
         if isinstance(set_id, str):
-            for e in every:
-                if e["id"] == set_id or e["name"].lower() == set_id.strip().lower():
-                    return e
-        raise ApiError(404, "no such set")
+            for match in (lambda e: e["id"] == set_id, lambda e: name_key(e["name"]) == name_key(set_id.strip())):     # an id first
+                for e in every:
+                    if match(e):
+                        return e
+        raise ApiError(404, "that set is not there (it may have been deleted)")
 
     def playable(self, set_id=None):
         """The set with only the shaders Vibes can show now, in the set's order."""
         cfg = self.config()
         rows = {s["id"]: s for s in S.Engine.library(self)}
         e = self.rotation(set_id, cfg, list(rows.values()))
-        heavy = cfg.get("heavy", {})
+        heavy = self.heavy_here(cfg)
         keep = [r for r in e["shaders"] if r["id"] in rows and not rows[r["id"]]["error"] and r["id"] not in heavy
                 and self._digest(r["id"]) not in self._refusals]
         return dict(e, shaders=keep)
@@ -753,16 +870,37 @@ class LiveEngine(S.Engine):
             self._save(cfg)
 
     # -- the guard --
-    def note_heavy(self, sid, verdict):
-        """The guard found this shader too heavy in a rotation: remember it, so no rotation shows it until someone
-        puts it back."""
+    def heavy_here(self, cfg=None):
+        """The heavy marks that count on this box now: made on this board (a mark with no board is this box's own),
+        at the drawing height that is set now or a lower one. A mark made at a greater height says nothing about a
+        lower one, so lowering the picture detail gives every marked shader another chance; raising it keeps them."""
+        cfg = cfg or self.config()
+        board = self.board()
+        return {sid: m for sid, m in cfg.get("heavy", {}).items() if m.get("board") in (None, board) and m.get("height", 0) <= cfg["height"]}
+
+    def note_heavy(self, sid, verdict=None):
+        """The guard found this shader too heavy in a rotation (or someone marked it by hand): remember it, with the
+        drawing height and the board, so no rotation shows it until someone puts it back."""
+        drops = (verdict or {}).get("drops_per_second") or 0
         with self._cfg:
             cfg = self.config()
-            size = (self.playing or {}).get("size") or (0, cfg["height"])
-            cfg.setdefault("heavy", {})[sid] = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": verdict["drops_per_second"] or 0, "height": size[1]}
+            mark = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": drops, "height": cfg["height"]}
+            if self.board():
+                mark["board"] = self.board()
+            cfg.setdefault("heavy", {})[sid] = mark
             self._save(cfg)
-        self.log("pvj-web: shader %s drops %s frames a second at %d lines: too heavy on this box, left out of rotations"
-                 % (sid, verdict["drops_per_second"], size[1]))
+        if verdict:
+            self.log("pvj-web: shader %s drops %s frames a second at %d lines: too heavy on this box, left out of rotations"
+                     % (sid, drops, cfg["height"]))
+
+    def unmark(self, ids):
+        """Take heavy marks back."""
+        with self._cfg:
+            cfg = self.config()
+            if any(sid in cfg.get("heavy", {}) for sid in ids):
+                for sid in ids:
+                    cfg["heavy"].pop(sid, None)
+                self._save(cfg)
 
     def watch(self):
         """What the guard sees for the shader on screen, or None while it is switched off or nothing is on."""
@@ -772,13 +910,37 @@ class LiveEngine(S.Engine):
         return self.guard.sample(on) if on else self.guard.sample(None)
 
     # -- changing what is on --
+    def frames(self, carrier):
+        """How many frames the carrier has played, not wrapped into three bytes (0 if it is not what plays)."""
+        try:
+            ipc = self.api.player.ipc
+            if ipc.request("get_property", "path") != carrier:
+                return 0
+            t = ipc.request("get_property", "time-pos")
+        except Exception:
+            return 0
+        return int(round(t * S.CARRIER_FPS)) if isinstance(t, (int, float)) and not isinstance(t, bool) and 0 <= t < 1e12 else 0
+
+    def show(self, *args, **kwargs):
+        result = super().show(*args, **kwargs)
+        p = self.playing
+        if result and result.get("ok") and p and p["anchor"] is not None and p["epoch"] == result["epoch"]:
+            now = self.frames(p["carrier"])
+            p["since"] = now - ((now - p["anchor"]) % S.FRAME_WRAP)       # the anchor as a whole count of frames
+            self.changer.keep()
+        return result
+
     def time_of(self, p):
-        """(the TIME the shader on screen has reached, the carrier frame that is so): where a new text has to go on
-        from. With the first version's clock the offset simply stays (mpv's frame number goes on counting)."""
+        """(the TIME the shader on screen has reached, the carrier frame that is so in three bytes, the same frame as
+        a whole count): where a new text has to go on from. The frames since the anchor are counted in whole numbers
+        here, so the answer is right however long the shader has been on (the three bytes the shader reads start
+        again after 6.4 days, which is why the worker gives an untouched shader a new anchor every two days). With
+        the first version's clock the offset simply stays (mpv's frame number goes on counting)."""
         if p["anchor"] is None:
-            return p["offset"], None
-        now = self.frame_now(p["carrier"])
-        return p["offset"] + p["controls"]["speed"] * ((now - p["anchor"]) % S.FRAME_WRAP) / S.CARRIER_FPS, now
+            return p["offset"], None, None
+        now = self.frames(p["carrier"])
+        gone = max(0, now - p["since"]) if p.get("since") is not None else (now - p["anchor"]) % S.FRAME_WRAP
+        return p["offset"] + p["controls"]["speed"] * gone / S.CARRIER_FPS, now % S.FRAME_WRAP, now
 
     def adjust(self, job):
         """Give the shader on screen new values or controls (the worker's call; see Changer). The carrier, the epoch
@@ -792,19 +954,27 @@ class LiveEngine(S.Engine):
                 if not p.get("held"):
                     return False
                 job = {"epoch": p["epoch"], "id": p["id"], "values": {}, "controls": {}, "held": {}}
+            elif job == "anchor":                                   # two days untouched: the same picture from a new anchor
+                if p["anchor"] is None:
+                    return False
+                job = {"epoch": p["epoch"], "id": p["id"], "values": {}, "controls": {}, "held": dict(p.get("held") or {}), "anchor": True}
             if (job["epoch"], job["id"]) != (p["epoch"], p["id"]):
                 return False                                        # that shader has gone: the wish goes with it
             try:
                 parsed, digest = self._parsed(self._path(p["id"])[0])
                 state = {"values": dict(p["values"], **job["values"]), "held": dict(job["held"]), "hue": p["hue"],
-                         "controls": dict(p["controls"], **job["controls"]), "offset": p["offset"], "anchor": p["anchor"]}
-                if state["anchor"] is not None and state["controls"]["speed"] != p["controls"]["speed"]:
-                    state["offset"], state["anchor"] = self.time_of(p)      # TIME goes on from where it is, at the new pace
+                         "controls": self.limit(parsed, dict(p["controls"], **job["controls"])), "offset": p["offset"], "anchor": p["anchor"]}
+                since = p.get("since")
+                if state["anchor"] is not None and (state["controls"]["speed"] != p["controls"]["speed"] or job.get("anchor")):
+                    state["offset"], state["anchor"], since = self.time_of(p)       # TIME goes on from where it is, at the new pace
                 desc = "nxlx shader %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, p["size"], state, desc)
                 key = (digest, S.shape_of(parsed, dict(state["values"], **state["held"])))
             except (ShaderError, ApiError) as e:
                 self.error = {"id": p["id"], "message": str(getattr(e, "message", e)), "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+                return False
+            if key in self._bad:                    # the GPU has refused exactly this before: it is not asked again
+                self.error = {"id": p["id"], "message": self._bad[key], "at": time.strftime("%Y-%m-%d %H:%M:%S")}
                 return False
             player = self.api.player
             try:
@@ -837,15 +1007,20 @@ class LiveEngine(S.Engine):
                     pass
                 self._cleanup({p["path"]})
                 self.error = {"id": p["id"], "message": message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+                if len(self._bad) >= 256:
+                    self._bad.clear()
+                self._bad[key] = message
                 self.log("pvj-web: shader %s refused with new values: %s" % (p["id"], message))
                 return False
             if verdict == "ok":
                 self._checked.add(key)
             preset = p.get("preset") if not job["values"] and not job["controls"] else job.get("preset")
             self.playing = dict(p, values=state["values"], held=state["held"], controls=state["controls"], offset=state["offset"],
-                                anchor=state["anchor"], path=out, desc=desc, digest=digest, preset=preset,
+                                anchor=state["anchor"], since=since, path=out, desc=desc, digest=digest, preset=preset,
                                 checked=True if (verdict == "ok" or key in self._checked) else p["checked"])
             self._cleanup({out})
+            if state["anchor"] is not None:
+                self.changer.keep()
             return bool(state["held"])
 
     def play_job(self, job):
@@ -959,11 +1134,17 @@ class LiveEngine(S.Engine):
         events = {i["name"] for i in parsed["inputs"] if i["type"] == "event"}
         held = {n: True for n, v in values.items() if n in events and v}
         values = {n: v for n, v in values.items() if n not in events}
+        if self._bad and (values or held):          # a switch or choice the GPU refused before is refused here, at once
+            wish = self.changer.pending() or {}
+            after = dict(on["values"], **(wish.get("values", {}) if wish.get("epoch") == on["epoch"] else {}))
+            said = self._bad.get((self._digest(on["id"]), S.shape_of(parsed, dict(after, **dict(values, **held)))))
+            if said:
+                raise ApiError(422, "the GPU refused these values before (%s); they were not sent again" % said)
         if values or controls or held:
             self.changer.submit(on, values, controls, held)
         wish = self.changer.pending() or {}
         return {"ok": True, "id": on["id"], "values": dict(self.current_values(parsed, on), **wish.get("values", {})),
-                "controls": dict(on["controls"], **wish.get("controls", {}))}
+                "controls": self.limit(parsed, dict(on["controls"], **wish.get("controls", {})))}
 
     def apply_preset(self, body):
         """{"name": preset} or {"index": 1 to 8} for the shader on screen, or with "id" for another shader, which is
@@ -1056,7 +1237,7 @@ class LiveEngine(S.Engine):
                 base["playing"].update(drops_per_second=seen["drops_per_second"], load=seen["state"])
         seen = self.guard.verdict if on else {}
         active = self.rotation(None, cfg, base["shaders"]) if self.enabled() else None
-        base["config"].update(guard=cfg.get("guard", True), clock=cfg.get("clock", S.CLOCKS[0]))
+        base["config"].update(guard=cfg.get("guard", True), clock=cfg.get("clock", S.CLOCKS[0]), faster=cfg.get("faster", False))
         if active:
             base["config"].update(dwell=active["dwell"], vary=active["vary"])
         base["render"].update(heights=list(S.heights_for(board)), default=S.default_height(board), measured=board == "pi4", board=board)
@@ -1111,14 +1292,10 @@ class LiveEngine(S.Engine):
             self._path(sid)
             if not isinstance(on, bool):
                 raise ApiError(400, "on must be true or false")
-            with self._cfg:
-                cfg = self.config()
-                heavy = cfg.setdefault("heavy", {})
-                if on:
-                    heavy[sid] = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": 0, "height": cfg["height"]}
-                else:
-                    heavy.pop(sid, None)
-                self._save(cfg)
+            if on:
+                self.note_heavy(sid)
+            else:
+                self.unmark([sid])
         elif action == "vibes":                     # in or out of the active set
             sid, on = body.get("id"), body.get("on")
             self._path(sid)
@@ -1134,17 +1311,20 @@ class LiveEngine(S.Engine):
         elif action == "config":
             if "height" in body and (isinstance(body["height"], bool) or body["height"] not in S.heights_for(self.board())):
                 raise ApiError(400, "height must be one of %s on this board" % ", ".join(str(h) for h in S.heights_for(self.board())))
-            for key, ok in (("guard", lambda v: isinstance(v, bool)), ("clock", lambda v: v in S.CLOCKS)):
+            for key, ok in (("guard", lambda v: isinstance(v, bool)), ("faster", lambda v: isinstance(v, bool)), ("clock", lambda v: v in S.CLOCKS)):
                 if key in body and not ok(body[key]):
-                    raise ApiError(400, "guard must be true or false, and clock carrier or frame")
+                    raise ApiError(400, "guard and faster must be true or false, and clock carrier or frame")
             super().api_set(body, device, client)
             with self._cfg:
                 cfg = self.config()
-                for key in ("guard", "clock"):
+                for key in ("guard", "clock", "faster"):
                     if key in body:
                         cfg[key] = body[key]
                 self._save(cfg)
                 self.tune_set(None, cfg["dwell"], cfg["vary"])      # dwell and variation belong to the active set
+            on = self.on_screen()
+            if "faster" in body and on:             # the limit applies to what is on now, not only to the next shader
+                self.changer.submit(on, controls={"speed": on["controls"]["speed"]})
         else:
             return super().api_set(body, device, client)
         return self.state()
