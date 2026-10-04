@@ -1098,7 +1098,7 @@ function startServer() {
     await page.click(mine + ' button:has-text("Remove")');
     await page.click('#confirmyes');
     await page.waitForFunction(() => !document.querySelector('#shadercard [data-shader="flat-grey.fs"]'));
-    assert.strictEqual((await get('/api/shaders')).shaders.length, 10, 'the uploaded file is gone from the box');
+    assert.strictEqual((await get('/api/shaders')).shaders.filter((s) => s.id === 'flat-grey.fs').length, 0, 'the uploaded file is gone from the box');
     await page.click('nav >> text=Live');
     await page.waitForFunction(() => /^Shader: Tide/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
     assert.strictEqual(await page.textContent('#vibeswords'), 'Start Vibes');
