@@ -1289,7 +1289,8 @@
   // -- moving between the index and a page --
   function redrawSystem() {         // only the System screen is rebuilt: the tabs and the rest stay as they are
     var old = app.querySelector('.shell > .screen');
-    if (!old || !S.device || S.tab !== 'system') return render();
+    var roomTab = !!app.querySelector('nav.tabs.many');       // the Room module was just switched: the tabs change too
+    if (!old || !S.device || S.tab !== 'system' || roomTab !== (!!window.pvjRoom && moduleOn('room'))) return render();
     stopTimers();
     keepNetForm();
     keepSyncForm();
@@ -2709,7 +2710,7 @@
     // The Room screen (room.js): one more tab while its module is on. A presenter or a guest starts on it when the
     // page is first loaded or the device has just been paired; nobody already on another screen is ever moved.
     var landing = S.landing !== false;
-    S.landing = false;
+    if (S.modules.length) S.landing = false;      // decided once the modules are known, not by a render that came before them
     if (window.pvjRoom && moduleOn('room')) {
       screens.room = function () { return window.pvjRoom.screen(roomCtx()); };
       names.unshift(['room', 'Room']);

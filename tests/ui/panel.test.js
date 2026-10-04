@@ -488,6 +488,7 @@ function startServer() {
     await page.waitForFunction(() => document.querySelectorAll('.proj-input').length === 2, null, { timeout: 15000 });   // both input lists are read
     await sys('Room');
     await switchOn('Room');
+    await page.waitForFunction(() => /^Room/.test(document.querySelector('nav').textContent));       // the tab is there at once
     await page.waitForSelector('#syspage .card:has-text("Where the room is run and set up")');
     await sysIndex();
     await chip('Room', 'Set up');
