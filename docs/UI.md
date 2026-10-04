@@ -67,11 +67,7 @@ The Live input card (USB capture stick or webcam) appears only when the box has 
 
 ## System
 
-![Vitals card](images/ui/system-vitals.png)
-
-Modules are switched on here. Beta modules are off until you turn them on; modules that are not built yet say so.
-
-![Modules card](images/ui/system-modules.png)
+System is a short list in three groups (Everyday, Show tools, This box), with Health above them and one page per row. Each row has a word for how it is doing (Off, Set up, Ready, Active, Problem) and a sentence. A module's page has its switch at the top right; while the module is off the page shows what it does and one button to switch it on. The cards below are each on their own page.
 
 ### Box and sound output
 

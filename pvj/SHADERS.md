@@ -4,7 +4,7 @@
 
 Moving pictures drawn by the box's GPU instead of played from a file, and **Vibes**: one tap that plays them endlessly for ambience.
 
-Switch the **Shaders and Vibes** module on under System > Modules (beta, off by default). It is offered on a Raspberry Pi 4, a Pi 5 and x86; not on a Pi 3.
+Switch it on under System > Vibes (beta, off by default). Switching it off while a shader is on the screen asks first, because it stops at once. It is offered on a Raspberry Pi 4, a Pi 5 and x86; not on a Pi 3.
 
 **Read this first: nothing here has been seen on a display, and no speed has been measured on any board.** It has run only in automated tests: against a real mpv with Mesa's software GPU on a virtual display in CI (the picture is checked through screenshots), and against fakes. How many frames a second each shader reaches on a Pi 4, a Pi 5 or a PC is unknown. The cost notes below are counts of work per pixel, not measurements.
 
@@ -12,8 +12,8 @@ Switch the **Shaders and Vibes** module on under System > Modules (beta, off by 
 
 - **Live screen: the Vibes button** (presenter, that is live access, and above). It starts the rotation; while it is on, the button stops it. "Now playing" shows `Vibes: <shader>`.
 - **Mix screen: the Shaders and Vibes card.** The list of shaders with **Play** (live access): one shader, until something else is played. The shader on screen shows its number inputs as sliders; a change is sent when you let go. Full-access devices also see: **In Vibes / Not in Vibes** per shader, **Delete** for uploads, the dwell time, variation on or off, the drawing size, and **Upload an ISF shader**.
-- **Autostart**: mode **Vibes** (System > Autostart). **Schedule**: the action **Start Vibes**. **OSC**: `/pvj/vibes` (press) starts it, `/pvj/vibes/next` goes to the next shader, the usual `/pvj/stop` ends it.
-- **MIDI**: the actions **Vibes on / off**, **Vibes: next shader** and **Vibes: time each shader stays** (a knob or fader), assigned with Learn under System > MIDI controllers ([MIDI.md](MIDI.md)). **DMX**: an optional ninth channel: 50 to 99 stop, 100 to 149 start, 150 to 199 next ([DMX.md](DMX.md)). Both act as a presenter through the same call as the panel, under the same limit of 50 commands a second, and do nothing while this module is off (the log says so once). Neither has been tried with a real controller or console.
+- **Autostart**: mode **Vibes** (System > At power-up). **Schedule**: the action **Start Vibes**. **OSC**: `/pvj/vibes` (press) starts it, `/pvj/vibes/next` goes to the next shader, the usual `/pvj/stop` ends it.
+- **MIDI**: the actions **Vibes on / off**, **Vibes: next shader** and **Vibes: time each shader stays** (a knob or fader), assigned with Learn under System > MIDI controller ([MIDI.md](MIDI.md)). **DMX**: an optional ninth channel: 50 to 99 stop, 100 to 149 start, 150 to 199 next ([DMX.md](DMX.md)). Both act as a presenter through the same call as the panel, under the same limit of 50 commands a second, and do nothing while this module is off (the log says so once). Neither has been tried with a real controller or console.
 - Opacity, Fade in and out, Blackout, the overlay picture, mirror, rotate and the projection mapping apply to a shader as to a clip. Speed changes how fast it moves; Freeze stops it.
 
 ### Vibes

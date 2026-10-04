@@ -47,6 +47,8 @@ Owner's open items: a layout board at https://claude.ai/artifact/Bc24QHaMhyeS3eZ
 
 ## What exists
 
+The System screen is an index of rows in three groups with one page per row (D42): a module is switched on its own page (System > Projectors, System > Vibes and so on), and each row shows a state chip. Next for it: fold the inner DMX, MIDI, Schedule and OSC switches into the page switch (approved by the owner), move the Vibes settings onto the Vibes page, and sync `tools/panel-playground/src/panel.css`.
+
 Merged to `master`: the security hotfix, the platform layer, the installer and services, the image definition, and the new core in Python 3 (API, panel, modules, themes, OSC receive, signed updates with rollback). On top of that, each with its own notes:
 
 | Feature | Notes | Default |

@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Streams: SRT, RTSP, RTMP (beta)
 
-Save network stream addresses and play them like clips. Switch on **Streams: SRT, RTSP, RTMP** under System > Modules, then use System > Streams. Full-access devices add and remove streams; live devices can play them; view devices see the list.
+Save network stream addresses and play them like clips. Switch it on under System > Streams. Full-access devices add and remove streams; live devices can play them; view devices see the list.
 
 ## Safety
 

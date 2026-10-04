@@ -1,6 +1,6 @@
 # Network settings (wired and Wi-Fi)
 
-Change the box's wired and Wi-Fi network from the panel (System, Network). It is the **Network** module: beta, **off by default**, needs NetworkManager (Raspberry Pi OS Bookworm and Trixie, and most desktop Linux, have it). Switch it on in System, Modules.
+Change the box's wired and Wi-Fi network from the panel (System, Network). It is the **Network** module: beta, **off by default**, needs NetworkManager (Raspberry Pi OS Bookworm and Trixie, and most desktop Linux, have it). Switch it on on that page.
 
 A gig usually runs on a **direct Ethernet cable** or a small private switch, so wired comes first. Wi-Fi is for a room where staff use a phone or a wall tablet, or where a cable cannot reach.
 

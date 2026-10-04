@@ -7,7 +7,8 @@
   var ACCENTS = ['#f59e0b', '#c2410c', '#22d3ee', '#e879f9', '#a3e635', '#ffffff'];
   var S = {
     tab: 'live', device: null, status: null, banks: [], bank: 0, media: [], modules: [], theme: null,
-    themes: [], devices: [], editing: false, sheet: null, msg: '', msgErr: false, token: null, failures: 0
+    themes: [], devices: [], editing: false, sheet: null, msg: '', msgErr: false, token: null, failures: 0,
+    sys: null, sysData: {}, sysFresh: false   // System: the page that is open (null: the index), what each row last answered
   };
   var app = document.getElementById('app');
   var offlineBanner = document.getElementById('offline');
@@ -61,6 +62,7 @@
         S.failures = 0;
         offlineBanner.hidden = true;
         if (r.status === 401 && S.device) { S.device = null; render(); }
+        if (method === 'POST' && r.ok) pageStateSoon();   // a System page's state line follows what was just changed
         return { ok: r.ok, status: r.status, data: data };
       });
     }, function () {
@@ -543,7 +545,7 @@
     var mod = S.modules.filter(function (m) { return m.id === 'mapper'; })[0];
     if (!mod || !mod.enabled) {
       body.textContent = '';
-      body.appendChild(h('div', { class: 'k', id: 'mapmsg', text: 'Off. Switch on "Projection mapper" under System > Modules (beta).' }));
+      body.appendChild(h('div', { class: 'k', id: 'mapmsg', text: 'Off. Switch it on under System, Projection mapping (beta).' }));
       return card;
     }
     var full = can('full'), d = null, canvas = null, drag = null, lastSend = 0, waiting = null;
@@ -967,29 +969,458 @@
   }
 
   // ---- system ---------------------------------------------------------
+  // A short index of rows in three groups, and one page per row. S.sys is the open page (null: the index).
+  // Each row can say how it is doing (a chip and a sentence), worked out from the same GET calls the cards use.
+  var confirmTimer = null, pageStateTimer = null;
+  var CHIPS = { off: 'Off', setup: 'Set up', ready: 'Ready', active: 'Active', problem: 'Problem', check: 'Check' };
+  var SYS_GROUPS = [['everyday', 'Everyday'], ['show', 'Show tools'], ['box', 'This box']];
+  function mod(id) { return S.modules.filter(function (x) { return x.id === id; })[0]; }
+  function plural(n, word, many) { return n + ' ' + (n === 1 ? word : (many || word + 's')); }
+  function st(chip, text) { return { chip: chip, text: text }; }
+  function goTab(tab) {
+    if (history.state && history.state.sys) history.replaceState(null, '');   // the page left behind is not one to come back to
+    S.tab = tab; S.msg = ''; S.sys = null; S.sysFresh = false;
+    loadAll().then(render);
+  }
+  function pointerCard(title, lines, buttons) {      // a page whose controls live on another screen says where
+    return h('div', { class: 'card' }, h('h2', { text: title }),
+      lines.map(function (t) { return h('p', { class: 'hint', text: t }); }),
+      h('div', { class: 'row wrap' }, buttons.map(function (b) { return h('button', { class: 'btn', text: b[1], onclick: function () { goTab(b[0]); } }); })));
+  }
+  function sysRows() {
+    var full = can('full'), remote = !!(S.device && S.device.remote);
+    var rows = [
+      { id: 'health', group: 'top', name: 'Health', role: 'view', url: '/api/health',
+        blurb: 'Whether the box is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
+        body: function () { return [healthCard()]; } },
+      { id: 'projectors', group: 'everyday', name: 'Projectors', role: 'live', module: 'projector', url: '/api/projectors',
+        blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. Not yet tried on a real projector.',
+        confirmOff: function (ask) { ask('The box stops checking the projectors. They stay as they are.'); },
+        body: function () { return [projectorsCard(full)]; } },
+      { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'full', module: 'scheduler', url: '/api/schedule',
+        blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
+        body: function () { return [scheduleCard()]; } },
+      { id: 'vibes', group: 'everyday', name: 'Vibes', role: 'live', module: 'shaders', url: '/api/shaders',
+        blurb: 'Moving patterns the box draws by itself, in place of a clip. Vibes plays them one after another, endlessly, for ambience. How fast they run on this box is not measured yet.',
+        confirmOff: function (ask) {
+          var pl = (S.status && S.status.player) || {};
+          ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
+        },
+        body: vibesPage },
+      { id: 'access', group: 'everyday', name: 'People and codes', role: 'full', url: '/api/access', urlRole: 'full',
+        blurb: 'The phones and tablets paired with this box, codes for guests and presenters, and the PIN.',
+        body: function () { return [accessCard()]; } },
+      { id: 'sound', group: 'everyday', name: 'Sound', role: 'live', url: '/api/audio',
+        blurb: 'Where the sound comes out, and a test tone to check left and right.',
+        body: function () { return [audioCard(full)]; } },
+      { id: 'autostart', group: 'show', name: 'At power-up', role: 'full', url: '/api/autostart',
+        blurb: 'What the box plays by itself when it is powered up, with nobody at the panel.',
+        body: function () { return [autostartCard(full)]; } },
+      { id: 'streams', group: 'show', name: 'Streams', role: 'live', module: 'inputs-srt', url: '/api/streams',
+        blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
+        body: function () { return [streamsCard(full)]; } },
+      { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',
+        blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
+        confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
+        body: function () {
+          return [pointerCard('Where the controls are', ['The mapping is placed and switched on with the Projection mapping card on the Mix screen.'], [['mix', 'Open Mix']])];
+        } },
+      { id: 'sync', group: 'show', name: 'Boxes in step', role: 'live', module: 'wall', url: '/api/sync',
+        blurb: 'Several boxes play together: one server leads and the clients follow its clip, position, pause and blackout. Each box can also show one tile of a video wall.',
+        confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other boxes stop following.' : null); }); },
+        body: function () { return [syncCard()]; } },
+      { id: 'midi', group: 'show', name: 'MIDI controller', role: 'full', module: 'control-midi', url: '/api/midi', urlRole: 'full',
+        blurb: 'Play pads, fade and mix from a USB pad controller, keyboard or fader box. The box only listens; it sends nothing back.',
+        body: function () { return [midiCard()]; } },
+      { id: 'dmx', group: 'show', name: 'DMX lighting desk', role: 'full', module: 'control-dmx', url: '/api/dmx', urlRole: 'full',
+        blurb: 'Control the box from a lighting desk or lighting software over the network (Art-Net or sACN): opacity, size, position, speed, volume, blackout and pads. The box only listens.',
+        body: function () { return [dmxCard()]; } },
+      { id: 'osc', group: 'show', name: 'OSC', role: 'full', url: '/api/osc',
+        blurb: 'Control the box from TouchOSC, QLab, Resolume and other programs that send OSC messages over the network.',
+        body: function () { return [oscCard()]; } },
+      { id: 'network', group: 'box', name: 'Network', role: 'full', module: 'network', url: '/api/network', urlRole: 'full',
+        blurb: 'Change the box\'s wired and Wi-Fi network: automatic, a fixed address, a direct cable, handing out addresses, joining a Wi-Fi network or making its own hotspot. Every change goes back by itself unless you confirm it.',
+        body: function () { return [networkCard()]; } },
+      { id: 'updates', group: 'box', name: 'Updates', role: 'full', url: '/api/system',
+        blurb: 'Install a newer version from a USB stick or an upload. Only updates signed with your key are taken, and a failed one goes back by itself.',
+        body: function () { return [updateCard()]; } },
+      { id: 'support', group: 'box', name: 'Remote support', role: 'full', url: '/api/support',
+        blurb: 'Let someone you trust help from far away, for a set time. Nothing can reach the box until you allow it and start a session.',
+        body: function () { return [supportCard()]; } },
+      { id: 'backup', group: 'box', name: 'Backup and reset', role: 'full',
+        fact: function () { return remote ? 'Settings file, diagnostics' : 'Settings file, diagnostics, factory reset'; },
+        blurb: 'Save or load this box\'s settings as a file, make a file for whoever is helping you, or start over.',
+        body: function () {
+          var cards = boxCareCards(), last = cards[cards.length - 1];
+          if (last && last.id === 'resetcard') cards.splice(cards.length - 1, 0, h('h2', { class: 'danger-h', id: 'dangerhead', text: 'Danger' }));
+          return cards;
+        } },
+      { id: 'look', group: 'box', name: 'Look', role: 'full',
+        fact: function () { var t = S.themes.filter(function (x) { return S.theme && x.id === S.theme.name; })[0]; return t ? t.name : ''; },
+        blurb: 'The panel\'s colours, on every paired device.',
+        body: function () { return [appearanceCard()]; } },
+      { id: 'about', group: 'box', name: 'About and power', role: 'view', url: '/api/system',
+        blurb: 'What this box is, its versions, storage, screens and clock, and restarting it.',
+        body: aboutPage }
+    ];
+    // A module nobody gave a row still gets one, so it can always be switched.
+    var known = rows.map(function (r) { return r.module; });
+    S.modules.forEach(function (m) {
+      if (m.type === 'core' || m.status !== 'ready' || known.indexOf(m.id) >= 0) return;
+      rows.push({ id: 'mod-' + m.id, group: 'show', name: m.name, role: 'full', module: m.id, blurb: m.description });
+    });
+    return rows;
+  }
+  function rowShown(row) {
+    if (!can(row.role) && !(row.id === 'support' && S.device && S.device.remote)) return false;
+    if (!row.module) return true;
+    var m = mod(row.module);
+    if (!m || m.status !== 'ready' || !m.supported) return false;
+    return can('full') || m.enabled;        // nobody gets a row they cannot use
+  }
+  function rowFetchable(row) { return !!row.url && can(row.urlRole || 'view') && (!row.module || moduleOn(row.module)); }
+
+  // -- what each row says about itself --
+  function schedWhat(e) {
+    return e.action === 'play' ? 'Play ' + e.file : e.action === 'preset' ? 'Start script ' + e.preset :
+      ({ stop: 'Stop', blackout: 'Blackout', show: 'Show screen', projector_on: 'Projectors on', projector_off: 'Projectors off', vibes: 'Start Vibes' })[e.action] || e.action;
+  }
+  function schedNext(d) {       // the next entry by the box's own clock; days count from Monday
+    var m = /^(\d+)-(\d+)-(\d+) (\d+):(\d+)/.exec(d.now || '');
+    if (!m) return '';
+    var today = (new Date(+m[1], +m[2] - 1, +m[3]).getDay() + 6) % 7, nowMin = +m[4] * 60 + +m[5], best = null;
+    d.entries.forEach(function (e) {
+      var t = /^(\d+):(\d+)$/.exec(e.time || '');
+      if (!t) return;
+      var at = +t[1] * 60 + +t[2];
+      (e.days || []).forEach(function (day) {
+        var off = (day - today + 7) % 7;
+        if (off === 0 && at <= nowMin) off = 7;
+        if (!best || off * 1440 + at < best.key) best = { key: off * 1440 + at, off: off, e: e };
+      });
+    });
+    return best ? (best.off === 0 ? '' : DAYS[(today + best.off) % 7] + ' ') + best.e.time + ' ' + schedWhat(best.e) : '';
+  }
+  var SYS_STATE = {
+    health: function (d) {
+      var host = /^https?:\/\/([^.\/:]+)\.local/.exec((d.addresses || [])[0] || ''), name = host ? host[1] : 'This box';
+      var lines = [['Power', d.power], ['Temperature', d.temperature], ['Player', d.player]];
+      (d.helpers || []).forEach(function (x) { if (!x.running && x.name !== 'pvj-netd') lines.push([x.label, { state: 'bad', text: 'Not running' }]); });
+      (d.projectors || []).forEach(function (x) { lines.push(['Projector ' + x.name, x]); });
+      var worst = lines.filter(function (l) { return l[1] && l[1].state === 'bad'; })[0] || lines.filter(function (l) { return l[1] && l[1].state === 'warn'; })[0];
+      if (!worst) return st(null, name + ' · all well');
+      return st(worst[1].state === 'bad' ? 'problem' : 'check', worst[0] + ': ' + worst[1].text);
+    },
+    projectors: function (d) {
+      var ps = d.projectors, n = ps.length;
+      if (!n) return st('setup', 'No projectors added yet');
+      var silent = ps.filter(function (p) { return p.status && p.status.ok === false; });
+      if (silent.length) return st('problem', silent[0].name + ' does not answer');
+      var warned = ps.filter(function (p) { var w = (p.status || {}).warnings || {}; return Object.keys(w).some(function (k) { return w[k] === 'error' || w[k] === 'warning'; }); });
+      if (warned.length) return st('problem', warned[0].name + ' has a warning');
+      var lit = ps.filter(function (p) { return /^(on|warming)/.test((p.status || {}).power || ''); });
+      if (lit.length) return st('active', lit.length + ' of ' + n + ' on');
+      var answered = ps.filter(function (p) { return p.status && p.status.ok; });
+      return st('ready', answered.length === n ? plural(n, 'projector') + ', none on' : 'Checking...');
+    },
+    schedule: function (d) {
+      if (!d.enabled) return st('off', 'On, but not running: turn the schedule on inside');
+      if (!d.entries.length) return st('setup', 'No entries yet');
+      var failed = d.entries.filter(function (e) { return d.last && d.last[e.id] && d.last[e.id].ok === false; });
+      if (failed.length) return st('problem', 'Last run failed: ' + (failed[0].label || schedWhat(failed[0])));
+      var next = schedNext(d);
+      return st('ready', next ? 'Next: ' + next : plural(d.entries.length, 'entry', 'entries'));
+    },
+    vibes: function (d) {
+      if (d.error) return st('problem', 'A shader was refused: ' + d.error.id);
+      if (d.vibes && d.vibes.running) return st('active', 'Vibes is on' + (d.playing ? ': ' + d.playing.name : ''));
+      if (d.playing) return st('active', 'Playing: ' + d.playing.name);
+      var n = d.shaders.filter(function (s) { return s.vibes && !s.error; }).length;
+      return n ? st('ready', plural(n, 'shader') + ' in the rotation') : st('setup', 'No shader is in the rotation');
+    },
+    access: function (d) {
+      var guests = d.codes.filter(function (c) { return c.role === 'view'; }).length, presenters = d.codes.length - guests;
+      return st(null, [plural(S.devices.length, 'device'), guests ? plural(guests, 'guest code') : '', presenters ? plural(presenters, 'presenter code') : ''].filter(Boolean).join(', '));
+    },
+    sound: function (d) {
+      var name = d.device === 'auto' ? d.automatic_is : d.device, dev = d.devices.filter(function (x) { return x.name === name; })[0];
+      return st(null, (d.device === 'auto' ? 'Automatic' : 'Fixed') + (dev && dev.description ? ': ' + dev.description : ''));
+    },
+    autostart: function (d) {
+      var c = d.config;
+      if (c.mode === 'off') return st('off', 'The box waits for you at power-up');
+      if (d.last && d.last.ok === false) return st('problem', 'Last run failed: ' + d.last.message);
+      return st('ready', ({ file: 'Plays ' + c.file, all: 'Plays every clip', slideshow: 'Shows the pictures', pad: 'Plays a pad', usb: 'Plays the USB stick',
+        preset: 'Runs ' + c.preset, vibes: 'Starts Vibes' })[c.mode] || c.mode);
+    },
+    streams: function (d) {
+      var pl = (S.status && S.status.player) || {};
+      if (!d.streams.length) return st('setup', 'No streams saved yet');
+      if (pl.stream) return st('active', 'Playing: ' + pl.stream);
+      return st('ready', d.streams.length + ' saved');
+    },
+    mapping: function (d) {
+      var state = (d.status || {}).state;
+      if (state === 'error') return st('problem', d.status.message || 'The mapping could not be shown');
+      if (!d.surfaces.length) return st('setup', 'No surfaces yet: add one on Mix');
+      if (d.edit && d.edit.on) return st('active', 'Being placed, with outlines on the display');
+      if (d.on || state === 'building') return st('active', state === 'building' ? 'Being worked out' : 'On the screen');
+      return st('ready', plural(d.surfaces.length, 'surface') + ', not on the screen');
+    },
+    sync: function (d) {
+      var c = d.config;
+      if (d.error) return st('problem', d.error);
+      if (c.role === 'off') return st('setup', 'No role chosen: choose server or client inside');
+      if (c.role === 'server') return st('active', 'Server of group "' + c.group + '"');
+      return d.server ? st('active', 'Following ' + d.server) : st('problem', 'Listening for a server');
+    },
+    midi: function (d) {
+      if (!d.enabled) return st('off', 'On, but not listening: turn it on inside');
+      if (!d.devices.length) return st('setup', 'No controller plugged in');
+      var deaf = d.devices.filter(function (x) { return !x.connected; });
+      if (deaf.length) return st('problem', deaf[0].name + ' is not reading');
+      return st('ready', plural(d.devices.length, 'controller') + ': ' + d.devices.map(function (x) { return x.name; }).join(', '));
+    },
+    dmx: function (d, before) {
+      if (!d.enabled) return st('off', 'On, but not listening: turn it on inside');
+      if (d.error) return st('problem', d.error);
+      if (before && before.enabled && d.received > before.received) return st('active', 'Frames arriving');
+      return st('ready', d.received ? 'Listening, ' + plural(d.received, 'frame') + ' so far' : 'Listening, nothing received yet');
+    },
+    osc: function (d) {
+      if (!d.enabled) return st('off', '');
+      if (d.error) return st('problem', d.error);
+      return st('ready', d.listening ? 'Listening on UDP ' + d.port : 'Starting');
+    },
+    network: function (d) {
+      if (!d.helper) return st('problem', 'The network helper is not running');
+      if (d.reverting) return st('problem', 'Going back to the previous network');
+      if (d.pending) return st('active', 'A change is waiting for your confirmation');
+      var addr = [];
+      d.interfaces.forEach(function (i) { if (i.kind === 'wired') addr = addr.concat(i.addresses || []); });
+      var ports = (d.wifi && d.wifi.ports) || {}, air = Object.keys(ports).filter(function (k) { return ports[k] && ports[k].ssid; }).map(function (k) { return (ports[k].hotspot ? 'Own hotspot: ' : 'Wi-Fi: ') + ports[k].ssid; });
+      return st('ready', air.concat(addr.length ? ['wired: ' + addr.join(', ')] : []).join(', ') || 'No wired address');
+    },
+    updates: function (d) { return st(null, 'Version ' + d.version); },
+    support: function (d) {
+      var c = d.config;
+      if (!c) return d.active ? st('active', 'Session open, ' + mins(d.seconds_left) + ' left') : st(null, 'No session');
+      if (!c.allowed) return st('off', 'Not allowed');
+      if (d.available === false) return st('problem', 'Not available on this box');
+      if (d.active) return st('active', 'Session open, ' + mins(d.seconds_left) + ' left');
+      return d.configured ? st('ready', 'Allowed, no session open') : st('setup', 'Allowed, but the support server is not filled in');
+    },
+    about: function (d) {
+      var sys = (S.status && S.status.system) || {};
+      return st(null, [d.board, typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '', d.disk ? gb(d.disk.free) + ' free' : ''].filter(Boolean).join(' · '));
+    }
+  };
+  function sysState(row) {
+    var m = row.module ? mod(row.module) : null;
+    if (row.module && !(m && m.enabled)) return st('off', '');
+    if (!row.url) return row.module ? st('ready', 'On') : st(null, row.fact ? row.fact() : '');
+    var d = S.sysData[row.id];
+    if (!d) return st(null, '');              // not asked yet, or not for this device to ask
+    try { return SYS_STATE[row.id](d.now, d.before); } catch (e) { return st(null, ''); }   // an answer in a shape not foreseen: say nothing, never break the screen
+  }
+  function showState(chip, text, state, words) {
+    chip.className = 'chip' + (state.chip ? ' chip-' + state.chip : '');
+    chip.textContent = state.chip ? CHIPS[state.chip] : '';
+    chip.hidden = !state.chip;
+    text.textContent = words === undefined ? state.text : words;
+  }
+  function patchRow(row) {
+    var el = document.getElementById('nav-' + row.id);
+    if (el) showState(el.querySelector('.chip'), el.querySelector('.navstate'), sysState(row));
+  }
+  function keepAnswer(row, r) {
+    if (r.ok) S.sysData[row.id] = { now: r.data, before: (S.sysData[row.id] || {}).now };
+    else delete S.sysData[row.id];
+  }
+  // Asked once when the index opens and again on each return to it; an answer only repaints its own row.
+  function loadSysStates() {
+    var asked = {};
+    sysRows().filter(rowShown).forEach(function (row) {
+      if (!rowFetchable(row)) { delete S.sysData[row.id]; return patchRow(row); }
+      (asked[row.url] = asked[row.url] || api('GET', row.url)).then(function (r) { keepAnswer(row, r); patchRow(row); });
+    });
+  }
+  function indexHealth() {        // Health keeps its own poll while the index is open
+    clearTimeout(healthTimer);
+    if (!document.getElementById('nav-health')) return;
+    api('GET', '/api/health').then(function (r) {
+      if (!document.getElementById('nav-health')) return;
+      var row = { id: 'health', url: '/api/health' };
+      keepAnswer(row, r); patchRow(row);
+      clearTimeout(healthTimer);
+      healthTimer = setTimeout(indexHealth, 5000);
+    });
+  }
+  // The open page's own state line: read when the page is drawn and after each change made on it.
+  function pageState() {
+    var line = document.getElementById('sysstate');
+    var row = S.sys && sysRows().filter(function (r) { return r.id === S.sys; })[0];
+    if (!line || !row || !row.url) return;
+    function show() {
+      var state = sysState(row);
+      line.hidden = !state.chip || !!row.module && !moduleOn(row.module);    // an off module's page already says Off
+      showState(line.querySelector('.chip'), line.querySelector('.hint'), state, state.text.replace(/ inside$/, ' below'));
+    }
+    if (!rowFetchable(row)) { delete S.sysData[row.id]; return show(); }
+    api('GET', row.url).then(function (r) { if (line.isConnected) { keepAnswer(row, r); show(); } });
+  }
+  function pageStateSoon() {
+    if (S.tab !== 'system' || !S.sys) return;
+    clearTimeout(pageStateTimer);
+    pageStateTimer = setTimeout(pageState, 500);
+  }
+
+  // -- moving between the index and a page --
+  function redrawSystem() {         // only the System screen is rebuilt: the tabs and the rest stay as they are
+    var old = app.querySelector('.shell > .screen');
+    if (!old || !S.device || S.tab !== 'system') return render();
+    stopTimers();
+    keepNetForm();
+    keepSyncForm();
+    old.parentNode.replaceChild(system(), old);
+  }
+  function openSys(id) {
+    S.sys = id; S.msg = '';
+    history.pushState({ sys: id }, '');
+    redrawSystem();
+    window.scrollTo(0, 0);
+  }
+  function sysBack() {
+    if (history.state && history.state.sys) return history.back();     // the popstate listener draws the index
+    S.sys = null; S.msg = ''; S.sysFresh = false;
+    redrawSystem();
+    window.scrollTo(0, 0);
+  }
   function system() {
-    var st = S.status || {}, sys = st.system || {}, pl = st.player || {};
-    var full = can('full');
-    var vitals = h('div', { class: 'card' }, h('h2', { text: 'Vitals' }),
-      kv('Board', sys.model || sys.board || '?'),
-      kv('Temperature', typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : 'n/a'),
-      kv('Player', pl.running ? 'Running' : 'Not running'),
-      kv('This device', S.device ? S.device.name + ' (' + S.device.role + ')' : ''));
-    var cards = [vitals, healthCard(), boxCard()];
-    cards.push(modulesCard(full), audioCard(full), autostartCard(full), streamsCard(full), projectorsCard(full), syncCard());
-    if (full || (S.device && S.device.remote)) cards.push(supportCard());
-    if (full) cards.push(updateCard());
-    if (full) cards.push.apply(cards, boxCareCards());
-    if (full) cards.push(scheduleCard(), networkCard(), oscCard(), dmxCard(), midiCard(), appearanceCard(), accessCard(), h('div', { class: 'card' }, h('h2', { text: 'Player' }),
-      h('button', { class: 'btn', text: 'Restart player now', onclick: function () { act('POST', '/api/player/restart', {}, function () { say('Player restarting. The service brings it straight back.'); }); } })));
-    cards.push(h('button', { class: 'btn', text: 'Forget this device', onclick: function () {
-      if (!S.device) return;
-      if (full) return say('Full-access devices are removed from the list above.', true);
-      S.device = null; render();
-    } }));
-    return h('div', { class: 'screen' }, h('div', { class: 'top' }, h('h1', { text: 'System' })),
+    var row = S.sys && sysRows().filter(function (r) { return r.id === S.sys && rowShown(r); })[0];
+    if (row) return sysPage(row.id, row.name, row.blurb, row);
+    S.sys = null;
+    return sysIndex();
+  }
+  function sysIndex() {
+    var rows = sysRows().filter(rowShown);
+    function nav(row) {
+      var state = sysState(row);
+      return h('button', { class: 'navrow', id: 'nav-' + row.id, onclick: function () { openSys(row.id); } },
+        h('span', { class: 'navname', text: row.name }),
+        h('span', { class: 'chip' + (state.chip ? ' chip-' + state.chip : ''), hidden: !state.chip, text: state.chip ? CHIPS[state.chip] : '' }),
+        h('span', { class: 'navstate', text: state.text }));
+    }
+    function group(id, title) {
+      var mine = rows.filter(function (r) { return r.group === id; });
+      return mine.length ? h('div', { class: 'card navgroup', id: 'group-' + id }, title ? h('h2', { class: 'navhead', text: title }) : null, mine.map(nav)) : null;
+    }
+    function fold(id, title, list) {      // modules that cannot be switched: named and described, no switches
+      return list.length ? h('details', { class: 'card fold', id: id }, h('summary', { text: title + ' (' + list.length + ')' }),
+        h('div', { class: 'list' }, list.map(function (m) {
+          return h('div', { class: 'item' }, h('span', {}, m.name, h('br'), h('span', { class: 'hint', text: m.description })));
+        }))) : null;
+    }
+    var optional = can('full') ? S.modules.filter(function (m) { return m.type !== 'core'; }) : [];
+    if (!S.sysFresh) { S.sysFresh = true; setTimeout(loadSysStates, 0); }
+    clearTimeout(healthTimer);
+    healthTimer = setTimeout(indexHealth, 5000);
+    return h('div', { class: 'screen', id: 'sysindex' }, h('div', { class: 'top' }, h('h1', { text: 'System' })),
       h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
-      h('div', { class: 'grid2' }, cards));
+      group('top', ''),
+      SYS_GROUPS.map(function (g) { return group(g[0], g[1]); }),
+      fold('notbuilt', 'Not built yet', optional.filter(function (m) { return m.status === 'planned'; })),
+      fold('notonboard', 'Not on this board', optional.filter(function (m) { return m.status === 'ready' && !m.supported; })));
+  }
+
+  // -- the page shell --
+  // A page's switch is a list of steps, each { isOn(), set(value) -> the API's answer }. Today there is one step, the
+  // module. A later slice adds the feature's own "enabled" flag as a second step (opts.steps): the switch then shows
+  // On only when every step is on, and switching on runs them in order.
+  function moduleStep(id) {
+    return { isOn: function () { return moduleOn(id); },
+      set: function (value) { return api('POST', '/api/modules/' + id, { enabled: value }).then(function (r) { if (r.ok) S.modules = r.data.modules; return r; }); } };
+  }
+  function runSwitch(steps, on) {
+    if (!on) return steps[0].set(false);
+    return steps.reduce(function (before, step) {
+      return before.then(function (r) { return !r.ok || step.isOn() ? r : step.set(true); });
+    }, Promise.resolve({ ok: true, data: {} }));
+  }
+  // Replaces the tapped control's row with a question, a danger button and a plain one; "no", or 8 seconds, puts it back.
+  function confirmRow(question, yesText, noText, onYes, control) {
+    var row = control.closest('.row') || control.parentNode;
+    clearTimeout(confirmTimer);
+    var box = h('div', { class: 'confirm', id: 'confirmrow', role: 'alert' }, h('span', { text: question }));
+    function revert() { clearTimeout(confirmTimer); if (box.parentNode) box.parentNode.removeChild(box); row.hidden = false; }
+    box.appendChild(h('div', { class: 'row' },
+      h('button', { class: 'btn danger grow', id: 'confirmyes', text: yesText, onclick: function () { revert(); onYes(); } }),
+      h('button', { class: 'btn grow', id: 'confirmno', text: noText, onclick: revert })));
+    row.hidden = true;
+    row.parentNode.insertBefore(box, row.nextSibling);
+    confirmTimer = setTimeout(revert, 8000);
+  }
+  function flipSwitch(opts, steps, on, control) {
+    function go() {
+      runSwitch(steps, on).then(function (r) {
+        if (!r.ok) return say(r.data.error || 'Could not switch it ' + (on ? 'on' : 'off') + '.', true);
+        S.sysFresh = false;
+        say(on ? 'Switched on.' : 'Switched off.');
+        redrawSystem();
+      });
+    }
+    if (on || !opts.confirmOff) return go();
+    opts.confirmOff(function (question) {
+      if (!question) return go();
+      if (control.isConnected && !document.getElementById('confirmrow')) confirmRow(question, 'Switch off', 'Keep it on', go, control);
+    });
+  }
+  function sysPage(id, title, blurb, opts) {
+    opts = opts || {};
+    var full = can('full');
+    var steps = opts.module ? [moduleStep(opts.module)].concat(opts.steps || []) : null;
+    var on = !steps || steps.every(function (s) { return s.isOn(); });
+    var head = h('div', { class: 'top syshead' }, h('h1', { text: title }));
+    if (steps && full) {
+      var sw = h('button', { class: 'switch', id: 'sysswitch', role: 'switch', 'aria-checked': on ? 'true' : 'false', 'aria-label': title,
+        onclick: function () { flipSwitch(opts, steps, !on, sw); } });
+      head.appendChild(h('span', { class: 'row switchwrap' }, h('span', { class: 'switchlabel', id: 'sysswitchlabel', text: on ? 'On' : 'Off' }), sw));
+    }
+    var body = on ? h('div', { class: 'grid2', id: 'sysbody' }, opts.body ? opts.body() : null) :
+      h('div', { class: 'card', id: 'sysoff' }, h('div', { text: 'Off. Your settings are kept while it is off.' }),
+        full ? h('button', { class: 'btn on big', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } }) : null);
+    setTimeout(pageState, 0);
+    return h('div', { class: 'screen syspage', id: 'syspage', 'data-page': id },
+      h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: '‹ System', onclick: sysBack })),
+      head,
+      h('p', { class: 'hint', id: 'sysblurb', text: blurb || '' }),
+      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
+      h('div', { class: 'row', id: 'sysstate', hidden: true }, h('span', { class: 'chip' }), h('span', { class: 'hint' })),
+      body);
+  }
+  // Vibes: started on Live. Its settings are still on Mix; they get their own card here when they move.
+  function vibesPage() {
+    return [
+      pointerCard('Start Vibes on Live', ['Vibes is started with the big Vibes button on the Live screen: one tap plays the shaders endlessly, another tap stops them.',
+        'It can also start by itself: at power-up, from the schedule, or from OSC, MIDI and DMX.'], [['live', 'Open Live']]),
+      pointerCard('Vibes settings', ['Which shaders are in the rotation, how long each one stays, the drawing size and your own uploads are on the Shaders card on the Mix screen.'], [['mix', 'Open Mix']])
+    ];
+  }
+  function aboutPage() {
+    var now = S.status || {}, sys = now.system || {}, pl = now.player || {}, full = can('full');
+    return [boxCard(),
+      h('div', { class: 'card' }, h('h2', { text: 'Vitals' }),
+        kv('Board', sys.model || sys.board || '?'),
+        kv('Temperature', typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : 'n/a'),
+        kv('Player', pl.running ? 'Running' : 'Not running'),
+        kv('This device', S.device ? S.device.name + ' (' + S.device.role + ')' : '')),
+      full ? h('div', { class: 'card' }, h('h2', { text: 'Player' }),
+        h('button', { class: 'btn', text: 'Restart player now', onclick: function () { act('POST', '/api/player/restart', {}, function () { say('Player restarting. The service brings it straight back.'); }); } })) : null,
+      h('button', { class: 'btn', id: 'forgetdevice', text: 'Forget this device', onclick: function () {
+        if (!S.device) return;
+        if (full) return say('Full-access devices are removed under System, People and codes.', true);
+        S.device = null; render();
+      } })];
   }
   // ---- health (the old Powersupply, Check Services and GPU Usage buttons, in plain words) ----
   var healthTimer = null;
@@ -1070,16 +1501,6 @@
     return card;
   }
   function kv(k, v) { return h('div', { class: 'row between' }, h('span', { text: k }), h('span', { class: 'k', text: String(v) })); }
-  function modulesCard(full) {
-    return h('div', { class: 'card' }, h('h2', { text: 'Modules' }),
-      h('div', { class: 'list' }, S.modules.map(function (m) {
-        var note = m.status === 'planned' ? 'Not built yet' : (!m.supported ? 'Not on this board' : m.type === 'core' ? 'Core' : m.channel);
-        var b = h('button', { class: 'btn small' + (m.enabled ? ' on' : ''), text: m.enabled ? 'On' : 'Off', 'aria-pressed': m.enabled ? 'true' : 'false',
-          disabled: !full || m.locked || m.status !== 'ready' || !m.supported,
-          onclick: function () { act('POST', '/api/modules/' + m.id, { enabled: !m.enabled }, function (d) { S.modules = d.modules; render(); }); } });
-        return h('div', { class: 'item' }, h('span', {}, m.name, h('br'), h('span', { class: 'k', text: m.version + ' · ' + note })), b);
-      })));
-  }
   // ---- DMX and MIDI ---------------------------------------------------
   var dmxForm = { universe: null, start: null, allow: null };  // survive redraws
   function moduleOn(id) { var m = S.modules.filter(function (x) { return x.id === id; })[0]; return !!(m && m.enabled); }
@@ -1087,10 +1508,6 @@
     var card = h('div', { class: 'card', id: 'dmxcard' }, h('h2', { text: 'DMX (Art-Net, sACN)' }));
     var body = h('div', { class: 'list', id: 'dmxbody' });
     card.appendChild(body);
-    if (!moduleOn('control-dmx')) {
-      body.appendChild(h('div', { class: 'k', id: 'dmxmsg', text: 'Off. Switch on "DMX over the network" under Modules above (beta).' }));
-      return card;
-    }
     function draw(d) {
       body.textContent = '';
       body.appendChild(h('div', { class: 'k', id: 'dmxline', text: d.error ? 'Problem: ' + d.error :
@@ -1136,10 +1553,6 @@
     var card = h('div', { class: 'card', id: 'midicard' }, h('h2', { text: 'MIDI controllers' }));
     var body = h('div', { class: 'list', id: 'midibody' });
     card.appendChild(body);
-    if (!moduleOn('control-midi')) {
-      body.appendChild(h('div', { class: 'k', id: 'midimsg', text: 'Off. Switch on "MIDI controller (USB)" under Modules above (beta).' }));
-      return card;
-    }
     function describe(e) {
       var what = MIDI_ACTIONS.filter(function (a) { return a[0] === e.action; })[0];
       var ctl = (e.kind === 'note' ? 'note ' : e.kind === 'cc' ? 'CC ' : 'program ') + e.number + (e.channel ? ' ch ' + e.channel : '');
@@ -1335,11 +1748,6 @@
   function streamsCard(full) {
     var body = h('div', { class: 'list', id: 'streambody' });
     var card = h('div', { class: 'card', id: 'streamcard' }, h('h2', { text: 'Streams' }), body);
-    var mod = S.modules.filter(function (m) { return m.id === 'inputs-srt'; })[0];
-    if (!mod || !mod.enabled) {
-      body.appendChild(h('div', { class: 'k', id: 'streammsg', text: 'Off. Switch on "Streams: SRT, RTSP, RTMP" under Modules above (beta).' }));
-      return card;
-    }
     function draw(d) {
       body.textContent = '';
       if (!d.streams.length) body.appendChild(h('div', { class: 'k', id: 'streamempty', text: 'No streams saved yet.' }));
@@ -1447,7 +1855,7 @@
       body.appendChild(h('div', { class: 'k', text: 'Only updates signed with your key are installed; older versions are refused; a failed update goes back by itself. A .sha256 file is optional.' }));
       later();
     }
-    refresh();
+    setTimeout(refresh, 0);   // the card is put on the page after this returns; refresh() asks nothing until it is
     return card;
   }
 
@@ -1568,12 +1976,6 @@
   function syncCard() {
     var body = h('div', { class: 'list', id: 'syncbody' }, h('div', { class: 'k', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'synccard' }, h('h2', { text: 'Sync and video wall' }), body);
-    var mod = S.modules.filter(function (m) { return m.id === 'wall'; })[0];
-    if (!mod || !mod.enabled) {
-      body.textContent = '';
-      body.appendChild(h('div', { class: 'k', id: 'syncmsg', text: 'Off. Switch on "Video wall and sync" under Modules above (beta).' }));
-      return card;
-    }
     var full = can('full');
     // Saves are counted: an answer that is older than a later save does not clear that save's message and is not
     // drawn over it; the card asks again instead. `sent` is what the fields held at the click: once saved, a field
@@ -1651,11 +2053,6 @@
     clearTimeout(projTimer);
     var body = h('div', { class: 'list', id: 'projbody' });
     var card = h('div', { class: 'card', id: 'projcard' }, h('h2', { text: 'Projectors' }), body);
-    var mod = S.modules.filter(function (m) { return m.id === 'projector'; })[0];
-    if (!mod || !mod.enabled) {
-      body.appendChild(h('div', { class: 'k', id: 'projmsg', text: 'Off. Switch on "Projector control" under Modules above (beta).' }));
-      return card;
-    }
     var states = {};  // id -> the last answer shown under it
     var shown = null; // what is on the page, to leave it alone while nothing changed
     function inputText(p, code) {
@@ -1809,11 +2206,6 @@
   function scheduleCard() {
     var body = h('div', { class: 'list', id: 'schedbody' });
     var card = h('div', { class: 'card', id: 'schedcard' }, h('h2', { text: 'Schedule' }), body);
-    var mod = S.modules.filter(function (m) { return m.id === 'scheduler'; })[0];
-    if (!mod || !mod.enabled) {
-      body.appendChild(h('div', { class: 'k', id: 'schedmsg', text: 'Off. Switch on "Weekly schedule" under Modules above (beta).' }));
-      return card;
-    }
     function save(cfg, done) {
       api('POST', '/api/schedule', { enabled: cfg.enabled, entries: cfg.entries }).then(function (r) {
         if (!r.ok) return say(r.data.error || 'Could not save the schedule', true);
@@ -1925,12 +2317,6 @@
     var mode = netForm.mode;
     var out = { iface: null, address: null, prefix: null, gateway: null, dns: null, ssid: null, pass: null, security: null,
       hidden: null, band: null, secs: null, preview: null, msg: null };
-    var mod = S.modules.filter(function (m) { return m.id === 'network'; })[0];
-    if (!mod || !mod.enabled) {
-      body.appendChild(h('div', { class: 'k', id: 'netmsg', text: 'Off. Switch on "Network settings (wired and Wi-Fi)" under Modules above (beta). Needs NetworkManager.' }));
-      return card;
-    }
-
     function refresh() {
       clearTimeout(netTimer);
       api('GET', '/api/network').then(function (r) {
@@ -2292,13 +2678,11 @@
   }
 
   // ---- shell ----------------------------------------------------------
+  function stopTimers() {
+    [netTimer, midiTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer].forEach(clearTimeout);
+  }
   function render() {
-    clearTimeout(netTimer);
-    clearTimeout(midiTimer);
-    clearTimeout(accessTimer);
-    clearTimeout(updateTimer);
-    clearTimeout(healthTimer);
-    clearTimeout(syncTimer);
+    stopTimers();
     keepNetForm();
     keepSyncForm();
     app.textContent = '';
@@ -2306,7 +2690,7 @@
     var screens = { live: live, mix: mix, media: media, system: system };
     var tabs = h('nav', { class: 'tabs', 'aria-label': 'Sections' }, [['live', 'Live'], ['mix', 'Mix'], ['media', 'Media'], ['system', 'System']].map(function (t) {
       return h('button', { class: 'btn' + (S.tab === t[0] ? ' on' : ''), text: t[1], 'aria-current': S.tab === t[0] ? 'page' : false,
-        onclick: function () { S.tab = t[0]; S.msg = ''; loadAll().then(render); } });
+        onclick: function () { goTab(t[0]); } });
     }));
     app.appendChild(h('div', { class: 'shell' }, supportBanner(), screens[S.tab](), tabs));
     if (S.sheet) app.appendChild(sheet());
@@ -2320,6 +2704,16 @@
     // keep it for the connect screen and take it out of the address bar and history at once.
     var scanned = /^#(code|pin)=([0-9]{4,6})$/.exec(location.hash);
     if (scanned) { S.scanned = { kind: scanned[1], value: scanned[2] }; history.replaceState(null, '', location.pathname); }
+    if (history.state && history.state.sys) history.replaceState(null, '');   // a reload starts on Live, like every other reload
+    window.addEventListener('popstate', function (e) {     // the phone's back gesture: from a System page to the index
+      if (!S.device) return;
+      var id = (e.state && e.state.sys) || null;
+      if (id) S.tab = 'system';
+      S.sys = id; S.msg = '';
+      if (!id) S.sysFresh = false;
+      render();
+      window.scrollTo(0, 0);
+    });
     var m = /^#token=([A-Za-z0-9_-]+)$/.exec(location.hash);
     var first = m ? api('POST', '/api/session', { token: m[1] }).then(function () { history.replaceState(null, '', location.pathname); }) : Promise.resolve();
     first.then(function () { return api('GET', '/api/status'); }).then(function (r) {
