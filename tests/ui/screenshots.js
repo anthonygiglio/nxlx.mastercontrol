@@ -258,7 +258,30 @@ function startServer() {
         await page.click('nav >> text=Live');
       }
     });
+    // The instrument: one shader chosen by hand (a switch, a choice, two colours and numbers), with a preset saved;
+    // the page on a phone, and Live on a laptop with the shader's strip beside the pads.
     await api('POST', '/api/vibes', { on: false });
+    await api('POST', '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
+    await api('POST', '/api/shaders/presets', { action: 'save', name: 'Warm' });
+    await shot('shaders-instrument', async (f) => {
+      await page.click('#shaderslink');
+      await soft('the instrument', page.waitForSelector('#shaderpresets [data-preset="Warm"]', { timeout: 15000 }));
+      await page.waitForTimeout(600);
+      await whole(f);
+      await page.click('nav >> text=Live');
+    });
+    await shot('live-shader-laptop', async (f) => {
+      await page.setViewportSize({ width: 1366, height: 768 });
+      try {
+        await soft('the strip on Live', page.waitForSelector('#liveshader:visible', { timeout: 15000 }));
+        await page.waitForTimeout(600);
+        await page.screenshot({ path: f, fullPage: true });
+      } finally {
+        await page.setViewportSize({ width: 390, height: 844 });
+      }
+    });
+    await api('POST', '/api/shaders/presets', { action: 'delete', id: 'isf-linear-gradient.fs', name: 'Warm' });
+    await api('POST', '/api/control', { action: 'stop' });
     await api('POST', '/api/play', { pad: [0, 0] });          // the clip is back for the pictures that follow
     await sysIndex();
 

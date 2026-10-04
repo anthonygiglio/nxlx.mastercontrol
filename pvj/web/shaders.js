@@ -560,6 +560,7 @@
       }
       var box = t.box;
       box.textContent = '';
+      if (!t.btn) { box.hidden = !on; if (!on) return; }          // a Vibes row in the controllers card: there only while MIDI is on
       box.appendChild(h('span', {}, h('b', { text: t.title }), h('br'),
         h('span', { class: 'hint', text: (t.hint ? t.hint + ' ' : '') + (!on ? '' : mine.length ? 'Now on: ' + mine.map(what).join('; ') + '.' : 'Not on any control yet (' + t.kind + ').') })));
       if (!on) {
