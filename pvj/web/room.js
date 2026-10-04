@@ -32,10 +32,18 @@
     var scenes = h('div', { class: 'card', id: 'roomscenes' }, h('h2', { text: 'Scenes' }), h('div', { class: 'k', text: 'Loading...' }));
     var groups = h('div', { class: 'room-groups', id: 'roomgroups' });
     var setup = full ? h('div', { class: 'card', id: 'roomsetup' }) : null;
+    // Let a guest in without leaving the room's controls: the guest code part of People and codes, opened on request
+    // (nothing is asked of the box until then). For whoever may use the buttons here.
+    var letin = live && c.letIn ? h('details', { class: 'card fold', id: 'roomletin' }, h('summary', { text: 'Let someone in' })) : null;
+    if (letin) letin.addEventListener('toggle', function () {
+      var old = letin.querySelector('#accesslive');
+      if (old) letin.removeChild(old);
+      if (letin.open) letin.appendChild(c.letIn());
+    });
     var root = h('div', { class: 'screen', id: 'roomscreen' },
       h('div', { class: 'top' }, h('h1', { text: 'Room' }), live ? null : h('div', { class: 'pill k', id: 'roomviewonly', text: 'View only' })),
       h('div', { id: 'msg', class: 'msg' + (c.state.msgErr ? ' err' : ''), role: 'status', text: c.state.msg }),
-      scenes, groups, setup);
+      scenes, groups, letin, setup);
     var shownLive = null, shownSetup = null, last = null;
 
     function send(path, body, said) {
