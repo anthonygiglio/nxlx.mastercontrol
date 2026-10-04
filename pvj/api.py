@@ -141,7 +141,8 @@ class Api:
         self._media_lock = threading.Lock()   # rename, delete and publishing an upload never interleave
         self.mix = {"opacity": 100, "blackout": False, "size": 100, "position": 0, "position_y": 0, "rotate": 0,
                     "flip_h": False, "flip_v": False}
-        self.fader = Fader(self._apply_opacity)
+        self.levels = {"volume": 100.0, "speed": 1.0}    # what was last set here (mpv's own start values until then); a
+        self.fader = Fader(self._apply_opacity)          # MIDI fader reads them for pickup without asking the player
         self._preview_lock = threading.Lock()
         self._control_lock = threading.RLock()
         self._usb_cache = (0.0, [])
@@ -875,8 +876,10 @@ class Api:
             self._player_call(p.seek, number(body, "value", -3600, 3600))
         elif action == "speed":
             self._player_call(p.speed, number(body, "value", 0.1, 4))
+            self.levels["speed"] = float(body["value"])
         elif action == "volume":
             self._player_call(p.volume, number(body, "value", 0, 130))
+            self.levels["volume"] = float(body["value"])
         elif action == "opacity":
             self.mix["opacity"] = number(body, "value", 0, 100)
             if not self.mix["blackout"]:
@@ -922,6 +925,7 @@ class Api:
                 raise ApiError(409, "no %s clip in the playlist" % ("next" if action == "next" else "previous"))
         elif action == "volume_step":
             self._player_call(p.volume_step, number(body, "value", -50, 50))
+            self.levels["volume"] = min(130.0, max(0.0, self.levels["volume"] + float(body["value"])))
         elif action == "reset":
             flipped = [k for k in ("flip_h", "flip_v") if self.mix[k]]
             self.mix.update(opacity=100, size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)
@@ -932,6 +936,7 @@ class Api:
             shown = 0 if self.mix["blackout"] else 255
             for fn, arg in ((p.opacity, shown), (p.size, 100), (p.position, 0), (p.speed, 1), (p.rotate, 0)):
                 self._player_call(fn, arg)
+            self.levels["speed"] = 1.0
         else:
             raise bad("unknown action")
         return {"ok": True}
@@ -1885,7 +1890,12 @@ class Api:
         return self.midi.status()
 
     def set_midi(self, body, device, client):
-        return self._set_control("midi", "control-midi", self.midi, midi_mod.validate, midi_mod.MidiError, body)
+        self._need_control("control-midi", self.midi)
+        known = self.midi.known_sources()
+
+        def check(new, current):
+            return midi_mod.validate(new, current, known)
+        return self._set_control("midi", "control-midi", self.midi, check, midi_mod.MidiError, body)
 
     def midi_learn(self, body, device, client):
         """Start (or cancel) waiting for the next control the owner moves or presses on any controller."""
@@ -1916,7 +1926,7 @@ class Api:
                     if profile is None:
                         raise ApiError(404, "that controller is not plugged in, or has no built-in layout")
                     if "set" in body:
-                        changed = midi_mod.add_entry(current, midi_mod.override_entry(profile, name, ask.get("control"), ask.get("action")))
+                        changed = midi_mod.set_override(current, profile, name, ask.get("control"), ask.get("action"))
                     else:
                         changed = midi_mod.reset_entries(current, profile, name, ask.get("control"))
                 elif "add" in body:

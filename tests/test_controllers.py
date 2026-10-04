@@ -97,7 +97,11 @@ class ProfileFilesTest(unittest.TestCase):
             return p
         bad = [lambda p: p.update(extra=1), lambda p: p.pop("sources"), lambda p: p.update(id="Korg"), lambda p: p.update(id="other"),
                lambda p: p["match"].update(card_ids=[]), lambda p: p["match"].update(card_ids=["^Mini$"]), lambda p: p["match"].update(card_ids=["a{9999}"]),
-               lambda p: p["match"].update(card_ids=["("]), lambda p: p["match"].update(more=[]), lambda p: p["layout"].update(rows=0),
+               lambda p: p["match"].update(card_ids=["("]), lambda p: p["match"].update(more=[]), lambda p: p["match"].update(card_ids=["(.*)*(.*)*(.*)*x"]),
+               lambda p: p["match"].update(card_names=["Mini.*"]), lambda p: p["match"].update(card_names=["a|b"]), lambda p: p["match"].update(usb_ids=["1235"]),
+               lambda p: p["match"].update(usb_ids=["1235:00ZZ"]), lambda p: p["match"].update(usb_ids="1235:0036"), lambda p: p["match"].pop("card_names"),
+               lambda p: p["controls"][0].update(action={"action": {}}), lambda p: p["controls"][0].update(action={"action": ["stop"]}),
+               lambda p: p["controls"][0].update(action={"action": None}), lambda p: p["controls"][0].update(action={"action": "blackout", "guard": True}), lambda p: p["layout"].update(rows=0),
                lambda p: p["layout"].update(cols=99), lambda p: p.update(controls=[]), lambda p: p["controls"][0].update(row=5),
                lambda p: p["controls"][0].update(kind="wheel"), lambda p: p["controls"][0].update(id=p["controls"][1]["id"]),
                lambda p: p["controls"][0].update(row=p["controls"][1]["row"], col=p["controls"][1]["col"]),
@@ -125,32 +129,97 @@ class ProfileFilesTest(unittest.TestCase):
         self.assertEqual([p["id"] for p in midi.load_profiles(d, said.append)], [NANO])
         self.assertEqual(len(said), 2)
         self.assertEqual(midi.load_profiles(os.path.join(d, "missing"), said.append), [])
+        for name, text in (("deep.json", "[" * 100000), ("odd.json", json.dumps(dict(raw(NANO), id="odd", controls=[{"id": "a", "name": "A", "row": 0, "col": 0,
+                           "kind": "button", "send": {"type": "cc", "channel": 0, "number": 1}, "action": {"action": {"x": 1}}}]))), ("bytes.json", "\udcff")):
+            with open(os.path.join(d, name), "w", errors="surrogateescape") as f:
+                f.write(text)                                            # none of these may take the hub down with it
+        self.assertEqual([p["id"] for p in midi.load_profiles(d, said.append)], [NANO])
+        for junk in ({}, [], 5, None, {"x": 1}):                         # an action name that is not text is refused, never a crash
+            with self.assertRaises(midi.MidiError):
+                midi.validate_entry({"kind": "cc", "number": 1, "action": junk})
 
     def test_the_files_are_covered_by_the_licence_file(self):
         with open(os.path.join(ROOT, "REUSE.toml")) as f:
             self.assertIn('"pvj/controllers.d/**"', f.read())
 
 
+# /proc/asound/cards as the owner's Pi shows it with the three controllers plugged in (ids, names and USB ids as reported
+# from that Pi on 2026-10-05; the HDMI and capture rows around them are typical, not copied)
+REAL_CARDS = (" 0 [vc4hdmi0       ]: vc4-hdmi - vc4-hdmi-0\n                      vc4-hdmi-0\n"
+              " 1 [vc4hdmi1       ]: vc4-hdmi - vc4-hdmi-1\n                      vc4-hdmi-1\n"
+              " 2 [nanoKONTROL2   ]: USB-Audio - nanoKONTROL2\n                      KORG INC. nanoKONTROL2 at usb-0000:01:00.0-1.2.1, full speed\n"
+              " 3 [Mix            ]: USB-Audio - MIDI Mix\n                      AKAI MIDI Mix at usb-0000:01:00.0-1.2.2, full speed\n"
+              " 4 [Mini           ]: USB-Audio - Launchpad Mini\n                      Focusrite A.E. Ltd Launchpad Mini at usb-0000:01:00.0-1.2.3, full speed\n")
+REAL_IDS = {2: ("nanoKONTROL2", "0944:0117"), 3: ("Mix", "09e8:0031"), 4: ("Mini", "1235:0036")}
+
+
+def asound(cards, ids, binary=False):
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "cards"), "wb") as f:
+        f.write(cards if binary else cards.encode())
+    for n, (card_id, usbid) in ids.items():
+        os.makedirs(os.path.join(d, "card%d" % n))
+        with open(os.path.join(d, "card%d" % n, "id"), "w") as f:
+            f.write(card_id + "\n")
+        if usbid:
+            with open(os.path.join(d, "card%d" % n, "usbid"), "w") as f:
+                f.write(usbid + "\n")
+    return d
+
+
 class MatchTest(unittest.TestCase):
+    def test_the_real_card_list_of_the_owners_pi(self):
+        d = asound(REAL_CARDS, {**REAL_IDS, 0: ("vc4hdmi0", None)})
+        got = {n: midi.card_info("/dev/snd/midiC%dD0" % n, d) for n in (0, 2, 3, 4, 9)}
+        self.assertEqual(got[2], {"name": "nanoKONTROL2", "usbid": "0944:0117", "readable": True})
+        self.assertEqual(got[3], {"name": "MIDI Mix", "usbid": "09e8:0031", "readable": True})
+        self.assertEqual(got[4], {"name": "Launchpad Mini", "usbid": "1235:0036", "readable": True})
+        self.assertEqual((got[0]["name"], got[0]["usbid"], got[9]["readable"]), ("vc4-hdmi-0", None, False))
+        for n, want in ((2, NANO), (3, MIX), (4, PAD)):
+            self.assertEqual(midi.match_profile(PROFILES, REAL_IDS[n][0], got[n])["id"], want)
+            self.assertEqual(midi.match_profile(PROFILES, REAL_IDS[n][0], dict(got[n], usbid=None))["id"], want)     # by id and name alone too
+            self.assertEqual(midi.match_profile(PROFILES, "whatever", got[n])["id"], want)                            # and the USB id decides by itself
+        self.assertEqual([p["match"]["usb_ids"] for p in (BY_ID[NANO], BY_ID[MIX], BY_ID[PAD])], [["0944:0117"], ["09e8:0031"], ["1235:0036"]])
+
     def test_by_card_id_and_by_the_cards_product_name(self):
         for card, name, want in (("nanoKONTROL2", None, NANO), ("nanoKONTROL2", "nanoKONTROL2", NANO), ("nanoKONTROL2_1", "nanoKONTROL2", NANO),
                                  ("Mix", "MIDI Mix", MIX), ("Mix", None, MIX), ("Mini", "Launchpad Mini", PAD), ("Mini_2", "Launchpad Mini", PAD),
                                  ("Mini", "Launchkey Mini", None),          # another product whose card id is also "Mini"
+                                 ("Mini", "X Launchpad Mini", None), ("Mini", "Launchpad Mini MK3", None),     # no prefix and no suffix is accepted
                                  ("Mix", "Some Other Mix", None), ("Minimal", None, None), ("xMini", None, None), ("nanoKONTROL", None, None),
-                                 ("MK3", "Launchpad Mini MK3", None), ("midiC1D0", None, None)):
+                                 ("MK3", "Launchpad Mini MK3", None), ("midiC1D0", None, None), ("Mini_x", None, None), ("Mini_1_1", None, None)):
             found = midi.match_profile(PROFILES, card, name)
             self.assertEqual(found["id"] if found else None, want, (card, name))
 
-    def test_the_product_name_is_read_from_the_card_list(self):
-        d = tempfile.mkdtemp()
-        with open(os.path.join(d, "cards"), "w") as f:
-            f.write(" 0 [vc4hdmi0       ]: vc4-hdmi - vc4-hdmi-0\n                      vc4-hdmi-0\n"
-                    " 2 [Mini           ]: USB-Audio - Launchpad Mini\n                      Novation Launchpad Mini at usb-0000:01:00.0-1.3, full speed\n"
-                    " 3 [Mix            ]: USB-Audio - MIDI Mix\n                      AKAI MIDI Mix at usb-0000:01:00.0-1.4, full speed\n"
-                    " 4 [odd            ]: USB-Audio - bad\x07name\n")
-        self.assertEqual([midi.card_name("/dev/snd/midiC%dD0" % n, d) for n in (2, 3, 0, 4, 9)], ["Launchpad Mini", "MIDI Mix", "vc4-hdmi-0", None, None])
-        self.assertIsNone(midi.card_name("/etc/passwd", d))
-        self.assertIsNone(midi.card_name("/dev/snd/midiC2D0", os.path.join(d, "missing")))
+    def test_a_card_list_that_was_read_but_gives_no_usable_name_does_not_match_by_id_alone(self):
+        unknown = {"name": None, "usbid": None, "readable": True}
+        self.assertIsNone(midi.match_profile(PROFILES, "Mini", unknown))
+        self.assertEqual(midi.match_profile(PROFILES, "Mini", {"name": None, "usbid": None, "readable": False})["id"], PAD)   # nothing to look at: the id decides
+        self.assertEqual(midi.match_profile(PROFILES, "Mini", {"name": None, "usbid": "1235:0036", "readable": True})["id"], PAD)
+        self.assertIsNone(midi.match_profile(PROFILES, "Mini", {"name": "Launchkey Mini", "usbid": "1235:0123", "readable": True}))
+        self.assertIsNone(midi.match_profile(PROFILES, None, None))
+
+    def test_the_card_list_cannot_confuse_the_reader(self):
+        # one byte that is not UTF-8, anywhere in the file: the other cards are still read, by name
+        d = asound(REAL_CARDS.encode() + b" 5 [odd            ]: USB-Audio - caf\xe9 box\n", {**REAL_IDS, 5: ("odd", None)}, binary=True)
+        self.assertEqual(midi.card_info("/dev/snd/midiC4D0", d)["name"], "Launchpad Mini")
+        self.assertEqual(midi.card_info("/dev/snd/midiC5D0", d), {"name": None, "usbid": None, "readable": True})
+        # a Launchkey Mini with a letter that is not ASCII, and one with an over-long name: read, unusable, so no match
+        for name in ("Launchkey Mini \u00e9", "Launchkey Mini " + "x" * 80):
+            d = asound(" 2 [Mini           ]: USB-Audio - %s\n                      Novation %s at usb-1, full speed\n" % (name, name), {2: ("Mini", None)})
+            info = midi.card_info("/dev/snd/midiC2D0", d)
+            self.assertEqual((info["name"], info["readable"]), (None, True), name)
+            self.assertIsNone(midi.match_profile(PROFILES, "Mini", info), name)
+        # the long name of one card made to look like another card's row: only the row with this card's own id counts
+        forged = (" 2 [Mini           ]: USB-Audio - Launchkey Mini\n                       3 [Mini           ]: USB-Audio - Launchpad Mini\n"
+                  " 3 [keys           ]: USB-Audio - Launchpad Mini\n 4 [Other          ]: USB-Audio - x\n 2 [Mini           ]: USB-Audio - Launchpad Mini\n")
+        d = asound(forged, {2: ("Mini", None), 3: ("Mini_1", None), 4: ("Other", None)})
+        self.assertEqual(midi.card_info("/dev/snd/midiC2D0", d)["name"], "Launchkey Mini")       # the first row that is really card 2's
+        self.assertEqual(midi.card_info("/dev/snd/midiC3D0", d)["name"], None)                   # row 3 carries another id: not this card's row
+        self.assertIsNone(midi.match_profile(PROFILES, "Mini_1", midi.card_info("/dev/snd/midiC3D0", d)))
+        self.assertEqual(midi.card_info("/etc/passwd", d), {"name": None, "usbid": None, "readable": False})
+        d = asound("", {2: ("Mini", "12zz:0036")})                                              # a usbid file that is not one
+        self.assertIsNone(midi.card_info("/dev/snd/midiC2D0", d)["usbid"])
 
 
 class MapperTest(unittest.TestCase):
@@ -222,7 +291,7 @@ class MapperTest(unittest.TestCase):
     def test_pickup_a_fader_left_down_does_not_black_the_screen(self):
         self.have["opacity"] = 100.0
         m = self.mapper(NANO, "nanoKONTROL2")
-        for v in (0, 1, 30, 90, 120):                           # fader 1 from the bottom: nothing until it reaches what the box has
+        for v in (0, 1, 30, 90, 115):                           # fader 1 from the bottom: nothing until it reaches what the box has
             self.cc(m, "nanoKONTROL2", 0, v)
             self.assertEqual(self.rec.calls, [], v)
             self.assertTrue(m.waiting("nanoKONTROL2", "cc", 0))
@@ -252,6 +321,24 @@ class MapperTest(unittest.TestCase):
         m.forget("nanoKONTROL2")                                # unplugged: it starts clean
         self.assertFalse(m.waiting("nanoKONTROL2", "cc", 0))
 
+    def test_pickup_a_fader_that_does_not_reach_its_ends_still_picks_up(self):
+        self.have["opacity"] = 100.0
+        m = self.mapper(NANO, "nanoKONTROL2")
+        self.cc(m, "nanoKONTROL2", 0, 118)                      # not the top
+        self.assertEqual(self.rec.calls, [])
+        self.cc(m, "nanoKONTROL2", 0, 121)                      # a worn fader's top: counts as the top
+        self.assertEqual(len(self.rec.calls), 1)
+        self.have["opacity"] = 0.0
+        m = self.mapper(NANO, "nanoKONTROL2")
+        self.cc(m, "nanoKONTROL2", 0, 30)
+        self.assertEqual(len(self.rec.calls), 1)
+        self.cc(m, "nanoKONTROL2", 0, 7)                        # and its bottom
+        self.assertEqual(len(self.rec.calls), 2)
+        self.have["opacity"] = 50.0
+        m = self.mapper(NANO, "nanoKONTROL2")
+        self.cc(m, "nanoKONTROL2", 0, 122)                      # the ends are no shortcut to a value in the middle
+        self.assertEqual(len(self.rec.calls), 2)
+
     def test_which_levels_pick_up_and_which_may_jump(self):
         by_action = {e["action"]: e["pickup"] for p in PROFILES for e in midi.profile_entries(p, "x")}
         self.assertEqual({a for a, on in by_action.items() if on}, {"opacity", "volume", "speed", "shader_speed", "shader_brightness"})
@@ -261,7 +348,7 @@ class MapperTest(unittest.TestCase):
         self.cc(m, "nanoKONTROL2", 16, 0)                       # and so does a shader control
         self.assertEqual(self.rec.calls, [("/api/shaders/values", {"controls": {"hue": -180.0}}), ("/api/shaders/values", {"control": 1, "level": 0})])
         self.rec.calls.clear()
-        self.cc(m, "nanoKONTROL2", 1, 0)                        # volume: the box's value is not known here, so it is followed
+        self.cc(m, "nanoKONTROL2", 1, 0)                        # volume: the box's value is not known to this bare mapper, so it is followed
         self.assertEqual(len(self.rec.calls), 1)
 
     def press(self, m, source, kind, number, after):
@@ -394,10 +481,13 @@ class HubTest(HubBase):
         first = self.pipes.pop("/dev/snd/midiC1D0")
         self.present = []
         os.close(first[1])                                                  # unplugged
-        self.wait(lambda: not self.hub.inputs)
+        self.wait(lambda: not self.hub.inputs and not self.hub._matched)       # the layout goes once the reader has ended
         self.assertEqual((self.hub.status()["controllers"], self.hub._matched, self.hub.activity), ([], {}, {}))
-        self.hub.on_message("nanoKONTROL2", ("cc", 0, 20, 127))            # a late message from it is the built-in map's, not the layout's
-        self.assertEqual(self.api.mix["opacity"], 100)
+        handled = []
+        self.api.handle = lambda *a, **k: handled.append(a) or (200, {})
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 20, 0))              # a late message from it (knob 5) is dropped: the built-in map
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 0, 0))               # would read CC 20 as opacity and black the screen out
+        self.assertEqual((self.api.mix["opacity"], handled, self.hub.activity), (100, [], {}))
 
     def test_several_controllers_each_use_their_own_layout_and_an_unknown_one_has_none(self):
         self.present = sorted(self.NAMES)
@@ -502,6 +592,158 @@ class HubTest(HubBase):
             self.assertEqual(self.post(path, body, token=live)[0], 403, path)
             self.assertEqual(self.post(path, body, token=view)[0], 403, path)
 
+    def test_nothing_is_acted_on_once_midi_is_switched_off(self):
+        self.present = ["/dev/snd/midiC1D0"]
+        self.enable()
+        self.wait(lambda: "/dev/snd/midiC1D0" in self.pipes)
+        handled = []
+        real = self.api.handle
+
+        def handle(method, path, *rest):
+            handled.append(path)
+            return real(method, path, *rest)
+        self.api.handle = handle
+        order = []
+        reader = self.hub.inputs["/dev/snd/midiC1D0"]
+        stop = reader.stop
+        reader.stop = lambda: (order.append(dict(self.hub._matched)), stop())[1]    # what the hub still knows when it joins the reader
+        self.settings.data["control"]["midi"]["enabled"] = False
+        self.hub.apply()
+        self.assertEqual([sorted(m) for m in order], [["/dev/snd/midiC1D0"]])          # the layout was still there: it goes after the reader
+        self.assertEqual(self.hub._matched, {})
+        for msg in (("cc", 0, 20, 0), ("cc", 0, 0, 0), ("cc", 0, 42, 127), ("on", 0, 74, 127), None):
+            self.hub.on_message("nanoKONTROL2", msg)                                   # still on its way from the reader
+        self.assertEqual((handled, self.api.mix["opacity"], self.api.mix["blackout"]), ([], 100, False))
+        seen = []
+        halted = midi.MidiInput("/dev/snd/midiC1D0", "nanoKONTROL2", lambda source, msg: seen.append(msg), open_fn=lambda path: os.pipe()[0])
+        halted.halt()                                                                  # a reader told to stop hands nothing on
+        halted._run()
+        self.assertEqual(seen, [])
+
+    def test_a_scan_does_not_hold_the_lock_while_a_reader_ends(self):
+        self.present = ["/dev/snd/midiC1D0", "/dev/snd/midiC4D0"]
+        self.enable()
+        self.wait(lambda: len(self.pipes) == 2)
+        slow = self.hub.inputs["/dev/snd/midiC4D0"]
+        held, real = [], slow.stop
+
+        def stop():
+            held.append(self.hub._lock._is_owned())
+            t0 = time.monotonic()
+            got = []
+            t = threading.Thread(target=lambda: got.append(self.hub.status()))        # the page asks meanwhile
+            t.start()
+            t.join(2)
+            held.append((bool(got), time.monotonic() - t0 < 1.5))
+            real()
+        slow.stop = stop
+        self.present = ["/dev/snd/midiC1D0"]
+        self.wait(lambda: len(held) == 2)
+        self.assertEqual(held, [False, (True, True)])
+        self.wait(lambda: [c["name"] for c in self.hub.status()["controllers"]] == ["nanoKONTROL2"])
+
+    def test_saving_a_guarded_control_unchanged_keeps_the_guard(self):
+        self.present = ["/dev/snd/midiC1D0"]
+        self.enable()
+        self.wait(lambda: "/dev/snd/midiC1D0" in self.pipes)
+
+        def r(cid="r8"):
+            return next(x for x in self.controller("nanoKONTROL2")["controls"] if x["id"] == cid)
+        for cid, action in (("r8", {"action": "blackout"}), ("r1", {"action": "scene_1"}), ("r8", {"action": "blackout", "guard": True})):
+            st, body, _ = self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": cid, "action": action}})
+            self.assertEqual((st, body["map"]), (200, []), cid)                          # Save without a change stores nothing
+            self.assertEqual((r(cid)["origin"], r(cid)["guard"]), ("standard", True))
+        clock = [50.0]
+        self.hub._clock = self.hub.mapper._clock = lambda: clock[0]
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 71, 127))                           # one press of R 8 still does nothing
+        self.assertFalse(self.api.mix["blackout"])
+        # blackout put on another button is guarded too, unless the person switches that off themselves
+        st, body, _ = self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "r5", "action": {"action": "blackout"}}})
+        self.assertEqual([(e["number"], e["action"], e["guard"]) for e in body["map"]], [(68, "blackout", True)])
+        self.assertEqual((r("r5")["origin"], r("r5")["guard"]), ("yours", True))
+        clock[0] += 5
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 68, 127))
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 68, 0))
+        self.assertFalse(self.api.mix["blackout"])
+        clock[0] += 0.5
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 68, 127))
+        self.assertTrue(self.api.mix["blackout"])
+        st, body, _ = self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "r8", "action": {"action": "blackout", "guard": False}}})
+        self.assertEqual(sorted((e["number"], e["guard"]) for e in body["map"]), [(68, True), (71, False)])       # a deliberate choice, stored as one
+        self.assertEqual((r()["origin"], r()["guard"]), ("yours", False))
+        clock[0] += 5
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 71, 0))
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 71, 127))
+        self.assertFalse(self.api.mix["blackout"])                                          # one press: it toggled the blackout off
+        st, body, _ = self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "r8", "action": {"action": "blackout"}}})
+        self.assertEqual([e["number"] for e in body["map"]], [68])                          # back to the standard: the own entry is gone
+        for bad in ({"action": "stop", "guard": True}, {"action": "blackout", "guard": 1}):
+            self.assertEqual(self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "r5", "action": bad}})[0], 400, bad)
+        self.assertEqual(self.post("/api/midi/map", {"add": {"kind": "cc", "number": 3, "action": {"x": 1}}})[0], 400)    # not a 500
+
+    def test_one_control_never_has_two_own_mappings_that_fire(self):
+        self.present = ["/dev/snd/midiC1D0"]
+        self.enable()
+        self.wait(lambda: "/dev/snd/midiC1D0" in self.pipes)
+        self.post("/api/midi/map", {"add": {"source": "nanoKONTROL2", "kind": "cc", "channel": 1, "number": 42, "action": "pause"}})    # learned, channel 1
+        st, body, _ = self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "stop", "action": {"action": "fadeout"}}})
+        self.assertEqual([(e["channel"], e["action"]) for e in body["map"]], [(0, "fadeout")])       # the card's choice replaced it
+        both = [midi.validate_entry({"source": "nano", "kind": "cc", "channel": c, "number": 5, "action": a}) for c, a in ((0, "stop"), (1, "pause"))]
+        rec = Recorder()
+        m = MidiMapper(rec, both, {}, clock=lambda: 1.0)                                            # a hand-edited file may still hold both
+        m.message("nano", ("cc", 0, 5, 127))
+        self.assertEqual(rec.calls, [("/api/control", {"action": "pause"})])                         # the channel's own one runs, alone
+        m.message("nano", ("cc", 3, 5, 127))
+        self.assertEqual(rec.calls[-1], ("/api/control", {"action": "stop"}))
+
+    def test_pickup_for_volume_and_speed_uses_what_the_panel_last_set(self):
+        self.hub._matched["/dev/snd/midiC1D0"] = ("nanoKONTROL2", BY_ID[NANO])
+        self.assertEqual((self.hub._target("volume"), self.hub._target("speed")), (100.0, 1.0))
+        self.assertEqual(self.post("/api/control", {"action": "volume", "value": 20})[0], 200)       # someone turns it down in the panel
+        self.assertEqual(self.hub._target("volume"), 20.0)
+        clock = [10.0]
+        self.hub._clock = self.hub.mapper._clock = lambda: clock[0]
+        before = len(self.player.calls)
+        for v in (127, 126, 90, 40):                                                                   # fader 2 was at the top: no jump to 100
+            clock[0] += 1
+            self.hub.on_message("nanoKONTROL2", ("cc", 0, 1, v))
+            self.assertEqual((len(self.player.calls), self.api.levels["volume"]), (before, 20.0), v)
+        clock[0] += 1
+        self.hub.on_message("nanoKONTROL2", ("cc", 0, 1, 20))                                         # it passed 20 percent (25 of 127): caught
+        self.assertEqual(self.api.levels["volume"], round(20 / 127 * 100, 2))
+        self.post("/api/control", {"action": "speed", "value": 2})
+        self.assertEqual(self.hub._target("speed"), 2.0)
+        self.post("/api/control", {"action": "reset"})
+        self.assertEqual(self.hub._target("speed"), 1.0)
+        self.post("/api/control", {"action": "volume_step", "value": 10})
+        self.assertEqual(self.hub._target("volume"), round(20 / 127 * 100, 2) + 10)
+
+    def test_the_switch_list_cannot_be_locked_or_filled(self):
+        self.present = ["/dev/snd/midiC3D0"]
+        self.enable()
+        self.wait(lambda: "/dev/snd/midiC3D0" in self.pipes)
+        def c():
+            return self.settings.data["control"]["midi"]
+        for junk in ("x", [], {"Mini": "x"}, {"a/b": {"standard": False}}, {"Mini": {"standard": False, "more": 1}}):
+            c()["controllers"] = junk                                                                   # a hand-edited file
+            st, body, _ = self.post("/api/midi", {"controller": "Mini", "standard": False})
+            self.assertEqual((st, c()["controllers"]), (200, {"Mini": {"standard": False}}), junk)
+        for name in ("ghost", "Mix", "nanoKONTROL2"):                                                   # well formed, never plugged in
+            self.assertEqual(self.post("/api/midi", {"controller": name, "standard": False})[0], 400, name)
+        self.assertEqual(c()["controllers"], {"Mini": {"standard": False}})
+        c()["controllers"]["Mix"] = {"standard": False}                                                   # stored earlier, unplugged now: still its own
+        self.assertEqual(self.post("/api/midi", {"controller": "Mix", "standard": True})[0], 200)
+        self.assertEqual(c()["controllers"], {"Mini": {"standard": False}})
+        first = self.pipes.pop("/dev/snd/midiC3D0")
+        self.present = []
+        os.close(first[1])
+        self.wait(lambda: not self.hub.inputs)
+        self.assertEqual(self.post("/api/midi", {"controller": "Mini", "standard": True})[0], 200)      # seen since the start: it can still be switched
+        self.assertEqual(c()["controllers"], {})
+        full = {"old%d" % i: {"standard": False} for i in range(32)}
+        self.assertEqual(midi.validate({"controller": "Mini", "standard": False}, {"controllers": dict(full)}, {"Mini"})["controllers"],
+                         dict({"old%d" % i: {"standard": False} for i in range(1, 32)}, Mini={"standard": False}))      # full: one never seen goes
+
     def test_a_layout_cannot_send_more_than_fifty_commands_a_second(self):
         self.hub._matched["/dev/snd/midiC3D0"] = ("Mini", BY_ID[PAD])
         self.hub._clock = lambda: 5.0
@@ -581,13 +823,20 @@ class NoBlockingTest(Live):
                 setattr(self.player, name, lambda *a, **k: True)
 
     def test_every_control_of_every_layout_answers_while_the_gpu_is_busy(self):
-        paths, took, errors = set(), [], []
+        paths, took, errors, answers = set(), [], [], {}
         real = self.hub._do
 
         def do(path, body):
             paths.add(path)
             return real(path, body)
         self.hub._do = self.hub.mapper.do = do
+        handle = self.api.handle
+
+        def answered(method, path, body, device, client):
+            status, payload = handle(method, path, body, device, client)
+            answers.setdefault((path, status), body)
+            return status, payload
+        self.api.handle = answered
         for n, p in enumerate(PROFILES):
             self.hub._matched["/dev/snd/midiC%dD0" % n] = (p["id"], p)       # the controller's name does not matter here
 
@@ -619,6 +868,13 @@ class NoBlockingTest(Live):
             self.assertFalse(t.is_alive(), "a control waited for the engine's lock: %s" % (took[-1:],))
         self.assertEqual(errors, [])
         self.assertLess(max(took)[0], 2.0, max(took))
+        # and the calls were real ones: everything this fake box can do answered 200. What is left: a pad with no clip
+        # on it, Room scenes with the Room module off
+        # (and, once a Stop button of a layout has been pressed, shader values and presets with no shader on)
+        refused = sorted({(path, status) for (path, status) in answers if status != 200})
+        self.assertEqual(refused, [("/api/play", 400), ("/api/room/scene", 409), ("/api/shaders/preset", 409), ("/api/shaders/values", 409)], answers)
+        for path in ("/api/shaders/values", "/api/shaders/step", "/api/vibes", "/api/blackout", "/api/fadein", "/api/fadeout", "/api/control"):
+            self.assertIn((path, 200), answers, path)
         self.assertTrue({"/api/shaders/values", "/api/shaders/step", "/api/shaders/preset", "/api/vibes", "/api/play", "/api/blackout",
                          "/api/room/scene", "/api/control", "/api/fadein", "/api/fadeout"} <= paths, paths)
 

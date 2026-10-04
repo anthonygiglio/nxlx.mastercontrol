@@ -1,7 +1,7 @@
 {
   "id": "novation-launchpad-mini",
   "name": "Novation Launchpad Mini",
-  "match": {"card_ids": ["Mini(_[0-9]+)?"], "card_names": [".*Launchpad Mini"]},
+  "match": {"card_ids": ["Mini"], "card_names": ["Launchpad Mini"], "usb_ids": ["1235:0036"]},
   "description": "The original Launchpad Mini (not the MK3): an 8 by 8 grid of pads, eight round buttons along the top (1 to 8) and eight down the right side (A to H), in its power-on X-Y layout: a pad sends the note 16 times its row plus its column (rows and columns from 0, top left), the right-hand buttons are column 8 (notes 8, 24 ... 120), the top buttons send CC 104 to 111.",
   "note": "From Novation's Launchpad S Programmer's Reference (the X-Y layout figure and the message examples), which the original Launchpad Mini shares, and one recording of the owner's Launchpad Mini on the box (notes 20 to 103 and CC 104 to 111: every one fits the X-Y layout, and note 20 does not exist in the other, drum rack, layout). The recording did not cover every pad. Not yet confirmed by pressing every control.",
   "sources": ["Novation Launchpad S Programmer's Reference Manual, version 1.02: X-Y layout (key = 16 x row + column), top row controllers 68h to 6Fh (104 to 111)", "A recording of the owner's Launchpad Mini on the test Pi, 2026-09-30 (project-log/DECISIONS.md D21): notes 20 to 103, CC 104 to 111"],

@@ -1,7 +1,7 @@
 {
   "id": "akai-midimix",
   "name": "Akai MIDI Mix",
-  "match": {"card_ids": ["Mix(_[0-9]+)?"], "card_names": [".*MIDI ?Mix"]},
+  "match": {"card_ids": ["Mix"], "card_names": ["MIDI Mix"], "usb_ids": ["09e8:0031"]},
   "description": "Twenty-four knobs in three rows, eight faders and a master fader, a row of Mute and a row of Rec Arm buttons, Bank Left, Bank Right and Solo. Holding Solo makes the Mute buttons send a second set of notes (shown as Solo+Mute). The numbers are the factory preset as widely reported: per strip three knobs and a fader on CC 16 to 19, 20 to 23, 24 to 27, 28 to 31, 46 to 49, 50 to 53, 54 to 57 and 58 to 61, master CC 62, Mute notes 1, 4 ... 22, Solo notes 2, 5 ... 23, Rec Arm notes 3, 6 ... 24, Bank Left 25, Bank Right 26, Solo 27.",
   "note": "Unverified against the manufacturer: no Akai document with the factory numbers was found (the support article on the editor gives none, and the User Guide could not be read when this was written), so each control is marked unverified. The numbers are those of a public Ableton Live script written for the factory preset. Not yet confirmed by pressing every control on a real MIDI Mix.",
   "sources": ["Akai Professional support article 'MIDImix: using the editor for customisation': each control sends a CC or a note that the editor can change; no factory numbers", "billmoser/MIDIMixD elements.py on GitHub (secondary, 'assumes factory default MIDI configuration'): the CC and note numbers used here"],
