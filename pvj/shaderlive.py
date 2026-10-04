@@ -758,6 +758,14 @@ class LiveEngine(S.Engine):
         return self.guard.sample(on) if on else self.guard.sample(None)
 
     # -- changing what is on --
+    def time_of(self, p):
+        """(the TIME the shader on screen has reached, the carrier frame that is so): where a new text has to go on
+        from. With the first version's clock the offset simply stays (mpv's frame number goes on counting)."""
+        if p["anchor"] is None:
+            return p["offset"], None
+        now = self.frame_now(p["carrier"])
+        return p["offset"] + p["controls"]["speed"] * ((now - p["anchor"]) % S.FRAME_WRAP) / S.CARRIER_FPS, now
+
     def adjust(self, job):
         """Give the shader on screen new values or controls (the worker's call; see Changer). The carrier, the epoch
         and TIME stay as they are: only the shader text is exchanged, and only while that shader still has the
@@ -777,9 +785,7 @@ class LiveEngine(S.Engine):
                 state = {"values": dict(p["values"], **job["values"]), "held": dict(job["held"]), "hue": p["hue"],
                          "controls": dict(p["controls"], **job["controls"]), "offset": p["offset"], "anchor": p["anchor"]}
                 if state["anchor"] is not None and state["controls"]["speed"] != p["controls"]["speed"]:
-                    now = self.frame_now(p["carrier"])              # TIME goes on from where it is, at the new pace
-                    state["offset"] = p["offset"] + p["controls"]["speed"] * ((now - p["anchor"]) % S.FRAME_WRAP) / S.CARRIER_FPS
-                    state["anchor"] = now
+                    state["offset"], state["anchor"] = self.time_of(p)      # TIME goes on from where it is, at the new pace
                 desc = "nxlx shader %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, p["size"], state, desc)
                 key = (digest, S.shape_of(parsed, dict(state["values"], **state["held"])))
@@ -849,7 +855,14 @@ class LiveEngine(S.Engine):
             if values is not None:
                 start = dict(start, **S.clean_values(parsed, values))
                 name = None if values else name
-            result = self.show(sid, start, controls=S.clean_controls(controls, stored), preset=name)
+            # The shader that is already on, played again (the panel's sliders do this): it goes on from the TIME it
+            # has reached, with the palette turn and the controls it has, instead of starting over.
+            on = self.on_screen()
+            same = on is not None and on["id"] == sid
+            if same and stored is None:
+                stored = on["controls"]
+            result = self.show(sid, start, hue=on["hue"] if same else 0.0, offset=self.time_of(on)[0] if same else 0.0,
+                               controls=S.clean_controls(controls, stored), preset=name)
         except ShaderError as e:
             raise ApiError(422, "%s: %s" % (sid, e))
         if not result["ok"]:

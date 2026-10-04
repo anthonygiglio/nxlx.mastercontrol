@@ -388,6 +388,27 @@ class ValuesTest(Live):
         self.pump()
         self.assertEqual((self.engine.playing["anchor"], self.engine.playing["offset"]), (60, 153.0))
 
+    def test_playing_the_shader_that_is_on_again_goes_on_from_its_time(self):
+        """The panel's sliders send a whole Play for every change. With the carrier's clock that started TIME over."""
+        self.engine.show("all.fs", {"level": 1.0}, hue=40.0, offset=100.0)
+        self.engine.change({"controls": {"speed": 2.0}})
+        self.pump()
+        self.player.time_pos = 10.0                                   # 300 frames at twice the pace: TIME is 120
+        self.engine.api_play({"id": "all.fs", "values": {"level": 0.25}}, None, "t")
+        p = self.engine.playing
+        self.assertEqual((p["anchor"], p["offset"], p["hue"], p["controls"]["speed"], p["values"]["level"]), (300, 120.0, 40.0, 2.0, 0.25))
+        self.assertIn("/ 30.0 * 2.0 + 120.0;", self.text())
+        self.engine.api_play({"id": "all.fs", "controls": {"speed": 1.0}}, None, "t")       # controls sent with it go on top
+        self.assertEqual((self.engine.playing["offset"], self.engine.playing["controls"]["speed"]), (120.0, 1.0))
+        self.engine.api_play({"id": "nxlx-tide.fs"}, None, "t")      # another shader starts at its own beginning
+        p = self.engine.playing
+        self.assertEqual((p["anchor"], p["offset"], p["hue"], p["controls"]["speed"]), (300, 0.0, 0.0, 1.0))
+        self.engine.api_set({"action": "config", "clock": "frame"}, None, "t")
+        self.engine.show("all.fs", offset=7.0)                        # the first version's clock: the offset just stays
+        self.player.time_pos = 50.0
+        self.engine.api_play({"id": "all.fs", "values": {"level": 0.5}}, None, "t")
+        self.assertEqual((self.engine.playing["anchor"], self.engine.playing["offset"]), (None, 7.0))
+
     def test_a_late_value_never_lands_on_a_clip_or_on_another_shader(self):
         self.engine.change({"values": {"level": 1.0}})
         self.player.play(["/media/clip.mp4"])                        # someone played a clip before the worker came round
@@ -436,11 +457,13 @@ class ValuesTest(Live):
         """Nothing a presenter or a controller sends waits for the engine's lock (the GPU's look at a shader can take
         seconds)."""
         done = []
+        self.engine.api_presets({"action": "save", "name": "kept"}, None, "t")
         with self.engine._lock:
             def calls():
                 self.engine.change({"values": {"level": 1.0}})
-                self.engine.apply_preset({"id": "nxlx-tide.fs", "name": "nope"}) if False else None
+                self.engine.apply_preset({"name": "kept"})
                 self.engine.step(1)
+                self.engine.state()
                 done.append(True)
             t = threading.Thread(target=calls)
             t.start()
