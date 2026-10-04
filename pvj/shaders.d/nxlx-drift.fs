@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "medium: 2 clouds of 3 octaves, 24 lattice values a pixel",
+    "COST": "high: 2 clouds of 3 octaves, 24 lattice values a pixel",
     "INPUTS": [
         {
             "NAME": "speed",
@@ -22,7 +22,7 @@
             "TYPE": "float",
             "MIN": 1.0,
             "MAX": 4.0,
-            "DEFAULT": 2.0
+            "DEFAULT": 1.6
         },
         {
             "NAME": "warmth",
@@ -59,7 +59,7 @@ float cloud(vec2 p) {
     float a = 0.5;
     for (int i = 0; i < 3; i++) {
         v += a * soft(p);
-        p = p * 2.03 + vec2(17.0, 9.0);
+        p = vec2(1.62 * p.x + 1.22 * p.y, 1.62 * p.y - 1.22 * p.x) + vec2(17.0, 9.0);    // turned as well as doubled: no grid shows
         a *= 0.5;
     }
     return v;
@@ -71,8 +71,11 @@ void main() {
     float t = TIME * speed * 0.04;
     float a = cloud(uv * scale + vec2(t, t * 0.6));
     float b = cloud(uv * scale * 0.7 - vec2(t * 0.8, -t * 0.3) + vec2(40.0));
-    vec3 cool = mix(vec3(0.02, 0.05, 0.20), vec3(0.10, 0.55, 0.70), a);
-    vec3 warm = mix(vec3(0.20, 0.03, 0.10), vec3(0.95, 0.55, 0.25), a);
-    vec3 col = mix(cool, warm, warmth) * (0.35 + 0.9 * b);
+    // Two palettes side by side, never blended half and half (that was grey): the second cloud says where each one
+    // lies, and Warmth moves the border. The first cloud is stretched to the full range for contrast.
+    a = smoothstep(0.22, 0.78, a);
+    vec3 cool = mix(vec3(0.01, 0.03, 0.22), vec3(0.05, 0.75, 0.90), a);
+    vec3 warm = mix(vec3(0.25, 0.01, 0.12), vec3(1.00, 0.62, 0.15), a);
+    vec3 col = mix(cool, warm, smoothstep(0.38, 0.62, b + (warmth - 0.5) * 0.6)) * (0.30 + 1.1 * a * a);
     gl_FragColor = vec4(col, 1.0);
 }

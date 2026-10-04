@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "low: 4 bands, about 12 sines and 4 colour blends a pixel",
+    "COST": "medium: 4 bands, about 12 sines and 4 colour blends a pixel",
     "INPUTS": [
         {
             "NAME": "speed",

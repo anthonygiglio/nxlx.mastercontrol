@@ -28,6 +28,10 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends xvfb xauth libegl1 libgles2 libgl1-mesa-dri
           PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaders_gpu
+      - name: Performing with shaders on the real mpv (values, speed, presets, no black frame; a skip is a failure)
+        run: PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
+      - name: The same on desktop OpenGL 3.1 with GLSL 1.40, the context mpv makes on a Raspberry Pi 4
+        run: MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140 PVJ_GPU_TEST=1 PVJ_GPU_ONLY=desktop xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
 
   shellcheck:
     runs-on: ubuntu-latest

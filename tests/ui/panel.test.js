@@ -918,7 +918,7 @@ function startServer() {
       'the page, top to bottom: now, the library, Vibes settings, other ways to control it (no sliders while nothing plays)');
     assert.strictEqual(await page.textContent('#shaderplaying'), 'No shader on screen');
     assert.strictEqual(await page.textContent('#vibesbtn'), 'Start Vibes');
-    assert(/Light work/.test(await page.textContent('#shadercard [data-shader="nxlx-tide.fs"]')), 'a shader says how much work it is');
+    assert(/Light work/.test(await page.textContent('#shadercard [data-shader="nxlx-silk.fs"]')), 'a shader says how much work it is');
     await onPage('Shaders and Vibes');
     // The Mix screen no longer has a shaders card
     await page.click('nav >> text=Mix');
