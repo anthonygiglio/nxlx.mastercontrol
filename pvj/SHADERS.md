@@ -34,7 +34,11 @@ Switch it on under System > Shaders and Vibes (beta, off by default). Switching 
 
 ## The bundled shaders
 
-Ten original generator shaders, written for this project (Apache-2.0, in `pvj/shaders.d`). All are slow and quiet, use short fixed loops (at most 5 rounds) and no textures. **Cost is a rough count of work per pixel, not a measurement.**
+Original generator shaders, written for this project (Apache-2.0, in `pvj/shaders.d`): the first ten below, and two families added later (the next section). All use short fixed loops (at most 5 rounds) and no textures. **Cost is a rough count of work per pixel, not a measurement.**
+
+### The first ten
+
+All slow and quiet, and all in the Vibes rotation until taken out.
 
 | Shader | Picture | Inputs | Rough cost per pixel |
 | --- | --- | --- | --- |
@@ -50,6 +54,31 @@ Ten original generator shaders, written for this project (Apache-2.0, in `pvj/sh
 | nxlx-tide | layers of slow waves | speed, swell, night colours | low: 5 layers, 10 sines |
 
 If the picture stutters, draw fewer lines (the **drawing size** on the card: 360, 540, 720 or 1080 lines, 720 by default, never more than the screen has; mpv scales the result to the screen) and take nxlx-nebula and nxlx-drift out of Vibes first.
+
+### Two more families: Ambient and Performance
+
+Written after the first ten, for two uses, and named by the `CATEGORIES` entry in each file:
+
+- **Ambient**: slow and calm, soft edges, nothing that flashes; made to stay on a wall for hours behind people or beside paintings. They are **in the Vibes rotation** from the start, like the first ten.
+- **Performance**: stronger, rhythmic and graphic, made to be played by hand. There is no sound input, so each has a rate or a beat control to ride. They are in the library, and **not in the Vibes rotation until someone puts them there** (the switch on the shader's row): one tap on Vibes in a room never starts a strobe. The settings keep these in a list `included`, beside `disabled` for the ones taken out; only bundled shaders of the category "Performance" start outside, an uploaded file is in the rotation whatever it calls itself.
+
+| Shader | Family | Picture | Inputs | Estimated cost per pixel |
+| --- | --- | --- | --- | --- |
+| nxlx-dusk | Ambient | A dusk or dawn sky: a slow glow low on the wall under thin drifting streaks of cloud | Speed, Glow height, Cloud streaks, Hour (choice), Sky colour (colour), Horizon colour (colour) | low: 5 sines and one division a pixel |
+| nxlx-lantern | Ambient | Four paper lanterns that sway a little and glow, each breathing at its own pace | Speed, Lantern size, Sway, Paper ribs, Shape (choice), Light colour (colour), Paper colour (colour) | low: 4 lanterns, 9 sines and 4 divisions a pixel |
+| nxlx-veil | Ambient | Three colours folding slowly into one another, like light through a thin curtain | Speed, Scale, Folds, First colour (colour), Second colour (colour), Third colour (colour) | low: 6 sines a pixel |
+| nxlx-bars | Performance | Bars that flash on the beat in four patterns; at most 3 flashes a second unless Fast is on, which doubles the rate (up to 6 a second: not for photosensitive people) | Beats a second, Bars, Fade after each beat, Pattern (choice), Lying bars (switch), Fast (switch), Lit colour (colour), Unlit colour (colour) | low: one sine and about 40 sums and products a pixel |
+| nxlx-tunnel | Performance | A flight through a patterned tunnel, with the travel rate, the twist and the vanishing point to play | Travel rate, Twist, Depth, Pattern (choice), Segments (choice), Fly backwards (switch), Wall colour (colour), Vanishing point (point) | low: one atan, one square root, one division and 2 sines a pixel |
+
+The rules every one of them keeps (the tests check what a test can check):
+
+- **Cost.** The owner measured the first ten on a Raspberry Pi 4 at 720 lines, where about 16 ms is there for the shader: nxlx-silk 7.5 ms, nxlx-lattice 8.3, nxlx-horizon 9.4, nxlx-prism 9.4, nxlx-pulse 10.6, nxlx-ember 11.2 (these hold 30 pictures a second), nxlx-tide 15.1, nxlx-aurora 20.6, nxlx-drift 30, nxlx-nebula 32.7. The new ones were written to stay at or under nxlx-ember: a handful of sines, at most one loop of 3 or 4 rounds, no marching, no clouds of noise. "low" in the table means that by the count of operations against those measured ones; "medium" means somewhat above nxlx-ember (and only Performance shaders may be medium, since they are not in the rotation). **None of the new shaders has been measured on a Pi**: the class is an estimate.
+- **Inputs.** 4 to 8 each, with plain labels: numbers, switches (`bool`), choices (`long` with `VALUES` and `LABELS`), colours (so a picture can be matched to a room or a show) and, in a few, a point (in 0 to 1 of the picture, so it does not move with the drawing size). Today the panel shows sliders for the numbers only and Vibes varies only numbers, so a switch, a choice, a colour and a point keep their `DEFAULT` until the panel has controls for them; each default is the look the shader was made for.
+- **Time.** `TIME` is never fed into a sine as it is. It is folded first, `fract(TIME * rate)`, a place in a cycle between 0 and 1, so the picture is as smooth after a day as in its first minute (a large number added to a small coordinate loses the coordinate's fine steps).
+- **Shape.** Everything is laid out from `RENDERSIZE`, so circles stay round on a 16:9 and on a 4:3 projector.
+- **Flashing.** No Ambient shader flashes. A Performance shader that flashes does so at most 3 times a second at any setting of its sliders: the rate is capped in the code, not only by the slider's MAX. Where a switch **Fast** exists it doubles that (up to 6 a second), it is off by default and the description says so; do not switch it on in a room where someone may be photosensitive. A shader that flashes never goes to black between flashes: the picture dims to a floor.
+- **Own construction.** No code was taken from Shadertoy, The Book of Shaders, ISF-Files or anywhere else, and none of the hash and noise one-liners that are passed around is used: where a shader needs scrambled numbers it makes them from whole-number arithmetic that a 32-bit float holds exactly (see `scramble` in nxlx-bars.fs).
+- **What CI draws.** Every bundled shader is drawn by a real mpv on Mesa's software GPU, on OpenGL ES and on desktop OpenGL, with its defaults and with varied numbers; every new one also with all numbers at MIN, all at MAX, late in `TIME`, and once per switch, per choice and per corner of a point. Each picture must be varied and not dark. That proves they compile and draw on that GPU; it says nothing about speed or about the Pi's driver.
 
 ## ISF: what is supported
 

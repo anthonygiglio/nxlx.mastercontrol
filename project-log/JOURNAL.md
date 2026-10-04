@@ -4,6 +4,16 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-04 (more shaders: an Ambient and a Performance family)
+
+The owner: "more shaders available to perform with or have as auto-playing vibes". In progress on the branch `more-shaders`, written in batches of five and pushed after each, so that CI's real mpv judges every one before the next batch.
+
+- New original ISF shaders in `pvj/shaders.d`, in two families named by `CATEGORIES`: **Ambient** (calm, for hours on a wall; in the Vibes rotation from the start) and **Performance** (rhythmic, played by hand; in the library, out of the rotation until put in). The list, the inputs and the estimated cost are in [pvj/SHADERS.md](../pvj/SHADERS.md).
+- `pvj/shaders.py`, kept small so it merges with the isf-library and shader-engine branches: `parse()` returns `categories`; a bundled shader of the category "Performance" is in Vibes only when named in the settings list `included` (the key and the line that reads it are the ones isf-library adds for its packs); the "vibes" action writes that list for such a shader and `disabled` for all others. `pvj/boxcare.py` checks `included` on import as it checks `disabled`.
+- Tests: the bundled set is named file by file in `tests/test_shaders.py`; the rules of the new families are checked there; the GPU test draws every bundled shader with defaults and varied numbers, and every new one at all MIN, all MAX, late in TIME and once per switch, choice and corner of a point, on OpenGL ES and desktop OpenGL.
+
+Not verified: none of the new shaders has been seen on a projector or measured on the Pi; the cost classes are estimates from the operation count against the owner's measurements of the first ten.
+
 ## 2026-10-04 (one switch per feature, and the Shaders page)
 
 Two slices the owner approved, in one pull request (#69, D43).

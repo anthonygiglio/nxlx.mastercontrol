@@ -28,6 +28,17 @@ void main() {
 """
 
 
+# The bundled set, named one by one: a file that is added or goes missing fails the tests until it is named here.
+# The first ten and the ambient family are in the Vibes rotation from the start; the performance family is not.
+FIRST_TEN = ["aurora", "drift", "ember", "horizon", "lattice", "nebula", "prism", "pulse", "silk", "tide"]
+AMBIENT = ["dusk", "lantern", "veil"]
+PERFORMANCE = ["bars", "tunnel"]
+BUNDLED = len(FIRST_TEN) + len(AMBIENT) + len(PERFORMANCE)
+IN_VIBES = len(FIRST_TEN) + len(AMBIENT)
+# Numbers from the hash and noise one-liners that are passed around everywhere: the bundled shaders build their own.
+WELL_KNOWN = ("43758.5453", "12.9898", "78.233", "0.1031", ".1030", "437.585", "289.0", "6.2831 * (", "0.5 + 0.5 * cos(6.28318 * (")
+
+
 def isf(head=None, body=BODY, **change):
     h = dict(HEAD if head is None else head, **change)
     return "/*" + json.dumps(h, indent=1) + "*/\n// a comment\n" + body
@@ -232,7 +243,8 @@ class TranslatorTest(unittest.TestCase):
 
     def test_every_bundled_shader_translates_and_carries_its_licence_and_cost(self):
         names = sorted(n for n in os.listdir(S.BUNDLED_DIR) if n.endswith(".fs"))
-        self.assertTrue(8 <= len(names) <= 12, names)
+        self.assertEqual(names, sorted("nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT + PERFORMANCE))
+        self.assertEqual((len(names), len(set(names))), (BUNDLED, BUNDLED))
         for n in names:
             self.assertTrue(S.FILE.fullmatch(n), n)
             with open(os.path.join(S.BUNDLED_DIR, n), "rb") as f:
@@ -253,6 +265,44 @@ class TranslatorTest(unittest.TestCase):
             t = S.translate(p, (1280, 720), V.vary(p["inputs"], random.Random(3)), hue=45.0, offset=10.0)
             self.assertIn("//!HOOK NATIVE", t)
             self.assertEqual(t.count("//!"), 5)
+            for known in WELL_KNOWN:
+                self.assertNotIn(known, p["body"], n)
+
+    def test_the_two_new_families_keep_their_rules(self):
+        """The shaders after the first ten: a family, 4 to 8 inputs with plain labels, choices with a label each, a
+        cost that starts with low or medium, loops of at most 4 rounds, and one sentence that says what it is."""
+        for family, names in (("Ambient", AMBIENT), ("Performance", PERFORMANCE)):
+            for name in names:
+                with open(os.path.join(S.BUNDLED_DIR, "nxlx-%s.fs" % name), "rb") as f:
+                    data = f.read()
+                p = S.parse(data)
+                head = json.loads(data[2:data.index(b"*/")])
+                self.assertEqual(sorted(p["categories"]), sorted(["Generator", family]), name)
+                self.assertEqual(S.default_in_vibes(p), family == "Ambient", name)
+                self.assertEqual(head["CREDIT"], "NXLX.Systems and contributors", name)
+                self.assertTrue(4 <= len(p["inputs"]) <= 8, (name, len(p["inputs"])))
+                self.assertIn(p["cost"].split(":")[0], ("low", "medium"), name)
+                if family == "Ambient":
+                    self.assertEqual(p["cost"].split(":")[0], "low", name)        # only light ones go into the rotation
+                self.assertTrue(20 <= len(head["DESCRIPTION"]) <= S.MAX_TEXT and head["DESCRIPTION"].endswith("."), name)
+                for spec, i in zip(head["INPUTS"], p["inputs"]):
+                    self.assertTrue(spec.get("LABEL") and i["label"] != i["name"], (name, i["name"]))
+                    self.assertIn(i["type"], ("float", "bool", "long", "color", "point2D"), (name, i["name"]))
+                    if i["type"] == "long":
+                        self.assertEqual(len(spec["VALUES"]), len(spec["LABELS"]), (name, i["name"]))
+                        self.assertTrue(len(spec["VALUES"]) >= 2 and all(isinstance(x, str) and x for x in spec["LABELS"]), (name, i["name"]))
+                    if i["type"] == "point2D":
+                        self.assertEqual((spec["MIN"], spec["MAX"]), ([0.0, 0.0], [1.0, 1.0]), (name, i["name"]))
+                        self.assertTrue(all(0.0 <= c <= 1.0 for c in i["default"]), (name, i["name"]))
+                for bound in re.findall(r"for \(int i = 0; i < (\d+); i\+\+\)", p["body"]):
+                    self.assertLessEqual(int(bound), 4, name)
+                self.assertNotRegex(p["body"], r"#\s*define", name)
+                # Time is folded before it is used, so a picture is as smooth after a day as in its first minute: TIME
+                # appears only as fract(TIME * rate), a place in a cycle, or as a count of beats that is then folded.
+                folded = len(re.findall(r"\bfract\(TIME \* ", p["body"])) + len(re.findall(r"\bfloat beats = TIME \* ", p["body"]))
+                self.assertEqual(len(re.findall(r"\bTIME\b", p["body"])), folded, name)
+                self.assertGreater(folded, 0, name)
+        self.assertEqual(len(set(FIRST_TEN + AMBIENT + PERFORMANCE)), BUNDLED)
 
     def test_the_carrier_is_built_from_whole_numbers_and_has_the_screens_shape(self):
         self.assertEqual(S.carrier_url((1920, 1080)), "av://lavfi:color=c=black:size=64x36:rate=30,format=rgb0")
@@ -606,10 +656,10 @@ class EngineTest(Base):
         S.parse = trips
         self.addCleanup(setattr, S, "parse", real)
         rows = {s["id"]: s for s in self.engine.library()}
-        self.assertEqual(len(rows), 13)
+        self.assertEqual(len(rows), BUNDLED + 3)
         for n in ("nan.fs", "huge.fs", "digits.fs"):
             self.assertTrue(rows[n]["error"] and not rows[n]["vibes"], rows[n])
-        self.assertEqual(len(self.engine.vibes_ids()), 10)
+        self.assertEqual(len(self.engine.vibes_ids()), IN_VIBES)
         self.assertEqual(self.api.handle("GET", "/api/shaders", {}, {"id": "t", "role": "view"}, "t")[0], 200)
         self.api.vibes._use_thread = False
         self.assertTrue(self.api.vibes.start()["running"])
@@ -746,18 +796,21 @@ class VibesTest(Base):
 
     def test_the_rotation_is_shuffled_and_shows_every_enabled_shader_before_any_again(self):
         enabled = self.engine.vibes_ids()
-        self.assertEqual(len(enabled), 10)
-        seen = self.run_rounds(30)
-        for k in range(0, 30, 10):
-            self.assertEqual(sorted(seen[k:k + 10]), sorted(enabled))
-        self.assertNotEqual(seen[:10], sorted(enabled))                # shuffled, not in name order
-        self.assertNotEqual(seen[:10], seen[10:20])                    # and shuffled again each time round
+        n = IN_VIBES
+        self.assertEqual(len(enabled), n)
+        self.assertEqual(sorted(enabled), sorted("nxlx-%s.fs" % x for x in FIRST_TEN + AMBIENT))      # no performance shader
+        seen = self.run_rounds(3 * n)
+        for k in range(0, 3 * n, n):
+            self.assertEqual(sorted(seen[k:k + n]), sorted(enabled))
+        self.assertNotEqual(seen[:n], sorted(enabled))                 # shuffled, not in name order
+        self.assertNotEqual(seen[:n], seen[n:2 * n])                   # and shuffled again each time round
         for a, b in zip(seen, seen[1:]):
             self.assertNotEqual(a, b)                                  # never the same one twice in a row
 
     def test_only_shaders_switched_on_for_vibes_are_picked(self):
-        for sid in self.engine.vibes_ids()[2:]:
-            self.engine.api_set({"action": "vibes", "id": sid, "on": False}, None, "t")
+        for sid in self.engine.vibes_ids():
+            if sid not in ("nxlx-aurora.fs", "nxlx-drift.fs"):
+                self.engine.api_set({"action": "vibes", "id": sid, "on": False}, None, "t")
         self.engine.upload("mine.fs", GOOD)
         allowed = {"nxlx-aurora.fs", "nxlx-drift.fs", "mine.fs"}
         self.assertEqual(set(self.engine.vibes_ids()), allowed)
@@ -767,6 +820,38 @@ class VibesTest(Base):
         with self.assertRaises(ApiError) as c:
             self.vibes.start()
         self.assertEqual(c.exception.status, 409)
+
+    def test_a_performance_shader_is_out_of_the_rotation_until_it_is_put_in(self):
+        """The strong, rhythmic ones are for playing by hand: a room's one-tap ambience never shows one unless somebody
+        chose it. They are kept in "included", apart from "disabled", so a settings file from before stays valid."""
+        rows = {s["id"]: s for s in self.engine.library()}
+        for name in PERFORMANCE:
+            self.assertEqual((rows["nxlx-%s.fs" % name]["vibes"], "Performance" in rows["nxlx-%s.fs" % name]["categories"]), (False, True), name)
+        for name in FIRST_TEN + AMBIENT:
+            self.assertTrue(rows["nxlx-%s.fs" % name]["vibes"], name)
+        self.assertNotIn("included", self.engine.config())
+        sid = "nxlx-%s.fs" % PERFORMANCE[0]
+        self.engine.show(sid)                                          # playing one by hand needs no switch
+        self.assertEqual(self.engine.state()["playing"]["id"], sid)
+        self.engine.api_set({"action": "vibes", "id": sid, "on": True}, None, "t")
+        self.engine.api_set({"action": "vibes", "id": sid, "on": True}, None, "t")
+        self.assertEqual((self.settings.data["shaders"]["included"], self.settings.data["shaders"]["disabled"]), ([sid], []))
+        self.assertIn(sid, self.engine.vibes_ids())
+        self.assertEqual(len(self.engine.vibes_ids()), IN_VIBES + 1)
+        self.engine.api_set({"action": "vibes", "id": sid, "on": False}, None, "t")
+        self.assertEqual((self.settings.data["shaders"]["included"], self.settings.data["shaders"]["disabled"]), ([], []))
+        self.assertNotIn(sid, self.engine.vibes_ids())
+        self.engine.api_set({"action": "vibes", "id": "nxlx-dusk.fs", "on": False}, None, "t")     # an ambient one, as before
+        self.assertEqual((self.settings.data["shaders"]["included"], self.settings.data["shaders"]["disabled"]), ([], ["nxlx-dusk.fs"]))
+        self.settings.data["shaders"] = {"included": ["../x", 5, sid, "nxlx-aurora.fs"]}            # edited by hand
+        self.assertEqual(self.engine.config()["included"], [sid, "nxlx-aurora.fs"])
+        self.assertIn(sid, self.engine.vibes_ids())
+        self.assertEqual(len(self.engine.vibes_ids()), IN_VIBES + 1)                               # naming an ambient one changes nothing
+        # the rule is for the bundled set: an upload that calls itself Performance is in, like every upload
+        self.engine.upload("loud.fs", "/*{\"CATEGORIES\": [\"Performance\"]}*/\nvoid main() { gl_FragColor = vec4(1.0); }\n")
+        self.assertIn("loud.fs", self.engine.vibes_ids())
+        self.engine.api_set({"action": "vibes", "id": "loud.fs", "on": False}, None, "t")
+        self.assertIn("loud.fs", self.engine.config()["disabled"])
 
     def test_each_round_varies_the_numbers_inside_min_and_max_and_shifts_the_palette(self):
         for sid in self.engine.vibes_ids():
@@ -981,7 +1066,7 @@ class VibesTest(Base):
         self.engine._tap = lambda path: FakeTap(path)
         self.vibes.start()
         self.assertFalse(self.vibes.tick())
-        self.assertEqual((self.vibes.running, len(self.vibes.refused), self.player.path, self.player.source_shader), (False, 10, None, None))
+        self.assertEqual((self.vibes.running, len(self.vibes.refused), self.player.path, self.player.source_shader), (False, IN_VIBES, None, None))
         self.assertIn("refused every shader", self.vibes.status()["last"]["message"])
 
     def test_blackout_stays_black_through_a_change(self):
@@ -1172,7 +1257,7 @@ class RolesTest(Base):
         self.assertEqual(self.call("POST", "/api/vibes", {"on": True})[0], 401)
         for token in (view, live, full):
             st, body, _ = self.call("GET", "/api/shaders", token=token)
-            self.assertEqual((st, len(body["shaders"])), (200, 10))
+            self.assertEqual((st, len(body["shaders"])), (200, BUNDLED))
         for path, body in (("/api/shaders/play", {"id": "nxlx-aurora.fs"}), ("/api/vibes", {"on": True}), ("/api/shaders", upload)):
             self.assertEqual(self.call("POST", path, body, token=view)[0], 403, path)
             self.assertEqual(self.call("POST", path, body, token=full, csrf=False)[0], 403, path)      # no cross-site requests

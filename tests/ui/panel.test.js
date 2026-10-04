@@ -913,7 +913,7 @@ function startServer() {
     await switchOn('Shaders and Vibes');
     assert(await moduleIsOn('shaders'), 'the shaders module is on');
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
-    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10, 'the ten bundled shaders are listed');
+    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 15, 'the bundled shaders are listed');
     assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard', 'vibessettings', 'shaderremote'],
       'the page, top to bottom: now, the library, Vibes settings, other ways to control it (no sliders while nothing plays)');
     assert.strictEqual(await page.textContent('#shaderplaying'), 'No shader on screen');
@@ -1094,7 +1094,7 @@ function startServer() {
     await page.click(mine + ' button:has-text("Remove")');
     await page.click('#confirmyes');
     await page.waitForFunction(() => !document.querySelector('#shadercard [data-shader="flat-grey.fs"]'));
-    assert.strictEqual((await get('/api/shaders')).shaders.length, 10, 'the uploaded file is gone from the box');
+    assert.strictEqual((await get('/api/shaders')).shaders.length, 15, 'the uploaded file is gone from the box');
     await page.click('nav >> text=Live');
     await page.waitForFunction(() => /^Shader: Tide/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
     assert.strictEqual(await page.textContent('#vibeswords'), 'Start Vibes');
