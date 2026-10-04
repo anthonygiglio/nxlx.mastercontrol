@@ -699,6 +699,25 @@ class EngineTest(Base):
         self.assertEqual([(s["pack"], s["source"]) for s in rows], [("isf-files", "bundled")])
         self.assertEqual(self.engine._path(sid), (os.path.join(ISF_PACK, sid), "bundled"))
 
+    def test_real_isf_files_from_another_program_go_through_the_upload_route(self):
+        """The way in for everything that is not bundled: a full-access device uploads the .fs file. The pack's files
+        are real files from Vidvox's collection, unchanged, so they stand for it here: each one uploads under a name
+        of its own, within the size and input limits, and is listed without an error."""
+        texts = {}
+        for n, name in enumerate(PACKED):
+            with open(os.path.join(ISF_PACK, name), "rb") as f:
+                data = f.read()
+            texts[name] = data.decode("utf-8")
+            self.assertLessEqual(len(data), S.MAX_SOURCE, name)
+            out = self.engine.api_set({"action": "upload", "name": "mine-%d.fs" % n, "source": data.decode("utf-8")}, None, "t")
+            row = [s for s in out["shaders"] if s["id"] == "mine-%d.fs" % n][0]
+            self.assertEqual((row["error"], row["pack"], row["vibes"]), (None, "uploads", True), name)
+            self.assertLessEqual(len(row["inputs"]), S.MAX_INPUTS)
+        # the three things real files do that the first translator refused, each present in the files that stand in
+        self.assertTrue(any(re.search(r"\bout_color\b", t) for t in texts.values()))
+        self.assertTrue(any(re.search(r'"NAME"\s*:\s*"[Cc]olor"', t) for t in texts.values()))
+        self.assertTrue(any(not t.isascii() for t in texts.values()))
+
     def test_only_plain_folders_with_a_plain_name_are_packs_and_none_can_stand_in_for_the_projects_own(self):
         root = os.path.join(self.tmp, "bundle")
         os.makedirs(os.path.join(root, "a-pack"))
