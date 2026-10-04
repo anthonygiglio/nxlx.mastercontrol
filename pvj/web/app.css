@@ -170,6 +170,52 @@ details.fold { display: block; }
 .btn.danger { background: #b00020; border-color: #b00020; color: #fff; }
 .danger-h { margin: 8px 0 0; font-size: 15px; color: #d32f4a; grid-column: 1 / -1; }
 #sysstate .hint { min-width: 0; }
+
+/* Live: the Vibes button is the big one, full width on a phone, with the way to the Shaders page under it */
+.vibesrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.vibesbig { flex: 1 1 100%; min-height: 64px; padding: 8px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-width: 2px; border-color: var(--ac); font-size: 18px; overflow-wrap: anywhere; }
+.vibessub { font-size: 13px; font-weight: 400; }
+#shaderslink, #vibesskip { flex: 1 1 0; }
+@media (min-width: 900px) { .vibesbig { flex: 1 1 0; } #shaderslink, #vibesskip { flex: none; } }
+/* The Shaders page: its cards sit in the page's own grid; a shader is a row with its buttons under its name */
+.syspage .shaderpage { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; }
+.shaderslot { min-width: 0; }
+.stageline { font-size: 16px; font-weight: 600; }
+.shaderstage .shadername { font-size: 26px; }
+.shaderfind { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 9.5rem); gap: 8px; }
+.slidervalue { font: 600 14px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.dmxzones { display: flex; flex-wrap: wrap; gap: 6px; }
+.list .item.teach { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
+.list .item.teach > span:first-child { flex: none; }
+.list .item.teach > .row { margin-left: 0; justify-content: flex-start; }
+#shaderdmx { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--ln); }
+.roominpage { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* A laptop: the library is a column of its own that scrolls by itself, so what is playing and its controls stay in
+   view. Two columns from 900 px, three from 1200 px; the Shaders page may use the whole window. */
+@media (min-width: 900px) {
+  .shell:has(#shaderpage) { max-width: 1600px; }
+  .syspage .shaderpage { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); grid-template-areas: "lib now" "lib ctl" "lib set" "lib remote"; grid-template-rows: auto auto auto 1fr; }
+  .slot-now { grid-area: now; } .slot-lib { grid-area: lib; } .slot-ctl { grid-area: ctl; } .slot-set { grid-area: set; } .slot-remote { grid-area: remote; }
+  .slot-lib { position: sticky; top: 12px; }
+  .shaderlist { max-height: calc(100dvh - 330px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
+}
+@media (min-width: 1200px) {
+  .syspage .shaderpage { grid-template-columns: minmax(0, 4fr) minmax(0, 5fr) minmax(0, 4fr); grid-template-areas: "lib now set" "lib ctl remote"; grid-template-rows: auto 1fr; }
+}
+.shadername { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.list .item.shader-entry { flex-direction: column; align-items: stretch; flex-wrap: nowrap; padding: 12px 0; }
+.list .item.shader-entry > span:first-child { flex: none; }
+.list .item.shader-entry > .row { margin-left: 0; justify-content: space-between; }
+.rot { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; cursor: pointer; min-width: 0; }
+.rot.between { justify-content: space-between; }
+.rot > span { min-width: 0; overflow-wrap: anywhere; }
+.switch:disabled { opacity: .5; cursor: not-allowed; }
+.field { font-weight: 600; font-size: 14px; }
+.saved { font-weight: 400; font-size: 13px; color: var(--mu); }
+.shaderslider { padding: 8px 0; border-top: 1px solid var(--ln); }
+.shaderslider:first-child { border-top: 0; }
+.shaderslider input[type=range] { height: 44px; }
+.shaderadv { gap: 8px; }
 /* Room screen: big buttons for staff, long names wrap, and five tabs still fit a phone */
 .tabs.many { gap: 3px; padding-left: 8px; padding-right: 8px; }
 .tabs.many .btn { padding: 0 2px; min-width: 0; font-size: 14px; }

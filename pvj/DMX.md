@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # DMX over the network (beta)
 
-Control the box from a lighting console or software (QLC+, Resolume, MadMapper, grandMA and others) over **Art-Net** (UDP 6454) or **sACN / E1.31** (UDP 5568). Switch it on under System > DMX lighting desk (the button on that page, then the switch at its top right), then turn DMX on with the button inside the page. Off until you turn it on. Full-access devices only.
+Control the box from a lighting console or software (QLC+, Resolume, MadMapper, grandMA and others) over **Art-Net** (UDP 6454) or **sACN / E1.31** (UDP 5568). Switch it on under System > DMX lighting desk with the switch at the top of the page: it is the only switch, and the box is listening as soon as it says On. Off until you switch it on. Full-access devices only. If the receiver cannot start (the port is in use, say), the reason is shown on the page and the switch stays Off. The switch never saves the fields on the page; **Save** does, because protocol, universe, start channel and networks change together. In the API these are still two things: the `control-dmx` module and `enabled` in `POST /api/dmx`; a box with the module on and `enabled` off shows Off, and switching on sends only `enabled`.
 
 Tell the console the box's address and universe; the box does not announce itself (no ArtPollReply, no discovery, nothing is ever sent back).
 
@@ -31,7 +31,7 @@ The first eight channels are where they always were. The fixed map had no free p
 - If the signal stops, the box holds its last state. If no valid frame arrives for 3 seconds, the next frame (from the same console or another) is a new baseline, so a restarted console cannot fire anything by coming back at zero.
 - Each level channel is applied at most 20 times a second; the next frame carries the change on, and a change that could not be applied is tried again.
 - Limits that do not depend on the sender's address (which can be forged): 500 packets a second in total, and 50 commands a second to the player. The port is not shared: if another program holds UDP 6454 or 5568, the box reports it.
-- Turning the module off in System stops the receiver.
+- Switching it off in System switches the module off, which stops the receiver. Your settings are kept.
 - Only the actions in the table are reachable. Nothing that shuts down, reboots or reconfigures the box.
 - Art-Net universe 0 to 32767; sACN universe 1 to 63999 (the box joins the multicast group `239.255.x.y` for its universe; unicast also works).
 
