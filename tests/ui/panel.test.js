@@ -918,6 +918,12 @@ function startServer() {
     const packed = (await get('/api/shaders')).shaders.filter((s) => s.pack === 'isf-files');
     assert(packed.length === 8 && packed.every((s) => s.source === 'bundled' && !s.vibes && !s.error), 'the ISF-Files pack is listed, out of Vibes');
     assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10 + packed.length, 'the pack is listed with the ten');
+    // somebody else's work says so on its row: the pack and the author's own credit; the project's own rows do not
+    assert.strictEqual(await page.locator('#shadercard [data-pack="isf-files"]').count(), packed.length, 'each pack row is marked with its pack');
+    assert.strictEqual(await page.textContent('#shadercard [data-shader="isf-simplex-noise.fs"] .shadercredit'),
+      'From the isf-files pack. Credit: by VIDVOX (simplex by Ashima Arts / Stefan Gustavson)', 'a pack shader shows its pack and credit');
+    assert.strictEqual(await page.locator('#shadercard [data-pack="isf-files"] .shadercredit').count(), packed.length, 'every pack row has the line');
+    assert.strictEqual(await page.locator('#shadercard [data-pack="nxlx"] .shadercredit').count(), 0, 'the project\'s own rows carry no credit line');
     assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard', 'vibessettings', 'shaderremote'],
       'the page, top to bottom: now, the library, Vibes settings, other ways to control it (no sliders while nothing plays)');
     assert.strictEqual(await page.textContent('#shaderplaying'), 'No shader on screen');
