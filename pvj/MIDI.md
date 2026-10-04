@@ -16,7 +16,7 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 
 ### How it behaves
 
-- **What wins.** For each control: a mapping you made (by Learn, or by tapping the control on its card) wins; else the controller's standard layout; else the built-in map. The built-in map is **not** used for a controller whose standard layout is on (otherwise knob 5 of a nanoKONTROL2, which sends CC 20, would also be the built-in map's opacity). A mapping made for "any controller" also wins over a standard layout for that control.
+- **What wins.** For each control: a mapping you made (by Learn, or by tapping the control on its card) wins; else the controller's standard layout; else the built-in map. The built-in map is **not** used for a controller whose standard layout is on (otherwise knob 5 of a nanoKONTROL2, which sends CC 20, would also be the built-in map's opacity). A mapping made for "any controller" also wins over a standard layout for that control. If a control has both, the controller's own mapping is the one that runs.
 - **Standard layout: on or off**, a switch on the controller's card, per controller and kept in the settings. Off leaves your own mappings and the built-in map, without unplugging anything.
 - **Several controllers at once** each use their own layout. A second controller of the same model (ALSA calls it `Mini_1`) uses the same layout; its switch and your mappings are its own.
 - **Matching** is by the ALSA card id (the last word of the product name: `nanoKONTROL2`, `Mix`, `Mini`) and, because other products end in the same word, by the product name ALSA shows in `/proc/asound/cards` ("Launchpad Mini", so a Launchkey Mini is not taken for one). Both are matched as a whole against the patterns in the file.
@@ -113,7 +113,7 @@ With the controller plugged in, open System > MIDI controller and look at its ca
 
 ### On the page
 
-Each connected controller has a card: its name and state line, the switch "Standard layout", the drawn layout (a grid built from the profile's positions; on a phone a wide controller scrolls sideways inside its card), and under it the profile's note. A control shows what it does now; it lights while it is moved; a dashed edge means "changed by you"; a dotted edge means it waits for pickup. Tap a control to see what it sends and to choose another action (Save), or "Nothing" to switch it off; "Back to the standard" undoes that for the control, and "Back to the standard for the whole controller" for all of them, after a question in place. A controller with no profile gets a card that says "No built-in layout for this one yet. Teach it below."
+Each connected controller has a card: its name and state line, the switch "Standard layout", the drawn layout (a grid built from the profile's positions; on a phone a wide controller scrolls sideways inside its card), and under it the profile's note. A control shows what it does now; it lights while it is moved; a dashed edge means "changed by you"; a dotted edge means it waits for pickup. Tap a control to see what it sends and to choose another action (Save), or "Nothing" to switch it off; "Back to the standard" undoes that for the control, and "Back to the standard for the whole controller" for all of them, after a question in place. Both remove only that controller's own mappings on the controls of its layout; a mapping made for any controller is shown on the control as such and is removed in the list of mappings. A controller with no profile gets a card that says "No built-in layout for this one yet. Teach it below."
 
 ### Writing a profile for another controller
 
@@ -196,7 +196,7 @@ On unless you turn it off (System > MIDI controller > Built-in map). It exists s
 
 ## Not built yet
 
-- **Lights** (a lit pad for a pad with a clip, brighter while it plays; the nanoKONTROL2's button lights). Left out on purpose, with what it would take written down (D47):
+- **Lights** (a lit pad for a pad with a clip, brighter while it plays; the nanoKONTROL2's button lights). Left out on purpose, with what it would take written down (D49):
   - The panel's service may only **read** ALSA devices (`DeviceAllow=char-alsa r`, checked by a test). Writing needs `rw` in `install/pvj-web.service`, and a unit file is not part of an update or of a quick deploy, so a box would have code that wants to write under a unit that forbids it; the writer would have to notice and say "lights need the updated service file".
   - A small writer per profiled controller on a second, write-only handle to the same device (never the reader's), non-blocking, dropping what does not fit, sending only what changed and at most a few dozen messages a second; an optional `lights` section in the profile; never anything to a device without a profile, which is why matching also checks the product name.
   - What to show needs the pads and what is playing, read from memory only (the writer must not ask the player from the reader's thread).

@@ -6,7 +6,7 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
 ## 2026-10-04 (controller profiles: a known MIDI controller works when it is plugged in)
 
-Pull request #77 (D47), on top of the shader engine (#72). The owner's words: "I would like to be able to connect a controller like the Korg nanoKONTROL2 and have it automatically/preset/natively mapped to control mastercontrol."
+Pull request #77 (D49), on top of the shader engine (#72). The owner's words: "I would like to be able to connect a controller like the Korg nanoKONTROL2 and have it automatically/preset/natively mapped to control mastercontrol."
 
 **Nothing in this entry was tried on a real controller.** The three are on the owner's Pi, which this session did not touch.
 
@@ -22,7 +22,7 @@ Pull request #77 (D47), on top of the shader engine (#72). The owner's words: "I
 
 **Sources, plainly.** Launchpad Mini: Novation's Launchpad S Programmer's Reference 1.02 (X-Y layout figure, message examples) plus the recording from 2026-09-30, which fits it. nanoKONTROL2: Korg's Parameter Guide has **no** factory CC table; the numbers are the widely reported ones, cross-checked with the Mixxx mapping; all marked unverified. MIDI Mix: no Akai document with numbers found; from a public Live script for the factory preset; all marked unverified.
 
-**Not built:** lights (D47 and `pvj/MIDI.md` say why and what it would take). The System page is still shown to full-access devices only; a presenter can read the layout through the API.
+**Not built:** lights (D49 and `pvj/MIDI.md` say why and what it would take). The System page is still shown to full-access devices only; a presenter can read the layout through the API.
 
 **Open, for the owner:** the two-minute check per controller in `pvj/MIDI.md` (move each control once, watch its box light). Start with the nanoKONTROL2 in CC mode. Also unread on the Pi: the product names in `/proc/asound/cards` ("nanoKONTROL2", "MIDI Mix", "Launchpad Mini" are assumed from the card ids).
 
