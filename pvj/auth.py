@@ -10,6 +10,10 @@
   number of times, and only a few can exist at once. They live in memory only: a restart clears them.
 * A presenter (live) may make and end the GUEST code, within PRESENTER_JOIN_MINUTES and PRESENTER_JOIN_MAX_USES, and
   nothing else (D47; the API decides what a role may ask for, this module keeps the limits and who made a code).
+* Bounds (review of D47): at most MAX_DEVICES paired devices, of which FULL_RESERVED places are kept for full-access
+  devices, so guests and presenters can never fill the list and keep the owner's PIN from pairing; at most
+  PRESENTER_CODES_PER_HOUR guest codes made by presenters in an hour; and a device that joined with a GUEST code is
+  dropped once it has not been used for GUEST_IDLE_DAYS (its last use is written down at most once a day).
 * The PIN is stored as a salted scrypt hash. Because it is short, guessing is
   throttled per client and globally, and comparisons are constant-time.
 """
@@ -30,6 +34,11 @@ JOIN_MAX_USES, JOIN_DEFAULT_USES = 50, 20
 PRESENTER_JOIN_MINUTES = (15, 60, 120)          # what a presenter may choose for a guest code: the panel's own three choices
 PRESENTER_JOIN_MAX_USES = 20
 JOIN_MAKERS = ("owner", "presenter")
+PRESENTER_CODES_PER_HOUR = 6                    # guest codes made by presenters (all of them together) in any hour
+MAX_DEVICES = 200                               # paired devices in all
+FULL_RESERVED = 20                              # of those, places only a full-access device can take
+GUEST_IDLE_DAYS = 7                             # a device that joined with a guest code goes when unused this long
+SEEN_EVERY = 86400                              # its last use is saved at most this often (seconds)
 PER_CLIENT_FAILS, PER_CLIENT_WINDOW = 5, 60.0
 GLOBAL_FAILS, GLOBAL_WINDOW = 20, 600.0
 LOCKOUT_SECONDS = 60.0
@@ -43,6 +52,18 @@ class AuthError(Exception):
 
 class JoinExists(AuthError):
     """A code for that role is active, and the caller did not say it may be replaced."""
+
+
+class JoinLimit(AuthError):
+    """Presenters have made as many guest codes this hour as they may. `retry_after` says when the next is possible."""
+
+
+class TooManyDevices(AuthError):
+    """The list of paired devices is full for this kind of device. Not a wrong guess."""
+
+
+class NotPaired(AuthError):
+    """The device that asked is no longer paired (removed while its request was on its way)."""
 
 
 def generate_pin():
@@ -68,6 +89,8 @@ class Auth:
         self.last_seen = {}
         self._pair_lock = threading.Lock()  # one PIN attempt at a time, so the counters are exact
         self._joins = {}        # code -> {"role", "expires" (monotonic), "uses"}
+        self._presenter_made = []   # when (monotonic) presenters made guest codes, within the last hour
+        self._prune_idle()
         if rotate_on_start or not settings.data["auth"].get("pin_hash"):
             self._new_pin()
 
@@ -138,9 +161,9 @@ class Auth:
                 raise AuthError("too many attempts", retry_after=int(wait) + 1)
             given = pin if isinstance(pin, str) else ""
             if len(given) == JOIN_LENGTH and given.isascii() and given.isdigit():
-                role = self._use_join(given)
+                role = self._use_join(given)      # TooManyDevices: the code is right, is not used up, and no guess is counted
                 if role:          # the failure count is NOT reset: a real code must not buy more PIN guesses
-                    return self._add_device(name, role)
+                    return self._add_device(name, role, via="code")
                 self._record_fail(client)
                 raise AuthError("wrong or expired code")
             if not self._check_pin(pin):
@@ -165,15 +188,20 @@ class Auth:
                 found = code
         if found is None:
             return None
+        self._prune_idle()
+        if not self._room_for(self._joins[found]["role"]):
+            raise TooManyDevices(self.FULL_TEXT)
         self._joins[found]["uses"] -= 1
         role = self._joins[found]["role"]
         self._prune_joins()
         return role
 
-    def create_join(self, role, minutes=JOIN_DEFAULT_MINUTES, uses=JOIN_DEFAULT_USES, by="owner", replace=True):
+    def create_join(self, role, minutes=JOIN_DEFAULT_MINUTES, uses=JOIN_DEFAULT_USES, by="owner", replace=True, check=None):
         """A new join code for `role` (view or live). Raises AuthError on bad input or too many codes. `by` says who
         made it ("owner": a full-access device; "presenter"), for the panel to show. With `replace` False an active
-        code for the role is left alone and JoinExists is raised."""
+        code for the role is left alone and JoinExists is raised. A presenter's codes are counted: JoinLimit after
+        PRESENTER_CODES_PER_HOUR in an hour. `check`: asked under the lock before anything is changed; if it says
+        no (the asking device was removed meanwhile), NotPaired is raised and the active code stays."""
         if role not in JOIN_ROLES:
             raise AuthError("a join code is for view (guest) or live (presenter) access")
         if by not in JOIN_MAKERS:
@@ -186,6 +214,16 @@ class Auth:
             same = [c for c, j in self._joins.items() if j["role"] == role]
             if same and not replace:
                 raise JoinExists("a code for that access is already active")
+            if check is not None and not check():
+                raise NotPaired("this device is no longer paired")
+            if by == "presenter":
+                t = self._clock()
+                self._presenter_made = [x for x in self._presenter_made if t - x < 3600.0]
+                if len(self._presenter_made) >= PRESENTER_CODES_PER_HOUR:
+                    wait = int(3600.0 - (t - self._presenter_made[0])) + 1
+                    raise JoinLimit("%d guest codes were made in the last hour, which is the most a presenter may; "
+                                    "use the code that is active, wait %d minutes, or ask the owner"
+                                    % (PRESENTER_CODES_PER_HOUR, -(-wait // 60)), retry_after=wait)
             for c in same:                      # one live code per role: a new one replaces the old
                 del self._joins[c]
             if len(self._joins) >= MAX_JOINS:
@@ -195,6 +233,8 @@ class Auth:
                 if code not in self._joins:
                     break
             self._joins[code] = {"role": role, "expires": self._clock() + minutes * 60, "uses": uses, "by": by}
+            if by == "presenter":
+                self._presenter_made.append(self._clock())
             return code
 
     def list_joins(self):
@@ -227,11 +267,43 @@ class Auth:
             raise AuthError("invites are for view or live access")
         return self._add_device(name, role)
 
-    def _add_device(self, name, role):
+    FULL_TEXT = ("too many devices are paired with this box; the owner removes some under System, People and codes, "
+                 "and then this works")
+
+    def _room_for(self, role):
+        """Is there a place for one more device of `role`? Guests and presenters share MAX_DEVICES - FULL_RESERVED
+        places; the rest can only be taken by full-access devices, so the PIN always pairs while fewer than
+        FULL_RESERVED full-access devices exist, however many guests there are. Nothing is ever evicted to make room."""
+        devices = self.settings.data["devices"]
+        if role == "full":
+            return len(devices) < MAX_DEVICES
+        return sum(1 for d in devices if d["role"] != "full") < MAX_DEVICES - FULL_RESERVED
+
+    def _idle(self, device, now):
+        return (device.get("via") == "code" and device["role"] == "view"
+                and now - device.get("seen", device["created"]) > GUEST_IDLE_DAYS * 86400)
+
+    def _prune_idle(self):
+        """Drop the devices that joined with a guest code and were not used for GUEST_IDLE_DAYS. Run at start and
+        whenever someone joins; such a device is also refused, and dropped, the moment it comes back."""
+        now = int(self._now())
+        with self.settings.lock:
+            keep = [d for d in self.settings.data["devices"] if not self._idle(d, now)]
+            if len(keep) != len(self.settings.data["devices"]):
+                self.settings.data["devices"] = keep
+                self.settings.save()
+
+    def _add_device(self, name, role, via=None):
+        """`via`: "code" for a device that joined with a join code (kept in its record; a guest that joined so is
+        the only kind that expires)."""
         token = secrets.token_urlsafe(24)
         device = {"id": secrets.token_hex(4), "name": str(name or "device")[:40], "role": role,
                   "token_hash": _token_hash(token), "created": int(self._now())}
+        if via:
+            device["via"] = via
         with self.settings.lock:
+            if not self._room_for(role):
+                raise TooManyDevices(self.FULL_TEXT)
             self.settings.data["devices"].append(device)
             self.settings.save()
         return token, self._public(device)
@@ -245,7 +317,15 @@ class Auth:
             if hmac.compare_digest(d["token_hash"], h):
                 found = d
         if found:
-            self.last_seen[found["id"]] = int(self._now())
+            now = int(self._now())
+            if self._idle(found, now):                 # a guest code's device, unused for too long: gone
+                self.revoke(found["id"])
+                return None
+            self.last_seen[found["id"]] = now
+            if found.get("via") == "code" and found["role"] == "view" and now - found.get("seen", found["created"]) >= SEEN_EVERY:
+                with self.settings.lock:               # written down once a day at most, so its idle time survives a restart
+                    found["seen"] = now
+                    self.settings.save()
             return self._public(found)
         return None
 

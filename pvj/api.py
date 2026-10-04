@@ -264,6 +264,8 @@ class Api:
     def pair(self, body, device, client):
         try:
             token, dev = self.auth.pair(str(body.get("pin", "")), str(body.get("name", "device")), client)
+        except auth_mod.TooManyDevices as e:
+            raise ApiError(409, str(e))
         except AuthError as e:
             raise ApiError(429 if e.retry_after else 403, str(e), e.retry_after)
         return {"device": dev, "token": token}
@@ -1289,6 +1291,8 @@ class Api:
     def invite(self, body, device, client):
         try:
             token, dev = self.auth.invite(str(body.get("name", "guest"))[:40], body.get("role"))
+        except auth_mod.TooManyDevices as e:
+            raise ApiError(409, str(e))
         except AuthError as e:
             raise bad(str(e))
         if not self._still_paired(device):
@@ -1847,22 +1851,29 @@ class Api:
         if not full:
             if role != "view":
                 raise ApiError(403, "a presenter can make a guest code only (full access needed)")
-            if isinstance(minutes, bool) or minutes not in auth_mod.PRESENTER_JOIN_MINUTES:
+            if type(minutes) is not int or minutes not in auth_mod.PRESENTER_JOIN_MINUTES:      # the type first: 15.0 == 15
                 raise bad("minutes must be one of %s" % ", ".join(str(m) for m in auth_mod.PRESENTER_JOIN_MINUTES))
-            if isinstance(uses, bool) or not isinstance(uses, int) or not 1 <= uses <= auth_mod.PRESENTER_JOIN_MAX_USES:
+            if type(uses) is not int or not 1 <= uses <= auth_mod.PRESENTER_JOIN_MAX_USES:
                 raise bad("uses must be a whole number from 1 to %d" % auth_mod.PRESENTER_JOIN_MAX_USES)
-        try:
+        old = next((j for j in self.auth.list_joins() if j["role"] == role), None)       # for the log line only
+        try:        # `check`: a device removed while this request was on its way changes nothing (the active code stays)
             code = self.auth.create_join(role, minutes, uses, by="owner" if full else "presenter",
-                                         replace=full or body.get("replace") is True)
+                                         replace=full or body.get("replace") is True, check=lambda: self._still_paired(device))
+        except auth_mod.NotPaired as e:
+            raise ApiError(401, str(e))
         except auth_mod.JoinExists:
             raise ApiError(409, "a guest code is already active; ending it means nobody else can join with it")
+        except auth_mod.JoinLimit as e:
+            raise ApiError(429, str(e), e.retry_after)
         except AuthError as e:
             raise bad(str(e))
         if not self._still_paired(device):
             self.auth.cancel_join(code)
             raise ApiError(401, "this device is no longer paired")
         if not full:
-            self.log("pvj-web: guest code made by presenter device %s (from %s)" % (device.get("id"), client))
+            self.log("pvj-web: guest code made by presenter device %s (from %s), %d minutes, %d uses%s"
+                     % (device.get("id"), client, minutes, uses,
+                        ", in the place of the one the %s made" % old["by"] if old else ""))
         return self._access_state(device)
 
     def cancel_join_code(self, body, device, client):
@@ -1924,18 +1935,31 @@ class Api:
             raise bad("show must be true or false")
         if not show:
             self.pinscreen.hide(only=only)
+            if not full:
+                self.log("pvj-web: guest code taken off the room screen by presenter device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
+        made = []           # the codes this very call made, to take back if the device turns out to be gone
         try:
-            self.pinscreen.show(body.get("items"), body.get("seconds", 60), by="owner" if full else "presenter", only=only)
+            self.pinscreen.show(body.get("items"), body.get("seconds", 60), by="owner" if full else "presenter", only=only,
+                                made=made, check=lambda: self._still_paired(device))
+        except auth_mod.NotPaired as e:
+            raise ApiError(401, str(e))
         except PermissionError as e:
             raise ApiError(403, "%s (full access needed)" % e)
         except pinscreen_mod.Busy as e:
             raise ApiError(409, str(e))
+        except auth_mod.JoinLimit as e:
+            raise ApiError(429, str(e), e.retry_after)
         except (ValueError, AuthError) as e:
             raise bad(str(e))
         if not self._still_paired(device):
+            for code in made:
+                self.auth.cancel_join(code)
             self.pinscreen.hide(only=only)
             raise ApiError(401, "this device is no longer paired")
+        if not full:
+            self.log("pvj-web: guest code put on the room screen for %d s by presenter device %s (from %s)%s"
+                     % (body.get("seconds", 60), device.get("id"), client, "; a guest code was made for it" if made else ""))
         return self._access_state(device)
 
     # --- DMX and MIDI input --------------------------------------------
