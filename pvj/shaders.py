@@ -56,6 +56,9 @@ INPUT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")
 _COUNTER = "format=gbrp,geq=r=N-256*floor(N/256):g=floor(N/256)-256*floor(N/65536):b=floor(N/65536)-256*floor(N/16777216),"
 CARRIER = re.compile(r"av://lavfi:color=c=black:size=[0-9]{1,4}x[0-9]{1,4}:rate=%d,(?:%s)?format=rgb0" % (CARRIER_FPS, re.escape(_COUNTER)))
 TYPES = ("float", "bool", "long", "color", "point2D", "event")
+# What stands in when a shader is refused and there is none to go back to: the carrier itself is not black any more
+# (its colour is its frame number), so black is drawn over it.
+BLACK = "//!HOOK NATIVE\n//!BIND HOOKED\n//!DESC nxlx black\n\nvec4 hook() {\n    return vec4(0.0, 0.0, 0.0, 1.0);\n}\n"
 # Names an input may not have: GLSL's own words, what mpv and this translator define, and ISF's built-ins.
 RESERVED = frozenset("""
 attribute const uniform varying layout centroid flat smooth noperspective patch sample break continue do for while
@@ -916,12 +919,14 @@ class Engine:
                     tap.close()
             if verdict == "refused":
                 back = before if before and before["carrier"] == carrier and os.path.exists(before["path"]) else None
+                keep = back["path"] if back else None
                 try:
-                    player.swap_source(back["path"] if back else None, new)
-                except PlayerError:
+                    keep = keep or self._write(BLACK)       # nothing to go back to: black, never the bare carrier
+                    player.swap_source(keep, new)
+                except (PlayerError, OSError):
                     pass
                 self.playing = dict(back, epoch=new) if back else None
-                self._cleanup({back["path"]} if back else set())
+                self._cleanup({keep} if keep else set())
                 self.error = {"id": sid, "message": message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
                 self.refused(sid, digest, message)
                 self.log("pvj-web: shader %s refused by the player: %s" % (sid, message))

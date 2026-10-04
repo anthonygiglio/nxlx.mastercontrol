@@ -74,6 +74,21 @@ class MeasuredFixesTest(Base):
         self.engine.show("nxlx-aurora.fs")
         self.assertIsNone(self.engine.state()["playing"]["checked"])
 
+    def test_a_refused_shader_with_none_before_it_leaves_black_not_the_carriers_own_colour(self):
+        """The carrier's colour is its frame number now: the bare carrier would show a dark red that gets brighter."""
+        self.player.vo = "gpu"
+        FakeTap.lines = REFUSAL
+        r = self.engine.show("nxlx-tide.fs")
+        self.assertEqual((r["ok"], r["showing"]), (False, None))
+        with open(self.player.source_shader) as f:
+            text = f.read()
+        self.assertEqual(text, S.BLACK)
+        self.assertIn("return vec4(0.0, 0.0, 0.0, 1.0);", text)
+        self.assertEqual(self.generated(), [os.path.basename(self.player.source_shader)])      # and the refused text is gone
+        FakeTap.lines = []
+        self.engine.show("nxlx-tide.fs")
+        self.assertEqual(len(self.generated()), 1)                    # the black one is removed like any other
+
     def test_deleting_a_shader_forgets_its_refusal(self):
         self.player.vo = "gpu"
         self.engine.upload("mine.fs", GOOD)

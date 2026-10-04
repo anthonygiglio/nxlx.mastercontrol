@@ -478,7 +478,8 @@ class EngineTest(Base):
         self.assertIn("`oops' undeclared", c.exception.message)
         self.assertIn("The screen is black", c.exception.message)
         self.assertEqual((self.player.source_shader, self.generated(), self.engine.state()["playing"]), (None, [], None))
-        self.assertEqual((self.player.calls[-2][:2], self.player.calls[-1]), (("swap_source", None), ("clear",)))   # black at once, then stopped
+        self.assertEqual((self.player.calls[-2][0], self.player.calls[-1]), ("swap_source", ("clear",)))            # black at once, then stopped
+        self.assertRegex(os.path.basename(self.player.calls[-2][1]), r"^shader-\d+-\d+\.glsl$")       # a shader that draws black, not the bare carrier
         self.assertIsNone(self.player.path)
         FakeTap.lines = []
         self.engine.api_play({"id": "nxlx-tide.fs"}, None, "t")                        # a later good try clears the error
