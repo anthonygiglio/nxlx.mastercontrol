@@ -689,7 +689,8 @@ class NetworkApiTest(ServerBase):
         from pvj.netd import NetService
         self.nm = FakeNm()
         self.sysfs = make_sysfs()
-        self.svc = NetService(runner=self.nm, sysfs=self.sysfs)
+        self.kdir = tempfile.mkdtemp()
+        self.svc = NetService(runner=self.nm, sysfs=self.sysfs, keyfile_dir=self.kdir)
 
         class Direct:
             def request(_, message):
@@ -714,7 +715,7 @@ class NetworkApiTest(ServerBase):
         self.enable()
         _, inv, _ = self.call("POST", "/api/devices/invite", {"name": "tech", "role": "live"}, token=self.token)
         for method, path in (("GET", "/api/network"), ("POST", "/api/network/apply"), ("POST", "/api/network/confirm"),
-                             ("POST", "/api/network/revert"), ("POST", "/api/network/plan")):
+                             ("POST", "/api/network/revert"), ("POST", "/api/network/plan"), ("POST", "/api/network/scan")):
             body = self.STATIC if method == "POST" else None
             self.assertEqual(self.call(method, path, body, token=inv["token"])[0], 403, path)
         self.assertEqual(self.call("GET", "/api/network")[0], 401)
@@ -745,6 +746,33 @@ class NetworkApiTest(ServerBase):
         self.assertEqual((st, body["pending"]), (200, None))
         self.assertEqual(self.nm.profiles["pvj-eth0"]["connection.autoconnect"], "yes")
         self.assertEqual(self.call("POST", "/api/network/confirm", {}, token=self.token)[0], 409)  # nothing pending
+
+    WIFI = {"iface": "wlan0", "mode": "dhcp", "ssid": "Leyline Staff", "password": "s3cret pass"}
+
+    def test_wifi_through_the_panel_never_returns_the_password(self):
+        self.enable()
+        st, body, _ = self.call("GET", "/api/network", token=self.token)
+        self.assertEqual(body["wifi_modes"], ["dhcp", "static", "hotspot", "off"])
+        self.assertEqual(body["wifi"], {"hardware": True, "radio": True, "ports": {"wlan0": None}})
+        st, plan, _ = self.call("POST", "/api/network/plan", self.WIFI, token=self.token)
+        self.assertEqual(st, 200)
+        st, body, _ = self.call("POST", "/api/network/apply", self.WIFI, token=self.token)
+        self.assertEqual((st, body["pending"]["ssid"], body["config"]["password_set"]), (200, "Leyline Staff", True))
+        _, status, _ = self.call("GET", "/api/network", token=self.token)
+        self.assertNotIn("s3cret", json.dumps([plan, body, status]))
+        self.assertEqual(self.nm.profiles["pvj-wlan0-try"]["_kf"]["wifi-security.psk"], "s3cret\\spass")
+        self.assertEqual(self.call("POST", "/api/network/confirm", {}, token=self.token)[0], 200)
+        _, status, _ = self.call("GET", "/api/network", token=self.token)
+        self.assertEqual(status["wifi"]["ports"]["wlan0"], {"ssid": "Leyline Staff", "hotspot": False})
+
+    def test_wifi_scan(self):
+        self.enable()
+        self.nm.scan_text = "Leyline Staff:60:WPA2:36\n"
+        st, body, _ = self.call("POST", "/api/network/scan", {"iface": "wlan0"}, token=self.token)
+        self.assertEqual((st, body["networks"][0]["ssid"]), (200, "Leyline Staff"))
+        self.assertEqual(self.call("POST", "/api/network/scan", {"iface": "eth0"}, token=self.token)[0], 409)
+        for bad in ({}, {"iface": "wlan0; reboot"}, {"iface": 5}, []):
+            self.assertEqual(self.call("POST", "/api/network/scan", bad, token=self.token)[0], 400, bad)
 
     def test_bad_requests_are_400_before_the_helper_sees_them(self):
         self.enable()

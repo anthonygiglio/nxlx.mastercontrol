@@ -4,7 +4,7 @@
 
 For the person running visuals at a gig. It covers the new Python panel (the `pvj/` folder). The old PHP panel for the legacy Pi 3 line has its own manual in `docs/html`.
 
-**Status, read this first.** The new core has been built and tested in containers and CI, and the image has been booted and used on **one Raspberry Pi 4** (what was and was not verified there is listed in [HANDOFF.md](../HANDOFF.md)). Other boards, a projector, and several features (MIDI Learn, streams, the read-only root, the Network module) have not been tried on hardware. Where this manual describes them, that is what the code is written to do. Treat anything not listed as verified as untested on hardware, and do not use it at a paid show without a rehearsal and a backup plan. The checklist is in [tools/DEVICE-TESTING.md](../tools/DEVICE-TESTING.md).
+**Status, read this first.** The new core has been built and tested in containers and CI, and the image has been booted and used on **one Raspberry Pi 4** (what was and was not verified there is listed in [HANDOFF.md](../HANDOFF.md)). Other boards, a projector, and several features (MIDI Learn, streams, the read-only root, the Network module and its Wi-Fi control) have not been tried on hardware. Where this manual describes them, that is what the code is written to do. Treat anything not listed as verified as untested on hardware, and do not use it at a paid show without a rehearsal and a backup plan. The checklist is in [tools/DEVICE-TESTING.md](../tools/DEVICE-TESTING.md).
 
 The pictures come from the test suite (test clips and a fake network), see [UI.md](UI.md).
 
@@ -142,7 +142,7 @@ Beta modules are **off** until you switch them on under System > Modules. Module
 | **DMX over the network**: Art-Net and sACN | [pvj/DMX.md](../pvj/DMX.md) |
 | **MIDI controller** (USB) | [pvj/MIDI.md](../pvj/MIDI.md) |
 | **OSC**: TouchOSC, Resolume, QLab and others | [pvj/OSC.md](../pvj/OSC.md) |
-| **Network settings** (wired) | [pvj/NETWORK.md](../pvj/NETWORK.md) |
+| **Network settings** (wired and Wi-Fi: join a network, the box's own hotspot, Wi-Fi off) | [pvj/NETWORK.md](../pvj/NETWORK.md) |
 
 The Projection mapping card on Mix, with a grid and a quad:
 
@@ -204,7 +204,7 @@ Without the tick a stream address is shortened to what is not secret: the name a
 
 **Diagnostics.** *Download diagnostics file* saves one file to send to whoever is helping you: the version, the board, the screens, module states, the Health card's data, the last update, and the settings with every secret removed (no PIN, token, code, key, password or stream login; a stream is shown only as where it comes from). The panel runs without system rights and is not allowed to read the system log, so the file says so instead of holding log lines; on the box, `sudo journalctl -b -u 'pvj-*'` prints them. If a box is set up so that the panel can read the log, the lines are included with PINs, codes and logins removed.
 
-**Factory reset.** Choose whether the clips stay or are deleted, then *Reset to factory settings* and confirm. Playback stops, every setting goes back to how a new box starts, every phone, tablet and guest is unpaired (this one too), codes and a running support session end, and the box makes a new PIN, so the PIN screen is back on the display (`sudo pvj-pin` also prints it). Deleting the clips removes the media files in the box's own media folder and nothing else; a USB drive is never emptied, and if the box keeps its clips on a USB drive (`PVJ_MEDIA_DIR`) the reset refuses to delete them. What a reset does not touch: the wired network settings (System > Network changes the system's own configuration), your own themes, anything in `/etc/pvj` (the signing key, fleet support details), and the settings backups that updates keep for a rollback (`/var/lib/pvj/backups`, readable by root only). Those backups still hold the old devices: after a reset, do not run `sudo pvj-update rollback` unless you mean to bring the old settings back, or remove them first with `sudo rm -r /var/lib/pvj/backups`.
+**Factory reset.** Choose whether the clips stay or are deleted, then *Reset to factory settings* and confirm. Playback stops, every setting goes back to how a new box starts, every phone, tablet and guest is unpaired (this one too), codes and a running support session end, and the box makes a new PIN, so the PIN screen is back on the display (`sudo pvj-pin` also prints it). Deleting the clips removes the media files in the box's own media folder and nothing else; a USB drive is never emptied, and if the box keeps its clips on a USB drive (`PVJ_MEDIA_DIR`) the reset refuses to delete them. What a reset does not touch: the network settings, wired and Wi-Fi (System > Network changes the system's own configuration), your own themes, anything in `/etc/pvj` (the signing key, fleet support details), and the settings backups that updates keep for a rollback (`/var/lib/pvj/backups`, readable by root only). Those backups still hold the old devices: after a reset, do not run `sudo pvj-update rollback` unless you mean to bring the old settings back, or remove them first with `sudo rm -r /var/lib/pvj/backups`.
 
 Through a remote support session, the settings can be exported without passwords and the diagnostics file downloaded; importing, exporting with passwords and factory reset are refused.
 
@@ -232,6 +232,6 @@ Not tested on a real box yet (2026-10-03): the three cards were tested with the 
 
 ## 8. Not built yet
 
-Crossfade, Wi-Fi and hotspot, updates from the network, a panel update button, NDI, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
+Crossfade, updates from the network, a panel update button, NDI, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
 
 **SMPTE ST 2110** is not supported directly and not planned: use a converter from 2110 to HDMI into the live input (USB capture), or from 2110 to NDI once NDI is built.

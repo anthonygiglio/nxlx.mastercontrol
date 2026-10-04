@@ -1,12 +1,19 @@
 {
   "id": "network",
-  "name": "Network settings (wired)",
+  "name": "Network settings (wired and Wi-Fi)",
   "version": "0.1.0",
   "type": "optional",
   "channel": "beta",
-  "requires": ["core"],
-  "boards": ["pi3", "pi4", "pi5", "x86"],
+  "requires": [
+    "core"
+  ],
+  "boards": [
+    "pi3",
+    "pi4",
+    "pi5",
+    "x86"
+  ],
   "status": "ready",
   "default_enabled": false,
-  "description": "Change the wired network from the panel: DHCP, fixed address, direct cable (link-local) or serve addresses. Every change reverts by itself unless confirmed. Needs NetworkManager."
+  "description": "Change the network from the panel: wired (DHCP, fixed address, direct cable or serve addresses) and Wi-Fi (join a network, the box's own hotspot, or Wi-Fi off). Every change reverts by itself unless confirmed. Needs NetworkManager."
 }

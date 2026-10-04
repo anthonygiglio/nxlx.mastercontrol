@@ -100,7 +100,7 @@ Projectors (see [PROJECTORS.md](../pvj/PROJECTORS.md)): two projectors at privat
 | --- | --- |
 | ![DMX card](images/ui/dmx.png) | ![MIDI card](images/ui/midi.png) |
 
-Network settings (wired) always revert by themselves unless you confirm them. See [NETWORK.md](../pvj/NETWORK.md).
+Network settings (wired and Wi-Fi) always revert by themselves unless you confirm them. See [NETWORK.md](../pvj/NETWORK.md).
 
 ![Network card](images/ui/network.png)
 

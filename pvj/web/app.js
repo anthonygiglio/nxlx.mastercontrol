@@ -1884,8 +1884,8 @@
   }
   // ---- network (wired) ------------------------------------------------
   var netTimer = null;
-  var netForm = { mode: 'dhcp', vals: {} };  // survives redraws of the System screen, so typing is never wiped
-  var NET_FIELDS = ['netaddr', 'netprefix', 'netgw', 'netdns'];
+  var netForm = { mode: 'dhcp', iface: null, vals: {} };  // survives redraws of the System screen, so typing is never wiped
+  var NET_FIELDS = ['netaddr', 'netprefix', 'netgw', 'netdns', 'netssid', 'netpass'];
   // Copy what is on screen into netForm just before anything is rebuilt. Relying on each field's input event
   // alone lost a value on a slow runner; reading the page at the moment of the redraw cannot miss one.
   function keepNetForm() {
@@ -1904,14 +1904,30 @@
     ['linklocal', 'Direct cable', 'Laptop plugged straight into the box; no router. The box uses a 169.254.x.x address.'],
     ['share', 'Serve addresses', 'The box hands out addresses to whatever is plugged in.']
   ];
+  var WIFI_MODES = [
+    ['dhcp', 'Join a network', 'Join a Wi-Fi network and take an address from its router.'],
+    ['static', 'Join, fixed address', 'Join a Wi-Fi network with an address you choose.'],
+    ['hotspot', 'Own hotspot', 'The box makes its own Wi-Fi network (WPA2) and hands out addresses to phones and tablets that join it.'],
+    ['off', 'Wi-Fi off', 'Switch Wi-Fi off. Saved networks are kept.']
+  ];
+  var WIFI_SECURITY = [['wpa-psk', 'WPA2 or WPA2/WPA3 password'], ['sae', 'WPA3 only'], ['open', 'Open (no password)']];
+  function wifiLine(i, w) {
+    if (!w) return 'wi-fi';
+    if (w.hardware === false) return 'wi-fi · blocked (a switch, or no Wi-Fi country set)';
+    if (w.radio === false) return 'wi-fi · off';
+    var now = w.ports && w.ports[i.name];
+    if (!now) return 'wi-fi · not connected';
+    return 'wi-fi · ' + (now.hotspot ? 'own hotspot “' : 'joined “') + now.ssid + '”';
+  }
   function networkCard() {
     var body = h('div', { class: 'list', id: 'netbody' });
-    var card = h('div', { class: 'card', id: 'netcard' }, h('h2', { text: 'Network (wired)' }), body);
+    var card = h('div', { class: 'card', id: 'netcard' }, h('h2', { text: 'Network' }), body);
     var mode = netForm.mode;
-    var out = { iface: null, address: null, prefix: null, gateway: null, dns: null, secs: null, preview: null, msg: null };
+    var out = { iface: null, address: null, prefix: null, gateway: null, dns: null, ssid: null, pass: null, security: null,
+      hidden: null, band: null, secs: null, preview: null, msg: null };
     var mod = S.modules.filter(function (m) { return m.id === 'network'; })[0];
     if (!mod || !mod.enabled) {
-      body.appendChild(h('div', { class: 'k', id: 'netmsg', text: 'Off. Switch on "Network settings (wired)" under Modules above (beta). Needs NetworkManager.' }));
+      body.appendChild(h('div', { class: 'k', id: 'netmsg', text: 'Off. Switch on "Network settings (wired and Wi-Fi)" under Modules above (beta). Needs NetworkManager.' }));
       return card;
     }
 
@@ -1924,15 +1940,21 @@
       });
     }
     function value(el) { return el ? el.value.trim() : ''; }
-    function config() {
+    function config(kind) {
       var c = { iface: value(out.iface), mode: mode, revert_seconds: parseInt(value(out.secs) || '60', 10) };
-      if (mode === 'static' || mode === 'share') {
+      if (mode === 'static' || mode === 'share' || mode === 'hotspot') {
         if (value(out.address)) c.address = value(out.address);
         if (value(out.prefix)) c.prefix = parseInt(value(out.prefix), 10);
       }
       if (mode === 'static') {
         if (value(out.gateway)) c.gateway = value(out.gateway);
         c.dns = value(out.dns).split(/[ ,]+/).filter(Boolean);
+      }
+      if (kind === 'wifi' && mode !== 'off') {
+        c.ssid = out.ssid ? out.ssid.value : '';          // a network name may start or end with a space
+        c.security = mode === 'hotspot' ? 'wpa-psk' : out.security.value;
+        if (c.security !== 'open') c.password = out.pass ? out.pass.value : '';
+        if (mode === 'hotspot') c.band = out.band.value; else c.hidden = !!(out.hidden && out.hidden.checked);
       }
       return c;
     }
@@ -1941,65 +1963,147 @@
       body.textContent = '';
       d.interfaces.forEach(function (i) {
         body.appendChild(h('div', { class: 'item' },
-          h('span', {}, i.name, h('br'), h('span', { class: 'k', text: (i.kind === 'wired' ? 'wired' : 'wi-fi') + ' \u00b7 ' + (i.carrier ? 'connected' : 'no link') + (i.speed_mbps ? ' \u00b7 ' + i.speed_mbps + ' Mbit/s' : '') })),
+          h('span', {}, i.name, h('br'), h('span', { class: 'k', id: 'netline-' + i.name, text: i.kind === 'wired'
+            ? 'wired · ' + (i.carrier ? 'connected' : 'no link') + (i.speed_mbps ? ' · ' + i.speed_mbps + ' Mbit/s' : '')
+            : wifiLine(i, d.wifi) })),
           h('span', { class: 'mono', text: (i.addresses || []).join(', ') || '-' })));
       });
       if (!d.helper) body.appendChild(h('div', { class: 'k', id: 'netmsg', text: 'The network helper (pvj-netd) is not running: changes cannot be applied. You can still preview them.' }));
       if (d.reverting) { body.appendChild(h('div', { class: 'msg err', id: 'netreverting', role: 'alert', text: 'Restoring the previous network. If this page stops responding, reconnect to the box at its old address.' })); netTimer = setTimeout(refresh, 2000); }
       if (d.pending) return drawPending(d.pending);
-      var wired = d.interfaces.filter(function (i) { return i.kind === 'wired'; });
-      if (!wired.length) return body.appendChild(h('div', { class: 'k', text: 'No wired network port found.' }));
-      out.iface = h('select', { class: 'text-input', id: 'netiface', 'aria-label': 'Network port' }, wired.map(function (i) { return h('option', { value: i.name, text: i.name }); }));
+      if (!d.interfaces.length) return body.appendChild(h('div', { class: 'k', text: 'No network port found.' }));
+      var names = d.interfaces.map(function (i) { return i.name; });
+      if (names.indexOf(netForm.iface) < 0) netForm.iface = names[0];
+      function kindOf(name) { return d.interfaces.filter(function (i) { return i.name === name; })[0].kind; }
+      out.iface = h('select', { class: 'text-input', id: 'netiface', 'aria-label': 'Network port' }, d.interfaces.map(function (i) {
+        return h('option', { value: i.name, text: i.name + (i.kind === 'wifi' ? ' (Wi-Fi)' : ' (wired)'), selected: i.name === netForm.iface });
+      }));
       var modes = h('div', { class: 'row wrap', id: 'netmodes' });
       var help = h('div', { class: 'k', id: 'nethelp' });
       var fields = h('div', { class: 'list', id: 'netfields' });
+      function kind() { return kindOf(out.iface.value); }
+      function modeList() { return kind() === 'wifi' ? WIFI_MODES : NET_MODES; }
       function remember(el) {
         if (netForm.vals[el.id]) el.value = netForm.vals[el.id];
         el.addEventListener('input', function () { netForm.vals[el.id] = el.value; });
       }
+      function input(id, label, placeholder, extra) {
+        var el = h('input', Object.assign({ class: 'text-input mono', id: id, 'aria-label': label, placeholder: placeholder }, extra || {}));
+        remember(el);
+        fields.appendChild(el);
+        return el;
+      }
+      function scanList(list) {
+        list.textContent = '';
+        list.appendChild(h('div', { class: 'k', text: 'Looking for networks...' }));
+        api('POST', '/api/network/scan', { iface: out.iface.value }).then(function (r) {
+          list.textContent = '';
+          if (!r.ok) return list.appendChild(h('div', { class: 'k err', text: r.data.error || 'Could not look for networks' }));
+          if (!r.data.networks.length) return list.appendChild(h('div', { class: 'k', text: 'No networks found.' }));
+          r.data.networks.forEach(function (n) {
+            var usable = n.security !== 'unsupported';
+            list.appendChild(h('button', { class: 'btn small' + (n.in_use ? ' on' : ''), disabled: !usable,
+              text: n.ssid + ' · ' + n.signal + '%' + (n.security === 'open' ? ' · open' : '') + (usable ? '' : ' · not supported'),
+              onclick: function () {
+                out.ssid.value = netForm.vals.netssid = n.ssid;
+                out.security.value = n.security;
+                drawPass();
+                if (out.pass) out.pass.focus();
+              } }));
+          });
+        });
+      }
+      function drawPass() {
+        var wrap = document.getElementById('netpasswrap');
+        if (!wrap) return;
+        wrap.textContent = '';
+        out.pass = null;
+        if (mode !== 'hotspot' && out.security && out.security.value === 'open') return;
+        out.pass = h('input', { class: 'text-input mono', id: 'netpass', type: 'password', autocomplete: 'off', 'aria-label': 'Wi-Fi password',
+          placeholder: mode === 'hotspot' ? 'Password for the hotspot (8 to 63 characters)' : 'Wi-Fi password' });
+        remember(out.pass);
+        wrap.appendChild(out.pass);
+      }
       function drawFields() {
         fields.textContent = '';
-        NET_MODES.forEach(function (m) { if (m[0] === mode) help.textContent = m[2]; });
-        if (mode === 'static' || mode === 'share') {
-          out.address = h('input', { class: 'text-input mono', id: 'netaddr', 'aria-label': 'Address', placeholder: mode === 'share' ? '10.42.0.1' : '192.168.1.50', inputmode: 'decimal' });
-          out.prefix = h('input', { class: 'text-input mono', id: 'netprefix', 'aria-label': 'Prefix length', placeholder: '24 (means 255.255.255.0)', inputmode: 'numeric' });
-          remember(out.address); remember(out.prefix);
-          fields.appendChild(out.address); fields.appendChild(out.prefix);
+        out.address = out.prefix = out.gateway = out.dns = out.ssid = out.pass = out.security = out.hidden = out.band = null;
+        modeList().forEach(function (m) { if (m[0] === mode) help.textContent = m[2]; });
+        if (kind() === 'wifi' && mode !== 'off') {
+          if (mode !== 'hotspot') {
+            var list = h('div', { class: 'row wrap', id: 'netscan' });
+            fields.appendChild(h('button', { class: 'btn small', id: 'netscanbtn', text: 'Find networks', onclick: function () { scanList(list); } }));
+            fields.appendChild(list);
+          }
+          out.ssid = input('netssid', 'Network name', mode === 'hotspot' ? 'Name of the box\'s Wi-Fi' : 'Network name (SSID)', { autocomplete: 'off' });
+          if (mode !== 'hotspot') {
+            out.security = h('select', { class: 'text-input', id: 'netsec', 'aria-label': 'Security', onchange: drawPass },
+              WIFI_SECURITY.map(function (x) { return h('option', { value: x[0], text: x[1] }); }));
+            fields.appendChild(out.security);
+          }
+          fields.appendChild(h('div', { id: 'netpasswrap' }));
+          if (mode === 'hotspot') {
+            out.band = h('select', { class: 'text-input', id: 'netband', 'aria-label': 'Band' },
+              h('option', { value: 'bg', text: '2.4 GHz (reaches further, every device)' }), h('option', { value: 'a', text: '5 GHz (faster, less crowded)' }));
+            fields.appendChild(out.band);
+          } else {
+            out.hidden = h('input', { type: 'checkbox', id: 'nethidden' });
+            fields.appendChild(h('label', { class: 'row' }, out.hidden, h('span', { text: 'Hidden network (it does not show in the list)' })));
+          }
+        }
+        if (mode === 'static' || mode === 'share' || mode === 'hotspot') {
+          out.address = input('netaddr', 'Address', mode === 'hotspot' ? '10.43.0.1' : mode === 'share' ? '10.42.0.1' : '192.168.1.50', { inputmode: 'decimal' });
+          out.prefix = input('netprefix', 'Prefix length', '24 (means 255.255.255.0)', { inputmode: 'numeric' });
         }
         if (mode === 'static') {
-          out.gateway = h('input', { class: 'text-input mono', id: 'netgw', 'aria-label': 'Gateway (optional)', placeholder: 'Gateway (optional)', inputmode: 'decimal' });
-          out.dns = h('input', { class: 'text-input mono', id: 'netdns', 'aria-label': 'DNS servers (optional)', placeholder: 'DNS servers (optional)' });
-          remember(out.gateway); remember(out.dns);
-          fields.appendChild(out.gateway); fields.appendChild(out.dns);
+          out.gateway = input('netgw', 'Gateway (optional)', 'Gateway (optional)', { inputmode: 'decimal' });
+          out.dns = input('netdns', 'DNS servers (optional)', 'DNS servers (optional)');
         }
+        drawPass();
       }
       function drawModes() {
         modes.textContent = '';
-        NET_MODES.forEach(function (m) {
+        modeList().forEach(function (m) {
           modes.appendChild(h('button', { class: 'btn small' + (m[0] === mode ? ' on' : ''), text: m[1], 'aria-pressed': m[0] === mode ? 'true' : 'false',
             onclick: function () { mode = netForm.mode = m[0]; drawModes(); drawFields(); } }));
         });
       }
-      out.secs = h('select', { class: 'text-input', id: 'netsecs', 'aria-label': 'Revert automatically after' },
-        [30, 60, 120, 300].map(function (n) { return h('option', { value: n, text: 'Revert after ' + n + ' s unless confirmed', selected: n === 60 }); }));
+      function drawSecs() {
+        var wifi = kind() === 'wifi';
+        out.secs.textContent = '';
+        [30, 60, 120, 300].forEach(function (n) {
+          out.secs.appendChild(h('option', { value: n, text: 'Revert after ' + n + ' s unless confirmed', selected: n === (wifi ? 120 : 60) }));
+        });
+      }
+      function fitMode() {
+        var ok = modeList().some(function (m) { return m[0] === mode; });
+        if (!ok) mode = netForm.mode = 'dhcp';
+      }
+      out.secs = h('select', { class: 'text-input', id: 'netsecs', 'aria-label': 'Revert automatically after' });
+      out.iface.addEventListener('change', function () { netForm.iface = out.iface.value; fitMode(); drawModes(); drawFields(); drawSecs(); });
       out.preview = h('pre', { class: 'mono', id: 'netplan', hidden: true });
       out.msg = h('div', { class: 'msg', id: 'netresult', role: 'status' });
-      drawModes(); drawFields();
+      fitMode();
       body.appendChild(out.iface); body.appendChild(modes); body.appendChild(help); body.appendChild(fields); body.appendChild(out.secs);
+      drawModes(); drawFields(); drawSecs();
       body.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn small', id: 'netpreview', text: 'Preview commands', onclick: function () {
-          api('POST', '/api/network/plan', config()).then(function (r) {
+          api('POST', '/api/network/plan', config(kind())).then(function (r) {
             out.preview.hidden = !r.ok; out.msg.className = 'msg' + (r.ok ? '' : ' err');
             out.msg.textContent = r.ok ? '' : (r.data.error || 'Invalid');
             if (r.ok) out.preview.textContent = r.data.commands.join('\n');
           });
         } }),
         h('button', { class: 'btn on small', id: 'netapply', text: 'Apply', onclick: function () {
-          var c = config();
+          var c = config(kind());
+          if (c.mode === 'off' && !window.confirm('Switch Wi-Fi off? If this phone or tablet reaches the box over Wi-Fi, it loses the connection; the change goes back by itself unless you confirm it from a wired connection.')) return;
+          out.msg.className = 'msg'; out.msg.textContent = 'Applying...';
           api('POST', '/api/network/apply', c).then(function (r) {
             if (!r.ok) { out.msg.className = 'msg err'; out.msg.textContent = r.data.error || 'Could not apply'; return; }
-            var where = (c.mode === 'static' || c.mode === 'share') ? ' If this page stops responding, open http://' + (c.address || '10.42.0.1') + ' and press Confirm before the timer runs out.'
-              : ' If this page stops responding, find the box at its new address and press Confirm before the timer runs out.';
+            var where;
+            if (c.mode === 'hotspot') where = ' Join the Wi-Fi “' + c.ssid + '” with this phone or tablet, then open http://' + (c.address || '10.43.0.1') + ' and press Confirm before the timer runs out.';
+            else if (c.mode === 'static' || c.mode === 'share') where = ' If this page stops responding, open http://' + (c.address || '10.42.0.1') + ' and press Confirm before the timer runs out.';
+            else if (c.ssid) where = ' If this page stops responding, join “' + c.ssid + '” yourself, find the box there (for example at http://' + location.hostname + ') and press Confirm before the timer runs out.';
+            else where = ' If this page stops responding, find the box at its new address and press Confirm before the timer runs out.';
             S.netNote = 'Applied.' + where;
             clearNetForm();
             refresh();
@@ -2009,8 +2113,10 @@
       body.appendChild(h('div', { class: 'k', text: 'A change can cut this connection. It goes back by itself unless you confirm it, and also if the box restarts before you do.' }));
     }
     function drawPending(p) {
+      var what = p.mode === 'hotspot' ? 'own hotspot “' + p.ssid + '”' : p.ssid ? 'joining “' + p.ssid + '”' + (p.mode === 'static' ? ' (fixed address)' : '')
+        : p.mode === 'off' ? 'Wi-Fi off' : p.mode;
       body.appendChild(h('div', { class: 'card', id: 'netpending', role: 'alert' },
-        h('div', { text: 'Waiting for your confirmation: ' + p.iface + ' \u2192 ' + p.mode }),
+        h('div', { text: 'Waiting for your confirmation: ' + p.iface + ' → ' + what }),
         h('div', { class: 'k', id: 'netleft', text: 'Reverts in ' + p.seconds_left + ' s' }),
         h('div', { class: 'k', text: S.netNote || '' }),
         h('div', { class: 'row' },

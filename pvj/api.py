@@ -1916,7 +1916,7 @@ class Api:
             self.settings.save()
         return self.scheduler.status()
 
-    # --- network (wired) -----------------------------------------------
+    # --- network (wired and Wi-Fi) -------------------------------------
     @staticmethod
     def _run_ip():
         try:
@@ -1952,13 +1952,15 @@ class Api:
 
     def get_network(self, body, device, client):
         self._need_network_module()
-        out = {"interfaces": self._local_status(), "pending": None, "helper": False, "modes": list(netcfg.MODES)}
+        out = {"interfaces": self._local_status(), "pending": None, "helper": False, "modes": list(netcfg.MODES),
+               "wifi_modes": list(netcfg.WIFI_MODES), "wifi": None}
         if self.net is not None:
             try:
-                reply = self.net.request({"cmd": "status"})
+                reply = self.net.request({"cmd": "status", "wifi": True})
                 if reply.get("ok"):
                     out["pending"], out["helper"] = reply.get("pending"), True
                     out["reverting"] = bool(reply.get("reverting"))
+                    out["wifi"] = reply.get("wifi")
             except netcfg.NetError:
                 pass
         return out
@@ -1989,16 +1991,23 @@ class Api:
             try:
                 reply = self.net.request({"cmd": "plan", "config": cfg})
                 if reply.get("ok"):
-                    return {"config": reply["config"], "commands": reply["commands"]}
+                    return {"config": netcfg.public(reply["config"]), "commands": reply["commands"]}
             except netcfg.NetError:
                 pass
-        return {"config": cfg, "commands": netcfg.preview(netcfg.plan(cfg))}
+        return {"config": netcfg.public(cfg), "commands": netcfg.preview(netcfg.plan(cfg))}
 
     def apply_network(self, body, device, client):
         self._need_network_module()
         cfg = self._checked_config(body)  # the helper validates again; refusing early gives a clear 400
         reply = self._netd({"cmd": "apply", "config": cfg})
-        return {"pending": reply.get("pending"), "config": cfg}
+        return {"pending": reply.get("pending"), "config": netcfg.public(cfg)}  # never the Wi-Fi password
+
+    def scan_wifi(self, body, device, client):
+        self._need_network_module()
+        iface = body.get("iface") if isinstance(body, dict) else None
+        if not isinstance(iface, str) or not netcfg.IFACE.fullmatch(iface):
+            raise bad("iface must be a Wi-Fi port name")
+        return {"networks": self._netd({"cmd": "scan", "iface": iface}).get("networks", [])}
 
     def confirm_network(self, body, device, client):
         # not gated on the module: a pending change must always be confirmable or revertable
@@ -2089,6 +2098,7 @@ class Api:
             ("POST", "/api/network/apply"): ("full", self.apply_network),
             ("POST", "/api/network/confirm"): ("full", self.confirm_network),
             ("POST", "/api/network/revert"): ("full", self.revert_network),
+            ("POST", "/api/network/scan"): ("full", self.scan_wifi),
             ("POST", "/api/media/delete"): ("full", self.delete_media),
             ("POST", "/api/media/rename"): ("full", self.rename_media),
             ("POST", "/api/pads"): ("full", self.set_pad),
