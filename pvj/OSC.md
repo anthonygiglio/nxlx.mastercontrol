@@ -21,6 +21,8 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/play/pad` | bank, pad (ints) | Same, with arguments |
 | `/pvj/play/file` | name (string) | Play a file from the media folder |
 | `/pvj/play/preset` | name (string) | Play a legacy preset such as `startlessonce05` |
+| `/pvj/vibes` | value (press) | Start Vibes, the endless shader rotation (needs the Shaders and Vibes module, see [SHADERS.md](SHADERS.md)); `/pvj/stop` ends it |
+| `/pvj/vibes/next` | value (press) | Go to the next shader now |
 | `/pvj/stop` | value (press) | Stop the clip (the player stays running) |
 | `/pvj/pause` | none, or 0/1 | No argument toggles; 1 pauses, 0 resumes |
 | `/pvj/blackout` | none, or 0/1 | No argument toggles |

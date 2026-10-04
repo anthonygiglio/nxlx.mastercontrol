@@ -13,7 +13,8 @@ Safety rules:
 - Entries fire at most once per minute, and only for minutes the thread actually watched. If the
   clock jumps (a Pi has no clock until the network sets it) or the thread stalls for more than
   two minutes, the skipped minutes are NOT replayed: a wrong clock must never fire old events.
-- Nothing dangerous is schedulable: only play, stop, blackout, show, a start script and projector power.
+- Nothing dangerous is schedulable: only play, stop, blackout, show, a start script, projector power and the shader
+  rotation (Vibes).
 """
 
 import datetime
@@ -24,7 +25,7 @@ import uuid
 
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 
-ACTIONS = ("play", "stop", "blackout", "show", "preset", "projector_on", "projector_off")
+ACTIONS = ("play", "stop", "blackout", "show", "preset", "projector_on", "projector_off", "vibes")
 MAX_ENTRIES = 50
 MAX_CATCHUP_MINUTES = 2
 _TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -152,6 +153,8 @@ class Scheduler:
                 self.api.control({"action": "stop"}, None, "schedule")
             elif action == "preset":
                 self.api.play({"preset": entry["preset"]}, None, "schedule")
+            elif action == "vibes":
+                self.api.vibes.api_vibes({"on": True}, None, "schedule")
             elif action in ("projector_on", "projector_off"):
                 out = self.api.projector_action({"id": "all", "action": "on" if action == "projector_on" else "off"}, None, "schedule")
                 failed = [r["error"] for r in out["results"].values() if not r["ok"]]

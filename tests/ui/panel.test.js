@@ -400,6 +400,37 @@ function startServer() {
     assert(await scanner.isDisabled('#black'), 'a guest code gives view-only access');
     await scanCtx.close();
 
+    // Shaders and Vibes: switch the module on, start the rotation with the big button on Live, then choose one shader
+    // by hand on Mix (which ends the rotation) and stop. The harness player draws nothing (--vo=null), so this
+    // checks the panel and the API, not the picture; the picture is checked in tests/test_shaders_gpu.py.
+    await page.click('nav >> text=Live');
+    await page.waitForSelector('.pads');
+    assert.strictEqual(await page.locator('#vibes').count(), 0, 'no Vibes button while the module is off');
+    await page.click('nav >> text=System');
+    await page.click('.item:has-text("Shaders and Vibes") >> button');
+    await page.waitForFunction(() => fetch('/api/modules').then((r) => r.json()).then((d) => d.modules.some((m) => m.id === 'shaders' && m.enabled)));
+    await page.click('nav >> text=Live');
+    await page.waitForSelector('#vibes');
+    await page.click('#vibes');
+    await page.waitForFunction(() => /^Vibes: nxlx-/.test((document.getElementById('np') || {}).textContent), null, { timeout: 15000 });
+    await page.waitForFunction(() => /Vibes is on/.test((document.getElementById('vibes') || {}).textContent));
+    await page.click('nav >> text=Mix');
+    await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
+    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10, 'the ten bundled shaders are listed');
+    await page.waitForFunction(() => /Vibes is on/.test((document.getElementById('shaderline') || {}).textContent));
+    await page.click('#shadercard [data-shader="nxlx-tide.fs"] >> text=Play');
+    await page.waitForFunction(() => /On screen: nxlx-tide/.test((document.getElementById('shaderline') || {}).textContent));
+    await page.waitForSelector('#shin-speed');                       // its number inputs are sliders
+    const vibesAfter = await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running));
+    assert.strictEqual(vibesAfter, false, 'choosing a shader by hand ends the rotation');
+    await page.fill('#vibesdwell', '45');
+    await page.click('#shadersave');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.dwell === 45));
+    await page.click('nav >> text=Live');
+    await page.waitForFunction(() => /^Shader: nxlx-tide/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
+    await page.click('#stop');
+    await page.waitForFunction(() => /Player idle/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
+
     // Desktop width
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.click('nav >> text=Live');

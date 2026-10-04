@@ -1,0 +1,18 @@
+{
+  "id": "shaders",
+  "name": "Shaders and Vibes",
+  "version": "0.1.0",
+  "type": "optional",
+  "channel": "beta",
+  "requires": [
+    "core"
+  ],
+  "boards": [
+    "pi4",
+    "pi5",
+    "x86"
+  ],
+  "status": "ready",
+  "default_enabled": false,
+  "description": "Generator shaders in the ISF format drawn by the player's GPU in place of a clip, and Vibes: one tap plays them endlessly for ambience, shuffled and varied each round. Ten bundled shaders; upload your own .fs files. Speed is not measured on any board yet; not offered on a Pi 3."
+}

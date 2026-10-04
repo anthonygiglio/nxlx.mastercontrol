@@ -154,6 +154,9 @@ class Api:
         self._import_lock = threading.Lock()
         from . import mapper as mapper_mod
         self.mapper = mapper_mod.Engine(self)
+        from . import shaders as shaders_mod, vibes as vibes_mod
+        self.shaders = shaders_mod.Engine(self)                     # ISF shader sources (see shaders.py)
+        self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
         from . import health as health_mod
         self.health = health_mod.Health(self, getattr(player, "rundir", "/run/pvj"))     # checks start in server.build
         from . import sync as sync_mod
@@ -328,6 +331,10 @@ class Api:
         path = status.get("path")
         if path == getattr(self.player, "TEST_PATTERN", None):
             status["path"], status["test_pattern"] = None, True
+            return status
+        if self.shaders.is_carrier(path):                 # a shader source: the blank picture under it is not a clip
+            showing = self.shaders.on_screen()
+            status["path"], status["shader"], status["vibes"] = None, (showing["id"][:-3] if showing else ""), self.vibes.running
             return status
         if self.capture is not None and path == self.capture.fifo:
             cur = self.capture.status(devices=False)["current"] or {}
@@ -1177,6 +1184,9 @@ class Api:
             raise ApiError(409, str(e))
         if module_id == "mapper":          # switching it off takes the mapping off the screen
             self.mapper.apply()
+        if module_id == "shaders" and not self.registry.enabled("shaders"):     # off: the rotation ends, the shader goes
+            self.vibes.stop()
+            self.shaders.off()
         if module_id == "wall":            # starts or stops following or leading, and the wall crop
             self.sync.apply()
         for mid, manager in (("control-dmx", self.dmx), ("control-midi", self.midi)):
@@ -1952,6 +1962,10 @@ class Api:
             ("POST", "/api/sync"): ("full", self.set_sync),
             ("GET", "/api/mapper"): ("view", self.get_mapper),
             ("POST", "/api/mapper"): ("full", self.set_mapper),
+            ("GET", "/api/shaders"): ("view", self.shaders.api_get),
+            ("POST", "/api/shaders"): ("full", self.shaders.api_set),
+            ("POST", "/api/shaders/play"): ("live", self.shaders.api_play),
+            ("POST", "/api/vibes"): ("live", self.vibes.api_vibes),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),

@@ -6,7 +6,7 @@ Play a clip or a legacy start script, stop, black out or show the screen, or swi
 
 ## What an entry can do
 
-`play` (a clip from the media folder, loop on or off), `preset` (a legacy start script such as `startlessonce05`, in `"preset"`), `stop`, `blackout`, `show`, `projector_on` and `projector_off` (every projector added under System > Projectors, see [PROJECTORS.md](PROJECTORS.md)). Nothing else is schedulable: no shutdown, reboot or settings changes.
+`play` (a clip from the media folder, loop on or off), `preset` (a legacy start script such as `startlessonce05`, in `"preset"`), `stop`, `blackout`, `show`, `projector_on` and `projector_off` (every projector added under System > Projectors, see [PROJECTORS.md](PROJECTORS.md)), and `vibes` (start the endless shader rotation, see [SHADERS.md](SHADERS.md); the module must be on; a `stop` entry ends it). Nothing else is schedulable: no shutdown, reboot or settings changes.
 
 ## Clock rules
 
@@ -17,7 +17,7 @@ Play a clip or a legacy start script, stop, black out or show the screen, or swi
 
 ## API
 
-`GET /api/schedule` (view) and `POST /api/schedule` (full) with `{"enabled": bool, "entries": [{"id"?, "label"?, "time": "HH:MM", "days": [0-6, Monday is 0], "action": "play|preset|stop|blackout|show|projector_on|projector_off", "file"?, "loop"?, "preset"?}]}`. The whole list is replaced on each save. At most 50 entries.
+`GET /api/schedule` (view) and `POST /api/schedule` (full) with `{"enabled": bool, "entries": [{"id"?, "label"?, "time": "HH:MM", "days": [0-6, Monday is 0], "action": "play|preset|stop|blackout|show|projector_on|projector_off|vibes", "file"?, "loop"?, "preset"?}]}`. The whole list is replaced on each save. At most 50 entries.
 
 ## Not verified on real hardware
 

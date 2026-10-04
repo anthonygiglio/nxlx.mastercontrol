@@ -15,6 +15,7 @@ What the box plays by itself, with nobody at the panel: after power-up, and afte
 | Play a pad | What a pad plays, with its own end-of-clip setting |
 | Play the USB stick | The clips at the top of the newest USB drive, looping, in order or shuffled; and **each time a drive with clips is plugged in**, that drive (a venue technician swaps the stick and it plays). A drive with no clips is ignored. |
 | Legacy start script | A name such as `startlessonce05` (see `pvj/README.md` for the table); slave, stream and wifi presets are not ported |
+| Vibes | The endless shader rotation of the Shaders and Vibes module (see [SHADERS.md](SHADERS.md)). The module must be on, or the last result says so. |
 
 An optional wait (0 to 120 seconds) lets a projector wake up before the first clip.
 

@@ -136,6 +136,7 @@ Beta modules are **off** until you switch them on under System > Modules. Module
 | **Weekly schedule**: play, start scripts, stop, blackout, show and projector power at set times | [pvj/SCHEDULE.md](../pvj/SCHEDULE.md) |
 | **Video wall and sync**: boxes play in step (server and client), each can show a tile of the picture | [pvj/SYNC.md](../pvj/SYNC.md) |
 | **Projection mapper**: quads, triangles and grids, lined up from the phone (card on Mix) | [pvj/MAPPER.md](../pvj/MAPPER.md) |
+| **Shaders and Vibes**: moving pictures made by the GPU, and one button that plays them endlessly | below, and [pvj/SHADERS.md](../pvj/SHADERS.md) |
 | **Projector control**: on, off and picture mute over PJLink | [pvj/PROJECTORS.md](../pvj/PROJECTORS.md) |
 | **Streams**: SRT, RTSP, RTMP | [pvj/STREAMS.md](../pvj/STREAMS.md) |
 | **DMX over the network**: Art-Net and sACN | [pvj/DMX.md](../pvj/DMX.md) |
@@ -153,6 +154,19 @@ Projectors and the schedule (here with projector power, a clip, a start script a
 ![Schedule](images/ui/schedule.png)
 
 Check the box clock before relying on the schedule: a Pi has no battery clock, and until the network sets the time the clock is wrong.
+
+### Shaders and Vibes (beta)
+
+A shader is a small program that the box's graphics chip runs to draw a moving picture: there is no clip, so it never ends and never repeats exactly. The box takes shaders in the **ISF** format (Interactive Shader Format, `.fs` files) and comes with ten slow, quiet ones made for ambience.
+
+Switch **Shaders and Vibes** on under System > Modules (beta, off by default; not offered on a Raspberry Pi 3).
+
+- **Vibes** is the big button that then appears on the **Live** screen (presenters and full-access devices). One tap and the box plays shaders endlessly: a shuffled order, three minutes each, a dip to black between them, and slightly different speeds, sizes and colours every round. It ends when you press **Stop**, press the button again, or play anything else; it never takes the screen back by itself.
+- On the **Mix** screen the **Shaders and Vibes** card lists the shaders. **Play** shows one until you play something else; its number inputs appear as sliders. Full-access devices choose which shaders Vibes may use, how long each stays (10 seconds to an hour), how many lines the shader is drawn with (fewer is lighter work), and upload their own `.fs` files (generator shaders only; a file the box cannot show is refused with the reason).
+- Opacity, the fades, Blackout, the overlay picture and the projection mapping all work on a shader as they do on a clip.
+- Vibes can also start by itself: choose **Vibes** under System > Autostart, add a **Start Vibes** entry to the schedule, or send the OSC address `/pvj/vibes`.
+
+**Not measured, and not seen on a screen yet.** How smoothly each shader runs on a Pi 4, a Pi 5 or a PC has not been measured on any board, and nobody has watched this on a display: so far it has only run in automated tests on a software graphics chip. Watch the screen the first time; if the picture stutters, choose fewer lines on the card or take the heavier shaders out of Vibes (each shader's cost is listed). Details: [pvj/SHADERS.md](../pvj/SHADERS.md).
 
 ## 6. Keep it safe and recoverable
 

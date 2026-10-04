@@ -259,6 +259,8 @@ def translate(address, args, mix=None):
         return ("/api/play", {"file": args[0]}) if args and isinstance(args[0], str) else None
     if a == "/pvj/play/preset":
         return ("/api/play", {"preset": args[0]}) if args and isinstance(args[0], str) else None
+    if a in ("/pvj/vibes", "/pvj/vibes/next"):          # the shader rotation: start it, or go to the next shader
+        return ("/api/vibes", {"on": True} if a == "/pvj/vibes" else {"next": True}) if pressed(args) else None
     if a == "/pvj/stop":
         return control("stop") if pressed(args) else None
     if a == "/pvj/pause":

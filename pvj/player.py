@@ -14,6 +14,7 @@ import signal
 import socket
 import stat
 import subprocess
+import threading
 import time
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".ts", ".wmv")
@@ -136,6 +137,10 @@ class Ipc:
 
 
 class Player:
+    # Defaults for a Player made without __init__ (some tests do); __init__ gives every player its own lock.
+    _lock = threading.RLock()
+    _mapping_shaders, _mapping_mode, _source, _source_pid, source_epoch = [], False, None, None, 0
+
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
         self.mpv_bin = mpv_bin
         self.extra_args = list(extra_args or [])
@@ -144,6 +149,14 @@ class Player:
         self.pid_path = os.path.join(self.rundir, "player.pid")
         self.ipc = Ipc(self.socket_path)
         self._proc = None
+        # The player's shader list has two layers: a shader source (a generator drawn in place of a clip, see
+        # pvj/shaders.py) and the projection mapping. Both are kept here so neither wipes the other.
+        self._lock = threading.RLock()
+        self._mapping_shaders = []
+        self._mapping_mode = False
+        self._source = None         # the generator shader file, only while its carrier picture is playing
+        self._source_pid = None     # the mpv it was given to; a restarted mpv has lost it
+        self.source_epoch = 0       # goes up each time what is playing changes hands; a shader rotation checks it
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
@@ -207,6 +220,13 @@ class Player:
         raise PlayerError("mpv did not become ready")
 
     def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
+        """Play `paths` (see _play). A shader source that was on is taken off first: it draws in place of the
+        picture, so it must never stay over a clip."""
+        with self._lock:
+            self._end_source()
+            return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
+
+    def _play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
         """Play `paths` (a list plays as a playlist). `ending` says what happens at the end: "loop" (the clip, or the
         whole list), "stop" (black, player idle), "next" (a list goes on and stops after the last clip) or "hold"
         (the last frame stays on screen). Without `ending`, `loop` picks "loop" or "stop" as before.
@@ -225,14 +245,7 @@ class Player:
         elif audio_device:
             self.ipc.request("set_property", "audio-device", audio_device)
         single = len(files) == 1
-        if getattr(self, "_pipe_globals", None):          # options a live input set for the whole player on an old mpv
-            for k in self._pipe_globals:
-                try:
-                    self.ipc.request("set_property", k, {"demuxer": "", "cache": "auto", "demuxer-readahead-secs": 1,
-                                                         "demuxer-max-bytes": "150MiB"}.get(k, 0 if "rawvideo-w" in k or "rawvideo-h" in k else ""))
-                except PlayerError:
-                    pass
-            self._pipe_globals = None
+        self._undo_pipe_globals()
         # Set before loading: a new file picks these up as it starts.
         self.ipc.request("set_property", "keep-open", "yes" if ending == "hold" else "no")
         self.ipc.request("set_property", "image-display-duration",
@@ -249,8 +262,24 @@ class Player:
         self.ipc.request("set_property", "loop-file", "inf" if (looping and single) else "no")
         self.ipc.request("set_property", "loop-playlist", "inf" if (looping and not single) else "no")
 
+    def _undo_pipe_globals(self):
+        """Take back the options a live input set for the whole player on an old mpv."""
+        if getattr(self, "_pipe_globals", None):
+            for k in self._pipe_globals:
+                try:
+                    self.ipc.request("set_property", k, {"demuxer": "", "cache": "auto", "demuxer-readahead-secs": 1,
+                                                         "demuxer-max-bytes": "150MiB"}.get(k, 0 if "rawvideo-w" in k or "rawvideo-h" in k else ""))
+                except PlayerError:
+                    pass
+            self._pipe_globals = None
+
     def play_pipe(self, path, width, height, fps):
         """Play raw YUYV frames from a pipe (a live input read by a separate helper; see pvj/capture.py)."""
+        with self._lock:
+            self._end_source()
+            return self._play_pipe(path, width, height, fps)
+
+    def _play_pipe(self, path, width, height, fps):
         if not self.is_running():
             raise PlayerError("player service is not running (systemctl start pvj-player)")
         opts = {"demuxer": "rawvideo", "demuxer-rawvideo-w": int(width), "demuxer-rawvideo-h": int(height),
@@ -360,9 +389,11 @@ class Player:
         """Stop the current clip but keep the player service and window alive. The loop settings go back to off, so
         an idle player does not report the last clip's looping (the panel's Loop button read "on" with nothing
         playing, seen on the Pi after the test pattern); every play sets them again."""
-        self.ipc.request("stop")
-        self.ipc.request("set_property", "loop-file", "no")
-        self.ipc.request("set_property", "loop-playlist", "no")
+        with self._lock:
+            self.ipc.request("stop")
+            self._end_source()
+            self.ipc.request("set_property", "loop-file", "no")
+            self.ipc.request("set_property", "loop-playlist", "no")
 
     def screenshot(self, path, quality=60, with_text=True):
         """Save what the player is showing right now as a JPEG. With `with_text` it is the whole window (brightness,
@@ -403,13 +434,97 @@ class Player:
         """While a projection mapping is shown: stretch the picture to the whole screen (the mapping is in screen
         pixels; mpv's final-picture shader only covers the picture's own area, so a letterboxed clip would move every
         surface) and use 8-bit GPU buffers (16-bit ones made the mapping's extra pass drop frames on a Pi 4)."""
-        self.ipc.request("set_property", "keepaspect", not on)
-        self.ipc.request("set_property", "fbo-format", "rgba8" if on else "auto")
+        with self._lock:
+            self.ipc.request("set_property", "keepaspect", not on)
+            self._mapping_mode = bool(on)
+            self._apply_fbo()
+
+    def _apply_fbo(self):
+        """8-bit GPU buffers while a mapping or a shader source adds a pass, mpv's own choice otherwise."""
+        self.ipc.request("set_property", "fbo-format", "rgba8" if (self._mapping_mode or self._source) else "auto")
 
     def set_shaders(self, paths):
         """Use these GLSL user shader files (the projection mapping), or none. The files must be readable by the
-        player; they are compiled on the GPU at once."""
-        self.ipc.request("set_property", "glsl-shaders", list(paths))
+        player; they are compiled on the GPU at once. A shader source that is on stays on, in front of them."""
+        with self._lock:
+            self._mapping_shaders = list(paths)
+            self._push_shaders()
+
+    def _push_shaders(self):
+        if self._source is not None:
+            try:
+                same = self.ipc.request("get_property", "pid") == self._source_pid
+            except PlayerError:
+                same = False
+            if not same:                      # mpv was restarted: the carrier is gone, so the source must go too
+                self._source = None
+        self.ipc.request("set_property", "glsl-shaders", ([self._source] if self._source else []) + self._mapping_shaders)
+
+    def _end_source(self):
+        """Something else takes the screen: the shader source comes off (a player that is down has lost it anyway)."""
+        self.source_epoch += 1
+        if self._source is not None:
+            self._source = None
+            try:
+                self._push_shaders()
+                self._apply_fbo()
+            except PlayerError:
+                pass
+
+    @property
+    def source_shader(self):
+        return self._source
+
+    def play_source(self, shader, carrier, epoch=None, spawn=False):
+        """Draw the generator shader file `shader` in place of the picture, over `carrier` (a blank picture from the
+        player itself that gives the shader frames to draw on). With `epoch`, only if nothing else has been played
+        since that epoch was handed out; otherwise None is returned and nothing changes. Returns the new epoch.
+        If the carrier is already playing only the shader is exchanged, so the picture does not restart."""
+        with self._lock:
+            if epoch is not None and epoch != self.source_epoch:
+                return None
+            if not self.is_running():
+                if not spawn:
+                    raise PlayerError("player service is not running (systemctl start pvj-player)")
+                self._spawn(None, False)
+            self._undo_pipe_globals()
+            previous = self._source
+            try:
+                self._source, self._source_pid = shader, self.ipc.request("get_property", "pid")
+                self._push_shaders()
+                self._apply_fbo()
+                try:
+                    current = self.ipc.request("get_property", "path")
+                except PlayerError:
+                    current = None
+                if current != carrier:
+                    self.ipc.request("set_property", "keep-open", "no")
+                    self.ipc.request("loadfile", carrier, "replace")
+                    self._wait_for_path(carrier)
+                self.ipc.request("set_property", "pause", False)
+                self.ipc.request("set_property", "loop-file", "no")
+                self.ipc.request("set_property", "loop-playlist", "no")
+            except PlayerError:
+                self._source = previous if previous != shader else None
+                try:
+                    self._push_shaders()
+                    self._apply_fbo()
+                except PlayerError:
+                    pass
+                raise
+            self.source_epoch += 1
+            return self.source_epoch
+
+    def swap_source(self, shader, epoch):
+        """Exchange the shader source for another file, or None for the bare carrier (black), only while `epoch` is
+        still current. True if it was done."""
+        with self._lock:
+            if epoch != self.source_epoch:
+                return False
+            self._source = shader
+            self._push_shaders()
+            self._apply_fbo()
+            return True
 
     def flip(self, horizontal, on):
         """Mirror the picture left-right or upside down (a video filter; about half a core more on a Pi 4 at 1080p)."""

@@ -88,9 +88,9 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 | --- | --- | --- |
 | `GET /api/hello`, `POST /api/pair`, `POST /api/session` | none | discovery, PIN pairing, guest link |
 | `GET /api/preview.jpg` | view | a JPEG of what the screen is showing (one shared screenshot every 3 s at most; failures are remembered for the same time) |
-| `GET /api/status`, `/api/media`, `/api/pads`, `/api/modules`, `/api/theme`, `/api/osc`, `/api/autostart`, `/api/schedule`, `/api/streams`, `/api/projectors`, `/api/mapper`, `/api/support` | view | read state (a stream's saved address is shown with its login hidden) |
-| `POST /api/play`, `/api/control`, `/api/blackout`, `/api/fadeout`, `/api/mix`, `/api/autostart/test`, `/api/projector` | live | play and mix |
-| `POST /api/pads`, `/api/theme`, `/api/modules/<id>`, `/api/devices/invite`, `/api/devices/revoke`, `/api/pin/rotate`, `/api/player/restart`, `/api/osc`, `/api/autostart`, `/api/schedule`, `/api/streams`, `/api/projectors`, `/api/mapper`, `/api/dmx`, `/api/midi`, `/api/media/*`, `/api/network/*`, `GET /api/devices`, `/api/dmx`, `/api/midi`, `/api/network` | full | configure |
+| `GET /api/status`, `/api/media`, `/api/pads`, `/api/modules`, `/api/theme`, `/api/osc`, `/api/autostart`, `/api/schedule`, `/api/streams`, `/api/projectors`, `/api/mapper`, `/api/shaders`, `/api/support` | view | read state (a stream's saved address is shown with its login hidden) |
+| `POST /api/play`, `/api/control`, `/api/blackout`, `/api/fadeout`, `/api/mix`, `/api/autostart/test`, `/api/projector`, `/api/shaders/play` (show one shader), `/api/vibes` (start, stop or skip the shader rotation) | live | play and mix |
+| `POST /api/pads`, `/api/theme`, `/api/modules/<id>`, `/api/devices/invite`, `/api/devices/revoke`, `/api/pin/rotate`, `/api/player/restart`, `/api/osc`, `/api/autostart`, `/api/schedule`, `/api/streams`, `/api/projectors`, `/api/mapper`, `/api/shaders` (upload, delete, Vibes settings), `/api/dmx`, `/api/midi`, `/api/media/*`, `/api/network/*`, `GET /api/devices`, `/api/dmx`, `/api/midi`, `/api/network` | full | configure |
 
 **Settings** are one JSON file (`/var/lib/pvj/settings.json`, mode 0600), written atomically with a backup and automatic recovery if a power cut tears the file. A schema change backs the old file up (`settings.json.bak-v<old>`) and migrates it; a file from a newer version is never rewritten, so rolling the program back cannot destroy settings.
 
@@ -104,7 +104,7 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 
 **Known limits:** "Restart player now" asks the player to quit and relies on systemd to bring it back; if mpv is completely wedged and ignores that request, restart it from a terminal (`sudo systemctl restart pvj-player`), because the panel runs unprivileged by design. A hardware watchdog for that case is not built. The server caps simultaneous connections at 64 and closes any connection after 30 seconds, so a flood of slow clients cannot exhaust it, but it does not replace a private network.
 
-**Also built (all beta or off by default):** [autostart](AUTOSTART.md), [weekly schedule](SCHEDULE.md), [streams](STREAMS.md), [projectors](PROJECTORS.md), [projection mapping](MAPPER.md), [remote support](../docs/REMOTE-SUPPORT.md), [DMX](DMX.md) and [MIDI](MIDI.md), each with its own safety notes and a list of what was not verified.
+**Also built (all beta or off by default):** [autostart](AUTOSTART.md), [weekly schedule](SCHEDULE.md), [streams](STREAMS.md), [projectors](PROJECTORS.md), [projection mapping](MAPPER.md), [shaders and Vibes](SHADERS.md), [remote support](../docs/REMOTE-SUPPORT.md), [DMX](DMX.md) and [MIDI](MIDI.md), each with its own safety notes and a list of what was not verified.
 
 **Not built yet:** crossfade (needs a second player; "Dip to black" and "Cut" work), the desktop screens (Presenter, Wall), NDI and AES67/Dante (ST 2110 only through a gateway, see D30), Wi-Fi and hotspot, updates from the network, a panel update button, and shutdown and reboot buttons. The old PHP panel still exists for the legacy Pi 3 line.
 

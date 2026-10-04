@@ -6,6 +6,7 @@ SPDX-PackageName = "nxlx.mastercontrol"
 path = [
   "pvj/modules.d/**",
   "pvj/themes.d/**",
+  "pvj/shaders.d/**",
   "pvj/*.md",
   "install/README.md",
   "image/README.md",

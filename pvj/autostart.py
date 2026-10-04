@@ -9,7 +9,8 @@ player process is still the one we saw, a Stop from the panel stays a stop.
 Modes: `off` (default), `file` (one clip), `all` (every clip in the media folder, in order or shuffled),
 `slideshow` (the pictures, a set time each), `pad` (what a pad plays), `usb` (the clips at the top of a USB drive,
 and again whenever a drive with clips is plugged in: a venue technician swaps the stick and it plays) and `preset`
-(a legacy start script name such as startlessonce05). It plays through the same Api calls as the panel.
+(a legacy start script name such as startlessonce05). It plays through the same Api calls as the panel. `vibes` starts
+the endless shader rotation (the Shaders and Vibes module, see SHADERS.md).
 """
 
 import re
@@ -20,7 +21,7 @@ from . import presets
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 from .player import PlayerError
 
-MODES = ("off", "file", "all", "slideshow", "pad", "usb", "preset")
+MODES = ("off", "file", "all", "slideshow", "pad", "usb", "preset", "vibes")
 USB_DEBOUNCE = 10.0         # seconds: a drive must be gone this long to count as plugged in again
 AUDIO_CHECK_EVERY = 5      # ticks (2 s each): the sound output is re-checked about every 10 seconds
 MAX_DELAY = 120
@@ -134,6 +135,8 @@ class Autostart:
                                              "ending": "loop" if cfg["loop"] else "stop"}}, None, "autostart")
             elif cfg["mode"] == "pad":
                 self.api.play({"pad": list(cfg["pad"])}, None, "autostart")
+            elif cfg["mode"] == "vibes":
+                self.api.vibes.api_vibes({"on": True}, None, "autostart")
             elif cfg["mode"] == "usb":
                 drives = self._drives_with_clips()
                 self._usb_seen = set(drives)       # what is here now counts as seen (a stick mounted at boot is not missed)
