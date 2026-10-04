@@ -9,24 +9,25 @@ ConditionPathExists=/usr/bin/nmcli
 StartLimitIntervalSec=0
 
 [Service]
-# The panel is unprivileged and cannot run nmcli. It asks this helper over a socket in /run/pvj
-# (group "pvj"); the helper re-validates every request and only runs fixed nmcli commands.
+# The panel is unprivileged and cannot run nmcli. It asks this helper over a socket in /run/pvj/netd
+# (root:pvj 0750: group "pvj" can reach the socket, only root can replace it); the helper checks who is calling,
+# re-validates every request and only runs fixed nmcli commands.
 User=root
 Group=pvj
 UMask=0007
-RuntimeDirectory=pvj
-RuntimeDirectoryMode=0770
-RuntimeDirectoryPreserve=yes
-# Saved state of an unconfirmed change: root only, survives a reboot (never in /run/pvj, which
-# every member of group pvj can write).
+# Its own folder, like pvj-sysd's. No other unit may name it: systemd gives a RuntimeDirectory to the unit that
+# starts, and this one used to be shared with the player and the panel, who then owned this socket (D45).
+RuntimeDirectory=pvj/netd
+RuntimeDirectoryMode=0750
+# Saved state of an unconfirmed change: root only, survives a reboot (so never in /run).
 StateDirectory=pvj-netd
 StateDirectoryMode=0700
-Environment=PVJ_RUNTIME_DIR=/run/pvj
+Environment=PVJ_RUNTIME_DIR=/run/pvj/netd
 ExecStart=@PVJ_DIR@/bin/pvj-netd
 Restart=always
 RestartSec=2
 
-# Sandbox: it needs the system D-Bus socket, /run/pvj, netlink for `ip addr`, and NetworkManager's
+# Sandbox: it needs the system D-Bus socket, /run/pvj/netd, netlink for `ip addr`, and NetworkManager's
 # profile folder (it writes a new Wi-Fi profile there, root only, so a password is never on a command line).
 CapabilityBoundingSet=
 NoNewPrivileges=yes
@@ -34,7 +35,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ReadWritePaths=/run/pvj /var/lib/pvj-netd -/etc/NetworkManager/system-connections
+ReadWritePaths=/run/pvj/netd /var/lib/pvj-netd -/etc/NetworkManager/system-connections
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes

@@ -23,6 +23,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from . import paths
 from . import autostart as autostart_mod, dmx as dmx_mod, hardware, midi as midi_mod, pinscreen as pinscreen_mod, sysd as sysd_mod, netd as netd_mod, osc as osc_mod, scheduler as scheduler_mod, themes as themes_mod
 from .api import Api, ApiError
 from .auth import Auth
@@ -383,10 +384,12 @@ class PvjServer(ThreadingHTTPServer):
 
 def write_pin_file(rundir, pin):
     """Show-the-PIN channel: a tmpfs file the display or an admin can read. Cleared on reboot."""
-    path = os.path.join(rundir, "pin")
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
+    path = paths.pin_file(rundir)
+    # Owner only: the panel writes it and root reads it (`sudo pvj-pin`). The player's account, which opens
+    # untrusted media and shares group pvj, has no business reading the full-access PIN.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "w") as f:
-        os.fchmod(f.fileno(), 0o640)
+        os.fchmod(f.fileno(), 0o600)
         f.write(pin + "\n")
 
 
@@ -409,12 +412,12 @@ def build(env=None, player=None):
     rundir = player.rundir
     api = Api(player, settings, auth, registry, themes, media, board,
               spawn=env.get("PVJ_DEV_SPAWN") == "1", on_pin=lambda pin: write_pin_file(rundir, pin))
-    api.net = netd_mod.NetdClient(os.path.join(rundir, "netd.sock"))
+    api.net = netd_mod.NetdClient(os.path.join(env.get("PVJ_NETD_DIR") or rundir, paths.NETD_SOCKET))
     from . import capture as capture_mod
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
-    api.sysd = sysd_mod.SysdClient(os.path.join(os.environ.get("PVJ_SYSD_DIR", "/run/pvj-sysd"), "sysd.sock"))
+    api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
     from . import supportd as supportd_mod
-    api.support.client = supportd_mod.SupportdClient(os.path.join(os.environ.get("PVJ_SUPPORTD_DIR", "/run/pvj-supportd"), "supportd.sock"))
+    api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
     api.support.panel_port = int(env.get("PVJ_PORT", "8080"))
     api.support.close_leftover()
     api.health.start()                       # notices a short undervoltage with nobody looking

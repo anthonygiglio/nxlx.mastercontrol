@@ -4,7 +4,7 @@
 
 Why a separate process: on a Raspberry Pi 4 with mpv 0.40, closing a V4L2 capture inside the player crashed the player
 (SIGBUS or SIGSEGV) in 4 of 5 switches back to a file, in libavdevice's buffer teardown. So the player never opens the
-device. A helper mpv, run by the web service, reads the device and writes raw frames to a pipe in /run/pvj; the player
+device. A helper mpv, run by the web service, reads the device and writes raw frames to a pipe in its own runtime folder (/run/pvj/web); the player
 plays the pipe with the raw video demuxer. Leaving the input stops the helper; if its teardown crashes, only the helper
 dies (0 player crashes in 5 switches, against 4 in 5 before). Measured on a Pi 4 with a MACROSILICON USB3 HDMI capture
 stick (YUYV only), through the pipe: 720p30 and 1080p30 dropped no frames and kept real time; 720p60 dropped 9 frames a
@@ -21,6 +21,8 @@ import signal
 import subprocess
 import threading
 import time
+
+from . import paths
 
 MODES = {"720p30": (1280, 720, 30), "1080p30": (1920, 1080, 30)}
 DEVICE = re.compile(r"video([0-9]{1,3})")
@@ -62,7 +64,7 @@ def list_devices(sysfs="/sys/class/video4linux"):
 class Capture:
     def __init__(self, rundir, mpv_bin="mpv", lister=list_devices, spawn=subprocess.Popen, log=print):
         self.rundir, self.mpv_bin, self.lister, self._spawn, self.log = rundir, mpv_bin, lister, spawn, log
-        self.fifo = os.path.join(rundir, "capture.fifo")
+        self.fifo = paths.capture_fifo(rundir)
         self.proc = None
         self.current = None           # {"device", "mode"}
         self._lock = threading.RLock()
@@ -84,7 +86,7 @@ class Capture:
         if not isinstance(device, str) or not DEVICE.fullmatch(device) or device not in [d["id"] for d in self.lister()]:
             raise CaptureError("no such input")
         self.stop()
-        os.mkfifo(self.fifo, 0o660)
+        os.mkfifo(self.fifo, 0o640)       # the panel writes, the player (group pvj) only reads
         return MODES[mode]
 
     def start(self, device, mode, timeout=5.0):

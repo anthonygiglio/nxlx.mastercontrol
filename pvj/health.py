@@ -24,6 +24,8 @@ import socket
 import threading
 import time
 
+from . import paths
+
 CHECK_EVERY = 5.0
 WARM_C, HOT_C = 80.0, 85.0          # a Pi 4 starts to slow down around 80 C and slows hard at 85 C
 
@@ -78,7 +80,7 @@ class Health:
 
     # -- power, remembered until a reboot --
     def _marker(self):
-        return os.path.join(self.rundir, "undervoltage-seen")
+        return paths.undervoltage_marker(self.rundir)
 
     def check_power(self):
         alarm = undervoltage_alarm(self.sysfs)
