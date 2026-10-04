@@ -448,23 +448,31 @@ class LogTap:
             pass
 
 
-_COMPILER_LINE = re.compile(r"^(?:ERROR: )?\d+:(\d+)(?:\(\d+\))?: (?:error: )?(.*)$")
+_COMPILER_LINE = re.compile(r"^(?:(ERROR|WARNING): )?\d+:(\d+)(?:\(\d+\))?: (?:(error|warning): )?(.*)$", re.I)
+_SOURCE_LINE = re.compile(r"^\[\s*\d+\]( |$)")                 # mpv prints the shader it could not compile, numbered
+_INTERNAL = re.compile(r"\bpvj_\w*|\bPVJ_\w*|\bHOOKED\w*|//!|^\s*#|[;{}]\s*$")
 
 
 def shader_errors(lines):
     """What the player said about a shader it refused, as one short message, or "" if it said nothing of the kind.
-    mpv prints the whole shader and then the GPU compiler's log, all at error level, from its video output."""
-    mine = [t for p, level, t in lines if level in ("error", "fatal") and p.startswith("vo/")
-            and not re.match(r"^\[\s*\d+\] ", t)]
+    mpv prints the whole shader and then the GPU compiler's log, all at error level, from its video output. Only the
+    compiler's errors are passed on: its warnings are left out (a refused shader's log also carries warnings about
+    this translator's own pvj_ names, which mean nothing to the person), and so is every line of the shader text."""
+    mine = [t for p, level, t in lines if level in ("error", "fatal") and p.startswith("vo/") and not _SOURCE_LINE.match(t)]
     if not any(re.search(r"shader|compile|link log|Unrecognized command|hook", t, re.I) for t in mine):
         return ""
-    said = []
+    said, warned = [], []
     for t in mine:
         m = _COMPILER_LINE.match(t.strip())
         if m:
-            said.append("line %s: %s" % (m.group(1), m.group(2)))
+            warning = "warning" in ((m.group(1) or "") + (m.group(3) or "")).lower()
+            if warning and _INTERNAL.search(m.group(4)):
+                continue
+            (warned if warning else said).append("line %s: %s" % (m.group(2), m.group(4)))
     if not said:
-        said = [t for t in mine if t.strip() and not re.search(r"shader source:|compile log|link log", t)]
+        # No compiler line was understood. Pass on what reads like a message, never a line of the generated shader.
+        said = warned or [t.strip() for t in mine if t.strip() and not _INTERNAL.search(t)
+                          and not re.search(r"shader source:|compile log|link log", t)]
     return "; ".join(said[:4])[:500] or "the GPU refused the shader"
 
 
@@ -651,6 +659,16 @@ class Engine:
             return []
         return [x for key in ("fresh", "redraw") for x in ((p or {}).get(key) or []) if isinstance(x, dict)]
 
+    def _fresh(self, desc):
+        """The passes mpv drew for the newest frame that belong to the shader called `desc` (and to no other: "shader
+        7 1" is not "shader 7 12"). The redraw list is left out: it can still hold the shader before this one."""
+        try:
+            p = self.api.player.ipc.request("get_property", "vo-passes")
+        except Exception:
+            return []
+        mine = re.compile(re.escape(desc) + r"(?![0-9])")
+        return [x for x in ((p or {}).get("fresh") or []) if isinstance(x, dict) and mine.search(str(x.get("desc", "")))]
+
     def _watch(self, tap, desc):
         """Wait until the player has drawn a frame with the shader called `desc` or has complained.
         ("ok" | "refused" | "unknown", message)."""
@@ -660,7 +678,8 @@ class Engine:
             lines += tap.drain(0.1)
             if shader_errors(lines):
                 break
-            mine = [x for x in self._passes() if desc in str(x.get("desc", ""))]
+            named = re.compile(re.escape(desc) + r"(?![0-9])")
+            mine = [x for x in self._passes() if named.search(str(x.get("desc", "")))]
             # A refused shader is listed too, with no time against it (seen in CI): only a pass that took time was
             # drawn. A GPU that reports no times at all gives "unknown" after a second, never "ok".
             drawn = any(isinstance(x.get(k), (int, float)) and x[k] > 0 for x in mine for k in ("avg", "last"))
@@ -747,7 +766,7 @@ class Engine:
                 self._checked.add(digest)
             if self.error and self.error["id"] == sid:
                 self.error = None
-            self.playing = {"id": sid, "values": clean, "hue": float(hue), "path": out, "carrier": carrier, "epoch": new,
+            self.playing = {"id": sid, "values": clean, "hue": float(hue), "path": out, "carrier": carrier, "epoch": new, "desc": desc,
                             "checked": True if (verdict == "ok" or digest in self._checked) else None}
             self._cleanup({out})
             if cut:
@@ -842,6 +861,8 @@ class Engine:
                 os.unlink(path)
             except OSError as e:
                 raise ApiError(500, "could not delete: %s" % (e.strerror or e))
+            if self.error and self.error["id"] == sid:      # a refusal of a file that is gone says nothing any more
+                self.error = None
             cfg = self.config()
             if sid in cfg["disabled"]:
                 cfg["disabled"] = [n for n in cfg["disabled"] if n != sid]
@@ -854,8 +875,8 @@ class Engine:
         playing = None
         if showing:
             playing = {"id": showing["id"], "name": showing["id"][:-3], "values": dict(showing["values"]), "checked": showing["checked"]}
-            for x in self._passes():
-                if "nxlx shader" in str(x.get("desc", "")) and isinstance(x.get("avg"), (int, float)) and x["avg"] > 0:
+            for x in self._fresh(showing.get("desc") or "nxlx shader"):     # its own pass, never the one before it
+                if isinstance(x.get("avg"), (int, float)) and not isinstance(x["avg"], bool) and x["avg"] > 0:
                     playing["pass_ms"] = round(x["avg"] / 1e6, 2)
         vibes = getattr(self.api, "vibes", None)
         size = render_size(self.screen(), cfg["height"])
