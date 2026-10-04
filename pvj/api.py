@@ -1899,12 +1899,27 @@ class Api:
         return self.midi.status()
 
     def midi_map(self, body, device, client):
-        """Add, remove or clear mappings. {"add": {kind, number, channel, source, action, ...}}, {"remove": id}, {"clear": true}."""
+        """Add, remove or clear mappings. {"add": {kind, number, channel, source, action, ...}}, {"remove": id}, {"clear": true}.
+        For a recognised controller: {"set": {"controller", "control", "action": {...}}} makes one control of its
+        drawn layout do something else, and {"reset": {"controller", "control"?}} goes back to the standard for one
+        control or for the whole controller. Both only add or remove the person's own mappings."""
         self._need_control("control-midi", self.midi)
         with self.settings.lock:
             current = list(self.settings.data["control"]["midi"]["map"])
             try:
-                if "add" in body:
+                if "set" in body or "reset" in body:
+                    ask = body.get("set", body.get("reset"))
+                    name = ask.get("controller") if isinstance(ask, dict) else None
+                    if not isinstance(name, str) or not midi_mod.SOURCE.fullmatch(name):
+                        raise bad("name the controller")
+                    profile = self.midi.profile_for(name)
+                    if profile is None:
+                        raise ApiError(404, "no built-in layout for that controller")
+                    if "set" in body:
+                        changed = midi_mod.add_entry(current, midi_mod.override_entry(profile, name, ask.get("control"), ask.get("action")))
+                    else:
+                        changed = midi_mod.reset_entries(current, profile, name, ask.get("control"))
+                elif "add" in body:
                     changed = midi_mod.add_entry(current, body["add"])
                 elif "remove" in body:
                     if not any(e["id"] == body["remove"] for e in current):
@@ -2123,7 +2138,7 @@ class Api:
             ("POST", "/api/autostart/test"): ("live", self.test_autostart),
             ("GET", "/api/dmx"): ("full", self.get_dmx),
             ("POST", "/api/dmx"): ("full", self.set_dmx),
-            ("GET", "/api/midi"): ("full", self.get_midi),
+            ("GET", "/api/midi"): ("live", self.get_midi),          # a presenter may look at the layout; changing it is full
             ("POST", "/api/midi"): ("full", self.set_midi),
             ("POST", "/api/midi/learn"): ("full", self.midi_learn),
             ("POST", "/api/midi/map"): ("full", self.midi_map),
