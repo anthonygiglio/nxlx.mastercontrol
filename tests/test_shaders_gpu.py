@@ -10,6 +10,7 @@ Run that way (as CI does), a skipped test is a failure, so a missing display or 
 usual test discovery it is skipped unless PVJ_GPU_TEST is set.
 This is a software GPU: it says nothing about speed, and nothing about the GPU driver of a real board.
 """
+import json
 import os
 import random
 import shutil
@@ -23,6 +24,7 @@ from pvj import shaders as S, vibes as V
 from pvj.api import ApiError
 from pvj.player import Player
 from tests.test_server import ServerBase
+from tests.test_shaders import AMBIENT, BUNDLED, PERFORMANCE
 
 GPU = os.environ.get("PVJ_GPU_TEST") == "1"
 W, H = 320, 180
@@ -119,22 +121,73 @@ class GpuCase:
         return r
 
     # -- the bundled set --
+    def draw(self, sid, what, failed, **kw):
+        """Show a shader and judge the picture: the player took it, drew a frame with it, and the screenshot is varied
+        (more than 40 colours in a grid of points) and not dark. A line is printed per draw, as the record of what
+        this GPU drew; what is wrong goes into `failed`, so one run names every shader that does not draw."""
+        self.engine._checked.clear()                               # watch the player's log every time
+        self.engine._cache.clear()                                 # and read the file again (a variant is rewritten)
+        r = self.engine.show(sid, **kw)
+        if not r["ok"]:
+            failed.append("%s (%s): refused: %s" % (sid, what, r["error"]))
+            print("shader, ES %s: %-18s %-22s REFUSED %s" % (self.ES, sid, what, r["error"]))
+            return
+        rows = self.shot()
+        colours = {rows[y][x] for y in range(2, H, 5) for x in range(2, W, 5)}
+        brightest = max(max(c) for c in colours)
+        print("shader, ES %s: %-18s %-22s drawn=%s colours=%d brightest=%d" % (self.ES, sid, what, self.engine.playing["checked"], len(colours), brightest))
+        if self.engine.playing["checked"] is not True:
+            failed.append("%s (%s): the player never drew a frame with it" % (sid, what))
+        if self.engine.error is not None:
+            failed.append("%s (%s): %s" % (sid, what, self.engine.error))
+        if len(colours) <= 40:
+            failed.append("%s (%s): a flat picture (%d colours)" % (sid, what, len(colours)))
+        if brightest <= 60:
+            failed.append("%s (%s): a dark picture" % (sid, what))
+
     def test_every_bundled_shader_compiles_and_draws_a_picture(self):
-        ids = [s["id"] for s in self.engine.library() if s["pack"] == "nxlx"]      # the project's own ten
-        self.assertEqual(len(ids), 10)
+        ids = [s["id"] for s in self.engine.library() if s["pack"] == "nxlx"]      # the project's own
+        self.assertEqual(len(ids), BUNDLED)
         rng = random.Random(11)
+        failed = []
         for sid in ids:
-            for varied in (False, True):
-                self.engine._checked.clear()                       # watch the player's log every time
-                inputs = next(s["inputs"] for s in self.engine.library() if s["id"] == sid)
-                kw = {"values": V.vary(inputs, rng), "hue": 77.0, "offset": 321.5} if varied else {}
-                self.show(sid, **kw)
-                self.assertIsNone(self.engine.error, sid)
-                rows = self.shot()
-                colours = {rows[y][x] for y in range(2, H, 5) for x in range(2, W, 5)}
-                self.assertGreater(len(colours), 40, "%s drew a flat picture (%d colours)" % (sid, len(colours)))
-                self.assertGreater(max(max(c) for c in colours), 60, "%s drew a dark picture" % sid)
-        self.assertEqual(self.shaders_in_player(), ["shader-%d-20.glsl" % os.getpid()])
+            inputs = next(s["inputs"] for s in self.engine.library() if s["id"] == sid)
+            self.draw(sid, "defaults", failed)
+            self.draw(sid, "varied", failed, values=V.vary(inputs, rng), hue=77.0, offset=321.5)
+        self.assertEqual(failed, [])
+        self.assertEqual(self.shaders_in_player(), ["shader-%d-%d.glsl" % (os.getpid(), 2 * BUNDLED)])
+
+    def test_every_new_shader_draws_at_the_ends_of_its_inputs_and_in_every_choice(self):
+        """The two families after the first ten have switches, choices and points besides numbers. Vibes never takes a
+        number to its end, and the engine only replaces numbers, so here each one is drawn with every number at its
+        MIN, at its MAX, late in TIME, and once per switch, per choice and per corner of a point: for those the file
+        is uploaded again under one name with that DEFAULT changed. Same judgement as above for every draw."""
+        failed, draws = [], 0
+        for name in AMBIENT + PERFORMANCE:
+            sid = "nxlx-%s.fs" % name
+            with open(os.path.join(S.BUNDLED_DIR, sid)) as f:
+                text = f.read()
+            end = text.index("*/")
+            head, body = json.loads(text[2:end]), text[end:]
+            floats = [i for i in head["INPUTS"] if i["TYPE"] == "float"]
+            self.draw(sid, "all MIN", failed, values={i["NAME"]: i["MIN"] for i in floats})
+            self.draw(sid, "all MAX", failed, values={i["NAME"]: i["MAX"] for i in floats})
+            self.draw(sid, "late", failed, offset=99990.0)
+            draws += 3
+            for n, spec in enumerate(head["INPUTS"]):
+                others = {"bool": [not spec.get("DEFAULT")], "point2D": [[0.0, 0.0], [1.0, 1.0]],
+                          "long": [v for v in spec.get("VALUES", []) if v != spec.get("DEFAULT")]}.get(spec["TYPE"], [])
+                for value in others:
+                    changed = dict(head, INPUTS=head["INPUTS"][:n] + [dict(spec, DEFAULT=value)] + head["INPUTS"][n + 1:])
+                    self.engine.upload("variant.fs", "/*" + json.dumps(changed) + body, replace=True)
+                    self.draw("variant.fs", "%s %s=%s" % (name, spec["NAME"], json.dumps(value)), failed)
+                    if spec["NAME"] == "fast":                       # the fastest it can go
+                        self.draw("variant.fs", "%s fast, all MAX" % name, failed, values={i["NAME"]: i["MAX"] for i in floats})
+                        draws += 1
+                    draws += 1
+        print("shaders, ES %s: %d draws at the ends and in the choices of %d shaders" % (self.ES, draws, len(AMBIENT + PERFORMANCE)))
+        self.assertEqual(failed, [])
+        self.assertGreaterEqual(draws, 5 * len(AMBIENT + PERFORMANCE))
 
     def test_every_shader_of_the_third_party_pack_compiles_and_draws_a_picture(self):
         """The pack from Vidvox's ISF-Files (pvj/shaders.d/isf-files), held to what the project's own ten are held to:
