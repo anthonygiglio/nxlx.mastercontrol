@@ -35,6 +35,47 @@ The Room screen's "Let someone in" is not drawn for a remote support login, and 
 
 Still open for the owner: "any presenter" includes one who came in by a presenter code ten minutes ago; the "Remove" buttons on the Paired devices list still do not ask first (the audit's item); the owner's own codes have no hourly limit.
 
+## 2026-10-04 (the Shaders page becomes an instrument)
+
+Panel only (`pvj/web/shaders.js`, `app.css`, a few lines of `app.js`), on top of the shader engine (#72, D46). The owner's words: "don't be shy about really making the control panels engaging and userfriendly"; "no telling the user to go to a different page to find the controls"; "someone doing more intense work will have a laptop, usually." No backend change.
+
+**Built:**
+
+1. Controls for the playing shader by type through `inputControl`: float, bool (the switch), long (buttons for up to five choices, a list for more, a slider for a range), color (native field and alpha), point2D (an XY pad with arrow keys), event (a button). All send `POST /api/shaders/values` with the shader's id while dragged, at most ten times a second per control, the last value always on release. Nothing sends a Play any more, so a control never ends Vibes.
+2. Speed (with Freeze), Colour turn and Brightness trim above them, each with Reset.
+3. Presets: apply on tap, save with a name, rename and delete under More, the one in use marked, "Changed" after a value moved.
+4. Rotation sets: one set looks like "Vibes settings"; a second makes a list of sets with one being edited, and the library's switches then mean "in the set being edited" (the card names it). Start Vibes on a set, make it the usual one, rename, delete.
+5. The library: filters by name, weight, pack and family; measured numbers; "Too heavy on this box" with Put it back; the GPU's refusal; the Playing mark is patched in place.
+6. Load as three lights and words, with picture detail beside it.
+7. MIDI teach buttons beside the first eight controls a knob can drive, Speed, Previous and Next, and preset 1 to 8.
+8. Live: Previous and Next beside the Vibes button, the set to play when there are two, and a strip of Speed and the first four controls; on a laptop the strip is a column on the right.
+9. Three groups of cards (stage, library, side) that stack on a phone and are columns from 900 and 1200 px. Keys: Space, the arrows, 1 to 8 (D47).
+10. Roles: a guest sees, a presenter performs, the owner saves and edits.
+11. Redraws: a card is not drawn again while it is being used, and a control takes the box's value only when it is free (D47).
+
+**Tested:** the browser test uploads a shader with every input type and checks what each control sends, that a held slider and a held point survive polls, a refusal beside its control, presets (save, apply, Changed, rename, delete), a second set (add, fill, make usual, start Vibes on it, rename, delete), the heavy mark and Put it back, the keys and that they do nothing in a field, the presenter's and the guest's page, Live's strip, and no overflow at phone and laptop widths. The load at "heavy" and a GPU refusal cannot happen in the harness (no GPU), so the test adds those fields to the box's answer on its way to the page.
+
+**Not verified:** nothing here has run on a Pi or been watched on a display. A real MIDI controller has not taught any of the new buttons.
+
+**Where the code and the brief or SHADERS.md differed** (the code won; for the engine's author):
+
+- `POST /api/shaders/values` answers `{ok, id, values, controls}`, with no `pending`. The page marks its own sends and reads `playing.pending` from the GET.
+- A GPU refusal of a new shape (a switch, a choice, an event) is not in the answer; it appears later as `error`. The page shows it at the control that sent last, which is a guess.
+- Presets come as names only, and any change sets `playing.preset` to null. "Changed" is therefore the page's own memory of the last preset it saw, lost on reload.
+- Step walks the active set, not the library, and takes no set.
+- `{"op": "activate"}` needs full access, so a presenter chooses a set per start (`{"on": true, "set"}`), which does not change the active one.
+- A row's `vibes` is membership of the active set; for another set the page reads `sets[].shaders` and sends the whole list back with `op: update`.
+- Every colour has four numbers, so "has alpha" cannot be told: every colour gets the alpha slider.
+- A point without MIN and MAX has no range: the page uses 0 to 1 when its default lies in there, else the drawing's pixels.
+- `categories` came with #74 while this was built; the family filter is now tested on the real 15 Performance shaders.
+- There is no way to reorder a set's entries or to give an entry a preset from the page; both are in the API.
+- Right after a Play, `GET /api/shaders` can say `playing: null` for a moment (the engine asks the player for its path, and the player has not loaded the carrier yet). The page and Live's strip follow the answer, so they can blink once; the browser test waits for the layout instead of measuring at once.
+- The review fixes of #72 were merged in on the way (a 422 from `/api/shaders/values` for values the GPU refused before is said beside the control like any other refusal; set and preset names have stricter rules, and the box's words are shown).
+
+**After #72 and #74 merged** (master merged in here): a new box has two sets, Ambient and Show, so the chooser beside Start Vibes is there from the start and the single-set page is what an owner gets by deleting down to one; Speed's top is each shader's `speed_max` (1 for a Performance shader), and the owner's opt-in `faster` is a switch under Advanced with the warning about photosensitive epilepsy in plain words; a refused value (422) frees its control at once so the box's value goes back into it.
+
+**Cost on the box, not measured:** the page asks `GET /api/shaders` every 3 seconds while a shader plays (every 5 otherwise; it was 5), and Live asks every 4 seconds while a shader is on. That call reads the whole library and asks the player a few questions. With 50 shaders on a Pi 4 nobody has timed it.
+
 ## 2026-10-04 (the shader engine: first hardware numbers, and performing with shaders)
 
 Pull request #72 (D46), backend only: Python, API, tests, docs. The owner's words: "a more robust shader playback and control system. i want to have more shaders available to perform with or have as auto-playing vibes." The Shaders page (#69) and the ISF pack (#70) are other sessions' work.

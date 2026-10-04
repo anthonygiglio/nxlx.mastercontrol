@@ -304,8 +304,11 @@
     var pads = h('div', { class: 'pads', id: 'pads' });
     (bank ? bank.pads : []).forEach(function (p, i) { pads.appendChild(padButton(S.bank, i, p)); });
     var canLive = can('live');
+    // On a laptop Live uses the width: the transport and the pads on the left, the playing shader's strip on the right
+    // (the strip is there only while a shader is on; on a phone it sits under the Vibes row).
     return h('div', { class: 'screen' },
       h('div', { class: 'top' }, h('h1', { text: 'nxlx.mastercontrol' }), h('div', { class: 'pill k', id: 'pill' })),
+      h('div', { class: 'livecols', id: 'livecols' },
       h('div', { class: 'card' },
         h('div', { class: 'k', text: 'Now playing' }),
         h('div', { id: 'np', style: false, text: '' }),
@@ -323,6 +326,7 @@
             act('POST', '/api/testpattern', { on: on }, poll);
           } }))),
       window.pvjShaders ? window.pvjShaders.liveRow(shaderCtx()) : null,
+      window.pvjShaders ? window.pvjShaders.liveStrip(shaderCtx()) : null,
       previewBlock(),
       h('div', { class: 'banks' }, S.banks.map(function (b, i) {
         return h('button', { class: 'btn' + (i === S.bank ? ' on' : ''), text: b.name.replace('Bank ', 'Bank '), 'aria-pressed': i === S.bank ? 'true' : 'false',
@@ -330,7 +334,7 @@
       })),
       pads,
       can('full') ? h('button', { class: 'btn small', text: S.editing ? 'Done editing' : 'Edit pads', onclick: function () { S.editing = !S.editing; render(); } }) : null,
-      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
+      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg })),
       h('div', { class: 'grow' }),
       h('div', { class: 'row' },
         h('button', { class: 'btn big grow', id: 'fade', text: 'Fade out', disabled: !canLive, onclick: function () { act('POST', '/api/fadeout', { seconds: 2 }); } }),
@@ -1016,7 +1020,7 @@
         steps: [scheduleStep()], offInner: true,
         body: function () { return [scheduleCard()]; } },
       { id: 'vibes', group: 'everyday', name: 'Shaders and Vibes', role: 'view', module: 'shaders', url: '/api/shaders',
-        blurb: 'Moving pictures the box draws by itself, in place of a clip. Vibes plays them one after another, for as long as you like. How fast they run on this box is not measured yet.',
+        blurb: 'Moving pictures the box draws by itself, in place of a clip. Vibes plays them one after another, for as long as you like. Play one yourself and it is an instrument: its controls, presets and a controller are all on this page.',
         confirmOff: function (ask) {
           var pl = (S.status && S.status.player) || {};
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
@@ -1634,7 +1638,10 @@
   var MIDI_ACTIONS = [['pad', 'Play a pad'], ['stop', 'Stop'], ['pause', 'Pause / resume'], ['blackout', 'Blackout on / off'], ['fadeout', 'Fade out'],
     ['reset', 'Reset mix'], ['opacity', 'Opacity (fader)'], ['size', 'Size (fader)'], ['position', 'Position X (fader)'], ['speed', 'Speed (fader)'],
     ['volume', 'Volume (fader)'], ['blackout_hold', 'Blackout while held up (fader)'],
-    ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)']];
+    ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)'],
+    ['shader_speed', 'Shader: speed (fader)'], ['shader_prev', 'Shader: the one before'], ['shader_next', 'Shader: the next one']]
+    .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['shader_control_' + n, 'Shader: control ' + n + ' of the one playing (knob)']; }))
+    .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['shader_preset_' + n, 'Shader: preset ' + n + ' of the one playing']; }));
   var midiForm = { action: 'opacity', bank: 0, index: 0 };  // survives redraws
   var midiTimer = null;
   function midiCard() {

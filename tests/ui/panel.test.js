@@ -49,9 +49,10 @@ function startServer() {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
     const problems = [];
-    // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload and the 503 for a screen
-    // preview from a harness player with no window are provoked on purpose.
-    const expected = /status of (400|401|403|503)/;
+    // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a value sent to a
+    // shader that has left the screen and the 503 for a screen preview from a harness player with no window are
+    // provoked on purpose.
+    const expected = /status of (400|401|403|409|503)/;
     page.on('console', (m) => { if (['error', 'warning'].includes(m.type()) && !expected.test(m.text())) problems.push(m.text()); });
     page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
     const base = 'http://127.0.0.1:' + info.port;
@@ -998,7 +999,9 @@ function startServer() {
     const big = await page.evaluate(() => { const r = document.getElementById('vibes').getBoundingClientRect(); return { h: r.height, w: r.width, vw: window.innerWidth }; });
     assert(big.h >= 56 && big.w >= big.vw - 34, 'the Vibes button is big and as wide as the phone screen allows: ' + JSON.stringify(big));
     assert.strictEqual(await page.textContent('#vibeswords'), 'Start Vibes');
-    assert(!(await page.isVisible('#vibesskip')), 'no Next one while Vibes is not playing');
+    assert(!(await page.isVisible('#vibesskip')) && !(await page.isVisible('#liveprev')), 'no Previous and Next while no shader is on');
+    await page.waitForSelector('#liveset:visible', { timeout: 20000 });
+    assert.deepStrictEqual(await page.$$eval('#liveset option', (os) => os.map((o) => o.textContent)), ['Set: Ambient', 'Set: Show'], 'a new box has two sets, and Live has the simple chooser beside the Vibes button');
     await fitsPhone('Live with the Vibes button');
     await page.click('#vibes');
     await page.waitForFunction(() => /^Vibes: [A-Z]/.test((document.getElementById('np') || {}).textContent), null, { timeout: 15000 });
@@ -1008,9 +1011,10 @@ function startServer() {
     // Starting, stopping, skipping and what is playing are together on Live
     await page.waitForSelector('#vibesskip:visible');
     assert((await page.evaluate(() => document.getElementById('vibesskip').getBoundingClientRect().height)) >= 44, 'Next one on Live is easy to hit');
-    const skipped = page.waitForResponse((r) => r.url().endsWith('/api/vibes') && r.request().postData() === '{"next":true}');
+    const skipped = page.waitForResponse((r) => r.url().endsWith('/api/shaders/step') && r.request().postData() === '{"dir":1}');
     await page.click('#vibesskip');
-    assert.strictEqual((await skipped).status(), 200, 'Next one on Live goes to the next shader');
+    assert.strictEqual((await skipped).status(), 200, 'Next on Live goes to the next shader');
+    assert(await page.isVisible('#liveprev'), 'and Previous is beside it');
     await fitsPhone('Live while Vibes is playing');
     if (shots) await page.screenshot({ path: path.join(shots, '8-live-vibes.png') });
     // The link lands on the same page, and Back returns to Live
@@ -1018,7 +1022,7 @@ function startServer() {
     await page.waitForSelector('#syspage h1:text-is("Shaders and Vibes")');
     await page.waitForFunction(() => /Vibes is playing/.test((document.getElementById('shaderline') || {}).textContent));
     assert.strictEqual(await page.textContent('#vibesbtn'), 'Stop Vibes');
-    assert.strictEqual(await page.textContent('#vibesnext'), 'Next one');
+    assert.strictEqual(await page.textContent('#shadernext'), 'Next \u203a');
     assert.strictEqual(await page.textContent('#sysback'), '‹ Live');
     if (shots) await page.screenshot({ path: path.join(shots, '9-shaders.png'), fullPage: true });
     // A guest sees what is playing, and nothing to press
@@ -1056,10 +1060,10 @@ function startServer() {
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"] .chip:text-is("Playing")');
     // Its number inputs are sliders, with their range and usual value, a Reset each and Reset all; applied when let go
     await page.waitForSelector('#shin-speed');
-    assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard', 'shadercontrols', 'vibessettings', 'shaderremote']);
+    assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercontrols', 'shaderpresets', 'shadercard', 'vibessettings', 'shaderremote']);
     const speed = (await get('/api/shaders')).shaders.find((x) => x.id === 'nxlx-tide.fs').inputs.find((i) => i.name === 'speed');
     assert(new RegExp(speed.min + ' to ' + speed.max + ', normally ' + speed.default).test(await page.textContent('#shadersliders')), 'a slider says its range and its usual value');
-    assert(/not saved/.test(await page.textContent('#slidernote')), 'the page says slider values are not saved');
+    assert(/does not stop Vibes/.test(await page.textContent('#slidernote')) && /save a preset/.test(await page.textContent('#slidernote')), 'the page says what a control does to Vibes and how to keep its value');
     const speedNow = () => get('/api/shaders').then((d) => d.playing && d.playing.values.speed);
     await page.evaluate((v) => { const el = document.getElementById('shin-speed'); el.value = v; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); }, speed.max);
     await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.max);
@@ -1136,7 +1140,8 @@ function startServer() {
     assert(!(await page.isVisible('#shaderupload')), 'Advanced starts folded');
     await page.click('#shaderadvanced summary');
     await page.waitForSelector('#shaderupload');
-    assert(/Fewer lines is lighter work/.test(await page.textContent('#shaderadvanced')), 'picture detail says what fewer lines does');
+    assert(/too heavy for this box/.test(await page.textContent('#shaderadvanced')), 'the guard\'s switch is under Advanced');
+    assert(/lightest/.test(await page.textContent('#shaderheight')), 'picture detail (beside the load, not under Advanced) says which choice is the lightest');
     await page.setInputFiles('#shaderpick', { name: 'bad$name.fs', mimeType: 'text/plain', buffer: Buffer.from('void main() {}') });
     await page.waitForFunction(() => /bad\$name\.fs was not added: a shader file is named/.test(document.getElementById('shaderuploadmsg').textContent));
     assert(/err/.test(await page.getAttribute('#shaderuploadmsg', 'class')), 'the refusal is shown as a problem');
@@ -1163,6 +1168,397 @@ function startServer() {
     await page.click('#confirmyes');
     await page.waitForFunction(() => !document.querySelector('#shadercard [data-shader="flat-grey.fs"]'));
     assert.strictEqual((await get('/api/shaders')).shaders.filter((s) => s.id === 'flat-grey.fs').length, 0, 'the uploaded file is gone from the box');
+    // ---- The instrument: controls by type, presets, sets, the load, a controller beside each control, the keys ----
+    // A shader with every kind of input, uploaded as a file would be. The harness player draws nothing, so what is
+    // checked is what the page sends and shows; the picture is tests/test_shaderlive_gpu.py.
+    const ALL = '/*{"DESCRIPTION": "Every kind of control, for the browser test.", "COST": "low: no loop", "INPUTS": [' +
+      '{"NAME": "level", "TYPE": "float", "MIN": 0.0, "MAX": 2.0, "DEFAULT": 0.5, "LABEL": "Level"},' +
+      '{"NAME": "lit", "TYPE": "bool", "DEFAULT": false, "LABEL": "Lit"},' +
+      '{"NAME": "mode", "TYPE": "long", "VALUES": [0, 2, 5], "LABELS": ["None", "Two", "Five"], "DEFAULT": 2, "LABEL": "Mode"},' +
+      '{"NAME": "shape", "TYPE": "long", "VALUES": [0, 1, 2, 3, 4, 5, 6], "LABELS": ["Dot", "Line", "Ring", "Star", "Wave", "Grid", "Cross"], "DEFAULT": 1, "LABEL": "Shape"},' +
+      '{"NAME": "count", "TYPE": "long", "MIN": 1, "MAX": 6, "DEFAULT": 3, "LABEL": "Count"},' +
+      '{"NAME": "tint", "TYPE": "color", "DEFAULT": [1.0, 0.5, 0.25, 1.0], "LABEL": "Tint"},' +
+      '{"NAME": "spot", "TYPE": "point2D", "DEFAULT": [0.5, 0.5], "MIN": [0.0, 0.0], "MAX": [1.0, 1.0], "LABEL": "Spot"},' +
+      '{"NAME": "bang", "TYPE": "event", "LABEL": "Flash"},' +
+      '{"NAME": "steps", "TYPE": "float", "MIN": 1.0, "MAX": 6.0, "DEFAULT": 3.0, "LABEL": "Steps"}]}*/\n' +
+      'void main() {\n    float v = 0.0;\n    for (int i = 0; i < 6; i++) { if (float(i) < steps) { v += level; } }\n' +
+      '    gl_FragColor = vec4(tint.rgb * v + vec3(spot, float(mode + count + shape)), (lit || bang) ? 1.0 : 0.5);\n}\n';
+    const AID = 'all-inputs.fs';
+    assert.strictEqual(await post('/api/shaders', { action: 'upload', name: AID, source: ALL }), 200);
+    assert.strictEqual(await post('/api/shaders/play', { id: AID }), 200);
+    await page.waitForSelector('#shin-level');
+    assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercontrols', 'shaderpresets', 'shadercard', 'vibessettings', 'shaderremote'],
+      'a phone, top to bottom: now, controls, presets, the library, Vibes, controllers');
+    const sent = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && /\/api\/(shaders\/(values|play|step|preset)|vibes)$/.test(r.url())) sent.push({ path: new URL(r.url()).pathname, body: JSON.parse(r.postData() || '{}') });
+    });
+    const sentTo = (p) => sent.filter((x) => x.path === p).map((x) => x.body);
+    async function wasSent(p, test, what) {
+      const hit = typeof test === 'function' ? test : (b) => JSON.stringify(b) === JSON.stringify(test);
+      for (let n = 0; n < 80; n++) { if (sentTo(p).some(hit)) return; await page.waitForTimeout(50); }
+      assert.fail(what + ': not sent to ' + p + (typeof test === 'function' ? '' : ' ' + JSON.stringify(test)) + '; the last were ' + JSON.stringify(sentTo(p).slice(-4)));
+    }
+    const V = (values) => ({ values, id: AID });
+    const C = (controls) => ({ controls, id: AID });
+    const VALUES = '/api/shaders/values';
+    const boxHas = (name, v) => page.waitForFunction(([n, x]) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && JSON.stringify(d.playing.values[n]) === JSON.stringify(x)), [name, v]);
+    const aPoll = () => page.waitForResponse((r) => r.url().endsWith('/api/shaders') && r.request().method() === 'GET', { timeout: 20000 });
+    const setRange = (id, v, events) => page.evaluate(([i, x, evs]) => { const el = document.getElementById(i); el.value = x; evs.forEach((e) => el.dispatchEvent(new Event(e))); }, [id, v, events]);
+    // a number: a slider that sends while it is dragged (a few times a second, not once per step), keeps its place
+    // through a poll while it is held, and always sends the last value when it is let go
+    await page.evaluate(() => {
+      const el = document.getElementById('shin-level');
+      el.dataset.seen = '1';
+      el.dispatchEvent(new Event('pointerdown'));
+      for (let n = 50; n <= 125; n++) { el.value = n / 100; el.dispatchEvent(new Event('input')); }
+    });
+    await page.waitForTimeout(400);
+    const dragged = sentTo(VALUES).length;
+    assert(dragged >= 1 && dragged <= 4, '76 steps of a drag are a few sends, not 76: ' + dragged);
+    assert.strictEqual(await post(VALUES, { values: { level: 0.2 } }), 200);            // moved from somewhere else meanwhile
+    await aPoll(); await aPoll();
+    await page.waitForTimeout(200);
+    {
+      const held = await page.$eval('#shin-level', (el) => [+el.value, el.dataset.seen]);
+      assert(Math.abs(held[0] - 1.25) < 0.006 && held[1] === '1', 'a slider that is held is neither moved nor drawn again by a poll: ' + JSON.stringify(held));
+    }
+    await setRange('shin-level', 1.5, ['input', 'change', 'pointerup']);
+    await wasSent(VALUES, V({ level: 1.5 }), 'a slider, let go');
+    await boxHas('level', 1.5);
+    assert.strictEqual(await post(VALUES, { values: { level: 0.3 } }), 200);            // and once nobody holds it, it follows the box
+    await page.waitForFunction(() => Math.abs(+document.getElementById('shin-level').value - 0.3) < 0.006, null, { timeout: 20000 });
+    assert.strictEqual(await page.$eval('#shin-level', (el) => el.dataset.seen), '1', 'the box\'s value is put into the slider that is there; the card is not drawn again');
+    // a switch
+    await page.click('#shin-lit');
+    await wasSent(VALUES, V({ lit: true }), 'a switch');
+    assert.strictEqual(await page.getAttribute('#shin-lit', 'aria-checked'), 'true');
+    assert.strictEqual(await page.getAttribute('#shin-lit', 'role'), 'switch');
+    // a choice of three: all in view; of seven: a list
+    assert.deepStrictEqual(await page.$$eval('#shin-mode [role=radio]', (bs) => bs.map((b) => b.textContent + ':' + b.getAttribute('aria-checked'))), ['None:false', 'Two:true', 'Five:false']);
+    await page.click('#shin-mode [data-value="5"]');
+    await wasSent(VALUES, V({ mode: 5 }), 'a choice, as buttons');
+    assert.strictEqual(await page.getAttribute('#shin-mode [data-value="5"]', 'aria-checked'), 'true');
+    assert.strictEqual(await page.$eval('#shin-shape', (el) => el.tagName + ':' + el.options.length), 'SELECT:7');
+    await page.selectOption('#shin-shape', '4');
+    await wasSent(VALUES, V({ shape: 4 }), 'a choice, as a list');
+    await setRange('shin-count', 5, ['input', 'change']);
+    await wasSent(VALUES, V({ count: 5 }), 'a whole number in a range');
+    // a colour: a swatch large enough to hit, and alpha beside it
+    {
+      const sw = await page.$eval('#shin-tint', (el) => { const r = el.getBoundingClientRect(); return [el.type, r.width, r.height]; });
+      assert(sw[0] === 'color' && sw[1] >= 44 && sw[2] >= 44, 'the colour swatch is a native colour field of at least 44 px: ' + JSON.stringify(sw));
+    }
+    await setRange('shin-tint', '#00ff00', ['input', 'change']);
+    await wasSent(VALUES, V({ tint: [0, 1, 0, 1] }), 'a colour');
+    await setRange('shin-tint-alpha', 0.5, ['input', 'change']);
+    await wasSent(VALUES, V({ tint: [0, 1, 0, 0.5] }), 'a colour\'s alpha');
+    // a point: a square to drag in, which keeps its place through a poll while held; the arrows nudge it (and do not step)
+    const xy = (type, fx, fy) => page.evaluate(([t, x, y]) => {
+      const el = document.getElementById('shin-spot'), r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent(t, { bubbles: true, cancelable: true, pointerId: 7, clientX: r.left + r.width * x, clientY: r.top + r.height * y }));
+    }, [type, fx, fy]);
+    const spotNear = (x, y) => (b) => b.values && b.values.spot && Math.abs(b.values.spot[0] - x) < 0.011 && Math.abs(b.values.spot[1] - y) < 0.011;
+    await page.locator('#shin-spot').scrollIntoViewIfNeeded();
+    {
+      const pad = await page.$eval('#shin-spot', (el) => { const r = el.getBoundingClientRect(); return [r.width, r.height]; });
+      assert(pad[0] >= 120 && Math.abs(pad[0] - pad[1]) < 2, 'the XY pad is a square: ' + JSON.stringify(pad));
+    }
+    await xy('pointerdown', 0.25, 0.25);
+    await wasSent(VALUES, spotNear(0.25, 0.75), 'a point, pressed (up is more)');
+    assert.strictEqual(await page.textContent('[data-input="spot"] .slidervalue'), 'x 0.25  y 0.75', 'the two numbers are shown');
+    assert.strictEqual(await post(VALUES, { values: { spot: [0.9, 0.9] } }), 200);
+    await aPoll(); await aPoll();
+    assert.strictEqual(await page.textContent('[data-input="spot"] .slidervalue'), 'x 0.25  y 0.75', 'a held point is not moved by a poll');
+    await xy('pointermove', 0.75, 0.25);
+    await xy('pointerup', 0.75, 0.25);
+    await wasSent(VALUES, spotNear(0.75, 0.75), 'a point, dragged');
+    const stepsBefore = sentTo('/api/shaders/step').length;
+    await page.focus('#shin-spot');
+    await page.keyboard.press('ArrowLeft');
+    await wasSent(VALUES, spotNear(0.73, 0.75), 'a point, nudged with an arrow key');
+    assert.strictEqual(sentTo('/api/shaders/step').length, stepsBefore, 'an arrow key on the XY pad moves the point, not the shader');
+    await page.evaluate(() => document.activeElement.blur());
+    // an event: a button
+    await page.click('#shin-bang');
+    await wasSent(VALUES, V({ bang: true }), 'an event');
+    // the three every shader has, above its own: Speed with Freeze, Colour turn, Brightness trim, each with Reset
+    assert.deepStrictEqual(await page.$$eval('#shadercommon .ctl', (cs) => cs.map((x) => x.dataset.common)), ['speed', 'hue', 'brightness']);
+    assert(await page.evaluate(() => document.getElementById('shadercommon').compareDocumentPosition(document.getElementById('shadersliders')) & Node.DOCUMENT_POSITION_FOLLOWING), 'the common controls are above the shader\'s own');
+    {
+      const d = await get('/api/shaders'), limits = d.controls.speed, mine = d.shaders.find((x) => x.id === AID);
+      assert(mine.speed_max === limits.max, 'a shader that is not of the Performance family may run at the box\'s top speed');
+      assert.deepStrictEqual(await page.$eval('#shc-speed', (el) => [+el.min, +el.max]), [limits.min, mine.speed_max], 'Speed runs from 0 to what the box allows this shader');
+      assert.strictEqual(await page.locator('#shadercommon [data-common="speed"] .trackmark').count(), 1, 'and 1 is marked');
+    }
+    await setRange('shc-speed', 2, ['input', 'change']);
+    await wasSent(VALUES, C({ speed: 2 }), 'Speed');
+    await page.click('#shc-speed-freeze');
+    await wasSent(VALUES, C({ speed: 0 }), 'Freeze');
+    assert.strictEqual(await page.getAttribute('#shc-speed-freeze', 'aria-checked'), 'true');
+    const twos = sentTo(VALUES).filter((b) => b.controls && b.controls.speed === 2).length;
+    await page.click('#shc-speed-freeze');
+    await page.waitForFunction(() => document.getElementById('shc-speed-freeze').getAttribute('aria-checked') === 'false');
+    for (let n = 0; n < 60 && sentTo(VALUES).filter((b) => b.controls && b.controls.speed === 2).length === twos; n++) await page.waitForTimeout(50);
+    assert.strictEqual(sentTo(VALUES).filter((b) => b.controls && b.controls.speed === 2).length, twos + 1, 'Freeze off goes back to the speed before');
+    await setRange('shc-hue', 90, ['input', 'change']);
+    await wasSent(VALUES, C({ hue: 90 }), 'Colour turn');
+    await page.click('#shadercommon button[aria-label="Reset Colour turn"]');
+    await wasSent(VALUES, C({ hue: 0 }), 'Reset of Colour turn');
+    await setRange('shc-brightness', 1.5, ['input', 'change']);
+    await wasSent(VALUES, C({ brightness: 1.5 }), 'Brightness trim');
+    assert.strictEqual(sentTo('/api/shaders/play').length, 0, 'no control sends a Play');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && d.playing.values.lit === true && d.playing.values.mode === 5 && d.playing.controls.brightness === 1.5 && d.playing.controls.speed === 2));
+    // a refusal is said at the control: here a value for a shader that has just left the screen
+    {
+      const said = await page.evaluate(() => fetch('/api/shaders/play', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ id: 'nxlx-tide.fs' }) }).then(() => {
+        document.getElementById('shin-lit').click();
+        return new Promise((done) => {
+          let n = 0;
+          const t = setInterval(() => { const e = document.querySelector('[data-input="lit"] .ctlnote.err'); if ((e && e.textContent) || ++n > 200) { clearInterval(t); done(e ? e.textContent : ''); } }, 20);
+        });
+      }));
+      assert(/another shader is on the screen/.test(said), 'a refused value is said beside its control: ' + said);
+    }
+    assert.strictEqual(await post('/api/shaders/play', { id: AID }), 200);
+    await page.waitForFunction(() => document.getElementById('shin-level') && !document.querySelector('.ctlnote.err') && document.getElementById('shaderplaying').textContent === 'All inputs', null, { timeout: 20000 });
+    // Presets. The keys do nothing while a name is being typed.
+    assert(/Presets: your saved versions of this shader/.test(await page.textContent('#shaderpresets')));
+    await page.fill('#presetname', 'x');
+    {
+      const before = sent.length;
+      for (const k of ['Space', '1', 'ArrowRight', 'ArrowLeft']) await page.keyboard.press(k);
+      await page.waitForTimeout(400);
+      assert.strictEqual(sent.length, before, 'no key does anything while a field has the cursor: ' + JSON.stringify(sent.slice(before)));
+    }
+    await page.fill('#presetname', 'Bright');
+    await page.click('#presetsave');
+    await page.waitForSelector('#presetrow [data-preset="Bright"][aria-pressed="true"]');           // saved, and marked as the one in use
+    assert.deepStrictEqual((await get('/api/shaders')).shaders.find((s) => s.id === AID).presets, ['Bright']);
+    await page.click('#shin-lit');
+    await page.waitForSelector('#presetchanged');                                                     // the values differ from it now
+    await page.waitForSelector('#presetrow [data-preset="Bright"].was');
+    await page.click('#presetrow [data-preset="Bright"]');
+    await wasSent('/api/shaders/preset', { id: AID, name: 'Bright' }, 'a tap on a preset');
+    await page.waitForSelector('#presetrow [data-preset="Bright"][aria-pressed="true"]');
+    await page.waitForFunction(() => !document.getElementById('presetchanged'));
+    await page.click('#presetmore summary');
+    await page.click('[data-preset-edit="Bright"] button:has-text("Rename")');
+    await page.fill('.renamerow input', 'Night');
+    await page.click('.renamerow button:has-text("Save")');
+    await page.waitForSelector('#presetrow [data-preset="Night"]');
+    assert.deepStrictEqual((await get('/api/shaders')).shaders.find((s) => s.id === AID).presets, ['Night'], 'renamed on the box');
+    await page.click('[data-preset-edit="Night"] button:has-text("Delete")');
+    await page.waitForSelector('#confirmrow:has-text("Delete the preset Night?")');
+    await page.click('#confirmno');
+    await page.waitForFunction(() => !document.getElementById('confirmrow'));
+    assert.strictEqual(await page.locator('#presetrow [data-preset="Night"]').count(), 1, '"Keep it" keeps the preset');
+    await page.click('[data-preset-edit="Night"] button:has-text("Delete")');
+    await page.click('#confirmyes');
+    await page.waitForSelector('#nopresets');
+    assert.deepStrictEqual((await get('/api/shaders')).shaders.find((s) => s.id === AID).presets, [], 'deleted on the box');
+    for (const name of ['One', 'Two']) {
+      await page.fill('#presetname', name);
+      await page.click('#presetsave');
+      await page.waitForSelector('#presetrow [data-preset="' + name + '"][aria-pressed="true"]');
+    }
+    assert.deepStrictEqual(await page.$$eval('#presetrow .slot', (xs) => xs.map((x) => x.textContent)), ['1', '2'], 'each preset shows its number, which is its key and its pad');
+    await page.evaluate(() => document.activeElement.blur());
+    await page.keyboard.press('1');
+    await wasSent('/api/shaders/preset', { id: AID, name: 'One' }, 'the key 1');
+    await page.waitForSelector('#presetrow [data-preset="One"][aria-pressed="true"]');
+    // A controller is taught beside the thing it controls: knob N is the N-th input a knob can drive (a colour and a
+    // point are not), and Speed, Previous, Next and the eight preset places have their own
+    assert.deepStrictEqual(await page.$$eval('#shadersliders [data-midi]', (bs) => bs.map((b) => b.dataset.midi)), [1, 2, 3, 4, 5, 6, 7].map((n) => 'shader_control_' + n));
+    assert.strictEqual(await page.locator('#shadersliders [data-input="tint"] [data-midi], #shadersliders [data-input="spot"] [data-midi]').count(), 0);
+    assert.strictEqual(await page.getAttribute('[data-input="bang"] [data-midi]', 'data-midi'), 'shader_control_6');
+    for (const a of ['shader_speed', 'shader_prev', 'shader_next']) assert.strictEqual(await page.locator('#shaderpage [data-midi="' + a + '"]').count(), 1, 'a MIDI button for ' + a);
+    assert.deepStrictEqual(await page.$$eval('#presetslots [data-midi]', (bs) => bs.map((b) => b.dataset.midi)), [1, 2, 3, 4, 5, 6, 7, 8].map((n) => 'shader_preset_' + n));
+    await page.click('[data-midi="shader_control_1"]');
+    await page.waitForSelector('[data-teach="shader_control_1"]:has-text("Knob 1 follows the first control of whichever shader is playing")');
+    await page.click('[data-teach="shader_control_1"] button:has-text("Teach a control")');
+    await page.waitForSelector('[data-teach="shader_control_1"] #shaderlearning:has-text("Move or press the control now")');
+    await page.click('#shaderteachcancel');
+    await page.waitForFunction(() => !document.getElementById('shaderlearning'));
+    assert.strictEqual(await post('/api/midi/map', { add: { source: '*', kind: 'cc', channel: 0, number: 41, action: 'shader_control_1' } }), 200);
+    await page.click('[data-midi="shader_control_1"]');                                             // closed, and opened again: it asks the box
+    await page.click('[data-midi="shader_control_1"]');
+    await page.waitForSelector('[data-teach="shader_control_1"]:has-text("Now on: any controller, control 41")');
+    await page.waitForSelector('[data-midi="shader_control_1"].mapped');
+    await onPage('Shaders and Vibes');                               // every kind of control, presets and a teach box open, at phone width
+    {
+      const small = await page.$$eval('#syspage button, #syspage select, #syspage summary, #syspage input[type=range], #syspage input[type=color], #syspage .xypad', (els) => els.filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.height < 44 || r.width < 44); })
+        .map((e) => (e.getAttribute('aria-label') || e.textContent || e.id).slice(0, 30)));
+      assert.deepStrictEqual(small, [], 'every control of the instrument is at least 44 px');
+    }
+    await page.click('[data-teach="shader_control_1"] button:has-text("Remove")');
+    await page.waitForSelector('[data-teach="shader_control_1"]:has-text("Not on any control yet")');
+    assert.strictEqual((await get('/api/midi')).map.filter((e) => e.action === 'shader_control_1').length, 0);
+    await page.click('[data-midi="shader_control_1"]');
+    // The library: measured numbers, the pack filter, picture detail from this board's own list
+    assert(/Light work\. 7\.5 to 11\.2 ms on a Pi 4 at 720 lines/.test(await page.textContent('#shadercard [data-shader="nxlx-silk.fs"]')), 'a measured shader says its numbers');
+    await page.selectOption('#shaderpack', 'isf-files');
+    assert.strictEqual((await shownRows()).length, packed.length, 'the pack filter shows the pack');
+    await page.selectOption('#shaderpack', 'all');
+    {
+      const rows = (await get('/api/shaders')).shaders, of = (f) => rows.filter((x) => (x.categories || []).includes(f)).length;
+      assert(of('Performance') === 15 && of('Ambient') >= 15, 'the box has both families: ' + of('Ambient') + ' and ' + of('Performance'));
+      for (const f of ['Performance', 'Ambient']) {
+        await page.selectOption('#shaderfamily', f);
+        assert.strictEqual((await shownRows()).length, of(f), 'the family filter shows the ' + f + ' shaders');
+      }
+      await page.selectOption('#shaderfamily', 'all');
+      assert(/Performance/.test(await page.textContent('#shadercard [data-shader="nxlx-bars.fs"] .shaderfacts')), 'a row says its family');
+    }
+    {
+      const render = (await get('/api/shaders')).render;
+      assert.deepStrictEqual(await page.$$eval('#shaderheight option', (os) => os.map((o) => +o.value)), render.heights, 'picture detail offers this board\'s own heights');
+      assert(/usual here/.test(await page.$eval('#shaderheight option[value="' + render.default + '"]', (o) => o.textContent)), 'and marks the usual one');
+      const other = render.heights.find((x) => x !== render.height);
+      await page.selectOption('#shaderheight', String(other));
+      await page.waitForFunction((x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), other);
+      await page.waitForSelector('#shaderheight');
+      await page.selectOption('#shaderheight', String(render.height));
+      await page.waitForFunction((x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), render.height);
+    }
+    // What this harness cannot make happen by itself (no GPU): a load that is too high and a GPU refusal. The box's
+    // answer is given those fields on its way to the page.
+    let faked = true;
+    await page.route('**/api/shaders', async (route) => {
+      if (!faked || route.request().method() !== 'GET') return route.continue();
+      const res = await route.fetch(), d = await res.json();
+      d.shaders.find((s) => s.id === 'nxlx-ember.fs').refused = 'line 6: no such thing';
+      if (d.playing) { d.playing.load = 'heavy'; d.playing.drops_per_second = 4.2; }
+      await route.fulfill({ response: res, json: d });
+    });
+    await page.waitForSelector('#shaderload[data-load="heavy"]', { timeout: 20000 });
+    assert(/Dropping frames: try a lower picture detail/.test(await page.textContent('#shaderloadwords')) && /4\.2 dropped frames a second/.test(await page.textContent('#shaderloadwords')), 'the load is said in words');
+    assert(await page.evaluate(() => document.getElementById('shadernow').contains(document.getElementById('shaderheight'))), 'picture detail is right there with the load');
+    await page.waitForSelector('#shadercard [data-shader="nxlx-ember.fs"] .shaderrefused:has-text("This box\'s GPU refused it: line 6: no such thing")');
+    faked = false;
+    await page.unroute('**/api/shaders');
+    await page.waitForFunction(() => document.getElementById('shaderload').getAttribute('data-load') !== 'heavy' && !document.querySelector('.shaderrefused'), null, { timeout: 20000 });
+    // Too heavy on this box: said on its row, with the way back
+    assert.strictEqual(await post('/api/shaders', { action: 'heavy', id: 'nxlx-silk.fs', on: true }), 200);
+    await page.waitForSelector('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy:has-text("Too heavy on this box. Left out of Vibes.")', { timeout: 20000 });
+    await page.click('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy button:has-text("Put it back")');
+    await page.waitForFunction(() => !document.querySelector('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy'));
+    assert.strictEqual((await get('/api/shaders')).shaders.find((s) => s.id === 'nxlx-silk.fs').heavy, null, '"Put it back" took the note off');
+    // Sets. A new box has two (Ambient, the usual one, and Show with the Performance shaders), so there is a simple
+    // chooser beside Start Vibes. With one set, nothing on the page asks anyone to think about sets.
+    assert.deepStrictEqual(await page.$$eval('#vibesset option', (os) => os.map((o) => o.textContent)), ['Ambient (usual)', 'Show'], 'the chooser: Ambient or Show');
+    assert.strictEqual(await page.textContent('#vibessettings h2'), 'Vibes sets');
+    assert.strictEqual(await page.textContent('#libset'), 'The switches put a shader in or out of the set Ambient.');
+    {
+      const first = (await get('/api/shaders')).sets.find((e) => e.name === 'Show');
+      assert.strictEqual(await post('/api/shaders', { action: 'set', op: 'delete', id: first.id }), 200);
+      await page.waitForFunction(() => !document.getElementById('vibesset') && !document.getElementById('setlist'), null, { timeout: 20000 });
+    }
+    assert.strictEqual(await page.locator('#vibesset, #setlist, #setstart').count(), 0, 'one set: no chooser and no list of sets');
+    assert.strictEqual(await page.textContent('#vibessettings h2'), 'Vibes settings');
+    assert.strictEqual(await page.textContent('#libset'), 'The switch puts a shader in or out of Vibes.');
+    await page.click('#setaddfold summary');
+    await page.fill('#setname', 'Show');
+    await page.click('#setadd');
+    await page.waitForSelector('#setediting:text-is("Editing: Show")');
+    assert.strictEqual(await page.textContent('#vibessettings h2'), 'Vibes sets');
+    assert.strictEqual(await page.textContent('#libset'), 'The switches put a shader in or out of the set Show.', 'the library says which set its switches edit');
+    const inSet = (id) => '#shadercard [data-shader="' + id + '"] .switch';
+    assert.strictEqual(await page.getAttribute(inSet('nxlx-prism.fs'), 'aria-checked'), 'false', 'the new set is empty');
+    assert(await page.isDisabled('#setstart'), 'an empty set cannot be started');
+    for (const id of ['nxlx-prism.fs', AID]) {
+      await page.click(inSet(id));
+      await page.waitForSelector(inSet(id) + '[aria-checked="true"]');
+    }
+    {
+      const d = await get('/api/shaders'), show = d.sets.find((e) => e.name === 'Show');
+      assert.deepStrictEqual(show.shaders.map((r) => r.id), ['nxlx-prism.fs', AID], 'the switches filled the set being edited');
+      assert(d.active !== show.id && d.sets.find((e) => e.id === d.active).shaders.every((r) => r.id !== AID), 'and left the usual set alone');
+      assert.strictEqual(await page.locator('#vibesset option').count(), 2, 'with two sets there is a chooser beside the Vibes button');
+      await page.click('#setactivate');
+      await page.waitForFunction(() => !document.getElementById('setactivate'));
+      assert.strictEqual((await get('/api/shaders')).active, show.id, 'made the usual set');
+    }
+    await page.click('#setstart');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set && d.vibes.set.name === 'Show' && d.playing), null, { timeout: 20000 });
+    await page.waitForFunction(() => /Vibes is playing the set Show/.test(document.getElementById('shaderline').textContent), null, { timeout: 20000 });
+    // moving a control while Vibes runs does not end it
+    await page.waitForSelector('#shc-hue');
+    await setRange('shc-hue', 45, ['input', 'change']);
+    await wasSent(VALUES, (b) => b.controls && b.controls.hue === 45, 'Colour turn during Vibes');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.playing && d.playing.controls.hue === 45), null, { timeout: 20000 });
+    // The keys: the arrows step, space stops and starts Vibes
+    await page.evaluate(() => document.activeElement.blur());
+    assert(/Space/.test(await page.textContent('#shaderkeys')), 'the keys are said on the page');
+    await page.keyboard.press('ArrowRight');
+    await wasSent('/api/shaders/step', { dir: 1 }, 'the right arrow');
+    await page.keyboard.press('ArrowLeft');
+    await wasSent('/api/shaders/step', { dir: -1 }, 'the left arrow');
+    await page.keyboard.press('Space');
+    await wasSent('/api/vibes', { on: false }, 'space, while Vibes runs');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running));
+    await page.waitForSelector('#vibesbtn:text-is("Start Vibes")');
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set.name === 'Show'), null, { timeout: 20000 });
+    await page.waitForSelector('#vibesbtn:text-is("Stop Vibes")', { timeout: 20000 });
+    // Previous and Next are buttons too, and work without Vibes
+    await page.click('#vibesbtn');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running));
+    {
+      const n = sentTo('/api/shaders/step').length;
+      await page.click('#shadernext');
+      await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running && d.playing), null, { timeout: 20000 });
+      assert.deepStrictEqual(sentTo('/api/shaders/step').slice(n), [{ dir: 1 }], 'Next steps without Vibes');
+      assert.strictEqual(await page.textContent('#shaderprev'), '‹ Previous');
+    }
+    // A Performance shader flashes, so its Speed stops at 1 until the owner allows faster, under Advanced, with a
+    // plain warning
+    assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-bars.fs' }), 200);
+    await page.waitForFunction(() => document.getElementById('speedlimit') && document.getElementById('shc-speed').max === '1', null, { timeout: 20000 });
+    assert.strictEqual(await page.textContent('#fasterwarning'), 'Lets performance shaders flash faster than 3 times a second. This can trigger seizures in people with photosensitive epilepsy.');
+    assert(await page.evaluate(() => document.getElementById('shaderadvanced').contains(document.getElementById('shaderfaster'))), 'the switch for faster is under Advanced');
+    assert.strictEqual(await page.getAttribute('#shaderfaster', 'aria-checked'), 'false', 'and it is off until someone switches it on');
+    if (!(await page.isVisible('#shaderfaster'))) await page.click('#shaderadvanced summary');
+    await page.click('#shaderfaster');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.faster === true));
+    await page.waitForFunction(() => document.getElementById('shc-speed').max === '4' && !document.getElementById('speedlimit'), null, { timeout: 20000 });
+    await page.waitForSelector('#shaderfaster[aria-checked="true"]');
+    await page.click('#shaderfaster');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.faster === false));
+    await page.waitForFunction(() => document.getElementById('shc-speed').max === '1', null, { timeout: 20000 });
+    // A set is renamed and deleted in place
+    assert.strictEqual(await post('/api/shaders', { action: 'set', op: 'add', name: 'Temp', shaders: ['nxlx-silk.fs'] }), 200);
+    await page.waitForSelector('#setlist .setrow:has-text("Temp")', { timeout: 20000 });
+    await page.click('#setlist .setrow:has-text("Temp")');
+    await page.waitForSelector('#setediting:text-is("Editing: Temp")');
+    await page.click('#setrename');
+    await page.fill('.renamerow input', 'Late');
+    await page.click('.renamerow button:has-text("Save")');
+    await page.waitForSelector('#setediting:text-is("Editing: Late")');
+    await page.selectOption('#vibesorder', 'listed');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.sets.some((e) => e.name === 'Late' && e.order === 'listed')));
+    await page.waitForSelector('#setdelete');
+    await page.click('#setdelete');
+    await page.waitForSelector('#confirmrow:has-text("Delete the set Late?")');
+    await fitsPhone('Shaders page, asking about a set');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => document.querySelectorAll('#setlist .setrow').length === 2);
+    assert.deepStrictEqual((await get('/api/shaders')).sets.map((e) => e.name), ['Ambient', 'Show']);
+    // Live: the shader before and the next one beside the Vibes button, the set to play, and a strip of Speed and
+    // the shader's first four controls
+    assert.strictEqual(await post('/api/shaders/play', { id: AID }), 200);
+    await page.click('nav >> text=Live');
+    await page.waitForSelector('#liveshader:visible', { timeout: 20000 });
+    await page.waitForFunction(() => document.getElementById('livename').textContent === 'All inputs', null, { timeout: 20000 });
+    assert.deepStrictEqual(await page.$$eval('#livectls .ctl', (cs) => cs.map((x) => x.dataset.common || x.dataset.input)), ['speed', 'level', 'lit', 'mode', 'shape'], 'the strip: Speed and the first four controls');
+    assert(await page.isVisible('#liveprev') && await page.isVisible('#vibesskip'), 'Previous and Next are beside the Vibes button while a shader is on');
+    assert.strictEqual(await page.locator('#liveset option').count(), 2, 'and the set to play, since there are two');
+    await setRange('live-level', 0.8, ['input', 'change']);
+    await wasSent(VALUES, V({ level: 0.8 }), 'a slider on Live');
+    await fitsPhone('Live with the shader strip');
+    await fitsCard('#liveshader', 'the shader strip on Live');
+    if (shots) await page.screenshot({ path: path.join(shots, '10-live-shader.png'), fullPage: true });
+    assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
     await page.click('nav >> text=Live');
     await page.waitForFunction(() => /^Shader: Tide/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
     assert.strictEqual(await page.textContent('#vibeswords'), 'Start Vibes');
@@ -1186,15 +1582,34 @@ function startServer() {
     assert.deepStrictEqual(await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard'], 'a presenter gets no settings and no links to MIDI and DMX');
     assert.strictEqual(await presenter.locator('#syspage .switch').count(), 0, 'no module switch and no rotation switches for a presenter');
     assert.strictEqual(await presenter.locator('#shaderupload, #vibesdwell, #vibesvary, #shaderpage button:has-text("Remove")').count(), 0, 'no upload, settings or Remove for a presenter');
-    assert.strictEqual(await presenter.locator('#shadercard button[aria-label^="Play "]').count(), BUNDLED_SHADERS + packed.length, 'a presenter can play each shader');
-    assert(/in the Vibes rotation/.test(await presenter.textContent('#shadercard [data-shader="nxlx-tide.fs"]')), 'a presenter reads whether a shader is in the rotation');
+    assert.strictEqual(await presenter.locator('#shaderheight, #shaderguard, #setadd, #setlist, #shaderpage [data-midi], #shaderpage button:has-text("Put it back")').count(), 0, 'no picture detail, guard, sets to edit or MIDI teaching for a presenter');
+    assert.strictEqual(await presenter.locator('#shadercard button[aria-label^="Play "]').count(), (await get('/api/shaders')).shaders.length, 'a presenter can play each shader');
+    assert(/in Vibes/.test(await presenter.textContent('#shadercard [data-shader="nxlx-tide.fs"]')), 'a presenter reads whether a shader is in Vibes');
     assert.strictEqual(await presenter.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a presenter\'s Shaders page');
     await presenter.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play Tide"]');
     await presenter.waitForFunction(() => (document.getElementById('shaderplaying') || {}).textContent === 'Tide');
-    await presenter.waitForSelector('#shin-speed');                  // a presenter gets the sliders
+    await presenter.waitForSelector('#shin-speed');                  // a presenter gets the controls
+    // a presenter moves controls and applies presets, and saves none
+    await presenter.waitForSelector('#nopresets:has-text("Someone with full access saves them")');
+    assert.strictEqual(await presenter.locator('#presetsave, #presetname, #presetmore').count(), 0, 'a presenter cannot save, rename or delete a preset');
+    assert.strictEqual(await post('/api/shaders/presets', { action: 'save', id: 'nxlx-tide.fs', name: 'Calm' }), 200);       // the owner saves one
+    await presenter.waitForSelector('#presetrow [data-preset="Calm"]', { timeout: 20000 });
+    {
+      const applied = presenter.waitForResponse((r) => r.url().endsWith('/api/shaders/preset') && r.request().method() === 'POST');
+      await presenter.click('#presetrow [data-preset="Calm"]');
+      assert.strictEqual((await applied).status(), 200, 'a presenter applies a preset');
+      const moved = presenter.waitForResponse((r) => r.url().endsWith('/api/shaders/values') && r.request().method() === 'POST');
+      await presenter.evaluate(() => { const el = document.getElementById('shc-hue'); el.value = 30; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); });
+      assert.strictEqual((await moved).status(), 200, 'a presenter moves a control');
+    }
+    assert.strictEqual(await post('/api/shaders/presets', { action: 'delete', id: 'nxlx-tide.fs', name: 'Calm' }), 200);
+    // and chooses the set Vibes plays (there are two), without changing which one is the usual one
+    await presenter.selectOption('#vibesset', { label: 'Ambient' });
+    await presenter.waitForSelector('#vibesbtn:text-is("Start Vibes")');
     await presenter.click('#vibesbtn');
     await presenter.waitForSelector('#vibesbtn:text-is("Stop Vibes")', { timeout: 15000 });
-    await presenter.waitForSelector('#vibesnext');
+    await presenter.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set.name === 'Ambient' && d.sets.find((e) => e.id === d.active).name === 'Show'), null, { timeout: 20000 });
+    await presenter.waitForSelector('#shadernext');
     await presenter.click('#vibesbtn');
     await presenter.waitForSelector('#vibesbtn:text-is("Start Vibes")', { timeout: 15000 });
     {
@@ -1294,6 +1709,20 @@ function startServer() {
     assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
     await page.click('nav >> text=Live');
     await page.waitForSelector('#shaderslink');
+    {
+      // The strip follows the box's answer, which may say "nothing on" for a moment right after a Play: wait for the
+      // layout to hold, and say what it was if it never does.
+      const measure = () => {
+        const r = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top }; };
+        return { pads: r('pads'), strip: r('liveshader'), vibes: r('vibes'), name: (document.getElementById('livename') || {}).textContent, vw: window.innerWidth };
+      };
+      const ok = await page.waitForFunction(() => {
+        const g = (id) => document.getElementById(id).getBoundingClientRect(), strip = g('liveshader');
+        return strip.width > 0 && (document.getElementById('livename') || {}).textContent === 'Tide' && g('pads').right <= strip.left && g('vibes').right <= strip.left && strip.right <= window.innerWidth;
+      }, null, { timeout: 20000 }).then(() => true, () => false);
+      assert(ok, 'on a laptop Live has the pads and the transport on the left and the shader strip on the right: ' + JSON.stringify(await page.evaluate(measure)) +
+        ' box: ' + JSON.stringify(await get('/api/shaders').then((d) => [d.playing && d.playing.id, d.vibes])));
+    }
     await fitsPhone('Live at 1366 px');
     await page.click('#shaderslink');
     await page.waitForSelector('#shadercontrols #shin-speed');
