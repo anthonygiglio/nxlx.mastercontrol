@@ -1020,7 +1020,7 @@
         steps: [scheduleStep()], offInner: true,
         body: function () { return [scheduleCard()]; } },
       { id: 'vibes', group: 'everyday', name: 'Shaders and Vibes', role: 'view', module: 'shaders', url: '/api/shaders',
-        blurb: 'Moving pictures the box draws by itself, in place of a clip. Vibes plays them one after another, for as long as you like. How fast they run on this box is not measured yet.',
+        blurb: 'Moving pictures the box draws by itself, in place of a clip. Vibes plays them one after another, for as long as you like. Play one yourself and it is an instrument: its controls, presets and a controller are all on this page.',
         confirmOff: function (ask) {
           var pl = (S.status && S.status.player) || {};
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);

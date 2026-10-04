@@ -117,7 +117,14 @@
     var el = document.createElement('span');
     el.className = 'ctlnote';
     el.setAttribute('role', 'status');
-    return { el: el, say: function (text, err, pending) { el.textContent = pending ? '●' : (text || ''); el.className = 'ctlnote' + (err ? ' err' : '') + (pending ? ' pending' : ''); } };
+    var fade = null;
+    function say(text, err, pending) {
+      clearTimeout(fade);
+      el.textContent = pending ? '●' : (text || '');
+      el.className = 'ctlnote' + (err ? ' err' : '') + (pending ? ' pending' : '');
+      if (err) fade = setTimeout(function () { say('', false, false); }, 8000);      // a refusal is read, then it goes
+    }
+    return { el: el, say: say };
   }
   // A range input that tells its channel when it is held.
   function slider(attrs, ch, onInput) {
@@ -463,7 +470,7 @@
     }
     function fail(r, msgId) {
       var el = msgId && document.getElementById(msgId), text = r.data.error || 'Something went wrong';
-      if (el) { el.textContent = text; el.className = 'msg err'; } else c.say(text, true);
+      if (el) { el.textContent = text; el.className = 'msg inmsg err'; } else c.say(text, true);
     }
     // One change: the answer is the whole state, or a short one (then the state is asked for a moment later). A
     // refusal is said in the card it belongs to.
@@ -472,6 +479,8 @@
         if (!root.isConnected) return r;
         if (!r.ok) { fail(r, msgId); return r; }
         c.say('');
+        var said = msgId && document.getElementById(msgId);
+        if (said) { said.textContent = ''; said.className = 'msg inmsg'; }
         if (r.data && r.data.shaders) draw(r.data); else soon(600);
         if (done) done(r.data);
         c.poll();
@@ -619,7 +628,7 @@
       t.box = h('div', { class: (always ? 'item ' : '') + 'teach' + (always ? '' : ' teachbox'), 'data-teach': action, hidden: !always });
       if (!always) t.btn = h('button', { class: 'btn midibtn', text: 'MIDI', 'data-midi': action, 'aria-label': 'MIDI controller: ' + title, 'aria-expanded': 'false', onclick: function () {
         ui.open = ui.open === action ? '' : action;
-        if (!midi.asked) loadMidi(); else drawTeachers();
+        if (ui.open || !midi.asked) loadMidi(); else drawTeachers();     // opening asks the box what is mapped now
       } });
       teachers.push(t);
       if (midi.asked) setTimeout(function () { if (t.box.isConnected) drawTeacher(t); }, 0);
@@ -631,7 +640,6 @@
       var parts = [LOAD[p.load] || ''];
       if (typeof p.drops_per_second === 'number' && p.drops_per_second > 0) parts.push(round(p.drops_per_second) + ' dropped frames a second.');
       if (p.pass_ms) parts.push(p.pass_ms + ' ms a frame.');
-      if (p.checked === null || p.checked === undefined) parts.push('Not confirmed by the GPU yet.');
       return parts.filter(Boolean).join(' ');
     }
     function patchLoad(d) {
@@ -657,19 +665,20 @@
           h('span', { class: 'chip chip-check', id: 'shaderpending', hidden: true, text: 'Changing' })),
         h('div', { class: 'stageline', id: 'shaderline', role: 'status', text: stateLine(d) }));
       if (running) card.appendChild(h('div', { class: 'progress', id: 'vibesprogress', 'aria-hidden': 'true' }, h('div', { id: 'vibesbar' })));
+      var picks = h('div', { class: 'pickrow' });
       card.appendChild(h('div', { class: 'loadbox', id: 'shaderload', hidden: true },
         h('span', { class: 'loadmeter', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), h('span', { id: 'shaderloadwords', role: 'status' })));
       if (full) {       // picture detail sits with the load it changes
+        var lightest = Math.min.apply(null, d.render.heights);
         var height = h('select', { class: 'text-input', id: 'shaderheight' }, d.render.heights.map(function (x) {
-          return h('option', { value: String(x), text: x + ' lines' + (x === d.render['default'] ? ' (usual for this box)' : ''), selected: x === d.config.height });
+          return h('option', { value: String(x), text: x + ' lines' + (x === d.render['default'] ? ' (usual here)' : x === lightest ? ' (lightest)' : ''), selected: x === d.config.height });
         }));
         height.addEventListener('change', function () {
           height.blur();
           send('/api/shaders', { action: 'config', height: +height.value }, function () { saved('height'); var m = document.getElementById('saved-height'); if (m) m.textContent = 'Saved'; }, 'shadernowmsg');
         });
-        card.appendChild(h('div', { class: 'detailrow' }, h('label', { class: 'field', for: 'shaderheight' }, 'Picture detail ', savedMark('height')), height));
-        card.appendChild(h('p', { class: 'hint', id: 'detailhint', text: 'Fewer lines is lighter work. Now drawn at ' + d.render.width + ' x ' + d.render.height + ', ' + d.render.fps + ' pictures a second' +
-          (d.render.measured ? '.' : '; speed on this board is not measured, so choose fewer lines if the picture stutters.') }));
+        picks.appendChild(h('div', { class: 'detailbox' }, h('label', { class: 'field', for: 'shaderheight' }, 'Picture detail ', savedMark('height')), height));
+        if (!d.render.measured) card.appendChild(h('p', { class: 'hint', id: 'detailhint', text: 'Speed on this board is not measured: choose fewer lines if the picture stutters.' }));
       }
       if (!running && v.last && v.last.message && v.last.message !== 'stopped') {
         card.appendChild(h('div', { class: 'hint', id: 'vibeslast', text: 'Vibes ' + v.last.message + ' (' + v.last.at + ').' }));
@@ -678,31 +687,33 @@
       if (!live) return card;
       if (many) {       // which set Vibes goes through; with one set nobody has to think about sets
         var pick = h('select', { class: 'text-input', id: 'vibesset', 'aria-label': 'The set of shaders Vibes plays' }, d.sets.map(function (e) {
-          return h('option', { value: e.id, text: e.name + (e.id === d.active ? ' (the usual one)' : ''), selected: e.id === (running && v.set ? v.set.id : chosen.id) });
+          return h('option', { value: e.id, text: e.name + (e.id === d.active ? ' (usual)' : ''), selected: e.id === (running && v.set ? v.set.id : chosen.id) });
         }));
         pick.addEventListener('change', function () {
           ui.startSet = pick.value; pick.blur();
           if (running) send('/api/vibes', vibesBody(data, true), function () { soon(1200); }, 'shadernowmsg'); else { drawn.now = ''; draw(data); }
         });
-        card.appendChild(h('div', { class: 'detailrow' }, h('label', { class: 'field', for: 'vibesset', text: 'Vibes plays the set' }), pick));
+        picks.appendChild(h('div', { class: 'detailbox' }, h('label', { class: 'field', for: 'vibesset', text: 'Vibes plays the set' }), pick));
       }
+      if (picks.firstChild) card.appendChild(picks);
       var prev = teacher('shader_prev', 'The shader before', '', 'a pad or a button'), next = teacher('shader_next', 'The next shader', '', 'a pad or a button');
       card.appendChild(h('div', { class: 'transport3' },
         h('button', { class: 'btn big', id: 'shaderprev', text: '‹ Previous', 'aria-label': 'The shader before', onclick: function () { step(-1); } }),
         h('button', { class: 'btn big' + (running ? '' : ' on'), id: 'vibesbtn', disabled: !running && !n, text: running ? 'Stop Vibes' : 'Start Vibes', onclick: toggleVibes }),
         h('button', { class: 'btn big', id: 'shadernext', text: 'Next ›', 'aria-label': 'The next shader', onclick: function () { step(1); } })));
-      card.appendChild(h('div', { class: 'msg', id: 'shadernowmsg', role: 'status' }));
-      if (prev) {
-        card.appendChild(h('div', { class: 'row wrap midirow' }, h('span', { class: 'hint grow', text: 'Previous and Next from a controller:' }), prev.btn, next.btn));
-        prev.btn.textContent = 'MIDI: Previous'; next.btn.textContent = 'MIDI: Next';
-        card.appendChild(prev.box); card.appendChild(next.box);
-      }
-      card.appendChild(h('p', { class: 'hint', id: 'stephint', text: 'Previous and Next go through ' + (many ? 'the set' : 'the shaders that are in Vibes') + ', with Vibes running or not.' }));
+      card.appendChild(h('div', { class: 'msg inmsg', id: 'shadernowmsg', role: 'status' }));
       if (!n) {
         card.appendChild(h('div', { class: 'hint', id: 'norotation', text: (many ? 'The set ' + chosen.name + ' has no shader in it. ' : 'Nothing is in Vibes. ') +
           (full ? 'Switch at least one shader in, in the list.' : 'Someone with full access chooses which shaders are in it.') }));
       }
-      card.appendChild(h('p', { class: 'hint keyshint', id: 'shaderkeys', text: 'Keys: Space starts and stops Vibes · ← → the shader before and the next · 1 to 8 a preset' }));
+      // Previous and Next go through the Vibes set, with Vibes running or not; their controller buttons sit under them
+      card.appendChild(h('div', { class: 'row wrap midirow' },
+        h('span', { class: 'hint grow keyshint', id: 'shaderkeys', text: 'Keys: Space is Vibes on and off \u00b7 \u2190 \u2192 step \u00b7 1 to 8 presets' }),
+        prev ? prev.btn : null, next ? next.btn : null));
+      if (prev) {
+        prev.btn.textContent = 'MIDI: Previous'; next.btn.textContent = 'MIDI: Next';
+        card.appendChild(prev.box); card.appendChild(next.box);
+      }
       return card;
     }
 
@@ -738,7 +749,7 @@
       if (!shown.length) { card.appendChild(h('div', { class: 'hint', id: 'nocontrols', text: 'This shader has no controls of its own.' })); return card; }
       card.appendChild(h('h3', { class: 'ctltitle', text: 'This shader\'s own' }));
       card.appendChild(own);
-      card.appendChild(h('div', { class: 'msg', id: 'shaderctlmsg', role: 'status' }));
+      card.appendChild(h('div', { class: 'msg inmsg', id: 'shaderctlmsg', role: 'status' }));
       card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'shaderresetall', text: 'Reset all to the shader\'s own values', onclick: function () {
         var all = {}, speed = {};
         shown.forEach(function (i) { if (i.type !== 'event') all[i.name] = i['default']; });
@@ -783,7 +794,7 @@
             n < 8 ? h('span', { class: 'slot', text: String(n + 1) }) : null, h('span', { text: name }));
         })));
       } else card.appendChild(h('div', { class: 'hint', id: 'nopresets', text: full ? 'None yet. Set the controls as you like them, then save.' : 'None yet. Someone with full access saves them.' }));
-      card.appendChild(h('div', { class: 'msg', id: 'presetmsg', role: 'status' }));
+      card.appendChild(h('div', { class: 'msg inmsg', id: 'presetmsg', role: 'status' }));
       if (!full) return card;
       var name = h('input', { class: 'text-input', id: 'presetname', type: 'text', maxlength: String(d.limits.name || 40), placeholder: 'A name, for example Bright', 'aria-label': 'Name of the new preset', autocomplete: 'off' });
       var save = h('button', { class: 'btn', id: 'presetsave', text: 'Save as preset', onclick: function () {
@@ -925,7 +936,7 @@
         live ? h('p', { class: 'hint', text: 'Play shows one shader until something else plays.' + (full ? '' : ' Vibes goes through the ones that are in it.') }) : null,
         full ? h('p', { class: 'hint', id: 'libset' }, many ? 'The switches put a shader in or out of the set ' : 'The switch puts a shader in or out of Vibes.', many ? h('b', { text: e.name }) : null, many ? '.' : null) : null,
         filters,
-        h('div', { class: 'msg', id: 'shaderlibmsg', role: 'status' }),
+        h('div', { class: 'msg inmsg', id: 'shaderlibmsg', role: 'status' }),
         h('div', { class: 'list shaderlist', id: 'shaderlist' }, d.shaders.map(function (s) { return entry(d, s, e, many); }),
           h('div', { class: 'hint', id: 'shadernone', hidden: true })));
     }
@@ -969,7 +980,7 @@
       card.appendChild(h('label', { class: 'rot between' }, h('span', {}, 'Change speed and colours a little each round ', savedMark('vary')),
         h('button', { class: 'switch', id: 'vibesvary', role: 'switch', 'aria-checked': e.vary ? 'true' : 'false', 'aria-label': 'Change speed and colours a little each round',
           onclick: function () { update({ vary: !e.vary }, 'vary'); } })));
-      card.appendChild(h('div', { class: 'msg', id: 'setmsg', role: 'status' }));
+      card.appendChild(h('div', { class: 'msg inmsg', id: 'setmsg', role: 'status' }));
       if (many) {
         var acts = h('div', { class: 'row wrap', id: 'setacts' },
           h('button', { class: 'btn on', id: 'setstart', text: 'Start Vibes on this set', disabled: !members(d, e), onclick: function () {
@@ -1010,7 +1021,7 @@
         h('div', { class: 'list shaderadv' },
           many ? null : h('p', { class: 'hint', text: 'A second list of shaders for Vibes, for example quiet ones for opening hours and strong ones for a show. Until you add one there is nothing to choose.' }),
           h('div', { class: 'row wrap saverow' }, name, h('button', { class: 'btn', id: 'setadd', text: 'Add the set', onclick: add })),
-          h('div', { class: 'msg', id: 'setaddmsg', role: 'status' })));
+          h('div', { class: 'msg inmsg', id: 'setaddmsg', role: 'status' })));
       addFold.addEventListener('toggle', function () { ui.addOpen = addFold.open; });
       card.appendChild(addFold);
 

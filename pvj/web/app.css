@@ -210,6 +210,9 @@ details.fold { display: block; }
 .transport3 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); gap: 8px; }
 .transport3 .btn { min-width: 0; padding: 0 6px; overflow-wrap: anywhere; }
 .detailrow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.pickrow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.detailbox { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.detailbox > label { font-size: 13px; }
 .keyshint { display: none; }
 /* Load at a glance: three lights and plain words */
 .loadbox { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; min-height: 28px; }
@@ -284,15 +287,24 @@ details.fold { display: block; }
   .col-lib { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 12px; }
   .col-stage { grid-column: 2; grid-row: 1; }
   .col-side { grid-column: 2; grid-row: 2; }
-  .shaderlist { max-height: calc(100dvh - 360px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
+  .shaderlist { max-height: calc(100dvh - 330px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
   .keyshint { display: block; }
   .detailrow { grid-template-columns: minmax(0, 1fr) minmax(0, 14rem); align-items: center; }
+  .pickrow { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  /* a laptop keeps the controls in view: the page's own description and state line give way (the Now card says both) */
+  .syspage[data-page="vibes"] #sysblurb, .syspage[data-page="vibes"] #sysstate { display: none !important; }
+  .midirow .keyshint { flex: 1 1 12rem; }
 }
 @media (min-width: 1200px) {
   .syspage .shaderpage { grid-template-columns: minmax(0, 4fr) minmax(0, 5fr) minmax(0, 4fr); }
   .col-lib { grid-row: 1; }
   .col-side { grid-column: 3; grid-row: 1; }
 }
+/* A presenter and a guest have no third column: the stage takes its room */
+@media (min-width: 1200px) {
+  .syspage .shaderpage:not(:has(.col-side > .shaderslot:not([hidden]))) { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); }
+}
+.msg.inmsg:empty { min-height: 0; }
 .shadername { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
 .list .item.shader-entry { flex-direction: column; align-items: stretch; flex-wrap: nowrap; padding: 12px 0; }
 .list .item.shader-entry.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
