@@ -342,7 +342,9 @@ def check_projectors(v, care):
             clean["details"] = _projector_details(entry["details"])
         if "labels" in entry:                      # a label is for one of the inputs the projector itself listed
             known = (clean.get("details") or {}).get("inputs") or []
-            labels = {code: projector_mod.validate_label(known, code, label) for code, label in _obj(entry["labels"], "labels").items()}
+            # No list (the details were never read, or an Edit moved the projector to a new address and they are
+            # being read anew): the labels typed before are kept, each for a code of the standard's form.
+            labels = {code: projector_mod.validate_label(known or [code], code, label) for code, label in _obj(entry["labels"], "labels").items()}
             clean["labels"] = {code: label for code, label in labels.items() if label}
         try:                                       # an address is judged now; a name is looked up (and judged) at each use
             ipaddress.ip_address(clean["host"])

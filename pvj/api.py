@@ -1521,18 +1521,33 @@ class Api:
         return {"enabled": enabled, "projectors": [one(p) for p in self.settings.data["projectors"]]}
 
     def set_projectors(self, body, device, client):
-        """{"add": {name, host, port, password}}, {"remove": id} or {"label": {"id", "input", "label"}}."""
+        """{"add": {name, host, port, password}}, {"remove": id}, {"label": {"id", "input", "label"}} or
+        {"edit": {"id", name?, host?, port?, password?}}. An edit checks what was sent exactly as an add does. A
+        field left out keeps its value: no password field keeps the stored password, an empty one takes it away.
+        A new host or port keeps the labels, drops the stored details and the status, and the background check
+        starts over at the new address (nothing more goes to the old one); a new name changes nothing else."""
         from . import projector as projector_mod
         self._need_projectors()
-        entry = None
-        if "add" in body:
+        entry = change = retire = None
+        if "add" in body or "edit" in body:
             try:
-                entry = projector_mod.validate(body["add"])
-                addr = projector_mod.private_address(entry["host"])      # refuse a public address now; a name lookup is slow, so outside the lock
+                if "add" in body:
+                    entry = projector_mod.validate(body["add"])
+                else:
+                    want = body["edit"]
+                    old = next((p for p in self.settings.data["projectors"] if isinstance(want, dict) and p["id"] == want.get("id")), None)
+                    if isinstance(want, dict) and isinstance(want.get("id"), str) and old is None:
+                        raise ApiError(404, "no such projector")
+                    change = projector_mod.validate_edit(old, want)
+                    entry = dict(old, **change)
+                    if (entry["host"], entry["port"]) == (old["host"], old["port"]):
+                        entry = None              # the address stays: it was checked when it was added, and is before every command
+                if entry is not None:
+                    addr = projector_mod.private_address(entry["host"])      # refuse a public address now; a name lookup is slow, so outside the lock
             except projector_mod.ProjectorError as e:
                 raise bad(str(e))
-            for p in list(self.settings.data["projectors"]):      # the same device under another spelling is one projector, not two
-                if p["port"] != entry["port"]:
+            for p in list(self.settings.data["projectors"]) if entry is not None else []:      # the same device under another spelling is one projector, not two
+                if p["port"] != entry["port"] or p["id"] == entry["id"]:      # an edit is never a duplicate of itself
                     continue
                 try:
                     same = projector_mod.private_address(p["host"]) == addr
@@ -1543,7 +1558,19 @@ class Api:
         with self.settings.lock:
             items = list(self.settings.data["projectors"])
             try:
-                if entry is not None:
+                if change is not None:
+                    at = [i for i, p in enumerate(items) if p["id"] == body["edit"]["id"]]
+                    if not at:                    # removed while the address was being looked up
+                        raise ApiError(404, "no such projector")
+                    cur = items[at[0]]
+                    new = dict(cur, **change)
+                    if (new["host"], new["port"]) != (cur["host"], cur["port"]):
+                        if entry is None or (entry["host"], entry["port"]) != (new["host"], new["port"]):
+                            raise ApiError(409, "that projector was changed from another device; try again")      # not the address that was checked
+                        new.pop("details", None)      # what the old address said it is; the labels stay
+                        retire = new["id"]
+                    items[at[0]] = new
+                elif entry is not None:
                     if len(items) >= projector_mod.MAX_PROJECTORS:
                         raise bad("at most %d projectors" % projector_mod.MAX_PROJECTORS)
                     items.append(entry)
@@ -1566,12 +1593,16 @@ class Api:
                         labels[want["input"]] = label
                     items[at[0]] = dict(old, labels=labels)
                 else:
-                    raise bad("send add, remove or label")
+                    raise bad("send add, edit, remove or label")
             except projector_mod.ProjectorError as e:
                 raise bad(str(e))
             self.settings.data["projectors"] = items
             self.settings.save()
+            if retire:                    # with the save, under the same lock: no answer from the old address is kept after it
+                self.projectors.retire(retire)
         self.projectors.apply()           # a new projector is identified and checked in the background; a removed one is let go
+        if change is not None and not retire:
+            self.projectors.poke(body["edit"]["id"])      # a new password: the status says at once whether it is right
         return self.get_projectors({}, device, client)
 
     def projector_action(self, body, device, client):

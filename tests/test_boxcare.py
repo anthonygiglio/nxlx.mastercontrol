@@ -274,6 +274,36 @@ class ImportTest(Base):
                 self.assertEqual((out["passwords_kept"], self.settings.data["projectors"][0]["password"]), (0, ""))
             self.assertNotIn(STREAM_PASSWORD, json.dumps(self.settings.data["streams"]))
 
+    def test_a_projector_edited_in_the_panel_goes_round(self):
+        """After an Edit that moved it to another address a projector has labels and no details (they are read anew
+        at the new address). That state must export and import like any other."""
+        details = {"class": "1", "name": "Beamer", "maker": "ACME", "model": "X-1", "info": None, "inputs": ["31", "32"], "read": 1790000000}
+        self.settings.data["projectors"][0].update(details=details, labels={"31": "Matrix"})
+        self.assertEqual(self.call("POST", "/api/modules/projector", {"enabled": True}, token=self.full)[0], 200)
+        st, body, _ = self.call("POST", "/api/projectors", {"edit": {"id": "aaaa0001", "name": "Left wall", "host": "192.168.1.77", "password": "New-pw"}}, token=self.full)
+        self.assertEqual(st, 200, body)
+        edited = {"id": "aaaa0001", "name": "Left wall", "host": "192.168.1.77", "port": 4352, "password": "New-pw", "labels": {"31": "Matrix"}}
+        self.assertEqual(self.settings.data["projectors"][0], edited)
+        before = copy.deepcopy(self.settings.data["projectors"])
+        file = self.export(passwords=True)
+        self.assertEqual(file["settings"]["projectors"], before)
+        self.settings.data["projectors"] = []
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["projectors"], before)
+        plain = self.export()                                             # without passwords: the box keeps its own
+        self.assertNotIn("New-pw", json.dumps(plain))
+        st, out = self.send(plain)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["projectors"], before)
+        # a rename and a cleared password go round too
+        self.assertEqual(self.call("POST", "/api/projectors", {"edit": {"id": "aaaa0001", "name": "Left", "password": ""}}, token=self.full)[0], 200)
+        before = copy.deepcopy(self.settings.data["projectors"])
+        file = self.export(passwords=True)
+        self.settings.data["projectors"] = []
+        self.assertEqual(self.send(file)[0], 200)
+        self.assertEqual(self.settings.data["projectors"], before)
+
     def test_a_projector_s_details_and_input_labels_go_round(self):
         """What the projector said it is and the labels given to its inputs are no secrets: they are exported, and
         checked on import the way the box checks them itself."""
@@ -313,9 +343,15 @@ class ImportTest(Base):
             self.assertEqual(st, 400, (key, value, out))
             self.assertTrue(out["error"].startswith("projectors:"), out)
             self.assertEqual(self.on_disk(), disk)
-        file["settings"]["projectors"][0]["details"] = {}                         # a label without a list of inputs to belong to
+        # A label without a list of inputs to belong to is what an Edit to a new address leaves (the list is read
+        # anew there), so it is kept; its code must still be one the standard could give.
+        file["settings"]["projectors"][0]["details"] = {}
         file["settings"]["projectors"][0]["labels"] = {"31": "Matrix"}
-        self.assertEqual(self.send(file)[0], 400)
+        self.assertEqual(self.send(file)[0], 200)
+        self.assertEqual(self.settings.data["projectors"][0]["labels"], {"31": "Matrix"})
+        for labels in ({"99": "Matrix"}, {"3": "Matrix"}, {"31": "x" * 25}, {"31": 5}):
+            file["settings"]["projectors"][0]["labels"] = labels
+            self.assertEqual(self.send(file)[0], 400, labels)
 
     def test_shaders_and_vibes_settings_and_what_uses_vibes_go_round(self):
         """The Vibes settings, and the DMX, MIDI, autostart and schedule entries that drive Vibes, import as exported."""
