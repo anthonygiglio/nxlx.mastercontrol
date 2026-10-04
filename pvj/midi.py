@@ -12,14 +12,18 @@ Limits:
 * Off until switched on. Only paths of the form /dev/snd/midiC<n>D<n> are ever opened (never an arbitrary file),
   and only if they are character devices.
 * Receive only; nothing is written to a device.
-* Only play (pads), stop, pause, fade, blackout, reset, opacity, size, position, speed, volume, the shader
-  rotation (Vibes on or off, next shader, dwell time) and the shader on screen (its first eight inputs, its speed,
-  the shader before and after it in the active set, its first eight presets) are reachable.
+* Only play (pads), stop, pause, fade, blackout, reset, opacity, size, position, speed, volume, the clip before and
+  after in the playlist, a Room scene, the shader rotation (Vibes on or off, next shader, dwell time) and the shader
+  on screen (its first eight inputs, its speed, hue and brightness, the shader before and after it in the active set,
+  its first eight presets) are reachable.
+* A known controller gets a ready-made layout from a profile file in controllers.d (see "Controller profiles" in
+  MIDI.md): matched by its ALSA card id and name, applied when it is plugged in, under the person's own mappings.
 * No more than 50 commands a second reach the player, whatever the controllers send.
 * The web service needs the `audio` group and read access to ALSA devices (the systemd unit has both).
 """
 
 import glob
+import json
 import os
 import re
 import select
@@ -61,6 +65,31 @@ SHADER_SLOTS = 8
 for _n in range(1, SHADER_SLOTS + 1):
     ACTIONS["shader_control_%d" % _n] = ("control", _n, None)
     ACTIONS["shader_preset_%d" % _n] = ("trigger", _n, None)
+# Added with the controller profiles. Each is a call the API already had: the playlist's neighbours, a fade in, the
+# shader's two other common controls, a Room scene by its place in the list, and a pad of "the controllers' bank"
+# (a bank the hub keeps for controllers that have one row of pad buttons; bank_prev and bank_next change it).
+ACTIONS.update({
+    "clip_prev": ("trigger", None, None), "clip_next": ("trigger", None, None), "fadein": ("trigger", None, None),
+    "shader_hue": ("level", -180.0, 180.0), "shader_brightness": ("level", 0.0, 2.0),
+    "bank_pad": ("trigger", None, None), "bank_prev": ("trigger", None, None), "bank_next": ("trigger", None, None),
+    "none": ("trigger", None, None),             # "do nothing": switches one control of a standard layout off
+    # Vibes with one of the two sets every box starts with, by name (the API's {"on": true, "set": name}); a box
+    # where that set was renamed or removed answers "no such set" and the log says so
+    "vibes_ambient": ("trigger", "Ambient", None), "vibes_show": ("trigger", "Show", None),
+})
+SCENE_SLOTS = 8
+for _n in range(1, SCENE_SLOTS + 1):
+    ACTIONS["scene_%d" % _n] = ("trigger", _n, None)
+BANKS = 3
+# Soft takeover ("pickup"): on a recognised controller these levels do nothing until the fader or knob reaches the
+# value the box has, so a fader left at the bottom does not black the screen out when it is first touched. The
+# others (a shader's own inputs, its hue, the size and position) may jump: see MIDI.md.
+PICKUP = ("opacity", "volume", "speed", "shader_speed", "shader_brightness")
+PICKUP_TOLERANCE = 4        # of 127: this close to the box's value counts as reached
+PICKUP_END = 8              # of 127: this close to the top or the bottom is the top or the bottom
+PICKUP_IDLE = 1.0           # a control that rested this long is checked against the box's value again
+GUARD_MIN, GUARD_MAX = 0.25, 1.0   # a guarded button needs a second press this long after the first
+PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "controllers.d")
 VIBES_DWELLS = (15, 30, 45, 60, 90, 120, 180, 240, 300, 420, 600, 900, 1200, 1800, 3600)      # seconds, bottom to top
 KINDS = ("note", "cc", "program")
 
@@ -86,6 +115,220 @@ def source_name(path, asound="/proc/asound"):
         except OSError:
             pass
     return os.path.basename(path)
+
+
+CARD_NAME = re.compile(r"[\x20-\x7e]{1,80}")
+USB_ID = re.compile(r"[0-9a-f]{4}:[0-9a-f]{4}")
+
+
+def card_info(path, asound="/proc/asound"):
+    """What ALSA says about the card behind a device path: {"name": its product name ("Launchpad Mini") or None,
+    "usbid": "1235:0036" or None, "readable": whether the card list could be read at all}. The card id alone is the
+    last word of the product name ("Mini"), which other products share, so a profile is matched on these too.
+    The list is read as bytes (a controller can name itself anything) and only the row that carries this card's own
+    number AND id counts; a name that is not plain printable text is "unusable" (None with readable True), which is
+    not the same as "could not look"."""
+    out = {"name": None, "usbid": None, "readable": False}
+    m = DEVICE_PATH.fullmatch(path)
+    if not m:
+        return out
+    number = int(m.group(1))
+    try:
+        with open(os.path.join(asound, "card%d" % number, "usbid"), "rb") as f:
+            usbid = f.read(64).decode("ascii", "replace").strip().lower()
+        if USB_ID.fullmatch(usbid):
+            out["usbid"] = usbid
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(asound, "card%d" % number, "id"), "rb") as f:
+            card_id = f.read(64).decode("ascii", "replace").strip()
+        with open(os.path.join(asound, "cards"), "rb") as f:
+            text = f.read(65536).decode("utf-8", "replace")
+    except OSError:
+        return out
+    out["readable"] = True
+    for line in text.split("\n"):
+        row = re.match(r" {0,2}([0-9]{1,3}) \[(.{15})\]: (\S+) - (.*)$", line)
+        if row and int(row.group(1)) == number and row.group(2).rstrip() == card_id:
+            name = row.group(4).rstrip()
+            if CARD_NAME.fullmatch(name):
+                out["name"] = name
+            break
+    return out
+
+
+def card_name(path, asound="/proc/asound"):
+    """The product name alone, or None (see card_info)."""
+    return card_info(path, asound)["name"]
+
+
+# --- controller profiles ---------------------------------------------------
+# A profile is one JSON file in controllers.d: which controller it is for, a drawing of it (a grid of named controls),
+# what each control sends, and what each does by default. The files are shipped with the program and read-only; they
+# are checked strictly, and a file that fails the check is left out with a line in the log. See MIDI.md.
+PROFILE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+CONTROL_ID = re.compile(r"[a-z0-9][a-z0-9_]{0,23}")
+CONTROL_KINDS = ("fader", "knob", "button", "pad")
+MATCH_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}")       # exact names only: no patterns, so nothing a file says can make matching slow
+PRINTABLE = re.compile(r"[\x20-\x7e]+")
+MAX_CONTROLS, MAX_SIDE, MAX_PROFILES = 160, 16, 64
+
+
+def _text(v, what, most):
+    if not isinstance(v, str) or not 1 <= len(v) <= most or not PRINTABLE.fullmatch(v):
+        raise MidiError("%s must be 1 to %d plain characters" % (what, most))
+    return v
+
+
+def _whole(v, what, lo, hi):
+    if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+        raise MidiError("%s must be a whole number from %d to %d" % (what, lo, hi))
+    return v
+
+
+def _keys(d, what, required, optional=()):
+    if not isinstance(d, dict):
+        raise MidiError("%s must be an object" % what)
+    missing, extra = [k for k in required if k not in d], [k for k in d if k not in required and k not in optional]
+    if missing or extra:
+        raise MidiError("%s: %s" % (what, "missing " + ", ".join(missing) if missing else "unknown key " + ", ".join(sorted(map(str, extra)))))
+
+
+def clean_action(a, kind="note"):
+    """A profile's or an override's action ({"action": "pad", "bank": 0, "index": 3}), checked by the same rules as a
+    learned mapping. Returns only the action's own fields."""
+    if not isinstance(a, dict):
+        raise MidiError("an action must be an object")
+    if any(k not in ("action", "bank", "index", "scene", "guard") for k in a):
+        raise MidiError("an action has only action, bank, index, scene and guard")
+    e = validate_entry(dict(a, kind=kind, number=0, channel=0, source="*"))
+    return {k: e[k] for k in ("action", "bank", "index", "scene", "guard") if k in e}
+
+
+def validate_profile(p, stem=None):
+    """A clean profile from a parsed file. Raises MidiError with the reason."""
+    _keys(p, "profile", ("id", "name", "match", "description", "sources", "layout", "controls"), ("note",))
+    if not isinstance(p["id"], str) or not PROFILE_ID.fullmatch(p["id"]) or (stem is not None and p["id"] != stem):
+        raise MidiError("id must be the file's name: small letters, digits and dashes")
+    out = {"id": p["id"], "name": _text(p["name"], "name", 60), "description": _text(p["description"], "description", 1200),
+           "note": _text(p["note"], "note", 1200) if "note" in p else ""}
+    if not isinstance(p["sources"], list) or not 1 <= len(p["sources"]) <= 8:
+        raise MidiError("sources must list one to eight documents")
+    out["sources"] = [_text(s, "a source", 400) for s in p["sources"]]
+    _keys(p["match"], "match", ("card_ids", "card_names"), ("usb_ids",))
+    out["match"] = {"usb_ids": []}
+    for key, least, shape, say in (("card_ids", 1, MATCH_TEXT, "an exact name: letters, digits, spaces and . _ -"),
+                                   ("card_names", 0, MATCH_TEXT, "an exact name: letters, digits, spaces and . _ -"),
+                                   ("usb_ids", 0, USB_ID, "a USB id like 1235:0036")):
+        values = p["match"].get(key, [])
+        if not isinstance(values, list) or not least <= len(values) <= 8:
+            raise MidiError("match.%s must be a list of %d to 8 entries" % (key, least))
+        for v in values:
+            if not isinstance(v, str) or not shape.fullmatch(v):
+                raise MidiError("match.%s: each entry is %s" % (key, say))
+        out["match"][key] = list(values)
+    _keys(p["layout"], "layout", ("rows", "cols"))
+    rows, cols = _whole(p["layout"]["rows"], "layout.rows", 1, MAX_SIDE), _whole(p["layout"]["cols"], "layout.cols", 1, MAX_SIDE)
+    out["layout"] = {"rows": rows, "cols": cols}
+    if not isinstance(p["controls"], list) or not 1 <= len(p["controls"]) <= MAX_CONTROLS:
+        raise MidiError("controls must list 1 to %d controls" % MAX_CONTROLS)
+    ids, cells, sends, controls = set(), set(), set(), []
+    for c in p["controls"]:
+        _keys(c, "a control", ("id", "name", "row", "col", "kind", "send", "action"), ("guard", "unverified"))
+        if not isinstance(c["id"], str) or not CONTROL_ID.fullmatch(c["id"]) or c["id"] in ids:
+            raise MidiError("a control's id must be unique: small letters, digits and _ (%r)" % (c["id"],))
+        what = "control %s" % c["id"]
+        ids.add(c["id"])
+        cell = (_whole(c["row"], what + " row", 0, rows - 1), _whole(c["col"], what + " col", 0, cols - 1))
+        if cell in cells:
+            raise MidiError("%s: two controls in one place" % what)
+        cells.add(cell)
+        if c["kind"] not in CONTROL_KINDS:
+            raise MidiError("%s: kind must be fader, knob, button or pad" % what)
+        _keys(c["send"], what + " send", ("type", "channel", "number"))
+        if c["send"]["type"] not in ("note", "cc"):
+            raise MidiError("%s: send.type must be note or cc" % what)
+        send = {"type": c["send"]["type"], "channel": _whole(c["send"]["channel"], what + " channel", 0, 16),
+                "number": _whole(c["send"]["number"], what + " number", 0, 127)}
+        if (send["type"], send["number"]) in sends:
+            raise MidiError("%s: two controls send the same message" % what)
+        sends.add((send["type"], send["number"]))
+        if c["kind"] in ("fader", "knob") and send["type"] != "cc":
+            raise MidiError("%s: a fader or knob sends a cc" % what)
+        action = None
+        if c["action"] is not None:
+            try:
+                action = clean_action(c["action"], send["type"])
+            except MidiError as e:
+                raise MidiError("%s: %s" % (what, e))
+            if "scene" in action or "guard" in action or action["action"] == "none":
+                raise MidiError("%s: a profile cannot name a scene id or the action none, and its guard is the control's" % what)
+            level = ACTIONS[action["action"]][0] in ("level", "control")
+            if c["kind"] in ("fader", "knob") and not level:
+                raise MidiError("%s: a fader or knob needs an action that follows it" % what)
+            if c["kind"] in ("button", "pad") and ACTIONS[action["action"]][0] == "level":
+                raise MidiError("%s: a button or pad needs an action that is pressed" % what)
+        for flag in ("guard", "unverified"):
+            if flag in c and not isinstance(c[flag], bool):
+                raise MidiError("%s: %s must be true or false" % (what, flag))
+        if c.get("guard") and (action is None or c["kind"] not in ("button", "pad")):
+            raise MidiError("%s: only a button or pad with an action can be guarded" % what)
+        controls.append({"id": c["id"], "name": _text(c["name"], what + " name", 24), "row": cell[0], "col": cell[1], "kind": c["kind"],
+                         "send": send, "action": action, "guard": bool(c.get("guard")), "unverified": bool(c.get("unverified"))})
+    out["controls"] = controls
+    return out
+
+
+def load_profiles(folder=PROFILE_DIR, log=print):
+    """Every profile file that passes the check, in the order of their file names."""
+    found = []
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".json"))[:MAX_PROFILES]
+    except OSError:
+        return found
+    for n in names:
+        try:
+            with open(os.path.join(folder, n), encoding="utf-8") as f:
+                found.append(validate_profile(json.loads(f.read(262144)), n[:-5]))
+        except Exception as e:                       # whatever a file holds, it costs only itself
+            log("midi: controller profile %s left out: %s" % (n, e))
+    return found
+
+
+def match_profile(profiles, card_id, info=None):
+    """The profile for a controller, or None. `info` is card_info()'s answer, a plain product name, or None when
+    nothing could be looked up. In order: a USB id the profile lists is the surest key and decides alone; else the
+    card id must be one the profile lists (ALSA adds _1, _2 for a second unit) and, if the profile lists product
+    names, the name must be one of them. A name that could not be looked up at all (no card list: a test, another
+    system) lets the card id decide; a card list that was read but gave no usable name does not."""
+    if isinstance(info, str):
+        info = {"name": info, "usbid": None, "readable": True}
+    info = info or {"name": None, "usbid": None, "readable": False}
+    base = re.sub(r"_[0-9]{1,3}$", "", card_id) if isinstance(card_id, str) else ""
+    for p in profiles:
+        if info.get("usbid") and info["usbid"] in p["match"]["usb_ids"]:
+            return p
+    for p in profiles:
+        if base not in p["match"]["card_ids"]:
+            continue
+        if p["match"]["card_names"] and (info.get("readable") or info.get("name") is not None) and info.get("name") not in p["match"]["card_names"]:
+            continue
+        return p
+    return None
+
+
+def profile_entries(profile, source):
+    """A profile's default actions as map entries for the controller called `source`."""
+    out = []
+    for c in profile["controls"]:
+        if c["action"] is None:
+            continue
+        e = dict(c["action"], id="p:" + c["id"], source=source, kind=c["send"]["type"], channel=c["send"]["channel"],
+                 number=c["send"]["number"], profile=True, guard=c["guard"])
+        e["pickup"] = e["action"] in PICKUP
+        out.append(e)
+    return out
 
 
 class MidiParser:
@@ -168,7 +411,7 @@ def validate_entry(e, keep_id=False):
     kind, action = e.get("kind"), e.get("action")
     if kind not in KINDS:
         raise MidiError("kind must be note, cc or program")
-    if action not in ACTIONS:
+    if not isinstance(action, str) or action not in ACTIONS:
         raise MidiError("unknown action")
     for key, lo, hi in (("number", 0, 127), ("channel", 0, 16)):
         v = e.get(key, 0 if key == "channel" else None)
@@ -188,11 +431,24 @@ def validate_entry(e, keep_id=False):
             if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= hi:
                 raise MidiError("pad %s must be 0 to %d" % (key, hi))
             out[key] = v
+    if action == "bank_pad":
+        v = e.get("index")
+        if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 11:
+            raise MidiError("pad index must be 0 to 11")
+        out["index"] = v
     if action == "scene":
         if not isinstance(e.get("scene"), str) or not re.fullmatch(r"[0-9a-f]{8}", e["scene"]):
             raise MidiError("choose a scene")
         out["scene"] = e["scene"]
+    if "guard" in e:                              # "press twice", for what darkens the screen or changes the room
+        if not isinstance(e["guard"], bool) or not guardable(action):
+            raise MidiError("guard is true or false, and only for blackout and Room scenes")
+        out["guard"] = e["guard"]
     return out
+
+
+def guardable(action):
+    return action in ("blackout", "scene") or (isinstance(action, str) and action.startswith("scene_"))
 
 
 class MidiMapper:
@@ -206,20 +462,71 @@ class MidiMapper:
         self._pressed = {}      # same key -> was it "down" last time (so a held or repeated value fires once)
         self.last_message = None
         self.vibes_on = lambda: False       # is the shader rotation running (for the on/off toggle); the hub sets it
+        self.profiled = set()               # controllers whose standard layout is on: the built-in map is not for them
+        self.target = lambda action: None   # the value the box has now, for pickup; the hub sets it. Must never wait
+        self.bank = 0                       # the controllers' bank, for bank_pad; not saved
+        self._pick = {}                     # (source, kind, number) -> {"caught", "prev", "sent", "at"}
+        self._armed = {}                    # trigger key -> time of the first press of a guarded button
 
     def matching(self, source, kind, channel, number):
-        """Entries for this control. If the user has mapped it, only their entries apply: a learned mapping replaces
-        the built-in one for that control instead of firing next to it."""
+        """Entries for this control, in the order of precedence: the person's own mapping (it replaces the others
+        instead of firing next to them), else the controller's standard layout, else the built-in map; and the
+        built-in map is never used for a controller whose standard layout is on."""
         found = [e for e in self.entries if e["kind"] == kind and e["number"] == number
                  and e["source"] in ("*", source) and e["channel"] in (0, channel + 1)]
-        mine = [e for e in found if not e.get("builtin")]
-        return mine or found
+        mine = [e for e in found if not e.get("builtin") and not e.get("profile")]
+        if mine:                                # this controller's mapping before one for any controller; its channel's before any channel's
+            mine = [e for e in mine if e["source"] == source] or mine
+            return [e for e in mine if e["channel"]] or mine
+        standard = [e for e in found if e.get("profile")]
+        if standard or source in self.profiled:
+            return standard
+        return found
 
-    @staticmethod
-    def _trigger_calls(e):
+    def forget(self, source):
+        """A controller went: its pickup and guard state go with it, so it starts clean when it comes back."""
+        for store in (self._pick, self._armed, self._pressed, self.pending):
+            for key in [k for k in store if source in k[:2]]:
+                del store[key]
+
+    def waiting(self, source, kind, number):
+        """True while a fader or knob has been moved but has not reached the box's value yet."""
+        st = self._pick.get((source, kind, number))
+        return bool(st and not st["caught"])
+
+    def _picked_up(self, e, key, value, now):
+        """Soft takeover. False while the control has not reached the value the box has."""
+        _, lo, hi = ACTIONS[e["action"]]
+        have = self.target(e["action"])
+        if have is None:
+            return True
+        at = (min(max(have, lo), hi) - lo) * 127.0 / (hi - lo)
+        st = self._pick.get(key)
+        if st and st["caught"] and (now - st["at"] < PICKUP_IDLE or abs(st["sent"] - at) <= PICKUP_TOLERANCE + 2):
+            st.update(prev=value, sent=value, at=now)
+            return True
+        prev = st["prev"] if st else None
+        # a fader that tops out at 122 must still reach "100 percent": the last few steps at each end count as the end
+        ends = (at >= 127 - PICKUP_END and value >= 127 - PICKUP_END) or (at <= PICKUP_END and value <= PICKUP_END)
+        caught = ends or abs(value - at) <= PICKUP_TOLERANCE or (prev is not None and (prev - at) * (value - at) <= 0)
+        self._pick[key] = {"caught": caught, "prev": value, "sent": value, "at": now}
+        return caught
+
+    def _trigger_calls(self, e):
         a = e["action"]
         if a == "pad":
             return [("/api/play", {"pad": [e["bank"], e["index"]]})]
+        if a == "bank_pad":
+            return [("/api/play", {"pad": [self.bank, e["index"]]})]
+        if a in ("bank_next", "bank_prev"):
+            self.bank = (self.bank + (1 if a == "bank_next" else -1)) % BANKS
+            return []
+        if a in ("clip_next", "clip_prev"):
+            return [("/api/control", {"action": "next" if a == "clip_next" else "prev"})]
+        if a == "fadein":
+            return [("/api/fadein", {"seconds": 2})]
+        if a.startswith("scene_"):
+            return [("/api/room/scene", {"number": ACTIONS[a][1]})]
         if a == "scene":
             return [("/api/room/scene", {"scene": e["scene"]})]
         if a in ("pause", "stop", "reset"):
@@ -232,6 +539,8 @@ class MidiMapper:
             return [("/api/vibes", {"on": None})]              # a toggle too
         if a == "vibes_next":
             return [("/api/vibes", {"next": True})]
+        if a in ("vibes_ambient", "vibes_show"):
+            return [("/api/vibes", {"on": True, "set": ACTIONS[a][1]})]
         if a in ("shader_next", "shader_prev"):
             return [("/api/shaders/step", {"dir": 1 if a == "shader_next" else -1})]
         if a.startswith("shader_preset_"):
@@ -250,8 +559,8 @@ class MidiMapper:
         if a.startswith("shader_control_"):
             return [("/api/shaders/values", {"control": ACTIONS[a][1], "level": value})]
         _, lo, hi = ACTIONS[a]
-        if a == "shader_speed":
-            return [("/api/shaders/values", {"controls": {"speed": round(lo + (hi - lo) * value / 127.0, 2)}})]
+        if a in ("shader_speed", "shader_hue", "shader_brightness"):
+            return [("/api/shaders/values", {"controls": {a[7:]: round(lo + (hi - lo) * value / 127.0, 2)}})]
         return [("/api/control", {"action": a, "value": round(lo + (hi - lo) * value / 127.0, 2)})]
 
     def plan(self, source, msg):
@@ -276,8 +585,16 @@ class MidiMapper:
                 self._pressed[key] = down if kind != "program" else False
                 if down and not was and now - self._fired.get(key, -1e9) >= TRIGGER_GAP:
                     self._fired[key] = now
+                    if e.get("guard"):                  # the same press twice: the first only arms it
+                        first = self._armed.pop(key, None)
+                        if first is None or not GUARD_MIN <= now - first <= GUARD_MAX:
+                            self._armed[key] = now
+                            continue
                     calls.extend(self._trigger_calls(e))
             else:
+                if e.get("pickup") and not self._picked_up(e, (source, kind, d1), d2, now):
+                    self.pending.pop(key, None)
+                    continue
                 if now - self._last.get(key, 0.0) < MIN_INTERVAL:
                     self.pending[key] = (e, d2)         # a fader sweep: keep only the newest value
                     continue
@@ -349,8 +666,12 @@ class MidiInput:
                     if not chunk:
                         break                           # end of stream: the device is gone
                     for msg in parser.feed(chunk):
+                        if self._stop.is_set():         # told to stop: what was still in the pipe is not acted on
+                            break
                         self.messages += 1
                         self.on_message(self.source, msg)
+                if self._stop.is_set():
+                    break
                 self.on_message(self.source, None)      # a tick: lets the hub flush held fader values
         except OSError:
             pass                                        # unplugged mid-read
@@ -372,6 +693,10 @@ class MidiInput:
     def alive(self):
         return bool(self._thread and self._thread.is_alive())
 
+    def halt(self):
+        """Tell the reader to stop, without waiting for it (stop() waits)."""
+        self._stop.set()
+
     def stop(self):
         self._stop.set()
         if self._thread:
@@ -383,9 +708,16 @@ class MidiHub:
     """Owns the settings-driven set of controllers, the map, and learn mode."""
 
     def __init__(self, api, settings, log=print, open_fn=None, lister=list_devices, namer=source_name,
-                 clock=time.monotonic, scan_interval=2.0):
+                 clock=time.monotonic, scan_interval=2.0, profiles=None, describer=card_info):
         self.api, self.settings, self.log = api, settings, log
         self._open_fn, self._lister, self._namer, self._clock = open_fn, lister, namer, clock
+        self.profiles = load_profiles(log=log) if profiles is None else profiles
+        self._describer = describer
+        self._matched = {}        # device path -> (source, profile or None), kept while the device is there
+        self._standard = {}       # (profile id, source) -> its entries, made once
+        self.activity = {}        # (source, kind, number) -> (time, value) of the last message, for the drawn layout
+        self._retired = set()     # controllers that went: a late message from one is dropped, not given to the built-in map
+        self._seen = set()        # controllers plugged in since the panel started (a switch is only kept for one of these)
         self.scan_interval = scan_interval
         self._lock = threading.RLock()
         self.inputs = {}          # path -> MidiInput
@@ -393,6 +725,7 @@ class MidiHub:
         self._stop = threading.Event()
         self.calls = RateLimiter(clock, rate=MAX_CALLS_PER_SECOND, burst=MAX_CALLS_PER_SECOND)   # a faulty pad cannot flood the player
         self.mapper = MidiMapper(self._do, [], api.mix, clock)
+        self.mapper.target = self._target
         self.learn_until = 0.0
         self.captured = None
         self._quiet = None
@@ -426,16 +759,82 @@ class MidiHub:
     def cfg(self):
         return self.settings.data["control"]["midi"]
 
-    def entries(self):
-        """The user's mappings (each re-checked: settings are a file a person may have edited) then the built-in map."""
+    # --- profiles ---------------------------------------------------------
+    def profile_for(self, source, path=None):
+        """The profile of the controller called `source` (its ALSA card id), or None. With the device path the card's
+        product name is checked too, and the answer is kept while the device is there."""
+        if path is not None and self._matched.get(path, (None,))[0] == source:
+            return self._matched[path][1]
+        info = None
+        if path is not None:
+            try:
+                info = self._describer(path)
+            except Exception:
+                info = None
+        found = match_profile(self.profiles, source, info)
+        if path is not None:
+            self._matched[path] = (source, found)
+        return found
+
+    def profile_of(self, source):
+        """The profile a connected controller's device was matched with (by card id and product name), or None.
+        Messages and the API's set and reset use this one, so both mean the same layout."""
+        for src, found in list(self._matched.values()):
+            if src == source:
+                return found
+        return None
+
+    def known_sources(self):
+        """The controllers that are plugged in or were since the panel started."""
+        with self._lock:
+            return set(self._seen) | {i.source for i in self.inputs.values()}
+
+    def standard_on(self, source):
+        """Is the standard layout switched on for this controller. On unless someone switched it off."""
+        entry = self.cfg().get("controllers", {})
+        entry = entry.get(source) if isinstance(entry, dict) else None
+        return not (isinstance(entry, dict) and entry.get("standard") is False)
+
+    def _target(self, action):
+        """The value the box has for a level, for pickup. Reads only what is in memory: it runs on the thread that
+        reads the controller and must never wait for the player or for the shader engine's lock."""
+        try:
+            if action == "opacity":
+                return float(self.api.mix["opacity"])
+            if action in ("shader_speed", "shader_brightness"):
+                playing = getattr(getattr(self.api, "shaders", None), "playing", None)
+                return float(playing["controls"][action[7:]]) if playing else None
+        except (KeyError, TypeError, ValueError):
+            return None
+        if action in ("volume", "speed"):       # what the API last set, from anywhere (Api.control keeps it in memory)
+            have = getattr(self.api, "levels", {}).get(action)
+            return float(have) if have is not None else None
+        return None
+
+    def entries(self, source=None):
+        """The user's mappings (each re-checked: settings are a file a person may have edited), then the standard
+        layout of the controller the message came from (if it has one and it is on), then the built-in map."""
         c = self.cfg()
+        profile = self.profile_of(source) if source is not None else None
+        if profile is not None and not self.standard_on(source):
+            profile = None
         mine = []
         for e in c["map"]:
             try:
-                mine.append(validate_entry(e, keep_id=True))
+                e = validate_entry(e, keep_id=True)
             except MidiError:
                 continue
-        return mine + (builtin_cached() if c["builtin"] else [])
+            if profile is not None and e["source"] == source:
+                e["pickup"] = e["action"] in PICKUP          # the same soft takeover as the layout it replaces
+            mine.append(e)
+        standard = []
+        if profile is not None:
+            key = (profile["id"], source)
+            if key not in self._standard:
+                self._standard[key] = profile_entries(profile, source)
+            standard = self._standard[key]
+        self.mapper.profiled = {source} if profile is not None else set()
+        return mine + standard + (builtin_cached() if c["builtin"] else [])
 
     # --- messages ---------------------------------------------------------
     def _run_calls(self, calls):
@@ -448,6 +847,10 @@ class MidiHub:
             self._do(path, body)
 
     def on_message(self, source, msg):
+        # MIDI switched off, or this controller unplugged: a message still on its way is dropped. Without this a late
+        # CC 20 from a nanoKONTROL2 (knob 5) would be read by the built-in map as opacity.
+        if self._stop.is_set() or source in self._retired:
+            return
         if msg is None:
             with self._lock:
                 calls = self.mapper.flush_calls()
@@ -456,6 +859,9 @@ class MidiHub:
         with self._lock:
             kind, channel, d1, d2 = msg
             now = self._clock()
+            if len(self.activity) > 1024:                                   # a faulty device cannot grow this without end
+                self.activity.clear()
+            self.activity[(source, "note" if kind in ("on", "off") else kind, d1)] = (now, 0 if kind == "off" else d2)
             if self.learn_until and now < self.learn_until and self.captured is None:
                 if kind == "cc" or (kind == "on" and d2 > 0) or kind == "program":
                     self.captured = {"source": source, "kind": "note" if kind == "on" else kind, "channel": channel + 1, "number": d1}
@@ -467,7 +873,7 @@ class MidiHub:
             q = self._quiet                                                # the control just learned is still moving: let it settle
             if q and now < q[3] and q[:3] == (source, "note" if kind in ("on", "off") else kind, d1):
                 return
-            self.mapper.entries = self.entries()
+            self.mapper.entries = self.entries(source)
             self.mapper.mix = self.api.mix
             calls = self.mapper.plan(source, msg)
         self._run_calls(calls)
@@ -489,19 +895,44 @@ class MidiHub:
         scan that waited for the lock would start a new reader after everything had been shut down."""
         if self._stop.is_set() or not self._lock.acquire(timeout=0.2):
             return
+        gone = []
         try:
             if self._stop.is_set():
                 return
             paths = set(self._lister())
             for path in list(self.inputs):
                 if path not in paths or not self.inputs[path].alive:
-                    self.inputs.pop(path).stop()
+                    inp = self.inputs.pop(path)
+                    inp.halt()                          # it delivers nothing more; it is joined below, without the lock
+                    gone.append((path, inp))
+                    if not any(i.source == inp.source for i in self.inputs.values()):
+                        self._retired.add(inp.source)
             for path in sorted(paths - set(self.inputs)):
-                inp = MidiInput(path, self._namer(path), self.on_message, log=self.log, open_fn=self._open_fn)
+                source = self._namer(path)
+                inp = MidiInput(path, source, self.on_message, log=self.log, open_fn=self._open_fn)
                 self.inputs[path] = inp
+                self._retired.discard(source)
+                self._seen.add(source)
+                if len(self._seen) > 256:
+                    self._seen = {i.source for i in self.inputs.values()}
+                self._matched.pop(path, None)           # looked up afresh: another controller may sit on this path now
+                found = self.profile_for(source, path)
+                if found is not None:
+                    self.log("midi: %s is a %s: its standard layout is %s" % (source, found["name"], "on" if self.standard_on(source) else "switched off"))
                 inp.start()
         finally:
             self._lock.release()
+        for path, inp in gone:                          # joining a reader can take seconds: never under the lock
+            inp.stop()
+        if gone:
+            with self._lock:
+                for path, inp in gone:
+                    if path not in self.inputs:
+                        self._matched.pop(path, None)   # its layout goes only once its reader has ended
+                    if not any(i.source == inp.source for i in self.inputs.values()):
+                        self.mapper.forget(inp.source)
+                        for key in [k for k in self.activity if k[0] == inp.source]:
+                            del self.activity[key]
 
     def apply(self):
         """Make reality match the settings and the module switch."""
@@ -511,7 +942,10 @@ class MidiHub:
             return
         with self._lock:
             self._stop.clear()
-            self.scan()
+        self.scan()                                     # not under the lock: it may have to wait for a reader to end
+        with self._lock:
+            if self._stop.is_set():
+                return
             if self._scanner is None:
                 def loop():
                     while not self._stop.wait(self.scan_interval):
@@ -530,14 +964,63 @@ class MidiHub:
             scanner, self._scanner = self._scanner, None
             inputs = list(self.inputs.values())
             self.inputs.clear()
+            for inp in inputs:
+                inp.halt()
             self.learn_until, self.captured = 0.0, None
         if scanner:
             scanner.join(timeout=3)
         for inp in inputs:
             inp.stop()
+        with self._lock:                                # only now, with every reader ended, do the layouts go
+            if self._stop.is_set():
+                self._matched.clear()
+                self.activity.clear()
+                self._retired.clear()
 
     def stop(self):
         self._stop_all()
+
+    def _controller(self, device, c, now):
+        """One connected controller for the panel: its profile, what each control does now and where that comes from
+        ("yours", "standard" or nothing), and what it last sent."""
+        source = device["name"]
+        profile = self.profile_for(source, device["path"]) if device["path"] in self.inputs else None
+        out = {"name": source, "path": device["path"], "connected": device["connected"], "messages": device["messages"],
+               "profile": None, "standard": self.standard_on(source), "controls": []}
+        if profile is None:
+            return out
+        out["profile"] = {k: profile[k] for k in ("id", "name", "description", "note", "sources")}
+        out["profile"].update(profile["layout"])
+        mine = {}
+        for e in c["map"]:
+            try:
+                e = validate_entry(e, keep_id=True)
+            except MidiError:
+                continue
+            if e["source"] in (source, "*"):                  # the controller's own mapping first, then one for any controller
+                key = (e["kind"], e["number"])
+                if key not in mine or (mine[key]["source"] == "*" and e["source"] == source):
+                    mine[key] = e
+        for ctl in profile["controls"]:
+            send = ctl["send"]
+            key = (send["type"], send["number"])
+            item = {k: ctl[k] for k in ("id", "name", "row", "col", "kind", "send", "unverified")}
+            if key in mine:
+                e = mine[key]
+                item.update(action={k: e[k] for k in ("action", "bank", "index", "scene") if k in e}, guard=bool(e.get("guard")),
+                            origin="yours" if e["source"] == source else "any",      # "any": made for every controller; removed in the list
+                            pickup=out["standard"] and e["source"] == source and e["action"] in PICKUP)
+            elif out["standard"] and ctl["action"] is not None:
+                item.update(action=dict(ctl["action"]), origin="standard", guard=ctl["guard"], pickup=ctl["action"]["action"] in PICKUP)
+            else:
+                item.update(action=None, origin=None, guard=False, pickup=False)
+            item["standard"] = dict(ctl["action"]) if ctl["action"] is not None else None
+            seen = self.activity.get((source,) + key)
+            item["value"] = seen[1] if seen else None
+            item["ago"] = round(now - seen[0], 2) if seen else None
+            item["waiting"] = self.mapper.waiting(source, *key)
+            out["controls"].append(item)
+        return out
 
     def status(self):
         with self._lock:
@@ -548,19 +1031,103 @@ class MidiHub:
                         "messages": seen[p].messages if p in seen else 0} for p in self._lister()]
             learning = bool(self.learn_until and now < self.learn_until)
             return {"enabled": c["enabled"], "builtin": c["builtin"], "devices": devices, "map": list(c["map"]),
-                    "last": self.mapper.last_message,
+                    "last": self.mapper.last_message, "bank": self.mapper.bank,
+                    "controllers": [self._controller(d, c, now) for d in devices] if c["enabled"] else [],
+                    "profiles": [{"id": p["id"], "name": p["name"]} for p in self.profiles],
                     "learn": {"active": learning, "captured": self.captured, "seconds_left": max(0, round(self.learn_until - now)) if learning else 0}}
 
 
-def validate(body, current):
-    """New switches (enabled, builtin) from untrusted input, based on `current`. The map has its own calls."""
+def validate(body, current, known=None):
+    """New switches (enabled, builtin, and one controller's standard layout) from untrusted input, based on `current`.
+    The map has its own calls. `known` is the set of controllers seen plugged in: a switch is only kept for one of
+    those or for one that has a switch already, so the list cannot be filled with made-up names."""
     new = dict(current)
     for key in ("enabled", "builtin"):
         if key in body:
             if not isinstance(body[key], bool):
                 raise MidiError("%s must be true or false" % key)
             new[key] = body[key]
+    if "controller" in body or "standard" in body:      # the standard layout of one controller, on or off
+        name = body.get("controller")
+        if not isinstance(name, str) or not SOURCE.fullmatch(name):
+            raise MidiError("bad controller name")
+        if not isinstance(body.get("standard"), bool):
+            raise MidiError("standard must be true or false")
+        try:
+            switches = validate_controllers(current.get("controllers", {}))
+        except MidiError:                                # junk in the settings file must not lock the switch for good
+            switches = {}
+        if known is not None and name not in known and name not in switches:
+            raise MidiError("that controller is not plugged in")
+        if body["standard"]:
+            switches.pop(name, None)                     # on is the default: nothing is kept for it
+        else:
+            switches[name] = {"standard": False}
+            if len(switches) > MAX_CONTROLLERS and known is not None:       # full: the ones not seen this run go first
+                for old in [n for n in switches if n not in known and n != name][:len(switches) - MAX_CONTROLLERS]:
+                    del switches[old]
+        new["controllers"] = validate_controllers(switches)
     return new
+
+
+MAX_CONTROLLERS = 32
+
+
+def validate_controllers(v):
+    """The per-controller switches as stored: {"<controller name>": {"standard": false}}. Raises MidiError."""
+    if not isinstance(v, dict) or len(v) > MAX_CONTROLLERS:
+        raise MidiError("controllers must be an object with at most %d controllers" % MAX_CONTROLLERS)
+    out = {}
+    for name, entry in v.items():
+        if not isinstance(name, str) or not SOURCE.fullmatch(name):
+            raise MidiError("bad controller name")
+        if not isinstance(entry, dict) or list(entry) != ["standard"] or not isinstance(entry["standard"], bool):
+            raise MidiError("a controller has one switch: standard, true or false")
+        out[name] = {"standard": entry["standard"]}
+    return out
+
+
+def override_entry(profile, source, control_id, action):
+    """The map entry that makes one control of a recognised controller do `action` instead of the standard, or None
+    when `action` IS the standard (same action, same press-twice): then nothing is stored, so pressing Save without
+    changing anything cannot quietly take the guard off blackout. For blackout and Room scenes the entry is guarded
+    unless the person switched "press twice" off themselves."""
+    ctl = next((c for c in profile["controls"] if c["id"] == control_id), None)
+    if ctl is None:
+        raise MidiError("no such control")
+    clean = clean_action(action, ctl["send"]["type"])
+    level = ACTIONS[clean["action"]][0]
+    if ctl["kind"] in ("fader", "knob") and level not in ("level", "control") and clean["action"] != "none":
+        raise MidiError("a fader or knob needs an action that follows it")
+    if ctl["kind"] in ("button", "pad") and level == "level":
+        raise MidiError("a button or pad needs an action that is pressed")
+    if guardable(clean["action"]):
+        clean.setdefault("guard", True)
+    plain = {k: v for k, v in clean.items() if k != "guard"}
+    if ctl["action"] is not None and plain == ctl["action"] and bool(clean.get("guard")) == ctl["guard"]:
+        return None
+    return dict(clean, source=source, kind=ctl["send"]["type"], channel=ctl["send"]["channel"], number=ctl["send"]["number"])
+
+
+def set_override(current_map, profile, source, control_id, action):
+    """The map after "this control does `action`": every own mapping of this controller for that control goes (on any
+    channel, so two can never fire together), and the new one is added unless it is the standard."""
+    entry = override_entry(profile, source, control_id, action)
+    kept = reset_entries(current_map, profile, source, control_id)
+    return kept if entry is None else add_entry(kept, entry)
+
+
+def reset_entries(current_map, profile, source, control_id=None):
+    """The map without the person's own mappings for the controls of this controller's layout (or for one of them).
+    Mappings for any controller, and this controller's mappings on numbers that are not in its layout, are kept."""
+    if control_id is None:
+        drawn = {(c["send"]["type"], c["send"]["number"]) for c in profile["controls"]}
+        return [e for e in current_map if not (e.get("source") == source and (e.get("kind"), e.get("number")) in drawn)]
+    ctl = next((c for c in profile["controls"] if c["id"] == control_id), None)
+    if ctl is None:
+        raise MidiError("no such control")
+    return [e for e in current_map if not (e.get("source") == source and e.get("kind") == ctl["send"]["type"]
+                                           and e.get("number") == ctl["send"]["number"])]
 
 
 def add_entry(current_map, entry):
