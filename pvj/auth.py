@@ -9,7 +9,7 @@
   They are meant to be shown on the display, so they can never give full access, they expire, they work a limited
   number of times, and only a few can exist at once. They live in memory only: a restart clears them.
 * A presenter (live) may make and end the GUEST code, within PRESENTER_JOIN_MINUTES and PRESENTER_JOIN_MAX_USES, and
-  nothing else (D46; the API decides what a role may ask for, this module keeps the limits and who made a code).
+  nothing else (D47; the API decides what a role may ask for, this module keeps the limits and who made a code).
 * The PIN is stored as a salted scrypt hash. Because it is short, guessing is
   throttled per client and globally, and comparisons are constant-time.
 """

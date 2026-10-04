@@ -320,7 +320,7 @@ class AccessApiTest(ServerBase):
                            ("/api/access/screen", {"show": "yes"}), ("/api/access/screen", {"show": True, "items": ["x"]}),
                            ("/api/access/screen", {"show": True, "items": ["pin"], "seconds": 1})):
             self.assertEqual(self.post(path, body)[0], 400, (path, body))
-        # Until D46 a presenter (live) was refused all four routes. It may now handle the guest code and nothing else
+        # Until D47 a presenter (live) was refused all four routes. It may now handle the guest code and nothing else
         # (PresenterGuestCodeTest has every refusal); a guest and an unpaired device are refused everything, as before.
         view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
         for path, body in (("/api/access/code", {"role": "view"}), ("/api/access/screen", {"show": False}), ("/api/access/cancel", {"all": True}),
@@ -333,7 +333,7 @@ class AccessApiTest(ServerBase):
 
 
 class PresenterGuestCodeTest(AccessApiTest):
-    """D46: a presenter (live) may make, see, show and end the GUEST code, and nothing more."""
+    """D47: a presenter (live) may make, see, show and end the GUEST code, and nothing more."""
 
     test_make_show_cancel = test_a_guest_can_join_with_the_code_and_is_view_only = test_bad_input_and_only_full_devices = None
 
@@ -565,7 +565,7 @@ class QrEndpointTest(ServerBase):
         self.assertEqual(self.call("GET", "/api/qr.svg?for=view", token=self.full)[0], 200)
         for target in ("pin", "full", "", "../x"):
             self.assertEqual(self.call("GET", "/api/qr.svg?for=" + target, token=self.full)[0], 400, target)
-        # Until D46 a presenter got no QR code at all. Now: the panel address and the guest code, never the presenter code.
+        # Until D47 a presenter got no QR code at all. Now: the panel address and the guest code, never the presenter code.
         self.call("POST", "/api/access/code", {"role": "live"}, token=self.full)
         live = self.call("POST", "/api/devices/invite", {"name": "g", "role": "live"}, token=self.full)[1]["token"]
         self.assertEqual(self.call("GET", "/api/qr.svg?for=panel", token=live)[0], 200)

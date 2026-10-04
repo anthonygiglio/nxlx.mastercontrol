@@ -1204,7 +1204,7 @@ function startServer() {
     assert.deepStrictEqual(await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent)),
       ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
     assert.strictEqual(await presenter.locator('#notbuilt').count(), 0, 'a presenter gets no list of modules');
-    // A presenter's People and codes (D46): the guest code and nothing else. The owner has a guest code and a
+    // A presenter's People and codes (D47): the guest code and nothing else. The owner has a guest code and a
     // presenter code active; the presenter sees the first, is asked before replacing or ending it, and never sees
     // the second.
     assert.strictEqual(await post('/api/access/code', { role: 'view', minutes: 60 }), 200);

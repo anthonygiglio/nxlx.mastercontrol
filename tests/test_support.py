@@ -304,7 +304,7 @@ class SessionApiTest(SupportBase):
         self.assertTrue(self.api.support.session)                              # and none of that ended it
 
     def test_guest_codes_stay_refused_through_the_tunnel_whatever_the_role(self):
-        """A presenter at the studio may handle the guest code (D46); a support login may not, with either role:
+        """A presenter at the studio may handle the guest code (D47); a support login may not, with either role:
         the whole /api/access path and the QR code are refused in the tunnel, before any role is looked at."""
         self.ready()
         requests = [("GET", "/api/access", {}), ("POST", "/api/access/code", {"role": "view", "minutes": 60}),
