@@ -171,7 +171,10 @@ function startServer() {
     // Projectors at private addresses; nothing is sent to them unless a button is pressed.
     await api('POST', '/api/projectors', { add: { name: 'Main projector', host: '127.0.0.1', port: info.projector_ports[0], password: 'secret1' } });
     await api('POST', '/api/projectors', { add: { name: 'Side projector', host: '127.0.0.1', port: info.projector_ports[1], password: '' } });
+    // A feature is on only when its module and its own flag are both on (the page switch does both); OSC has only the flag.
     await api('POST', '/api/midi', { enabled: true });
+    await api('POST', '/api/dmx', { enabled: true });
+    await api('POST', '/api/osc', { enabled: true });
     for (const m of [{ source: 'nanoKONTROL2', kind: 'cc', number: 0, action: 'opacity' }, { source: 'nanoKONTROL2', kind: 'cc', number: 16, action: 'volume' },
       { source: 'Mini', kind: 'note', number: 11, action: 'pad', bank: 0, index: 0 }, { source: 'Mini', kind: 'cc', number: 104, action: 'blackout' }]) await api('POST', '/api/midi/map', { add: m });
     await api('POST', '/api/autostart', { mode: 'file', file: 'intro.mkv', loop: true, delay: 5 });
@@ -212,7 +215,7 @@ function startServer() {
       await whole(f);
     });
     await shot('system-page', async (f) => { await sys('Streams'); await soft('streams page', page.waitForSelector('.stream-entry')); await page.waitForTimeout(600); await whole(f); });
-    await shot('system-page-off', async (f) => { await sys('Vibes'); await page.waitForSelector('#sysswitchon'); await whole(f); });
+    await shot('system-page-off', async (f) => { await sys('Shaders and Vibes'); await page.waitForSelector('#sysswitchon'); await whole(f); });
     await pageShot('health', 'Health', 'Health', () => page.waitForSelector('#healthpower'));
     await pageShot('box', 'About and power', 'Box', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent)));
     await pageShot('sound-output', 'Sound', 'Sound output', () => page.waitForSelector('#audioline, #audiomsg'));
@@ -226,6 +229,37 @@ function startServer() {
     await pageShot('control-osc', 'OSC', 'Control \\(OSC\\)', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('oscline').textContent)));
     await pageShot('appearance', 'Look', 'Appearance');
     await pageShot('access', 'People and codes', 'Access', () => page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));
+    // Shaders and Vibes: the page with Vibes playing (opened from Live, as staff do), and Live with the big button.
+    await api('POST', '/api/modules/shaders', { enabled: true });
+    await api('POST', '/api/vibes', { on: true });
+    await shot('shaders-page', async (f) => {
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('#shaderslink');
+      await page.click('#shaderslink');
+      await soft('shaders page', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
+      await page.waitForTimeout(600);
+      await whole(f);
+    });
+    await shot('live-vibes', async (f) => {
+      await page.click('nav >> text=Live');
+      await soft('vibes button', page.waitForFunction(() => /^Vibes is playing: /.test((document.getElementById('vibeswords') || {}).textContent), null, { timeout: 15000 }));
+      await page.waitForTimeout(600);
+      await whole(f);
+    });
+    await shot('shaders-page-laptop', async (f) => {
+      await page.setViewportSize({ width: 1366, height: 768 });
+      try {
+        await page.click('#shaderslink');
+        await soft('shaders page on a laptop', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
+        await page.waitForTimeout(800);
+        await page.screenshot({ path: f, fullPage: true });
+      } finally {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.click('nav >> text=Live');
+      }
+    });
+    await api('POST', '/api/vibes', { on: false });
+    await api('POST', '/api/play', { pad: [0, 0] });          // the clip is back for the pictures that follow
     await sysIndex();
 
     // Whole screens, top to bottom, as a starting point for mock-ups (docs/mockups/current). Every optional module

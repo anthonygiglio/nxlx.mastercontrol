@@ -128,7 +128,7 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 
 The System screen is a short list in three groups, with **Health** above them:
 
-- **Everyday**: Projectors, Schedule, Vibes, People and codes, Sound.
+- **Everyday**: Projectors, Schedule, Shaders and Vibes, People and codes, Sound.
 - **Show tools**: At power-up, Streams, Projection mapping, Boxes in step, MIDI controller, DMX lighting desk, OSC.
 - **This box**: Network, Updates, Remote support, Backup and reset, Look, About and power.
 
@@ -148,9 +148,11 @@ Each row says how it is doing, with one word and a sentence:
 
 **Switching off** is immediate, except where it changes what the room sees. Then the page asks first, in place, and goes back by itself after 8 seconds if you do not answer: Vibes while it is playing, Projection mapping while it is on the screen, Boxes in step while a role is set, and Projectors.
 
-DMX, MIDI, the schedule and OSC also have their own on and off button inside their page. While the module is on but that button is off, the row says so ("On, but not listening: turn it on inside").
+**One switch per feature.** The switch at the top of a page is the only one: there is no second on and off button inside. Switching DMX, MIDI, the schedule or OSC on makes the box listen (or the schedule run) at once, and Remote support's switch is what allows it. If something stops it from starting (a port that is in use, say), the reason is shown on the page and the switch stays Off. Switching the schedule on when it already has entries asks first ("Switch the schedule on? 5 entries will start running at their times."), and switching it off keeps the entries. A switch never saves other fields on the page: those have their own Save button.
 
-A presenter sees only Health, Projectors, Vibes, Sound, Streams, Boxes in step and About and power (and only the modules that are on); a guest sees Health and About and power. Modules that are not built yet are listed at the bottom, folded, with no switches.
+**When a change is saved.** A control that does one safe thing (a switch, a tick, a choice from a list) is applied when you tap it. A Save button appears only where several fields must change together, such as the DMX universe and start channel or the Remote support server.
+
+A presenter sees only Health, Projectors, Shaders and Vibes, Sound, Streams, Boxes in step and About and power (and only the modules that are on); a guest sees Health, About and power, and Shaders and Vibes while that is on (to see what is playing). Modules that are not built yet are listed at the bottom, folded, with no switches.
 
 | What | Where to read |
 | --- | --- |
@@ -200,21 +202,31 @@ Setting it up is for a full-access device: switch **Projectors** and then **Room
 
 A shader is a small program that the box's graphics chip runs to draw a moving picture: there is no clip, so it never ends and never repeats exactly. The box takes shaders in the **ISF** format (Interactive Shader Format, `.fs` files) and comes with ten slow, quiet ones made for ambience.
 
-Switch it on under System > Vibes (beta, off by default; not offered on a Raspberry Pi 3). That page also says where the controls are.
+Switch it on under System > Shaders and Vibes (beta, off by default; not offered on a Raspberry Pi 3). Everything about shaders is on that one page. It also opens from the **Shaders** link next to the Vibes button on Live, and Back then returns to Live.
 
-- **Vibes** is the big button that then appears on the **Live** screen (presenters and full-access devices). One tap and the box plays shaders endlessly: a shuffled order, three minutes each, a dip to black between them, and slightly different speeds, sizes and colours every round. It ends when you press **Stop**, press the button again, or play anything else; it never takes the screen back by itself.
-- On the **Mix** screen the **Shaders and Vibes** card lists the shaders. **Play** shows one until you play something else; its number inputs appear as sliders. Full-access devices choose which shaders Vibes may use, how long each stays (10 seconds to an hour), how many lines the shader is drawn with (fewer is lighter work), and upload their own `.fs` files (generator shaders only; a file the box cannot show is refused with the reason).
+- **Vibes** is the big button that then appears on the **Live** screen (presenters and full-access devices). It reads **Start Vibes**, and while it runs **Vibes is playing: Aurora** (tap to stop), with **Next one** beside it. One tap and the box plays shaders endlessly: a shuffled order, three minutes each, a dip to black between them, and slightly different speeds, sizes and colours every round. It ends when you press **Stop**, press the button again, or play anything else; it never takes the screen back by itself.
+- The **Shaders and Vibes** page, top to bottom:
+  1. **On screen now**: the shader's name, how long until the next one, **Start Vibes** or **Stop Vibes**, and **Next one**. If Vibes ended because something else was played, it says so here.
+  2. **Shaders**: a box to find one by name and a choice by how much work it is, then every shader that came with the box and every one you added, with how much work it is for the box (light, medium, heavy). **Play** shows just that one until something else plays. Full-access devices get a switch per shader, **In the Vibes rotation**, applied when tapped, and **Remove** for their own files (it asks first). A shader the graphics chip refused shows the reason in red.
+  3. **Controls** for the shader that is playing: a slider for each of its number inputs, with its range and usual value, **Reset** per slider (or a double tap on it) and **Reset all**. The picture changes when you let go. Slider values are not saved: next time the shader starts from its own values. Changing one keeps that shader on the screen, so Vibes stops going to the next one.
+  4. **Vibes settings** (full access): **Each one stays for** (30 seconds to 1 hour) and **Change speed and colours a little each round**, both applied when tapped. Under **Advanced**: picture detail in lines (fewer lines is lighter work) and **+ Add a shader file (.fs)** (generator shaders only; a file the box cannot show is refused, with the reason under the button).
+  5. **Run Vibes from a controller** (full access): switch MIDI on here and teach a pad or a knob (**Teach a control**, then move or press it) for start and stop, next one, and how long each stays; what is already taught is shown with **Remove**. For a lighting desk: the DMX switch, the channel Vibes is on (the ninth from the start channel), its ranges (50 to 99 stop, 100 to 149 start, 150 to 199 next) and the level the box last received.
+- A presenter can start, stop, skip, play one shader and move its sliders. Only full access changes the rotation and the settings, adds and removes files. A guest sees what is playing.
 - The list holds the project's own ten shaders, then eleven from Vidvox's public **ISF-Files** collection (names starting with `isf-`; somebody else's work under the MIT licence, each with its author's credit), then your uploads. The `isf-` shaders are there to play by hand and are **not in Vibes** until a full-access device switches one to In Vibes: most are still pictures, and none has been timed on a board. More ISF generators (from ISF-Files, the ISF editor's web site or VDMX) are added one file at a time with Upload; filters, transitions and shaders that react to sound are not supported yet ([pvj/SHADERS.md](../pvj/SHADERS.md) says which and why).
 - Opacity, the fades, Blackout, the overlay picture and the projection mapping all work on a shader as they do on a clip.
 - Vibes can also start by itself: choose **Vibes** under System > At power-up, add a **Start Vibes** entry to the schedule, send the OSC address `/pvj/vibes`, assign **Vibes on / off**, **next shader** and the time each shader stays to a MIDI controller with Learn, or use the ninth DMX channel (see [pvj/MIDI.md](../pvj/MIDI.md) and [pvj/DMX.md](../pvj/DMX.md)).
 
-**Not measured, and not seen on a screen yet.** How smoothly each shader runs on a Pi 4, a Pi 5 or a PC has not been measured on any board, and nobody has watched this on a display: so far it has only run in automated tests on a software graphics chip. Watch the screen the first time; if the picture stutters, choose fewer lines on the card or take the heavier shaders out of Vibes (each shader's cost is listed). Details: [pvj/SHADERS.md](../pvj/SHADERS.md).
+On a laptop (from about 900 px wide) the page is a workspace: the list of shaders is a column of its own that scrolls by itself, what is playing and its controls stay in view beside it, and the settings and controllers are a third column on a wide window.
+
+No page sends you to another one for its controls: System > Projection mapping holds the mapping controls (they are also on Mix), and System > Room holds the Room screen's scenes, walls and set-up under its switch.
+
+**Not measured, and not seen on a screen yet.** How smoothly each shader runs on a Pi 4, a Pi 5 or a PC has not been measured on any board, and nobody has watched this on a display: so far it has only run in automated tests on a software graphics chip. Watch the screen the first time; if the picture stutters, choose fewer lines under Advanced or take the heavier shaders out of the Vibes rotation (each shader says how much work it is). Details: [pvj/SHADERS.md](../pvj/SHADERS.md).
 
 ## 6. Keep it safe and recoverable
 
 - **Keep the show network private.** The panel is protected by a PIN and per-device tokens, but it is not built to face the internet. OSC, DMX and MIDI are off until you switch them on; OSC and DMX only accept senders on private networks (plus ranges you add).
 - **Power cuts.** The read-only root protects the system disk from a pulled plug (`sudo pvj-rootfs enable`, then reboot). Not tested on a real board.
-- **Remote support** is off until you allow it, and even then only open while you run a session you started (time-limited, panel only, visible on every device, stoppable). See [REMOTE-SUPPORT.md](REMOTE-SUPPORT.md).
+- **Remote support** is off until you switch it on (System > Remote support), and even then only open while you run a session you started (time-limited, panel only, visible on every device, stoppable). See [REMOTE-SUPPORT.md](REMOTE-SUPPORT.md).
 - **Updates** are signed bundles (`pvj-N.N.N.tar.gz` with its `.sig`; a `.sha256` is optional). System > **Updates** (full access) installs one from a `pvj-update` folder on a USB stick, or one you upload there; it is checked against your signing key, an older version is refused, and if the panel does not come back the box goes back to the version before by itself. The panel and the player restart during an update. From a terminal: `sudo pvj-update`. See [pvj/README.md](../pvj/README.md#updates-and-rollback).
 - **Player stuck?** System > About and power > Restart player now asks it to quit and systemd brings it back. If mpv ignores that, run `sudo systemctl restart pvj-player` on the box.
 - **Network changes** always revert by themselves unless you confirm them. Test them with a keyboard and monitor on the box, never over SSH on the only link.
@@ -262,7 +274,7 @@ Not tested on a real box yet (2026-10-03): the three cards were tested with the 
 | A pad is grey and says Empty | Edit pads (full access) and assign a clip |
 | Clip will not play | Check the file plays in `mpv` on the box; on a Pi 5 use HEVC (no hardware H.264 decode) |
 | Nothing shows on the projector | `pvj-selftest --play` on the box; check `journalctl -u pvj-player` |
-| DMX or MIDI does nothing | The module must be on **and** turned on inside its page (the System row says "On, but not listening" until it is); read the card's status line and `journalctl -u pvj-web` |
+| DMX or MIDI does nothing | Open its page under System: the switch at the top must say On (if it could not start, the reason is on the page); then read the card's status line and `journalctl -u pvj-web` |
 | A projector does not answer | PJLink must be switched on in the projector's network menu; check its address and password; a projector that is warming up or cooling down refuses commands for a minute or so (an input change is tried again for 90 seconds by itself) |
 | A projector shows no inputs to choose | Many projectors list their inputs only while switched on: switch it on, wait for "On", then System > Projectors > Refresh details |
 | The mapped picture stutters | Map at 1920x1080 or less on a Pi 4, and leave Edit on the display when you are done (editing costs more) |
