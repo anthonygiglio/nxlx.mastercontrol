@@ -125,14 +125,14 @@ class PreviewInThePlayersFolderTest(unittest.TestCase):
         with open(self.shot, "wb") as f:
             f.write(b"old")
         os.chmod(self.env["PVJ_PLAYER_DIR"], 0o550)          # as on a box: the panel cannot unlink in it
-        self.assertEqual(self.api.preview({"role": "full"}), JPEG)
+        self.assertEqual(self.api.preview_jpeg(None), JPEG)
         self.assertEqual(self.api.player.screenshot.call_args[0][0], self.shot)
         self.assertEqual(os.listdir(self.env["PVJ_RUNTIME_DIR"]), [])
 
     def test_a_player_without_the_attribute_keeps_the_picture_in_its_one_folder(self):
         self.api.player = mock.Mock(spec=["rundir", "screenshot"], rundir=self.env["PVJ_PLAYER_DIR"])
         self.api.player.screenshot.side_effect = self.screenshot
-        self.assertEqual(self.api.preview({"role": "full"}), JPEG)
+        self.assertEqual(self.api.preview_jpeg(None), JPEG)
 
 
 class NetdFolderTest(unittest.TestCase):

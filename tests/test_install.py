@@ -4,6 +4,7 @@
 import json
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -84,6 +85,89 @@ class InstallTest(unittest.TestCase):
         self.assertIn("SystemMaxUse=64M", log)
         self.assertGreater("50-pvj-persistent-log.conf", "40-rpi-volatile-storage.conf")
 
+    def test_each_service_gets_its_own_runtime_folder_and_tmpfiles_keeps_the_parent_with_root(self):
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        conf = self.read(self.p("etc/tmpfiles.d/pvj.conf"))
+        self.assertIn("d /run/pvj 0755 root root -", conf)
+        for unit, folder in (("pvj-player", "pvj/player"), ("pvj-web", "pvj/web"), ("pvj-netd", "pvj/netd")):
+            text = self.read(self.p("etc/systemd/system/%s.service" % unit))
+            self.assertIn("RuntimeDirectory=%s\n" % folder, text)
+            self.assertIn("Environment=PVJ_RUNTIME_DIR=/run/%s\n" % folder, text)
+            self.assertNotIn("RuntimeDirectory=pvj\n", text)
+        self.assertFalse(os.path.exists(self.p("run")))          # a fresh install makes nothing under /run itself
+
+    def old_run_folder(self, mode=0o770):
+        """What a running version from before D44 leaves in /run/pvj: one shared folder (here DIR/run/pvj)."""
+        run = self.p("run/pvj")
+        os.makedirs(run)
+        for name in ("pin", "player.pid", "preview.jpg", "overlay.bgra", "overlay-3.bgra", "mapper-7-1.glsl", "shader-7-2.glsl"):
+            with open(os.path.join(run, name), "w") as f:
+                f.write("old")
+        with open(os.path.join(run, "undervoltage-seen"), "w") as f:
+            f.write("1759570000")
+        for name in ("player.sock", "netd.sock"):
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            cwd = os.getcwd()
+            os.chdir(run)                     # a unix socket name is short; the stage folder's path may not be
+            try:
+                s.bind(name)
+            finally:
+                os.chdir(cwd)
+            s.close()
+        os.mkfifo(os.path.join(run, "capture.fifo"))
+        # and what an account that owned the folder could have left under the new names
+        os.mkdir(os.path.join(run, "netd"))
+        with open(os.path.join(run, "netd", "netd.sock"), "w") as f:
+            f.write("planted")
+        os.symlink("/etc", os.path.join(run, "player"))
+        os.symlink("/etc/passwd", os.path.join(run, "web"))
+        os.chmod(run, mode)
+        return run
+
+    def test_upgrade_over_a_running_older_install_empties_the_shared_folder_and_keeps_only_the_power_note(self):
+        run = self.old_run_folder()
+        r = install(self.src, self.stage)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("a folder per service", r.stdout)
+        self.assertEqual(os.stat(run).st_mode & 0o7777, 0o755)                  # on a box also chown root:root
+        self.assertEqual(os.listdir(run), ["web"])                               # no stale file, link or planted folder
+        self.assertFalse(os.path.islink(os.path.join(run, "web")))
+        self.assertEqual(os.stat(os.path.join(run, "web")).st_mode & 0o7777, 0o750)
+        self.assertEqual(os.listdir(os.path.join(run, "web")), ["undervoltage-seen"])
+        self.assertEqual(self.read(os.path.join(run, "web", "undervoltage-seen")), "1759570000")
+        self.assertTrue(os.path.isdir("/etc") and os.path.isfile("/etc/passwd"))   # the links were removed, not followed
+
+    def test_upgrade_does_not_carry_a_note_that_is_a_link_or_not_a_number(self):
+        run = self.old_run_folder()
+        os.unlink(os.path.join(run, "undervoltage-seen"))
+        os.symlink("/etc/passwd", os.path.join(run, "undervoltage-seen"))
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.assertEqual(os.listdir(os.path.join(run, "web")), [])
+        stage2 = tempfile.mkdtemp()
+        self.stage = stage2
+        run = self.old_run_folder()
+        with open(os.path.join(run, "undervoltage-seen"), "w") as f:
+            f.write("$(reboot); rm -rf /\n")
+        self.assertEqual(install(self.src, stage2).returncode, 0)
+        self.assertEqual(os.listdir(os.path.join(run, "web")), [])
+
+    def test_reinstall_over_the_new_layout_leaves_the_services_folders_alone(self):
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        run = self.p("run/pvj")
+        for d in ("player", "web", "netd"):
+            os.makedirs(os.path.join(run, d))
+            with open(os.path.join(run, d, "live"), "w") as f:
+                f.write("in use")
+        with open(os.path.join(run, "stray"), "w") as f:
+            f.write("x")
+        os.chmod(run, 0o755)
+        r = install(self.src, self.stage)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("a folder per service", r.stdout)
+        self.assertEqual(sorted(os.listdir(run)), ["netd", "player", "web"])     # the stray file went, the folders stayed
+        for d in ("player", "web", "netd"):
+            self.assertEqual(self.read(os.path.join(run, d, "live")), "in use")
+
     def test_installed_copy_runs(self):
         install(self.src, self.stage)
         r = subprocess.run([self.p("opt/pvj/releases/9.9.1/bin/pvj-player"), "info"], capture_output=True, text=True)
@@ -153,6 +237,7 @@ class InstallTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.p("etc/systemd/system/pvj-usb@.service")))
         self.assertFalse(os.path.exists(self.p("etc/udev/rules.d/99-pvj-usb.rules")))
         self.assertFalse(os.path.exists(self.p("etc/systemd/journald.conf.d/50-pvj-persistent-log.conf")))
+        self.assertFalse(os.path.exists(self.p("etc/tmpfiles.d/pvj.conf")))
         self.assertTrue(os.path.exists(self.p("etc/pvj/pvj.env")))
         install(self.src, self.stage, "--uninstall", "--purge")
         self.assertFalse(os.path.exists(self.p("etc/pvj")))
