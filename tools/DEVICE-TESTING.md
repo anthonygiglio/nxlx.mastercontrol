@@ -70,6 +70,53 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | Schedule | Check the box clock (System > Schedule shows it), add an entry two minutes ahead, turn the schedule on | It fires once at that minute and shows "Last run"; reboot and confirm nothing fires for old times |
 | Network | **Last, with a monitor and keyboard on the Pi**, never over SSH on the only connection. Try a change, confirm, then one you do not confirm | A change you do not confirm reverts by itself. Never test this remotely on the only link |
 
+### Runtime folders: who owns what in /run (D44)
+
+**Not run on any box yet.** The change that gives each service its own runtime folder was tested only in CI, which cannot start the units. This list is the proof; until someone has run it, nothing may be claimed about how the folders behave on hardware.
+
+One command lists every owner, group, mode and type. Run it at each step below and keep the output:
+
+```
+L() { sudo find /run/pvj /run/pvj-sysd /run/pvj-supportd /run/pvj-update -printf '%u:%g %m %y %p\n' 2>&1 | sort -k4; }
+A=$(sed -n 's/.*"user": "\([^"]*\)".*/\1/p' /etc/pvj/install.json); echo "display account: $A"
+L
+```
+
+What `L` must print every time (`A` is the display account; `d` folder, `s` socket, `f` file, `l` link, `p` pipe):
+
+| Path | Owner:group | Mode | Type |
+| --- | --- | --- | --- |
+| `/run/pvj` | `root:root` | 755 | d |
+| `/run/pvj/netd` | `root:pvj` | 750 | d |
+| `/run/pvj/netd/netd.sock` | `root:pvj` | 660 | s |
+| `/run/pvj/player` | `A:pvj` | 750 | d |
+| `/run/pvj/player/player.sock` | `A:pvj` | 660 | s |
+| `/run/pvj/player/preview.jpg` (after the panel showed a preview) | `A:pvj` | 660 | f |
+| `/run/pvj/web` | `pvj-web:pvj` | 750 | d |
+| `/run/pvj/web/pin` | `pvj-web:pvj` | 600 | f |
+| `/run/pvj/web/player.sock`, `/run/pvj/web/netd.sock` | `root:root` | 777 | l |
+| `/run/pvj/web/shader-*.glsl`, `mapper-*.glsl`, `overlay*.bgra`, `undervoltage-seen` (when in use) | `pvj-web:pvj` | 640 | f |
+| `/run/pvj/web/capture.fifo` (while a live input plays) | `pvj-web:pvj` | 640 | p |
+| `/run/pvj-sysd`, `/run/pvj-supportd` | `root:pvj` | 750 | d |
+| `/run/pvj-sysd/sysd.sock`, `/run/pvj-supportd/supportd.sock` | `root:pvj` | 660 | s |
+| `/run/pvj-update` (only after an update from the panel) | `root:root` | 755 | d |
+
+Nothing else may be directly in `/run/pvj`: `sudo find /run/pvj -maxdepth 1 ! -type d` prints nothing.
+
+| # | When | Do | Good |
+| --- | --- | --- | --- |
+| R1 | Upgrade over the running older version | Before: `L` (expect one shared `/run/pvj`, mode 770, with `player.sock`, `netd.sock`, `pin` in it). Then `sudo install/install.sh`, then `L` | The installer says "moving the runtime files to a folder per service"; `L` matches the table; `systemctl is-active pvj-player pvj-web pvj-netd pvj-sysd pvj-supportd` says `active` five times |
+| R2 | After a boot | `sudo reboot`, then `L`, and `journalctl -b \| grep -i cycle` | The table; no "ordering cycle" line; all five services active |
+| R3 | It still works across the folders | Play a clip; open the preview; `sudo pvj-pin`; the Network page shows the addresses and "Find networks" answers; play a shader; show a PNG overlay; a mapping if one is set up; a live input if a capture stick is there | Each works. Each one crosses from one service's folder to another's |
+| R4 | Player restart from the panel | System > About and power > Restart player now, wait 5 s, `L` | The table. `netd.sock` and `pin` did not change owner |
+| R5 | Restart of each unit | For each of `pvj-player pvj-web pvj-netd pvj-sysd pvj-supportd`: `sudo systemctl restart NAME; sleep 5; L` | The table after every one, and R3's play and Network page still work at the end |
+| R6 | Stop and start in the other order | `sudo systemctl stop pvj-player pvj-web pvj-netd; sudo systemctl start pvj-web; sleep 3; systemctl is-active pvj-web; L; sudo systemctl start pvj-netd pvj-player; sleep 5; L` | The panel is `active` without the player (it says the player is not running); after the stop `/run/pvj/player` and `/run/pvj/netd` are gone and `/run/pvj` is still `root:root 755`; at the end the table |
+| R7 | Reinstall | `sudo install/install.sh; L` | The table; no "moving the runtime files" line this time |
+| R8 | The accounts cannot take each other's things | `sudo -u "$A" -g pvj cat /run/pvj/web/pin`; `sudo -u "$A" touch /run/pvj/x`; `sudo -u "$A" mv /run/pvj/netd /run/pvj/n2`; `sudo -u "$A" rm /run/pvj/netd/netd.sock`; `sudo -u pvj-web rm /run/pvj/netd/netd.sock`; `sudo -u pvj-web touch /run/pvj/player/x`; `sudo -u "$A" touch /run/pvj/web/x` | "Permission denied" seven times, and `L` is unchanged |
+| R9 | Update from the panel (when a signed bundle is at hand) | Install it from System > Updates, then `L` and R3's Network page | The table; the network helper answers without a reboot |
+
+Send back the output of `L` at every step and the output of R8. If any line differs, stop and send it: do not "fix" an owner by hand.
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
