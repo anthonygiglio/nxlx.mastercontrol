@@ -303,6 +303,33 @@ class SessionApiTest(SupportBase):
             self.assertEqual(st, 403, (method, path, body))
         self.assertTrue(self.api.support.session)                              # and none of that ended it
 
+    def test_guest_codes_stay_refused_through_the_tunnel_whatever_the_role(self):
+        """A presenter at the studio may handle the guest code (D46); a support login may not, with either role:
+        the whole /api/access path and the QR code are refused in the tunnel, before any role is looked at."""
+        self.ready()
+        requests = [("GET", "/api/access", {}), ("POST", "/api/access/code", {"role": "view", "minutes": 60}),
+                    ("POST", "/api/access/code", {"role": "view", "replace": True}), ("POST", "/api/access/cancel", {"role": "view"}),
+                    ("POST", "/api/access/screen", {"show": True, "items": ["view"], "seconds": 60}), ("POST", "/api/access/screen", {"show": False})]
+        for role in ("live", "full"):
+            code = self.start(role=role)[1]["code"]
+            dev = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
+            self.assertEqual((dev["role"], dev.get("remote")), (role, True))
+            for method, path, body in requests:
+                st, out = self.h(method, path, body, dev, TUNNEL)
+                self.assertEqual(st, 403, (role, method, path, out))
+                self.assertIn("remote support", out["error"])
+                self.assertEqual(self.h(method, path, body, dev, LAN)[0], 403, (role, method, path))     # nor from the studio's network with that login
+            with self.assertRaises(sp.SupportApiError):
+                self.api.support.guard("GET", "/api/qr.svg", dev, TUNNEL)
+            self.assertEqual(self.auth.list_joins(), [])
+            self.h("POST", "/api/support/stop", device=self.full_dev)
+        # a studio presenter's own token does not work through the tunnel either
+        self.start(role="live")
+        for method, path, body in requests:
+            self.assertEqual(self.h(method, path, body, self.live_dev, TUNNEL)[0], 403, (method, path))
+        self.assertEqual(self.auth.list_joins(), [])
+        self.assertEqual(self.h("POST", "/api/access/code", {"role": "view", "minutes": 60}, self.live_dev, LAN)[0], 200)      # at the studio it may
+
     def test_only_the_studio_starts_or_changes_it_and_only_support_logins_work_in_the_tunnel(self):
         self.ready()
         code = self.start()[1]["code"]

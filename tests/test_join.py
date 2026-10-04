@@ -85,6 +85,25 @@ class JoinCodeTest(unittest.TestCase):
         self.assertEqual(self.a.list_joins(), [])
 
 
+    def test_a_code_says_who_made_it_and_can_be_left_alone_or_ended_by_role(self):
+        owner = self.a.create_join("view")
+        self.assertEqual([(j["role"], j["by"]) for j in self.a.list_joins()], [("view", "owner")])
+        with self.assertRaises(auth_mod.JoinExists):
+            self.a.create_join("view", by="presenter", replace=False)
+        self.assertEqual(self.a.list_joins()[0]["code"], owner)             # untouched
+        mine = self.a.create_join("view", by="presenter")
+        self.assertEqual([(j["code"], j["by"]) for j in self.a.list_joins()], [(mine, "presenter")])
+        with self.assertRaises(AuthError):
+            self.a.create_join("view", by="anyone")
+        live = self.a.create_join("live")
+        self.assertTrue(self.a.cancel_join_role("view"))
+        self.assertFalse(self.a.cancel_join_role("view"))
+        self.assertEqual([j["code"] for j in self.a.list_joins()], [live])
+        self.t[0] += 16 * 60                                                # an expired code is not "one to end"
+        self.assertFalse(self.a.cancel_join_role("live"))
+        self.a.create_join("view", replace=False)                           # and is not in the way of a new one
+
+
 class ReviewFindingsTest(unittest.TestCase):
     def setUp(self):
         self.settings = Settings(os.path.join(tempfile.mkdtemp(), "s.json"))
@@ -219,6 +238,47 @@ class ManualDisplayTest(unittest.TestCase):
         self.p.show(["pin"], 60)                                                # must not raise
         self.assertTrue(self.p.status()["showing"])
 
+    def test_a_caller_limited_to_the_guest_code_cannot_touch_anything_else_on_the_display(self):
+        self.auth._add_device("owner", "full")
+        only = ("view",)
+        for items in (["pin"], ["live"], ["view", "pin"], ["view", "live"], ["address"], ["view", "address"]):
+            with self.assertRaises(PermissionError, msg=str(items)):
+                self.p.show(items, 60, by="presenter", only=only)
+        self.assertFalse(self.p.status()["showing"])
+        self.assertEqual(self.auth.list_joins(), [])                             # and no code was made on the way
+        st = self.p.show(["view"], 60, by="presenter", only=only)
+        self.assertEqual((st["items"], [(j["role"], j["by"]) for j in self.auth.list_joins()]), (["view"], [("view", "presenter")]))
+        self.assertNotIn("Presenter", self.text())
+        self.assertNotIn(self.auth.current_pin, self.text().replace(self.auth.list_joins()[0]["code"], ""))
+        # the owner has the PIN and the presenter code up: a limited caller neither replaces them nor keeps them up longer
+        self.p.show(["pin", "live", "view"], 100)
+        with self.assertRaises(pinscreen.Busy):
+            self.p.show(["view"], 3600, by="presenter", only=only)
+        self.assertEqual((self.p.status()["items"], self.p.status()["seconds_left"]), (["pin", "live", "view"], 100))
+        # its hide takes only the guest code off; the rest stays for the time the owner gave it
+        st = self.p.hide(only=only)
+        self.assertEqual((st["showing"], st["items"], st["seconds_left"]), (True, ["pin", "live"], 100))
+        self.assertIn("Full access PIN", self.text())
+        self.assertNotIn("Guest", self.text())
+        self.assertFalse(self.p.hide()["showing"])                               # the owner's hide takes everything off
+        self.p.show(["view"], 60)
+        self.assertFalse(self.p.hide(only=only)["showing"])
+        self.t[0] += 500                                                         # an owner's display that ran out is not in the way
+        self.p.show(["pin"], 20)
+        self.t[0] += 21
+        self.assertTrue(self.p.show(["view"], 60, by="presenter", only=only)["showing"])
+
+    def test_only_fixed_words_digits_and_the_address_reach_the_display(self):
+        """What a show request can vary is which items and for how long. Every character drawn is from the
+        whitelist, whatever the box is called and whatever a device is named."""
+        self.auth._add_device("${osd-ass-cc/0}{\\an5}OWNED\n$>", "live")
+        p = pinscreen.PinScreen(self.api, self.auth, log=lambda *_: None, hostname="box${x}\n{\\b1}", clock=lambda: self.t[0])
+        p.show(["view"], 60, by="presenter", only=("view",))
+        text = self.api.player.shown[-1][1]
+        self.assertNotIn("OWNED", text)
+        self.assertRegex(text, r"\A[A-Za-z0-9 .:/_\-,\n]*\Z")              # the whitelist, plus the comma of the fixed labels
+        self.assertNotRegex(text, r"[${}\\]")
+
 
 class AccessApiTest(ServerBase):
     def setUp(self):
@@ -260,11 +320,214 @@ class AccessApiTest(ServerBase):
                            ("/api/access/screen", {"show": "yes"}), ("/api/access/screen", {"show": True, "items": ["x"]}),
                            ("/api/access/screen", {"show": True, "items": ["pin"], "seconds": 1})):
             self.assertEqual(self.post(path, body)[0], 400, (path, body))
-        live = self.post("/api/devices/invite", {"name": "g", "role": "live"})[1]["token"]
-        for path, body in (("/api/access/code", {"role": "view"}), ("/api/access/screen", {"show": False}), ("/api/access/cancel", {"all": True})):
-            self.assertEqual(self.post(path, body, token=live)[0], 403, path)
-        self.assertEqual(self.call("GET", "/api/access", token=live)[0], 403)
+        # Until D46 a presenter (live) was refused all four routes. It may now handle the guest code and nothing else
+        # (PresenterGuestCodeTest has every refusal); a guest and an unpaired device are refused everything, as before.
+        view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
+        for path, body in (("/api/access/code", {"role": "view"}), ("/api/access/screen", {"show": False}), ("/api/access/cancel", {"all": True}),
+                           ("/api/access/cancel", {"role": "view"}), ("/api/access/screen", {"show": True, "items": ["view"]})):
+            self.assertEqual(self.post(path, body, token=view)[0], 403, path)
+            self.assertEqual(self.call("POST", path, body)[0], 401, path)
+        self.assertEqual(self.call("GET", "/api/access", token=view)[0], 403)
         self.assertEqual(self.call("GET", "/api/access")[0], 401)
+        self.assertEqual(self.auth.list_joins(), [])
+
+
+class PresenterGuestCodeTest(AccessApiTest):
+    """D46: a presenter (live) may make, see, show and end the GUEST code, and nothing more."""
+
+    test_make_show_cancel = test_a_guest_can_join_with_the_code_and_is_view_only = test_bad_input_and_only_full_devices = None
+
+    def setUp(self):
+        super().setUp()
+        self.live = self.post("/api/devices/invite", {"name": "staff", "role": "live"})[1]["token"]
+
+    def as_live(self, path, body):
+        return self.post(path, body, token=self.live)
+
+    def codes(self):
+        return {j["role"]: j for j in self.auth.list_joins()}
+
+    def test_the_allowed_path_make_see_show_hide_end(self):
+        st, body, _ = self.call("GET", "/api/access", token=self.live)
+        self.assertEqual((st, body["codes"], body["screen"]), (200, [], {"showing": False, "items": [], "seconds_left": 0, "other": False}))
+        st, body, _ = self.as_live("/api/access/code", {"role": "view", "minutes": 60})
+        self.assertEqual(st, 200)
+        code = body["codes"][0]
+        self.assertEqual((code["role"], code["by"], code["uses_left"], 3500 < code["seconds_left"] <= 3600), ("view", "presenter", 20, True))
+        st, body, _ = self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 300})
+        self.assertEqual((st, body["screen"]["showing"], body["screen"]["items"], body["screen"]["other"]), (200, True, ["view"], False))
+        self.assertIn(code["code"], self.shown[-1][1])
+        self.assertNotIn(self.auth.current_pin, self.shown[-1][1].replace(code["code"], ""))
+        st, body, _ = self.as_live("/api/access/screen", {"show": False})
+        self.assertEqual((st, body["screen"]["showing"]), (200, False))
+        # someone joins with it, and is a guest
+        st, guest, _ = self.call("POST", "/api/pair", {"pin": code["code"], "name": "visitor"})
+        self.assertEqual((st, guest["device"]["role"]), (200, "view"))
+        self.assertEqual(self.call("GET", "/api/access", token=guest["token"])[0], 403)
+        self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 300})
+        st, body, _ = self.as_live("/api/access/cancel", {"role": "view"})
+        self.assertEqual((st, body["codes"], body["screen"]["showing"]), (200, [], False))      # ended, and off the room screen
+        self.assertEqual(self.as_live("/api/access/cancel", {"role": "view"})[0], 404)
+        self.assertEqual(self.call("POST", "/api/pair", {"pin": code["code"], "name": "late"})[0], 403)
+
+    def test_show_makes_the_guest_code_if_there_is_none_within_the_presenter_limits(self):
+        st, body, _ = self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 3600})
+        self.assertEqual(st, 200)
+        code = self.codes()["view"]
+        self.assertEqual((code["by"], code["uses_left"] <= auth_mod.PRESENTER_JOIN_MAX_USES, code["seconds_left"] <= 7200), ("presenter", True, True))
+        self.assertNotIn("live", self.codes())
+
+    def test_never_a_presenter_code(self):
+        for body in ({"role": "live"}, {"role": "live", "minutes": 15}, {"role": "full"}, {"role": ["view", "live"]}, {"role": "LIVE"}, {}, {"role": None},
+                     {"role": "live", "replace": True}):
+            st, out, _ = self.as_live("/api/access/code", body)
+            self.assertEqual(st, 403, (body, out))
+        self.assertEqual(self.auth.list_joins(), [])
+        for body in ({"show": True, "items": ["live"]}, {"show": True, "items": ["view", "live"]}, {"show": True, "items": ["live", "view"], "seconds": 60}):
+            self.assertEqual(self.as_live("/api/access/screen", body)[0], 403, body)
+        self.assertEqual(self.auth.list_joins(), [])                    # showing would have made the code: it did not
+        self.assertFalse(self.api.pinscreen.status()["showing"])
+        # the owner's presenter code: not listed, not as a QR code, not ended, not testable by its digits
+        self.post("/api/access/code", {"role": "live"})
+        self.post("/api/access/code", {"role": "view"})
+        secret = self.codes()["live"]["code"]
+        st, body, _ = self.call("GET", "/api/access", token=self.live)
+        self.assertEqual([c["role"] for c in body["codes"]], ["view"])
+        self.assertNotIn(secret, str(body))
+        self.assertEqual(self.call("GET", "/api/qr.svg?for=live", token=self.live)[0], 403)
+        for body in ({"role": "live"}, {"code": secret}, {"code": "000000"}, {"all": True}, {"role": "view", "all": True}, {"role": "view", "code": secret}, {}):
+            st, out, _ = self.as_live("/api/access/cancel", body)
+            self.assertEqual(st, 403, (body, out))                      # the same answer for a right and a wrong guess
+            self.assertNotIn(secret, str(out))
+        self.assertEqual(sorted(self.codes()), ["live", "view"])
+        for path, body in (("/api/access/code", {"role": "view", "replace": True}), ("/api/access/cancel", {"role": "view"}),
+                           ("/api/access/screen", {"show": True, "items": ["view"]}), ("/api/access/screen", {"show": False})):
+            st, out, _ = self.as_live(path, body)
+            self.assertEqual(st, 200, (path, out))
+            self.assertNotIn(secret, str(out))
+        self.assertEqual(self.codes()["live"]["code"], secret)          # and none of that touched it
+
+    def test_never_the_pin(self):
+        pin = self.auth.current_pin
+        for body in ({"show": True, "items": ["pin"]}, {"show": True, "items": ["pin", "view"], "seconds": 60}, {"show": True, "items": ["view", "pin", "live"]}):
+            self.assertEqual(self.as_live("/api/access/screen", body)[0], 403, body)
+        self.assertFalse(self.api.pinscreen.status()["showing"])
+        self.assertEqual(self.as_live("/api/pin/rotate", {})[0], 403)
+        self.assertEqual(self.as_live("/api/pin/unlock", {})[0], 403)
+        self.assertEqual(self.auth.current_pin, pin)
+        # the owner has the PIN on the display: a presenter is told only that "something else" is there, cannot
+        # replace it or keep it up longer, and cannot take it off
+        self.post("/api/access/screen", {"show": True, "items": ["pin", "view"], "seconds": 120})
+        st, body, _ = self.call("GET", "/api/access", token=self.live)
+        self.assertEqual((body["screen"]["items"], body["screen"]["other"]), (["view"], True))
+        self.assertNotIn(pin, str(body))
+        self.assertNotIn("pin", str(body["screen"]))
+        self.assertEqual(self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 3600})[0], 409)
+        self.assertLessEqual(self.api.pinscreen.status()["seconds_left"], 120)
+        st, body, _ = self.as_live("/api/access/screen", {"show": False})
+        self.assertEqual((st, body["screen"]["showing"], body["screen"]["other"]), (200, False, True))
+        self.assertEqual(self.api.pinscreen.status()["items"], ["pin"])            # the owner's PIN stays up
+        self.assertIn("Full access PIN", self.shown[-1][1])
+
+    def test_never_a_permanent_link_and_never_device_removal(self):
+        devices = [d["id"] for d in self.auth.list_devices()]
+        for role in ("view", "live"):
+            self.assertEqual(self.as_live("/api/devices/invite", {"name": "x", "role": role})[0], 403)
+        self.assertEqual(self.call("GET", "/api/devices", token=self.live)[0], 403)
+        for did in devices:
+            self.assertEqual(self.as_live("/api/devices/revoke", {"id": did})[0], 403)
+        self.assertEqual([d["id"] for d in self.auth.list_devices()], devices)
+
+    def test_limits_minutes_uses_and_one_code_that_is_not_replaced_by_accident(self):
+        for body in ({"minutes": 16}, {"minutes": 121}, {"minutes": 1}, {"minutes": 0}, {"minutes": "60"}, {"minutes": True}, {"minutes": 60.5}, {"minutes": None},
+                     {"minutes": [60]}, {"uses": 21}, {"uses": 50}, {"uses": 0}, {"uses": -1}, {"uses": True}, {"uses": "5"}, {"uses": 2.5}):
+            st, out, _ = self.as_live("/api/access/code", dict({"role": "view"}, **body))
+            self.assertEqual(st, 400, (body, out))
+        self.assertEqual(self.auth.list_joins(), [])
+        for minutes in auth_mod.PRESENTER_JOIN_MINUTES:
+            st, out, _ = self.as_live("/api/access/code", {"role": "view", "minutes": minutes, "uses": 20, "replace": True})
+            self.assertEqual(st, 200, out)
+            self.assertTrue(minutes * 60 - 5 <= out["codes"][0]["seconds_left"] <= minutes * 60)
+        self.assertEqual(max(auth_mod.PRESENTER_JOIN_MINUTES), 120)
+        self.assertEqual(self.as_live("/api/access/code", {"role": "view", "uses": 1, "replace": True})[1]["codes"][0]["uses_left"], 1)
+        self.assertEqual(len(self.auth.list_joins()), 1)                # still at most one per role
+        # the owner's code is in use: a presenter's new code needs an explicit "replace"
+        owner = self.post("/api/access/code", {"role": "view", "minutes": 100, "uses": 50})[1]["codes"][0]
+        self.assertEqual(owner["by"], "owner")
+        st, out, _ = self.call("GET", "/api/access", token=self.live)
+        self.assertEqual((out["codes"][0]["code"], out["codes"][0]["by"]), (owner["code"], "owner"))      # it may see and show it
+        for body in ({"role": "view"}, {"role": "view", "replace": False}, {"role": "view", "replace": "yes"}, {"role": "view", "replace": 1}):
+            self.assertEqual(self.as_live("/api/access/code", body)[0], 409, body)
+        self.assertEqual(self.codes()["view"]["code"], owner["code"])
+        self.assertEqual(self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 60})[0], 200)
+        self.assertEqual(self.codes()["view"]["code"], owner["code"])   # showing it does not replace it
+        st, out, _ = self.as_live("/api/access/code", {"role": "view", "replace": True})
+        self.assertEqual((st, out["codes"][0]["by"], out["codes"][0]["code"] != owner["code"]), (200, "presenter", True))
+        # a code is still 6 digits, in memory only, and a wrong guess is throttled as before
+        self.assertRegex(out["codes"][0]["code"], r"^[0-9]{6}$")
+        with open(self.settings.path) as f:
+            self.assertNotIn(out["codes"][0]["code"], f.read())
+        wrong = "%06d" % ((int(out["codes"][0]["code"]) + 1) % 10 ** 6)
+        got = [self.call("POST", "/api/pair", {"pin": wrong, "name": "x"})[0] for _ in range(auth_mod.PER_CLIENT_FAILS + 1)]
+        self.assertEqual((got[0], got[-1]), (403, 429))
+
+    def test_csrf_and_seconds(self):
+        for path, body in (("/api/access/code", {"role": "view"}), ("/api/access/cancel", {"role": "view"}),
+                           ("/api/access/screen", {"show": True, "items": ["view"]}), ("/api/access/screen", {"show": False})):
+            self.assertEqual(self.call("POST", path, body, token=self.live, csrf=False)[0], 403, path)
+            st = self.call("POST", path, body, token=self.live, headers={"Origin": "http://attacker.example"})[0]
+            self.assertEqual(st, 403, path)
+        self.assertEqual(self.auth.list_joins(), [])
+        self.assertFalse(self.api.pinscreen.status()["showing"])
+        for seconds in (0, 9, 3601, True, "60", 1.5):
+            self.assertEqual(self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": seconds})[0], 400, seconds)
+        for body in ({"show": "yes"}, {"show": True}, {"show": True, "items": "view"}, {"show": True, "items": []}, {"show": True, "items": ["view", "view"]}):
+            self.assertEqual(self.as_live("/api/access/screen", body)[0], 400, body)
+
+    def test_a_show_request_cannot_draw_text_on_the_display(self):
+        evil = "${osd-ass-cc/0}{\\an5}OWNED"
+        for body in ({"show": True, "items": ["view"], "text": evil}, {"show": True, "items": ["view"], "label": evil, "title": evil, "name": evil, "code": evil}):
+            self.assertEqual(self.as_live("/api/access/screen", body)[0], 200)
+            self.assertNotIn("OWNED", str(self.shown))
+        for body in ({"show": True, "items": [evil]}, {"show": True, "items": ["view", evil]}, {"show": True, "items": {"view": evil}}):
+            self.assertIn(self.as_live("/api/access/screen", body)[0], (400, 403))
+        self.as_live("/api/access/code", {"role": "view", "replace": True, "code": "OWNED1", "by": "owner", "name": evil})
+        self.assertEqual(self.codes()["view"]["by"], "presenter")      # who made it is not for the caller to say
+        self.assertRegex(self.codes()["view"]["code"], r"^[0-9]{6}$")
+        for cmd in self.shown:
+            if cmd[0] == "show-text":
+                self.assertNotIn("OWNED", cmd[1])
+                self.assertRegex(cmd[1], r"\A[A-Za-z0-9 .:/_\-,\n]*\Z")     # the whitelist, plus the comma of the fixed labels
+
+    def test_any_live_role_device_may_however_it_joined(self):
+        code = self.post("/api/access/code", {"role": "live"})[1]["codes"][0]["code"]
+        st, joined, _ = self.call("POST", "/api/pair", {"pin": code, "name": "joined by code"})
+        self.assertEqual((st, joined["device"]["role"]), (200, "live"))
+        st, body, _ = self.post("/api/access/code", {"role": "view", "minutes": 15}, token=joined["token"])
+        self.assertEqual((st, body["codes"][0]["by"]), (200, "presenter"))
+        self.assertEqual(len(body["codes"]), 1)                        # and it does not see the presenter code it joined with
+        # removed by the owner: nothing more
+        self.assertEqual(self.post("/api/devices/revoke", {"id": joined["device"]["id"]})[0], 200)
+        self.assertEqual(self.post("/api/access/code", {"role": "view", "replace": True}, token=joined["token"])[0], 401)
+
+    def test_a_device_removed_while_its_request_ran_leaves_nothing_behind(self):
+        dev = self.auth.authenticate(self.live)
+        self.auth.revoke(dev["id"])                                     # its token was checked a moment ago; now it is gone
+        self.assertEqual(self.api.handle("POST", "/api/access/code", {"role": "view"}, dev, "192.168.1.9")[0], 401)
+        self.assertEqual(self.auth.list_joins(), [])
+        self.assertEqual(self.api.handle("POST", "/api/access/screen", {"show": True, "items": ["view"]}, dev, "192.168.1.9")[0], 401)
+        self.assertFalse(self.api.pinscreen.status()["showing"])
+
+    def test_the_owner_s_own_requests_are_as_before(self):
+        st, body, _ = self.post("/api/access/code", {"role": "view", "minutes": 7, "uses": 50})
+        self.assertEqual((st, body["codes"][0]["by"], body["codes"][0]["uses_left"]), (200, "owner", 50))
+        self.assertEqual(self.post("/api/access/code", {"role": "view"})[0], 200)      # replaces, without being asked to
+        self.post("/api/access/code", {"role": "live"})
+        st, body, _ = self.call("GET", "/api/access", token=self.full)
+        self.assertEqual((sorted(c["role"] for c in body["codes"]), "other" in body["screen"]), (["live", "view"], False))
+        self.assertEqual(self.post("/api/access/cancel", {"role": "live"})[0], 200)
+        self.assertEqual(self.post("/api/access/cancel", {"role": "live"})[0], 404)
+        self.assertEqual(self.post("/api/access/screen", {"show": True, "items": ["pin", "address"], "seconds": 30})[0], 200)
 
 
 class HostCheckTest(ServerBase):
@@ -302,9 +565,18 @@ class QrEndpointTest(ServerBase):
         self.assertEqual(self.call("GET", "/api/qr.svg?for=view", token=self.full)[0], 200)
         for target in ("pin", "full", "", "../x"):
             self.assertEqual(self.call("GET", "/api/qr.svg?for=" + target, token=self.full)[0], 400, target)
+        # Until D46 a presenter got no QR code at all. Now: the panel address and the guest code, never the presenter code.
+        self.call("POST", "/api/access/code", {"role": "live"}, token=self.full)
         live = self.call("POST", "/api/devices/invite", {"name": "g", "role": "live"}, token=self.full)[1]["token"]
-        self.assertEqual(self.call("GET", "/api/qr.svg?for=panel", token=live)[0], 403)
-        self.assertEqual(self.call("GET", "/api/qr.svg?for=panel")[0], 401)
+        self.assertEqual(self.call("GET", "/api/qr.svg?for=panel", token=live)[0], 200)
+        self.assertEqual(self.call("GET", "/api/qr.svg?for=view", token=live)[0], 200)
+        for target in ("live", "pin", "full", ""):
+            self.assertEqual(self.call("GET", "/api/qr.svg?for=" + target, token=live)[0], 403, target)
+        self.assertEqual(self.call("GET", "/api/qr.svg?for=live", token=self.full)[0], 200)
+        view = self.call("POST", "/api/devices/invite", {"name": "g", "role": "view"}, token=self.full)[1]["token"]
+        for target in ("panel", "view", "live"):
+            self.assertEqual(self.call("GET", "/api/qr.svg?for=" + target, token=view)[0], 403, target)
+            self.assertEqual(self.call("GET", "/api/qr.svg?for=" + target)[0], 401, target)
 
     def test_a_bad_host_header_cannot_be_put_into_a_qr_code(self):
         st, _, _ = self.call("GET", "/api/qr.svg?for=panel", token=self.full, headers={"Host": "evil.example/<script>"})

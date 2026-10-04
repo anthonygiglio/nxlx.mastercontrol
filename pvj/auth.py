@@ -8,6 +8,8 @@
 * A paired full-access device can also make short-lived JOIN CODES (6 digits) for guests (view) or presenters (live).
   They are meant to be shown on the display, so they can never give full access, they expire, they work a limited
   number of times, and only a few can exist at once. They live in memory only: a restart clears them.
+* A presenter (live) may make and end the GUEST code, within PRESENTER_JOIN_MINUTES and PRESENTER_JOIN_MAX_USES, and
+  nothing else (D46; the API decides what a role may ask for, this module keeps the limits and who made a code).
 * The PIN is stored as a salted scrypt hash. Because it is short, guessing is
   throttled per client and globally, and comparisons are constant-time.
 """
@@ -25,6 +27,9 @@ JOIN_ROLES = ("view", "live")
 MAX_JOINS = 4
 JOIN_MIN_MINUTES, JOIN_MAX_MINUTES, JOIN_DEFAULT_MINUTES = 1, 120, 15
 JOIN_MAX_USES, JOIN_DEFAULT_USES = 50, 20
+PRESENTER_JOIN_MINUTES = (15, 60, 120)          # what a presenter may choose for a guest code: the panel's own three choices
+PRESENTER_JOIN_MAX_USES = 20
+JOIN_MAKERS = ("owner", "presenter")
 PER_CLIENT_FAILS, PER_CLIENT_WINDOW = 5, 60.0
 GLOBAL_FAILS, GLOBAL_WINDOW = 20, 600.0
 LOCKOUT_SECONDS = 60.0
@@ -34,6 +39,10 @@ class AuthError(Exception):
     def __init__(self, message, retry_after=None):
         super().__init__(message)
         self.retry_after = retry_after
+
+
+class JoinExists(AuthError):
+    """A code for that role is active, and the caller did not say it may be replaced."""
 
 
 def generate_pin():
@@ -161,16 +170,22 @@ class Auth:
         self._prune_joins()
         return role
 
-    def create_join(self, role, minutes=JOIN_DEFAULT_MINUTES, uses=JOIN_DEFAULT_USES):
-        """A new join code for `role` (view or live). Raises AuthError on bad input or too many codes."""
+    def create_join(self, role, minutes=JOIN_DEFAULT_MINUTES, uses=JOIN_DEFAULT_USES, by="owner", replace=True):
+        """A new join code for `role` (view or live). Raises AuthError on bad input or too many codes. `by` says who
+        made it ("owner": a full-access device; "presenter"), for the panel to show. With `replace` False an active
+        code for the role is left alone and JoinExists is raised."""
         if role not in JOIN_ROLES:
             raise AuthError("a join code is for view (guest) or live (presenter) access")
+        if by not in JOIN_MAKERS:
+            raise AuthError("unknown maker")
         for name, v, lo, hi in (("minutes", minutes, JOIN_MIN_MINUTES, JOIN_MAX_MINUTES), ("uses", uses, 1, JOIN_MAX_USES)):
             if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
                 raise AuthError("%s must be a whole number from %d to %d" % (name, lo, hi))
         with self._pair_lock:
             self._prune_joins()
             same = [c for c, j in self._joins.items() if j["role"] == role]
+            if same and not replace:
+                raise JoinExists("a code for that access is already active")
             for c in same:                      # one live code per role: a new one replaces the old
                 del self._joins[c]
             if len(self._joins) >= MAX_JOINS:
@@ -179,14 +194,14 @@ class Auth:
                 code = "%0*d" % (JOIN_LENGTH, secrets.randbelow(10 ** JOIN_LENGTH))
                 if code not in self._joins:
                     break
-            self._joins[code] = {"role": role, "expires": self._clock() + minutes * 60, "uses": uses}
+            self._joins[code] = {"role": role, "expires": self._clock() + minutes * 60, "uses": uses, "by": by}
             return code
 
     def list_joins(self):
         with self._pair_lock:
             self._prune_joins()
             t = self._clock()
-            return [{"code": c, "role": j["role"], "seconds_left": max(0, int(j["expires"] - t)), "uses_left": j["uses"]}
+            return [{"code": c, "role": j["role"], "seconds_left": max(0, int(j["expires"] - t)), "uses_left": j["uses"], "by": j["by"]}
                     for c, j in sorted(self._joins.items(), key=lambda kv: kv[1]["role"])]
 
     def cancel_join(self, code=None):
@@ -197,6 +212,15 @@ class Auth:
                 self._joins.clear()
                 return changed
             return self._joins.pop(code, None) is not None
+
+    def cancel_join_role(self, role):
+        """Cancel the code for `role`, whatever its digits are. True if there was one."""
+        with self._pair_lock:
+            self._prune_joins()
+            found = [c for c, j in self._joins.items() if j["role"] == role]
+            for c in found:
+                del self._joins[c]
+            return bool(found)
 
     def invite(self, name, role):
         if role not in ("view", "live"):
