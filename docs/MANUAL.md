@@ -4,7 +4,7 @@
 
 For the person running visuals at a gig. It covers the new Python panel (the `pvj/` folder). The old PHP panel for the legacy Pi 3 line has its own manual in `docs/html`.
 
-**Status, read this first.** The new core has been built and tested in containers and CI, and the image has been booted and used on **one Raspberry Pi 4** (what was and was not verified there is listed in [HANDOFF.md](../HANDOFF.md)). Other boards, a projector, and several features (MIDI Learn, streams, the read-only root, the Network module) have not been tried on hardware. Where this manual describes them, that is what the code is written to do. Treat anything not listed as verified as untested on hardware, and do not use it at a paid show without a rehearsal and a backup plan. The checklist is in [tools/DEVICE-TESTING.md](../tools/DEVICE-TESTING.md).
+**Status, read this first.** The new core has been built and tested in containers and CI, and the image has been booted and used on **one Raspberry Pi 4** (what was and was not verified there is listed in [HANDOFF.md](../HANDOFF.md)). Other boards, a projector, and several features (MIDI Learn, streams, the read-only root, the Network module and its Wi-Fi control) have not been tried on hardware. Where this manual describes them, that is what the code is written to do. Treat anything not listed as verified as untested on hardware, and do not use it at a paid show without a rehearsal and a backup plan. The checklist is in [tools/DEVICE-TESTING.md](../tools/DEVICE-TESTING.md).
 
 The pictures come from the test suite (test clips and a fake network), see [UI.md](UI.md).
 
@@ -28,7 +28,7 @@ There are three access levels: **view** (look only), **live** (play and mix) and
 
 ### Letting other people in: codes and QR codes on the display
 
-For a studio or a gig, the person running the show (a full-access device) opens System > Access:
+For a studio or a gig, the person running the show (a full-access device) opens System > People and codes:
 
 - **New guest code** (watch only) or **New presenter code** (play and mix) makes a 6 digit code. Codes expire (15 minutes by default, up to 2 hours), work a limited number of times, and a new code for the same role replaces the old one. They are never written to disk, so a restart clears them.
 - **Show on display** puts the chosen codes on the box's screen, each with a big **QR code** in the top right corner (guest on the left, presenter on the right), together with the panel address, for 1 minute to 1 hour, even over a playing clip. **Hide from display** takes them off at once. A phone camera that scans a code opens the panel with the code filled in; one tap on **Join with code** and it is in, with exactly that access. The code travels in the part of the address after `#`, which a browser does not send to the box or anyone else, and the panel removes it from the address bar straight away (a phone's camera or scanner app may still remember what it scanned).
@@ -85,7 +85,7 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 
 **Screen** (Live, under Now playing): tap **Take snapshot** to see what the box is putting on the display. It is a screenshot of the player's own output, so a blackout, brightness or size change shows up. It is a single picture on request, not a live view, and it is deliberately not automatic: on a Raspberry Pi 4 each snapshot stalls playback for about a quarter of a second (measured: a continuous preview made video visibly choppy). Any paired device may take one, including view-only guests. For a real-time picture use an HDMI capture device on the display's output.
 
-**Sound output** (System): on a Raspberry Pi "Automatic" sends the sound to the HDMI port that has the screen on it (the player's own default is the 3.5 mm headphone jack, which is silent on a monitor). Pick another output, such as the headphones or a USB sound device, in System > Sound output. The choice is remembered and re-applied if the player restarts.
+**Sound output** (System): on a Raspberry Pi "Automatic" sends the sound to the HDMI port that has the screen on it (the player's own default is the 3.5 mm headphone jack, which is silent on a monitor). Pick another output, such as the headphones or a USB sound device, in System > Sound. The choice is remembered and re-applied if the player restarts.
 
 **Now playing** (Live) has the controls of a normal player: a **position slider** (drag and release to jump), **Prev** and **Next** (when several clips are playing as a list, for example Play all), **- 10 s** and **+ 10 s**, **Fade in** (from a blackout or a fade out, over 2 s) and **Test pattern** (SMPTE colour bars from the player itself, for lining up a projector; tap again to stop).
 
@@ -115,7 +115,7 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 
 **Clip details** (Media > Info): codec, picture size, frame rate, length and sound of a clip, read by the player without showing it (the old Movie Codec and Movie Resolution buttons).
 
-**Box** (System): software versions, free space for media, what is connected to each screen output and the modes it offers, the mode the player is using now, and the box clock. Full-access devices also get **Restart the box** and **Power off** (each asks first; neither is reachable over OSC, MIDI or DMX), and, while the clock has not been set from the network (a Pi has no clock battery, so a box with no internet starts at the time it was last shut down), **Set the box clock to this phone's time**. These go through a small helper, `pvj-sysd`, that runs as root with no capabilities of its own (systemd and timedated do the work), in its own folder that only root can change, and answers only root and the panel's account. A clock is only accepted up to 2036: a phone set to a far future year would otherwise stick, because the box saves its clock. If setting the clock goes wrong, the panel says so, including when network time could not be switched back on (the helper switches it back on at its next start). **Test tones** (System > Sound output): 5 seconds of 440 Hz on the left, right or both speakers.
+**Box** (System > About and power): software versions, free space for media, what is connected to each screen output and the modes it offers, the mode the player is using now, and the box clock. Full-access devices also get **Restart the box** and **Power off** (each asks first; neither is reachable over OSC, MIDI or DMX), and, while the clock has not been set from the network (a Pi has no clock battery, so a box with no internet starts at the time it was last shut down), **Set the box clock to this phone's time**. These go through a small helper, `pvj-sysd`, that runs as root with no capabilities of its own (systemd and timedated do the work), in its own folder that only root can change, and answers only root and the panel's account. A clock is only accepted up to 2036: a phone set to a far future year would otherwise stick, because the box saves its clock. If setting the clock goes wrong, the panel says so, including when network time could not be switched back on (the helper switches it back on at its next start). **Test tones** (System > Sound output): 5 seconds of 440 Hz on the left, right or both speakers.
 
 ![Box](images/ui/box.png)
 ![Sound output](images/ui/sound-output.png)
@@ -126,9 +126,31 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 
 ## 5. Optional modules (System)
 
-Beta modules are **off** until you switch them on under System > Modules. Modules that are not built yet say "Not built yet".
+The System screen is a short list in three groups, with **Health** above them:
 
-![Modules](images/ui/system-modules.png)
+- **Everyday**: Projectors, Schedule, Vibes, People and codes, Sound.
+- **Show tools**: At power-up, Streams, Projection mapping, Boxes in step, MIDI controller, DMX lighting desk, OSC.
+- **This box**: Network, Updates, Remote support, Backup and reset, Look, About and power.
+
+Tap a row to open its page. **‹ System** at the top of a page, or the phone's back gesture, returns to the list.
+
+Each row says how it is doing, with one word and a sentence:
+
+| Word | Meaning |
+| --- | --- |
+| **Off** | switched off (your settings are kept) |
+| **Set up** | on, but it cannot work yet: nothing added, or nothing chosen |
+| **Ready** | on and set up, doing nothing at the moment |
+| **Active** | doing something now |
+| **Problem** | something is wrong; the sentence says what |
+
+**Switching a module on.** Beta modules are **off** until you switch them on. Open the module's row: while it is off the page shows what it does and one button, **Switch on**. After that the switch is at the top right of the page, with the word On or Off beside it. You stay on the page, and a line under the title says what happened.
+
+**Switching off** is immediate, except where it changes what the room sees. Then the page asks first, in place, and goes back by itself after 8 seconds if you do not answer: Vibes while it is playing, Projection mapping while it is on the screen, Boxes in step while a role is set, and Projectors.
+
+DMX, MIDI, the schedule and OSC also have their own on and off button inside their page. While the module is on but that button is off, the row says so ("On, but not listening: turn it on inside").
+
+A presenter sees only Health, Projectors, Vibes, Sound, Streams, Boxes in step and About and power (and only the modules that are on); a guest sees Health and About and power. Modules that are not built yet are listed at the bottom, folded, with no switches.
 
 | What | Where to read |
 | --- | --- |
@@ -142,7 +164,7 @@ Beta modules are **off** until you switch them on under System > Modules. Module
 | **DMX over the network**: Art-Net and sACN | [pvj/DMX.md](../pvj/DMX.md) |
 | **MIDI controller** (USB) | [pvj/MIDI.md](../pvj/MIDI.md) |
 | **OSC**: TouchOSC, Resolume, QLab and others | [pvj/OSC.md](../pvj/OSC.md) |
-| **Network settings** (wired) | [pvj/NETWORK.md](../pvj/NETWORK.md) |
+| **Network settings** (wired and Wi-Fi: join a network, the box's own hotspot, Wi-Fi off) | [pvj/NETWORK.md](../pvj/NETWORK.md) |
 
 The Projection mapping card on Mix, with a grid and a quad:
 
@@ -163,14 +185,14 @@ This is for the people who run the room. You do not need to know how the box wor
 
 Open the panel on your phone and tap **Room** at the bottom. (If you joined with a presenter code, you start there.)
 
-- **Scenes** are the big buttons at the top, with names such as "Console night" or "Film". Tap one. The projectors it needs switch on, choose the right source and the box starts what belongs to it. A projector takes about a minute to warm up; the line under the buttons says how it is going and then how it went, for example "Main wall: on, input Console. Painting wall: no answer."
+- **Scenes** are the big buttons at the top, with names such as "Console night" or "Film". Tap one. The projectors it needs switch on, choose the right source and the box starts what belongs to it. A projector takes about a minute to warm up; the line under the buttons says how it is going ("Main wall: switching on (warming up)") and then how it went, for example "Main wall: on, input Console. Painting wall: no answer."
 - Tapped the wrong scene? Just tap the right one. The newer one takes over.
 - Each **wall** has its own box: a word that says how it is (On, Off, Warming up, Cooling down, No answer), **On** and **Off**, a button for each **source** (the console, the box, and so on), **Mute picture** and **Mute sound**.
-- **All off** at the bottom switches every projector off. It asks you to tap a second time, so it cannot happen by accident. Projectors cool down for a minute or two before they are really off; leave them plugged in.
+- **All off** at the bottom switches every projector off. It first asks "Turn off all projectors?"; tap **Turn off** to do it or **Keep them on** to leave them, so it cannot happen by accident. Projectors cool down for a minute or two before they are really off; leave them plugged in.
 - "No answer" means the box cannot reach that projector. Check that it has power at the wall and that its network cable is in. Then tap the scene again.
 - If you joined with a guest code you can look, and the buttons are not there.
 
-Setting it up is for a full-access device: switch **Projector control** and **Room (groups and scenes)** on under System > Modules, add the projectors under System > Projectors and give their inputs labels, then on the Room screen, under "Set up the room", make the groups (the walls) and the scenes. A scene can also run from the schedule ("Apply a Room scene"), from OSC and from a MIDI control. Details: [pvj/ROOM.md](../pvj/ROOM.md).
+Setting it up is for a full-access device: switch **Projectors** and then **Room** on (System, each on its own page), add the projectors under System > Projectors and give their inputs labels, then on the Room screen, under "Set up the room", make the groups (the walls) and the scenes. A scene can also run from the schedule ("Apply a Room scene"), from OSC and from a MIDI control. Details: [pvj/ROOM.md](../pvj/ROOM.md).
 
 **Not tried in a real room yet.** No real projector has been controlled by any of this; it has been tested against a stand-in projector in software only.
 
@@ -178,12 +200,12 @@ Setting it up is for a full-access device: switch **Projector control** and **Ro
 
 A shader is a small program that the box's graphics chip runs to draw a moving picture: there is no clip, so it never ends and never repeats exactly. The box takes shaders in the **ISF** format (Interactive Shader Format, `.fs` files) and comes with ten slow, quiet ones made for ambience.
 
-Switch **Shaders and Vibes** on under System > Modules (beta, off by default; not offered on a Raspberry Pi 3).
+Switch it on under System > Vibes (beta, off by default; not offered on a Raspberry Pi 3). That page also says where the controls are.
 
 - **Vibes** is the big button that then appears on the **Live** screen (presenters and full-access devices). One tap and the box plays shaders endlessly: a shuffled order, three minutes each, a dip to black between them, and slightly different speeds, sizes and colours every round. It ends when you press **Stop**, press the button again, or play anything else; it never takes the screen back by itself.
 - On the **Mix** screen the **Shaders and Vibes** card lists the shaders. **Play** shows one until you play something else; its number inputs appear as sliders. Full-access devices choose which shaders Vibes may use, how long each stays (10 seconds to an hour), how many lines the shader is drawn with (fewer is lighter work), and upload their own `.fs` files (generator shaders only; a file the box cannot show is refused with the reason).
 - Opacity, the fades, Blackout, the overlay picture and the projection mapping all work on a shader as they do on a clip.
-- Vibes can also start by itself: choose **Vibes** under System > Autostart, add a **Start Vibes** entry to the schedule, send the OSC address `/pvj/vibes`, assign **Vibes on / off**, **next shader** and the time each shader stays to a MIDI controller with Learn, or use the ninth DMX channel (see [pvj/MIDI.md](../pvj/MIDI.md) and [pvj/DMX.md](../pvj/DMX.md)).
+- Vibes can also start by itself: choose **Vibes** under System > At power-up, add a **Start Vibes** entry to the schedule, send the OSC address `/pvj/vibes`, assign **Vibes on / off**, **next shader** and the time each shader stays to a MIDI controller with Learn, or use the ninth DMX channel (see [pvj/MIDI.md](../pvj/MIDI.md) and [pvj/DMX.md](../pvj/DMX.md)).
 
 **Not measured, and not seen on a screen yet.** How smoothly each shader runs on a Pi 4, a Pi 5 or a PC has not been measured on any board, and nobody has watched this on a display: so far it has only run in automated tests on a software graphics chip. Watch the screen the first time; if the picture stutters, choose fewer lines on the card or take the heavier shaders out of Vibes (each shader's cost is listed). Details: [pvj/SHADERS.md](../pvj/SHADERS.md).
 
@@ -193,7 +215,7 @@ Switch **Shaders and Vibes** on under System > Modules (beta, off by default; no
 - **Power cuts.** The read-only root protects the system disk from a pulled plug (`sudo pvj-rootfs enable`, then reboot). Not tested on a real board.
 - **Remote support** is off until you allow it, and even then only open while you run a session you started (time-limited, panel only, visible on every device, stoppable). See [REMOTE-SUPPORT.md](REMOTE-SUPPORT.md).
 - **Updates** are signed bundles (`pvj-N.N.N.tar.gz` with its `.sig`; a `.sha256` is optional). System > **Updates** (full access) installs one from a `pvj-update` folder on a USB stick, or one you upload there; it is checked against your signing key, an older version is refused, and if the panel does not come back the box goes back to the version before by itself. The panel and the player restart during an update. From a terminal: `sudo pvj-update`. See [pvj/README.md](../pvj/README.md#updates-and-rollback).
-- **Player stuck?** System > Restart player asks it to quit and systemd brings it back. If mpv ignores that, run `sudo systemctl restart pvj-player` on the box.
+- **Player stuck?** System > About and power > Restart player now asks it to quit and systemd brings it back. If mpv ignores that, run `sudo systemctl restart pvj-player` on the box.
 - **Network changes** always revert by themselves unless you confirm them. Test them with a keyboard and monitor on the box, never over SSH on the only link.
 
 **Hostile drives and files.** A USB stick or an upload can hold a file that is named `.mp4` but is really a playlist or a script for the player. The player is started so that it plays media only: it does not follow references inside files (playlists, EDL), load sidecar subtitle or audio files, load scripts or run youtube-dl. This was tested on a Raspberry Pi 4 with fake playlists. A drive is also mounted read-only with `nosuid,nodev,noexec`, and only the top level of a drive is listed, up to a limit.
@@ -204,7 +226,7 @@ System > Health says in plain words whether the box is well: the power supply (a
 
 ## Settings file, diagnostics and factory reset
 
-Three cards in System, for full-access devices only.
+Three cards under System > Backup and reset, for full-access devices only. Factory reset is last, under the heading Danger.
 
 **Settings file.** *Export settings* saves the box's settings as one file (`nxlx-settings-<box>-<date>.json`): pads, modules, theme, mix, OSC, schedule, streams, DMX and MIDI, autostart, sound output, the picture over the video, projectors, the mapping and sync. *Import settings* loads such a file: it is checked first (a file from a newer version is refused, one from an older version is brought up to date, and every value goes through the same checks as the panel's own forms), a copy of the present settings is kept on the box (`settings.json.before-import-<time>` beside the settings file, the last three), and only then are the settings replaced. One wrong value stops the whole import and nothing changes. The clips themselves are not in the file: pads and the schedule refer to them by name.
 
@@ -221,7 +243,7 @@ Without the tick a stream address is shortened to what is not secret: the name a
 
 **Diagnostics.** *Download diagnostics file* saves one file to send to whoever is helping you: the version, the board, the screens, module states, the Health card's data, the last update, and the settings with every secret removed (no PIN, token, code, key, password or stream login; a stream is shown only as where it comes from). The panel runs without system rights and is not allowed to read the system log, so the file says so instead of holding log lines; on the box, `sudo journalctl -b -u 'pvj-*'` prints them. If a box is set up so that the panel can read the log, the lines are included with PINs, codes and logins removed.
 
-**Factory reset.** Choose whether the clips stay or are deleted, then *Reset to factory settings* and confirm. Playback stops, every setting goes back to how a new box starts, every phone, tablet and guest is unpaired (this one too), codes and a running support session end, and the box makes a new PIN, so the PIN screen is back on the display (`sudo pvj-pin` also prints it). Deleting the clips removes the media files in the box's own media folder and nothing else; a USB drive is never emptied, and if the box keeps its clips on a USB drive (`PVJ_MEDIA_DIR`) the reset refuses to delete them. What a reset does not touch: the wired network settings (System > Network changes the system's own configuration), your own themes, anything in `/etc/pvj` (the signing key, fleet support details), and the settings backups that updates keep for a rollback (`/var/lib/pvj/backups`, readable by root only). Those backups still hold the old devices: after a reset, do not run `sudo pvj-update rollback` unless you mean to bring the old settings back, or remove them first with `sudo rm -r /var/lib/pvj/backups`.
+**Factory reset.** Choose whether the clips stay or are deleted, then *Reset to factory settings* and confirm. Playback stops, every setting goes back to how a new box starts, every phone, tablet and guest is unpaired (this one too), codes and a running support session end, and the box makes a new PIN, so the PIN screen is back on the display (`sudo pvj-pin` also prints it). Deleting the clips removes the media files in the box's own media folder and nothing else; a USB drive is never emptied, and if the box keeps its clips on a USB drive (`PVJ_MEDIA_DIR`) the reset refuses to delete them. What a reset does not touch: the network settings, wired and Wi-Fi (System > Network changes the system's own configuration), your own themes, anything in `/etc/pvj` (the signing key, fleet support details), and the settings backups that updates keep for a rollback (`/var/lib/pvj/backups`, readable by root only). Those backups still hold the old devices: after a reset, do not run `sudo pvj-update rollback` unless you mean to bring the old settings back, or remove them first with `sudo rm -r /var/lib/pvj/backups`.
 
 Through a remote support session, the settings can be exported without passwords and the diagnostics file downloaded; importing, exporting with passwords and factory reset are refused.
 
@@ -235,20 +257,20 @@ Not tested on a real box yet (2026-10-03): the three cards were tested with the 
 | A clip stutters | Media > Info on the clip says if it is too heavy for this box; see Prepare your clips |
 | Stutters, network drops, odd restarts | System > Health: a "Power" warning means the power supply is too weak. After an unexpected restart, `journalctl -b -1 -e` on the box shows the end of the log before it (the log is kept across restarts, up to 64 MB) |
 | The page does not load | Same network as the box? `systemctl status pvj-web` on the box; the address may have changed (check the router's client list) |
-| "Wrong PIN" | The PIN changes at every start. `sudo pvj-pin`, or System > New PIN from a paired device |
+| "Wrong PIN" | The PIN changes at every start. `sudo pvj-pin`, or System > People and codes > New PIN from a paired device |
 | A pad is grey and says Empty | Edit pads (full access) and assign a clip |
 | Clip will not play | Check the file plays in `mpv` on the box; on a Pi 5 use HEVC (no hardware H.264 decode) |
 | Nothing shows on the projector | `pvj-selftest --play` on the box; check `journalctl -u pvj-player` |
-| DMX or MIDI does nothing | The module must be on **and** the card turned on; read the card's status line and `journalctl -u pvj-web` |
+| DMX or MIDI does nothing | The module must be on **and** turned on inside its page (the System row says "On, but not listening" until it is); read the card's status line and `journalctl -u pvj-web` |
 | A projector does not answer | PJLink must be switched on in the projector's network menu; check its address and password; a projector that is warming up or cooling down refuses commands for a minute or so (an input change is tried again for 90 seconds by itself) |
 | A projector shows no inputs to choose | Many projectors list their inputs only while switched on: switch it on, wait for "On", then System > Projectors > Refresh details |
 | The mapped picture stutters | Map at 1920x1080 or less on a Pi 4, and leave Edit on the display when you are done (editing costs more) |
 | Schedule fires at the wrong time | Check the box clock shown on the Schedule card and the time zone |
-| Someone is helping you from far away | System > Diagnostics > Download diagnostics file, and send it; it holds no PIN or password |
-| The box should go to someone else, or start over | System > Factory reset |
+| Someone is helping you from far away | System > Backup and reset > Download diagnostics file, and send it; it holds no PIN or password |
+| The box should go to someone else, or start over | System > Backup and reset > Factory reset |
 
 ## 8. Not built yet
 
-Crossfade, Wi-Fi and hotspot, updates from the network, a panel update button, NDI, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
+Crossfade, updates from the network, a panel update button, NDI, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
 
 **SMPTE ST 2110** is not supported directly and not planned: use a converter from 2110 to HDMI into the live input (USB capture), or from 2110 to NDI once NDI is built.

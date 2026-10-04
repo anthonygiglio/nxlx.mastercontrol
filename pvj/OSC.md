@@ -1,6 +1,6 @@
 # OSC control
 
-Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **System > Control (OSC)** (full-access devices only). Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
+Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **System > OSC** (full-access devices only). Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
 
 ## Safety
 
@@ -37,7 +37,7 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/loop`, `/pvj/mute` | 0/1 | Set (an argument is required) |
 | `/pvj/mix/reset` | value (press) | Reset opacity, size, position, speed, rotation |
 | `/pvj/scene/<n>` | value (press) | Apply the n-th scene of the Room module (1 is the first; see [ROOM.md](ROOM.md)) |
-| `/pvj/scene` | name (string) or number | The same, by the scene's name or its place in the list |
+| `/pvj/scene` | name (string) or number (2 or 2.0) | The same, by the scene's name or its place in the list. A scene that plays something also takes a blackout off |
 | `/pvj/group/<n>/on`, `/pvj/group/<n>/off` | value (press) | Switch the projectors of the n-th group on or off; `all` in place of the number is every projector |
 | `/pvj/group/<n>/mute`, `/mute_picture`, `/mute_sound` | 0/1 | Mute (1) or unmute (0) picture and sound, the picture, or the sound of that group (an argument is required) |
 | `/pvj/group/<n>/input` | input code (`31`, as a string or a number) | Switch that group's projectors to that input; the codes are listed in System > Projectors |
@@ -51,7 +51,7 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 Also from the old receiver: `/startmasteronce01` to `/startmasteronce99` (play the clip numbered so, once; these failed silently before), `/testscreen` and `/testscreenoff` (the test pattern), `/testtone`, `/testtoneleft`, `/testtoneright`, `/overlay` and `/stopoverlay` (the overlay picture chosen on the Mix screen), `/image` (the slideshow of the media folder) and `/stopimage`, `/fliph` and `/flipv` (each press switches the mirror over, like the old buttons).
 
 Not carried over:
-- on purpose, because they change settings or the system, which needs a full-access device: `/audiohdmiout`, `/audiojack`, `/audiousb`, `/audioboth` (System > Sound output), `/startslave` (System > Sync and video wall), `/reboot`, `/shutdown`, `/rebootall`, `/shutdownall`, `/customfunction1` and `/customfunction2` (they ran shell scripts);
+- on purpose, because they change settings or the system, which needs a full-access device: `/audiohdmiout`, `/audiojack`, `/audiousb`, `/audioboth` (System > Sound), `/startslave` (System > Boxes in step), `/reboot`, `/shutdown`, `/rebootall`, `/shutdownall`, `/customfunction1` and `/customfunction2` (they ran shell scripts);
 - not built yet: `/screenon` and `/screenoff` (display sleep), the clock (`/clockdisplay` and colours), `/imageusb` and `/imagemanual`, the audio player (`/startaudio...`, `/stopaudio`), the PDF presenter (`/startpdf...`), the camera and its effects, soft edge, `/getcontent`;
 - replaced: PiWall (`/piwallmaster`, `/piwallloop`) by Sync and video wall; Syphon (`/tcpsserver`) and `/ndisend`, `/ndireceiver` wait for NDI.
 

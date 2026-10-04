@@ -32,18 +32,22 @@ Next, in order:
 
 1. **PJLink Phase 1: built (PR #61, D37), not tested on a real projector.** Identify on add, input selection with labels and the 90 second retry, separate picture and sound mute, lamp hours and warnings in Health, background status; the fake projector is written from the standard; independent review done, all findings fixed with tests. Next for it: the first test with a real Epson (what it answers in standby, how long it is unavailable after power-on, separate mutes, lamp hours), and record what it does in `pvj/PROJECTORS.md`.
 2. **PJLink Phase 2:** class 2 volume steps, freeze, input names, signal resolution, "Find projectors" search, status notices.
-3. **Groups, scenes and the Room screen are built** (D40, `pvj/ROOM.md`: the Room module, scenes from the schedule, OSC and MIDI; no DMX, no volume), **not tried on a real projector or in a real room.** Next for it: with the first real Epson, set up "Main wall" and one scene and watch a tap (is 90 seconds enough for the source and the mute after power-on; does All off behave during warm-up); then let a staff member use the Room screen on a phone and write down what confused them.
+3. **Groups, scenes and the Room screen are built** (D40, `pvj/ROOM.md`: the Room module with its row under System > Everyday, scenes from the schedule, OSC and MIDI; no DMX, no volume; independent review done, every finding fixed with a test), **not tried on a real projector or in a real room.** Next for it: with the first real Epson, set up "Main wall" and one scene and watch a tap (is 90 seconds enough for the source and the mute after power-on; does All off behave during warm-up); then let a staff member use the Room screen on a phone and write down what confused them.
 4. **ISF shader playback is built** (D38, `pvj/SHADERS.md`: generator shaders, ten bundled, and Vibes, the endless rotation), but **not seen on any display and its speed is unmeasured on every board**: first put it on the test Pi, watch each bundled shader, and measure dropped frames at 720 and 1080 lines (A, B, A, B, A). Still open: live coding with a last-good fallback, then **projectM** as an optional module on boards with OpenGL ES 3 (measure on the Pi 4 first).
 5. **Painting-wall masks** on the second projector (likely the Pi 3B as a second synced box).
 6. **Network notes** for the private NXLX network (a dedicated router, fixed addresses, projectors without internet, staff Wi-Fi or a wall tablet).
 7. **Video matrix driver** (serial, TCP, HTTP, OSC command templates) once the owner picks a model; audio routing is undecided.
-8. The earlier parity list, now after the above: display mode (owner at the monitor); mapper workflow; wall improvements; schedule with dates; follow-on actions; Wi-Fi hotspot.
+8. The earlier parity list, now after the above: display mode (owner at the monitor); mapper workflow; wall improvements; schedule with dates; follow-on actions.
+
+**Wi-Fi control (2026-10-04, D41)** is built and reviewed but has never run on a box. First test on the Pi, from the wired port or a keyboard: set the Wi-Fi country, switch the Network module on, Find networks, join a known network, confirm, then a hotspot from a phone, then Wi-Fi off and back. Questions to answer are at the end of the journal entry. Open PRs at the end of 2026-10-04: #64 (room, waits for its review), #65 (UX proposal, waits for the owner), #67 (System index, green, docs and log still to write).
 
 Small follow-ups: a factory reset cannot remove the root-only update backups in `/var/lib/pvj/backups` (they hold the old devices and passwords, and `pvj-update rollback` after a reset brings them back); it needs a pvj-sysd action. Box care (PR #62, D39) has not been run on the Pi: export and import, the diagnostics file (does it say the log is not readable), a factory reset with the PIN screen returning. Check after the Pi's next restart that `journalctl --list-boots` shows more than one boot (the persistent log, D35, was installed but not yet seen across a restart).
 
 Owner's open items: a layout board at https://claude.ai/artifact/Bc24QHaMhyeS3eZfFyamLJ (press Save, then ask Claude to read it back) and editable mock-ups (SVG, layered PSD, PNG) in `docs/mockups/current/` (not in git; CI artifact `ui-mockups`). The design playground (D34, `tools/panel-playground`) has a preview at https://claude.ai/artifact/DYUr95vVi1jJyGquxhqZTu. A Pi 3B for two-box sync tests is waiting for a spare SD card (never touch its current card).
 
 ## What exists
+
+The System screen is an index of rows in three groups with one page per row (D42): a module is switched on its own page (System > Projectors, System > Vibes and so on), and each row shows a state chip. Next for it: fold the inner DMX, MIDI, Schedule and OSC switches into the page switch (approved by the owner), move the Vibes settings onto the Vibes page, and sync `tools/panel-playground/src/panel.css`.
 
 Merged to `master`: the security hotfix, the platform layer, the installer and services, the image definition, and the new core in Python 3 (API, panel, modules, themes, OSC receive, signed updates with rollback). On top of that, each with its own notes:
 
@@ -70,7 +74,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | Multi-box sync and video wall | `pvj/SYNC.md` | off (beta) |
 | Streams and live input (SRT, RTSP, RTMP, USB capture) | `pvj/STREAMS.md` | off (beta) |
 | DMX (Art-Net, sACN), MIDI controllers | `pvj/DMX.md`, `pvj/MIDI.md` | off (beta) |
-| Wired network settings with confirm-or-revert | `pvj/NETWORK.md` | off (beta) |
+| Network settings with confirm-or-revert: wired, and Wi-Fi (join a network, own hotspot, Wi-Fi off, find networks; D41) | `pvj/NETWORK.md` | off (beta) |
 | System log kept across restarts, 64 MB cap (D35) | `docs/MANUAL.md` | on |
 
 Docs for people: [docs/MANUAL.md](docs/MANUAL.md) and pictures in [docs/UI.md](docs/UI.md) (made by `tests/ui/screenshots.js`, which with `MOCKUPS` set also writes the editable mock-ups, `tests/ui/mockups.js`). Module manifests: `pvj/modules.d`.
@@ -83,10 +87,10 @@ One test Raspberry Pi 4 (Model B Rev 1.5, Debian 13 trixie, wired Ethernet, a 25
 - Sync and the wall on two real boxes (waiting for the Pi 3B's spare card); a real support server (VPS); swapping USB sticks while running; copy from USB on the box.
 - MIDI Learn with the real controllers; the PIN on screen on a fresh box; streams with a real source; HEVC, 4K, 1080p60; 24 fps judder; the second HDMI port; a real projector.
 - Shaders and Vibes: never seen on a display, no speed measured on any board, run only on a software GPU in CI; its MIDI and DMX controls only against fakes.
-- The read-only root (`pvj-rootfs`), the Network module (test with a keyboard and monitor on the box, never over SSH on the only link), TouchOSC.
+- The read-only root (`pvj-rootfs`), the Network module and its Wi-Fi control (test with a keyboard and monitor on the box, never over SSH or Wi-Fi on the only link), TouchOSC.
 - Pi 3, Pi 5 and x86.
 
-Not built: crossfade (needs a second player), display mode, Wi-Fi and hotspot, updates from the network, NDI, AES67/Dante, presenter, importing old mapper files, MIDI controller profiles and feedback, custom DMX layouts.
+Not built: crossfade (needs a second player), display mode, company (802.1X) Wi-Fi and setting the Wi-Fi country, updates from the network, NDI, AES67/Dante, presenter, importing old mapper files, MIDI controller profiles and feedback, custom DMX layouts.
 
 Known limits: the panel cannot restart a wedged mpv (unprivileged by design). Merged branches on GitHub are not deleted (ask the owner). GitHub ruleset "Protect master" requires 9 checks and pull requests; do not change it without asking.
 

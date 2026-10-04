@@ -49,7 +49,7 @@
     var box = h('div', { class: 'card', id: 'shadercard' }, h('div', { class: 'k', text: 'Shaders and Vibes (beta)' }), body);
     clearTimeout(timer);
     if (!c.moduleOn('shaders')) {
-      body.appendChild(h('div', { class: 'k', id: 'shadermsg', text: 'Off. Switch on "Shaders and Vibes" under System > Modules (beta).' }));
+      body.appendChild(h('div', { class: 'k', id: 'shadermsg', text: 'Off. Switch it on under System, Vibes (beta).' }));
       return box;
     }
     function send(path, payload, done) {

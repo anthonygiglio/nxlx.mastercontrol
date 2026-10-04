@@ -141,6 +141,42 @@ function startServer() {
       assert(bad.length === 0, what + ': outside the card or squeezed: ' + bad.join(', '));
     }
     await fitsCard('.card', 'Media');
+    // Nothing may make the page wider than the phone.
+    async function fitsPhone(what) {
+      const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert(wide <= 1, what + ': ' + wide + ' px wider than the phone');
+    }
+    // System is an index of rows and one page per row. sysIndex() goes to the index, sys(name) opens a row's page,
+    // onPage() checks the open page fits, chip() waits for what a row's chip says.
+    const rowOf = (name) => `.navrow:has(.navname:text-is("${name}"))`;
+    async function sysIndex() {
+      if (await page.locator('#sysback').count()) await page.click('#sysback');
+      else if (!(await page.locator('#sysindex').count())) await page.click('nav >> text=System');
+      await page.waitForSelector('#sysindex');
+    }
+    async function sys(name) {
+      await sysIndex();
+      await page.click(rowOf(name));
+      await page.waitForSelector(`#syspage h1:text-is("${name}")`);
+    }
+    async function chip(name, word) { await page.waitForSelector(`${rowOf(name)} .chip:text-is("${word}")`, { timeout: 8000 }); }
+    async function onPage(name) {
+      assert.strictEqual(await page.textContent('#syspage h1'), name, 'still on the ' + name + ' page');
+      await fitsCard('.card, #syspage', name + ' page');
+      await fitsPhone(name + ' page');
+    }
+    // The page's switch: off shows only the description and one big button; switching on keeps the person there
+    async function switchOn(name) {
+      assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', name + ' starts off');
+      assert.strictEqual(await page.textContent('#sysswitchlabel'), 'Off');
+      assert(/Your settings are kept/.test(await page.textContent('#sysoff')), name + ': the off page says the settings are kept');
+      assert.strictEqual(await page.textContent('#sysswitchon'), 'Switch on ' + name);
+      await page.click('#sysswitchon');
+      await page.waitForSelector('#sysswitch[aria-checked="true"]');
+      await page.waitForFunction(() => /Switched on/.test(document.getElementById('msg').textContent));
+      assert.strictEqual(await page.textContent('#sysswitchlabel'), 'On');
+      assert.strictEqual(await page.textContent('#syspage h1'), name, 'switching on keeps the ' + name + ' page open');
+    }
 
     // Mix: drag a slider and check the throttle keeps request count sane
     await page.click('nav >> text=Mix');
@@ -158,13 +194,31 @@ function startServer() {
     await page.click('text=90°');
     await page.click('text=Reset mix');
 
-    // System: modules, appearance, guest link
-    await page.click('nav >> text=System');
+    // System: the index (three groups, a row each), the folded list of what is not built, then each page
+    await sysIndex();
     await page.waitForSelector('h1:has-text("System")');
-    assert(await page.isVisible('text=NDI'), 'NDI module listed');
-    assert(await page.isVisible('text=Not built yet'), 'planned modules are labelled');
+    assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
+    assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Vibes', 'People and codes', 'Sound',
+      'At power-up', 'Streams', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
+      'Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
+    const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
+    assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
+    assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (5)');
+    assert(!(await page.isVisible('#notbuilt >> text=NDI')), 'the list of what is not built starts folded');
+    await page.click('#notbuilt summary');
+    assert(await page.isVisible('#notbuilt >> text=NDI'), 'NDI is listed as not built yet');
+    assert(await page.isVisible('#notbuilt >> text=Receive NDI from Resolume'), 'with its description');
+    assert.strictEqual(await page.locator('#notbuilt button').count(), 0, 'what is not built has no switch');
+    await page.click('#notbuilt summary');
+    await page.waitForFunction(() => document.querySelector('#nav-health .navstate').textContent.length > 8, null, { timeout: 8000 });   // the box's name and "all well", or the worst problem
+    await chip('Network', 'Off');
+    await chip('At power-up', 'Off');
+    await fitsCard('.card', 'System index');
+    await fitsPhone('System index');
     // Network: switch the module on, preview, apply, watch the countdown, confirm
-    await page.click('.item:has-text("Network settings") >> button');
+    await sys('Network');
+    assert.strictEqual(await page.locator('#netcard').count(), 0, 'a module that is off shows no card');
+    await switchOn('Network');
     await page.waitForSelector('#netiface');
     await page.waitForSelector('#netcard >> text=192.168.1.9/24', { timeout: 8000 });  // the address arrives after the card first draws
     await page.click('#netmodes >> text=Fixed address');
@@ -173,8 +227,10 @@ function startServer() {
     // The gateway is set without any input event (as a lost or late event would): the redraw must still keep it.
     // (waits for the field: the card may be being redrawn at this moment, which is exactly what this step is about)
     await page.waitForFunction(() => { const g = document.getElementById('netgw'); if (!g) return false; g.value = '192.168.50.1'; return true; }, null, { timeout: 8000 });
-    // A redraw of the screen must not wipe what was typed
-    await page.click('nav >> text=System');
+    // A redraw of the screen must not wipe what was typed: leave for another screen and come back to the page
+    await page.click('nav >> text=Mix');
+    await page.waitForSelector('#mo');
+    await sys('Network');
     try {
       await page.waitForFunction(() => {
         const a = document.getElementById('netaddr'), g = document.getElementById('netgw');
@@ -214,12 +270,54 @@ function startServer() {
     await page.waitForSelector('#netpending');
     await page.click('#netrevert');
     await page.waitForSelector('#netiface');
+    // Wi-Fi: pick the Wi-Fi port, find networks, choose one, type its password, apply, confirm; the password never comes back
+    await page.selectOption('#netiface', 'wlan0');
+    await page.waitForSelector('#netmodes >> text=Own hotspot');
+    assert(!(await page.isVisible('#netmodes >> text=Direct cable')), 'wired modes are not offered for Wi-Fi');
+    await page.click('#netscanbtn');
+    await page.waitForSelector('#netscan >> text=Leyline Staff');
+    assert(await page.isDisabled('#netscan button:has-text("Corp")'), 'a company (802.1X) network cannot be chosen');
+    assert(await page.isVisible('#netscan button:has-text("<img src=x")'), 'a hostile name is shown as text');
+    assert.strictEqual(await page.$$eval('#netcard img', (els) => els.length), 0, 'and never becomes markup');
+    assert(!(await page.evaluate(() => window.pwned)), 'nothing from a network name ran');
+    await page.click('#netscan >> text=Leyline Staff');
+    assert.strictEqual(await page.inputValue('#netssid'), 'Leyline Staff');
+    await page.fill('#netpass', 'short');
+    await page.click('#netapply');
+    await page.waitForFunction(() => /password/i.test(document.getElementById('netresult').textContent) && document.getElementById('netresult').className.includes('err'));
+    await page.fill('#netpass', 'staff only 2026');
+    const applied = page.waitForResponse((r) => r.url().endsWith('/api/network/apply'));
+    await page.click('#netapply');
+    assert(!(await (await applied).text()).includes('staff only'), 'the password is not sent back');
+    await page.waitForFunction(() => /joining \u201cLeyline Staff\u201d/.test((document.getElementById('netpending') || {}).textContent || ''));
+    await page.click('#netconfirm');
+    await page.waitForFunction(() => /joined \u201cLeyline Staff\u201d/.test((document.getElementById('netline-wlan0') || {}).textContent || ''));
+    assert(!(await page.content()).includes('staff only'), 'the password is not left on the page');
+    await page.selectOption('#netiface', 'wlan0');
+    await page.click('#netmodes >> text=Own hotspot');
+    await page.waitForSelector('#netband');
+    await page.selectOption('#netiface', 'eth0');
+    await page.waitForSelector('#netmodes >> text=Direct cable');
+    await page.waitForFunction(() => !document.getElementById('netreverting') && !document.getElementById('netpending'));
+    await onPage('Network');
+    // Back returns to the index (the button, and the phone's own back), and the row now tells the truth
+    await page.click('#sysback');
+    await page.waitForSelector('#sysindex');
+    await chip('Network', 'Ready');
+    await page.waitForSelector(`${rowOf('Network')} .navstate:has-text("192.168.1.9/24")`);
+    await page.click(rowOf('Network'));
+    await page.waitForSelector('#syspage h1:text-is("Network")');
+    await page.evaluate(() => history.back());
+    await page.waitForSelector('#sysindex');
+    await sys('OSC');
     await page.waitForSelector('#oscline:has-text("Off")');
     await page.click('#osctoggle');
     await page.waitForFunction(() => /Listening on UDP/.test(document.getElementById('oscline').textContent));
     await page.click('#osctoggle');
     await page.waitForFunction(() => document.getElementById('oscline').textContent === 'Off');
+    await onPage('OSC');
     // Autostart: reject a missing clip, then save "play every clip" and see it summarised
+    await sys('At power-up');
     await page.waitForSelector('#autoline:has-text("Off")');
     await page.selectOption('#automode', 'file');
     await page.selectOption('#autofile', { index: 0 });
@@ -242,17 +340,26 @@ function startServer() {
     await page.selectOption('#automode', 'off');
     await page.click('#autosave');
     await page.waitForFunction(() => /^Off/.test(document.getElementById('autoline').textContent));
-    // DMX: switch the module on, reject a bad universe, turn it on and off
-    await page.click('.item:has-text("DMX over the network") >> button');
+    await onPage('At power-up');
+    // DMX: switch the module on, reject a bad universe, turn it on and off. The module is on but DMX itself is not
+    // listening yet: the page and the index row both say so.
+    await sys('DMX lighting desk');
+    await switchOn('DMX lighting desk');
     await page.waitForSelector('#dmxline:has-text("Off")');
+    await page.waitForSelector('#sysstate:has-text("not listening")');
     await page.fill('#dmxuni', '99999');
     await page.click('#dmxsave');
     await page.waitForFunction(() => /universe/i.test(document.getElementById('msg').textContent));
     await page.fill('#dmxuni', '2');
     await page.click('#dmxsave');
     await page.waitForFunction(() => document.getElementById('dmxuni').value === '2');
+    await onPage('DMX lighting desk');
+    await sysIndex();
+    await chip('DMX lighting desk', 'Off');
+    await page.waitForSelector(`${rowOf('DMX lighting desk')} .navstate:has-text("On, but not listening")`);
     // MIDI: switch the module on; nothing is plugged in here, so check the card and the learn flow, then turn it off
-    await page.click('.item:has-text("MIDI controller") >> button');
+    await sys('MIDI controller');
+    await switchOn('MIDI controller');
     await page.waitForSelector('#midiline:has-text("Off")');
     await page.click('#miditoggle');
     await page.waitForFunction(() => /waiting for a controller/.test(document.getElementById('midiline').textContent));
@@ -268,8 +375,13 @@ function startServer() {
     await page.waitForFunction(() => /Built-in map: off/.test(document.getElementById('midibuiltin').textContent));
     await page.click('#miditoggle');
     await page.waitForFunction(() => document.getElementById('midiline').textContent === 'Off');
-    // Streams: switch the module on, reject a bad address, save one with a login (hidden), remove it
-    await page.click('.item:has-text("Streams: SRT") >> button');
+    await onPage('MIDI controller');
+    // Streams: the index says Off before; switch the module on, reject a bad address, save one with a login (hidden),
+    // remove it; the index says Set up after (on, but nothing saved)
+    await sysIndex();
+    await chip('Streams', 'Off');
+    await sys('Streams');
+    await switchOn('Streams');
     await page.waitForSelector('#streamempty');
     await page.fill('#streamname', 'Cam');
     await page.fill('#streamurl', 'file:///etc/passwd');
@@ -279,10 +391,17 @@ function startServer() {
     await page.click('#streamadd');
     await page.waitForSelector('.stream-entry:has-text("rtsp://***@10.0.0.5/live")');
     assert(!(await page.textContent('body')).includes('hunter2'), 'stream password is never shown');
+    await sysIndex();
+    await chip('Streams', 'Ready');
+    await sys('Streams');
     await page.click('.stream-entry >> button:has-text("Remove")');
     await page.waitForSelector('#streamempty');
+    await onPage('Streams');
+    await sysIndex();
+    await chip('Streams', 'Set up');
     // Schedule: switch the module on, add an entry, turn the schedule on and off, remove the entry
-    await page.click('.item:has-text("Weekly schedule") >> button');
+    await sys('Schedule');
+    await switchOn('Schedule');
     await page.waitForSelector('#schedclock');
     await page.selectOption('#schedaction', 'stop');
     await page.fill('#schedlabel', 'Close');
@@ -300,9 +419,11 @@ function startServer() {
     await page.waitForSelector('.sched-entry:has-text("Start script startlessonce01")');
     await page.click('.sched-entry >> button:has-text("Remove")');
     await page.waitForSelector('#schedempty');
+    await onPage('Schedule');
     // Projectors: a public address is refused; the harness's fake PJLink projector (loopback, allowed there only)
     // is added, says who it is, shows its state, lamp hours and a warning, takes an input, a label and a mute
-    await page.click('.item:has-text("Projector control") >> button');
+    await sys('Projectors');
+    await switchOn('Projectors');
     await page.waitForSelector('#projline');
     await page.fill('#projname', 'Main');
     await page.fill('#projhost', '8.8.8.8');
@@ -346,7 +467,15 @@ function startServer() {
     await page.waitForFunction(() => !/muted/.test(document.querySelector('.proj-status').textContent), null, { timeout: 15000 });
     await page.click('button[aria-label="Refresh details Main"]');
     await page.waitForFunction(() => /Refresh details: done/.test(document.getElementById('msg').textContent));
+    await onPage('Projectors');
+    await sysIndex();
+    await chip('Projectors', 'Problem');                             // the projector's own warning reaches the index row
+    await page.waitForSelector(`${rowOf('Projectors')} .navstate:has-text("Main has a warning")`);
+    await sys('Health');
     await page.waitForSelector('#healthcard .item:has-text("Projector: Main"):has-text("lamp 1234 h"):has-text("Warning: filter")', { timeout: 15000 });
+    await onPage('Health');
+    await sys('Projectors');
+    await page.waitForSelector('.proj-entry');
     if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page');
     if ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.text()))).includes('secret1')) problems.push('the projector password came back from the API');
     // The room: the harness's second fake projector (in standby, slow to warm up), two groups, a scene tapped on the
@@ -357,8 +486,14 @@ function startServer() {
     await page.click('#projadd');
     await page.waitForFunction(() => document.querySelectorAll('.proj-entry').length === 2);
     await page.waitForFunction(() => document.querySelectorAll('.proj-input').length === 2, null, { timeout: 15000 });   // both input lists are read
-    await page.click('.item:has-text("Room (groups and scenes)") >> button');
-    await page.click('nav >> text=Room');
+    await sys('Room');
+    await switchOn('Room');
+    await page.waitForSelector('#syspage .card:has-text("Where the room is run and set up")');
+    await sysIndex();
+    await chip('Room', 'Set up');
+    await page.waitForSelector(`${rowOf('Room')} .navstate:has-text("No groups or scenes yet")`);
+    await sys('Room');
+    await page.click('#syspage button:has-text("Open Room")');
     await page.waitForSelector('#roomsetup #roomgname');
     for (const [wall, member] of [['Main wall', 'Main'], ['Painting wall', 'Painting']]) {
       await page.fill('#roomgname', wall);
@@ -382,7 +517,7 @@ function startServer() {
     const roomWide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (roomWide > 1) problems.push('the Room screen is ' + roomWide + ' px wider than the phone');
     await page.click('.room-scene:has-text("Console night")');
-    await page.waitForFunction(() => /Main wall: on, input Box, sound muted\. Painting wall: on\. Box: playing tunnel\.mkv\./.test((document.getElementById('roomjob') || {}).textContent || ''), null, { timeout: 20000 });
+    await page.waitForFunction(() => /Main wall: on, input Box, sound muted\. Painting wall: switching on \(warming up\)\. Box: playing tunnel\.mkv\./.test((document.getElementById('roomjob') || {}).textContent || ''), null, { timeout: 20000 });
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '32') problems.push('the scene did not switch the main wall to input 32');
     if (await pjlink(info.projector_ports[0], 'secret1', 'AVMT ?') !== '21') problems.push('the scene did not mute the sound of the main wall only');
     if (await pjlink(info.projector_ports[1], '', 'POWR ?') !== '3') problems.push('the scene did not switch the painting wall on');
@@ -410,15 +545,40 @@ function startServer() {
       assert.strictEqual(await staff.locator('#roomsetup').count(), 0, role + ': no set-up');
       await roomCtx.close();
     }
+    // All off: a double tap sends nothing (its second tap lands on the question, which is not taken yet); the
+    // question names what happens; "Keep them on" puts the buttons back; the deliberate two steps switch off
+    let groupPosts = 0;
+    const countPosts = (r) => { if (r.url().endsWith('/api/room/group') && r.method() === 'POST') groupPosts++; };
+    page.on('request', countPosts);
+    await page.dblclick('#roomalloff');
+    await page.waitForTimeout(700);
+    assert.strictEqual(groupPosts, 0, 'a double tap on All off sent ' + groupPosts + ' request(s)');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('a double tap on All off switched a projector off');
+    if (await page.locator('#roomallask').count()) await page.click('#roomallkeep');
+    await page.waitForSelector('#roomalloff');
+    // the same with the second tap exactly on "Turn off", at once: not taken
+    await page.evaluate(() => { document.getElementById('roomalloff').click(); document.getElementById('roomalloffyes').click(); });
+    await page.waitForSelector('#roomallask:has-text("Turn off all 2 projectors? They need about a minute to cool before they can come on again.")');
+    await page.waitForTimeout(700);
+    assert.strictEqual(groupPosts, 0, 'a tap on Turn off in the same moment as the question sent ' + groupPosts + ' request(s)');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('Turn off was taken in the same moment as the question');
+    await fitsCard('#roomscreen .card', 'Room, All off asking');
+    await page.click('#roomallkeep');
+    await page.waitForSelector('#roomalloff');
+    assert.strictEqual(await page.locator('#roomallask').count(), 0, 'Keep them on puts the buttons back');
     await page.click('#roomalloff');
-    await page.waitForSelector('#roomalloff:has-text("Tap again")');
-    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('All off switched a projector off on the first tap');
-    await fitsCard('#roomscreen .card', 'Room, All off asked again');
-    await page.click('#roomalloff');
+    await page.waitForSelector('#roomalloffyes');
+    await page.waitForTimeout(700);
+    await page.click('#roomalloffyes');
+    page.off('request', countPosts);
+    assert.strictEqual(groupPosts, 1, 'the two deliberate steps send All off once');
     await page.waitForSelector('.room-group:has-text("Main wall") .room-state:has-text("Off")', { timeout: 15000 });
     if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '0') problems.push('All off did not switch the main wall off');
     if (shots) await page.screenshot({ path: path.join(shots, '8-room.png'), fullPage: true });
-    await page.click('nav >> text=System');
+    await sysIndex();
+    await chip('Room', 'Ready');
+    await page.waitForSelector(`${rowOf('Room')} .navstate:has-text("2 groups, 1 scene")`);
+    await sys('Schedule');
     await page.waitForSelector('#schedscene', { state: 'attached' });
     await page.selectOption('#schedaction', 'scene');
     await page.click('#schedadd');
@@ -428,15 +588,39 @@ function startServer() {
     await page.click('nav >> text=Room');
     await page.click('button[aria-label="Remove scene Console night"]');
     await page.waitForSelector('#roomnoscenes');
-    await page.click('nav >> text=System');
-    await page.click('.item:has-text("Room (groups and scenes)") >> button');
+    await sys('Room');
+    await page.click('#sysswitch');
+    await page.waitForSelector('#sysoff');
     await page.waitForFunction(() => !/Room/.test(document.querySelector('nav').textContent));
+    await sys('Projectors');
     await page.click('button[aria-label="Remove Painting"]');
     await page.waitForFunction(() => document.querySelectorAll('.proj-entry').length === 1);
     await page.click('.proj-entry >> button:has-text("Remove")');
     await page.waitForFunction(() => !document.querySelector('.proj-entry'));
     // Sync and video wall: switch the module on, be a server, set a wall tile, back to off
-    await page.click('.item:has-text("Video wall and sync") >> button');
+    // This step failed twice in CI only. If it fails again it says what the form held, what the message was, what is
+    // saved, and every /api/sync request the page made with its answer.
+    const syncSeen = [];
+    page.on('response', (r) => {
+      if (!r.url().endsWith('/api/sync')) return;
+      const q = r.request();
+      r.text().catch(() => '(no body)').then((t) => {
+        syncSeen.push(q.method() + ' ' + (q.postData() || '') + ' -> ' + r.status() + ' ' + t.slice(0, 160));
+        if (syncSeen.length > 10) syncSeen.shift();
+      });
+    });
+    const syncState = async () => {
+      const form = await page.evaluate(() => {
+        const v = (id) => { const el = document.getElementById(id); return el ? el.value : '(missing)'; };
+        const m = document.getElementById('msg');
+        return fetch('/api/sync').then((r) => r.json()).catch((x) => ({ config: 'fetch failed: ' + x.message })).then((d) => ({
+          cols: v('wallcols'), rows: v('wallrows'), col: v('wallcol'), row: v('wallrow'), bezel: v('wallbezel'),
+          msg: m ? m.textContent : '(missing)', saved: d.config }));
+      }).catch((x) => 'evaluate failed: ' + x.message);
+      return JSON.stringify({ form: form, requests: syncSeen });
+    };
+    await sys('Boxes in step');
+    await switchOn('Boxes in step');
     await page.waitForSelector('#syncrole-server');
     await page.click('#syncrole-server');
     await page.waitForSelector('#syncline:has-text("Server")');
@@ -444,17 +628,29 @@ function startServer() {
     await page.selectOption('#wallcol', '1');
     await page.fill('#wallbezel', '3');
     await page.click('#wallsave');
-    await page.waitForFunction(() => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.cols === 2 && d.config.wall.col === 1 && d.config.wall.bezel === 3));
-    await page.selectOption('#wallcol', '2');
+    try {
+      await page.waitForFunction(() => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.cols === 2 && d.config.wall.col === 1 && d.config.wall.bezel === 3), null, { timeout: 15000 });
+    } catch (e) { throw new Error(e.message.split('\n')[0] + ' | the wall was not saved: ' + await syncState()); }
+    // The card is rebuilt by the answer to the save above and, while it is a server, every 2 seconds. A column chosen
+    // just before such a rebuild must still be there at the click. It is set without an event (as the Network step
+    // does), the line at the top of the card is marked, and the step waits until that line is a new one.
+    await page.evaluate(() => { document.getElementById('syncline').dataset.seen = '1'; document.getElementById('wallcol').value = '2'; });
+    await page.waitForFunction(() => { const l = document.getElementById('syncline'); return l && !l.dataset.seen; }, null, { timeout: 8000 });
+    if (await page.evaluate(() => document.getElementById('wallcol').value) !== '2') throw new Error('a redraw of the Sync card lost the chosen column: ' + await syncState());
     await page.click('#wallsave');
-    await page.waitForFunction(() => /inside the wall/.test(document.getElementById('msg').textContent));
+    try {
+      await page.waitForFunction(() => /inside the wall/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
+    } catch (e) { throw new Error(e.message.split('\n')[0] + ' | no refusal shown: ' + await syncState()); }
     await page.click('#syncrole-off');
     await page.waitForSelector('#syncline:has-text("Off")');
     await fitsCard('#synccard', 'Sync card');
-    // Projection mapping: switch the module on, add a quad on Mix, drag and nudge a corner, save, switch it on
-    await page.click('.item:has-text("Projection mapper") >> button');
-    await page.waitForFunction(() => /Projection mapper/.test(document.body.textContent));
-    await page.click('nav >> text=Mix');
+    await onPage('Boxes in step');
+    // Projection mapping: switch the module on (its page says where the controls are and takes you there), add a
+    // quad on Mix, drag and nudge a corner, save, switch it on
+    await sys('Projection mapping');
+    await switchOn('Projection mapping');
+    await onPage('Projection mapping');
+    await page.click('#syspage >> text=Open Mix');
     await page.waitForSelector('#mapadd-quad');
     await page.click('#mapadd-quad');
     await page.waitForSelector('.map-entry:has-text("Quad")');
@@ -483,8 +679,7 @@ function startServer() {
     await page.waitForSelector('#mapstatus:has-text("Mapping is off")');
     await page.click('.map-entry >> button:has-text("Remove")');
     await page.waitForFunction(() => !document.querySelector('.map-entry'));
-    await page.click('nav >> text=System');
-    await page.waitForSelector('h1:has-text("System")');
+    await sys('Remote support');
     // Remote support: off by default; settings saved and checked; allowing it shows the start controls
     await page.waitForSelector('#supportcard #supportallow');
     assert(/Remote support is off/.test(await page.textContent('#supportcard')), 'remote support starts off');
@@ -501,18 +696,35 @@ function startServer() {
     await page.waitForFunction(() => /inside the support network/.test(document.getElementById('msg').textContent));
     await page.click('#supportallow');
     await page.waitForFunction(() => /Remote support is off/.test(document.getElementById('supportcard').textContent));
+    await onPage('Remote support');
+    await sys('Look');
     await page.click('button:has-text("Night red")');
     await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(0, 0, 0)');
+    await onPage('Look');
+    await sys('People and codes');
     await page.click('text=Create guest link');
     await page.waitForFunction(() => { const i = document.querySelector('input[aria-label="Guest link"]'); return i && !i.hidden && /#token=/.test(i.value); });
     const guestLink = await page.inputValue('input[aria-label="Guest link"]');
-    await fitsCard('.card', 'System');
+    await onPage('People and codes');
+    await sys('Sound');
+    await page.waitForSelector('#audioline, #audiomsg');
+    await onPage('Sound');
+    await sys('Updates');
+    await page.waitForSelector('#updateversion');
+    await onPage('Updates');
+    await sys('About and power');
+    await page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent));
+    await onPage('About and power');
+    await sysIndex();
+    await fitsCard('.card', 'System index, modules on');
     if (shots) await page.screenshot({ path: path.join(shots, '4-system.png'), fullPage: true });
 
     // Box care: export the settings (no access data in the file), change something, import the file back; a file
     // with a repeated key is refused; diagnostics downloads; factory reset wants a choice and can be cancelled
     // (a real reset would unpair this test's own device, so it is covered by tests/test_boxcare.py)
+    await sys('Backup and reset');
     await page.waitForSelector('#settingscard #exportbtn');
+    assert.deepStrictEqual(await page.$$eval('#sysbody > *', (els) => els.map((e) => e.id)), ['settingscard', 'diagcard', 'dangerhead', 'resetcard'], 'reset is last, under Danger');
     const [exported] = await Promise.all([page.waitForEvent('download'), page.click('#exportbtn')]);
     assert(/^nxlx-settings-.+\.json$/.test(exported.suggestedFilename()), 'export file name: ' + exported.suggestedFilename());
     const exportedText = require('fs').readFileSync(await exported.path(), 'utf8');
@@ -552,6 +764,7 @@ function startServer() {
     assert(/every device is unpaired/.test(asked) && /The clips stay/.test(asked), 'the reset question says what it does: ' + asked);
     assert.strictEqual(resets, 0, 'a cancelled reset sends nothing');
     await fitsCard('#settingscard, #diagcard, #resetcard', 'Box care');
+    await onPage('Backup and reset');
 
     // Guest (view only) via the link in a fresh context
     const guestCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -563,9 +776,17 @@ function startServer() {
     assert(await guest.isDisabled('#stop'), 'view-only guest cannot stop');
     assert(!(await guest.isVisible('text=Edit pads')), 'view-only guest cannot edit pads');
     assert.strictEqual(await guest.evaluate(() => location.hash), '', 'token removed from the URL');
+    // A guest's System has only what a guest can use: no disabled lists
+    await guest.click('nav >> text=System');
+    await guest.waitForSelector('#sysindex');
+    assert.deepStrictEqual(await guest.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'About and power'], 'the rows a guest sees');
+    assert.strictEqual(await guest.locator('#notbuilt').count(), 0, 'a guest gets no list of modules');
+    await guest.click('.navrow:has-text("About and power")');
+    await guest.waitForSelector('#boxcard');
+    assert.strictEqual(await guest.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a guest page');
 
     // Scan-to-join: the owner makes a guest code; a phone opens the QR code's link and joins with one tap as view only
-    await page.click('nav >> text=System');
+    await sys('People and codes');
     await page.waitForSelector('#newguest');
     await page.click('#newguest');
     await page.waitForSelector('.join-code[data-role="view"]');
@@ -594,19 +815,36 @@ function startServer() {
     await page.click('nav >> text=Live');
     await page.waitForSelector('.pads');
     assert.strictEqual(await page.locator('#vibes').count(), 0, 'no Vibes button while the module is off');
-    await page.click('nav >> text=System');
-    await page.click('.item:has-text("Shaders and Vibes") >> button');
+    await sys('Vibes');
+    await switchOn('Vibes');
     await page.waitForFunction(() => fetch('/api/modules').then((r) => r.json()).then((d) => d.modules.some((m) => m.id === 'shaders' && m.enabled)));
-    await page.click('nav >> text=Live');
+    assert(/big Vibes button on the Live screen/.test(await page.textContent('#sysbody')), 'the Vibes page says it is started on Live');
+    await onPage('Vibes');
+    await page.click('#syspage >> text=Open Live');
     await page.waitForSelector('#vibes');
     await page.click('#vibes');
     await page.waitForFunction(() => /^Vibes: nxlx-/.test((document.getElementById('np') || {}).textContent), null, { timeout: 15000 });
     await page.waitForFunction(() => /Vibes is on/.test((document.getElementById('vibes') || {}).textContent));
+    // Switching Vibes off while it is on the screen asks first, in place; "no" puts the switch back and changes nothing
+    await sysIndex();
+    await chip('Vibes', 'Active');
+    await sys('Vibes');
+    await page.click('#sysswitch');
+    await page.waitForSelector('#confirmrow:has-text("Vibes is on the screen. Switching off stops it now.")');
+    assert(!(await page.isVisible('#sysswitch')), 'the question takes the place of the switch');
+    await fitsPhone('Vibes page, asking');
+    await page.click('#confirmno');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    assert.strictEqual(await page.locator('#confirmrow').count(), 0, 'the question is gone after "no"');
+    assert(await page.evaluate(() => fetch('/api/modules').then((r) => r.json()).then((d) => d.modules.some((m) => m.id === 'shaders' && m.enabled))), 'Vibes is still on after "no"');
+    assert(await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running)), 'and still playing');
     await page.click('nav >> text=Mix');
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
     assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10, 'the ten bundled shaders are listed');
     await page.waitForFunction(() => /Vibes is on/.test((document.getElementById('shaderline') || {}).textContent));
-    await page.click('#shadercard [data-shader="nxlx-tide.fs"] >> text=Play');
+    // By its label, not its text: when the rotation happens to be showing this very shader (1 time in 10) the button
+    // reads "On screen", and a click on "Play" then waited for 30 seconds and failed.
+    await page.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play nxlx-tide"]');
     await page.waitForFunction(() => /On screen: nxlx-tide/.test((document.getElementById('shaderline') || {}).textContent));
     await page.waitForSelector('#shin-speed');                       // its number inputs are sliders
     const vibesAfter = await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running));
@@ -618,6 +856,28 @@ function startServer() {
     await page.waitForFunction(() => /^Shader: nxlx-tide/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
     await page.click('#stop');
     await page.waitForFunction(() => /Player idle/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
+
+    // A presenter's System: the rows a presenter can use (the modules that are on), no switches, nothing disabled
+    const presenterToken = await page.evaluate(() => fetch('/api/devices/invite', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' },
+      body: JSON.stringify({ name: 'Presenter', role: 'live' }) }).then((r) => r.json()).then((d) => d.token));
+    const liveCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const presenter = await liveCtx.newPage();
+    presenter.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push('presenter: ' + m.text()); });
+    presenter.on('pageerror', (e) => problems.push('presenter pageerror: ' + e.message));
+    await presenter.goto(base + '/#token=' + presenterToken);
+    await presenter.waitForSelector('.pads');
+    await presenter.click('nav >> text=System');
+    await presenter.waitForSelector('#sysindex');
+    assert.deepStrictEqual(await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent)),
+      ['Health', 'Projectors', 'Vibes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
+    assert.strictEqual(await presenter.locator('#notbuilt').count(), 0, 'a presenter gets no list of modules');
+    await presenter.click('.navrow:has-text("Projectors")');
+    await presenter.waitForSelector('#projline');
+    assert.strictEqual(await presenter.locator('.switch').count(), 0, 'a presenter gets no switch');
+    assert.strictEqual(await presenter.locator('#projadd').count(), 0, 'and no form to add a projector');
+    await presenter.click('#sysback');
+    await presenter.waitForSelector('#sysindex');
+    await liveCtx.close();
 
     // Desktop width
     await page.setViewportSize({ width: 1280, height: 800 });

@@ -6,7 +6,7 @@ The old panel had Beamer On and Beamer Off buttons. This does the same over the 
 
 ## In the panel
 
-Switch the **Projector control** module on under System > Modules (beta, off by default), then use System > Projectors. A full-access device adds a projector (a name, its IP address or name, the port, 4352 unless changed, and the PJLink password if one is set) and removes it. A guest sees the list and the status only.
+Switch it on under System > Projectors (beta, off by default). Switching it off again asks first: the box stops checking the projectors, and they stay as they are. A full-access device adds a projector (a name, its IP address or name, the port, 4352 unless changed, and the PJLink password if one is set) and removes it. A guest sees the list and the status only.
 
 **What the projector says it is.** When a projector is added the box asks it, in the background, for its name, maker, model, other information, PJLink class and its list of inputs, and shows them under the projector. Adding never waits for the projector: one that is switched off at the wall is added all the same and shows "Details not read yet". Many projectors will not list their inputs while in standby; the box asks again by itself the first time it sees the projector switched on. **Refresh details** asks again at any time (after a firmware update or a swapped projector, for example). What the projector will not say this time, or says in a form that is not the standard's, keeps its older value: one odd answer never empties the input list.
 

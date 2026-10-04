@@ -205,12 +205,12 @@ class TranslatorTest(unittest.TestCase):
         ok = "void main() { gl_FragColor = vec4(1.0); }\n"
         for tail in ("void main(" + " " * 31000, "void" + " " * 31000 + "main", "#" + " " * 31000, ("void main( " * 2500), "/" * 31000,
                      ";" + " " * 31000 + "x", "\t" * 31000 + "#define", "{ " * 15000):
-            started = time.perf_counter()
+            started = time.thread_time()            # the work this thread did, not the time a busy runner kept it waiting
             try:
                 S.translate(S.parse("/*{}*/\n" + ok + tail), (1280, 720))
             except S.ShaderError:
                 pass
-            self.assertLess(time.perf_counter() - started, 0.5, tail[:12])
+            self.assertLess(time.thread_time() - started, 0.5, tail[:12])
 
     def test_the_code_is_translated_once_per_file_not_at_every_show(self):
         p = S.parse(isf())
@@ -901,21 +901,32 @@ class VibesTest(Base):
         stalled every later OSC cue, Blackout and Stop included."""
         import threading
         import time
-        inside, go = threading.Event(), threading.Event()
+        # The change is held in its dip for a minute, far longer than the calls take together. The proof is that each
+        # call returns while the change is still held (`left` is not set): a call that waited for the change could
+        # only return after it. The time limit is a second check, for a wait that gives up by itself: 2 seconds is
+        # 30 times below the hold and 10 times above the 0.19 s that one call took on a busy CI runner (the old limit
+        # was 0.1 s; nothing in these calls waits, set_dwell writes the settings file and that can be slow).
+        hold, limit = 60, 2.0
+        inside, go, left = threading.Event(), threading.Event(), threading.Event()
         self.vibes.start()
         self.vibes.tick()
         self.now[0] += 180
-        self.during_dip = lambda: (inside.set(), go.wait(5))
+        self.during_dip = lambda: left.is_set() or (inside.set(), go.wait(hold), left.set())     # held once, at the first step
         worker = threading.Thread(target=self.vibes.tick, daemon=True)
         worker.start()
         self.assertTrue(inside.wait(5))
         try:
-            for call in (self.vibes.skip, self.vibes.status, lambda: self.vibes.set_dwell(60), self.vibes.tick,
-                         lambda: self.api.handle("POST", "/api/vibes", {"next": True}, {"id": "osc", "role": "live"}, "t"),
-                         self.vibes.stop, self.vibes.yield_screen, self.vibes.start, self.vibes.stop):
+            for name, call in (("skip", self.vibes.skip), ("status", self.vibes.status), ("set_dwell", lambda: self.vibes.set_dwell(60)),
+                               ("tick", self.vibes.tick),
+                               ("api next", lambda: self.api.handle("POST", "/api/vibes", {"next": True}, {"id": "osc", "role": "live"}, "t")),
+                               ("stop", self.vibes.stop), ("yield_screen", self.vibes.yield_screen), ("start", self.vibes.start),
+                               ("stop again", self.vibes.stop)):
                 started = time.perf_counter()
                 call()
-                self.assertLess(time.perf_counter() - started, 0.1, call)
+                took = time.perf_counter() - started
+                self.assertFalse(left.is_set(), "%s returned only after the change (%.2f s)" % (name, took))
+                self.assertTrue(worker.is_alive(), name)
+                self.assertLess(took, limit, name)
         finally:
             go.set()
             worker.join(5)

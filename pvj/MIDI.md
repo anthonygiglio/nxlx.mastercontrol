@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # MIDI controllers (beta)
 
-Play pads, fade and mix from USB MIDI controllers: pad grids, fader boxes, keyboards. Switch on **MIDI controller (USB)** under System > Modules, then use System > MIDI controllers (full-access devices only). Off until you turn it on.
+Play pads, fade and mix from USB MIDI controllers: pad grids, fader boxes, keyboards. Switch it on under System > MIDI controller (full-access devices only), then turn MIDI on with the button inside the page. Off until you turn it on.
 
 **Every controller that is plugged in is read at once**, and a controller unplugged and replugged is picked up again within a couple of seconds. Nothing is written back to a controller (no lights or motor faders yet).
 
@@ -34,7 +34,7 @@ A trigger fires once per press (a note-on, or a CC that goes from below 64 to 64
 
 ## Built-in map
 
-On unless you turn it off (System > MIDI controllers > Built-in map). It exists so a plain pad controller works with no setup: notes 36 to 71 (and program changes 0 to 35) play pads 1 to 36 (A is 1 to 12, B 13 to 24, C 25 to 36); notes 72 to 76 are stop, pause, blackout, fade out and reset; CC 20 to 24 are opacity, size, position, speed and volume; CC 25 is blackout while up. Real controllers rarely use these numbers (a Novation Launchpad Mini sends notes 20 to 103 and CC 104 to 111), so expect to learn your own.
+On unless you turn it off (System > MIDI controller > Built-in map). It exists so a plain pad controller works with no setup: notes 36 to 71 (and program changes 0 to 35) play pads 1 to 36 (A is 1 to 12, B 13 to 24, C 25 to 36); notes 72 to 76 are stop, pause, blackout, fade out and reset; CC 20 to 24 are opacity, size, position, speed and volume; CC 25 is blackout while up. Real controllers rarely use these numbers (a Novation Launchpad Mini sends notes 20 to 103 and CC 104 to 111), so expect to learn your own.
 
 ## Safety
 

@@ -1,15 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj-netd: the small root helper that changes the wired network on behalf of the unprivileged panel.
-
-The panel (user pvj-web) cannot and must not run nmcli. It sends one JSON line over a Unix socket in
-/run/pvj (group pvj); this daemon re-validates everything with pvj.netcfg, runs only the fixed nmcli
-commands that come out of it (argument lists, never a shell), and keeps a safety net: every change is
-pending until confirmed and is reverted automatically when the timer runs out, when a command fails,
-when this daemon restarts, or when the box reboots (the profile is not autoconnect until confirmed).
-"""
-
-"""pvj-netd: the small root helper that changes the wired network on behalf of the unprivileged panel.
+"""pvj-netd: the small root helper that changes the wired and Wi-Fi network on behalf of the unprivileged panel.
 
 The panel (user pvj-web) cannot and must not run nmcli. It sends one JSON line over a Unix socket in
 /run/pvj (group pvj); this daemon re-validates everything with pvj.netcfg, runs only the fixed nmcli
@@ -20,6 +11,7 @@ commands that come out of it (argument lists, never a shell), and keeps a safety
   daemon restarts, and when the box reboots (the candidate is not autoconnect until confirmed)
 * an undo that fails is retried until it works, and never reported as done before it is
 * the saved state lives in a root-only directory (never in /run/pvj, which group members can write)
+* a Wi-Fi password goes only into a root-only keyfile, never into a command line, a reply or a log
 """
 
 import ipaddress
@@ -28,10 +20,12 @@ import os
 import re
 import socket
 import socketserver
+import stat
 import struct
 import subprocess
 import threading
 import time
+import uuid as uuidlib
 
 from . import netcfg
 from .netcfg import NetError
@@ -39,14 +33,19 @@ from .netcfg import NetError
 MAX_LINE = 4096
 UP_TIMEOUT = 20          # `connection up` may wait for DHCP; the panel request must outlast the total below
 OTHER_TIMEOUT = 10
-MAX_REVERT_TRIES = 20
+SCAN_TIMEOUT = 15        # `device wifi list --rescan yes` waits for the scan to finish
+WIFI_UP_TIMEOUT = 45     # joining Wi-Fi (association, then DHCP) takes longer than a cable
+MAX_REVERT_TRIES = 20    # then it keeps trying, slowly, and never gives up while running
 REVERT_RETRY_SECONDS = 3
+SLOW_RETRY_SECONDS = 60
 
 
 class NetService:
     def __init__(self, runner=subprocess.run, clock=time.monotonic, sysfs="/sys/class/net", state_dir=None,
-                 log=print):
+                 log=print, keyfile_dir=netcfg.KEYFILE_DIR, new_token=None):
         self.runner, self.clock, self.sysfs, self.log = runner, clock, sysfs, log
+        self.keyfile_dir = keyfile_dir
+        self.new_token = new_token or (lambda: os.urandom(4).hex())
         self.state_file = os.path.join(state_dir, "net-pending.json") if state_dir else None
         self.pending = None
         self._revert_job = None
@@ -57,6 +56,8 @@ class NetService:
         assert isinstance(argv, list) and argv[0] in ("nmcli", "ip")
         if timeout is None:
             timeout = UP_TIMEOUT if argv[:3] == ["nmcli", "connection", "up"] else OTHER_TIMEOUT
+            if argv[1:7] == ["-t", "-f", "SSID,SIGNAL,SECURITY,CHAN", "device", "wifi", "list"]:
+                timeout = SCAN_TIMEOUT
         try:
             return self.runner(argv, capture_output=True, text=True, timeout=timeout)
         except FileNotFoundError:
@@ -64,8 +65,8 @@ class NetService:
         except subprocess.TimeoutExpired:
             raise NetError("%s did not answer in %d seconds" % (argv[0], timeout))
 
-    def _must(self, argv):
-        r = self._run(argv)
+    def _must(self, argv, timeout=None):
+        r = self._run(argv, timeout)
         if r.returncode != 0:
             raise NetError((r.stderr or r.stdout or "nmcli failed").strip()[:300])
         return r.stdout
@@ -80,6 +81,65 @@ class NetService:
             if dev == iface and netcfg.UUID.fullmatch(uuid):
                 return uuid
         return None
+
+    def _radio(self):
+        """(hardware allows it, radio on), from `nmcli radio`; (None, None) when it cannot be read."""
+        try:
+            r = self._run(["nmcli", "-t", "-f", "WIFI-HW,WIFI", "radio"])
+        except NetError:
+            return None, None
+        f = netcfg.parse_terse(r.stdout.strip()) if r.returncode == 0 else []
+        if len(f) != 2:
+            return None, None
+        return f[0] == "enabled", f[1] == "enabled"
+
+    def _wifi_now(self, iface):
+        """What a Wi-Fi port is doing: the network name and whether it is the box's own hotspot."""
+        uuid = self._active_uuid(iface)
+        if not uuid:
+            return None
+        try:
+            r = self._run(["nmcli", "-t", "-g", "802-11-wireless.ssid,802-11-wireless.mode", "connection", "show", "uuid", uuid])
+        except NetError:
+            return None
+        lines = r.stdout.split("\n") if r.returncode == 0 else []
+        if len(lines) < 2:
+            return None
+        return {"ssid": netcfg.clean_ssid(netcfg.unescape_terse(lines[0])) or "?",
+                "hotspot": lines[1].strip() == "ap"}
+
+    def _write_keyfile(self, cfg, token):
+        """The candidate Wi-Fi profile, readable by root only. The directory must be root's and not writable by
+        anyone else; the file must not exist (no following a planted link)."""
+        d = self.keyfile_dir
+        try:
+            st = os.lstat(d)
+        except OSError:
+            raise NetError("NetworkManager's profile folder %s is missing" % d)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o022:
+            raise NetError("NetworkManager's profile folder %s is not safe to write to" % d)
+        path = netcfg.keyfile_path(cfg["iface"], token, d)
+        text = netcfg.keyfile(cfg, str(uuidlib.uuid4()))
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except OSError:
+            raise NetError("could not write the Wi-Fi profile (%s exists or cannot be made)" % path)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError:
+            self._unlink_keyfile(cfg["iface"], token)
+            raise NetError("could not write the Wi-Fi profile")
+
+    def _unlink_keyfile(self, iface, token):
+        if not token:
+            return
+        try:
+            os.unlink(netcfg.keyfile_path(iface, token, self.keyfile_dir))
+        except (OSError, NetError):
+            pass
 
     def _exists(self, name):
         return self._run(["nmcli", "-t", "-f", "connection.id", "connection", "show", "id", name]).returncode == 0
@@ -107,16 +167,41 @@ class NetService:
         return netcfg.validate(request, netcfg.list_interfaces(self.sysfs), self._others())
 
     # --- public operations ---------------------------------------------------------
-    def status(self):
+    def status(self, wifi=False):
         with self.lock:
             p = self.pending
-            return {"interfaces": netcfg.list_interfaces(self.sysfs), "reverting": self._revert_job is not None,
-                    "pending": None if p is None else {"iface": p.cfg["iface"], "mode": p.cfg["mode"],
-                                                       "seconds_left": p.seconds_left(self.clock())}}
+            out = {"interfaces": netcfg.list_interfaces(self.sysfs), "reverting": self._revert_job is not None,
+                   "pending": None if p is None else {"iface": p.cfg["iface"], "mode": p.cfg["mode"],
+                                                      "ssid": p.cfg.get("ssid"),
+                                                      "seconds_left": p.seconds_left(self.clock())}}
+        if wifi and any(i["kind"] == "wifi" for i in out["interfaces"]):
+            hw, on = self._radio()   # outside the lock: a slow nmcli must not hold up an apply or the timer
+            out["wifi"] = {"hardware": hw, "radio": on,
+                           "ports": {i["name"]: self._wifi_now(i["name"]) for i in out["interfaces"] if i["kind"] == "wifi"}}
+        return out
 
     def plan(self, request):
         cfg = self._validated(request)
-        return {"config": cfg, "commands": netcfg.preview(netcfg.plan(cfg))}
+        return {"config": netcfg.public(cfg), "commands": netcfg.preview(netcfg.plan(cfg, None, self.keyfile_dir))}
+
+    def scan(self, iface):
+        """Wi-Fi networks in range of one Wi-Fi port, strongest first."""
+        ports = [i for i in netcfg.list_interfaces(self.sysfs) if i["kind"] == "wifi"]
+        if not isinstance(iface, str) or iface not in [i["name"] for i in ports]:
+            raise NetError("no such Wi-Fi port")
+        hw, on = self._radio()
+        if hw is False:
+            raise NetError("Wi-Fi is blocked on this box (a switch, or no Wi-Fi country set)")
+        if on is False:
+            raise NetError("Wi-Fi is off; choose a network or a hotspot and apply it to switch it on")
+        base = ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,CHAN", "device", "wifi", "list", "ifname", iface]
+        r = self._run(base + ["--rescan", "yes"])
+        if r.returncode != 0:   # "scanning not allowed" right after another scan: the cached list is fine
+            r = self._run(base + ["--rescan", "no"])
+        if r.returncode != 0:
+            raise NetError((r.stderr or "the Wi-Fi scan failed").strip()[:300])
+        now = self._wifi_now(iface)
+        return {"networks": netcfg.scan_results(r.stdout, current=now["ssid"] if now and not now["hotspot"] else None)}
 
     def apply(self, request):
         with self.lock:
@@ -124,14 +209,31 @@ class NetService:
                 raise NetError("a change is already waiting for confirmation (or being undone); wait or revert it first")
             cfg = self._validated(request)
             iface = cfg["iface"]
+            wifi = netcfg.is_wifi(cfg)
+            radio_was_off, token = False, None
+            if wifi:
+                hw, on = self._radio()
+                if hw is False:
+                    raise NetError("Wi-Fi is blocked on this box (a switch, or no Wi-Fi country set); it cannot be changed here")
+                if cfg["mode"] == "off" and on is False:
+                    raise NetError("Wi-Fi is already off")
+                radio_was_off = cfg["mode"] != "off" and on is False
+                if cfg["mode"] != "off":
+                    token = self.new_token()
             previous = self._active_uuid(iface)
-            self.pending = netcfg.PendingChange(cfg, previous, self.clock(), cfg["revert_seconds"])
+            # the password stays only in the keyfile: what is kept in memory and on disk here never holds it
+            self.pending = netcfg.PendingChange(netcfg.public(cfg), previous, self.clock(), cfg["revert_seconds"])
+            self.pending.radio_was_off, self.pending.keyfile = radio_was_off, token
             self._save_state("pending")
             try:
                 if self._exists(netcfg.candidate_name(iface)):  # a leftover from an earlier crash
                     self._run(["nmcli", "connection", "delete", "id", netcfg.candidate_name(iface)])
-                for cmd in netcfg.plan(cfg):
-                    self._must(cmd)
+                if radio_was_off:
+                    self._must(["nmcli", "radio", "wifi", "on"])
+                if token:
+                    self._write_keyfile(cfg, token)
+                for cmd in netcfg.plan(cfg, token, self.keyfile_dir):
+                    self._must(cmd, WIFI_UP_TIMEOUT if wifi and cmd[2] == "up" else None)
             except NetError as e:
                 self._begin_revert()
                 undone = self._attempt_revert()
@@ -145,9 +247,27 @@ class NetService:
             if not self.pending:
                 raise NetError("nothing is waiting for confirmation")
             iface = self.pending.cfg["iface"]
-            old_exists = self._exists(netcfg.profile_name(iface))
-            for cmd in netcfg.confirm_plan(iface, old_exists):
-                self._must(cmd)
+            wifi_off = netcfg.is_wifi(self.pending.cfg) and self.pending.cfg["mode"] == "off"
+            if not wifi_off and self._exists(netcfg.old_name(iface)):   # left from an earlier confirm
+                self._run(["nmcli", "connection", "delete", "id", netcfg.old_name(iface)])
+            old_exists = not wifi_off and self._exists(netcfg.profile_name(iface))
+            cmds = netcfg.confirm_plan(iface, old_exists, wifi_off)
+            final = cmds.pop() if old_exists else None   # deleting the old profile is last, and not required
+            try:
+                for cmd in cmds:
+                    self._must(cmd)
+            except NetError:
+                # still undoable: give the old profile its name back if it had been renamed (best effort)
+                if old_exists and self._exists(netcfg.old_name(iface)):
+                    self._run(["nmcli", "connection", "modify", "id", netcfg.old_name(iface),
+                               "connection.id", netcfg.profile_name(iface)])
+                raise
+            if final:
+                try:
+                    if self._run(final).returncode != 0:
+                        self.log("pvj-netd: kept the new network, but could not delete the old profile; it goes at the next change")
+                except NetError:
+                    self.log("pvj-netd: kept the new network, but could not delete the old profile; it goes at the next change")
             self.pending = None
             self._save_state(None)
             return self.status()
@@ -163,7 +283,8 @@ class NetService:
     # --- undoing, with retries ----------------------------------------------------------
     def _begin_revert(self):
         p, self.pending = self.pending, None
-        self._revert_job = {"iface": p.cfg["iface"], "uuid": p.previous_uuid, "tries": 0, "next": 0}
+        self._revert_job = {"iface": p.cfg["iface"], "uuid": p.previous_uuid, "tries": 0, "next": 0,
+                            "radio_was_off": getattr(p, "radio_was_off", False), "keyfile": getattr(p, "keyfile", None)}
         self._save_state("reverting")
 
     def _attempt_revert(self):
@@ -173,8 +294,13 @@ class NetService:
             return True
         ok = True
         try:
-            cmds = netcfg.revert_plan(job["iface"], self._exists(netcfg.candidate_name(job["iface"])), job["uuid"])
-        except NetError as e:
+            # a slow or failing nmcli here is a failed try, never a reason to drop the undo
+            candidate_exists = self._exists(netcfg.candidate_name(job["iface"]))
+        except NetError:
+            candidate_exists, ok = True, False
+        try:
+            cmds = netcfg.revert_plan(job["iface"], candidate_exists, job["uuid"], job.get("radio_was_off", False))
+        except NetError as e:   # only a bad connection id in the saved state can get here
             self.log("pvj-netd: cannot plan the undo: %s" % e)
             self._revert_job = None
             self._save_state(None)
@@ -187,15 +313,18 @@ class NetService:
                 continue
             if r.returncode != 0 and cmd[2] != "down":  # taking an already-down profile down may complain
                 ok = False
+        if ok:   # a keyfile written but never loaded (a crash in between) is not removed by nmcli
+            self._unlink_keyfile(job["iface"], job.get("keyfile"))
         job["tries"] += 1
-        job["next"] = self.clock() + REVERT_RETRY_SECONDS
+        job["next"] = self.clock() + (REVERT_RETRY_SECONDS if job["tries"] < MAX_REVERT_TRIES else SLOW_RETRY_SECONDS)
         if ok:
             self._revert_job = None
             self._save_state(None)
             return True
-        if job["tries"] >= MAX_REVERT_TRIES:
-            self.log("pvj-netd: GAVE UP undoing a network change after %d tries; state kept for a restart" % job["tries"])
-            self._revert_job = None  # the state file stays, so the next start tries again
+        if job["tries"] == MAX_REVERT_TRIES:
+            # Never dropped while running: a new change must not overwrite what is still owed. From now on
+            # it is tried once a minute; the saved state also lets a restart take it over.
+            self.log("pvj-netd: STILL FAILING to undo a network change after %d tries; trying once a minute" % job["tries"])
         return False
 
     def tick(self):
@@ -220,9 +349,11 @@ class NetService:
             except OSError:
                 pass
             return
-        job = self._revert_job
-        data = {"phase": phase, "iface": (job["iface"] if job else self.pending.cfg["iface"]),
-                "previous_uuid": (job["uuid"] if job else self.pending.previous_uuid)}
+        job, p = self._revert_job, self.pending
+        data = {"phase": phase, "iface": (job["iface"] if job else p.cfg["iface"]),
+                "previous_uuid": (job["uuid"] if job else p.previous_uuid),
+                "radio_was_off": bool(job.get("radio_was_off") if job else getattr(p, "radio_was_off", False)),
+                "keyfile": (job.get("keyfile") if job else getattr(p, "keyfile", None))}
         tmp = self.state_file + ".tmp"
         try:
             os.unlink(tmp)
@@ -248,6 +379,11 @@ class NetService:
                 raise ValueError("bad interface")
             if uuid is not None and not (isinstance(uuid, str) and netcfg.UUID.fullmatch(uuid)):
                 raise ValueError("bad connection id")
+            radio_was_off, token = d.get("radio_was_off", False), d.get("keyfile")
+            if not isinstance(radio_was_off, bool):
+                raise ValueError("bad radio state")
+            if token is not None and not (isinstance(token, str) and netcfg.TOKEN.fullmatch(token)):
+                raise ValueError("bad keyfile name")
         except (OSError, ValueError, KeyError, TypeError):
             self.log("pvj-netd: ignoring an unreadable or invalid saved state")
             try:
@@ -256,7 +392,8 @@ class NetService:
                 pass
             return False
         with self.lock:
-            self._revert_job = {"iface": iface, "uuid": uuid, "tries": 0, "next": 0}
+            self._revert_job = {"iface": iface, "uuid": uuid, "tries": 0, "next": 0,
+                                "radio_was_off": radio_was_off, "keyfile": token}
             self._attempt_revert()
         return True
 
@@ -267,7 +404,9 @@ class NetService:
                 raise NetError("request must be an object")
             cmd = message.get("cmd")
             if cmd == "status":
-                return {"ok": True, **self.status()}
+                return {"ok": True, **self.status(wifi=message.get("wifi") is True)}
+            if cmd == "scan":
+                return {"ok": True, **self.scan(message.get("iface"))}
             if cmd == "plan":
                 return {"ok": True, **self.plan(message.get("config"))}
             if cmd == "apply":
@@ -327,7 +466,7 @@ class _Handler(socketserver.StreamRequestHandler):
 class NetdClient:
     """Used by the panel: one request, one reply."""
 
-    def __init__(self, path, timeout=60):
+    def __init__(self, path, timeout=180):   # a Wi-Fi apply that fails and is undone can take about two minutes
         self.path, self.timeout = path, timeout
 
     def request(self, message):

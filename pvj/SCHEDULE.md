@@ -2,11 +2,11 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Weekly schedule (beta)
 
-Play a clip or a legacy start script, stop, black out or show the screen, or switch the projectors on or off at a set time on chosen days. Switch the **Weekly schedule** module on under System > Modules, then use System > Schedule (full-access devices change it; view devices can read it). Off by default, and nothing runs until the module and the schedule switch are both on.
+Play a clip or a legacy start script, stop, black out or show the screen, or switch the projectors on or off at a set time on chosen days. Switch it on under System > Schedule, then turn the schedule on with the button inside the page (full-access devices change it; view devices can read it). Off by default, and nothing runs until the module and the schedule switch are both on.
 
 ## What an entry can do
 
-`play` (a clip from the media folder, loop on or off), `preset` (a legacy start script such as `startlessonce05`, in `"preset"`), `stop`, `blackout`, `show`, `projector_on` and `projector_off` (every projector added under System > Projectors, see [PROJECTORS.md](PROJECTORS.md)), and `vibes` (start the endless shader rotation, see [SHADERS.md](SHADERS.md); the module must be on; a `stop` entry ends it), and `scene` (apply a scene of the Room module, by its id in `"scene"`: groups of projectors on or off, their source and mutes, and what the box plays, see [ROOM.md](ROOM.md); the entry answers at once and the projectors follow in the background, so "Last run" says whether the scene was started, and the Room screen how it went). Nothing else is schedulable: no shutdown, reboot or settings changes.
+`play` (a clip from the media folder, loop on or off), `preset` (a legacy start script such as `startlessonce05`, in `"preset"`), `stop`, `blackout`, `show`, `projector_on` and `projector_off` (every projector added under System > Projectors, see [PROJECTORS.md](PROJECTORS.md)), and `vibes` (start the endless shader rotation, see [SHADERS.md](SHADERS.md); the module must be on; a `stop` entry ends it), and `scene` (apply a scene of the Room module, by its id in `"scene"`: groups of projectors on or off, their source and mutes, and what the box plays, see [ROOM.md](ROOM.md); a scene that plays a clip, a pad, a stream or Vibes also takes a blackout off, so a `blackout` entry before it does not leave the screen dark; the entry answers at once and the projectors follow in the background, so "Last run" says whether the scene was started, and the Room screen how it went). Nothing else is schedulable: no shutdown, reboot or settings changes.
 
 ## Clock rules
 

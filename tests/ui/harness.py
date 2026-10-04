@@ -36,7 +36,11 @@ from tests.test_netd import FakeNm, make_sysfs  # noqa: E402
 from pvj.netd import NetService  # noqa: E402
 
 _fake_nm = FakeNm()
-_net_service = NetService(runner=_fake_nm, sysfs=make_sysfs())
+_fake_nm.scan_text = ("Leyline Staff:72:WPA2:36\nVenue Guest:40::1\nCorp:60:WPA2 802.1X:6\n"
+                      "<img src=x onerror=pwned=1>:30:WPA2:11\n")   # names come from strangers
+_keyfiles = os.path.join(tmp, "nm-connections")
+os.makedirs(_keyfiles, mode=0o700)
+_net_service = NetService(runner=_fake_nm, sysfs=make_sysfs(), keyfile_dir=_keyfiles)
 
 
 class _DirectNet:

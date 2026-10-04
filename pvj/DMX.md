@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # DMX over the network (beta)
 
-Control the box from a lighting console or software (QLC+, Resolume, MadMapper, grandMA and others) over **Art-Net** (UDP 6454) or **sACN / E1.31** (UDP 5568). Switch on **DMX over the network** under System > Modules, then use System > DMX. Off until you turn it on. Full-access devices only.
+Control the box from a lighting console or software (QLC+, Resolume, MadMapper, grandMA and others) over **Art-Net** (UDP 6454) or **sACN / E1.31** (UDP 5568). Switch it on under System > DMX lighting desk (the button on that page, then the switch at its top right), then turn DMX on with the button inside the page. Off until you turn it on. Full-access devices only.
 
 Tell the console the box's address and universe; the box does not announce itself (no ArtPollReply, no discovery, nothing is ever sent back).
 

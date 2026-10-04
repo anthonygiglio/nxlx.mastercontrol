@@ -183,37 +183,50 @@ function startServer() {
       { label: 'Lamps off', time: '23:45', days: [0, 1, 2, 3, 4, 5, 6], action: 'projector_off' }] });
     await api('POST', '/api/streams', { action: 'add', name: 'Stage camera', url: 'rtsp://admin:secret@192.168.0.40/live' });
     await api('POST', '/api/streams', { action: 'add', name: 'Laptop (SRT)', url: 'srt://192.168.0.20:9000' });
-    await page.click('nav >> text=System');
-    await page.waitForSelector('#schedclock');
-    await page.waitForSelector('.stream-entry');
-    await page.waitForSelector('#dmxline');
-    await page.waitForSelector('#midiline');
-    await page.waitForSelector('#netiface');
-    // The newer cards: a wait that runs out must not stop the other shots (the picture then shows what is there).
+    // System is an index of rows and one page per row: each card is photographed on its own page.
+    // A wait that runs out must not stop the other shots (the picture then shows what is there).
     const soft = (what, p) => p.catch(() => failures.push('wait: ' + what));
-    await soft('projectors', page.waitForSelector('.proj-status:has-text("lamp")'));   // the harness's fake projectors have answered
-    await soft('sound output', page.waitForSelector('#audioline, #audiomsg'));
-    await soft('box', page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent)));
-    await soft('access codes', page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));
-    await page.waitForTimeout(800);
-
-    await page.evaluate(() => { document.querySelector('.tabs').style.setProperty('display', 'none', 'important'); });   // the fixed tab bar would cover the bottom of tall cards
-    await shot('system-vitals', (f) => card('Vitals').screenshot({ path: f }));
-    await shot('system-modules', (f) => card('Modules').screenshot({ path: f }));
-    await shot('box', (f) => card('Box').screenshot({ path: f }));
-    await shot('sound-output', (f) => card('Sound output').screenshot({ path: f }));
-    await shot('projectors', (f) => card('Projectors').screenshot({ path: f }));
-    await shot('autostart', (f) => card('Autostart').screenshot({ path: f }));
-    await shot('schedule', (f) => card('Schedule').screenshot({ path: f }));
-    await shot('streams', (f) => card('Streams').screenshot({ path: f }));
-    await shot('dmx', (f) => card('DMX').screenshot({ path: f }));
-    await shot('midi', (f) => card('MIDI').screenshot({ path: f }));
-    await shot('network', (f) => card('Network').screenshot({ path: f }));
-    await shot('control-osc', (f) => card('Control \\(OSC\\)').screenshot({ path: f }));
-    await shot('appearance', (f) => card('Appearance').screenshot({ path: f }));
-    await shot('access', (f) => card('Access').screenshot({ path: f }));
-
-    await page.evaluate(() => { document.querySelector('.tabs').style.removeProperty('display'); });
+    async function sysIndex() {
+      if (await page.locator('#sysback').count()) await page.click('#sysback');
+      else if (!(await page.locator('#sysindex').count())) await page.click('nav >> text=System');
+      await page.waitForSelector('#sysindex');
+    }
+    async function sys(name) {
+      await sysIndex();
+      await page.click(`.navrow:has(.navname:text-is("${name}"))`);
+      await page.waitForSelector(`#syspage h1:text-is("${name}")`);
+    }
+    async function pageShot(name, row, title, ready) {
+      await shot(name, async (f) => {
+        await sys(row);
+        if (ready) await soft(name, ready());
+        await page.waitForTimeout(600);
+        await tabs(false);             // the fixed tab bar would cover the bottom of tall cards
+        try { await card(title).screenshot({ path: f }); } finally { await tabs(true); }
+      });
+    }
+    await shot('system-index', async (f) => {
+      await sysIndex();
+      await soft('index states', page.waitForSelector('.navrow .chip-ready, .navrow .chip-active'));
+      await page.waitForTimeout(1500);                      // every row has its answer
+      await whole(f);
+    });
+    await shot('system-page', async (f) => { await sys('Streams'); await soft('streams page', page.waitForSelector('.stream-entry')); await page.waitForTimeout(600); await whole(f); });
+    await shot('system-page-off', async (f) => { await sys('Vibes'); await page.waitForSelector('#sysswitchon'); await whole(f); });
+    await pageShot('health', 'Health', 'Health', () => page.waitForSelector('#healthpower'));
+    await pageShot('box', 'About and power', 'Box', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent)));
+    await pageShot('sound-output', 'Sound', 'Sound output', () => page.waitForSelector('#audioline, #audiomsg'));
+    await pageShot('projectors', 'Projectors', 'Projectors', () => page.waitForSelector('.proj-status:has-text("lamp")'));   // the harness's fake projectors have answered
+    await pageShot('autostart', 'At power-up', 'Autostart', () => page.waitForSelector('#autoline'));
+    await pageShot('schedule', 'Schedule', 'Schedule', () => page.waitForSelector('#schedclock'));
+    await pageShot('streams', 'Streams', 'Streams', () => page.waitForSelector('.stream-entry'));
+    await pageShot('dmx', 'DMX lighting desk', 'DMX', () => page.waitForSelector('#dmxline'));
+    await pageShot('midi', 'MIDI controller', 'MIDI', () => page.waitForSelector('#midiline'));
+    await pageShot('network', 'Network', 'Network', () => page.waitForSelector('#netiface'));
+    await pageShot('control-osc', 'OSC', 'Control \\(OSC\\)', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('oscline').textContent)));
+    await pageShot('appearance', 'Look', 'Appearance');
+    await pageShot('access', 'People and codes', 'Access', () => page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));
+    await sysIndex();
 
     // Whole screens, top to bottom, as a starting point for mock-ups (docs/mockups/current). Every optional module
     // is switched on first, so every card is in the picture.

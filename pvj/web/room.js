@@ -8,8 +8,10 @@
   'use strict';
 
   var timer = null;        // the next look at /api/room
-  var armed = 0;           // until when a second tap on "All off" counts (Date.now())
+  var armed = 0;           // when "All off" asked its question (Date.now()); 0: not asking
   var armTimer = null;
+  var resume = null;       // looks again when the tab is shown again (nothing is asked while it is hidden)
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden' && resume) resume(); });
   var names = {};          // scene id -> name, for the schedule card
   var streams = null;      // saved streams, read once when a scene may play one
   var draft = { group: blankGroup(), scene: blankScene() };     // what is being typed; survives redraws
@@ -69,17 +71,28 @@
           return h('button', { class: 'btn grow ' + (cls || 'big'), text: text, 'aria-label': title + ': ' + text, 'data-action': action,
             onclick: function () { send('/api/room/group', body, title + ': ' + text + ', started'); } });
         };
-        if (all) {
-          var isArmed = Date.now() < armed;
+        if (all && armed) {
+          // The question takes the place of the two buttons, so the second tap of a double tap lands on it: a
+          // "yes" in the first 600 ms after asking is not taken. "No", or 8 seconds, puts the buttons back.
+          var n = g.projectors.length, calm = function () { armed = 0; clearTimeout(armTimer); if (last && document.body.contains(root)) drawLive(last); };
+          kids.push(h('div', { class: 'confirm', id: 'roomallask', role: 'alert' },
+            h('span', { text: n === 1 ? 'Turn off the projector? It needs about a minute to cool before it can come on again.' :
+              'Turn off all ' + n + ' projectors? They need about a minute to cool before they can come on again.' }),
+            h('div', { class: 'row' },
+              h('button', { class: 'btn danger grow big', id: 'roomalloffyes', text: 'Turn off', onclick: function () {
+                if (Date.now() - armed < 600) return;
+                armed = 0; clearTimeout(armTimer);
+                send('/api/room/group', { group: 'all', action: 'off' }, 'Everything: off, started');
+              } }),
+              h('button', { class: 'btn grow big', id: 'roomallkeep', text: n === 1 ? 'Keep it on' : 'Keep them on', onclick: calm }))));
+        } else if (all) {
           kids.push(h('div', { class: 'row wrap' }, button('All on', 'on'),
-            h('button', { class: 'btn big grow' + (isArmed ? ' on' : ''), id: 'roomalloff', text: isArmed ? 'Tap again: everything off' : 'All off', onclick: function () {
+            h('button', { class: 'btn big grow', id: 'roomalloff', text: 'All off', onclick: function () {
               clearTimeout(armTimer);
-              if (Date.now() < armed) { armed = 0; return send('/api/room/group', { group: 'all', action: 'off' }, 'Everything: off, started'); }
-              armed = Date.now() + 6000;
-              armTimer = setTimeout(function () { armed = 0; if (last && document.body.contains(root)) drawLive(last); }, 6000);
+              armed = Date.now();
+              armTimer = setTimeout(function () { armed = 0; if (last && document.body.contains(root)) drawLive(last); }, 8000);
               drawLive(last);
-            } }),
-            isArmed ? h('button', { class: 'btn big', id: 'roomallcancel', text: 'Cancel', onclick: function () { armed = 0; clearTimeout(armTimer); drawLive(last); } }) : null));
+            } })));
         } else {
           kids.push(h('div', { class: 'row' }, button('On', 'on'), button('Off', 'off')));
           if (g.inputs.length) {
@@ -307,7 +320,7 @@
         shownLive = shownSetup = null;
         return;
       }
-      var a = JSON.stringify([d.scenes.map(function (s) { return [s.id, s.name]; }), d.groups, d.all, d.job, Date.now() < armed]);
+      var a = JSON.stringify([d.scenes.map(function (s) { return [s.id, s.name]; }), d.groups, d.all, d.job, armed]);
       if (a !== shownLive) { shownLive = a; drawLive(d); }
       if (!setup) return;
       var plain = function (g) { return [g.id, g.name, g.projectors, g.inputs]; };
@@ -316,13 +329,18 @@
       var typing = at && setup.contains(at) && /^(INPUT|SELECT)$/.test(at.tagName);
       if (force || (b !== shownSetup && !typing)) { shownSetup = b; drawSetup(d, force); }
     }
+    var wait = 2000;       // between two looks; longer after each one that fails, back to 2 seconds when one works
     function load(now) {
       clearTimeout(timer);
-      if (!now && document.visibilityState === 'hidden') { timer = setTimeout(function () { if (document.body.contains(root)) load(); }, 2000); return; }
+      resume = function () { if (document.body.contains(root)) load(true); };
+      if (!c.state.device) return;                                       // no longer paired: nothing more is asked
+      if (!now && document.visibilityState === 'hidden') return;         // a hidden tab asks nothing; `resume` looks again
       c.api('GET', '/api/room').then(function (r) {
         if (!document.body.contains(root)) return;
         clearTimeout(timer);
-        timer = setTimeout(function () { if (document.body.contains(root)) load(); }, 2000);
+        wait = r.ok ? 2000 : Math.min(wait * 2, 30000);
+        if (!c.state.device) return;
+        timer = setTimeout(function () { if (document.body.contains(root)) load(); }, wait);
         if (!r.ok) {
           if (last === null) { scenes.textContent = ''; scenes.appendChild(h('h2', { text: 'Scenes' })); scenes.appendChild(h('div', { class: 'k', id: 'roommsg', text: r.data.error || 'Not available' })); }
           return;

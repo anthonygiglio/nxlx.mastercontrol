@@ -167,5 +167,20 @@ class WebUnitTest(unittest.TestCase):
         self.assertNotIn("AF_PACKET", families)
 
 
+class NetdUnitTest(unittest.TestCase):
+    def test_the_network_helper_may_write_where_it_puts_wi_fi_profiles(self):
+        # found by review: ProtectSystem=strict made /etc read-only, so every Wi-Fi join would have failed
+        from pvj import netcfg
+        keys = load_units()["pvj-netd.service"]
+        self.assertEqual(keys["ProtectSystem"], ["strict"])
+        paths = [p.lstrip("-") for p in words(keys, "ReadWritePaths")]
+        self.assertIn(netcfg.KEYFILE_DIR, paths)
+        self.assertEqual(sorted(paths), sorted(["/run/pvj", "/var/lib/pvj-netd", netcfg.KEYFILE_DIR]))
+
+    def test_the_network_helper_may_read_the_boxs_addresses(self):
+        families = words(load_units()["pvj-netd.service"], "RestrictAddressFamilies")
+        self.assertEqual(sorted(families), ["AF_NETLINK", "AF_UNIX"])
+
+
 if __name__ == "__main__":
     unittest.main()
