@@ -1912,9 +1912,9 @@ class Api:
                     name = ask.get("controller") if isinstance(ask, dict) else None
                     if not isinstance(name, str) or not midi_mod.SOURCE.fullmatch(name):
                         raise bad("name the controller")
-                    profile = self.midi.profile_for(name)
+                    profile = self.midi.profile_of(name)        # the layout the hub matched for the connected controller
                     if profile is None:
-                        raise ApiError(404, "no built-in layout for that controller")
+                        raise ApiError(404, "that controller is not plugged in, or has no built-in layout")
                     if "set" in body:
                         changed = midi_mod.add_entry(current, midi_mod.override_entry(profile, name, ask.get("control"), ask.get("action")))
                     else:

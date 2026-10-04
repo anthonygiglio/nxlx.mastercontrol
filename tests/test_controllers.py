@@ -181,7 +181,6 @@ class MapperTest(unittest.TestCase):
                                           ("/api/shaders/values", {"control": 7, "level": 10})])
         mix = self.mapper(MIX, "Mix")
         self.cc(mix, "Mix", 25, 127)                           # knob B3 is CC 25: "blackout while held up" in the built-in map
-        self.assertEqual(self.rec.calls[-1], ("/api/control", {"action": "vibes_dwell", "value": 3600}) if False else self.rec.calls[-1])
         self.assertEqual(self.rec.calls[-1], ("/api/vibes", {"dwell": 3600}))
         self.assertFalse(any(p == "/api/blackout" for p, _ in self.rec.calls))
 
@@ -196,6 +195,17 @@ class MapperTest(unittest.TestCase):
         self.cc(m, "nanoKONTROL2", 16, 127)
         self.cc(m, "nanoKONTROL2", 17, 127)
         self.assertEqual(self.rec.calls, [("/api/control", {"action": "size", "value": 200.0}), ("/api/shaders/values", {"control": 2, "level": 127})])
+        every = midi.validate_entry({"source": "*", "kind": "cc", "number": 17, "action": "volume"})     # for any controller: it wins over the layout
+        m = self.mapper(NANO, "nanoKONTROL2", every)
+        self.cc(m, "nanoKONTROL2", 17, 127)
+        self.assertEqual(self.rec.calls[-1], ("/api/control", {"action": "volume", "value": 100.0}))
+        m = self.mapper(NANO, "nanoKONTROL2", every, midi.validate_entry({"source": "nanoKONTROL2", "kind": "cc", "number": 17, "action": "size"}))
+        self.rec.calls.clear()
+        self.cc(m, "nanoKONTROL2", 17, 0)                      # and the controller's own mapping comes before that one, alone
+        self.assertEqual(self.rec.calls, [("/api/control", {"action": "size", "value": 1.0})])
+        self.rec.calls.clear()
+        self.cc(m, "nanoKONTROL2", 16, 127)
+        self.cc(m, "nanoKONTROL2", 17, 127)
         nothing = midi.validate_entry({"source": "nanoKONTROL2", "kind": "cc", "number": 42, "action": "none"})
         m = self.mapper(NANO, "nanoKONTROL2", nothing)
         self.cc(m, "nanoKONTROL2", 42, 127)                    # Stop, switched off by the person
@@ -395,6 +405,10 @@ class HubTest(HubBase):
         got = {c["name"]: (c["profile"] or {}).get("id") for c in self.hub.status()["controllers"]}
         self.assertEqual(got, {"nanoKONTROL2": NANO, "Mix": MIX, "Mini": PAD, "keys": None, "Mini_1": None})   # a Launchkey Mini is not a Launchpad Mini
         self.assertEqual(next(c for c in self.hub.status()["controllers"] if c["name"] == "keys")["controls"], [])
+        launchkey = {"set": {"controller": "Mini_1", "control": "side_g", "action": {"action": "none"}}}
+        self.assertEqual(self.post("/api/midi/map", launchkey)[0], 404)       # its card id fits, its product name does not: no layout to change
+        self.assertEqual(self.post("/api/midi/map", {"reset": {"controller": "Mini_1"}})[0], 404)
+        self.assertEqual(self.post("/api/midi/map", {"reset": {"controller": "Mix_1"}})[0], 404)      # not plugged in
         self.send("/dev/snd/midiC3D0", [0x90, 104, 127])                  # the Launchpad's G: Stop
         self.wait(lambda: len(self.player.calls) >= 1)
         before = len(self.player.calls)
@@ -416,10 +430,17 @@ class HubTest(HubBase):
         self.assertEqual([(c["name"], c["standard"]) for c in body["controllers"]], [("nanoKONTROL2", True), ("Mini", False)])
         self.assertTrue(all(x["action"] is None for x in self.controller("Mini")["controls"]))
         self.assertEqual(next(x for x in self.controller("Mini")["controls"] if x["id"] == "side_g")["standard"], {"action": "stop"})
+        reached, real = [], self.api.handle
+
+        def handle(method, path, body, *rest):
+            reached.append((path, body))
+            return real(method, path, body, *rest)
+        self.api.handle = handle
         self.send("/dev/snd/midiC3D0", [0x90, 104, 127])                  # G does nothing now
         self.send("/dev/snd/midiC3D0", [0x90, 74, 127])                   # and the built-in map is back for it: blackout
         self.wait(lambda: self.api.mix["blackout"])
-        self.assertEqual(self.player.calls[:0], [])
+        self.assertEqual(reached, [("/api/blackout", {"on": True})])       # no Stop was sent for G
+        self.api.handle = real
         st, body, _ = self.post("/api/midi", {"controller": "Mini", "standard": True})
         self.assertEqual(self.settings.data["control"]["midi"]["controllers"], {})        # on is the default: nothing is kept
         for bad in ({"controller": "Mini"}, {"standard": True}, {"controller": "a/b", "standard": True}, {"controller": "Mini", "standard": 1}):
@@ -445,6 +466,18 @@ class HubTest(HubBase):
         st, body, _ = self.post("/api/midi/map", {"reset": {"controller": "nanoKONTROL2"}})          # the whole controller
         self.assertEqual([(e["source"], e["number"]) for e in body["map"]], [("*", 99)])               # other mappings are kept
         self.assertTrue(all(x["origin"] != "yours" for x in body["controllers"][0]["controls"]))
+        # a mapping for any controller wins on this one too, is shown as such, and no reset here removes it; neither
+        # does a reset remove this controller's mapping on a number that is not in its layout
+        self.post("/api/midi/map", {"add": {"source": "*", "kind": "cc", "number": 42, "action": "pause"}})
+        self.post("/api/midi/map", {"add": {"source": "nanoKONTROL2", "kind": "cc", "number": 100, "action": "stop"}})
+        stop = next(x for x in self.controller("nanoKONTROL2")["controls"] if x["id"] == "stop")
+        self.assertEqual((stop["action"], stop["origin"]), ({"action": "pause"}, "any"))
+        self.post("/api/midi/map", {"reset": {"controller": "nanoKONTROL2", "control": "stop"}})
+        st, body, _ = self.post("/api/midi/map", {"reset": {"controller": "nanoKONTROL2"}})
+        self.assertEqual(sorted((e["source"], e["number"]) for e in body["map"]), [("*", 42), ("*", 99), ("nanoKONTROL2", 100)])
+        self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "stop", "action": {"action": "fadeout"}}})
+        stop = next(x for x in self.controller("nanoKONTROL2")["controls"] if x["id"] == "stop")
+        self.assertEqual((stop["action"], stop["origin"]), ({"action": "fadeout"}, "yours"))      # its own mapping comes before the one for any
         for body, want in (({"set": {"controller": "nanoKONTROL2", "control": "nope", "action": {"action": "stop"}}}, 400),
                            ({"set": {"controller": "nanoKONTROL2", "control": "stop", "action": {"action": "shutdown"}}}, 400),
                            ({"set": {"controller": "nanoKONTROL2", "control": "stop", "action": {"action": "opacity"}}}, 400),

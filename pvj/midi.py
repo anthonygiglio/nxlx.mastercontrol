@@ -429,8 +429,8 @@ class MidiMapper:
         found = [e for e in self.entries if e["kind"] == kind and e["number"] == number
                  and e["source"] in ("*", source) and e["channel"] in (0, channel + 1)]
         mine = [e for e in found if not e.get("builtin") and not e.get("profile")]
-        if mine:
-            return mine
+        if mine:                                # a mapping for this controller comes before one made for any controller
+            return [e for e in mine if e["source"] == source] or mine
         standard = [e for e in found if e.get("profile")]
         if standard or source in self.profiled:
             return standard
@@ -716,8 +716,9 @@ class MidiHub:
             self._matched[path] = (source, found)
         return found
 
-    def _profile_of_source(self, source):
-        """For a message, which only knows the controller's name: the profile its device was matched with."""
+    def profile_of(self, source):
+        """The profile a connected controller's device was matched with (by card id and product name), or None.
+        Messages and the API's set and reset use this one, so both mean the same layout."""
         for src, found in list(self._matched.values()):
             if src == source:
                 return found
@@ -746,7 +747,7 @@ class MidiHub:
         """The user's mappings (each re-checked: settings are a file a person may have edited), then the standard
         layout of the controller the message came from (if it has one and it is on), then the built-in map."""
         c = self.cfg()
-        profile = self._profile_of_source(source) if source is not None else None
+        profile = self.profile_of(source) if source is not None else None
         if profile is not None and not self.standard_on(source):
             profile = None
         mine = []
@@ -902,15 +903,18 @@ class MidiHub:
                 e = validate_entry(e, keep_id=True)
             except MidiError:
                 continue
-            if e["source"] in (source, "*"):
-                mine.setdefault((e["kind"], e["number"]), e)
+            if e["source"] in (source, "*"):                  # the controller's own mapping first, then one for any controller
+                key = (e["kind"], e["number"])
+                if key not in mine or (mine[key]["source"] == "*" and e["source"] == source):
+                    mine[key] = e
         for ctl in profile["controls"]:
             send = ctl["send"]
             key = (send["type"], send["number"])
             item = {k: ctl[k] for k in ("id", "name", "row", "col", "kind", "send", "unverified")}
             if key in mine:
                 e = mine[key]
-                item.update(action={k: e[k] for k in ("action", "bank", "index", "scene") if k in e}, origin="yours", guard=False,
+                item.update(action={k: e[k] for k in ("action", "bank", "index", "scene") if k in e}, guard=False,
+                            origin="yours" if e["source"] == source else "any",      # "any": made for every controller; removed in the list
                             pickup=out["standard"] and e["source"] == source and e["action"] in PICKUP)
             elif out["standard"] and ctl["action"] is not None:
                 item.update(action=dict(ctl["action"]), origin="standard", guard=ctl["guard"], pickup=ctl["action"]["action"] in PICKUP)
@@ -994,9 +998,11 @@ def override_entry(profile, source, control_id, action):
 
 
 def reset_entries(current_map, profile, source, control_id=None):
-    """The map without the person's own mappings for this controller (or for one of its controls)."""
+    """The map without the person's own mappings for the controls of this controller's layout (or for one of them).
+    Mappings for any controller, and this controller's mappings on numbers that are not in its layout, are kept."""
     if control_id is None:
-        return [e for e in current_map if e.get("source") != source]
+        drawn = {(c["send"]["type"], c["send"]["number"]) for c in profile["controls"]}
+        return [e for e in current_map if not (e.get("source") == source and (e.get("kind"), e.get("number")) in drawn)]
     ctl = next((c for c in profile["controls"] if c["id"] == control_id), None)
     if ctl is None:
         raise MidiError("no such control")

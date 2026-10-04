@@ -1682,7 +1682,9 @@
     function detail(c, x) {
       var box = h('div', { class: 'ctldetail', id: 'ctldetail' });
       box.appendChild(h('div', { id: 'ctlnow', text: x.name + ': ' + midiWhat(x.action) +
-        (x.origin === 'yours' ? ' (your choice' + (x.standard ? '; the standard is ' + midiWhat(x.standard) : '') + ')' : x.origin === 'standard' ? ' (standard layout)' : '') }));
+        (x.origin === 'yours' ? ' (your choice' + (x.standard ? '; the standard is ' + midiWhat(x.standard) : '') + ')' :
+          x.origin === 'any' ? ' (a mapping made for any controller; remove it in the list of mappings below to get the standard back)' :
+          x.origin === 'standard' ? ' (standard layout)' : '') }));
       box.appendChild(h('p', { class: 'hint', text: 'Sends ' + (x.send.type === 'cc' ? 'CC ' : 'note ') + x.send.number +
         (x.unverified ? ' (from a list that the maker\'s document does not confirm)' : '') + '.' +
         (x.guard ? ' Press it twice within a second; one press does nothing.' : '') +
@@ -1743,7 +1745,7 @@
         c.controls.forEach(function (x) {
           var chosen = !!midiSel && midiSel.ctl === c.name && midiSel.id === x.id;
           if (chosen) open = x;
-          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : ''), type: 'button',
+          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' || x.origin === 'any' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : ''), type: 'button',
             'data-id': x.id, 'aria-pressed': chosen ? 'true' : 'false', 'aria-label': x.name + ': ' + midiWhat(x.action),
             onclick: function () { midiSel = chosen ? null : { ctl: c.name, id: x.id }; draw(d); } },
             h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }), h('span', { class: 'ctlval' }));
