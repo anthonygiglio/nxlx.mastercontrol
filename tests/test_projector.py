@@ -1541,6 +1541,30 @@ class ApiTest(ServerBase):
             self.assertNotIn("details", self.stored())
             self.assertEqual(self.api.projectors.identify(self.stored())["name"], "The other one")
 
+    def test_settings_export_and_import_after_an_edit_to_another_projector(self):
+        """The whole story: inputs named, the projector swapped for one at another address that lists other inputs,
+        the box reads the new one. A name for an input the new one does not list is kept and not shown, and the
+        box's own export of that state imports again."""
+        other = FakeProjector("pw1", inputs=("31", "33"), name="The other one")
+        self.addCleanup(other.close)
+        with mock.patch.object(self.api.projectors, "apply", lambda: None):
+            pid = self.add()[1]["projectors"][0]["id"]
+            self.assertEqual(self.api.projectors.identify(self.stored())["inputs"], ["11", "31", "32"])
+            for code, label in (("31", "Matrix"), ("32", "Box")):
+                self.assertEqual(self.post("/api/projectors", {"label": {"id": pid, "input": code, "label": label}})[0], 200)
+            self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port, "name": "New one"}})[0], 200)
+            self.assertEqual(self.api.projectors.identify(self.stored())["inputs"], ["31", "33"])
+            self.assertEqual(self.stored()["labels"], {"31": "Matrix", "32": "Box"})
+            self.assertEqual([(i["code"], i["label"]) for i in self.projector()["inputs"]], [("31", "Matrix"), ("33", "")])
+            before = json.loads(json.dumps(self.settings.data["projectors"]))
+            st, out, _ = self.post("/api/system/settings/export", {"passwords": True})
+            self.assertEqual(st, 200, out)
+            self.assertEqual(out["file"]["settings"]["projectors"], before)
+            self.settings.data["projectors"] = []
+            st, body, _ = self.call("POST", "/api/system/settings/import?confirm=import", raw=json.dumps(out["file"]).encode(), token=self.full)
+            self.assertEqual(st, 200, body)
+            self.assertEqual(self.settings.data["projectors"], before)
+
     def test_groups_keep_pointing_at_an_edited_projector(self):
         with mock.patch.object(self.api.projectors, "apply", lambda: None):
             pid = self.add()[1]["projectors"][0]["id"]

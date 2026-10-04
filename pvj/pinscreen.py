@@ -88,8 +88,8 @@ class PinScreen:
         exist yet is made (`by` says by whom). Returns the status. Raises ValueError for bad input.
         `only` (a presenter's request): the items this caller may put up or take down. Checked here, under the same
         lock as the change, so nothing a full-access device put up meanwhile (the PIN, the presenter code) is ever
-        replaced or kept up longer by it: PermissionError for an item outside `only`, Busy when such an item is on
-        the display now."""
+        replaced or kept up longer by it: PermissionError for an item outside `only`, Busy when such an item (other
+        than the plain address, which is no secret) is on the display now."""
         if (not isinstance(items, list) or not items or len(items) > len(MANUAL_ITEMS) or len(set(items)) != len(items)
                 or not all(i in MANUAL_ITEMS for i in items)):
             raise ValueError("choose what to show: pin, view, live and/or address")
@@ -99,7 +99,7 @@ class PinScreen:
             raise PermissionError("this device may show the guest code only")
         with self._lock:
             m = self._current()
-            if only is not None and m and not all(i in only for i in m["items"]):
+            if only is not None and m and not all(i in only or i == "address" for i in m["items"]):      # the address is no secret: it may be replaced
                 raise Busy("something else is on the room screen; a full-access device takes it off")
             have = {j["role"] for j in self.auth.list_joins()}
             for role in items:

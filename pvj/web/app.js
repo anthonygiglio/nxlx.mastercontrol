@@ -1094,6 +1094,7 @@
     return rows;
   }
   function rowShown(row) {
+    if (row.id === 'access' && S.device && S.device.remote) return false;      // codes are refused through the support connection, whatever the role
     if (!can(row.role) && !(row.id === 'support' && S.device && S.device.remote)) return false;
     if (!row.module) return true;
     var m = mod(row.module);
@@ -2801,7 +2802,15 @@
             var items = all ? ['pin', 'view', 'live'].filter(function (i) { return accessForm[i]; }) : ['view'];
             if (!items.length) return say('Choose what to show.', true);
             if (all && accessForm.pin && !window.confirm('Anyone who can see the room screen will see the ' + roleName('full') + ' PIN. Show it?')) return;
-            send('/api/access/screen', { show: true, items: items, seconds: accessForm.seconds }, 'On the room screen.');
+            function show() { send('/api/access/screen', { show: true, items: items, seconds: accessForm.seconds }, 'On the room screen.'); }
+            // No guest code yet: make it first, for the time chosen above (a code the box makes for a show lasts
+            // as long as the show, which is not what was chosen). 409: someone made one meanwhile; show that one.
+            if (all || codes.length) return show();
+            api('POST', '/api/access/code', { role: 'view', minutes: accessForm.minutes, replace: false }).then(function (r) {
+              if (!live.isConnected) return;
+              if (!r.ok && r.status !== 409) { say(r.data.error || 'Something went wrong', true); return refresh(true); }
+              show();
+            });
           } }) : null,
           scr.showing ? h('button', { class: 'btn small', id: 'hideaccess', text: 'Take it off the room screen', onclick: function () {
             send('/api/access/screen', { show: false }, 'Taken off the room screen.');

@@ -261,6 +261,10 @@ class ManualDisplayTest(unittest.TestCase):
         self.assertIn("Full access PIN", self.text())
         self.assertNotIn("Guest", self.text())
         self.assertFalse(self.p.hide()["showing"])                               # the owner's hide takes everything off
+        for items in (["address"], ["view", "address"]):                         # the address alone is no secret: it may be replaced
+            self.p.show(items, 100)
+            self.assertEqual(self.p.show(["view"], 60, by="presenter", only=only)["items"], ["view"])
+            self.p.hide()
         self.p.show(["view"], 60)
         self.assertFalse(self.p.hide(only=only)["showing"])
         self.t[0] += 500                                                         # an owner's display that ran out is not in the way
@@ -428,6 +432,17 @@ class PresenterGuestCodeTest(AccessApiTest):
         self.assertEqual((st, body["screen"]["showing"], body["screen"]["other"]), (200, False, True))
         self.assertEqual(self.api.pinscreen.status()["items"], ["pin"])            # the owner's PIN stays up
         self.assertIn("Full access PIN", self.shown[-1][1])
+
+    def test_what_a_presenter_is_told_about_the_room_screen_matches_what_it_may_do(self):
+        """ "other" is true exactly when a show would be refused: the PIN or the presenter code is up. The plain
+        address is not "other", and can be replaced."""
+        for items, other in ((["address"], False), (["view", "address"], False), (["live"], True), (["pin", "address"], True), (["view", "live"], True)):
+            self.post("/api/access/screen", {"show": True, "items": items, "seconds": 100})
+            told = self.call("GET", "/api/access", token=self.live)[1]["screen"]
+            self.assertEqual(told["other"], other, items)
+            st = self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 60})[0]
+            self.assertEqual(st, 409 if other else 200, items)
+            self.post("/api/access/screen", {"show": False})
 
     def test_never_a_permanent_link_and_never_device_removal(self):
         devices = [d["id"] for d in self.auth.list_devices()]

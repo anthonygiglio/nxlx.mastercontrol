@@ -330,7 +330,15 @@ class ImportTest(Base):
         got = self.settings.data["projectors"][0]
         self.assertEqual((got["details"], got["labels"]), (dict(details, maker="M" * 32), {"31": "Matrix"}))
         disk = self.on_disk()
-        for key, value in (("labels", {"33": "Not one of its inputs"}), ("labels", {"31": "x" * 25}), ("labels", {"31": "a\u202eb"}),
+        # A label for an input that is not in the list is what the box itself holds after the projector stopped
+        # listing it (or was swapped by an Edit): kept, not shown. It imports; a code of no such form does not.
+        kept = copy.deepcopy(file)
+        kept["settings"]["projectors"][0]["labels"] = {"31": "Matrix", "33": "Not listed any more"}
+        self.assertEqual(self.send(kept)[0], 200)
+        self.assertEqual(self.settings.data["projectors"][0]["labels"], {"31": "Matrix", "33": "Not listed any more"})
+        self.assertEqual(self.send(file)[0], 200)
+        disk = self.on_disk()
+        for key, value in (("labels", {"99": "No such code"}), ("labels", {"3": "Too short"}), ("labels", {"31": "x" * 25}), ("labels", {"31": "a\u202eb"}),
                            ("labels", {"31": 5}), ("labels", ["31"]), ("details", "ACME"), ("details", dict(details, inputs=["31", "31"])),
                            ("details", dict(details, inputs=["99"])), ("details", dict(details, inputs="31")),
                            ("details", {"class": "12"}), ("details", dict(details, name=5)), ("details", dict(details, read=True)),
