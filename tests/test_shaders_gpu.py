@@ -143,12 +143,12 @@ class GpuCase:
         pack = [s for s in self.engine.library() if s["source"] == "bundled" and s["pack"] != "nxlx"]
         self.assertEqual([s["id"] for s in pack], ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs",
                                                   "isf-radial-gradient.fs", "isf-ridgelines.fs", "isf-simplex-noise.fs",
-                                                  "isf-sine-warp-gradient.fs", "isf-spiral.fs"])
-        rng = random.Random(11)
+                                                  "isf-sine-warp-gradient.fs"])
         failed = []
         for s in pack:
             sid = s["id"]
-            for varied in (False, True):
+            rng = random.Random("isf " + sid)          # each file's varied values are its own: they do not move when
+            for varied in (False, True):                # another file joins or leaves the pack
                 self.engine._checked.clear()
                 kw = {"values": V.vary(s["inputs"], rng), "hue": 77.0, "offset": 321.5} if varied else {}
                 r = self.engine.show(sid, **kw)

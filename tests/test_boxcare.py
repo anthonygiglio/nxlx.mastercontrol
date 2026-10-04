@@ -324,7 +324,7 @@ class ImportTest(Base):
         self.assertIn("is not in the file", " ".join(self.send(self.export())[1]["notes"]))
         d = self.settings.data
         d["shaders"] = {"dwell": 45, "vary": False, "height": 540, "disabled": ["Plasma.fs", "My own 2.fs"],
-                        "included": ["isf-spiral.fs"]}                            # a third-party pack's shader, put into Vibes
+                        "included": ["isf-ridgelines.fs"]}                            # a third-party pack's shader, put into Vibes
         d["autostart"] = dict(d["autostart"], mode="vibes")
         d["schedule"] = scheduler.validate({"enabled": True, "entries": [{"time": "20:00", "days": [0, 6], "action": "vibes"}]})
         d["control"]["dmx"] = dict(d["control"]["dmx"], enabled=True)
@@ -570,8 +570,8 @@ class ImportTest(Base):
             ("shaders", {"disabled": ["a.fs", "a.fs"]}),
             ("shaders", {"disabled": "a.fs"}),
             ("shaders", {"included": ["../etc/passwd"]}),
-            ("shaders", {"included": ["isf-spiral.fs", "isf-spiral.fs"]}),
-            ("shaders", {"included": "isf-spiral.fs"}),
+            ("shaders", {"included": ["isf-ridgelines.fs", "isf-ridgelines.fs"]}),
+            ("shaders", {"included": "isf-ridgelines.fs"}),
             ("shaders", []),
             ("sync", {"role": "boss"}),
             ("sync", {"wall": {"cols": 2, "rows": 2, "col": 5, "row": 0}}),

@@ -18,7 +18,7 @@ ISF_PACK = os.path.join(S.BUNDLED_DIR, "isf-files")
 # The third-party pack (Vidvox ISF-Files, MIT): in the library, never in the Vibes rotation by itself.
 # Named one by one (tests/test_license.py pins the same list and the checksums): the pack changes by decision only.
 PACKED = ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs", "isf-radial-gradient.fs", "isf-ridgelines.fs",
-          "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs", "isf-spiral.fs"]
+          "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs"]
 HEAD ={"ISFVSN": "2", "DESCRIPTION": "test", "CREDIT": "tests", "INPUTS": [
     {"NAME": "speed", "TYPE": "float", "MIN": 0.5, "MAX": 2.0, "DEFAULT": 1.0, "LABEL": "Speed"},
     {"NAME": "flip", "TYPE": "bool", "DEFAULT": True},
@@ -789,9 +789,9 @@ class EngineTest(Base):
             row = [s for s in out["shaders"] if s["id"] == "mine-%d.fs" % n][0]
             self.assertEqual((row["error"], row["pack"], row["vibes"]), (None, "uploads", True), name)
             self.assertLessEqual(len(row["inputs"]), S.MAX_INPUTS)
-        # two of the three things real files do that the first translator refused are present in the files that stand
-        # in (the third, an input called `color`, is in upstream files that are not bundled; it has its own test above)
-        self.assertTrue(any(re.search(r"\bout_color\b", t) for t in texts.values()))
+        # one of the three things real files do that the first translator refused is present in the files that stand
+        # in: text that is not ASCII in a comment (`out_color` and an input called `color` are in upstream files that
+        # are not bundled; each has its own test above)
         self.assertTrue(any(not t.isascii() for t in texts.values()))
 
     def test_only_plain_folders_with_a_plain_name_are_packs_and_none_can_stand_in_for_the_projects_own(self):

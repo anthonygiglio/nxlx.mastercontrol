@@ -51,9 +51,9 @@ ISF_LICENSE_SHA256 = "83e4dd21429a91fb7cea67a476032a9641425e5355df2e0f589a738b6e
 WEBGL_NOISE_LICENSE_SHA256 = "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916"
 # The checksum list, made from the upstream clone at commit 395072d4 and checked against it then. Pinned here, so the
 # files and the list cannot be changed together unnoticed.
-ISF_SUMS_SHA256 = "1227115195d2345b870e3b55739d040ce89bccc0a7f299dc9871cfc370ad4820"
+ISF_SUMS_SHA256 = "38066ce8878457610d44950a371fca5f2a78bac89132c16b94169a1535d00a4e"
 ISF_FILES = ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs", "isf-radial-gradient.fs", "isf-ridgelines.fs",
-             "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs", "isf-spiral.fs"]
+             "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs"]
 
 
 class LicenseTest(unittest.TestCase):
