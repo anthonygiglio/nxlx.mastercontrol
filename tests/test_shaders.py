@@ -31,8 +31,8 @@ void main() {
 # The bundled set, named one by one: a file that is added or goes missing fails the tests until it is named here.
 # The first ten and the ambient family are in the Vibes rotation from the start; the performance family is not.
 FIRST_TEN = ["aurora", "drift", "ember", "horizon", "lattice", "nebula", "prism", "pulse", "silk", "tide"]
-AMBIENT = ["bloom", "caustic", "contour", "dusk", "fringe", "kaleido", "lantern", "moire", "petal", "ribbon", "ridge", "stars", "tiles", "veil"]
-PERFORMANCE = ["bars", "beam", "burst", "checker", "glitch", "grid", "halftone", "scope", "spokes", "stripes", "tunnel"]
+AMBIENT = ["bloom", "caustic", "contour", "dusk", "fringe", "kaleido", "lantern", "moire", "petal", "pool", "ribbon", "ridge", "stars", "tiles", "veil"]
+PERFORMANCE = ["bars", "beam", "burst", "checker", "chevron", "glitch", "grid", "halftone", "mirror", "radar", "scope", "spokes", "stripes", "tunnel", "zoom"]
 BUNDLED = len(FIRST_TEN) + len(AMBIENT) + len(PERFORMANCE)
 IN_VIBES = len(FIRST_TEN) + len(AMBIENT)
 # Numbers from the hash and noise one-liners that are passed around everywhere: the bundled shaders build their own.
