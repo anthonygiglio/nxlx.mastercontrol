@@ -4,6 +4,24 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-04 (the ISF library)
+
+The owner: "don't forget about ISF shaders. (https://github.com/Vidvox/ISF-Files)". Done (PR #70, D44): how much of that library the box runs, a pack of what can be bundled, and the plan for the rest.
+
+**Licence.** The repository is MIT as a whole (`LICENSE`: "Copyright (c) 2018" with no holder; GitHub reports MIT). The files are another matter: of the 36 generators the box can run, nine carry a comment that their code comes from elsewhere (The Book of Shaders, a repository that no longer exists, two glsl.io pages, Stack Overflow, an ISF sketch, a blog post and a font, a web page of colour tables). Those are not bundled and are listed in THIRD_PARTY_LICENSES.md with the reason; sources outside GitHub were not opened, so "unknown" there means not established. Two bundled files hold Ashima Arts' simplex noise (MIT), whose notice is printed in the inventory.
+
+**Survey** (`tools/isf-survey.py`, 327 files): 36 translate (17 before this change); 210 need the playing picture (121 nothing else); 68 are transitions; 72 need several passes and 49 a picture kept between frames; 38 have a vertex shader; 7 need sound; 4 load pictures. The ranked plan for the engine is in pvj/SHADERS.md ("What would unlock the rest"): filters first (+121), transitions (+68), several passes (+10), persistent buffers (+40, and most likely not possible with mpv user shaders at all), vertex shaders (+32), sound, imported pictures.
+
+**Translator.** Three gaps, each found by the survey and fixed with a test: `out_color` (9 generators) and an input called `color` (3) are renamed to `pvj_` names instead of refused; text that is not ASCII is allowed inside comments, which were already cut out and never passed on (7 generators had a dash or an arrow in one). Added while there: `##` is refused, since a name joined from pieces is one the checks never saw.
+
+**Pack.** `pvj/shaders.d/isf-files`: ten files, byte for byte upstream under names without spaces, with upstream's LICENSE and checksums; declared MIT in REUSE.toml. The engine lists packs (`"pack"` in `GET /api/shaders`); a pack's shaders are in the library and not in Vibes until put in (`included` in the settings, exported and imported). What CI's real mpv said about the 27 licence-clear candidates, on OpenGL ES and desktop OpenGL, defaults and varied: 10 pass every time; Random Lines passed one run and failed the next by one colour (40 where more than 40 are asked) and is left out; 11 draw flat pictures by design (shapes of a few colours); 5 fail (OpenGL ES refuses a function called `sign` or `round`, a float compared with a whole number, a wrong return type; two of them draw black on desktop OpenGL).
+
+Changed in existing tests, each for a stated reason: the GPU test picks the project's ten by pack; `out_color` and a non-ASCII comment moved from the refused list to tests of their own, with the refusals that remain around them; the library and browser tests count the pack beside the ten; the licence test reads every REUSE annotation, with REUSE's own rule for `*`, and whole file names.
+
+Not verified: nothing here ran on the Pi or was seen on a display; no pack file has been timed on any board (the cost notes are counts from the text; the Pi 4 numbers quoted in SHADERS.md were measured for the project's own shaders in another branch). The claims about mpv in the plan (no texture survives a frame, a still as a `//!TEXTURE`, brightness and filters at MAIN, sound through a filter graph) are from reading and from how this module already works, and each needs a CI spike. On this Mac `tests/test_release.py`, `test_install.py`, `test_update.py` and `test_netd.py` fail for reasons of the machine (no GNU tar among them); CI is the reference.
+
+Open: whether the owner wants the flat shapes (Checkerboard, Stripes, Spiral's cousins) as a second pack with a rule of its own; the nine files of unclear origin, if the owner can establish their terms; `tools/make-release.sh` still splits file names at spaces (a test now forbids such names instead); `test_no_secret_is_in_it` in tests/test_boxcare.py failed once here because the PIN's digits occurred in the disk's byte count (LESSONS; not fixed, not this branch's code). The branch `shader-engine` adds a cost field and per-board defaults to `pvj/shaders.py`; the pack listing was kept small (`packs`, `_bundled`, a `pack` key, `included`) so the two merge.
+
 ## 2026-10-04 (one switch per feature, and the Shaders page)
 
 Two slices the owner approved, in one pull request (#69, D43).

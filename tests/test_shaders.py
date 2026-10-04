@@ -155,7 +155,7 @@ class TranslatorTest(unittest.TestCase):
         # (text that is not ASCII is allowed inside a comment now, since comments are never passed on: see the test of
         # comments below; in the code itself it is refused as before)
         for text in (isf(body=ok + "\nfloat café = 1.0;"), isf(body=ok + "\x00"), isf(body=ok + "\x1b[2J"), isf(body=ok + "\x0c"),
-                     isf(body="float a = 1.0;\n" + ok), isf(body="/* x */ " + ok)):
+                     isf(body="float a\u2028= 1.0;\n" + ok), isf(body="/* x */\u00a0" + ok)):
             self.assertIn("ASCII", refusal(self, text))
 
     def test_a_comment_may_hold_any_text_because_no_comment_reaches_the_player(self):
@@ -163,18 +163,18 @@ class TranslatorTest(unittest.TestCase):
         refused for that alone). The comments are cut out before anything else is looked at, so what the checks read
         and what the player gets is the same text, and it is plain ASCII."""
         ok = "void main() { gl_FragColor = vec4(1.0); }"
-        text = isf(body="// Spectrum – hue shifts → café •\n/* — secret line */\n" + ok + " // é\x0b\x0c")
+        text = isf(body="// Spectrum \u2013 hue shifts \u2192 café \u2022\n/* \u2014 secret\u2028line */\n" + ok + " // é\x0b\x0c")
         out = S.translate(S.parse(text), (640, 360))
         self.assertTrue(out.isascii())
         self.assertFalse(any(word in out for word in ("Spectrum", "secret", "line */")))
         self.assertTrue(all(" " <= ch <= "~" or ch == "\n" for ch in out), "only printable ASCII and line breaks reach the player")
         # a comment cannot be used to carry something past the checks: what follows it is still read as code
-        for body, reason in (("// –\nuniform float u;\n" + ok, "uniform, varying, in or out"),
-                             ("/* – */ #pragma optimize(off)\n" + ok, "not allowed"),
-                             ("//  \n#include <x>\n" + ok, "not allowed"),
-                             ("/* – */ float HOOKED_x;\n" + ok, "used by the player"),
-                             ("// – \\\n" + ok, "line continuations"),
-                             ("/* –\n//!HOOK OUTPUT\n*/" + ok, "//!")):
+        for body, reason in (("// \u2013\nuniform float u;\n" + ok, "uniform, varying, in or out"),
+                             ("/* \u2013 */ #pragma optimize(off)\n" + ok, "not allowed"),
+                             ("// \u2028\n#include <x>\n" + ok, "not allowed"),
+                             ("/* \u2013 */ float HOOKED_x;\n" + ok, "used by the player"),
+                             ("// \u2013 \\\n" + ok, "line continuations"),
+                             ("/* \u2013\n//!HOOK OUTPUT\n*/" + ok, "//!")):
             self.assertIn(reason, refusal(self, isf(body=body)), body)
 
     def test_two_names_the_player_owns_are_renamed_and_never_reach_it(self):

@@ -53,9 +53,9 @@ If the picture stutters, draw fewer lines (the **drawing size** on the card: 360
 
 ## The ISF-Files pack (third-party shaders)
 
-Eleven generators from Vidvox's public ISF collection (https://github.com/Vidvox/ISF-Files, commit `395072d4`, MIT), in `pvj/shaders.d/isf-files`. **They are not this project's work**: each is the upstream file byte for byte under a name without spaces, keeps its own `CREDIT` (shown in the list), and the licence, the notices and the full file list are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md). In `GET /api/shaders` they carry `"pack": "isf-files"`; the project's own ten carry `"pack": "nxlx"` and uploads `"pack": "uploads"`, so a page can group and filter by pack.
+Ten generators from Vidvox's public ISF collection (https://github.com/Vidvox/ISF-Files, commit `395072d4`, MIT), in `pvj/shaders.d/isf-files`. **They are not this project's work**: each is the upstream file byte for byte under a name without spaces, keeps its own `CREDIT` (shown in the list), and the licence, the notices and the full file list are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md). In `GET /api/shaders` they carry `"pack": "isf-files"`; the project's own ten carry `"pack": "nxlx"` and uploads `"pack": "uploads"`, so a page can group and filter by pack.
 
-**They are in the library, not in the Vibes rotation.** A third-party shader joins Vibes only when a full-access device switches it to **In Vibes** (the same switch as for every other shader; `{"action": "vibes", "id": "isf-spiral.fs", "on": true}`). The reason: seven of the eleven are still pictures, made as building blocks for a VJ and not as ambience, and none has been timed on a board.
+**They are in the library, not in the Vibes rotation.** A third-party shader joins Vibes only when a full-access device switches it to **In Vibes** (the same switch as for every other shader; `{"action": "vibes", "id": "isf-spiral.fs", "on": true}`). The reason: seven of the ten are still pictures, made as building blocks for a VJ and not as ambience, and none has been timed on a board.
 
 | Shader | Upstream name | Picture | Moves by itself | Rough cost per pixel (a count, not a measurement) |
 | --- | --- | --- | --- | --- |
@@ -64,16 +64,15 @@ Eleven generators from Vidvox's public ISF collection (https://github.com/Vidvox
 | isf-corner-colors | Corner Colors | a blend between four corner colours | no | low: no loop |
 | isf-linear-gradient | Linear Gradient | a two-colour gradient at an angle | no | low: no loop |
 | isf-radial-gradient | Radial Gradient | a two-colour gradient from a centre | no | low: no loop |
-| isf-random-lines | Random Lines | coloured lines that wobble | yes | **heavy: a loop of 60 rounds, a line distance in each** |
 | isf-ridgelines | Ridgelines | sharp ridges of noise, like terrain | yes | medium: up to 6 octaves of simplex noise |
 | isf-simplex-noise | Simplex Noise | soft clouds of noise | yes | medium: up to 6 octaves of simplex noise |
 | isf-sine-warp-gradient | Sine Warp Gradient | a gradient bent by sines | no | low: no loop |
 | isf-spiral | Spiral | a two-colour spiral | no | low: no loop |
 | isf-worley-cells | Worley Cells | cells like a honeycomb or cracked mud | yes | low to medium: 9 neighbour cells |
 
-What is known about speed, and what is not. On the owner's Raspberry Pi 4 (mpv 0.40, desktop OpenGL 3.1 on V3D, measured for the project's own shaders in another branch, not here) about 16 ms are available for the shader pass at 720 lines: passes of 7.5 to 11 ms held 30 frames a second, 15 ms dropped 3 a second, 20 ms dropped 7. **None of the eleven has been timed on any board.** By that yardstick anything with more than a few dozen rounds per pixel is heavy on a Pi 4: `isf-random-lines` is, and should stay out of Vibes there until it is timed; `isf-ridgelines` and `isf-simplex-noise` have an `octaves` input, and fewer octaves cost less. Play one and read `playing.pass_ms` in `GET /api/shaders` (mpv's own timing of the pass) before putting it into Vibes.
+What is known about speed, and what is not. On the owner's Raspberry Pi 4 (mpv 0.40, desktop OpenGL 3.1 on V3D, measured for the project's own shaders in another branch, not here) about 16 ms are available for the shader pass at 720 lines: passes of 7.5 to 11 ms held 30 frames a second, 15 ms dropped 3 a second, 20 ms dropped 7. **None of the ten has been timed on any board.** By that yardstick anything with ray marching, noise of many octaves or more than a few dozen rounds per pixel is heavy on a Pi 4 and must not be in the default rotation. None of the ten has a long loop (upstream's Random Lines, 60 rounds per pixel, would have been the heavy one; it is not in the pack). `isf-ridgelines` and `isf-simplex-noise` are the ones to watch: up to 6 octaves of noise, with an `octaves` input, and fewer octaves cost less. Play one and read `playing.pass_ms` in `GET /api/shaders` (mpv's own timing of the pass) before putting it into Vibes.
 
-How these eleven were chosen: see "The survey of ISF-Files" below.
+How these ten were chosen: see "The survey of ISF-Files" below.
 
 ### Adding more ISF files to a box
 
@@ -126,7 +125,8 @@ All 327 `.fs` files of ISF-Files at commit `395072d4` were put through this tran
 
 Translating is not drawing. Of the 36, **nine were not tried** because their own comments point to code from elsewhere under terms that could not be established (listed in THIRD_PARTY_LICENSES.md). The other 27 ran in CI on a real mpv with Mesa's software GPU, once on OpenGL ES and once on desktop OpenGL, with their defaults and with varied inputs, and were held to the rule for the project's own ten (the player takes it, draws a frame, more than 40 colours in the picture, not dark):
 
-- **11 passed** on both and are the pack.
+- **10 passed** on both, every time, and are the pack (97 colours at the least, most of them several hundred).
+- **1 was on the line**: Random Lines passed one CI run (46 colours with its defaults on desktop OpenGL) and failed the next (40 colours with varied inputs, where more than 40 are asked). A file that passes only sometimes is not bundled; it is also the heaviest of them (60 rounds per pixel).
 - **11 drew, but a flat picture by design** (1 to 39 colours on at least one of the four runs): Checkerboard, Stripes, Poly Star, Solid Color, Graph Paper, Grid Warp, Color Schemes, Lines, Noise, Random Checkerboard, Random Stripes. These work; they are shapes and patterns of a few colours, which the rule for ambience pictures does not let through. They can be uploaded, and a pack of "shapes" with a rule of its own would be a small follow-up if the owner wants them bundled.
 - **5 failed**: Basic Shape and Random Shape (they define a function `sign`, which OpenGL ES refuses as a built-in name; on desktop OpenGL Random Shape drew black and Basic Shape two colours), VU Meter (defines `round`, refused on OpenGL ES), Bordered Box (compares a float with a whole number, refused on OpenGL ES; black on desktop OpenGL with its default inputs), Line Group (returns a whole number from a float function, refused on OpenGL ES). On desktop OpenGL all five were taken by the player, and Line Group drew a varied picture there. The owner's Pi 4 uses desktop OpenGL, so Line Group may well be usable there by upload; none is bundled because a bundled file must work on both.
 

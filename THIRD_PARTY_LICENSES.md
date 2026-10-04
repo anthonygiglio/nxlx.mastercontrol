@@ -38,7 +38,6 @@ How the files were chosen (2026-10-04): of the 327 `.fs` files upstream, only ge
 | `isf-corner-colors.fs` | Corner Colors.fs | VIDVOX |
 | `isf-linear-gradient.fs` | Linear Gradient.fs | by Carter Rosenberg |
 | `isf-radial-gradient.fs` | Radial Gradient.fs | by Carter Rosenberg |
-| `isf-random-lines.fs` | Random Lines.fs | VIDVOX |
 | `isf-ridgelines.fs` | Ridgelines.fs | by VIDVOX (simplex by Ashima Arts / Stefan Gustavson) |
 | `isf-simplex-noise.fs` | Simplex Noise.fs | by VIDVOX (simplex by Ashima Arts / Stefan Gustavson) |
 | `isf-sine-warp-gradient.fs` | Sine Warp Gradient.fs | by VIDVOX |
@@ -119,4 +118,4 @@ The sources outside GitHub were not opened (this work was limited to GitHub), so
 
 ### Not bundled for another reason: the licence is clear, the picture check was not passed
 
-Sixteen more generators are VIDVOX's own under the same MIT licence (Line Group.fs also holds a dither based on https://github.com/hughsk/glsl-dither, MIT, by Hugh Kennedy). They were tried on the real player in CI and did not pass the check every bundled shader must pass (taken by the player on OpenGL ES and on desktop OpenGL, a varied picture of more than 40 colours, not dark), so they are not in the pack. Nothing about their licence stands in the way of adding them later or of uploading them. The list and what CI saw are in [pvj/SHADERS.md](pvj/SHADERS.md).
+Seventeen more generators are VIDVOX's own under the same MIT licence (Line Group.fs also holds a dither based on https://github.com/hughsk/glsl-dither, MIT, by Hugh Kennedy). They were tried on the real player in CI and did not pass the check every bundled shader must pass (taken by the player on OpenGL ES and on desktop OpenGL, a varied picture of more than 40 colours, not dark), so they are not in the pack. Nothing about their licence stands in the way of adding them later or of uploading them. The list and what CI saw are in [pvj/SHADERS.md](pvj/SHADERS.md).
