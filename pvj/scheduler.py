@@ -99,6 +99,10 @@ def validate(body):
             if not isinstance(sid, str) or not _ID.fullmatch(sid):
                 raise ScheduleError(where + "choose a scene")
             item["scene"] = sid
+        elif action == "vibes" and e.get("set") is not None:      # a rotation set by its id; without one, the active set
+            if not isinstance(e["set"], str) or not _ID.fullmatch(e["set"]):
+                raise ScheduleError(where + "choose a set")
+            item["set"] = e["set"]
         clean.append(item)
     return {"enabled": enabled, "entries": clean}
 
@@ -160,7 +164,7 @@ class Scheduler:
             elif action == "preset":
                 self.api.play({"preset": entry["preset"]}, None, "schedule")
             elif action == "vibes":
-                self.api.vibes.api_vibes({"on": True}, None, "schedule")
+                self.api.vibes.api_vibes(dict({"on": True}, **({"set": entry["set"]} if entry.get("set") else {})), None, "schedule")
             elif action in ("projector_on", "projector_off"):
                 out = self.api.projector_action({"id": "all", "action": "on" if action == "projector_on" else "off"}, None, "schedule")
                 failed = [r["error"] for r in out["results"].values() if not r["ok"]]
