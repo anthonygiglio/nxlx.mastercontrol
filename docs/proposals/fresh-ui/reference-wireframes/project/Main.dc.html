@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Live pads</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 10px;min-height:44px;cursor:pointer}
+.pad{font:600 13px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;min-height:80px;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;padding:8px;text-align:left}
+.pad span{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#55554f;font-weight:400}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.on span{color:#fff}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: #f4f3ef">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 18px">PocketVJ</div>
+<div class="k" style="border: 1.5px solid #1c1c1c; border-radius: 20px; padding: 4px 10px; background: #fff">Pi 5 · 1080p60 · 47°C · OK</div>
+</div>
+<div style="border: 1.5px solid #1c1c1c; background: #fff; border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div class="k">Now playing · Output 1</div>
+<div style="font-weight: 600; font-size: 16px">02_tunnel_loop.mp4</div>
+<div style="height: 8px; border: 1.5px solid #1c1c1c; border-radius: 4px; background: #ecebe6"><div style="width: 62%; height: 100%; background: #1c1c1c"></div></div>
+<div class="k" style="display: flex; justify-content: space-between"><span>00:19 / 00:32</span><span>Next: 05_strobe (queued)</span></div>
+</div>
+<div style="display: flex; gap: 8px">
+<button class="btn on" style="flex-grow: 1">Bank A</button>
+<button class="btn" style="flex-grow: 1">Bank B</button>
+<button class="btn" style="flex-grow: 1">Bank C</button>
+<button class="btn" style="flex-grow: 1">Live cam</button>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<button class="pad"><span>01</span>Intro wash</button>
+<button class="pad on"><span>02</span>Tunnel loop</button>
+<button class="pad"><span>03</span>Grid pulse</button>
+<button class="pad"><span>04</span>Ink drops</button>
+<button class="pad"><span>05</span>Strobe</button>
+<button class="pad"><span>06</span>Logo</button>
+<button class="pad"><span>07</span>Waves</button>
+<button class="pad"><span>08</span>Static</button>
+<button class="pad"><span>09</span>Countdown</button>
+<button class="pad"><span>10</span>Empty</button>
+<button class="pad"><span>11</span>Empty</button>
+<button class="pad"><span>12</span>Random</button>
+</div>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; gap: 8px">
+<button class="btn" style="flex-grow: 1; min-height: 56px">Fade out</button>
+<button class="btn" style="flex-grow: 1; min-height: 56px">Freeze</button>
+<button class="btn" style="flex-grow: 1; min-height: 56px; background: #1c1c1c; color: #fff">Blackout</button>
+</div>
+<div style="display: flex; border-top: 1.5px solid #1c1c1c; padding-top: 8px; gap: 4px">
+<button class="btn on" style="flex-grow: 1; min-height: 48px">Live</button>
+<button class="btn" style="flex-grow: 1; min-height: 48px">Mix</button>
+<button class="btn" style="flex-grow: 1; min-height: 48px">Media</button>
+<button class="btn" style="flex-grow: 1; min-height: 48px">System</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

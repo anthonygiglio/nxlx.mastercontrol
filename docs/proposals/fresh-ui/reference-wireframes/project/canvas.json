@@ -1,0 +1,212 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Connect.dc.html": {
+      "h": 844,
+      "title": "3 Connect and pair",
+      "w": 390,
+      "x": 940,
+      "y": 0
+    },
+    "Control.dc.html": {
+      "h": 800,
+      "title": "13 Control: OSC, MIDI, DMX",
+      "w": 1280,
+      "x": 2720,
+      "y": 4640
+    },
+    "Coverage.dc.html": {
+      "h": 800,
+      "title": "14 Coverage: every original feature",
+      "w": 1280,
+      "x": 0,
+      "y": 5740
+    },
+    "Health.dc.html": {
+      "h": 800,
+      "title": "7 System: health, recovery, updates",
+      "w": 1280,
+      "x": 1360,
+      "y": 2360
+    },
+    "Inputs.dc.html": {
+      "h": 800,
+      "title": "9 Inputs: NDI, Resolume, MadMapper, cameras",
+      "w": 1280,
+      "x": 1360,
+      "y": 3540
+    },
+    "Library.dc.html": {
+      "h": 800,
+      "title": "4 Media library and file tools",
+      "w": 1280,
+      "x": 0,
+      "y": 1200
+    },
+    "Main.dc.html": {
+      "h": 844,
+      "title": "1 Live: pads",
+      "w": 390,
+      "x": 0,
+      "y": 0
+    },
+    "Mapper.dc.html": {
+      "h": 800,
+      "title": "8 Projection mapper",
+      "w": 1280,
+      "x": 0,
+      "y": 3540
+    },
+    "Mix.dc.html": {
+      "h": 844,
+      "title": "2 Live: mix",
+      "w": 390,
+      "x": 470,
+      "y": 0
+    },
+    "Modules.dc.html": {
+      "h": 800,
+      "title": "17 Modules and updates",
+      "w": 1280,
+      "x": 1360,
+      "y": 6900
+    },
+    "Network.dc.html": {
+      "h": 800,
+      "title": "6 Network (wired show network first)",
+      "w": 1280,
+      "x": 0,
+      "y": 2360
+    },
+    "Presenter.dc.html": {
+      "h": 800,
+      "title": "10 Presenter: slides, PDF, overlay, audio",
+      "w": 1280,
+      "x": 2720,
+      "y": 3540
+    },
+    "Schedule.dc.html": {
+      "h": 800,
+      "title": "12 Schedule, clock, startup",
+      "w": 1280,
+      "x": 1360,
+      "y": 4640
+    },
+    "Setup.dc.html": {
+      "h": 800,
+      "title": "5 Hardware, display, audio, projector",
+      "w": 1280,
+      "x": 1360,
+      "y": 1200
+    },
+    "Themes.dc.html": {
+      "h": 800,
+      "title": "16 Themes and colours",
+      "w": 1280,
+      "x": 0,
+      "y": 6900
+    },
+    "Topology.dc.html": {
+      "h": 800,
+      "title": "15 Gig wiring on a private network",
+      "w": 1280,
+      "x": 1360,
+      "y": 5740
+    },
+    "Wall.dc.html": {
+      "h": 800,
+      "title": "11 Video wall and multi-box sync",
+      "w": 1280,
+      "x": 0,
+      "y": 4640
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-09-29T12:00:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "t1": {
+      "kind": "title1",
+      "maxW": 1330,
+      "text": "Performer view (phone, at the gig)",
+      "w": 240,
+      "x": 0,
+      "y": -260
+    },
+    "t2": {
+      "kind": "title1",
+      "maxW": 2640,
+      "text": "Setup and admin (desktop or tablet, before the gig)",
+      "w": 240,
+      "x": 0,
+      "y": 940
+    },
+    "t3": {
+      "kind": "title1",
+      "maxW": 1280,
+      "text": "Replaces 12 tabs and ~400 scripts with 11 screens",
+      "w": 240,
+      "x": 1360,
+      "y": 2100
+    },
+    "t4": {
+      "kind": "title1",
+      "maxW": 4000,
+      "text": "Mapping and inputs (MadMapper and Resolume in, projectors out)",
+      "w": 240,
+      "x": 0,
+      "y": 3300
+    },
+    "t5": {
+      "kind": "title1",
+      "maxW": 4000,
+      "text": "Multi-box, automation and control",
+      "w": 240,
+      "x": 0,
+      "y": 4400
+    },
+    "t6": {
+      "kind": "title1",
+      "maxW": 2640,
+      "text": "Proof of coverage and gig wiring",
+      "w": 240,
+      "x": 0,
+      "y": 5500
+    },
+    "t7": {
+      "kind": "title1",
+      "maxW": 2640,
+      "text": "Theming and future-proofing",
+      "w": 240,
+      "x": 0,
+      "y": 6640
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Mix.dc.html",
+    "Connect.dc.html",
+    "Library.dc.html",
+    "Setup.dc.html",
+    "Network.dc.html",
+    "Health.dc.html",
+    "Mapper.dc.html",
+    "Inputs.dc.html",
+    "Presenter.dc.html",
+    "Wall.dc.html",
+    "Schedule.dc.html",
+    "Control.dc.html",
+    "Coverage.dc.html",
+    "Topology.dc.html",
+    "Themes.dc.html",
+    "Modules.dc.html"
+  ],
+  "pages": [],
+  "title": "PocketVJ Modernization Wireframes"
+}

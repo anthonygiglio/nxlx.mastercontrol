@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Network and security</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:44px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:10px;box-sizing:border-box}
+.card h2{margin:0;font-size:16px;font-weight:600}
+.sv{display:grid;grid-template-columns:minmax(0,1fr) 120px 150px 70px;gap:12px;align-items:center;border-top:1px solid #dcdbd5;padding:10px 0;font-size:14px}
+.tg{font-family:'IBM Plex Mono',monospace;font-size:12px;border:1.5px solid #1c1c1c;border-radius:14px;padding:4px 10px;text-align:center;background:#fff;min-height:28px;cursor:pointer}
+.tg.y{background:#1c1c1c;color:#fff}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 24px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="cur">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 16px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Network and security</div>
+<div class="k">Safe by default on shared venue networks</div>
+</div>
+<div class="card">
+<h2>How the box connects</h2>
+<div style="display: flex; gap: 8px">
+<button class="btn on" style="flex-grow: 1">Direct Ethernet, private NXLX network (best at gigs)</button>
+<button class="btn" style="flex-grow: 1">Own hotspot</button>
+<button class="btn" style="flex-grow: 1">Join venue Wi-Fi</button>
+</div>
+<div style="display: flex; gap: 8px; align-items: center">
+<span class="k">Address mode</span>
+<button class="btn on" style="min-height: 36px">Fixed IP</button>
+<button class="btn" style="min-height: 36px">DHCP client</button>
+<button class="btn" style="min-height: 36px">Link-local</button>
+<button class="btn" style="min-height: 36px">Serve DHCP</button>
+<span class="k" style="margin-left: 8px">IP 10.0.0.101 · Mask 255.255.255.0 · No gateway</span>
+</div>
+<div style="display: flex; gap: 24px" class="k"><span>Hotspot: pocketvj-4f2a (optional, for phone)</span><span>Password: set per box, printed on first boot</span><span>Address: pocketvj.local</span></div>
+</div>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; flex-grow: 1; min-height: 0">
+<div class="card">
+<h2>Services</h2>
+<div class="sv k"><span>Service</span><span>Port</span><span>Who can reach it</span><span>State</span></div>
+<div class="sv"><span>Web panel (needs paired device)</span><span class="k">80</span><span class="k">Paired devices</span><button class="tg y">On</button></div>
+<div class="sv"><span>OSC remote (TouchOSC, DMX bridge)</span><span class="k">UDP 9876</span><span class="k">Allow-list: 192.168.4.20</span><button class="tg">Off</button></div>
+<div class="sv"><span>MIDI controller</span><span class="k">USB</span><span class="k">Local only</span><button class="tg y">On</button></div>
+<div class="sv"><span>Remote screen (VNC)</span><span class="k">5900</span><span class="k">Local only</span><button class="tg">Off</button></div>
+<div class="sv"><span>File manager</span><span class="k">8060</span><span class="k">Paired devices</span><button class="tg">Off</button></div>
+<div class="sv"><span>Guest view-only link</span><span class="k">80</span><span class="k">Anyone with link</span><button class="tg">Off</button></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div class="card">
+<h2>Pairing PIN</h2>
+<div style="font: 500 32px 'IBM Plex Mono', monospace; letter-spacing: .2em">4 1 7 2</div>
+<button class="btn">Generate new PIN</button>
+<div class="k">Shown on the projector test screen</div>
+</div>
+<div class="card" style="flex-grow: 1">
+<h2>Recent sessions</h2>
+<div style="font-size: 13px; display: flex; justify-content: space-between"><span>Your phone</span><span class="k">now</span></div>
+<div style="font-size: 13px; display: flex; justify-content: space-between"><span>Stage tech tablet</span><span class="k">12 min ago</span></div>
+<div style="font-size: 13px; display: flex; justify-content: space-between"><span>Unknown device (blocked)</span><span class="k">1 h ago</span></div>
+<button class="btn" style="margin-top: auto">Unpair all devices</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

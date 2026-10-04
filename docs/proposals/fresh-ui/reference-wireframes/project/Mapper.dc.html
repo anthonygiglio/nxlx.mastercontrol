@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Projection mapper</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 12px;min-height:36px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.card h2{margin:0;font-size:15px;font-weight:600}
+.sel{min-height:40px;border:1.5px solid #1c1c1c;border-radius:6px;background:#fff;font:14px 'IBM Plex Sans',sans-serif;padding:0 8px}
+.sf{position:absolute;border:2px solid #1c1c1c;background:#fff;font:600 12px 'IBM Plex Sans',sans-serif;padding:6px;box-sizing:border-box}
+.vx{position:absolute;width:12px;height:12px;background:#1c1c1c;margin:-6px 0 0 -6px}
+.vx.a{background:#c2410c}
+.li{display:flex;justify-content:space-between;align-items:center;border:1.5px solid #1c1c1c;border-radius:6px;padding:6px 10px;font-size:13px}
+.li.cur{background:#1c1c1c;color:#fff}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 20px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="cur">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 20px 28px; display: flex; flex-direction: column; gap: 12px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Projection mapper</div>
+<div style="display: flex; gap: 8px">
+<button class="btn">Open layout</button>
+<button class="btn">Save</button>
+<button class="btn">Undo</button>
+<button class="btn on">Live</button>
+</div>
+</div>
+<div style="display: flex; gap: 8px; align-items: center">
+<button class="btn on">Edit</button>
+<button class="btn">Test grid</button>
+<button class="btn">Add quad</button>
+<button class="btn">Add triangle</button>
+<button class="btn">Add circle</button>
+<div style="flex-grow: 1"></div>
+<div class="k">Output: HDMI-1 1920x1080</div>
+</div>
+<div style="display: flex; gap: 16px; flex-grow: 1; min-height: 0">
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0">
+<div style="position: relative; height: 380px; border: 1.5px dashed #6b6b66; background: #ecebe6; border-radius: 6px; overflow: hidden">
+<div class="sf" style="left: 40px; top: 50px; width: 230px; height: 150px">1 · Quad<br><span style="font-weight: 400">Pad A2 Tunnel loop</span></div>
+<div class="vx" style="left: 40px; top: 50px"></div><div class="vx" style="left: 270px; top: 50px"></div><div class="vx" style="left: 270px; top: 200px"></div><div class="vx" style="left: 40px; top: 200px"></div>
+<div class="sf" style="left: 330px; top: 90px; width: 240px; height: 170px; border-color: #c2410c; border-width: 3px">2 · Quad (selected)<br><span style="font-weight: 400">NDI: RESOLUME Output</span></div>
+<div class="vx" style="left: 330px; top: 90px"></div><div class="vx a" style="left: 570px; top: 90px"></div><div class="vx" style="left: 570px; top: 260px"></div><div class="vx" style="left: 330px; top: 260px"></div>
+<div class="sf" style="left: 120px; top: 205px; width: 150px; height: 130px; border-radius: 50%; text-align: center; padding-top: 44px">3 · Circle<br><span style="font-weight: 400">Camera</span></div>
+<div class="k" style="position: absolute; left: 10px; bottom: 8px">Drag corners, or use the nudge pad. Snaps to output edges.</div>
+</div>
+<div style="display: flex; gap: 8px; align-items: center">
+<button class="btn">Prev surface</button>
+<button class="btn">Next surface</button>
+<button class="btn">Prev vertex</button>
+<button class="btn">Next vertex</button>
+<div style="flex-grow: 1"></div>
+<div class="k">Step</div>
+<select class="sel" aria-label="Nudge step"><option>1 px</option><option>5 px</option><option>20 px</option></select>
+</div>
+<div style="display: flex; gap: 8px; align-items: center">
+<button class="btn">Left</button>
+<button class="btn">Right</button>
+<button class="btn">Up</button>
+<button class="btn">Down</button>
+<div style="flex-grow: 1"></div>
+<div class="k">No mouse needed: phone d-pad, keyboard, MIDI or OSC</div>
+</div>
+</div>
+<div style="width: 330px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px">
+<div class="card">
+<h2>Surfaces</h2>
+<div class="li"><span>1 · Quad</span><span class="k">A2 loop</span></div>
+<div class="li cur"><span>2 · Quad</span><span class="k">NDI</span></div>
+<div class="li"><span>3 · Circle</span><span class="k">Camera</span></div>
+<div style="display: flex; gap: 8px"><button class="btn" style="flex-grow: 1; min-height: 36px">Layer up</button><button class="btn" style="flex-grow: 1; min-height: 36px">Layer down</button><button class="btn" style="min-height: 36px">Delete</button></div>
+</div>
+<div class="card">
+<h2>Surface 2: source and look</h2>
+<label for="ms" class="k">Source</label>
+<select id="ms" class="sel"><option>NDI: RESOLUME Output</option><option>Live pad (A1 to C4)</option><option>Camera or capture</option><option>Image or slideshow</option></select>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1; min-height: 36px">Fill</button><button class="btn" style="flex-grow: 1; min-height: 36px">Fit</button></div>
+<div class="k">Soft edge</div>
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1; min-height: 36px">Left</button><button class="btn" style="flex-grow: 1; min-height: 36px">Right</button><button class="btn" style="flex-grow: 1; min-height: 36px">Top</button><button class="btn" style="flex-grow: 1; min-height: 36px">Bottom</button></div>
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1; min-height: 36px">Mask</button><button class="btn" style="flex-grow: 1; min-height: 36px">Overlay</button><button class="btn" style="flex-grow: 1; min-height: 36px">Color</button></div>
+</div>
+<div class="card" style="flex-grow: 1">
+<h2>Bring a layout in</h2>
+<div style="border: 1.5px dashed #6b6b66; background: #ecebe6; border-radius: 6px; padding: 10px; font-size: 13px; line-height: 1.4">Drop a MadMapper or Resolume export here (beta). Surfaces and positions are read where possible; you check them before going live.</div>
+<button class="btn" style="min-height: 36px">Convert old PocketVJ mapping</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

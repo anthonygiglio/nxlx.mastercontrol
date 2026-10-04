@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gig wiring</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.nd{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;box-sizing:border-box;font-size:14px}
+.nd b{font-size:15px}
+.hub{border:2px solid #1c1c1c;background:#1c1c1c;color:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:4px;box-sizing:border-box;text-align:center}
+.ln{font:500 11px 'IBM Plex Mono',monospace;color:#55554f;text-align:center;padding:4px}
+.col{display:flex;flex-direction:column;gap:14px;justify-content:center}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 16px; background: #f4f3ef">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<div style="font-weight: 600; font-size: 24px">Gig wiring: direct Ethernet on a private network</div>
+<div class="k">Wi-Fi is only for the phone, and is optional</div>
+</div>
+<div style="display: flex; gap: 20px; align-items: stretch; flex-grow: 1">
+<div class="col" style="width: 300px">
+<div class="nd"><b>Show laptop</b><span>Resolume or MadMapper</span><span class="k">NDI out · OSC out · Art-Net out</span></div>
+<div class="nd"><b>Lighting desk</b><span>Art-Net or sACN</span><span class="k">Optional</span></div>
+<div class="nd"><b>MIDI controller</b><span>USB into the laptop or the box</span><span class="k">Optional</span></div>
+</div>
+<div class="col" style="width: 60px"><div class="ln">wired</div><div class="ln">wired</div><div class="ln">USB</div></div>
+<div class="col" style="width: 260px">
+<div class="hub"><b>Private NXLX network</b><span class="k" style="color: #ecebe6">Switch, no internet</span><span class="k" style="color: #ecebe6">Fixed IPs, one subnet</span></div>
+<div class="nd"><b>Your phone or tablet</b><span class="k">Own hotspot from a box, or wired tablet</span></div>
+</div>
+<div class="col" style="width: 60px"><div class="ln">wired</div><div class="ln">wired</div></div>
+<div class="col" style="flex-grow: 1">
+<div class="nd"><b>PocketVJ box 1 (sender)</b><span>Pi 5 or mini PC</span><span class="k">Mapper · pads · NDI in</span></div>
+<div class="nd"><b>PocketVJ box 2 (receiver)</b><span>Pi 4 or old PC</span><span class="k">Wall tile 2</span></div>
+</div>
+<div class="col" style="width: 60px"><div class="ln">HDMI</div><div class="ln">HDMI</div></div>
+<div class="col" style="width: 190px">
+<div class="nd"><b>Projector 1</b><span class="k">PJLink on and off</span></div>
+<div class="nd"><b>Projector 2</b><span class="k">PJLink on and off</span></div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+<div class="nd"><b>Addresses</b><span style="font-size: 13px; line-height: 1.5">Boxes: 10.0.0.101, .102 ...<br>Laptop: 10.0.0.20<br>Or link-local, no setup</span></div>
+<div class="nd"><b>Why wired</b><span style="font-size: 13px; line-height: 1.5">Crowds jam Wi-Fi. NDI and OSC stay steady over a cable, and no venue login is needed.</span></div>
+<div class="nd"><b>Fails safe</b><span style="font-size: 13px; line-height: 1.5">If the cable drops, boxes keep playing the last clip and reconnect by themselves.</span></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

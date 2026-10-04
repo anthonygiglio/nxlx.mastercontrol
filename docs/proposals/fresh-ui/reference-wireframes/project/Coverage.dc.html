@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Feature coverage map</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.r{display:grid;grid-template-columns:40px 250px minmax(0,1fr) 190px 110px;gap:14px;align-items:center;padding:10px 16px;border-top:1px solid #dcdbd5;font-size:13px;line-height:1.4}
+.r.h{border-top:none}
+.bd{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1.5px solid #1c1c1c;border-radius:4px;padding:3px 6px;text-align:center}
+.bd.w{background:#1c1c1c;color:#fff}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 12px; background: #f4f3ef">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<div style="font-weight: 600; font-size: 24px">Every original feature has a home</div>
+<div class="k">Old panel: 12 tabs · New: 11 screens</div>
+</div>
+<div style="border: 1.5px solid #1c1c1c; background: #fff; border-radius: 6px">
+<div class="r h k"><span>#</span><span>Old tab</span><span>What it did</span><span>New home</span><span>Status</span></div>
+<div class="r"><span class="k">1</span><span>Autostart</span><span>Start a loop, slideshow, mapper or receiver at boot</span><span>Schedule: power-on list</span><span class="bd">Kept</span></div>
+<div class="r"><span class="k">2</span><span>File handling</span><span>File browser, USB mount, filename and permission fixers, conform images, clean hidden files, get content</span><span>Library and file tools</span><span class="bd">Reworked</span></div>
+<div class="r"><span class="k">3</span><span>Presenter</span><span>Slideshow, PDF and Impress, overlay, audio player</span><span>Presenter</span><span class="bd">Kept</span></div>
+<div class="r"><span class="k">4</span><span>Video</span><span>Loops 01 to 10, play once, fade, alpha, size, speed, position, rotate, master and slave</span><span>Live pads, Mix, Wall</span><span class="bd w">Redesigned</span></div>
+<div class="r"><span class="k">5</span><span>Sharing and camera</span><span>Screen sharing, VNC, TCPSyphon, Pi camera, camera filters, NDI</span><span>Inputs</span><span class="bd w">Redesigned</span></div>
+<div class="r"><span class="k">6</span><span>Mapping</span><span>Quads, triangles, circles, vertices, layers, soft edge, mask, overlay, mouse-free control, converter</span><span>Mapper</span><span class="bd w">Redesigned</span></div>
+<div class="r"><span class="k">7</span><span>Video wall</span><span>3 and 4 screen walls, sender and receiver, Syphon, PiWall</span><span>Wall (PiWall legacy)</span><span class="bd">Reworked</span></div>
+<div class="r"><span class="k">8</span><span>Scheduler</span><span>Clock display, countdown, timetable, sleep and wake</span><span>Schedule</span><span class="bd">Kept</span></div>
+<div class="r"><span class="k">9</span><span>DMX, OSC, MIDI</span><span>OSC commands, TouchOSC, MIDI, OLA, QLC+, Pure Data, Processing, custom functions</span><span>Control</span><span class="bd">Kept</span></div>
+<div class="r"><span class="k">10</span><span>Display</span><span>Info, resolution, rotate and flip, sleep, projector on and off, test screen and tone</span><span>Setup</span><span class="bd">Reworked</span></div>
+<div class="r"><span class="k">11</span><span>Network</span><span>Ethernet DHCP and fixed IP, Wi-Fi, sender, antenna and channel</span><span>Network</span><span class="bd w">Redesigned</span></div>
+<div class="r"><span class="k">12</span><span>System</span><span>Update, password, factory reset, VNC, services, versions, manual, terminal</span><span>System</span><span class="bd">Reworked</span></div>
+<div class="r" style="background: #ecebe6"><span class="k">New</span><span>Not in the original</span><span>MadMapper and Resolume input, layout import, pairing PIN, watchdog, optimise media, self-test</span><span>Inputs, Mapper, System</span><span class="bd w">New</span></div>
+</div>
+<div class="k">Redesigned = same feature, new layout or engine · Reworked = same screen idea, cleaner · Kept = as is, restyled</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

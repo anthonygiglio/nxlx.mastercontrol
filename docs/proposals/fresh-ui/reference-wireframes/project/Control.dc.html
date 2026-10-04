@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Control OSC MIDI DMX</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:40px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.card h2{margin:0;font-size:15px;font-weight:600}
+.mp{display:grid;grid-template-columns:120px minmax(0,1fr) 90px;gap:10px;align-items:center;border-top:1px solid #dcdbd5;padding:7px 0;font-size:13px}
+.li{display:flex;justify-content:space-between;align-items:center;border:1.5px solid #1c1c1c;border-radius:6px;padding:7px 10px;font-size:13px;gap:8px}
+.bd{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1.5px solid #1c1c1c;border-radius:4px;padding:3px 6px}
+.bd.w{background:#1c1c1c;color:#fff}
+.cmd{font:12px 'IBM Plex Mono',monospace;border-top:1px solid #dcdbd5;padding:5px 0;display:flex;justify-content:space-between}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 20px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="cur">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Control: OSC, MIDI, DMX</div>
+<div class="k">Every button in the app is also an OSC command</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; flex-grow: 1; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div class="card">
+<h2>OSC</h2>
+<div class="li"><span>Listen on UDP</span><span class="bd">9876</span></div>
+<div class="li"><span>Only accept from</span><span class="bd">10.0.0.20</span></div>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">On</button><button class="btn" style="flex-grow: 1">Off</button></div>
+<div class="k">Command groups</div>
+<div style="font-size: 12px; line-height: 1.5">Global · Audio · Display · Video and pads · Presenter · Camera · Wall · NDI · Projector · Custom</div>
+<button class="btn">Download TouchOSC layout</button>
+</div>
+<div class="card" style="flex-grow: 1">
+<h2>Live OSC monitor</h2>
+<div class="cmd"><span>/startmaster02</span><span>10.0.0.20</span></div>
+<div class="cmd"><span>/softedge100h</span><span>10.0.0.20</span></div>
+<div class="cmd"><span>/fliph</span><span>10.0.0.20</span></div>
+<div class="cmd"><span>/blocked /shutdown</span><span>10.0.0.77</span></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div class="card">
+<h2>MIDI</h2>
+<div class="li"><span>Akai APC Mini</span><span class="bd w">Connected</span></div>
+<div class="k">Learn: press a pad, then choose an action</div>
+<div class="mp k"><span>Input</span><span>Action</span><span>Type</span></div>
+<div class="mp"><span class="k">Note 36</span><span>Play pad A1</span><span class="k">Note</span></div>
+<div class="mp"><span class="k">Note 37</span><span>Play pad A2</span><span class="k">Note</span></div>
+<div class="mp"><span class="k">CC 1</span><span>Opacity</span><span class="k">Knob</span></div>
+<div class="mp"><span class="k">CC 2</span><span>Speed</span><span class="k">Knob</span></div>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Learn</button><button class="btn" style="flex-grow: 1">Clear</button></div>
+<div class="k">Unplugging never crashes it; it reconnects by itself</div>
+</div>
+<div class="card" style="flex-grow: 1">
+<h2>Custom functions</h2>
+<div class="li"><span>Custom 1: launch a script</span><button class="btn" style="min-height: 34px">Edit</button></div>
+<div class="li"><span>Custom 2: launch a script</span><button class="btn" style="min-height: 34px">Edit</button></div>
+<div class="k">Runs only scripts in the custom folder, never free text</div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div class="card">
+<h2>DMX, Art-Net and sACN</h2>
+<div class="li"><span>Art-Net universe 1</span><span class="bd w">Receiving</span></div>
+<div class="li"><span>sACN universe 1</span><span class="bd">Idle</span></div>
+<div class="mp k"><span>Channel</span><span>Controls</span><span>Range</span></div>
+<div class="mp"><span class="k">1</span><span>Pad select</span><span class="k">0-255</span></div>
+<div class="mp"><span class="k">2</span><span>Opacity</span><span class="k">0-255</span></div>
+<div class="mp"><span class="k">3</span><span>Speed</span><span class="k">0-255</span></div>
+<div class="k">Advanced: OLA and QLC+ as before</div>
+</div>
+<div class="card" style="flex-grow: 1">
+<h2>Works with</h2>
+<div style="font-size: 13px; line-height: 1.6">Resolume and MadMapper (OSC, NDI)<br>TouchOSC and other OSC apps<br>QLC+ and OLA lighting software<br>Pure Data and Processing sketches<br>Any MIDI controller</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

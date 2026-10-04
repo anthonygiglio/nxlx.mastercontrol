@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Connect and pair</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 10px;min-height:44px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.pin{width:56px;height:64px;border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;font:500 28px 'IBM Plex Mono',monospace;text-align:center}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 24px 16px 16px; display: flex; flex-direction: column; gap: 16px; background: #f4f3ef">
+<div style="font-weight: 600; font-size: 22px">Connect to your box</div>
+<div style="font-size: 14px; line-height: 1.5">Join the box's own Wi-Fi, or scan the code shown on the projector test screen. No internet needed.</div>
+<div style="display: flex; gap: 12px; align-items: center; border: 1.5px dashed #6b6b66; background: #ecebe6; border-radius: 6px; padding: 12px">
+<div style="width: 120px; height: 120px; border: 1.5px solid #1c1c1c; background: #fff; display: flex; align-items: center; justify-content: center" class="k">QR code</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div class="k">Wi-Fi</div>
+<div style="font: 500 15px 'IBM Plex Mono', monospace">pocketvj-4f2a</div>
+<div class="k">Address</div>
+<div style="font: 500 15px 'IBM Plex Mono', monospace">pocketvj.local</div>
+</div>
+</div>
+<div class="k">Enter the 4 digit PIN shown on screen</div>
+<div style="display: flex; gap: 10px; justify-content: center">
+<input class="pin" aria-label="PIN digit 1" value="4" maxlength="1">
+<input class="pin" aria-label="PIN digit 2" value="1" maxlength="1">
+<input class="pin" aria-label="PIN digit 3" value="" maxlength="1">
+<input class="pin" aria-label="PIN digit 4" value="" maxlength="1">
+</div>
+<button class="btn on" style="min-height: 52px">Pair this phone</button>
+<div style="border: 1.5px solid #1c1c1c; background: #fff; border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 6px">
+<div class="k">Paired devices</div>
+<div style="display: flex; justify-content: space-between; font-size: 14px"><span>Your phone</span><span class="k">Full control</span></div>
+<div style="display: flex; justify-content: space-between; font-size: 14px"><span>Stage tech tablet</span><span class="k">Live only</span></div>
+<div style="display: flex; justify-content: space-between; font-size: 14px"><span>Guest link</span><span class="k">View only</span></div>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="text-align: center">Connection lost? The box keeps playing. Reconnect any time.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

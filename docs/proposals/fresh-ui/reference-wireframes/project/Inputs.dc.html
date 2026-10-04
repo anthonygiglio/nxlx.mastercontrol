@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inputs and sources</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:40px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.card h2{margin:0;font-size:15px;font-weight:600}
+.li{display:flex;justify-content:space-between;align-items:center;border:1.5px solid #1c1c1c;border-radius:6px;padding:8px 10px;font-size:13px;gap:8px}
+.sel{min-height:40px;border:1.5px solid #1c1c1c;border-radius:6px;background:#fff;font:14px 'IBM Plex Sans',sans-serif;padding:0 8px}
+.bd{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1.5px solid #1c1c1c;border-radius:4px;padding:3px 6px}
+.bd.w{background:#1c1c1c;color:#fff}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 20px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="cur">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Inputs and sources</div>
+<div class="k">Any input can feed a live pad or a mapper surface</div>
+</div>
+<div class="card" style="flex-direction: row; gap: 16px; align-items: stretch">
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 8px">
+<h2>Network video (NDI) from your laptop</h2>
+<div class="li"><span>LAPTOP · RESOLUME Output</span><span class="bd">1920x1080 · 60 fps · 9 ms</span><button class="btn on" style="min-height: 34px">Use as pad D1</button></div>
+<div class="li"><span>LAPTOP · MadMapper Output 2</span><span class="bd">1280x720 · 30 fps · 8 ms</span><button class="btn" style="min-height: 34px">Use as pad D2</button></div>
+<div class="li" style="border-style: dashed; border-color: #6b6b66"><span>Scanning the show network...</span><span class="k">2 found</span></div>
+</div>
+<div style="width: 300px; display: flex; flex-direction: column; gap: 8px; border-left: 1.5px solid #1c1c1c; padding-left: 16px">
+<h2>NDI quality</h2>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Full</button><button class="btn" style="flex-grow: 1">HX (lighter)</button></div>
+<div style="font-size: 12px; line-height: 1.4">Older boards can stutter on full 1080p. The self-test tells you what this box can take.</div>
+<div class="k">Presets: Resolume · MadMapper</div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+<div class="card">
+<h2>Other network streams</h2>
+<label for="su" class="k">Stream address</label>
+<input id="su" class="sel" value="srt://10.0.0.20:9000" style="font-family: 'IBM Plex Mono', monospace">
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1">SRT</button><button class="btn" style="flex-grow: 1">RTSP</button><button class="btn" style="flex-grow: 1">RTMP</button></div>
+<div class="li"><span>Syphon over TCP (Mac, legacy)</span><span class="bd w">Listening</span></div>
+</div>
+<div class="card">
+<h2>Capture and cameras</h2>
+<div class="li"><span>HDMI capture card</span><span class="bd">Found</span></div>
+<div class="li"><span>USB webcam</span><span class="bd">Found</span></div>
+<div class="li"><span>Pi camera</span><span class="bd">None</span></div>
+<div class="k">Live filter</div>
+<div style="display: flex; gap: 6px; flex-wrap: wrap"><button class="btn on" style="min-height: 34px">None</button><button class="btn" style="min-height: 34px">Sketch</button><button class="btn" style="min-height: 34px">Emboss</button><button class="btn" style="min-height: 34px">Hatch</button><button class="btn" style="min-height: 34px">GPen</button></div>
+</div>
+<div class="card">
+<h2>Screen sharing</h2>
+<div class="li"><span>Receive a shared screen</span><button class="btn" style="min-height: 34px">Start</button></div>
+<div class="li"><span>Remote desktop (VNC)</span><span class="bd">Off</span></div>
+<div class="li"><span>Take picture from camera</span><button class="btn" style="min-height: 34px">Capture</button></div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; flex-grow: 1">
+<div class="card">
+<h2>Pixel and light data in (Art-Net, sACN)</h2>
+<div class="li"><span>Universe 1, from lighting desk or MadMapper</span><span class="bd">Receiving</span></div>
+<div class="k">Use channels to trigger pads, set opacity and speed</div>
+<button class="btn" style="align-self: flex-start">Open channel map in Control</button>
+</div>
+<div class="card">
+<h2>Recipe: Resolume or MadMapper to this box</h2>
+<div style="font-size: 13px; line-height: 1.5">1. Plug both into the same wired show network.<br>2. Turn on NDI output in the laptop app.<br>3. It appears in the list above. Tap Use as pad.<br>4. Optional: send OSC to this box to change clips (see Control).</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

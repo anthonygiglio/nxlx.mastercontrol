@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Health, recovery, updates</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:36px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.card h2{margin:0;font-size:16px;font-weight:600}
+.kv{display:flex;justify-content:space-between;font-size:14px;border-top:1px solid #dcdbd5;padding-top:8px}
+.bar{height:10px;border:1.5px solid #1c1c1c;border-radius:5px;background:#ecebe6}
+.bar div{height:100%;background:#1c1c1c}
+.ev{display:grid;grid-template-columns:80px minmax(0,1fr) 110px;gap:12px;font-size:13px;border-top:1px solid #dcdbd5;padding:8px 0}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 24px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="cur">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 16px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">System: health, recovery and updates</div>
+<button class="btn on">Restart player now</button>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+<div class="card">
+<h2>Vitals</h2>
+<div class="kv"><span>Temperature</span><span class="k">47°C</span></div>
+<div class="bar"><div style="width: 40%"></div></div>
+<div class="kv"><span>CPU</span><span class="k">32%</span></div>
+<div class="bar"><div style="width: 32%"></div></div>
+<div class="kv"><span>Memory</span><span class="k">1.4 / 8 GB</span></div>
+<div class="bar"><div style="width: 18%"></div></div>
+<div class="kv"><span>Disk</span><span class="k">1.8 / 58 GB</span></div>
+<div class="bar"><div style="width: 3%"></div></div>
+</div>
+<div class="card">
+<h2>Auto-recovery</h2>
+<div class="kv"><span>Watchdog</span><span class="k">Active</span></div>
+<div class="kv"><span>Player restarts tonight</span><span class="k">1</span></div>
+<div class="kv"><span>Restart limit before safe mode</span><span class="k">5 / 10 min</span></div>
+<div class="kv"><span>Protect storage (read-only)</span><span class="k">On</span></div>
+<div style="font-size: 13px; line-height: 1.5; border: 1.5px dashed #6b6b66; background: #ecebe6; border-radius: 6px; padding: 10px">If the player crashes it restarts by itself. Cutting power mid-show will not corrupt the SD card or disk.</div>
+</div>
+<div class="card">
+<h2>Updates</h2>
+<div class="kv"><span>Installed</span><span class="k">v4.0.0</span></div>
+<div class="kv"><span>Channel</span><span class="k">Stable</span></div>
+<div class="kv"><span>Source</span><span class="k">Your fork, checksum checked</span></div>
+<div style="display: flex; gap: 8px; margin-top: 4px">
+<button class="btn" style="flex-grow: 1">Check now</button>
+<button class="btn" style="flex-grow: 1">Roll back to v3.x</button>
+</div>
+<div class="k">Works offline from a USB stick</div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; flex-grow: 1; min-height: 0">
+<div class="card">
+<h2>Event log</h2>
+<div class="ev k"><span>Time</span><span>Event</span><span>Result</span></div>
+<div class="ev"><span class="k">21:14</span><span>Player stopped unexpectedly (bad file 03_grid_pulse.mov)</span><span class="k">Auto-restarted</span></div>
+<div class="ev"><span class="k">21:02</span><span>Phone paired (Your phone)</span><span class="k">Full control</span></div>
+<div class="ev"><span class="k">20:41</span><span>Projector on (PJLink)</span><span class="k">OK</span></div>
+<div class="ev"><span class="k">20:38</span><span>Boot complete in 24 s, autoplay pad A1</span><span class="k">OK</span></div>
+<div class="ev"><span class="k">20:37</span><span>Power restored after cut</span><span class="k">No repair needed</span></div>
+<div style="flex-grow: 1"></div>
+<button class="btn" style="align-self: flex-start">Download support bundle</button>
+</div>
+<div class="card">
+<h2>Backup and safe mode</h2>
+<button class="btn">Export settings and pads</button>
+<button class="btn">Restore from file</button>
+<button class="btn">Diagnostics console</button>
+<button class="btn">Open offline manual</button>
+<button class="btn">Change access PIN</button>
+<div class="k" style="margin-top: 6px">Safe mode</div>
+<div style="font-size: 13px; line-height: 1.5">Hold a key or press the reset pin at boot to start with defaults and a test pattern.</div>
+<button class="btn" style="margin-top: auto">Factory reset</button>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

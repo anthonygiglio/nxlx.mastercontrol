@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Video wall and sync</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:40px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.card h2{margin:0;font-size:15px;font-weight:600}
+.tr{display:grid;grid-template-columns:minmax(0,1fr) 130px 90px 90px 80px;gap:10px;align-items:center;border-top:1px solid #dcdbd5;padding:9px 0;font-size:13px}
+.tile{border:1.5px solid #1c1c1c;border-radius:4px;background:#ecebe6;display:flex;align-items:center;justify-content:center;font:500 12px 'IBM Plex Mono',monospace;min-height:64px}
+.tile.me{background:#c2410c;border-color:#c2410c;color:#fff}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 20px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="cur">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Video wall and multi-box sync</div>
+<div class="k">Several boxes, one picture, one clock</div>
+</div>
+<div class="card">
+<h2>This box is</h2>
+<div style="display: flex; gap: 8px">
+<button class="btn on" style="flex-grow: 1">Sender (master)</button>
+<button class="btn" style="flex-grow: 1">Receiver (slave)</button>
+<button class="btn" style="flex-grow: 1">Standalone</button>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 12px; flex-grow: 1; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div class="card">
+<h2>Wall layout</h2>
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1">3 across</button><button class="btn" style="flex-grow: 1">4 across</button><button class="btn on" style="flex-grow: 1">2 x 2</button><button class="btn" style="flex-grow: 1">Custom</button></div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px">
+<div class="tile me">Box 1 · this</div><div class="tile">Box 2</div><div class="tile">Box 3</div><div class="tile">Box 4</div>
+</div>
+<div class="k">Each box shows its own slice. Soft-edge blend set in Setup.</div>
+</div>
+<div class="card" style="flex-grow: 1">
+<h2>Sync method</h2>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<button class="btn on" style="text-align: left">Synced playback (same file on each box)</button>
+<button class="btn" style="text-align: left">Stream picture over network (NDI or Syphon/TCP)</button>
+<button class="btn" style="text-align: left">PiWall (legacy, Pi 3 only)</button>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>Boxes on the show network</h2>
+<div class="tr k"><span>Name</span><span>Address</span><span>Tile</span><span>Temp</span><span>State</span></div>
+<div class="tr"><span>pocketvj-4f2a (this box)</span><span class="k">10.0.0.101</span><span class="k">1</span><span class="k">47°C</span><span class="k">OK</span></div>
+<div class="tr"><span>pocketvj-9c11</span><span class="k">10.0.0.102</span><span class="k">2</span><span class="k">51°C</span><span class="k">OK</span></div>
+<div class="tr"><span>pocketvj-b07e</span><span class="k">10.0.0.103</span><span class="k">3</span><span class="k">49°C</span><span class="k">OK</span></div>
+<div class="tr"><span>pocketvj-21d8</span><span class="k">10.0.0.104</span><span class="k">4</span><span class="k">--</span><span class="k">Offline</span></div>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; gap: 6px; flex-wrap: wrap"><button class="btn on">Play on all</button><button class="btn">Play once on all</button><button class="btn">Stop all</button><button class="btn">Copy media to all</button></div>
+<div style="display: flex; gap: 6px"><button class="btn">Reboot all</button><button class="btn">Shut down all</button><button class="btn">Find boxes again</button></div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

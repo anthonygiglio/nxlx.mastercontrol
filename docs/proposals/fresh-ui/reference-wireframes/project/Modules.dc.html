@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Modules and updates</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 12px;min-height:36px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.card h2{margin:0;font-size:15px;font-weight:600}
+.md{display:grid;grid-template-columns:minmax(0,1fr) 70px 110px 120px 60px;gap:10px;align-items:center;border-top:1px solid #dcdbd5;padding:8px 0;font-size:13px}
+.tg{font-family:'IBM Plex Mono',monospace;font-size:12px;border:1.5px solid #1c1c1c;border-radius:14px;padding:3px 10px;text-align:center;background:#fff;cursor:pointer}
+.tg.y{background:#1c1c1c;color:#fff}
+.bd{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1.5px solid #1c1c1c;border-radius:4px;padding:3px 6px;text-align:center}
+.bd.w{background:#1c1c1c;color:#fff}
+.li{display:flex;justify-content:space-between;align-items:center;border-top:1px solid #dcdbd5;padding:7px 0;font-size:13px}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 20px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="cur">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 20px 28px; display: flex; flex-direction: column; gap: 12px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">System: modules and updates</div>
+<div class="k">Features are switchable parts, so new ones arrive without breaking old ones</div>
+</div>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 12px; flex-grow: 1; min-height: 0">
+<div class="card">
+<h2>Modules</h2>
+<div class="md k"><span>Module</span><span>Version</span><span>Type</span><span>Update</span><span>State</span></div>
+<div class="md"><span>Player engine and web panel</span><span class="k">4.0.0</span><span class="bd">Core, locked</span><span class="k">Up to date</span><button class="tg y">On</button></div>
+<div class="md"><span>Media library</span><span class="k">4.0.0</span><span class="bd">Core, locked</span><span class="k">Up to date</span><button class="tg y">On</button></div>
+<div class="md"><span>Projection mapper</span><span class="k">4.0.0</span><span class="bd">Optional</span><span class="bd w">4.0.1 ready</span><button class="tg y">On</button></div>
+<div class="md"><span>NDI and network inputs</span><span class="k">4.0.0</span><span class="bd">Optional</span><span class="k">Up to date</span><button class="tg y">On</button></div>
+<div class="md"><span>Presenter</span><span class="k">4.0.0</span><span class="bd">Optional</span><span class="k">Up to date</span><button class="tg y">On</button></div>
+<div class="md"><span>Video wall and sync</span><span class="k">4.0.0</span><span class="bd">Optional</span><span class="k">Up to date</span><button class="tg">Off</button></div>
+<div class="md"><span>DMX, Art-Net, MIDI</span><span class="k">4.0.0</span><span class="bd">Optional</span><span class="k">Up to date</span><button class="tg y">On</button></div>
+<div class="md"><span>Projector control</span><span class="k">4.0.0</span><span class="bd">Optional</span><span class="k">Up to date</span><button class="tg y">On</button></div>
+<div class="md"><span>Layout import (MadMapper, Resolume)</span><span class="k">0.3.0</span><span class="bd w">Beta</span><span class="k">Up to date</span><button class="tg">Off</button></div>
+<div class="md"><span>PiWall (legacy, Pi 3 only)</span><span class="k">3.9.0</span><span class="bd">Legacy</span><span class="k">No updates</span><button class="tg">Off</button></div>
+<div style="flex-grow: 1"></div>
+<div class="k">Turning a module off frees memory on small boards and hides its screen</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div class="card">
+<h2>Updates</h2>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Stable</button><button class="btn" style="flex-grow: 1">Beta</button><button class="btn" style="flex-grow: 1">Nightly</button></div>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Update all</button><button class="btn" style="flex-grow: 1">From USB stick</button></div>
+<div class="li"><span>Checks before installing</span><span class="k">Signature, space, OS</span></div>
+<div class="li"><span>Your pads, maps, themes</span><span class="k">Backed up first</span></div>
+<div class="li"><span>Settings format</span><span class="k">Auto-converted</span></div>
+</div>
+<div class="card">
+<h2>Version history</h2>
+<div class="li"><span>4.0.0, installed</span><span class="k">Active</span></div>
+<div class="li"><span>3.9.0, previous</span><button class="btn" style="min-height: 30px">Roll back</button></div>
+<div class="li"><span>Changelog for 4.0.1</span><button class="btn" style="min-height: 30px">Read</button></div>
+</div>
+<div class="card" style="flex-grow: 1">
+<h2>Add-ons</h2>
+<div style="font-size: 13px; line-height: 1.5">Themes, languages, mapper effects and OSC command packs install as files into an add-ons folder and are never touched by updates.</div>
+<button class="btn" style="align-self: flex-start">Open add-ons folder</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

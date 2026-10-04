@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hardware and playback setup</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:44px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:10px;box-sizing:border-box}
+.card h2{margin:0;font-size:16px;font-weight:600}
+.kv{display:flex;justify-content:space-between;font-size:14px;border-top:1px solid #dcdbd5;padding-top:8px}
+.sel{min-height:44px;border:1.5px solid #1c1c1c;border-radius:6px;background:#fff;font:14px 'IBM Plex Sans',sans-serif;padding:0 8px}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 24px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="cur">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 16px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Hardware and playback</div>
+<div class="k">Replaces old tabs: Display, Audio, Format, Mapping</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+<div class="card">
+<h2>Detected hardware</h2>
+<div class="kv"><span>Device</span><span class="k">Raspberry Pi 5, 8 GB</span></div>
+<div class="kv"><span>OS</span><span class="k">Debian 13, arm64</span></div>
+<div class="kv"><span>Video decode</span><span class="k">Software H.264, HW HEVC</span></div>
+<div class="kv"><span>Recommended max</span><span class="k">1080p60 H.264</span></div>
+<div style="font-size: 13px; line-height: 1.5; border: 1.5px dashed #6b6b66; background: #ecebe6; border-radius: 6px; padding: 10px">Works the same on Pi 3B, Pi 4, Pi 5, mini PCs and old computers. Only the recommended limits change.</div>
+</div>
+<div class="card">
+<h2>Player engine</h2>
+<label for="pe" class="k">Backend</label>
+<select id="pe" class="sel">
+<option>Auto: mpv on DRM/KMS (tested)</option>
+<option>mpv on X11 (fallback)</option>
+<option>VLC (last resort)</option>
+</select>
+<label for="hw" class="k">Decoding</label>
+<select id="hw" class="sel">
+<option>Auto hardware, fall back to software</option>
+<option>Software only (old PCs)</option>
+</select>
+<div style="display: flex; gap: 8px; margin-top: 4px">
+<button class="btn on" style="flex-grow: 1">Run 60 s self-test</button>
+<button class="btn" style="flex-grow: 1">Test pattern</button>
+</div>
+<div class="k">Last test: passed, 0 dropped frames</div>
+</div>
+<div class="card">
+<h2>Outputs</h2>
+<div style="display: flex; justify-content: space-between; align-items: center; border: 1.5px solid #1c1c1c; border-radius: 6px; padding: 10px 12px"><span>HDMI-1 · 1920x1080 @ 60</span><button class="btn" style="min-height: 36px">Configure</button></div>
+<div style="display: flex; justify-content: space-between; align-items: center; border: 1.5px dashed #6b6b66; border-radius: 6px; padding: 10px 12px"><span>HDMI-2 · not connected</span><span class="k">Off</span></div>
+<div style="display: flex; gap: 8px">
+<button class="btn on" style="flex-grow: 1">Single</button>
+<button class="btn" style="flex-grow: 1">Mirror</button>
+<button class="btn" style="flex-grow: 1">Span 2</button>
+<button class="btn" style="flex-grow: 1">Edge blend</button>
+</div>
+<div class="k">Modes read from the screen, no more forcing resolutions by hand</div>
+</div>
+<div class="card">
+<h2>Audio and startup</h2>
+<label for="au" class="k">Audio out</label>
+<select id="au" class="sel">
+<option>HDMI-1</option>
+<option>USB sound card</option>
+<option>3.5 mm jack (Pi 3B, Pi 4)</option>
+</select>
+<div class="k">Rotate and flip</div>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1; min-height: 36px">0°</button><button class="btn" style="flex-grow: 1; min-height: 36px">90°</button><button class="btn" style="flex-grow: 1; min-height: 36px">180°</button><button class="btn" style="flex-grow: 1; min-height: 36px">270°</button><button class="btn" style="flex-grow: 1; min-height: 36px">Flip H</button><button class="btn" style="flex-grow: 1; min-height: 36px">Flip V</button></div>
+<div class="kv"><span>Projector (PJLink, serial, CEC)</span><span class="k">On · Off · Status</span></div>
+<div class="kv"><span>Screen sleep and wake</span><span class="k">Manual or scheduled</span></div>
+<div class="kv"><span>Test screen and test tone</span><span class="k">Buttons</span></div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Live mix</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 10px;min-height:44px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.row{display:flex;flex-direction:column;gap:6px;border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:10px 12px}
+.row label{display:flex;justify-content:space-between;font-weight:600;font-size:14px}
+.row input[type=range]{width:100%;height:32px;accent-color:#c2410c}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 10px; background: #f4f3ef">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 18px">Mix</div>
+<div class="k">Replaces old tabs 3 and 4</div>
+</div>
+<div class="row"><label for="mo">Opacity <span class="k">80%</span></label><input id="mo" type="range" min="0" max="100" value="80"></div>
+<div class="row"><label for="ms">Size <span class="k">100%</span></label><input id="ms" type="range" min="0" max="200" value="100"></div>
+<div class="row"><label for="mp">Position X <span class="k">0</span></label><input id="mp" type="range" min="-100" max="100" value="0"></div>
+<div class="row"><label for="mv">Speed <span class="k">1.0x</span></label><input id="mv" type="range" min="25" max="200" value="100"></div>
+<div class="row">
+<div class="k">Transition</div>
+<div style="display: flex; gap: 6px">
+<button class="btn" style="flex-grow: 1">Cut</button>
+<button class="btn on" style="flex-grow: 1">Crossfade</button>
+<button class="btn" style="flex-grow: 1">Dip to black</button>
+</div>
+<div class="k" style="margin-top: 4px">Duration</div>
+<div style="display: flex; gap: 6px">
+<button class="btn" style="flex-grow: 1">0.5s</button>
+<button class="btn on" style="flex-grow: 1">1s</button>
+<button class="btn" style="flex-grow: 1">2s</button>
+<button class="btn" style="flex-grow: 1">5s</button>
+</div>
+</div>
+<div class="row">
+<div class="k">Rotate / flip</div>
+<div style="display: flex; gap: 6px">
+<button class="btn on" style="flex-grow: 1">0°</button>
+<button class="btn" style="flex-grow: 1">90°</button>
+<button class="btn" style="flex-grow: 1">180°</button>
+<button class="btn" style="flex-grow: 1">270°</button>
+</div>
+</div>
+<div style="display: flex; gap: 8px">
+<button class="btn" style="flex-grow: 1">Loop: on</button>
+<button class="btn" style="flex-grow: 1">Audio: mute</button>
+<button class="btn" style="flex-grow: 1">Reset mix</button>
+</div>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; border-top: 1.5px solid #1c1c1c; padding-top: 8px; gap: 4px">
+<button class="btn" style="flex-grow: 1; min-height: 48px">Live</button>
+<button class="btn on" style="flex-grow: 1; min-height: 48px">Mix</button>
+<button class="btn" style="flex-grow: 1; min-height: 48px">Media</button>
+<button class="btn" style="flex-grow: 1; min-height: 48px">System</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

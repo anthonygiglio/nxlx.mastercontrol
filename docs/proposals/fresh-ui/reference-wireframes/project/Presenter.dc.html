@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Presenter</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:40px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.card h2{margin:0;font-size:15px;font-weight:600}
+.li{display:flex;justify-content:space-between;align-items:center;border:1.5px solid #1c1c1c;border-radius:6px;padding:8px 10px;font-size:13px;gap:8px}
+.sel{min-height:40px;border:1.5px solid #1c1c1c;border-radius:6px;background:#fff;font:14px 'IBM Plex Sans',sans-serif;padding:0 8px}
+.th{width:96px;height:62px;border:1.5px dashed #6b6b66;background:#ecebe6;border-radius:4px;flex-shrink:0}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 20px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="cur">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Presenter</div>
+<div class="k">For stills, slides, PDFs, overlays and background audio</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<div class="card">
+<h2>Slideshow</h2>
+<div style="display: flex; gap: 12px">
+<div class="th"></div><div class="th"></div><div class="th"></div>
+</div>
+<div class="li"><span>Folder</span><span class="k">Library / Photos (24 images)</span></div>
+<div class="k">Time per slide</div>
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1">2 s</button><button class="btn on" style="flex-grow: 1">5 s</button><button class="btn" style="flex-grow: 1">10 s</button><button class="btn" style="flex-grow: 1">15 s</button><button class="btn" style="flex-grow: 1">30 s</button><button class="btn" style="flex-grow: 1">60 s</button></div>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Start automatic</button><button class="btn" style="flex-grow: 1">Manual: prev</button><button class="btn" style="flex-grow: 1">Manual: next</button></div>
+<div class="li"><span>Play from USB stick instead</span><button class="btn" style="min-height: 34px">Use USB</button></div>
+</div>
+<div class="card">
+<h2>PDF and slide decks</h2>
+<div class="li"><span>talk_v3.pdf · 42 pages</span><span class="k">Page 1</span></div>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Present</button><button class="btn" style="flex-grow: 1">Prev</button><button class="btn" style="flex-grow: 1">Next</button><button class="btn" style="flex-grow: 1">Stop</button></div>
+<div class="li"><span>Open a PDF from USB</span><button class="btn" style="min-height: 34px">Use USB</button></div>
+<div class="li"><span>Impress and other decks</span><span class="k">Export to PDF first</span></div>
+<div class="k" style="margin-top: 4px">Slides can also be a mapper surface source</div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; flex-grow: 1">
+<div class="card">
+<h2>Overlay</h2>
+<div class="li"><span>logo_bug.png</span><span class="k">Transparent PNG</span></div>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Overlay on</button><button class="btn" style="flex-grow: 1">Overlay off</button></div>
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1">Top left</button><button class="btn" style="flex-grow: 1">Top right</button><button class="btn" style="flex-grow: 1">Bottom left</button><button class="btn" style="flex-grow: 1">Bottom right</button></div>
+<div class="k">Works over video, slides and mapper output</div>
+</div>
+<div class="card">
+<h2>Audio player</h2>
+<div class="li"><span>ambient_set.mp3</span><span class="k">02:14 / 41:20</span></div>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Play</button><button class="btn" style="flex-grow: 1">Stop audio only</button><button class="btn" style="flex-grow: 1">Play from USB</button></div>
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1">Volume to 100%</button><button class="btn" style="flex-grow: 1">Test tone L</button><button class="btn" style="flex-grow: 1">Test tone R</button></div>
+<div class="k">Output chosen in Setup</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

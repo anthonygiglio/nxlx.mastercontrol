@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Media library</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:44px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.tr{display:grid;grid-template-columns:48px minmax(0,1fr) 64px 92px 44px 132px 52px;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid #c9c8c2;font-size:14px}
+.th{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f;border-top:none}
+.thumb{width:48px;height:36px;border:1.5px dashed #6b6b66;background:#ecebe6;border-radius:4px}
+.bd{font-family:'IBM Plex Mono',monospace;font-size:11px;border:1.5px solid #1c1c1c;border-radius:4px;padding:3px 6px;text-align:center}
+.bd.w{background:#1c1c1c;color:#fff}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 24px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="cur">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 16px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Media library</div>
+<div style="display: flex; gap: 8px">
+<button class="btn">Import from USB</button>
+<button class="btn on">Upload files</button>
+</div>
+</div>
+<div style="border: 1.5px dashed #6b6b66; background: #ecebe6; border-radius: 6px; padding: 18px; display: flex; justify-content: space-between; align-items: center">
+<div style="font-size: 14px">Drop videos here. Each file is checked against this device and flagged if it may stutter.</div>
+<div class="k">USB drive found: STUDIO_2 (14 files)</div>
+</div>
+<div style="display: flex; gap: 16px; flex-grow: 1; min-height: 0">
+<div style="flex-grow: 1; border: 1.5px solid #1c1c1c; background: #fff; border-radius: 6px; display: flex; flex-direction: column; min-width: 0">
+<div class="tr th"><span></span><span>Name</span><span>Codec</span><span>Size</span><span>FPS</span><span>On this device</span><span>Pad</span></div>
+<div class="tr"><div class="thumb"></div><span>01_intro_wash.mp4</span><span class="k">H.264</span><span class="k">1920x1080</span><span class="k">30</span><span class="bd">Direct play</span><span class="bd">A1</span></div>
+<div class="tr"><div class="thumb"></div><span>02_tunnel_loop.mp4</span><span class="k">H.264</span><span class="k">1920x1080</span><span class="k">60</span><span class="bd">Direct play</span><span class="bd">A2</span></div>
+<div class="tr"><div class="thumb"></div><span>03_grid_pulse.mov</span><span class="k">ProRes</span><span class="k">3840x2160</span><span class="k">30</span><span class="bd w">Optimise advised</span><span class="bd">A3</span></div>
+<div class="tr"><div class="thumb"></div><span>04_ink_drops.mp4</span><span class="k">HEVC</span><span class="k">1920x1080</span><span class="k">30</span><span class="bd">Direct play</span><span class="bd">A4</span></div>
+<div class="tr"><div class="thumb"></div><span>05_strobe.mp4</span><span class="k">H.264</span><span class="k">1280x720</span><span class="k">60</span><span class="bd">Direct play</span><span class="bd">A5</span></div>
+<div class="tr"><div class="thumb"></div><span>06_logo.png</span><span class="k">Image</span><span class="k">1920x1080</span><span class="k">still</span><span class="bd">Direct play</span><span class="bd">A6</span></div>
+<div class="tr"><div class="thumb"></div><span>07_waves.avi</span><span class="k">MPEG-4</span><span class="k">1024x768</span><span class="k">25</span><span class="bd">Direct play</span><span class="bd">Unset</span></div>
+<div style="flex-grow: 1"></div>
+<div style="border-top: 1px solid #c9c8c2; padding: 10px 14px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center"><span class="k" style="margin-right: 6px">File tools</span><button class="btn" style="min-height: 34px; padding: 0 10px">Fix filenames</button><button class="btn" style="min-height: 34px; padding: 0 10px">Fix permissions</button><button class="btn" style="min-height: 34px; padding: 0 10px">Conform images</button><button class="btn" style="min-height: 34px; padding: 0 10px">Clean hidden files</button><button class="btn" style="min-height: 34px; padding: 0 10px">Mount USB</button><button class="btn" style="min-height: 34px; padding: 0 10px">Eject USB</button><button class="btn" style="min-height: 34px; padding: 0 10px">Get content</button></div>
+<div style="border-top: 1px solid #c9c8c2; padding: 10px 14px; display: flex; justify-content: space-between" class="k"><span>7 items · 1.8 GB of 58 GB used</span><span>Drag rows to reorder pads</span></div>
+</div>
+<div style="width: 256px; flex-shrink: 0; border: 1.5px solid #1c1c1c; background: #fff; border-radius: 6px; padding: 14px; display: flex; flex-direction: column; gap: 12px">
+<div style="font-weight: 600; font-size: 16px">Optimise for playback</div>
+<div style="font-size: 13px; line-height: 1.5">03_grid_pulse.mov is 4K ProRes. This Pi 5 can play it, but may drop frames. Convert to a safe copy; the original stays untouched.</div>
+<label for="tg" class="k">Target profile</label>
+<select id="tg" style="min-height: 44px; border: 1.5px solid #1c1c1c; border-radius: 6px; background: #fff; font: 14px 'IBM Plex Sans', sans-serif; padding: 0 8px">
+<option>Auto: this device (Pi 5)</option>
+<option>Pi 3B: 720p30 H.264</option>
+<option>Pi 4: 1080p30 H.264</option>
+<option>Pi 5: 1080p60 H.264</option>
+<option>Old PC: 720p30 MPEG-4</option>
+</select>
+<div style="border: 1.5px dashed #6b6b66; background: #ecebe6; border-radius: 6px; padding: 10px; font-size: 13px">Preview: 1920x1080, H.264, 30 fps, 12 Mbps, no audio<br><span class="k">Est. 4 min on this device</span></div>
+<button class="btn on">Optimise selected</button>
+<button class="btn">Optimise all flagged</button>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

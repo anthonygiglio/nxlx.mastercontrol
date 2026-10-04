@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Schedule, clock and startup</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#f4f3ef;color:#1c1c1c}
+.k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#55554f}
+.btn{font:600 14px 'IBM Plex Sans',sans-serif;border:1.5px solid #1c1c1c;background:#fff;color:#1c1c1c;border-radius:6px;padding:0 14px;min-height:40px;cursor:pointer}
+.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{padding:12px 14px;border-radius:6px;color:#1c1c1c;text-decoration:none;font-weight:600;font-size:14px}
+.nav a.cur{background:#1c1c1c;color:#fff}
+.card{border:1.5px solid #1c1c1c;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box}
+.card h2{margin:0;font-size:15px;font-weight:600}
+.ev{display:grid;grid-template-columns:100px 70px minmax(0,1fr) 60px;gap:10px;align-items:center;border-top:1px solid #dcdbd5;padding:8px 0;font-size:13px}
+.sel{min-height:40px;border:1.5px solid #1c1c1c;border-radius:6px;background:#fff;font:14px 'IBM Plex Sans',sans-serif;padding:0 8px}
+.li{display:flex;justify-content:space-between;align-items:center;border:1.5px solid #1c1c1c;border-radius:6px;padding:8px 10px;font-size:13px}
+.li.cur{background:#1c1c1c;color:#fff}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; background: #f4f3ef">
+<div style="width: 220px; flex-shrink: 0; box-sizing: border-box; padding: 20px 14px; border-right: 1.5px solid #1c1c1c; display: flex; flex-direction: column; gap: 20px">
+<div style="font-weight: 600; font-size: 20px; padding: 0 14px">PocketVJ</div>
+<div class="nav">
+<div class="k" style="padding: 0 14px 2px">Play</div>
+<a href="#" class="">Live</a>
+<a href="#" class="">Library</a>
+<a href="#" class="">Presenter</a>
+<div class="k" style="padding: 10px 14px 2px">Sources and output</div>
+<a href="#" class="">Inputs</a>
+<a href="#" class="">Mapper</a>
+<a href="#" class="">Setup</a>
+<a href="#" class="">Wall</a>
+<div class="k" style="padding: 10px 14px 2px">Automate</div>
+<a href="#" class="cur">Schedule</a>
+<a href="#" class="">Control</a>
+<div class="k" style="padding: 10px 14px 2px">Box</div>
+<a href="#" class="">Network</a>
+<a href="#" class="">System</a>
+</div>
+<div style="flex-grow: 1"></div>
+<div class="k" style="padding: 0 14px">v4.0 · Pi 5 · OK</div>
+</div>
+<div style="flex-grow: 1; box-sizing: border-box; padding: 24px 28px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-weight: 600; font-size: 24px">Schedule, clock and startup</div>
+<div class="k">Replaces old tabs: Autostart, Scheduler</div>
+</div>
+<div style="display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 12px; flex-grow: 1; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div class="card">
+<h2>When the box powers on</h2>
+<div class="li cur"><span>Play pad</span><span class="k" style="color: #fff">A1</span></div>
+<div class="li"><span>Loop a folder</span><span class="k">Off</span></div>
+<div class="li"><span>Random video</span><span class="k">Off</span></div>
+<div class="li"><span>Slideshow or PDF</span><span class="k">Off</span></div>
+<div class="li"><span>Mapper layout</span><span class="k">Off</span></div>
+<div class="li"><span>Receiver / wall tile</span><span class="k">Off</span></div>
+<div class="li"><span>Clock display</span><span class="k">Off</span></div>
+<div class="li"><span>Control panel only</span><span class="k">Off</span></div>
+<div class="k">Also: custom function 1 and 2</div>
+</div>
+<div class="card" style="flex-grow: 1">
+<h2>Clock display</h2>
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1">White</button><button class="btn" style="flex-grow: 1">Red</button><button class="btn on" style="flex-grow: 1">Green</button><button class="btn" style="flex-grow: 1">Orange</button><button class="btn" style="flex-grow: 1">Pink</button></div>
+<div style="display: flex; gap: 6px"><button class="btn" style="flex-grow: 1">Show clock</button><button class="btn" style="flex-grow: 1">Countdown</button></div>
+</div>
+</div>
+<div class="card">
+<h2>Timetable</h2>
+<div style="display: flex; gap: 6px"><button class="btn on" style="flex-grow: 1">Every day</button><button class="btn" style="flex-grow: 1">Weekdays</button><button class="btn" style="flex-grow: 1">Custom days</button><button class="btn" style="flex-grow: 1">One time</button></div>
+<div class="ev k"><span>Time</span><span>Days</span><span>Action</span><span>On</span></div>
+<div class="ev"><span class="k">18:00</span><span class="k">Daily</span><span>Projector on, play pad A1</span><span class="k">Yes</span></div>
+<div class="ev"><span class="k">18:45</span><span class="k">Daily</span><span>Show clock in green</span><span class="k">Yes</span></div>
+<div class="ev"><span class="k">19:00</span><span class="k">Fri, Sat</span><span>Play Bank B, loop</span><span class="k">Yes</span></div>
+<div class="ev"><span class="k">02:00</span><span class="k">Daily</span><span>Screen sleep and GPU off</span><span class="k">Yes</span></div>
+<div class="ev"><span class="k">02:05</span><span class="k">Daily</span><span>Projector off, shut down</span><span class="k">No</span></div>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; gap: 6px"><button class="btn on">Add event</button><button class="btn">Edit</button><button class="btn">Delete</button><button class="btn">Set the box clock</button></div>
+<div class="k">Clock source: network time, or set by hand when offline</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
