@@ -538,7 +538,13 @@ function startServer() {
       staff.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push('room ' + role + ': ' + m.text()); });
       staff.on('pageerror', (e) => problems.push('room ' + role + ' pageerror: ' + e.message));
       await staff.goto(base + '/#token=' + roomTokens[n]);
-      await staff.waitForSelector('#roomscreen .room-group:has-text("Painting wall") .room-state:has-text("Warming up")', { timeout: 15000 });
+      try {
+        await staff.waitForSelector('#roomscreen .room-group:has-text("Painting wall") .room-state:has-text("Warming up")', { timeout: 15000 });
+      } catch (e) {     // say what the device had on its screen, what the box answered, and any error of the page
+        const seen = await staff.evaluate(() => fetch('/api/room').then((r) => r.text()).then((t) => ({
+          nav: (document.querySelector('nav') || {}).textContent, screen: (document.getElementById('app') || {}).textContent.slice(0, 400), room: t.slice(0, 700) })));
+        throw new Error('room ' + role + ': not on the Room screen with the painting wall warming up: ' + JSON.stringify(seen) + ' problems: ' + problems.join('; '));
+      }
       assert(await staff.isDisabled('.room-scene') === (role === 'view'), role + ': the scene button is ' + (role === 'view' ? 'not ' : '') + 'for tapping');
       assert.strictEqual(await staff.locator('#roomalloff').count(), role === 'view' ? 0 : 1, role + ': All off');
       assert.strictEqual(await staff.locator('#roomviewonly').count(), role === 'view' ? 1 : 0, role + ': the view only note');
