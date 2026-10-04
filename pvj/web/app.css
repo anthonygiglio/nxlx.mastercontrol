@@ -170,3 +170,26 @@ details.fold { display: block; }
 .btn.danger { background: #b00020; border-color: #b00020; color: #fff; }
 .danger-h { margin: 8px 0 0; font-size: 15px; color: #d32f4a; grid-column: 1 / -1; }
 #sysstate .hint { min-width: 0; }
+
+/* Live: the Vibes button is the big one, full width on a phone, with the way to the Shaders page under it */
+.vibesrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.vibesbig { flex: 1 1 100%; min-height: 64px; padding: 8px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-width: 2px; border-color: var(--ac); font-size: 18px; overflow-wrap: anywhere; }
+.vibessub { font-size: 13px; font-weight: 400; }
+#shaderslink { flex: 1 1 100%; }
+@media (min-width: 900px) { .vibesbig { flex: 1 1 0; } #shaderslink { flex: none; } }
+/* The Shaders page: its cards sit in the page's own grid; a shader is a row with its buttons under its name */
+.syspage .shaderpage { grid-column: 1 / -1; }
+.shadername { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.list .item.shader-entry { flex-direction: column; align-items: stretch; flex-wrap: nowrap; padding: 12px 0; }
+.list .item.shader-entry > span:first-child { flex: none; }
+.list .item.shader-entry > .row { margin-left: 0; justify-content: space-between; }
+.rot { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; cursor: pointer; min-width: 0; }
+.rot.between { justify-content: space-between; }
+.rot > span { min-width: 0; overflow-wrap: anywhere; }
+.switch:disabled { opacity: .5; cursor: not-allowed; }
+.field { font-weight: 600; font-size: 14px; }
+.saved { font-weight: 400; font-size: 13px; color: var(--mu); }
+.shaderslider { padding: 8px 0; border-top: 1px solid var(--ln); }
+.shaderslider:first-child { border-top: 0; }
+.shaderslider input[type=range] { height: 44px; }
+.shaderadv { gap: 8px; }

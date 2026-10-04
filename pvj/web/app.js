@@ -8,7 +8,8 @@
   var S = {
     tab: 'live', device: null, status: null, banks: [], bank: 0, media: [], modules: [], theme: null,
     themes: [], devices: [], editing: false, sheet: null, msg: '', msgErr: false, token: null, failures: 0,
-    sys: null, sysData: {}, sysFresh: false   // System: the page that is open (null: the index), what each row last answered
+    sys: null, sysData: {}, sysFresh: false,  // System: the page that is open (null: the index), what each row last answered
+    sysFrom: null                             // the tab a page was opened from, when not from the index ('live': the Shaders link)
   };
   var app = document.getElementById('app');
   var offlineBanner = document.getElementById('offline');
@@ -380,7 +381,12 @@
     return bar;
   }
   // Shaders and Vibes lives in shaders.js; it borrows these helpers.
-  function shaderCtx() { return { h: h, api: api, act: act, can: can, say: say, poll: poll, moduleOn: moduleOn, state: S }; }
+  function shaderCtx() {
+    return { h: h, api: api, act: act, can: can, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
+      rowShown: function (id) { return sysRows().some(function (r) { return r.id === id && rowShown(r); }); },
+      openSys: function (id) { openSys(id, null, true); },          // from the Shaders page to another page: Back skips the page left behind
+      openShaders: function () { openSys('vibes', S.tab); } };
+  }
   function patchLive() {
     var st = S.status || {}, pl = st.player || {}, sys = st.system || {};
     var np = document.getElementById('np');
@@ -485,7 +491,6 @@
             onclick: function () { act('POST', '/api/control', { action: 'flip_v', value: !m.flip_v }, function () { poll(); setTimeout(render, 200); }); } }))),
       overlayCard(),
       mapperCard(),
-      window.pvjShaders ? window.pvjShaders.card(shaderCtx()) : null,
       h('div', { class: 'card' },
         h('div', { class: 'k', text: 'Rotate' }),
         choice([0, 90, 180, 270].map(function (d) { return { label: d + '°', value: d }; }), m.rotate === undefined ? 0 : m.rotate,
@@ -977,7 +982,7 @@
   function st(chip, text) { return { chip: chip, text: text }; }
   function goTab(tab) {
     if (history.state && history.state.sys) history.replaceState(null, '');   // the page left behind is not one to come back to
-    S.tab = tab; S.msg = ''; S.sys = null; S.sysFresh = false;
+    S.tab = tab; S.msg = ''; S.sys = null; S.sysFresh = false; S.sysFrom = null;
     loadAll().then(render);
   }
   function pointerCard(title, lines, buttons) {      // a page whose controls live on another screen says where
@@ -999,13 +1004,13 @@
         blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
         steps: [scheduleStep()], offInner: true,
         body: function () { return [scheduleCard()]; } },
-      { id: 'vibes', group: 'everyday', name: 'Vibes', role: 'live', module: 'shaders', url: '/api/shaders',
-        blurb: 'Moving patterns the box draws by itself, in place of a clip. Vibes plays them one after another, endlessly, for ambience. How fast they run on this box is not measured yet.',
+      { id: 'vibes', group: 'everyday', name: 'Shaders and Vibes', role: 'view', module: 'shaders', url: '/api/shaders',
+        blurb: 'Moving pictures the box draws by itself, in place of a clip. Vibes plays them one after another, for as long as you like. How fast they run on this box is not measured yet.',
         confirmOff: function (ask) {
           var pl = (S.status && S.status.player) || {};
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
         },
-        body: vibesPage },
+        body: function () { return window.pvjShaders ? [window.pvjShaders.page(shaderCtx())] : []; } },
       { id: 'access', group: 'everyday', name: 'People and codes', role: 'full', url: '/api/access', urlRole: 'full',
         blurb: 'The phones and tablets paired with this box, codes for guests and presenters, and the PIN.',
         body: function () { return [accessCard()]; } },
@@ -1138,9 +1143,10 @@
       return st('ready', next ? 'Next: ' + next : plural(d.entries.length, 'entry', 'entries'));
     },
     vibes: function (d) {
-      if (d.error) return st('problem', 'A shader was refused: ' + d.error.id);
-      if (d.vibes && d.vibes.running) return st('active', 'Vibes is on' + (d.playing ? ': ' + d.playing.name : ''));
-      if (d.playing) return st('active', 'Playing: ' + d.playing.name);
+      var nice = window.pvjShaders ? window.pvjShaders.nice : String;
+      if (d.error) return st('problem', 'A shader was refused: ' + nice(d.error.id));
+      if (d.vibes && d.vibes.running) return st('active', 'Vibes is playing' + (d.playing ? ': ' + nice(d.playing.name) : ''));
+      if (d.playing) return st('active', 'One shader is playing: ' + nice(d.playing.name));
       var n = d.shaders.filter(function (s) { return s.vibes && !s.error; }).length;
       return n ? st('ready', plural(n, 'shader') + ' in the rotation') : st('setup', 'No shader is in the rotation');
     },
@@ -1299,16 +1305,25 @@
     keepSyncForm();
     old.parentNode.replaceChild(system(), old);
   }
-  function openSys(id) {
+  // from: the tab the page is opened from when that is not System (Back then returns there). replace: the page takes
+  // the place of the one that is open, so Back does not stop at it.
+  function openSys(id, from, replace) {
+    var other = S.tab !== 'system';
+    if (other) { S.sysFrom = from || null; S.tab = 'system'; }
     S.sys = id; S.msg = '';
-    history.pushState({ sys: id }, '');
-    redrawSystem();
+    if (replace && history.state && history.state.sys) history.replaceState({ sys: id }, '');
+    else history.pushState({ sys: id }, '');
+    if (other) render(); else redrawSystem();     // from another tab the tab bar changes too
     window.scrollTo(0, 0);
   }
-  function sysBack() {
-    if (history.state && history.state.sys) return history.back();     // the popstate listener draws the index
+  function leaveSysPage() {          // back at the index, or at the tab the page was opened from
     S.sys = null; S.msg = ''; S.sysFresh = false;
-    redrawSystem();
+    if (S.sysFrom) { S.tab = S.sysFrom; S.sysFrom = null; }
+  }
+  function sysBack() {
+    if (history.state && history.state.sys) return history.back();     // the popstate listener draws what is behind
+    leaveSysPage();
+    render();
     window.scrollTo(0, 0);
   }
   function system() {
@@ -1455,20 +1470,12 @@
         full ? h('div', { class: 'row' }, h('button', { class: 'btn on big grow', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } })) : null);
     setTimeout(pageState, 0);
     return h('div', { class: 'screen syspage', id: 'syspage', 'data-page': id },
-      h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: '‹ System', onclick: sysBack })),
+      h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: S.sysFrom === 'live' ? '‹ Live' : '‹ System', onclick: sysBack })),
       head,
       h('p', { class: 'hint', id: 'sysblurb', text: blurb || '' }),
       h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
       h('div', { class: 'row', id: 'sysstate', hidden: true }, h('span', { class: 'chip' }), h('span', { class: 'hint' })),
       body);
-  }
-  // Vibes: started on Live. Its settings are still on Mix; they get their own card here when they move.
-  function vibesPage() {
-    return [
-      pointerCard('Start Vibes on Live', ['Vibes is started with the big Vibes button on the Live screen: one tap plays the shaders endlessly, another tap stops them.',
-        'It can also start by itself: at power-up, from the schedule, or from OSC, MIDI and DMX.'], [['live', 'Open Live']]),
-      pointerCard('Vibes settings', ['Which shaders are in the rotation, how long each one stays, the drawing size and your own uploads are on the Shaders card on the Mix screen.'], [['mix', 'Open Mix']])
-    ];
   }
   function aboutPage() {
     var now = S.status || {}, sys = now.system || {}, pl = now.player || {}, full = can('full');
@@ -2759,9 +2766,8 @@
     window.addEventListener('popstate', function (e) {     // the phone's back gesture: from a System page to the index
       if (!S.device) return;
       var id = (e.state && e.state.sys) || null;
-      if (id) S.tab = 'system';
-      S.sys = id; S.msg = '';
-      if (!id) S.sysFresh = false;
+      if (id) { S.tab = 'system'; S.sys = id; S.msg = ''; }
+      else leaveSysPage();
       render();
       window.scrollTo(0, 0);
     });
