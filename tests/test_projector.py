@@ -584,7 +584,9 @@ class Phase1Test(unittest.TestCase):
         fake = FakeProjector()
         self.addCleanup(fake.close)
         orig = fake.answer
-        fake.answer = lambda c, v: (time.sleep(1.2), orig(c, v))[1]
+        # The earlier command is held for 3 seconds, so "busy" at the second one's own deadline (0.6 s) is far from
+        # "busy" after waiting for the first (a limit of 1.0 against a hold of 1.2 left no room on a busy runner).
+        fake.answer = lambda c, v: (time.sleep(3.0), orig(c, v))[1]
         first = threading.Thread(target=projector.PJLink("127.0.0.1", fake.port, timeout=2).state)
         first.start()
         self.assertTrue(wait_for(lambda: fake.received))
@@ -594,7 +596,8 @@ class Phase1Test(unittest.TestCase):
         took = time.monotonic() - start
         self.assertEqual(cm.exception.code, "busy")
         self.assertIn("busy", str(cm.exception))
-        self.assertTrue(0.4 < took < 1.0, took)
+        self.assertTrue(0.4 < took < 2.0, took)
+        self.assertTrue(first.is_alive())                 # it did not wait for the earlier command to end
         first.join()
         self.assertEqual(len(fake.received), 1)           # the second was never sent
         self.assertEqual(projector._busy, {})

@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
+import ipaddress
 import os
 import tempfile
 import unittest
@@ -89,7 +90,7 @@ class ValidateTest(unittest.TestCase):
         self.assertEqual(netcfg.validate(dict(req, address="192.168.1.77"), IFACES, others)["address"], "192.168.1.77")
 
     def test_interface_and_mode_rules(self):
-        for iface in ("wlan0", "eth9", "lo", "", None, "eth0; reboot", "../eth0", "ETH0", "eth0 ", "a" * 40):
+        for iface in ("eth9", "lo", "", None, "eth0; reboot", "../eth0", "ETH0", "eth0 ", "a" * 40):
             with self.assertRaises(NetError, msg=repr(iface)):
                 netcfg.validate({"iface": iface, "mode": "dhcp"}, IFACES)
         for mode in ("", None, "DHCP", "bridge", 5):
@@ -131,10 +132,10 @@ class PlanTest(unittest.TestCase):
 
     def test_confirm_swaps_in_the_candidate_without_ever_leaving_no_autoconnect_profile(self):
         first = netcfg.confirm_plan("eth0", old_exists=True)
-        self.assertEqual([c[3] if c[2] != "modify" else "modify" for c in first], ["modify", "id", "modify"])
         self.assertEqual(first[0][3:6], ["id", "pvj-eth0-try", "connection.autoconnect"])
-        self.assertEqual(first[1], ["nmcli", "connection", "delete", "id", "pvj-eth0"])  # only after the candidate autoconnects
-        self.assertEqual(first[2][3:7], ["id", "pvj-eth0-try", "connection.id", "pvj-eth0"])
+        self.assertEqual(first[1][3:], ["id", "pvj-eth0", "connection.id", "pvj-eth0-old"])   # renamed, not deleted, until
+        self.assertEqual(first[2][3:], ["id", "pvj-eth0-try", "connection.id", "pvj-eth0"])   # the candidate has its name
+        self.assertEqual(first[3], ["nmcli", "connection", "delete", "id", "pvj-eth0-old"])   # and only then deleted
         self.assertEqual(len(netcfg.confirm_plan("eth0", old_exists=False)), 2)
 
     def test_revert_drops_the_candidate_and_reactivates_the_previous_connection_by_uuid(self):
@@ -193,6 +194,165 @@ class PendingTest(unittest.TestCase):
         self.assertTrue(p.expired(160.0))
         p.restart(200.0)  # the countdown restarts once the new network is up
         self.assertEqual(p.seconds_left(200.0), 60)
+
+
+def wifi(**kw):
+    return netcfg.validate(dict({"iface": "wlan0", "mode": "dhcp", "ssid": "Leyline Staff", "password": "correct horse"}, **kw), IFACES)
+
+
+class WifiValidateTest(unittest.TestCase):
+    def test_join_is_normalised_and_public_drops_the_password(self):
+        cfg = wifi()
+        self.assertEqual(cfg, {"iface": "wlan0", "mode": "dhcp", "revert_seconds": 60, "kind": "wifi", "ssid": "Leyline Staff",
+                               "security": "wpa-psk", "password": "correct horse", "hidden": False})
+        pub = netcfg.public(cfg)
+        self.assertNotIn("password", pub)
+        self.assertTrue(pub["password_set"])
+        self.assertNotIn("correct horse", repr(pub))
+
+    def test_each_kind_of_port_has_its_own_modes(self):
+        for mode in ("linklocal", "share"):
+            with self.assertRaises(NetError, msg=mode):
+                wifi(mode=mode)
+        for mode in ("hotspot", "off"):
+            with self.assertRaises(NetError, msg=mode):
+                ok(mode=mode, ssid="x", password="12345678")
+        self.assertEqual(wifi(mode="off"), {"iface": "wlan0", "mode": "off", "revert_seconds": 60, "kind": "wifi"})
+
+    def test_network_names(self):
+        self.assertEqual(wifi(ssid="Café 🎛")["ssid"], "Café 🎛")
+        self.assertEqual(wifi(ssid="x" * 32)["ssid"], "x" * 32)
+        for bad in ("", None, 5, "x" * 33, "é" * 17, "a\nb", "a\x00b", "a‮b", "\ud800", ["x"]):
+            with self.assertRaises(NetError, msg=repr(bad)):
+                wifi(ssid=bad)
+
+    def test_passwords(self):
+        self.assertEqual(wifi(password="a b\\c\"d'e")["password"], "a b\\c\"d'e")
+        self.assertEqual(wifi(password="ab" * 32)["password"], "ab" * 32)          # 64 hex digits: a raw key
+        for bad in (None, "", "short77", "x" * 64, "x" * 65, "pass\nword", "pässwörd", 12345678, "tab\there!"):
+            with self.assertRaises(NetError, msg=repr(bad)):
+                wifi(password=bad)
+
+    def test_security_choices(self):
+        self.assertNotIn("password", wifi(security="open", password=None))
+        self.assertEqual(wifi(security="open", password="")["security"], "open")
+        self.assertEqual(wifi(security="sae")["security"], "sae")
+        with self.assertRaises(NetError):
+            wifi(security="sae", password="ab" * 32)             # WPA3 has no raw hex key
+        for bad in ("wep", "WPA2", "", None, "802.1x"):
+            with self.assertRaises(NetError, msg=repr(bad)):
+                wifi(security=bad)
+        with self.assertRaises(NetError):
+            wifi(security="open", password="12345678")      # a password for an open network is a mistake
+        with self.assertRaises(NetError):
+            wifi(mode="hotspot", security="open")           # the box never makes an open hotspot
+
+    def test_hidden_and_band(self):
+        self.assertTrue(wifi(hidden=True)["hidden"])
+        for bad in ("yes", 1, None):
+            with self.assertRaises(NetError):
+                wifi(hidden=bad)
+        h = wifi(mode="hotspot", band="a")
+        self.assertEqual((h["band"], h["address"], h["prefix"]), ("a", "10.43.0.1", 24))
+        self.assertNotIn("hidden", h)
+        for bad in ("5", "abg", None):
+            with self.assertRaises(NetError):
+                wifi(mode="hotspot", band=bad)
+
+    def test_hotspot_addresses_follow_the_served_address_rules(self):
+        with self.assertRaises(NetError):
+            wifi(mode="hotspot", address="8.8.8.1")
+        with self.assertRaises(NetError):
+            wifi(mode="hotspot", address="10.0.0.1", prefix=8)
+        others = [("eth0", ipaddress.ip_network("10.43.0.0/24"))]
+        with self.assertRaises(NetError):
+            netcfg.validate({"iface": "wlan0", "mode": "hotspot", "ssid": "a", "password": "12345678"}, IFACES, others)
+
+    def test_fixed_address_on_wifi(self):
+        cfg = wifi(mode="static", address="192.168.8.20", prefix=24, gateway="192.168.8.1")
+        self.assertEqual((cfg["address"], cfg["gateway"], cfg["ssid"]), ("192.168.8.20", "192.168.8.1", "Leyline Staff"))
+
+
+class WifiPlanTest(unittest.TestCase):
+    UUID = "0b3c2f57-7d0a-4a5e-9d6a-1f2e3d4c5b6a"
+
+    def parse(self, text):
+        out, section = {}, None
+        for line in text.splitlines():
+            if line.startswith("["):
+                section = line.strip("[]")
+            elif "=" in line:
+                k, v = line.split("=", 1)
+                out["%s.%s" % (section, k)] = v
+        return out
+
+    def test_keyfile_for_joining(self):
+        kf = self.parse(netcfg.keyfile(wifi(hidden=True, password="a b\\c d e"), self.UUID))
+        self.assertEqual(kf["connection.id"], "pvj-wlan0-try")
+        self.assertEqual(kf["connection.autoconnect"], "false")
+        self.assertEqual(kf["wifi.mode"], "infrastructure")
+        self.assertEqual(bytes(int(b) for b in kf["wifi.ssid"].rstrip(";").split(";")), b"Leyline Staff")
+        self.assertEqual(kf["wifi.hidden"], "true")
+        self.assertEqual(kf["wifi-security.key-mgmt"], "wpa-psk")
+        self.assertEqual(kf["wifi-security.psk"], "a\\sb\\\\c\\sd\\se")   # GKeyFile: \s is a space, \\ a backslash
+        self.assertNotIn("band", " ".join(kf))
+
+    def test_keyfile_cannot_be_broken_out_of(self):
+        # nothing a user types can start a new line or section: the SSID is bytes and the password is checked
+        text = netcfg.keyfile(wifi(ssid="[ipv4]"), self.UUID)
+        self.assertEqual(sum(1 for l in text.splitlines() if l == "[ipv4]"), 1)
+        with self.assertRaises(NetError):
+            netcfg.keyfile(wifi(), "not-a-uuid")
+
+    def test_keyfile_for_hotspot_and_open(self):
+        kf = self.parse(netcfg.keyfile(wifi(mode="hotspot", band="a"), self.UUID))
+        self.assertEqual((kf["wifi.mode"], kf["wifi.band"], kf["wifi-security.proto"], kf["wifi-security.pairwise"],
+                          kf["wifi-security.pmf"]), ("ap", "a", "rsn", "ccmp", "1"))
+        kf = self.parse(netcfg.keyfile(wifi(security="open", password=None), self.UUID))
+        self.assertFalse([k for k in kf if k.startswith("wifi-security")])
+
+    def test_plan_and_preview_never_show_the_password(self):
+        cfg = wifi(password="hunter2hunter2")
+        cmds = netcfg.plan(cfg, "abcdef01", "/etc/NetworkManager/system-connections")
+        self.assertEqual(cmds[0], ["nmcli", "connection", "load",
+                                   "/etc/NetworkManager/system-connections/pvj-wlan0-try-abcdef01.nmconnection"])
+        self.assertEqual(cmds[-1], ["nmcli", "connection", "up", "id", "pvj-wlan0-try"])
+        self.assertIn("connection.autoconnect", cmds[1])
+        self.assertEqual(cmds[1][cmds[1].index("connection.autoconnect") + 1], "no")
+        text = "\n".join(netcfg.preview(cmds)) + repr(cmds)
+        self.assertNotIn("hunter2", text)
+        self.assertIn("readable by root only", text)
+        hot = netcfg.plan(wifi(mode="hotspot"), "abcdef01")
+        self.assertEqual(hot[1][hot[1].index("ipv4.method") + 1], "shared")
+        self.assertEqual(netcfg.plan(wifi(mode="off")), [["nmcli", "device", "disconnect", "wlan0"]])
+        for bad in ("../../x", "ABCDEF01", "abc", None):
+            with self.assertRaises((NetError, TypeError)):
+                netcfg.keyfile_path("wlan0", bad)
+
+    def test_confirm_and_revert_for_wifi(self):
+        self.assertEqual(netcfg.confirm_plan("wlan0", True, wifi_off=True), [["nmcli", "radio", "wifi", "off"]])
+        self.assertEqual(netcfg.revert_plan("wlan0", False, None, radio_was_off=True)[-1], ["nmcli", "radio", "wifi", "off"])
+
+
+class ScanTest(unittest.TestCase):
+    def test_terse_lines_are_split_on_unescaped_colons(self):
+        self.assertEqual(netcfg.parse_terse(r"*:My\:Net\\:80:WPA2:6"), ["*", "My:Net\\", "80", "WPA2", "6"])
+
+    def test_results_are_deduplicated_cleaned_and_sorted(self):
+        text = "\n".join([
+            "Venue:40:WPA2:1", "Venue:70:WPA1 WPA2:36", "Leyline Staff:55:WPA2 WPA3:11",
+            "Guest::0:6", ":90:WPA2:6", "Corp:80:WPA2 802.1X:6", "Old:30:WEP:6", "New:20:WPA3:149",
+            "Open Cafe:10::1", "bad\x01name:99:WPA2:1", "Odd:x:WPA2:1", "garbage", "a:b:c:d:e"])
+        got = netcfg.scan_results(text, current="Leyline Staff")
+        self.assertEqual([n["ssid"] for n in got], ["Leyline Staff", "Corp", "Venue", "Old", "New", "Open Cafe"])
+        by = {n["ssid"]: n for n in got}
+        self.assertTrue(by["Leyline Staff"]["in_use"])
+        self.assertEqual((by["Venue"]["signal"], by["Venue"]["channel"]), (70, 36))
+        self.assertEqual({k: by[k]["security"] for k in by},
+                         {"Leyline Staff": "wpa-psk", "Corp": "unsupported", "Venue": "wpa-psk", "Old": "unsupported",
+                          "New": "sae", "Open Cafe": "open"})
+        self.assertEqual(len(netcfg.scan_results("\n".join("n%d:50:WPA2:1" % i for i in range(100)))), 40)
+        self.assertFalse(any(n["in_use"] for n in netcfg.scan_results(text)))
 
 
 if __name__ == "__main__":

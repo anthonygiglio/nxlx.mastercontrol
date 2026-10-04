@@ -37,7 +37,9 @@ Next, in order:
 5. **Painting-wall masks** on the second projector (likely the Pi 3B as a second synced box).
 6. **Network notes** for the private NXLX network (a dedicated router, fixed addresses, projectors without internet, staff Wi-Fi or a wall tablet).
 7. **Video matrix driver** (serial, TCP, HTTP, OSC command templates) once the owner picks a model; audio routing is undecided.
-8. The earlier parity list, now after the above: display mode (owner at the monitor); mapper workflow; wall improvements; schedule with dates; follow-on actions; Wi-Fi hotspot.
+8. The earlier parity list, now after the above: display mode (owner at the monitor); mapper workflow; wall improvements; schedule with dates; follow-on actions.
+
+**Wi-Fi control (2026-10-04, D41)** is built and reviewed but has never run on a box. First test on the Pi, from the wired port or a keyboard: set the Wi-Fi country, switch the Network module on, Find networks, join a known network, confirm, then a hotspot from a phone, then Wi-Fi off and back. Questions to answer are at the end of the journal entry. Open PRs at the end of 2026-10-04: #64 (room, waits for its review), #65 (UX proposal, waits for the owner), #67 (System index, green, docs and log still to write).
 
 Small follow-ups: a factory reset cannot remove the root-only update backups in `/var/lib/pvj/backups` (they hold the old devices and passwords, and `pvj-update rollback` after a reset brings them back); it needs a pvj-sysd action. Box care (PR #62, D39) has not been run on the Pi: export and import, the diagnostics file (does it say the log is not readable), a factory reset with the PIN screen returning. Check after the Pi's next restart that `journalctl --list-boots` shows more than one boot (the persistent log, D35, was installed but not yet seen across a restart).
 
@@ -69,7 +71,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | Multi-box sync and video wall | `pvj/SYNC.md` | off (beta) |
 | Streams and live input (SRT, RTSP, RTMP, USB capture) | `pvj/STREAMS.md` | off (beta) |
 | DMX (Art-Net, sACN), MIDI controllers | `pvj/DMX.md`, `pvj/MIDI.md` | off (beta) |
-| Wired network settings with confirm-or-revert | `pvj/NETWORK.md` | off (beta) |
+| Network settings with confirm-or-revert: wired, and Wi-Fi (join a network, own hotspot, Wi-Fi off, find networks; D41) | `pvj/NETWORK.md` | off (beta) |
 | System log kept across restarts, 64 MB cap (D35) | `docs/MANUAL.md` | on |
 
 Docs for people: [docs/MANUAL.md](docs/MANUAL.md) and pictures in [docs/UI.md](docs/UI.md) (made by `tests/ui/screenshots.js`, which with `MOCKUPS` set also writes the editable mock-ups, `tests/ui/mockups.js`). Module manifests: `pvj/modules.d`.
@@ -82,10 +84,10 @@ One test Raspberry Pi 4 (Model B Rev 1.5, Debian 13 trixie, wired Ethernet, a 25
 - Sync and the wall on two real boxes (waiting for the Pi 3B's spare card); a real support server (VPS); swapping USB sticks while running; copy from USB on the box.
 - MIDI Learn with the real controllers; the PIN on screen on a fresh box; streams with a real source; HEVC, 4K, 1080p60; 24 fps judder; the second HDMI port; a real projector.
 - Shaders and Vibes: never seen on a display, no speed measured on any board, run only on a software GPU in CI; its MIDI and DMX controls only against fakes.
-- The read-only root (`pvj-rootfs`), the Network module (test with a keyboard and monitor on the box, never over SSH on the only link), TouchOSC.
+- The read-only root (`pvj-rootfs`), the Network module and its Wi-Fi control (test with a keyboard and monitor on the box, never over SSH or Wi-Fi on the only link), TouchOSC.
 - Pi 3, Pi 5 and x86.
 
-Not built: crossfade (needs a second player), display mode, Wi-Fi and hotspot, updates from the network, NDI, AES67/Dante, presenter, importing old mapper files, MIDI controller profiles and feedback, custom DMX layouts.
+Not built: crossfade (needs a second player), display mode, company (802.1X) Wi-Fi and setting the Wi-Fi country, updates from the network, NDI, AES67/Dante, presenter, importing old mapper files, MIDI controller profiles and feedback, custom DMX layouts.
 
 Known limits: the panel cannot restart a wedged mpv (unprivileged by design). Merged branches on GitHub are not deleted (ask the owner). GitHub ruleset "Protect master" requires 9 checks and pull requests; do not change it without asking.
 

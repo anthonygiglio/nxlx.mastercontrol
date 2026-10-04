@@ -270,6 +270,34 @@ function startServer() {
     await page.waitForSelector('#netpending');
     await page.click('#netrevert');
     await page.waitForSelector('#netiface');
+    // Wi-Fi: pick the Wi-Fi port, find networks, choose one, type its password, apply, confirm; the password never comes back
+    await page.selectOption('#netiface', 'wlan0');
+    await page.waitForSelector('#netmodes >> text=Own hotspot');
+    assert(!(await page.isVisible('#netmodes >> text=Direct cable')), 'wired modes are not offered for Wi-Fi');
+    await page.click('#netscanbtn');
+    await page.waitForSelector('#netscan >> text=Leyline Staff');
+    assert(await page.isDisabled('#netscan button:has-text("Corp")'), 'a company (802.1X) network cannot be chosen');
+    assert(await page.isVisible('#netscan button:has-text("<img src=x")'), 'a hostile name is shown as text');
+    assert.strictEqual(await page.$$eval('#netcard img', (els) => els.length), 0, 'and never becomes markup');
+    assert(!(await page.evaluate(() => window.pwned)), 'nothing from a network name ran');
+    await page.click('#netscan >> text=Leyline Staff');
+    assert.strictEqual(await page.inputValue('#netssid'), 'Leyline Staff');
+    await page.fill('#netpass', 'short');
+    await page.click('#netapply');
+    await page.waitForFunction(() => /password/i.test(document.getElementById('netresult').textContent) && document.getElementById('netresult').className.includes('err'));
+    await page.fill('#netpass', 'staff only 2026');
+    const applied = page.waitForResponse((r) => r.url().endsWith('/api/network/apply'));
+    await page.click('#netapply');
+    assert(!(await (await applied).text()).includes('staff only'), 'the password is not sent back');
+    await page.waitForFunction(() => /joining \u201cLeyline Staff\u201d/.test((document.getElementById('netpending') || {}).textContent || ''));
+    await page.click('#netconfirm');
+    await page.waitForFunction(() => /joined \u201cLeyline Staff\u201d/.test((document.getElementById('netline-wlan0') || {}).textContent || ''));
+    assert(!(await page.content()).includes('staff only'), 'the password is not left on the page');
+    await page.selectOption('#netiface', 'wlan0');
+    await page.click('#netmodes >> text=Own hotspot');
+    await page.waitForSelector('#netband');
+    await page.selectOption('#netiface', 'eth0');
+    await page.waitForSelector('#netmodes >> text=Direct cable');
     await page.waitForFunction(() => !document.getElementById('netreverting') && !document.getElementById('netpending'));
     await onPage('Network');
     // Back returns to the index (the button, and the phone's own back), and the row now tells the truth
@@ -453,6 +481,27 @@ function startServer() {
     await page.click('.proj-entry >> button:has-text("Remove")');
     await page.waitForFunction(() => !document.querySelector('.proj-entry'));
     // Sync and video wall: switch the module on, be a server, set a wall tile, back to off
+    // This step failed twice in CI only. If it fails again it says what the form held, what the message was, what is
+    // saved, and every /api/sync request the page made with its answer.
+    const syncSeen = [];
+    page.on('response', (r) => {
+      if (!r.url().endsWith('/api/sync')) return;
+      const q = r.request();
+      r.text().catch(() => '(no body)').then((t) => {
+        syncSeen.push(q.method() + ' ' + (q.postData() || '') + ' -> ' + r.status() + ' ' + t.slice(0, 160));
+        if (syncSeen.length > 10) syncSeen.shift();
+      });
+    });
+    const syncState = async () => {
+      const form = await page.evaluate(() => {
+        const v = (id) => { const el = document.getElementById(id); return el ? el.value : '(missing)'; };
+        const m = document.getElementById('msg');
+        return fetch('/api/sync').then((r) => r.json()).catch((x) => ({ config: 'fetch failed: ' + x.message })).then((d) => ({
+          cols: v('wallcols'), rows: v('wallrows'), col: v('wallcol'), row: v('wallrow'), bezel: v('wallbezel'),
+          msg: m ? m.textContent : '(missing)', saved: d.config }));
+      }).catch((x) => 'evaluate failed: ' + x.message);
+      return JSON.stringify({ form: form, requests: syncSeen });
+    };
     await sys('Boxes in step');
     await switchOn('Boxes in step');
     await page.waitForSelector('#syncrole-server');
@@ -462,10 +511,19 @@ function startServer() {
     await page.selectOption('#wallcol', '1');
     await page.fill('#wallbezel', '3');
     await page.click('#wallsave');
-    await page.waitForFunction(() => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.cols === 2 && d.config.wall.col === 1 && d.config.wall.bezel === 3));
-    await page.selectOption('#wallcol', '2');
+    try {
+      await page.waitForFunction(() => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.cols === 2 && d.config.wall.col === 1 && d.config.wall.bezel === 3), null, { timeout: 15000 });
+    } catch (e) { throw new Error(e.message.split('\n')[0] + ' | the wall was not saved: ' + await syncState()); }
+    // The card is rebuilt by the answer to the save above and, while it is a server, every 2 seconds. A column chosen
+    // just before such a rebuild must still be there at the click. It is set without an event (as the Network step
+    // does), the line at the top of the card is marked, and the step waits until that line is a new one.
+    await page.evaluate(() => { document.getElementById('syncline').dataset.seen = '1'; document.getElementById('wallcol').value = '2'; });
+    await page.waitForFunction(() => { const l = document.getElementById('syncline'); return l && !l.dataset.seen; }, null, { timeout: 8000 });
+    if (await page.evaluate(() => document.getElementById('wallcol').value) !== '2') throw new Error('a redraw of the Sync card lost the chosen column: ' + await syncState());
     await page.click('#wallsave');
-    await page.waitForFunction(() => /inside the wall/.test(document.getElementById('msg').textContent));
+    try {
+      await page.waitForFunction(() => /inside the wall/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
+    } catch (e) { throw new Error(e.message.split('\n')[0] + ' | no refusal shown: ' + await syncState()); }
     await page.click('#syncrole-off');
     await page.waitForSelector('#syncline:has-text("Off")');
     await fitsCard('#synccard', 'Sync card');
@@ -667,7 +725,9 @@ function startServer() {
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
     assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10, 'the ten bundled shaders are listed');
     await page.waitForFunction(() => /Vibes is on/.test((document.getElementById('shaderline') || {}).textContent));
-    await page.click('#shadercard [data-shader="nxlx-tide.fs"] >> text=Play');
+    // By its label, not its text: when the rotation happens to be showing this very shader (1 time in 10) the button
+    // reads "On screen", and a click on "Play" then waited for 30 seconds and failed.
+    await page.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play nxlx-tide"]');
     await page.waitForFunction(() => /On screen: nxlx-tide/.test((document.getElementById('shaderline') || {}).textContent));
     await page.waitForSelector('#shin-speed');                       // its number inputs are sliders
     const vibesAfter = await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running));
