@@ -393,7 +393,11 @@ class Vibes:
             try:
                 rotation = self.engine.playable(self.set_id)
             except ApiError:                        # the set this run was started with has been deleted
-                rotation = {"shaders": [], "order": "shuffle", "vary": False, "dwell": 0}
+                self._finish("ended: the set it was running has been deleted")
+                if self.started:
+                    self.engine.off(self.epoch)
+                self._undip()
+                return False
             sid = self._next_id(rotation)
             if sid is None:
                 self._finish("ended: the player refused every shader" if self.refused else "ended: no shader is switched on for Vibes")

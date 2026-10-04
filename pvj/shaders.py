@@ -30,6 +30,7 @@ import re
 import socket
 import threading
 import time
+import unicodedata
 
 from .api import ApiError, valid_name
 from .player import PlayerError
@@ -93,6 +94,9 @@ _RENAMED = "out_color"                  # in the code, spelled exactly so; any o
 _INPUT_RENAMED = ("color",)             # as an input's name, in any letter case
 
 
+HIDDEN = ("Cc", "Cf", "Zl", "Zp", "Cs")      # Unicode categories no name or label may hold
+
+
 class ShaderError(ValueError):
     """An ISF file this box will not take; the message says why in plain words."""
 
@@ -122,17 +126,20 @@ def _num(v, what, limit=1e6):
     return float(v)
 
 
-def _f(x):
-    """A GLSL float literal (finite numbers only)."""
-    s = "%.7g" % _num(x, "a value", 1e9)
+def _f(x, digits=7):
+    """A GLSL float literal (finite numbers only). A magnitude below 1e-30 is written as 0: a 32-bit number cannot
+    hold 1e-40, and what a compiler makes of such a literal is its own business."""
+    v = _num(x, "a value", 1e9)
+    s = "%.*g" % (digits, 0.0 if abs(v) < 1e-30 else v)
     return s if ("." in s or "e" in s) else s + ".0"
 
 
 def _text(v, limit=MAX_TEXT):
-    """A short line of plain text for the panel (control characters dropped)."""
+    """A short line of plain text for the panel. Dropped: control characters, and the characters that are not seen
+    but change what is seen (text direction overrides, zero-width marks, line and paragraph separators)."""
     if not isinstance(v, str):
         return ""
-    return "".join(ch for ch in v if ch >= " " and ch != "\x7f")[:limit].strip()
+    return "".join(ch for ch in v if unicodedata.category(ch) not in HIDDEN)[:limit].strip()
 
 
 # ---- the ISF header ----------------------------------------------------------------------------------------------------
@@ -457,7 +464,7 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
     if not re.fullmatch(r"[a-z0-9 ]{1,40}", desc):
         raise ShaderError("bad description")
     values = clean_values(parsed, values)
-    hue, offset = _num(hue, "hue", 360.0), _num(offset, "offset", 1e7)
+    hue, offset = _num(hue, "hue", 360.0), _num(offset, "offset", 1e9)
     speed, gain = _num(speed, "speed", SPEED_MAX), _num(gain, "brightness", GAIN_MAX)
     if speed < SPEED_MIN or gain < GAIN_MIN:
         raise ShaderError("speed and brightness cannot be below 0")
@@ -512,7 +519,7 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
                   "    if (pvj_hi < 0) { pvj_hi += 32768; }"]
     lines += ["    PVJ_HP float pvj_k = 512.0;",
               "    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / %s%s + %s;" % (
-                  _f(CARRIER_FPS), "" if speed == 1.0 else " * %s" % _f(speed), _f(offset)),
+                  _f(CARRIER_FPS), "" if speed == 1.0 else " * %s" % _f(speed), _f(offset, 10)),
               "    pvj_norm = vec2(HOOKED_pos.x, 1.0 - HOOKED_pos.y);",
               "    pvj_coord = vec4(pvj_norm * RENDERSIZE, 0.0, 1.0);",
               "    pvj_color = vec4(0.0, 0.0, 0.0, 1.0);",
@@ -531,9 +538,19 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
 
 
 # ---- the carrier -------------------------------------------------------------------------------------------------------
+def usable(screen):
+    """The screen's size as whole numbers, or 1920 x 1080 for one that is no size at all (a player without a window
+    reports 0 x 0; dividing by it raised, and 0 x 5 gave a carrier of no width)."""
+    try:
+        sw, sh = int(screen[0]), int(screen[1])
+    except (TypeError, ValueError, IndexError):
+        return 1920, 1080
+    return (sw, sh) if 16 <= sw <= 16384 and 16 <= sh <= 16384 else (1920, 1080)
+
+
 def render_size(screen, height):
     """(width, height) the shader is drawn at: `height` lines (never more than the screen has) in the screen's shape."""
-    sw, sh = screen
+    sw, sh = usable(screen)
     h = max(16, min(int(height), sh, 1080))
     w = max(16, min(1920, int(round(h * sw / float(sh) / 2.0)) * 2))
     return w, h
@@ -545,7 +562,7 @@ def carrier_url(screen, counter=True):
     frame's colour is its own number (nobody sees it: the shader draws in its place), otherwise it is black. Built
     from whole numbers only; it is the same kind of address as the test pattern, which the hardened player already
     plays."""
-    sw, sh = int(screen[0]), int(screen[1])
+    sw, sh = usable(screen)
     g = math.gcd(sw, sh)
     aw, ah = sw // g, sh // g
     m = max(1, -(-36 // ah))
@@ -951,7 +968,7 @@ class Engine:
                 events = {i["name"] for i in parsed["inputs"] if i["type"] == "event"}
                 state = {"values": {n: v for n, v in clean.items() if n not in events},        # an event is never kept
                          "held": {n: True for n in clean if n in events and clean[n]},
-                         "hue": _num(hue, "hue", 360.0), "offset": _num(offset, "offset", 1e7), "controls": clean_controls(controls),
+                         "hue": _num(hue, "hue", 360.0), "offset": _num(offset, "offset", 1e9), "controls": clean_controls(controls),
                          "anchor": self.frame_now(carrier) if cfg.get("clock", CLOCKS[0]) == "carrier" else None}
                 text = self.compose(parsed, size, state, desc)
                 clean, key = state["values"], (digest, shape_of(parsed, clean))

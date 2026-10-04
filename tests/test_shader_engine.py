@@ -407,7 +407,7 @@ class ValuesTest(Live):
         self.assertEqual((p["offset"], p["controls"]), (150.0, {"speed": 1.0, "hue": 180.0, "brightness": 0.0}))
         self.assertIn("c = clamp(c * 0.0, 0.0, 1.0);", self.text())
         # the three bytes of the frame number start again after 6.4 days: the frames since the anchor stay right
-        self.engine.playing["anchor"] = S.FRAME_WRAP - 30
+        self.engine.playing["anchor"] = self.engine.playing["since"] = S.FRAME_WRAP - 30
         self.player.time_pos = (S.FRAME_WRAP + 60) / 30.0
         self.engine.change({"controls": {"speed": 2.0}})
         self.pump()
@@ -433,6 +433,55 @@ class ValuesTest(Live):
         self.player.time_pos = 50.0
         self.engine.api_play({"id": "all.fs", "values": {"level": 0.5}}, None, "t")
         self.assertEqual((self.engine.playing["anchor"], self.engine.playing["offset"]), (None, 7.0))
+
+    def test_thirty_days_on_one_shader_and_the_speed_still_changes_without_a_jump(self):
+        """The three bytes of the frame number start again every 6.4 days. A speed change after 30 days at speed 4
+        gave an offset of 1,430,951 where about 10.4 million was right, and offsets above 10 million were refused."""
+        day = 86400.0
+        self.engine.show("all.fs")
+        self.engine.change({"controls": {"speed": 4.0}})
+        self.pump()
+        anchors = []
+        for n in range(1, 31):                                        # nobody touches it; the worker comes by on its own
+            self.player.time_pos = n * day
+            self.now[0] += day
+            while self.engine.changer.pump():
+                pass
+            anchors.append(self.engine.playing["anchor"])
+            gone = (int(round(n * day * 30)) - self.engine.playing["since"]) / 30.0
+            self.assertLess(gone, 3 * day)                            # never near the 6.4 days the shader could not count
+            self.assertAlmostEqual(self.engine.playing["offset"] + 4.0 * gone, 4.0 * n * day, places=3)       # TIME is where it should be
+        self.assertGreater(len(set(anchors)), 10)                     # a new anchor every two days
+        self.engine.change({"controls": {"speed": 1.0}})
+        self.pump(0.0)
+        p = self.engine.playing
+        self.assertAlmostEqual(p["offset"], 4.0 * 30 * day, places=3)                     # 10,368,000
+        self.assertEqual(p["anchor"], int(30 * day * 30) % S.FRAME_WRAP)
+        self.assertIn("+ 10368000.0;", self.text())                   # written in full, not rounded to seven digits
+        # and without the worker (its thread asleep the whole time): the count is still right, in whole numbers
+        self.engine.show("all.fs")
+        self.engine.changer.clear()
+        self.engine.change({"controls": {"speed": 4.0}})
+        self.pump()
+        self.engine.changer._refresh = None
+        start = self.engine.playing["offset"]
+        self.player.time_pos = 60 * day
+        self.engine.change({"controls": {"speed": 2.0}})
+        self.pump()
+        self.assertAlmostEqual(self.engine.playing["offset"] - start, 4.0 * 30 * day, places=3)
+        self.assertIsNone(self.engine.error)
+
+    def test_tiny_numbers_and_a_screen_of_no_size(self):
+        self.assertEqual((S._f(1e-40), S._f(4.940656e-324), S._f(-1e-35), S._f(1e-20)), ("0.0", "0.0", "0.0", "1e-20"))
+        t = S.translate(S.parse(ALL), (640, 360), {"level": 1e-40, "tint": [5e-324, 0.5, 1e-39]})
+        self.assertIn("const float level = 0.0;", t)
+        self.assertIn("const vec4 tint = vec4(0.0, 0.5, 0.0, 1.0);", t)
+        for screen in ((0, 0), (0, 5), (5, 0), (-1920, 1080), None, ("a", "b"), (10 ** 9, 10 ** 9)):
+            self.assertEqual(S.carrier_url(screen), S.carrier_url((1920, 1080)), screen)
+            self.assertEqual(S.render_size(screen, 720), (1280, 720), screen)
+        self.player.osd_size = lambda: (0, 0)
+        self.assertTrue(self.engine.show("all.fs")["ok"])
+        self.assertEqual(self.engine.state()["render"]["width"], 1280)
 
     def test_a_late_value_never_lands_on_a_clip_or_on_another_shader(self):
         self.engine.change({"values": {"level": 1.0}})
@@ -774,6 +823,62 @@ class SetsTest(Live):
         self.assertEqual([e["name"] for e in st["sets"]], ["Ambient", "Late show"])
         st = self.engine.api_set({"action": "set", "op": "delete", "id": show["id"]}, None, "t")
         self.assertEqual((st["active"], [e["name"] for e in st["sets"]], st["config"]["dwell"]), ("00000000", ["Ambient"], 180))
+
+    def test_names_hold_nothing_unseen_and_are_compared_as_written(self):
+        """A text direction override, a zero-width mark or a line separator in a name shows as another name, or as
+        none; a set named like an id was taken for that id."""
+        self.engine.upload("all.fs", ALL)
+        self.engine.play("all.fs")
+        for bad in ("a\u202eb", "a\u200bb", "a\u0085b", "a\u2028b", "a\u2029b", "\u200f", "a\x7fb", "a\tb", "a\ufeffb", "a\ud800b"):
+            for body in ({"action": "save", "name": bad},):
+                with self.assertRaises(ApiError, msg=repr(bad)) as c:
+                    self.engine.api_presets(body, None, "t")
+                self.assertEqual(c.exception.status, 400)
+            for body in ({"op": "add", "name": bad}, {"op": "add", "name": "Ok", "shaders": [{"id": "all.fs", "preset": bad}]}):
+                with self.assertRaises(ApiError, msg=repr(bad)) as c:
+                    self.engine.api_set(dict({"action": "set"}, **body), None, "t")
+                self.assertEqual(c.exception.status, 400)
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                L.check_extra({"sets": [{"id": "00000000", "name": bad}]})
+        for bad in ("00000000", "deadbeef"):                          # a set named like an id
+            with self.assertRaises(ApiError) as c:
+                self.add(bad, [])
+            self.assertEqual(c.exception.status, 400)
+        self.engine.api_presets({"action": "save", "name": "Caf\u00e9 STRASSE"}, None, "t")
+        self.engine.api_presets({"action": "save", "name": "Cafe\u0301 stra\u00dfe"}, None, "t")     # the same name, typed another way
+        self.assertEqual(len(self.row("all.fs")["presets"]), 1)
+        self.assertEqual(self.engine.apply_preset({"name": "CAFE\u0301 STRASSE"})["preset"], "Cafe\u0301 stra\u00dfe")
+        self.add("\u00c9t\u00e9", [])
+        with self.assertRaises(ApiError):
+            self.add("E\u0301TE\u0301", [])
+        self.assertEqual(self.engine.rotation("e\u0301te\u0301")["name"], "\u00c9t\u00e9")
+        # an id is looked for before a name, whatever the order of the list (sets saved before names like ids were refused)
+        self.settings.data["shaders"]["sets"] = [{"id": "aaaaaaaa", "name": "bbbbbbbb"}, {"id": "bbbbbbbb", "name": "Real"}]
+        self.assertEqual(self.engine.config().get("sets", [{}])[0].get("id"), "bbbbbbbb")       # the one named like an id is not read
+        # labels, the heavy note and the "no input" message are stripped of the same characters
+        p = S.parse('/*{"INPUTS": [{"NAME": "a", "TYPE": "long", "VALUES": [0, 1], "LABELS": ["on\u202e", "of\u200bf"], "LABEL": "A\u2028B"}]}*/ void main() {}')
+        self.assertEqual((p["inputs"][0]["labels"], p["inputs"][0]["label"]), (["on", "off"], "AB"))
+        self.assertEqual(L.check_heavy({"a.fs": {"at": "20\u202e26"}})["a.fs"]["at"], "2026")
+        with self.assertRaises(ApiError) as c:
+            self.engine.change({"values": {"le\u202evel\u2028": 1}})
+        self.assertNotIn("\u202e", c.exception.message)
+        self.assertNotIn("\u2028", c.exception.message)
+
+    def test_a_set_deleted_while_it_runs_ends_vibes_with_its_own_message(self):
+        show = self.add("Show", ["nxlx-prism.fs", "nxlx-silk.fs"])
+        entry = scheduler.validate({"enabled": True, "entries": [{"time": "08:00", "days": [0], "action": "vibes", "set": show["id"]}]})["entries"][0]
+        self.vibes.start(show["id"])
+        self.vibes.tick()
+        self.engine.api_set({"action": "set", "op": "delete", "id": show["id"]}, None, "t")
+        self.now[0] += 4000
+        self.assertFalse(self.vibes.tick())
+        self.assertEqual((self.vibes.running, self.vibes.status()["last"]["message"]), (False, "ended: the set it was running has been deleted"))
+        self.assertIsNone(self.player.source_shader)
+        sched = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)
+        sched._execute(entry, datetime.datetime.now())                # the schedule still holds the dead id: "last run" says so
+        self.assertEqual((sched.last[entry["id"]]["ok"], sched.last[entry["id"]]["message"]), (False, "that set is not there (it may have been deleted)"))
+        st, body = self.api.handle("POST", "/api/vibes", {"on": True, "set": "Show"}, {"id": "osc", "role": "live"}, "osc")
+        self.assertEqual((st, body["error"]), (404, "that set is not there (it may have been deleted)"))
 
     def test_sets_are_checked(self):
         show = self.add("Show", ["nxlx-prism.fs"])
