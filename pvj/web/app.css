@@ -190,39 +190,143 @@ details.fold { display: block; }
 .danger-h { margin: 8px 0 0; font-size: 15px; color: #d32f4a; grid-column: 1 / -1; }
 #sysstate .hint { min-width: 0; }
 
-/* Live: the Vibes button is the big one, full width on a phone, with the way to the Shaders page under it */
+/* Live: the Vibes button is the big one, full width on a phone; under it the shader before and the next one, the set
+   to play and the way to the Shaders page. On a laptop the playing shader's strip is a column of its own. */
+.livecols { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.livecols > * { min-width: 0; }
 .vibesrow { display: flex; flex-wrap: wrap; gap: 8px; }
 .vibesbig { flex: 1 1 100%; min-height: 64px; padding: 8px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-width: 2px; border-color: var(--ac); font-size: 18px; overflow-wrap: anywhere; }
 .vibessub { font-size: 13px; font-weight: 400; }
-#shaderslink, #vibesskip { flex: 1 1 0; }
-@media (min-width: 900px) { .vibesbig { flex: 1 1 0; } #shaderslink, #vibesskip { flex: none; } }
-/* The Shaders page: its cards sit in the page's own grid; a shader is a row with its buttons under its name */
+#shaderslink, #vibesskip, #liveprev { flex: 1 1 0; min-width: 0; padding: 0 8px; }
+#liveset { flex: 1 1 100%; min-height: 56px; }
+.liveside h2 { font-size: 20px; overflow-wrap: anywhere; min-width: 0; }
+@media (min-width: 900px) {
+  .vibesbig { flex: 1 1 0; }
+  #shaderslink, #vibesskip, #liveprev { flex: none; }
+  #liveset { flex: 0 1 14rem; }
+  .shell:has(.livecols.has-side) { max-width: 1500px; }
+  .livecols.has-side { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
+  .livecols.has-side > * { grid-column: 1; }
+  .livecols.has-side > .liveside { grid-column: 2; grid-row: 1 / span 12; position: sticky; top: 12px; }
+}
+/* The Shaders page: an instrument. Three groups of cards: the stage (now, controls, presets), the library, and the
+   side (Vibes and its sets, controllers). A phone stacks them in that order. */
 .syspage .shaderpage { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; }
+.shadercol { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .shaderslot { min-width: 0; }
 .stageline { font-size: 16px; font-weight: 600; }
 .shaderstage .shadername { font-size: 26px; }
-.shaderfind { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 9.5rem); gap: 8px; }
-.slidervalue { font: 600 14px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.shaderfind { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.shaderfind > input { grid-column: 1 / -1; }
+.slidervalue { font: 600 14px ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre; }
 .dmxzones { display: flex; flex-wrap: wrap; gap: 6px; }
 .list .item.teach { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
 .list .item.teach > span:first-child { flex: none; }
 .list .item.teach > .row { margin-left: 0; justify-content: flex-start; }
 #shaderdmx { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--ln); }
 .roominpage { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* The transport: the one primary button in the middle, the shader before and the next one beside it */
+.transport3 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); gap: 8px; }
+.transport3 .btn { min-width: 0; padding: 0 6px; overflow-wrap: anywhere; }
+.detailrow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.pickrow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.detailbox { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.detailbox > label { font-size: 13px; }
+.keyshint { display: none; }
+/* Load at a glance: three lights and plain words */
+.loadbox { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; min-height: 28px; }
+.loadbox > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.loadmeter { display: inline-flex; gap: 3px; flex: none; }
+.loadmeter i { width: 14px; height: 18px; border-radius: 3px; border: 1.5px solid var(--ln); background: var(--bg); }
+.load-ok .loadmeter i:nth-child(1) { background: var(--fg); border-color: var(--fg); }
+.load-tight .loadmeter i:nth-child(-n+2) { background: var(--ac); border-color: var(--ac); }
+.load-heavy .loadmeter i { background: #b00020; border-color: #b00020; }
+.load-heavy > span:last-child { color: var(--ac); }
+/* Controls, drawn by type. Each is a block: its name and value, then the thing to move with its buttons beside it. */
+.ctls { display: flex; flex-direction: column; }
+.ctl { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--ln); min-width: 0; }
+.ctls > .ctl:first-child { border-top: 0; }
+.ctlhead { display: flex; align-items: baseline; gap: 8px; font-weight: 600; font-size: 14px; min-width: 0; }
+.ctllabel { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-weight: 600; font-size: 14px; }
+.ctlnote { font-size: 13px; font-weight: 600; min-width: 0.8em; overflow-wrap: anywhere; }
+.ctlnote.pending { color: var(--ac); }
+.ctlnote.err { color: var(--ac); flex: 1 1 100%; }
+.ctlhead:has(.ctlnote.err) { flex-wrap: wrap; }
+.ctlrow { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.ctlrow > input[type=range], .ctlrow > .track, .ctlrow > select, .ctlrow > .seg, .ctlrow > input[type=number] { flex: 1 1 8rem; min-width: 0; width: auto; }
+.ctl input[type=range] { width: 100%; height: 44px; accent-color: var(--ac); margin: 0; }
+.ctlacts { display: flex; gap: 6px; flex: none; margin-left: auto; }
+.ctlacts:empty { display: none; }
+.ctlrange { font-size: 12px; }
+.ctltitle { margin: 6px 0 0; font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); }
+.track { position: relative; padding-bottom: 14px; }
+.track input[type=range] { display: block; }
+.trackmark { position: absolute; bottom: 0; transform: translateX(-50%); font: 500 10px ui-monospace, Menlo, monospace; color: var(--mu); border-top: 6px solid var(--mu); line-height: 1.1; pointer-events: none; }
+.freezelabel { flex: none; font-weight: 600; }
+.midibtn { font-size: 12px; padding: 0 8px; letter-spacing: .04em; color: var(--mu); }
+.midibtn.mapped { border-color: var(--ac); color: var(--fg); }
+.midibtn[aria-expanded="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.teachbox { display: flex; flex-direction: column; gap: 6px; padding: 10px; margin: 0 0 8px; border: 1.5px dashed var(--ln); border-radius: 6px; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
+.midirow { margin-top: 2px; }
+.seg { display: flex; gap: 0; flex-wrap: wrap; }
+.segbtn { flex: 1 1 0; min-width: 44px; border-radius: 0; margin-left: -1.5px; padding: 0 8px; overflow-wrap: anywhere; }
+.seg .segbtn:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.seg .segbtn:last-child { border-radius: 0 6px 6px 0; }
+.swatchpick { flex: none; width: 72px; height: 48px; padding: 2px; border: 1.5px solid var(--ln); border-radius: 6px; background: var(--cd); cursor: pointer; }
+.alphalabel { flex: none; font-size: 12px; color: var(--mu); }
+.ctl-color .ctlrow > input[type=range] { flex: 1 1 5rem; }
+.xyrow { align-items: flex-start; }
+.xypad { position: relative; flex: 0 1 220px; width: 100%; max-width: 220px; aspect-ratio: 1; border: 1.5px solid var(--ln); border-radius: 6px; background-color: var(--bg); touch-action: none; cursor: crosshair;
+  background-image: linear-gradient(var(--ln), var(--ln)), linear-gradient(var(--ln), var(--ln)); background-size: 1px 100%, 100% 1px; background-position: center; background-repeat: no-repeat; }
+.xypad:focus-visible { outline: 3px solid var(--ac); outline-offset: 2px; }
+.xydot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--ac); border: 2px solid var(--on); pointer-events: none; }
+.ctl.compact { padding: 4px 0; }
+.ctl.compact .xypad { max-width: 140px; }
+/* Presets: a row of buttons; the one in use is filled, the one that was changed since is outlined */
+.presetrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.preset { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.preset.was { border-color: var(--ac); border-style: dashed; }
+.slot { font: 500 11px ui-monospace, Menlo, monospace; opacity: .75; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; flex: none; }
+.saverow > input, .renamerow > input { flex: 1 1 10rem; width: auto; min-width: 0; }
+.list .item.presetitem > .row, .list .item.presetitem > .confirm { flex: 1 1 100%; margin-left: 0; justify-content: flex-start; }
+.list .item.presetitem .grow { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; }
+.slotgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 4px 0; }
+/* Sets: one row each; a tap chooses the one being edited */
+.setrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; align-items: center; width: 100%; min-height: 56px; padding: 8px; border: 0; border-top: 1px solid var(--ln);
+  background: none; color: var(--fg); text-align: left; cursor: pointer; }
+.setrow:first-child { border-top: 0; }
+.setrow.on { box-shadow: inset 3px 0 0 var(--ac); }
+.setrow .setchips { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 /* A laptop: the library is a column of its own that scrolls by itself, so what is playing and its controls stay in
-   view. Two columns from 900 px, three from 1200 px; the Shaders page may use the whole window. */
+   view. Two columns from 900 px (the library, and the stage with the side under it), three from 1200 px; the page may
+   use the whole window. */
 @media (min-width: 900px) {
   .shell:has(#shaderpage) { max-width: 1600px; }
-  .syspage .shaderpage { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); grid-template-areas: "lib now" "lib ctl" "lib set" "lib remote"; grid-template-rows: auto auto auto 1fr; }
-  .slot-now { grid-area: now; } .slot-lib { grid-area: lib; } .slot-ctl { grid-area: ctl; } .slot-set { grid-area: set; } .slot-remote { grid-area: remote; }
-  .slot-lib { position: sticky; top: 12px; }
+  .syspage .shaderpage { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+  .col-lib { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 12px; }
+  .col-stage { grid-column: 2; grid-row: 1; }
+  .col-side { grid-column: 2; grid-row: 2; }
   .shaderlist { max-height: calc(100dvh - 330px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
+  .keyshint { display: block; }
+  .detailrow { grid-template-columns: minmax(0, 1fr) minmax(0, 14rem); align-items: center; }
+  .pickrow { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  /* a laptop keeps the controls in view: the page's own description and state line give way (the Now card says both) */
+  .syspage[data-page="vibes"] #sysblurb, .syspage[data-page="vibes"] #sysstate { display: none !important; }
+  .midirow .keyshint { flex: 1 1 12rem; }
 }
 @media (min-width: 1200px) {
-  .syspage .shaderpage { grid-template-columns: minmax(0, 4fr) minmax(0, 5fr) minmax(0, 4fr); grid-template-areas: "lib now set" "lib ctl remote"; grid-template-rows: auto 1fr; }
+  .syspage .shaderpage { grid-template-columns: minmax(0, 4fr) minmax(0, 5fr) minmax(0, 4fr); }
+  .col-lib { grid-row: 1; }
+  .col-side { grid-column: 3; grid-row: 1; }
 }
+/* A presenter and a guest have no third column: the stage takes its room */
+@media (min-width: 1200px) {
+  .syspage .shaderpage:not(:has(.col-side > .shaderslot:not([hidden]))) { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); }
+}
+.msg.inmsg:empty { min-height: 0; }
 .shadername { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
 .list .item.shader-entry { flex-direction: column; align-items: stretch; flex-wrap: nowrap; padding: 12px 0; }
+.list .item.shader-entry.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
 .list .item.shader-entry > span:first-child { flex: none; }
 .list .item.shader-entry > .row { margin-left: 0; justify-content: space-between; }
 .rot { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; cursor: pointer; min-width: 0; }
@@ -231,10 +335,8 @@ details.fold { display: block; }
 .switch:disabled { opacity: .5; cursor: not-allowed; }
 .field { font-weight: 600; font-size: 14px; }
 .saved { font-weight: 400; font-size: 13px; color: var(--mu); }
-.shaderslider { padding: 8px 0; border-top: 1px solid var(--ln); }
-.shaderslider:first-child { border-top: 0; }
-.shaderslider input[type=range] { height: 44px; }
 .shaderadv { gap: 8px; }
+.hint.warn { color: var(--fg); font-weight: 600; border-left: 3px solid #b00020; padding-left: 8px; }
 /* Room screen: big buttons for staff, long names wrap, and five tabs still fit a phone */
 .tabs.many { gap: 3px; padding-left: 8px; padding-right: 8px; }
 .tabs.many .btn { padding: 0 2px; min-width: 0; font-size: 14px; }
