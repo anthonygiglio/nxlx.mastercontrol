@@ -38,6 +38,10 @@ Panel only (`pvj/web/shaders.js`, `app.css`, a few lines of `app.js`), on top of
 - A point without MIN and MAX has no range: the page uses 0 to 1 when its default lies in there, else the drawing's pixels.
 - `categories` is not in the rows on this branch (#74 adds it); the family filter shows only when a row has it.
 - There is no way to reorder a set's entries or to give an entry a preset from the page; both are in the API.
+- Right after a Play, `GET /api/shaders` can say `playing: null` for a moment (the engine asks the player for its path, and the player has not loaded the carrier yet). The page and Live's strip follow the answer, so they can blink once; the browser test waits for the layout instead of measuring at once.
+- The review fixes of #72 were merged in on the way (a 422 from `/api/shaders/values` for values the GPU refused before is said beside the control like any other refusal; set and preset names have stricter rules, and the box's words are shown).
+
+**Cost on the box, not measured:** the page asks `GET /api/shaders` every 3 seconds while a shader plays (every 5 otherwise; it was 5), and Live asks every 4 seconds while a shader is on. That call reads the whole library and asks the player a few questions. With 50 shaders on a Pi 4 nobody has timed it.
 
 ## 2026-10-04 (the shader engine: first hardware numbers, and performing with shaders)
 
