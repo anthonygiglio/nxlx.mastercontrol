@@ -165,6 +165,17 @@ function startServer() {
       await fitsCard('.card, #syspage', name + ' page');
       await fitsPhone(name + ' page');
     }
+    const post = (path, body) => page.evaluate(([p, b]) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b) }).then((r) => r.status), [path, body]);
+    const get = (path) => page.evaluate((p) => fetch(p).then((r) => r.json()), path);
+    const moduleIsOn = async (id) => (await get('/api/modules')).modules.some((m) => m.id === id && m.enabled);
+    // Switching off with the page's switch: the page then shows only the description and the big button
+    async function switchOff(name) {
+      await page.click('#sysswitch');
+      await page.waitForSelector('#sysoff');
+      await page.waitForFunction(() => /Switched off/.test(document.getElementById('msg').textContent));
+      assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', name + ' is off');
+      assert.strictEqual(await page.textContent('#syspage h1'), name, 'switching off keeps the ' + name + ' page open');
+    }
     // The page's switch: off shows only the description and one big button; switching on keeps the person there
     async function switchOn(name) {
       assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', name + ' starts off');
@@ -309,12 +320,21 @@ function startServer() {
     await page.waitForSelector('#syspage h1:text-is("Network")');
     await page.evaluate(() => history.back());
     await page.waitForSelector('#sysindex');
+    // OSC has no module: the page's switch is OSC itself, and there is no second switch inside the card
+    await sysIndex();
+    await chip('OSC', 'Off');
     await sys('OSC');
-    await page.waitForSelector('#oscline:has-text("Off")');
-    await page.click('#osctoggle');
+    assert.strictEqual(await page.locator('#osccard, #oscline').count(), 0, 'OSC off shows no card');
+    await switchOn('OSC');
     await page.waitForFunction(() => /Listening on UDP/.test(document.getElementById('oscline').textContent));
-    await page.click('#osctoggle');
-    await page.waitForFunction(() => document.getElementById('oscline').textContent === 'Off');
+    assert.strictEqual((await get('/api/osc')).enabled, true, 'the page switch turned OSC on');
+    assert.strictEqual(await page.locator('#osctoggle').count(), 0, 'no second switch inside the OSC card');
+    await onPage('OSC');
+    await sysIndex();
+    await chip('OSC', 'Ready');
+    await sys('OSC');
+    await switchOff('OSC');
+    assert.strictEqual((await get('/api/osc')).enabled, false, 'the page switch turned OSC off');
     await onPage('OSC');
     // Autostart: reject a missing clip, then save "play every clip" and see it summarised
     await sys('At power-up');
@@ -341,28 +361,56 @@ function startServer() {
     await page.click('#autosave');
     await page.waitForFunction(() => /^Off/.test(document.getElementById('autoline').textContent));
     await onPage('At power-up');
-    // DMX: switch the module on, reject a bad universe, turn it on and off. The module is on but DMX itself is not
-    // listening yet: the page and the index row both say so.
+    // DMX: ONE switch. It switches the module on and then DMX itself, so the box is listening when it says On.
     await sys('DMX lighting desk');
     await switchOn('DMX lighting desk');
-    await page.waitForSelector('#dmxline:has-text("Off")');
-    await page.waitForSelector('#sysstate:has-text("not listening")');
+    await page.waitForSelector('#dmxline:has-text("Listening on UDP")');
+    assert(await moduleIsOn('control-dmx') && (await get('/api/dmx')).enabled === true, 'the page switch turned on the module and DMX itself');
+    assert.strictEqual(await page.locator('#dmxtoggle').count(), 0, 'no second switch inside the DMX card');
     await page.fill('#dmxuni', '99999');
     await page.click('#dmxsave');
     await page.waitForFunction(() => /universe/i.test(document.getElementById('msg').textContent));
     await page.fill('#dmxuni', '2');
     await page.click('#dmxsave');
-    await page.waitForFunction(() => document.getElementById('dmxuni').value === '2');
+    await page.waitForFunction(() => fetch('/api/dmx').then((r) => r.json()).then((d) => d.universe === 2));
     await onPage('DMX lighting desk');
     await sysIndex();
+    await chip('DMX lighting desk', 'Ready');
+    await page.waitForSelector(`${rowOf('DMX lighting desk')} .navstate:has-text("Listening")`);
+    // A box in the mixed state (the module on, DMX itself off, as boxes set up before this were): the row and the
+    // page say Off, and switching on sends only DMX's own call. A field being edited is never saved by the switch.
+    assert.strictEqual(await post('/api/dmx', { enabled: false }), 200);
+    await sys('DMX lighting desk');
+    await page.waitForSelector('#sysoff');
+    assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', 'module on but DMX off shows Off');
+    await sysIndex();
     await chip('DMX lighting desk', 'Off');
-    await page.waitForSelector(`${rowOf('DMX lighting desk')} .navstate:has-text("On, but not listening")`);
+    assert(!/not listening|inside/.test(await page.textContent(rowOf('DMX lighting desk'))), 'the row no longer points at a second switch');
+    await sys('DMX lighting desk');
+    await page.waitForSelector('#sysswitchon');
+    const dmxCalls = [];
+    const dmxSeen = (r) => { if (r.method() === 'POST' && /\/api\/(dmx|modules\/control-dmx)$/.test(r.url())) dmxCalls.push(r.url().replace(/^.*\/api\//, '') + ' ' + r.postData()); };
+    page.on('request', dmxSeen);
+    await page.click('#sysswitchon');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    await page.waitForSelector('#dmxuni');
+    assert.deepStrictEqual(dmxCalls, ['dmx {"enabled":true}'], 'switching on from the mixed state sends only the inner call, with nothing but the flag');
+    await page.fill('#dmxuni', '7');                                 // typed, not saved
+    dmxCalls.length = 0;
+    await page.click('#sysswitch');
+    await page.waitForSelector('#sysoff');
+    assert.deepStrictEqual(dmxCalls, ['modules/control-dmx {"enabled":false}'], 'switching off switches the module off and saves nothing else');
+    await page.click('#sysswitchon');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    page.off('request', dmxSeen);
+    assert.strictEqual((await get('/api/dmx')).universe, 2, 'the switch did not save the universe that was only typed');
+    await onPage('DMX lighting desk');
     // MIDI: switch the module on; nothing is plugged in here, so check the card and the learn flow, then turn it off
     await sys('MIDI controller');
     await switchOn('MIDI controller');
-    await page.waitForSelector('#midiline:has-text("Off")');
-    await page.click('#miditoggle');
     await page.waitForFunction(() => /waiting for a controller/.test(document.getElementById('midiline').textContent));
+    assert(await moduleIsOn('control-midi') && (await get('/api/midi')).enabled === true, 'the page switch turned on the module and MIDI itself');
+    assert.strictEqual(await page.locator('#miditoggle').count(), 0, 'no second switch inside the MIDI card');
     await page.waitForSelector('#midinomap');
     for (const a of ['vibes', 'vibes_next', 'vibes_dwell']) assert.strictEqual(await page.locator('#midiaction option[value="' + a + '"]').count(), 1, 'the MIDI action list offers ' + a);
     await page.selectOption('#midiaction', 'pad');
@@ -373,8 +421,9 @@ function startServer() {
     await page.waitForSelector('#midilearn');
     await page.click('#midibuiltin');
     await page.waitForFunction(() => /Built-in map: off/.test(document.getElementById('midibuiltin').textContent));
-    await page.click('#miditoggle');
-    await page.waitForFunction(() => document.getElementById('midiline').textContent === 'Off');
+    await onPage('MIDI controller');
+    await switchOff('MIDI controller');
+    assert(!(await moduleIsOn('control-midi')), 'switching off switches the MIDI module off');
     await onPage('MIDI controller');
     // Streams: the index says Off before; switch the module on, reject a bad address, save one with a login (hidden),
     // remove it; the index says Set up after (on, but nothing saved)
@@ -407,10 +456,34 @@ function startServer() {
     await page.fill('#schedlabel', 'Close');
     await page.click('#schedadd');
     await page.waitForSelector('.sched-entry:has-text("Close: 18:00")');
-    await page.click('#schedtoggle');
-    await page.waitForFunction(() => document.getElementById('schedtoggle').getAttribute('aria-pressed') === 'true');
-    await page.click('#schedtoggle');
-    await page.waitForFunction(() => document.getElementById('schedtoggle').getAttribute('aria-pressed') === 'false');
+    assert.strictEqual(await page.locator('#schedtoggle').count(), 0, 'no second switch inside the Schedule card');
+    let sched = await get('/api/schedule');
+    assert(sched.enabled === true && sched.entries.length === 1, 'with no entries the switch turned the schedule on without asking, and the entry was added');
+    // Off: only the schedule's own flag; the module stays on and the entries are kept
+    await switchOff('Schedule');
+    sched = await get('/api/schedule');
+    assert(sched.enabled === false && sched.entries.length === 1 && await moduleIsOn('scheduler'), 'switching off keeps the module on and the entries saved');
+    await sysIndex();
+    await chip('Schedule', 'Off');
+    await page.waitForSelector(`${rowOf('Schedule')} .navstate:has-text("1 entry saved, not running")`);
+    // On with a saved entry: it would start running at once, so the switch asks first, in place
+    await sys('Schedule');
+    await page.click('#sysswitchon');
+    await page.waitForSelector('#confirmrow:has-text("Switch the schedule on? 1 entry will start running at its time.")');
+    await fitsPhone('Schedule page, asking');
+    await page.click('#confirmno');
+    await page.waitForSelector('#sysswitchon');
+    assert.strictEqual(await page.locator('#confirmrow').count(), 0, 'the question is gone after "Not yet"');
+    assert.strictEqual((await get('/api/schedule')).enabled, false, '"Not yet" leaves the schedule off');
+    await page.click('#sysswitchon');
+    await page.click('#confirmyes');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    sched = await get('/api/schedule');
+    assert(sched.enabled === true && sched.entries.length === 1 && sched.entries[0].label === 'Close', 'switching on kept the saved entry');
+    await sysIndex();
+    await chip('Schedule', 'Ready');
+    await page.waitForSelector(`${rowOf('Schedule')} .navstate:has-text("18:00 Stop")`);    // the row shows the next one
+    await sys('Schedule');
     await page.click('.sched-entry >> button:has-text("Remove")');
     await page.waitForSelector('#schedempty');
     await page.selectOption('#schedaction', 'preset');
@@ -564,21 +637,28 @@ function startServer() {
     await page.waitForFunction(() => !document.querySelector('.map-entry'));
     await sys('Remote support');
     // Remote support: off by default; settings saved and checked; allowing it shows the start controls
-    await page.waitForSelector('#supportcard #supportallow');
+    await page.waitForSelector('#supportcard #supportsave');
     assert(/Remote support is off/.test(await page.textContent('#supportcard')), 'remote support starts off');
+    assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', 'and its switch is the page switch');
+    assert.strictEqual(await page.locator('#supportallow').count(), 0, 'no second switch inside the Remote support card');
     await page.fill('#support-endpoint', 'support.example.com:51820');
     await page.fill('#support-server_key', 'a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s=');
     await page.fill('#support-address', '10.77.0.40');
     await page.fill('#support-network', '10.77.0.0/24');
     await page.click('#supportsave');
-    await page.click('#supportallow');
+    await page.waitForFunction(() => fetch('/api/support').then((r) => r.json()).then((d) => d.config.address === '10.77.0.40'));
+    await page.click('#sysswitch');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    assert.strictEqual((await get('/api/support')).config.allowed, true, 'the page switch allowed remote support');
     await page.waitForSelector('#supportstart');
     await page.waitForSelector('#supportwhy');                       // no helper in the test harness: said plainly
     await page.fill('#support-address', '10.99.0.40');
     await page.click('#supportsave');
     await page.waitForFunction(() => /inside the support network/.test(document.getElementById('msg').textContent));
-    await page.click('#supportallow');
+    await page.click('#sysswitch');
+    await page.waitForSelector('#sysswitch[aria-checked="false"]');
     await page.waitForFunction(() => /Remote support is off/.test(document.getElementById('supportcard').textContent));
+    assert.strictEqual((await get('/api/support')).config.allowed, false, 'the page switch turned remote support off');
     await onPage('Remote support');
     await sys('Look');
     await page.click('button:has-text("Night red")');
@@ -615,7 +695,6 @@ function startServer() {
     assert.strictEqual(exportedFile.passwords_included, false, 'no passwords unless ticked');
     for (const k of ['auth', 'devices', 'support', 'support_log']) assert(!(k in exportedFile.settings), k + ' must not be exported');
     assert(!/token|pin_hash|a2tra2tr/.test(exportedText), 'no access data or support key in the export');
-    const post = (path, body) => page.evaluate(([p, b]) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b) }).then((r) => r.status), [path, body]);
     const otherDuration = exportedFile.settings.mix.duration === 3 ? 4 : 3;
     assert.strictEqual(await post('/api/mix', { transition: exportedFile.settings.mix.transition, duration: otherDuration }), 200);
     page.once('dialog', (d) => d.accept());
