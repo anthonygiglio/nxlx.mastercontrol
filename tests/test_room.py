@@ -82,6 +82,16 @@ class ValidateTest(unittest.TestCase):
         self.refused({"scenes": [self.scene(groups=[{"group": "all", "power": "on"}, {"group": "all", "power": "off"}])]})
         self.refused({"groups": [dict(self.GROUP, name="Main‮wall")]})        # a right-to-left override
 
+    def test_names_that_look_empty_or_like_another_are_refused(self):
+        for name in ("\u2800", "\u0301\u0301", "...", "\u0410ll", "A ll", "\uff21\uff4c\uff4c", "a\u04cf\u04cf", "ALL "):
+            self.refused({"groups": [dict(self.GROUP, name=name)]})
+        self.refused({"groups": [self.GROUP, dict(self.GROUP, name="Main  Wall")]})
+        self.refused({"groups": [self.GROUP, dict(self.GROUP, name="\uff2dain wall")]})        # a full-width M
+        self.refused({"scenes": [self.scene(), self.scene(name="MOVIE")]})
+        self.refused({"scenes": [self.scene(name="\u2800")]})
+        self.assertEqual(room.validate({"scenes": [self.scene(name="All")]})["scenes"][0]["name"], "All")     # only groups keep "All" free
+        self.assertEqual(room.validate({"groups": [dict(self.GROUP, name="Wall 2")]})["groups"][0]["name"], "Wall 2")
+
     def test_what_a_group_gets_in_a_scene(self):
         for row in ({"group": "all", "power": "maybe"}, {"group": "all", "input": "99"}, {"group": "all", "picture": True},
                     {"group": "everything"}, {"group": "all", "power": "off", "input": "31"},
@@ -291,7 +301,7 @@ class SceneTest(RoomBase):
         self.assertEqual((st, body["started"], body["name"]), (200, True, "Console night"))
         self.assertLess(time.monotonic() - start, 0.5)                                    # nobody waits for a projector
         self.assertTrue(wait_for(lambda: a.power == "3"))
-        self.assertTrue(wait_for(lambda: "waiting to switch to Console" in self.job()["text"]), self.job())
+        self.assertTrue(wait_for(lambda: self.job()["text"] == "Main wall: switching on (warming up), waiting to switch to Console."), self.job())
         self.assertTrue(self.job()["running"])
         self.assertTrue(wait_for(lambda: self.api.projectors.status(pa)["pending_input"] == "32"))     # Phase 1's retry has it
         time.sleep(0.4)
@@ -375,20 +385,26 @@ class SceneTest(RoomBase):
         a, pa = self.projector("Left", slow=True)
         main = self.group("Main wall", [pa])
         on = self.scene("On", [{"group": main, "power": "on", "input": "32", "picture": "mute"}])
-        self.post("/api/projector", {"id": pa, "action": "on"})
-        a.finish()
-        self.post("/api/projector", {"id": pa, "action": "off"})
-        self.assertEqual(a.power, "2")                                                    # cooling down: it refuses everything
-        self.post("/api/room/scene", {"scene": on})
-        self.assertTrue(wait_for(lambda: sets(a).count("POWR 1") >= 3), sets(a))          # the room keeps asking
-        self.assertEqual(self.api.handle("POST", *osc.translate("/beameroff", [1.0]), osc.OSC_DEVICE, "192.168.0.9")[0], 200)
-        self.assertTrue(wait_for(lambda: not self.job()["running"]))
-        time.sleep(0.3)                                                                   # a command already on the wire is over by now
-        mark = len(a.received)
-        a.finish()
-        time.sleep(0.6)
-        self.assertEqual([line[2:] for line in a.received[mark:] if not line.endswith("?")], [])
-        self.assertEqual((a.power, self.job()["text"]), ("0", "Main wall: changed by a later choice."))
+        sched = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)
+        offs = (lambda: self.api.handle("POST", *osc.translate("/beameroff", [1.0]), osc.OSC_DEVICE, "192.168.0.9"),      # OSC
+                lambda: self.post("/api/projector", {"id": pa, "action": "off"}),                                        # the Projectors card
+                lambda: sched._execute({"id": "e1", "action": "projector_off"}, datetime.datetime(2026, 10, 3, 23, 0)))   # the schedule
+        for press_off in offs:
+            self.post("/api/projector", {"id": pa, "action": "on"})
+            a.finish()
+            self.post("/api/projector", {"id": pa, "action": "off"})
+            self.assertEqual(a.power, "2")                                                # cooling down: it refuses everything
+            before = sets(a).count("POWR 1")
+            self.post("/api/room/scene", {"scene": on})
+            self.assertTrue(wait_for(lambda: sets(a).count("POWR 1") >= before + 3), sets(a))     # the room keeps asking
+            press_off()
+            self.assertTrue(wait_for(lambda: not self.job()["running"]))
+            time.sleep(0.3)                                                               # a command already on the wire is over by now
+            mark = len(a.received)
+            a.finish()
+            time.sleep(0.6)
+            self.assertEqual([line[2:] for line in a.received[mark:] if not line.endswith("?")], [])
+            self.assertEqual((a.power, self.job()["text"]), ("0", "Main wall: changed by a later choice."))
         # the same for a source: the scene's is still to come when the card's chooser picks another
         self.post("/api/room/scene", {"scene": on})
         self.assertTrue(wait_for(lambda: self.api.projectors.status(pa)["pending_input"] == "32"))
@@ -466,7 +482,10 @@ class SceneTest(RoomBase):
         self.assertNotIn("INPT 32", [line[2:] for line in a.received[mark:]])
         self.assertTrue(wait_for(lambda: not self.job()["running"]))
         self.assertEqual(self.job()["text"], "Main wall: on, changed by a later choice.")
-        self.assertEqual(self.state()["groups"][0]["last"]["text"], "Main wall: off.")
+        last = lambda: self.state()["groups"][0]["last"]
+        self.assertEqual((last()["text"], last()["running"]), ("Main wall: switching off (cooling down).", True))
+        a.finish()
+        self.assertTrue(wait_for(lambda: (last()["text"], last()["running"]) == ("Main wall: off.", False)), last())
 
     def test_many_taps_never_pile_up_threads(self):
         a, pa = self.projector("Left", slow=True)
@@ -551,6 +570,181 @@ class SceneTest(RoomBase):
         self.assertEqual(self.post("/api/room/scene", {})[0], 400)
 
 
+class ReviewTest(RoomBase):
+    """One test per finding of the independent review of PR #64."""
+
+    def test_off_is_not_done_because_a_remembered_status_says_cooling_down(self):
+        """Off, On (retried while it cools), cooled, On taken, it warms up; Off again before the next status check
+        lands. The remembered status still says "cooling down": that is not proof. The step keeps asking."""
+        a, pa = self.projector("Left", slow=True)
+        mon = self.api.projectors
+        self.post("/api/projector", {"id": pa, "action": "on"})
+        a.finish()
+        self.post("/api/room/group", {"group": "all", "action": "off"})
+        self.assertTrue(wait_for(lambda: mon.status(pa).get("power") == "cooling down"))
+        self.post("/api/room/group", {"group": "all", "action": "on"})
+        self.assertTrue(wait_for(lambda: sets(a).count("POWR 1") >= 3))
+        gate, real = threading.Event(), mon._poll
+
+        def held(w, entry):                     # a status check that does not come back for a while
+            gate.wait(10)
+            return real(w, entry)
+        mon._poll = held
+        self.addCleanup(gate.set)
+        time.sleep(0.3)
+        a.finish()                              # cooled: the next retry of On is taken and it warms up
+        self.assertTrue(wait_for(lambda: a.power == "3"))
+        self.assertEqual(mon.status(pa).get("power"), "cooling down")                     # what the box remembers is now wrong
+        offs = sets(a).count("POWR 0")
+        self.post("/api/room/group", {"group": "all", "action": "off"})
+        self.assertTrue(wait_for(lambda: sets(a).count("POWR 0") >= offs + 2))            # refused, and asked again
+        last = lambda: self.state()["all"]["last"]
+        self.assertEqual((last()["running"], last()["text"]), (True, "All: switching off."))
+        a.finish()                              # warm: the next Off is taken
+        self.assertTrue(wait_for(lambda: a.power == "2"), sets(a))
+        mon._poll = real
+        gate.set()
+        self.assertTrue(wait_for(lambda: last()["text"] == "All: switching off (cooling down)."), last())
+        a.finish()
+        self.assertTrue(wait_for(lambda: (last()["running"], last()["text"]) == (False, "All: off.")), last())
+
+    def hold_the_rooms_input(self):
+        """Monitor.set_input, held for the room's thread just before it runs; (entered, gate)."""
+        mon, real = self.api.projectors, self.api.projectors.set_input
+        entered, gate = threading.Event(), threading.Event()
+
+        def held(entry, code, **kw):
+            if threading.current_thread().name == "room" and not entered.is_set():
+                entered.set()
+                gate.wait(5)
+            return real(entry, code, **kw)
+        mon.set_input = held
+        self.addCleanup(gate.set)
+        return entered, gate
+
+    def test_a_scene_s_source_never_follows_a_newer_pick_on_the_projectors_card(self):
+        a, pa = self.projector("Left")
+        self.post("/api/projector", {"id": pa, "action": "on"})
+        main = self.group("Main wall", [pa])
+        sid = self.scene("Console", [{"group": main, "input": "32"}])
+        entered, gate = self.hold_the_rooms_input()
+        self.post("/api/room/scene", {"scene": sid})
+        self.assertTrue(entered.wait(5))                                                  # the room is about to send 32
+        self.assertEqual(self.post("/api/projector", {"id": pa, "action": "input", "input": "31"})[0], 200)
+        gate.set()
+        self.assertTrue(self.finished())
+        time.sleep(0.4)
+        self.assertEqual(([c for c in sets(a) if c.startswith("INPT")], a.input), (["INPT 31"], "31"))
+        self.assertEqual(self.job()["text"], "Main wall: changed by a later choice.")
+
+    def test_the_room_does_not_stop_the_card_s_retry_of_the_same_source(self):
+        a, pa = self.projector("Left", slow=True)
+        self.post("/api/projector", {"id": pa, "action": "on"})                           # warming up: every input change is retried
+        main = self.group("Main wall", [pa])
+        sid = self.scene("Console", [{"group": main, "input": "32"}])
+        entered, gate = self.hold_the_rooms_input()
+        self.post("/api/room/scene", {"scene": sid})
+        self.assertTrue(entered.wait(5))
+        self.assertTrue(self.post("/api/projector", {"id": pa, "action": "input", "input": "32"})[1]["results"][pa]["pending"])
+        gate.set()
+        self.assertTrue(self.finished())
+        self.assertTrue(wait_for(lambda: not room_threads()))
+        self.assertEqual(self.api.projectors.status(pa)["pending_input"], "32")           # the card's retry is still there
+        a.finish()
+        self.assertTrue(wait_for(lambda: a.input == "32"))
+
+    def test_the_same_scene_over_and_over_still_gets_its_commands_through(self):
+        """A controller that repeats itself, or an impatient thumb: twenty a second for two seconds."""
+        a, pa = self.projector("Left")
+        main = self.group("Main wall", [pa])
+        sid = self.scene("Film", [{"group": main, "power": "on", "input": "32", "sound": "mute"}], {"action": "file", "file": "a.mp4"})
+        connections, end, during = a.connections, time.monotonic() + 2.0, None
+        while time.monotonic() < end:
+            self.assertEqual(self.api.handle("POST", "/api/room/scene", {"scene": sid}, osc.OSC_DEVICE, "192.168.0.9")[0], 200)
+            if "POWR 1" in sets(a) and during is None:
+                during = time.monotonic()
+            time.sleep(0.05)
+        self.assertIsNotNone(during, "no power command got through during the flood")
+        self.assertTrue(self.finished(), self.job())
+        self.assertEqual((a.power, a.input, a.audio_mute), ("1", "32", True))
+        self.assertGreaterEqual(min(sets(a).count("POWR 1"), sets(a).count("INPT 32"), sets(a).count("AVMT 21")), 1)
+        self.assertLessEqual(a.connections - connections, len(a.received) + 3)            # no connections opened and abandoned
+        self.assertEqual(len(self.player.plays), 1)                                       # and the clip started once
+        self.api.room._last_box = None                                                    # (as if) a while later: it plays again
+        self.post("/api/room/scene", {"scene": sid})
+        self.assertEqual(len(self.player.plays), 2)
+
+    def test_removing_a_scene_or_a_group_ends_what_it_still_had_to_send(self):
+        a, pa = self.projector("Left", slow=True)
+        main = self.group("Main wall", [pa])
+        sid = self.scene("Console", [{"group": main, "power": "on", "input": "32", "picture": "mute"}])
+        pending = lambda: self.api.projectors.status(pa)["pending_input"]
+        self.post("/api/room/scene", {"scene": sid})
+        self.assertTrue(wait_for(lambda: pending() == "32"))
+        self.assertEqual(self.post("/api/room", {"remove_scene": sid})[0], 200)
+        self.assertTrue(wait_for(lambda: pending() is None and not room_threads()))
+        self.post("/api/room/group", {"group": main, "action": "input", "input": "31"})
+        self.post("/api/room/group", {"group": main, "action": "mute_sound"})
+        self.assertTrue(wait_for(lambda: pending() == "31"))
+        self.assertEqual(self.post("/api/room", {"remove_group": main})[0], 200)
+        self.assertTrue(wait_for(lambda: pending() is None and not room_threads()))
+        mark = len(a.received)
+        a.finish()
+        time.sleep(0.5)
+        self.assertEqual([line[2:] for line in a.received[mark:] if not line.endswith("?")], [])
+        self.assertEqual((a.input, a.video_mute, a.audio_mute), ("11", False, False))
+
+    def test_more_than_one_thing_in_one_edit_is_refused(self):
+        _, pa = self.projector("Left")
+        group, scene = {"name": "Main wall", "projectors": [pa]}, {"name": "Film", "groups": []}
+        for body in ({"group": group, "scene": scene}, {"group": group, "remove_scene": "0123abcd"},
+                     {"scene": scene, "remove_group": "0123abcd"}, {"remove_group": "0123abcd", "remove_scene": "0123abcd"}, {}):
+            st, out, _ = self.post("/api/room", body)
+            self.assertEqual((st, out["error"]), (400, "send one of group, remove_group, scene or remove_scene"), body)
+        self.assertEqual(self.settings.data["room"], {"groups": [], "scenes": []})
+
+    def test_a_command_that_never_comes_back_does_not_hold_off_back(self):
+        """A name lookup that hangs is the one step nobody can bound. The thread stuck in it is left behind (its
+        command is never sent) and Off goes out from a fresh one; still never more threads than projectors."""
+        a, pa = self.projector("Left")
+        main = self.group("Main wall", [pa])
+        self.api.room.stuck = 0.3
+        entered, gate = threading.Event(), threading.Event()
+        self.addCleanup(gate.set)
+
+        class Hung(projector.PJLink):
+            def power(self, on):
+                if on and not entered.is_set():
+                    entered.set()
+                    gate.wait(10)
+                return super().power(on)
+        self.api._pjlink = lambda e: Hung(e["host"], e["port"], e["password"], timeout=1.0)
+        self.post("/api/room/group", {"group": main, "action": "on"})
+        self.assertTrue(entered.wait(5))
+        time.sleep(0.5)
+        self.post("/api/room/group", {"group": main, "action": "off"})
+        self.assertTrue(wait_for(lambda: "POWR 0" in sets(a)), sets(a))                   # Off did not wait for the stuck thread
+        self.assertLessEqual(len(room_threads()), 2)
+        self.assertLessEqual(len(self.api.room.threads()), projector.MAX_PROJECTORS)
+        mark = len(a.received)
+        gate.set()
+        self.assertTrue(wait_for(lambda: not room_threads()))
+        self.assertNotIn("POWR 1", [line[2:] for line in a.received[mark:]])              # what it was stuck on is never sent
+
+    def test_a_scene_through_the_support_tunnel_runs_whole(self):
+        a, pa = self.projector("Left")
+        sid = self.scene("Film", [{"group": "all", "power": "on"}], {"action": "file", "file": "a.mp4"})
+        tunnel, support = "10.77.0.9", {"id": "support", "name": "Support", "role": "live", "remote": True}
+        self.api.support.is_remote = lambda client: client == tunnel
+        st, out = self.api.handle("POST", "/api/room/scene", {"scene": sid}, support, tunnel)
+        self.assertEqual((st, out["box"]), (200, {"ok": True, "text": "playing a.mp4"}))
+        self.assertTrue(wait_for(lambda: a.power == "1"))
+        self.assertEqual(len(self.player.plays), 1)
+        # what a support login may not do stays refused, and a paired device's token does not work through the tunnel
+        self.assertEqual(self.api.handle("POST", "/api/room", {"remove_scene": sid}, support, tunnel)[0], 403)
+        self.assertEqual(self.api.handle("POST", "/api/room/scene", {"scene": sid}, {"id": "x", "role": "live"}, tunnel)[0], 403)
+
+
 class VibesBoxTest(RoomBase):
     def test_a_scene_starts_and_stops_vibes_through_its_own_api(self):
         self.scene("Ambience", [], {"action": "vibes"})
@@ -595,6 +789,9 @@ class ScheduleOscMidiTest(RoomBase):
         self.assertIsNone(t("/pvj/scene/2", [0.0]))                                       # the release does nothing
         self.assertEqual(t("/pvj/scene", ["Evening"]), ("/api/room/scene", {"name": "Evening"}))
         self.assertEqual(t("/pvj/scene", [3]), ("/api/room/scene", {"number": 3}))
+        self.assertEqual(t("/pvj/scene", [2.0]), ("/api/room/scene", {"number": 2}))        # a whole number sent as a float
+        self.assertIsNone(t("/pvj/scene", [2.5]))
+        self.assertIsNone(t("/pvj/scene", [float("nan")]))
         self.assertEqual(t("/pvj/group/all/off", [1.0]), ("/api/room/group", {"group": "all", "action": "off"}))
         self.assertEqual(t("/pvj/group/1/on", []), ("/api/room/group", {"number": 1, "action": "on"}))
         self.assertEqual(t("/pvj/group/2/mute", [1]), ("/api/room/group", {"number": 2, "action": "mute"}))

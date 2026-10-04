@@ -28,6 +28,7 @@ import copy
 import re
 import threading
 import time
+import unicodedata
 import uuid
 
 from . import projector as projector_mod
@@ -43,6 +44,9 @@ ORDER = ("power", "input", "picture", "sound")       # the order of the steps fo
 GROUP_ACTIONS = ("on", "off", "mute", "unmute", "mute_picture", "unmute_picture", "mute_sound", "unmute_sound", "input")
 ROOM_DEVICE = {"id": "room", "name": "Room", "role": "live"}     # what the box does in a scene runs as a presenter
 GRACE = 25.0                 # seconds more than the monitor's own retry time that an input change may take
+STUCK = 25.0                 # a command that has not come back after this long (a name lookup that hangs) is left behind
+BOX_GAP = 2.0                # the same scene again within this many seconds does not start its clip again
+LOOKALIKE = str.maketrans({"\u0430": "a", "\u03b1": "a", "\u04cf": "l", "\u0456": "l", "\u03b9": "l", "\u0131": "l", "|": "l", "1": "l"})
 _ID = re.compile(r"[0-9a-f]{8}")
 _INPUT = re.compile(r"[1-5][1-9]")
 
@@ -109,10 +113,20 @@ def _name(value, what, seen):
             or any(projector_mod._unprintable(ch) for ch in value)):
         raise RoomError("give the %s a name of up to %d plain characters" % (what, NAME_MAX))
     name = value.strip()
-    if name.lower() in seen:
+    if not any(ch.isalnum() for ch in name):
+        raise RoomError("the name of a %s needs at least one letter or digit" % what)
+    key = name_key(name)
+    if key in seen:
         raise RoomError("there is already a %s called %s" % (what, name))
-    seen.add(name.lower())
+    seen.add(key)
     return name
+
+
+def name_key(name):
+    """What two names are compared by: compatibility forms folded together (full-width letters, ligatures), case
+    and spaces ignored, and the few letters of other alphabets that look like "a" and "l" read as those, so
+    nothing that looks like "All" or like a name already there gets in."""
+    return "".join(unicodedata.normalize("NFKC", name).casefold().split()).translate(LOOKALIKE)
 
 
 def _id(given, seen):
@@ -189,6 +203,7 @@ class _Step:
     def __init__(self, kind, want, label=""):
         self.kind, self.want, self.label = kind, want, label
         self.state, self.text, self.since = "todo", "", None
+        self.done_at, self.seen = None, False     # a power step: when the projector took it, and whether a check has agreed since
 
     @property
     def live(self):
@@ -221,6 +236,7 @@ class _Slot:
         self.wake = threading.Event()
         self.thread = None
         self.handed = None                    # an input change of ours that the monitor is retrying
+        self.busy = None                      # time.monotonic() since which the thread is inside one command
         self.powered = 0.0                    # time.monotonic() of our last "power on" that the projector took
 
 
@@ -229,6 +245,11 @@ class Room:
         self.api, self.log, self.tick = api, log, tick
         self.lock = threading.Lock()          # never held while talking to a projector or the player
         self._slots = {}                      # projector id -> _Slot, only while it has work
+        self.stuck = STUCK
+        self._order = threading.Lock()        # one scene at a time decides what the box and the projectors do
+        self._left = []                       # threads left behind inside a command that never came back
+        self._last_box = None                 # (scene id, its box, time.monotonic(), the result)
+        self._power = {}                      # projector id -> its last power step that no status check has agreed with yet
         self._scene_job = None                # the scene applied last
         self._group_jobs = {}                 # group id -> the group button pressed last
 
@@ -268,22 +289,41 @@ class Room:
     # -- the workers --
     def _submit(self, pid, steps, replace):
         """With self.lock held. `replace`: a scene, which drops everything older for this projector; else a group
-        button, which drops only steps of its own kind (and everything, if it switches the projector off)."""
+        button, which drops only steps of its own kind (and everything, if it switches the projector off).
+        A step that is asked for again while it is still to come (the same scene tapped twice, a controller
+        that repeats itself) is kept as it is, and if nothing changes the command under way is left alone:
+        otherwise a stream of the same request would never let one command through. Returns {kind: step}, the
+        steps that now stand for the ones asked for."""
         slot = self._slots.get(pid)
         if slot is None:
             slot = self._slots[pid] = _Slot(pid)
+        live = [s for s in slot.steps if s.live]
+        same = {(s.kind, s.want): s for s in live}
+        used = [same.get((s.kind, s.want), s) for s in steps]
         kinds = {s.kind for s in steps}
         off = any(s.kind == "power" and not s.want for s in steps)
-        keep = []
-        for s in slot.steps:
-            if not s.live:
+        if "power" in kinds:
+            self._settled(pid)
+        keep, changed = [], any(s not in live for s in used)
+        for s in live:
+            if s in used:
                 continue
             if replace or off or s.kind in kinds:
                 s.state, s.text = "dropped", "changed by a later choice"
+                changed = True
             else:
                 keep.append(s)
-        slot.steps = sorted(keep + list(steps), key=lambda s: ORDER.index(s.kind))
-        self._kick(slot)
+        slot.steps = sorted(keep + used, key=lambda s: ORDER.index(s.kind))
+        if changed or slot.thread is None:
+            self._kick(slot)
+        return {s.kind: s for s in used}
+
+    def _settled(self, pid):
+        """With self.lock held: a newer power choice was made for this projector, so the older one's "switching
+        on" is over: it is no longer waited for."""
+        old = self._power.pop(pid, None)
+        if old is not None:
+            old.seen = True
 
     def _kick(self, slot):
         """With self.lock held: the command of an older choice that is not on the wire yet is not sent, and the
@@ -291,6 +331,14 @@ class Room:
         slot.cancel.set()
         slot.cancel = threading.Event()
         slot.wake.set()
+        if slot.thread is not None and slot.busy is not None and time.monotonic() - slot.busy > self.stuck:
+            # Inside one command for far longer than its deadline: a name lookup that hangs (the one step we cannot
+            # bound). Its command is cancelled and will not be sent; a fresh thread takes the projector over, as
+            # long as that keeps the room at MAX_PROJECTORS threads in all.
+            self._left = [t for t in self._left if t.is_alive()]
+            if len([s for s in self._slots.values() if s.thread is not None]) + len(self._left) < projector_mod.MAX_PROJECTORS:
+                self._left.append(slot.thread)
+                slot.thread, slot.busy = None, None
         if slot.thread is None:
             slot.thread = threading.Thread(target=self._run, args=(slot,), name="room", daemon=True)
             slot.thread.start()
@@ -310,6 +358,8 @@ class Room:
             return
         with self.lock:
             for pid in pids:
+                if "power" in kinds:
+                    self._settled(pid)
                 slot = self._slots.get(pid)
                 hit = [s for s in slot.steps if s.live and (action == "off" or s.kind in kinds)] if slot else []
                 for s in hit:
@@ -321,11 +371,14 @@ class Room:
 
     def threads(self):
         with self.lock:
-            return [s.thread for s in self._slots.values() if s.thread is not None and s.thread.is_alive()]
+            return [t for t in [s.thread for s in self._slots.values() if s.thread is not None] + self._left if t.is_alive()]
 
     def _run(self, slot):
         while True:
             with self.lock:
+                if slot.thread is not threading.current_thread():     # left behind: a fresh thread has the projector now
+                    return
+                slot.busy = None
                 live = [s for s in slot.steps if s.live]
                 waiting = any(s.kind == "input" and s.state == "waiting" and s.want == slot.handed for s in live)
                 stale = slot.handed if slot.handed is not None and not waiting else None
@@ -356,20 +409,34 @@ class Room:
         there). A step a newer choice dropped meanwhile stays dropped. An input change the monitor is still
         retrying for a step that ends here is stopped by the thread's next turn (slot.handed)."""
         with self.lock:
+            if slot.thread is not threading.current_thread():     # a thread that was left behind decides nothing any more
+                return
             for s in steps:
                 if s.live:
                     s.state, s.text = state, (s.did() if text is None else text)
+                    s.done_at = time.monotonic()
+                    if s.kind == "power" and state == "done":
+                        self._power[slot.pid] = s
             for s in rest:
                 if s.live:
                     s.state, s.text = "skipped", text
         self.monitor.poke(slot.pid)                   # the state shown follows at once, after a failure too
 
-    def _not_ready(self, slot, step, code):
-        """The projector said "unavailable" or was busy with another command: wait and look again, or give up."""
+    def _not_ready(self, slot, step, code, link):
+        """The projector said "unavailable" or was busy with another command: wait and look again, or give up.
+        A power step is over if the projector itself, asked now, says it is on its way there (or there); the
+        status the monitor remembers is not proof, it can be a moment old and say the opposite of what is true."""
         retry_for, retry_every = self.monitor.retry_for, self.monitor.retry_every
+        if step.kind == "power" and code == "ERR3":
+            try:
+                now = link.state()
+            except projector_mod.ProjectorError:
+                now = None
+            if now in (("warming up", "on") if step.want else ("cooling down", "off")):
+                if step.want:
+                    slot.powered = time.monotonic()
+                return self._finish(slot, [step], "done")
         st = self.monitor.status(slot.pid)
-        if step.kind == "power" and st.get("ok") and st.get("power") == ("warming up" if step.want else "cooling down"):
-            return self._finish(slot, [step], "done")             # it is already on its way there
         self.monitor.poke(slot.pid)
         if (code == "ERR3" and step.kind != "power" and st.get("ok") and st.get("power") == "off"
                 and time.monotonic() - slot.powered > retry_for):
@@ -387,10 +454,12 @@ class Room:
         if step.since is None:
             step.since = time.monotonic()
         if step.kind == "input":
-            return self._input(slot, step, entry, live)
+            return self._input(slot, step, entry, live, cancel)
         link = self.api._pjlink(entry)
         link.cancel = cancel
         both = None
+        with self.lock:
+            slot.busy = time.monotonic()
         try:
             if step.kind == "power":
                 link.power(step.want)
@@ -403,7 +472,7 @@ class Room:
             if e.code == "stopped":                   # a newer choice came in: look again
                 return
             if e.code in ("ERR3", "busy"):
-                return self._not_ready(slot, step, e.code)
+                return self._not_ready(slot, step, e.code, link)
             if e.code == "unreachable":
                 return self._finish(slot, [step], "failed", "no answer", rest=live)
             return self._finish(slot, [step], "failed", str(e))
@@ -411,7 +480,7 @@ class Room:
             slot.powered = time.monotonic()
         self._finish(slot, [step] + ([both] if both else []), "done")
 
-    def _input(self, slot, step, entry, live):
+    def _input(self, slot, step, entry, live, cancel):
         mon, code = self.monitor, step.want
         if step.state == "todo":
             known = (entry.get("details") or {}).get("inputs") or []
@@ -422,16 +491,34 @@ class Room:
                     slot.wake.wait(mon.retry_every)   # the monitor reads the list the first time it sees it switched on
                     return
                 return self._finish(slot, [step], "failed", "its inputs are not known yet")
+            def wanted():
+                """Asked by the monitor once this change holds the projector's input lock, just before it is
+                sent: a newer choice (a scene, a group button, the Projectors card) drops the step first and
+                sends after us, so what is sent here is never newer than what follows. The retry that may come
+                of it is marked as ours here, before it can exist; a choice from outside takes the mark away."""
+                with self.lock:
+                    if step.state != "todo":
+                        return False
+                    slot.handed, slot.busy = code, time.monotonic()
+                    return True
+
+            def unmark():
+                with self.lock:
+                    if slot.handed == code and step.state != "waiting":
+                        slot.handed = None
             try:
-                pending = mon.set_input(entry, code)["pending"]
+                pending = mon.set_input(entry, code, wanted=wanted, cancel=cancel)["pending"]
             except projector_mod.ProjectorError as e:
+                unmark()
+                if e.code == "stopped":
+                    return
                 if e.code == "unreachable":
                     return self._finish(slot, [step], "failed", "no answer", rest=live)
                 return self._finish(slot, [step], "failed", str(e))
             if not pending:
+                unmark()
                 return self._finish(slot, [step], "done")
             with self.lock:                           # the monitor now tries again by itself (Phase 1's retry)
-                slot.handed = code
                 if step.state == "todo":
                     step.state, step.since = "waiting", time.monotonic()
             return
@@ -452,7 +539,8 @@ class Room:
         self._finish(slot, [step], "dropped", "changed by a later choice")      # someone chose another input meanwhile
 
     def stop(self):
-        """Drop everything not sent yet (the panel is closing)."""
+        """Drop everything not sent yet: the module is switched off, a factory reset, or the panel is closing
+        (server.main calls it on the way out)."""
         with self.lock:
             for slot in self._slots.values():
                 for s in slot.steps:
@@ -473,11 +561,25 @@ class Room:
                 out.append((kind, row[kind] == "mute"))
         return out
 
-    def _box(self, box, client):
-        """Do what the scene says the box does; {"ok", "text"} or None for "leave"."""
+    def _box(self, scene):
+        """Do what the scene says the box does; {"ok", "text"} or None for "leave". The calls are made as a
+        presenter from the box itself ("room"), like the schedule's: whoever applied the scene was already checked
+        for the role and, through the support tunnel, for what a support login may do; a scene only plays, stops
+        or blacks out, which every presenter may. The same scene again within BOX_GAP seconds does not start
+        its clip again."""
+        box, client = scene["box"], "room"
         action = box.get("action", "leave")
         if action not in BOX or action == "leave":
             return None
+        last = self._last_box
+        if last and last[0] == scene["id"] and last[1] == box and time.monotonic() - last[2] < BOX_GAP and last[3]["ok"]:
+            self._last_box = (scene["id"], dict(box), time.monotonic(), last[3])
+            return last[3]
+        out = self._box_run(box, action, client)
+        self._last_box = (scene["id"], dict(box), time.monotonic(), out)
+        return out
+
+    def _box_run(self, box, action, client):
         _clean, calls, shows = BOX[action]
         text = {"stop": "stopped", "blackout": "blackout", "vibes": "Vibes", "vibes_stop": "Vibes stopped"}.get(action, "playing")
         try:
@@ -495,6 +597,10 @@ class Room:
         return {"ok": True, "text": text}
 
     def start_scene(self, scene, client):
+        with self._order:             # two scenes at the same moment: the box and the projectors follow the same one
+            return self._start_scene(scene)
+
+    def _start_scene(self, scene):
         cfg = self.config()
         groups = {g["id"]: g for g in cfg["groups"]}
         entries = {p["id"]: p for p in self._projectors()}
@@ -508,23 +614,31 @@ class Room:
             for p in members:                         # a projector in two groups of one scene: the later line stands
                 for kind, want in wants:
                     plans.setdefault(p["id"], {})[kind] = _Step(kind, want, self._label(p, want) if kind == "input" else "")
-            rows.append({"name": name, "pids": [p["id"] for p in members], "kinds": [k for k, _ in wants]})
-        box = self._box(scene["box"], client)
+            rows.append({"gid": r["group"], "name": name, "pids": [p["id"] for p in members], "kinds": [k for k, _ in wants]})
+        box = self._box(scene)
         job = {"scene": scene["id"], "name": scene["name"], "started": int(time.time()), "box": box, "rows": rows,
                "plans": plans, "names": {p["id"]: p["name"] for p in entries.values()}}
         with self.lock:
             old, self._scene_job = self._scene_job, job
             for pid, steps in plans.items():
-                self._submit(pid, list(steps.values()), True)
-            for pid, steps in ((old or {}).get("plans") or {}).items():       # the older scene's projectors that this one leaves alone
-                slot = self._slots.get(pid)
-                if pid in plans or slot is None:
-                    continue
-                for s in steps.values():
-                    if s.live:
-                        s.state, s.text = "dropped", "changed by a later choice"
-                self._kick(slot)
+                plans[pid] = self._submit(pid, list(steps.values()), True)
+            if old:                                   # the older scene's projectors that this one leaves alone
+                self._drop(old, skip=plans)
         return job
+
+    def _drop(self, job, gid=None, skip=()):
+        """With self.lock held: what `job` (of one of its groups only, with `gid`) still had to send is dropped."""
+        for row in job["rows"]:
+            if gid is not None and row.get("gid") != gid:
+                continue
+            for pid in row["pids"]:
+                slot, plan = self._slots.get(pid), job["plans"].get(pid) or {}
+                hit = [plan[k] for k in row["kinds"] if k in plan and plan[k].live]
+                if pid in skip or slot is None or not hit:
+                    continue
+                for s in hit:
+                    s.state, s.text = "dropped", "changed by a later choice"
+                self._kick(slot)
 
     def start_group(self, gid, group, action, code):
         entries = {p["id"]: p for p in self._projectors()}
@@ -539,23 +653,36 @@ class Room:
         plans = {p["id"]: {kind: _Step(kind, want, self._label(p, want) if kind == "input" else "") for kind, want in wants}
                  for p in members}
         job = {"started": int(time.time()), "box": None, "plans": plans, "names": {p["id"]: p["name"] for p in members},
-               "rows": [{"name": name, "pids": [p["id"] for p in members], "kinds": [k for k, _ in wants]}]}
+               "rows": [{"gid": gid, "name": name, "pids": [p["id"] for p in members], "kinds": [k for k, _ in wants]}]}
         with self.lock:
             self._group_jobs[gid] = job
             for pid, steps in plans.items():
-                self._submit(pid, list(steps.values()), False)
+                plans[pid] = self._submit(pid, list(steps.values()), False)
         return job
 
     # -- saying how it went --
-    @staticmethod
-    def _words(steps):
+    def _settling(self, pid, s):
+        """A power step the projector has taken, while no status check has agreed yet: the wall is warming up or
+        cooling down. Final once a check agrees, or after the time a projector may take (someone may have
+        changed it by hand since, which is not this step's failure)."""
+        if s.kind != "power" or s.state != "done" or s.seen or s.text != s.did():
+            return False
+        st = self.monitor.status(pid)
+        if (st.get("ok") and st.get("power") == s.did()) or time.monotonic() - (s.done_at or 0) > self.monitor.retry_for + GRACE:
+            s.seen = True
+            return False
+        return True
+
+    def _words(self, pid, steps):
         """("on, input Console", "done" | "running" | "failed") for one projector's steps."""
-        words = [s.text for s in steps if s.state == "done"]
+        settling = [s for s in steps if self._settling(pid, s)]
+        words = [("switching on (warming up)" if s.want else "switching off (cooling down)") if s in settling else s.text
+                 for s in steps if s.state == "done"]
         failed = [s for s in steps if s.state in ("failed", "skipped")]
-        live = [s for s in steps if s.live]
+        live = [s for s in steps if s.live] or settling
         if failed:
             words.append(failed[0].text)
-        elif live:
+        elif live and live[0].live:
             words.append(live[0].doing())
         elif any(s.state == "dropped" for s in steps):
             words.append("changed by a later choice")
@@ -571,7 +698,7 @@ class Room:
             per = []
             for pid in row["pids"]:
                 plan = job["plans"].get(pid) or {}
-                text, state = self._words([plan[k] for k in row["kinds"] if k in plan])
+                text, state = self._words(pid, [plan[k] for k in row["kinds"] if k in plan])
                 running, ok = running or state == "running", ok and state != "failed"
                 per.append((job["names"].get(pid, "?"), text))
             if not per:
@@ -652,6 +779,8 @@ class Room:
         """{"group": {"id"?, "name", "projectors"}}, {"remove_group": id}, {"scene": {"id"?, "name", "groups", "box"}}
         or {"remove_scene": id}. With an id the group or scene is replaced, without one it is added."""
         self._need()
+        if len([k for k in ("group", "remove_group", "scene", "remove_scene") if k in body]) != 1:
+            raise bad("send one of group, remove_group, scene or remove_scene")
         settings = self.api.settings
         with settings.lock:
             cfg = copy.deepcopy(self.config())
@@ -702,6 +831,14 @@ class Room:
                     raise ApiError(404, "no such stream")
             settings.data["room"] = clean
             settings.save()
+            with self.lock:                           # what a removed scene or group still had to send is not sent
+                job = self._scene_job
+                if "remove_scene" in body and job and job["scene"] == body["remove_scene"]:
+                    self._drop(job)
+                if "remove_group" in body:
+                    for j in (job, self._group_jobs.get(body["remove_group"])):
+                        if j:
+                            self._drop(j, gid=body["remove_group"])
         return self.api_get({}, device, client)
 
     @staticmethod

@@ -510,20 +510,28 @@ class Monitor:
         with self.lock:
             return self._input_locks.setdefault(pid, threading.Lock())
 
-    def set_input(self, entry, code):
+    def set_input(self, entry, code, wanted=None, cancel=None):
         """Switch the input now. If the projector says "unavailable" (warming up, mostly), keep trying in the
         background for retry_for seconds; {"pending": True} then. Other refusals raise ProjectorError.
         One input change at a time per projector: a retry that is being sent is over before this one goes
-        out, and it is not sent again afterwards, so the last choice made is the one that stands."""
+        out, and it is not sent again afterwards, so the last choice made is the one that stands.
+        `wanted` (the room's): asked once this change has the projector's input lock, just before it is sent; if
+        it says no, a newer choice was made while this one waited, and nothing is sent ("stopped"). `cancel`: an
+        Event that, once set, also keeps the command from being sent."""
         pid = entry["id"]
         with self._input_lock(pid):
+            if wanted is not None and not wanted():
+                raise ProjectorError("stopped", "stopped")
             with self.lock:
                 w = self._workers.get(pid)
                 if w:
                     w.pending = None                   # a newer choice replaces one still being retried
                 self._notice.pop(pid, None)
             try:
-                self._link(entry).set_input(code)
+                link = self._link(entry)
+                if cancel is not None:
+                    link.cancel = cancel
+                link.set_input(code)
             except ProjectorError as e:
                 if e.code != "ERR3":
                     raise

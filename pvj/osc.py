@@ -233,6 +233,8 @@ def _room(a, args):
         v = args[0] if args else None
         if isinstance(v, str):
             return "/api/room/scene", {"name": v}
+        if isinstance(v, float) and _number(v) and v == int(v):       # a controller that only sends floats
+            v = int(v)
         return ("/api/room/scene", {"number": v}) if isinstance(v, int) and not isinstance(v, bool) else None
     m = _ROOM_GROUP.fullmatch(a)
     if not m:
