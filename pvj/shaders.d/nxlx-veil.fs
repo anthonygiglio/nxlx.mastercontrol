@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "low: 6 sines a pixel",
+    "COST": "low: 5 sines a pixel",
     "INPUTS": [
         {
             "NAME": "speed",

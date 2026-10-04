@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "low: 4 lanterns, 9 sines and 4 divisions a pixel",
+    "COST": "low: 4 lanterns, 9 sines and 5 divisions a pixel",
     "INPUTS": [
         {
             "NAME": "speed",
@@ -97,6 +97,7 @@ void main() {
     }
     radius *= size * min(1.0, wide / 0.8);
     float rib = 1.0 - 0.30 * ribs * smoothstep(0.55, 1.0, sin(p.y * 22.0 / radius.y));
+    vec2 scale = vec2(1.0) / radius;
     vec3 col = vec3(0.06, 0.025, 0.05) + vec3(0.05, 0.025, 0.02) * (0.5 - p.y);
     for (int i = 0; i < 4; i++) {
         float fi = float(i);
@@ -104,14 +105,14 @@ void main() {
         float swing = sin(6.2831853 * fract(TIME * speed * (0.021 + 0.004 * fi) + 0.37 * fi));
         float breath = 0.88 + 0.12 * sin(6.2831853 * fract(TIME * speed * (0.047 - 0.006 * fi) + 0.61 * fi));
         vec2 c = vec2((fi - 1.5) * wide * 0.46 + 0.035 * sway * swing, 0.02 + 0.11 * (fract(fi * 0.618 + 0.25) - 0.5));
-        vec2 d = (p - c) / radius;
+        vec2 d = (p - c) * scale;
         float q = dot(d, d);
         float body = 1.0 - smoothstep(0.85, 1.0, q);
         float halo = 0.50 / (1.0 + 1.1 * q);
-        vec3 lit = mix(glow.rgb, paper.rgb, smoothstep(0.05, 0.95, q)) * rib;
+        vec3 lit = mix(glow.rgb, paper.rgb, min(q * q, 1.0)) * rib;
         col = mix(col + mix(paper.rgb, glow.rgb, 0.5) * halo * breath * 0.6, lit * breath, body);
         // the cord it hangs from
-        float cord = (1.0 - smoothstep(0.0015, 0.0035, abs(p.x - c.x))) * step(c.y + radius.y, p.y);
+        float cord = clamp(1.75 - 500.0 * abs(p.x - c.x), 0.0, 1.0) * step(c.y + radius.y, p.y);
         col = mix(col, vec3(0.16, 0.10, 0.08), cord * 0.8);
     }
     gl_FragColor = vec4(col, 1.0);

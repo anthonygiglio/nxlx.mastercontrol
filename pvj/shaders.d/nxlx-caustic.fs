@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "low: 3 rounds of bending, 8 sines and one division a pixel",
+    "COST": "low: 3 rounds of bending, 9 sines and one division a pixel",
     "INPUTS": [
         {
             "NAME": "speed",

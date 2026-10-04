@@ -6,7 +6,7 @@
         "Generator",
         "Performance"
     ],
-    "COST": "low: 6 sines a pixel",
+    "COST": "low: at most 5 sines a pixel",
     "INPUTS": [
         {
             "NAME": "rate",
