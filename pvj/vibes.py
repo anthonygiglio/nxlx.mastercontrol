@@ -123,6 +123,9 @@ class Vibes:
                 self.epoch = self.api.player.source_epoch
             self.order, self.current, self.rounds, self.refused = [], None, 0, set()
             self.set_id, self.history, self._want, self._tight = set_id, [], None, set()
+        changer = getattr(self.engine, "changer", None)
+        if changer:
+            changer.clear()             # a step or a preset that was still waiting must not take the screen from this run
             self.due = self._clock()
             self.last = None
             self._clear = None
@@ -137,7 +140,11 @@ class Vibes:
                 if self.started:
                     self._clear = self.epoch
                 self._end("stopped")
-        self._settle()
+        # The screen is cleared by the rotation's own thread when it has one (it ends at once and settles): clearing
+        # takes the engine's lock, which is held while the GPU looks at a shader, and a Stop from a controller or the
+        # schedule must not wait for that.
+        if not (self._use_thread and self._thread is not None):
+            self._settle()
         self._wake.set()
         return self.status()
 

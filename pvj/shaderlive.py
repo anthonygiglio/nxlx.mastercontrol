@@ -356,10 +356,21 @@ class Changer:
             self._wake()
 
     def show(self, job):
-        """Put a whole shader on (the newest wish wins), away from the caller's thread."""
+        """Put a whole shader on (the newest wish wins), away from the caller's thread. The job carries the player's
+        epoch of the moment it was asked for: whatever is played or stopped before the worker comes round keeps the
+        screen."""
         with self._cond:
             self._show, self._adjust = job, None
             self._wake()
+
+    def queued(self):
+        with self._cond:
+            return self._show
+
+    def clear(self):
+        """Forget what is waiting (the module went off, Vibes was started, the box was reset)."""
+        with self._cond:
+            self._show = self._adjust = self._release = None
 
     def _wake(self):
         if self._use_thread and self._thread is None:
@@ -440,6 +451,9 @@ class LiveEngine(S.Engine):
         self.changer = Changer(self, clock, thread)
         self.guard = Guard(self, clock)
         self._refusals = {}                         # source hash -> what the GPU said; a changed file has another hash
+        # Settings are edited under this lock, never under the engine's own: that one is held while the GPU looks at a
+        # shader (up to four seconds), and a dwell knob, a preset or a set must not wait for it.
+        self._cfg = threading.RLock()
 
     def board(self):
         return (getattr(self.api, "board", None) or {}).get("kind")
@@ -572,7 +586,7 @@ class LiveEngine(S.Engine):
         on = self.on_screen()
         if on is None or (sid is not None and sid != on["id"]):
             raise ApiError(409, "play the shader first: a preset keeps the values that are on the screen")
-        with self._lock:
+        with self._cfg:
             cfg, rows = self._presets_of(on["id"])
             wish = self.changer.pending() or {}
             wish = wish if (wish.get("epoch"), wish.get("id")) == (on["epoch"], on["id"]) else {}
@@ -595,7 +609,7 @@ class LiveEngine(S.Engine):
         self._path(sid)
         if not isinstance(to, str) or not NAME.fullmatch(to) or to != to.strip():
             raise ApiError(400, "a preset needs a name of 1 to 40 characters")
-        with self._lock:
+        with self._cfg:
             cfg, rows = self._presets_of(sid)
             hit = next((p for p in rows if isinstance(name, str) and p["name"].lower() == name.lower()), None)
             if hit is None:
@@ -612,7 +626,7 @@ class LiveEngine(S.Engine):
 
     def preset_delete(self, sid, name):
         self._path(sid)
-        with self._lock:
+        with self._cfg:
             cfg, rows = self._presets_of(sid)
             keep = [p for p in rows if not (isinstance(name, str) and p["name"].lower() == name.lower())]
             if len(keep) == len(rows):
@@ -673,7 +687,7 @@ class LiveEngine(S.Engine):
     def _edit_sets(self, change):
         """Change the sets under the lock: `change(cfg, sets)` edits the list (made real first if it was only the
         first set's default) and may return the id to make active."""
-        with self._lock:
+        with self._cfg:
             cfg = self.config()
             every = self.sets(cfg)
             active = change(cfg, every)
@@ -726,7 +740,7 @@ class LiveEngine(S.Engine):
 
     def tune_set(self, set_id=None, dwell=None, vary=None):
         """Change how long each shader stays, or the variation, of one set (the active one if none is named)."""
-        with self._lock:
+        with self._cfg:
             cfg = self.config()
             target = self.rotation(set_id, cfg)
             active = target["id"] == self.rotation(None, cfg)["id"]
@@ -742,7 +756,7 @@ class LiveEngine(S.Engine):
     def note_heavy(self, sid, verdict):
         """The guard found this shader too heavy in a rotation: remember it, so no rotation shows it until someone
         puts it back."""
-        with self._lock:
+        with self._cfg:
             cfg = self.config()
             size = (self.playing or {}).get("size") or (0, cfg["height"])
             cfg.setdefault("heavy", {})[sid] = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": verdict["drops_per_second"] or 0, "height": size[1]}
@@ -835,18 +849,28 @@ class LiveEngine(S.Engine):
             return bool(state["held"])
 
     def play_job(self, job):
-        """Put a whole shader on from the worker (a step to the next or the one before, a preset of another shader)."""
+        """Put a whole shader on from the worker (a step to the next or the one before, a preset of another shader),
+        only if nothing was played or stopped since it was asked for."""
+        if not self.enabled():
+            return                                  # the module went off meanwhile: nothing to show, nothing to report
         try:
-            self.play(job["id"], job.get("values"), job.get("controls"), job.get("preset"))
+            self.play(job["id"], job.get("values"), job.get("controls"), job.get("preset"), epoch=job["epoch"], queued=True)
         except ApiError as e:
             self.error = {"id": job["id"], "message": e.message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
 
-    def play(self, sid, values=None, controls=None, preset=None):
+    def off(self, epoch=None):
+        if epoch is None:                           # the module was switched off: what was waiting goes too
+            self.changer.clear()
+        super().off(epoch)
+
+    def play(self, sid, values=None, controls=None, preset=None, epoch=None, queued=False):
         """Show one shader by hand: with the values given, else its named preset, else its "default" preset, else the
-        file's defaults. The rotation ends. Raises 422 if the player refuses it."""
+        file's defaults. The rotation ends. Raises 422 if the player refuses it. With `epoch`, only if nothing else
+        was played or stopped since (None is returned then); `queued` is the worker's call, whose request already
+        ended the rotation when it was made."""
         self._need()
         vibes = getattr(self.api, "vibes", None)
-        if vibes:
+        if vibes and not queued:
             vibes.yield_screen()                    # the operator chose a shader: the rotation ends
         path, _ = self._path(sid)
         try:
@@ -862,9 +886,11 @@ class LiveEngine(S.Engine):
             if same and stored is None:
                 stored = on["controls"]
             result = self.show(sid, start, hue=on["hue"] if same else 0.0, offset=self.time_of(on)[0] if same else 0.0,
-                               controls=S.clean_controls(controls, stored), preset=name)
+                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch)
         except ShaderError as e:
             raise ApiError(422, "%s: %s" % (sid, e))
+        if result is None:
+            return None                             # the screen went to something else: it keeps it
         if not result["ok"]:
             if not result["showing"]:
                 self.off(result["epoch"])           # nothing to go back to: stop, which leaves the screen black
@@ -974,8 +1000,8 @@ class LiveEngine(S.Engine):
         else:
             vibes = getattr(self.api, "vibes", None)
             if vibes:
-                vibes.yield_screen()
-            self.changer.show({"id": sid, "preset": name})
+                vibes.yield_screen()                # now, at the request: the worker never ends a rotation
+            self.changer.show({"id": sid, "preset": name, "epoch": self.api.player.source_epoch})
         return {"ok": True, "id": sid, "preset": name}
 
     def step(self, direction):
@@ -991,16 +1017,18 @@ class LiveEngine(S.Engine):
         if not ids:
             raise ApiError(409, "the active set has no shader that can be shown")
         on = self.on_screen()
-        wish = self.changer._show
+        epoch = self.api.player.source_epoch
+        wish = self.changer.queued()
+        wish = wish if wish and wish.get("epoch") == epoch else None       # a step asked for before something else played is dead
         at = (wish or {}).get("id") or (on["id"] if on else None)
         nxt = ids[(ids.index(at) + direction) % len(ids)] if at in ids else ids[0 if direction == 1 else -1]
-        self.changer.show({"id": nxt})
+        self.changer.show({"id": nxt, "epoch": epoch})
         return {"ok": True, "id": nxt}
 
     # -- delete also clears what was kept for the file --
     def delete(self, sid):
         super().delete(sid)
-        with self._lock:
+        with self._cfg:
             cfg = self.config()
             had = sid in cfg.get("presets", {}) or sid in cfg.get("heavy", {}) or any(r["id"] == sid for e in cfg.get("sets", []) for r in e["shaders"])
             if had:
@@ -1083,7 +1111,7 @@ class LiveEngine(S.Engine):
             self._path(sid)
             if not isinstance(on, bool):
                 raise ApiError(400, "on must be true or false")
-            with self._lock:
+            with self._cfg:
                 cfg = self.config()
                 heavy = cfg.setdefault("heavy", {})
                 if on:
@@ -1110,7 +1138,7 @@ class LiveEngine(S.Engine):
                 if key in body and not ok(body[key]):
                     raise ApiError(400, "guard must be true or false, and clock carrier or frame")
             super().api_set(body, device, client)
-            with self._lock:
+            with self._cfg:
                 cfg = self.config()
                 for key in ("guard", "clock"):
                     if key in body:

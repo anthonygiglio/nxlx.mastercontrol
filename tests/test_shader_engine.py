@@ -479,21 +479,96 @@ class ValuesTest(Live):
         self.assertEqual((vibes.running, vibes.current, self.engine.playing["hue"], self.engine.playing["controls"]["speed"]), (True, sid, hue, 2.0))
 
     def test_requests_answer_while_the_gpu_is_busy_with_a_change(self):
-        """Nothing a presenter or a controller sends waits for the engine's lock (the GPU's look at a shader can take
-        seconds)."""
-        done = []
+        """Nothing a presenter, a controller, OSC, DMX or the schedule sends waits for the engine's lock (the GPU's
+        look at a shader can take four seconds). The dwell knob did: 3.99 s were measured."""
         self.engine.api_presets({"action": "save", "name": "kept"}, None, "t")
-        with self.engine._lock:
-            def calls():
-                self.engine.change({"values": {"level": 1.0}})
-                self.engine.apply_preset({"name": "kept"})
-                self.engine.step(1)
-                self.engine.state()
-                done.append(True)
-            t = threading.Thread(target=calls)
+        self.engine.api_set({"action": "set", "op": "add", "name": "Show", "shaders": ["nxlx-silk.fs"]}, None, "t")
+        vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=lambda: self.now[0], sleep=lambda s: None, rng=random.Random(1), thread=True, log=lambda *_: None)
+        self.addCleanup(vibes.stop)
+        live = {"id": "midi", "role": "live"}
+        calls = [("/api/shaders/values", {"values": {"level": 1.0}}), ("/api/shaders/values", {"control": 1, "level": 64}),
+                 ("/api/shaders/values", {"controls": {"speed": 2.0}}), ("/api/shaders/preset", {"name": "kept"}), ("/api/shaders/preset", {"index": 1}),
+                 ("/api/shaders/step", {"dir": 1}), ("/api/shaders/step", {"dir": -1}),
+                 ("/api/vibes", {"on": True}), ("/api/vibes", {"dwell": 45}), ("/api/vibes", {"next": True}), ("/api/vibes", {"previous": True}),
+                 ("/api/vibes", {"on": False}), ("/api/vibes", {"on": True, "set": "Show"}), ("/api/vibes", {"dwell": 60}), ("/api/vibes", {"on": False}),
+                 ("/api/blackout", {"on": True}), ("/api/blackout", {"on": False})]
+        took, answers = [], []
+        with self.engine._lock:                                       # as if the GPU were looking at a shader
+            def run():
+                for path, body in calls:
+                    t0 = time.monotonic()
+                    answers.append((path, body, self.api.handle("POST", path, body, live, "midi")[0]))
+                    took.append(time.monotonic() - t0)
+                t0 = time.monotonic()
+                self.api.handle("GET", "/api/shaders", {}, live, "t")
+                self.api.handle("GET", "/api/status", {}, live, "t")
+                took.append(time.monotonic() - t0)
+            t = threading.Thread(target=run)
             t.start()
-            t.join(5)
-        self.assertEqual(done, [True])
+            t.join(20)
+            self.assertFalse(t.is_alive(), "a request waited for the engine's lock: %s" % (answers[-1:],))
+        self.assertEqual([a for a in answers if a[2] != 200], [])
+        self.assertLess(max(took), 2.0)
+        self.assertEqual(self.engine.rotation("Show")["dwell"], 60)   # the dwell knob wrote the running set's time meanwhile
+
+    def test_a_queued_step_or_preset_never_takes_the_screen_back(self):
+        """A step (while Vibes is off) and a preset of another shader are put on by the worker a moment later. They
+        used to carry no epoch: the shader replaced a clip played meanwhile, came back after a Stop, and ended a
+        Vibes run that had started in between."""
+        self.engine.api_presets({"action": "save", "name": "kept"}, None, "t")
+        self.engine.play("nxlx-silk.fs")
+        wishes = (lambda: self.engine.step(1), lambda: self.engine.step(-1), lambda: self.engine.apply_preset({"id": "all.fs", "name": "kept"}))
+        for wish in wishes:                                           # a clip played before the worker came round keeps the screen
+            self.engine.play("nxlx-silk.fs")
+            wish()
+            self.player.play(["/media/clip.mp4"])
+            self.assertTrue(self.pump())
+            self.assertEqual((self.player.path, self.player.source_shader, self.engine.state()["playing"]), ("/media/clip.mp4", None, None))
+        for wish in wishes:                                           # after a Stop the screen stays empty
+            self.engine.play("nxlx-silk.fs")
+            wish()
+            self.player.clear()
+            self.pump()
+            self.assertEqual((self.player.path, self.player.source_shader), (None, None))
+        self.assertIsNone(self.engine.error)
+        vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=lambda: self.now[0], sleep=lambda s: None, rng=random.Random(1), thread=False, log=lambda *_: None)
+        for tick_first in (True, False):                              # Vibes started in between runs on, whoever comes first
+            self.engine.play("nxlx-silk.fs")
+            self.engine.step(1)
+            vibes.start()
+            if tick_first:
+                vibes.tick()
+            self.pump()
+            vibes.tick()
+            self.assertEqual((vibes.running, vibes.status()["last"]), (True, None))
+            self.assertEqual(self.engine.state()["playing"]["id"], vibes.current)
+            vibes.stop()
+        # a preset of another shader ends the rotation when it is asked for, not when the worker comes round
+        vibes.start()
+        vibes.tick()
+        self.engine.apply_preset({"id": "all.fs", "name": "kept"})
+        self.assertEqual((vibes.running, vibes.status()["last"]["message"]), (False, "ended: a shader was chosen by hand"))
+        self.pump()
+        self.assertEqual(self.engine.state()["playing"]["id"], "all.fs")
+        # the module switched off with a step waiting: nothing is shown and no error is noted
+        self.engine.step(1)
+        self.api.set_module("shaders", {"enabled": False}, None, "t")
+        self.assertFalse(self.pump())
+        self.assertEqual((self.engine.error, self.player.source_shader), (None, None))
+        self.api.registry.set_enabled("shaders", True)
+        self.engine.play("nxlx-silk.fs")
+        self.engine.changer.show({"id": "all.fs", "epoch": self.player.source_epoch})         # and one that slipped past the switch
+        self.api.registry.set_enabled("shaders", False)
+        self.pump()
+        self.assertIsNone(self.engine.error)
+        # two steps before the worker comes round are still two steps
+        self.api.registry.set_enabled("shaders", True)
+        ids = self.engine.vibes_ids()
+        self.engine.play(ids[0])
+        self.engine.step(1)
+        self.engine.step(1)
+        self.pump()
+        self.assertEqual(self.engine.state()["playing"]["id"], ids[2])
 
 
 class PresetTest(Live):
