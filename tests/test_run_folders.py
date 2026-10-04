@@ -4,6 +4,7 @@
 
 The ownership itself (systemd handing a folder to the unit that starts) cannot be shown here; the units are checked
 in tests/test_units.py and the real box with the checklist in tools/DEVICE-TESTING.md."""
+import errno
 import os
 import socket
 import stat
@@ -96,6 +97,28 @@ class PanelSideTest(unittest.TestCase):
                            env={"PATH": os.environ["PATH"], "PVJ_RUNTIME_DIR": self.env["PVJ_RUNTIME_DIR"]})
         self.assertEqual((r.returncode, r.stdout), (0, "4321\n"))
 
+    def run_pin(self):
+        return subprocess.run(["sh", os.path.join(REPO, "bin", "pvj-pin")], capture_output=True, text=True, timeout=20,
+                              env={"PATH": os.environ["PATH"], "PVJ_RUNTIME_DIR": self.env["PVJ_RUNTIME_DIR"]})
+
+    def test_pvj_pin_shows_no_other_file_through_a_link_and_does_not_hang_on_a_pipe(self):
+        # it runs as root (sudo) on a name the panel's account controls
+        secret = os.path.join(self.base, "shadow")
+        with open(secret, "w") as f:
+            f.write("root:secret\n")
+        pin = os.path.join(self.base, "web", "pin")
+        os.symlink(secret, pin)
+        r = self.run_pin()
+        self.assertEqual((r.returncode, r.stdout), (1, ""))
+        os.unlink(pin)
+        os.mkfifo(pin)
+        r = self.run_pin()                                   # the 20 s limit would end a hang
+        self.assertEqual((r.returncode, r.stdout), (1, ""))
+        os.unlink(pin)
+        with open(pin, "w") as f:
+            f.write("x" * 5000)
+        self.assertEqual(len(self.run_pin().stdout), 32)
+
 
 class PreviewInThePlayersFolderTest(unittest.TestCase):
     """mpv writes the preview, so it is in the player's folder, which the panel can read and not change."""
@@ -115,24 +138,71 @@ class PreviewInThePlayersFolderTest(unittest.TestCase):
         self.addCleanup(os.chmod, self.env["PVJ_PLAYER_DIR"], 0o750)
 
     def screenshot(self, path, quality, with_text):
-        os.chmod(self.env["PVJ_PLAYER_DIR"], 0o750)          # the player may write in its own folder
-        with open(path, "wb") as f:
+        with open(path, "wb") as f:                          # mpv, in its own folder
             f.write(JPEG)
-        os.chmod(self.env["PVJ_PLAYER_DIR"], 0o550)
 
-    @unittest.skipIf(os.getuid() == 0, "root may write anywhere")
-    def test_the_panel_asks_for_the_picture_there_and_does_not_need_to_remove_the_old_one(self):
+    def old(self, data=JPEG):
         with open(self.shot, "wb") as f:
-            f.write(b"old")
-        os.chmod(self.env["PVJ_PLAYER_DIR"], 0o550)          # as on a box: the panel cannot unlink in it
-        self.assertEqual(self.api.preview_jpeg(None), JPEG)
+            f.write(data)
+        os.utime(self.shot, ns=(1, 1))                       # written some time ago
+
+    def test_the_panel_never_tries_to_remove_a_picture_in_the_players_folder(self):
+        # On a box the panel's sandbox (ProtectSystem=strict) mounts the player's folder read-only, and unlink
+        # then fails with EROFS, not EACCES: the first version caught the wrong one and every preview was a 503
+        # (found by the independent review). The panel must not call unlink there at all.
+        self.old(b"old")
+        calls = []
+
+        def unlink(path, *a, **kw):
+            calls.append(path)
+            raise OSError(errno.EROFS, "Read-only file system")
+        with mock.patch("os.unlink", unlink):
+            self.assertEqual(self.api.preview_jpeg(None), JPEG)
+        self.assertEqual(calls, [])
         self.assertEqual(self.api.player.screenshot.call_args[0][0], self.shot)
         self.assertEqual(os.listdir(self.env["PVJ_RUNTIME_DIR"]), [])
+
+    def test_a_picture_from_an_earlier_request_is_never_served_as_new(self):
+        from pvj.api import ApiError
+        self.old()                                           # a good JPEG, but from before
+        self.api.player.screenshot.side_effect = lambda *a: None       # mpv said yes and wrote nothing
+        with self.assertRaises(ApiError) as e:
+            self.api.preview_jpeg(None)
+        self.assertEqual(e.exception.status, 503)
+        self.assertIn("did not produce a picture", e.exception.message)
+        # and the next real one is served, whether mpv writes over the file or puts a new one in its place
+        self.api._preview = None
+        self.api.player.screenshot.side_effect = self.screenshot
+        self.assertEqual(self.api.preview_jpeg(None), JPEG)
+        self.api._preview = None
+
+        def replace(path, quality, with_text):
+            os.chmod(self.env["PVJ_PLAYER_DIR"], 0o750)
+            with open(path + ".tmp", "wb") as f:
+                f.write(JPEG + b"2")
+            os.replace(path + ".tmp", path)
+        self.api.player.screenshot.side_effect = replace
+        self.assertEqual(self.api.preview_jpeg(None), JPEG + b"2")
+
+    def test_a_first_picture_with_no_file_there_before_is_served(self):
+        self.assertFalse(os.path.exists(self.shot))
+        self.assertEqual(self.api.preview_jpeg(None), JPEG)
+
+    def test_a_link_in_place_of_the_picture_is_not_followed(self):
+        from pvj.api import ApiError
+        secret = os.path.join(self.base, "secret")
+        with open(secret, "wb") as f:
+            f.write(JPEG)
+        os.symlink(secret, self.shot)
+        self.api.player.screenshot.side_effect = lambda *a: None
+        with self.assertRaises(ApiError):
+            self.api.preview_jpeg(None)
 
     def test_a_player_without_the_attribute_keeps_the_picture_in_its_one_folder(self):
         self.api.player = mock.Mock(spec=["rundir", "screenshot"], rundir=self.env["PVJ_PLAYER_DIR"])
         self.api.player.screenshot.side_effect = self.screenshot
-        self.assertEqual(self.api.preview_jpeg(None), JPEG)
+        self.old(b"old")
+        self.assertEqual(self.api.preview_jpeg(None), JPEG)       # its own folder: removed first, as before
 
 
 class NetdFolderTest(unittest.TestCase):

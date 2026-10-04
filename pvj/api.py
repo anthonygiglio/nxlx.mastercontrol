@@ -308,16 +308,28 @@ class Api:
                 return cached[1]
             # mpv writes the picture, so it is in the player's own folder, where nobody else can leave a link.
             path = getattr(self.player, "preview_path", None) or os.path.join(self.player.rundir, paths.PREVIEW)
+            ours = os.path.dirname(os.path.abspath(path)) == os.path.abspath(self.player.rundir)
             try:
-                try:
-                    os.unlink(path)               # where the folder is ours too (a desk, the tests): start clean
-                except (FileNotFoundError, PermissionError):
-                    pass                          # on a box the panel may not remove it; mpv writes over it
+                before = None
+                if ours:                          # one folder for everything (a desk, the tests): start clean
+                    try:
+                        os.unlink(path)
+                    except FileNotFoundError:
+                        pass
+                else:
+                    # On a box the picture is in the player's folder, which the panel must not touch and cannot:
+                    # its sandbox mounts everything but its own folder read-only, so even trying to remove the
+                    # file fails ("Read-only file system"). mpv writes over the old picture instead, and the
+                    # panel tells a new one from the one that was there by what the file looks like now.
+                    before = self._preview_mark(path)
                 self._player_call(self.player.screenshot, path, 60, with_text)
                 fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
                 try:
-                    if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    st = os.fstat(fd)
+                    if not stat.S_ISREG(st.st_mode):
                         raise ApiError(500, "preview file is not a regular file")
+                    if before is not None and before == (st.st_ino, st.st_mtime_ns, st.st_ctime_ns):
+                        raise ApiError(503, "the player did not produce a picture")     # the old one: never served again
                     with os.fdopen(fd, "rb", closefd=False) as f:
                         data = f.read(PREVIEW_MAX_BYTES + 1)
                 finally:
@@ -333,6 +345,17 @@ class Api:
                 raise err
             self._preview = (time.monotonic(), data, with_text)
             return data
+
+    @staticmethod
+    def _preview_mark(path):
+        """What tells one written preview file from the next: which file it is and when it was last written or
+        changed. Compared for "the same", never for "newer", so a clock that was set back does no harm. None if
+        there is no file."""
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return None
+        return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
 
     def _public_player_status(self):
         """Player status with stream passwords hidden and the saved stream's name added."""
