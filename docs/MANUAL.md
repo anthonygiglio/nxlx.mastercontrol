@@ -168,6 +168,18 @@ A presenter sees only Health, Projectors, Shaders and Vibes, Sound, Streams, Box
 | **OSC**: TouchOSC, Resolume, QLab and others | [pvj/OSC.md](../pvj/OSC.md) |
 | **Network settings** (wired and Wi-Fi: join a network, the box's own hotspot, Wi-Fi off) | [pvj/NETWORK.md](../pvj/NETWORK.md) |
 
+**A MIDI controller that just works.** Switch MIDI on (System > MIDI controller) and plug in a Korg nanoKONTROL2, an Akai MIDI Mix or a Novation Launchpad Mini (the original one): the box recognises it within a couple of seconds and it works at once, with nothing to teach. The page shows a card for it with the controller drawn on it; every control says what it does, and lights up when you move it. In short, the same on each so your hands find it again:
+
+- **The eight knobs** (the top row on the MIDI Mix) are the first eight controls of whichever shader is playing.
+- **The faders**, left to right: opacity, volume, clip speed, shader speed, shader colour turn, shader brightness; the last two are spare.
+- **A row of buttons plays pads 1 to 8** (S on the nanoKONTROL2, Mute on the MIDI Mix) of the bank the controllers are on; two buttons step through banks A, B and C (Marker < and > on the nanoKONTROL2, Bank Left and Right on the MIDI Mix). **The next row is shader presets 1 to 8** (M, Rec Arm). The Launchpad Mini shows all three banks at once: two rows of six pads each, then a row of presets and a row that presses the shader's controls.
+- **Transport**: Play is pause and resume, Stop is stop, Rewind and Forward are the previous and next clip, Track < and > the previous and next shader, Cycle is Vibes on and off. On the Launchpad these are the round buttons along the top.
+- **Blackout and the Room scenes need the same button twice within a second**, so a stray finger does not darken the room. They are marked 2x on the card.
+- **A fader that is not where the box is waits.** Opacity, volume, the speeds and the shader brightness do nothing until the fader reaches the value the box has; then it is followed. So a fader left at the bottom does not black the screen out when you touch it.
+- **Change anything**: tap a control on the card and choose what it should do, or Nothing. Your choice wins over the standard; "Back to the standard" undoes it. The switch "Standard layout" turns the whole layout off for that controller.
+
+A nanoKONTROL2 must be in its CC mode (hold SET MARKER and CYCLE while plugging it in). The box sends nothing to a controller, so pads and buttons do not light. **These three layouts are written from documents and one recording and have not been tried on the real controllers yet**: move each control once and watch it light up on the card; one that does not light has a wrong number. The full tables, and how to add a controller by writing one file, are in [pvj/MIDI.md](../pvj/MIDI.md#controller-profiles). Any other controller is taught with Learn on the same page.
+
 The Projection mapping card on Mix, with a grid and a quad:
 
 ![Projection mapping](images/ui/mapper.png)

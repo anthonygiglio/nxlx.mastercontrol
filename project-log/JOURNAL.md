@@ -4,6 +4,28 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-04 (controller profiles: a known MIDI controller works when it is plugged in)
+
+Pull request #77 (D47), on top of the shader engine (#72). The owner's words: "I would like to be able to connect a controller like the Korg nanoKONTROL2 and have it automatically/preset/natively mapped to control mastercontrol."
+
+**Nothing in this entry was tried on a real controller.** The three are on the owner's Pi, which this session did not touch.
+
+**Built:**
+
+1. Profile files, `pvj/controllers.d/<id>.json`, for the Korg nanoKONTROL2 (51 controls), the Akai MIDI Mix (60) and the original Novation Launchpad Mini (80): match patterns, a drawing, what each control sends, its default action. Checked strictly on load; adding a controller is one file (how: `pvj/MIDI.md`).
+2. The hub applies a profile when a matching controller appears and drops it when it goes. Per control: your mapping, then the profile, then the built-in map, which is not used for a controller whose profile is on. A switch per controller. Several controllers each use their own.
+3. Pickup for opacity, volume, clip speed, shader speed and shader brightness; the same press twice for blackout and Room scenes; a controllers' bank for the two controllers with one row of pad buttons.
+4. New actions over calls the API had: previous and next clip, fade in, shader hue and brightness, Room scene 1 to 8, nothing, bank pad, bank step.
+5. The MIDI page: a card per controller with its layout drawn as a grid, what each control does, lights while it is moved (the hub keeps the last message per control), a tap to choose another action, "Back to the standard" for one control and for the controller (a question in place), the real switch "Standard layout". An unknown controller: "No built-in layout for this one yet. Teach it below." The old "Remove all mappings" asks in place now too.
+6. API: `GET /api/midi` (now for presenters too) gains `controllers`, `bank`, `profiles`; `POST /api/midi` takes `{"controller", "standard"}`; `POST /api/midi/map` takes `set` and `reset`. Settings: `control.midi.controllers`, optional, no schema change, in boxcare's check with a round trip.
+7. Tests (`tests/test_controllers.py`, 33): the files, matching, precedence on the numbers that collide with the built-in map, pickup, both edges of the double press, hot-plug with pipes, the cap, roles, the settings round trip, and every control of every layout sent while the shader engine's lock is held. The browser test plugs a fake nanoKONTROL2 into the harness.
+
+**Sources, plainly.** Launchpad Mini: Novation's Launchpad S Programmer's Reference 1.02 (X-Y layout figure, message examples) plus the recording from 2026-09-30, which fits it. nanoKONTROL2: Korg's Parameter Guide has **no** factory CC table; the numbers are the widely reported ones, cross-checked with the Mixxx mapping; all marked unverified. MIDI Mix: no Akai document with numbers found; from a public Live script for the factory preset; all marked unverified.
+
+**Not built:** lights (D47 and `pvj/MIDI.md` say why and what it would take). The System page is still shown to full-access devices only; a presenter can read the layout through the API.
+
+**Open, for the owner:** the two-minute check per controller in `pvj/MIDI.md` (move each control once, watch its box light). Start with the nanoKONTROL2 in CC mode. Also unread on the Pi: the product names in `/proc/asound/cards` ("nanoKONTROL2", "MIDI Mix", "Launchpad Mini" are assumed from the card ids).
+
 ## 2026-10-04 (the shader engine: first hardware numbers, and performing with shaders)
 
 Pull request #72 (D46), backend only: Python, API, tests, docs. The owner's words: "a more robust shader playback and control system. i want to have more shaders available to perform with or have as auto-playing vibes." The Shaders page (#69) and the ISF pack (#70) are other sessions' work.

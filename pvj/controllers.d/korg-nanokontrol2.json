@@ -1,7 +1,7 @@
 {
   "id": "korg-nanokontrol2",
   "name": "Korg nanoKONTROL2",
-  "match": {"card_ids": ["nanoKONTROL2(_[0-9]+)?"], "card_names": ["nanoKONTROL2( [0-9]+)?"]},
+  "match": {"card_ids": ["nanoKONTROL2(_[0-9]+)?"], "card_names": [".*nanoKONTROL2"]},
   "description": "Eight knobs, eight faders, three rows of eight buttons (S, M, R) and eleven transport buttons, in the controller's CC mode. The numbers are the factory assignments of CC mode as widely reported: faders CC 0 to 7, knobs CC 16 to 23, S CC 32 to 39, M CC 48 to 55, R CC 64 to 71, transport CC 41 to 46 and 58 to 62, buttons momentary (127 down, 0 up).",
   "note": "Unverified against the manufacturer: Korg's nanoKONTROL2 Parameter Guide describes every parameter of CC mode but prints no table of the factory numbers, so each control is marked unverified. The group ranges agree with the Mixxx project's mapping for this controller. Not yet confirmed by pressing every control on a real nanoKONTROL2. The controller must be in CC mode (hold SET MARKER and CYCLE while plugging it in); in a DAW mode its faders send pitch bend, which the box does not read.",
   "sources": ["Korg nanoKONTROL2 Parameter Guide (E1): CC mode parameters, LED mode (p. 9), factory reset (p. 13); it has no table of factory CC numbers", "Mixxx controller mapping 'Korg nanoKONTROL 2.midi.xml' (secondary): faders 0 to 7, knobs 16 to 23, S 32 to 39, M 48 to 55, R 64 to 71, transport 41 to 62"],
