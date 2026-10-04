@@ -40,7 +40,9 @@ FIRST_TEN = ["aurora", "drift", "ember", "horizon", "lattice", "nebula", "prism"
 AMBIENT = ["bloom", "caustic", "contour", "dusk", "fringe", "kaleido", "lantern", "moire", "petal", "pool", "ribbon", "ridge", "stars", "tiles", "veil"]
 PERFORMANCE = ["bars", "beam", "burst", "checker", "chevron", "glitch", "grid", "halftone", "mirror", "radar", "scope", "spokes", "stripes", "tunnel", "zoom"]
 BUNDLED = len(FIRST_TEN) + len(AMBIENT) + len(PERFORMANCE)
-IN_VIBES = len(FIRST_TEN) + len(AMBIENT)
+HEAVY = ["drift", "nebula"]                   # measured on a Pi 4: out of the rotation until someone puts them in
+ROTATION = [n for n in FIRST_TEN + AMBIENT if n not in HEAVY]
+IN_VIBES = len(ROTATION)
 # Numbers from the hash and noise one-liners that are passed around everywhere: the bundled shaders build their own.
 WELL_KNOWN = ("43758.5453", "12.9898", "78.233", "0.1031", ".1030", "437.585", "289.0", "6.2831 * (", "0.5 + 0.5 * cos(6.28318 * (")
 
@@ -396,14 +398,20 @@ class TranslatorTest(unittest.TestCase):
         self.assertEqual(len(set(FIRST_TEN + AMBIENT + PERFORMANCE)), BUNDLED)
 
     def test_the_carrier_is_built_from_whole_numbers_and_has_the_screens_shape(self):
-        self.assertEqual(S.carrier_url((1920, 1080)), "av://lavfi:color=c=black:size=64x36:rate=30,format=rgb0")
+        self.assertEqual(S.carrier_url((1920, 1080), counter=False), "av://lavfi:color=c=black:size=64x36:rate=30,format=rgb0")
+        counted = S.carrier_url((1920, 1080))                         # the same picture, each frame painted with its number
+        self.assertEqual(counted, "av://lavfi:color=c=black:size=64x36:rate=30,format=gbrp,geq=r=N-256*floor(N/256):"
+                                  "g=floor(N/256)-256*floor(N/65536):b=floor(N/65536)-256*floor(N/16777216),format=rgb0")
+        self.assertTrue(S.is_carrier(counted))
         self.assertEqual(S.carrier_url((2560, 1440)), S.carrier_url((1280, 720)))
-        self.assertEqual(S.carrier_url((1920, 1200)), "av://lavfi:color=c=black:size=64x40:rate=30,format=rgb0")
-        self.assertEqual(S.carrier_url((1366, 768)), "av://lavfi:color=c=black:size=683x384:rate=30,format=rgb0")
-        self.assertEqual(S.carrier_url((1080, 1920)), "av://lavfi:color=c=black:size=27x48:rate=30,format=rgb0")
-        for good in (S.carrier_url((1920, 1080)), S.carrier_url((1366, 768))):
+        self.assertEqual(S.carrier_url((1920, 1200), False), "av://lavfi:color=c=black:size=64x40:rate=30,format=rgb0")
+        self.assertEqual(S.carrier_url((1366, 768), False), "av://lavfi:color=c=black:size=683x384:rate=30,format=rgb0")
+        self.assertEqual(S.carrier_url((1080, 1920), False), "av://lavfi:color=c=black:size=27x48:rate=30,format=rgb0")
+        for good in (S.carrier_url((1920, 1080)), S.carrier_url((1366, 768)), S.carrier_url((1366, 768), False)):
             self.assertTrue(S.is_carrier(good))
-        for bad in (S.carrier_url((1920, 1080)) + "\n", "av://lavfi:color=c=black:size=64x36:rate=30,format=rgb0,movie=/etc/passwd",
+        for bad in (S.carrier_url((1920, 1080)) + "\n", S.carrier_url((1920, 1080)).replace("floor(N/256)", "floor(N/255)"),
+                    S.carrier_url((1920, 1080)).replace(",format=rgb0", ",movie=/etc/passwd,format=rgb0"),
+                    "av://lavfi:color=c=black:size=64x36:rate=30,format=rgb0,movie=/etc/passwd",
                     "av://lavfi:smptehdbars=size=1920x1080:rate=25", "/media/a.mp4", None, 5):
             self.assertFalse(S.is_carrier(bad), bad)
         self.assertEqual(S.render_size((1920, 1080), 720), (1280, 720))
@@ -572,13 +580,13 @@ class EngineTest(Base):
         self.assertRegex(name, r"^shader-%d-1\.glsl$" % os.getpid())
         path = os.path.join(self.rundir, name)
         self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o640")
-        self.assertEqual(self.player.calls[-2], ("play_source", path, "av://lavfi:color=c=black:size=64x36:rate=30,format=rgb0"))
+        self.assertEqual(self.player.calls[-2], ("play_source", path, S.carrier_url((1920, 1080))))
         with open(path) as f:
             text = f.read()
         self.assertIn("//!WIDTH 1280\n//!HEIGHT 720\n", text)       # 720 lines by default, in the screen's shape
         self.assertIn("const float speed = 1.5;", text)
         st = self.engine.state()
-        self.assertEqual((st["playing"]["id"], st["playing"]["values"], st["playing"]["checked"]), ("nxlx-aurora.fs", {"speed": 1.5}, None))
+        self.assertEqual((st["playing"]["id"], st["playing"]["values"]["speed"], st["playing"]["checked"]), ("nxlx-aurora.fs", 1.5, None))
         self.assertEqual(self.api.status({}, None, "t")["player"]["shader"], "nxlx-aurora")
         self.assertIsNone(self.api.status({}, None, "t")["player"]["path"])           # the carrier is not shown as a clip
         self.engine.show("nxlx-tide.fs")
@@ -613,7 +621,8 @@ class EngineTest(Base):
         self.assertIn("`oops' undeclared", c.exception.message)
         self.assertIn("The screen is black", c.exception.message)
         self.assertEqual((self.player.source_shader, self.generated(), self.engine.state()["playing"]), (None, [], None))
-        self.assertEqual((self.player.calls[-2][:2], self.player.calls[-1]), (("swap_source", None), ("clear",)))   # black at once, then stopped
+        self.assertEqual((self.player.calls[-2][0], self.player.calls[-1]), ("swap_source", ("clear",)))            # black at once, then stopped
+        self.assertRegex(os.path.basename(self.player.calls[-2][1]), r"^shader-\d+-\d+\.glsl$")       # a shader that draws black, not the bare carrier
         self.assertIsNone(self.player.path)
         FakeTap.lines = []
         self.engine.api_play({"id": "nxlx-tide.fs"}, None, "t")                        # a later good try clears the error
@@ -657,7 +666,7 @@ class EngineTest(Base):
     def test_upload_checks_the_file_before_storing_it(self):
         r = self.engine.api_set({"action": "upload", "name": "My shader 1.fs", "source": GOOD}, None, "t")
         mine = [s for s in r["shaders"] if s["source"] == "uploaded"]
-        self.assertEqual([(s["id"], s["description"], s["vibes"]) for s in mine], [("My shader 1.fs", "mine", True)])
+        self.assertEqual([(s["id"], s["description"], s["vibes"]) for s in mine], [("My shader 1.fs", "mine", False)])    # in the library only
         stored = os.path.join(self.tmp, "shaders", "My shader 1.fs")
         with open(stored) as f:
             self.assertEqual(f.read(), GOOD)
@@ -729,33 +738,41 @@ class EngineTest(Base):
         for s in pack:
             self.assertEqual((s["source"], s["error"], s["vibes"]), ("bundled", None, False), s["id"])
             self.assertEqual(s["name"], s["id"][:-3])
-        self.assertTrue(all(s["vibes"] == ("Performance" not in s["categories"]) for s in own))      # all but the ones to perform with
+        heavy = {"nxlx-%s.fs" % x for x in HEAVY}
+        self.assertTrue(all(s["vibes"] == ("Performance" not in s["categories"] and s["id"] not in heavy) for s in own))    # not the ones to perform with, not the heavy two
         self.assertEqual(len(self.engine.vibes_ids()), IN_VIBES)                  # the pack adds nothing to the rotation
         self.assertTrue(any("VIDVOX" in s["credit"].upper() for s in pack))
         self.assertEqual(self.engine.packs()[0], ("nxlx", S.BUNDLED_DIR))
         self.assertEqual([p for p, _ in self.engine.packs()], ["nxlx", "isf-files"])
         self.engine.upload("mine.fs", GOOD)
         mine = [s for s in self.engine.library() if s["id"] == "mine.fs"][0]
-        self.assertEqual((mine["pack"], mine["source"], mine["vibes"]), ("uploads", "uploaded", True))
+        self.assertEqual((mine["pack"], mine["source"], mine["vibes"]), ("uploads", "uploaded", False))      # in the library only
 
     def test_a_pack_shader_joins_vibes_only_when_the_owner_puts_it_in(self):
         sid = PACKED[0]
+        own = [x["id"] for x in self.engine.library() if x["pack"] == "nxlx" and x["vibes"]]
         st = self.engine.api_set({"action": "vibes", "id": sid, "on": True}, None, "t")
-        self.assertTrue([s for s in st["shaders"] if s["id"] == sid][0]["vibes"])
-        self.assertEqual((self.settings.data["shaders"]["included"], self.settings.data["shaders"]["disabled"]), ([sid], []))
-        self.assertEqual(sorted(self.engine.vibes_ids()), sorted(["nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT] + [sid]))
+        self.assertTrue([x for x in st["shaders"] if x["id"] == sid][0]["vibes"])
+
+        def in_set():       # the rotation is a set since the shader engine (shaderlive.py): the switch writes the active set
+            return [r["id"] for r in self.settings.data["shaders"]["sets"][0]["shaders"]]
+        self.assertEqual(in_set(), own + [sid])
+        self.assertEqual(sorted(self.engine.vibes_ids()), sorted(own + [sid]))
         self.engine.api_set({"action": "vibes", "id": sid, "on": True}, None, "t")                # twice is once
-        self.assertEqual(self.settings.data["shaders"]["included"], [sid])
-        self.engine.api_set({"action": "vibes", "id": "nxlx-tide.fs", "on": False}, None, "t")    # the project's own: as before
-        self.assertEqual((self.settings.data["shaders"]["included"], self.settings.data["shaders"]["disabled"]), ([sid], ["nxlx-tide.fs"]))
+        self.assertEqual(in_set().count(sid), 1)
+        self.engine.api_set({"action": "vibes", "id": "nxlx-tide.fs", "on": False}, None, "t")    # the project's own: the same switch
+        self.assertEqual((sid in in_set(), "nxlx-tide.fs" in in_set()), (True, False))
         self.engine.api_set({"action": "config", "dwell": 60}, None, "t")                         # another change keeps the list
-        self.assertEqual(self.settings.data["shaders"]["included"], [sid])
+        self.assertIn(sid, in_set())
         self.engine.api_set({"action": "vibes", "id": sid, "on": False}, None, "t")
-        self.assertEqual(self.settings.data["shaders"]["included"], [])
+        self.assertNotIn(sid, in_set())
         self.assertNotIn(sid, self.engine.vibes_ids())
+        # settings saved by the pack's first version: its "included" list is read for the first set while no set is saved
         self.settings.data["shaders"] = {"included": ["../x", 5, sid, "gone.fs"]}                 # edited by hand
         self.assertEqual(self.engine.config()["included"], [sid, "gone.fs"])
         self.assertEqual(len(self.engine.vibes_ids()), IN_VIBES + 1)              # a name that is no file adds nothing
+        self.engine.api_set({"action": "config", "dwell": 61}, None, "t")         # the first save writes the list as the set Ambient
+        self.assertIn(sid, in_set())
         # the old settings, saved before packs existed, read as they did
         self.settings.data["shaders"] = {"dwell": 45, "vary": False, "height": 540, "disabled": []}
         self.assertEqual(self.engine.config(), {"dwell": 45, "vary": False, "height": 540, "disabled": []})
@@ -855,7 +872,7 @@ class EngineTest(Base):
             self.assertLessEqual(len(data), S.MAX_SOURCE, name)
             out = self.engine.api_set({"action": "upload", "name": "mine-%d.fs" % n, "source": data.decode("utf-8")}, None, "t")
             row = [s for s in out["shaders"] if s["id"] == "mine-%d.fs" % n][0]
-            self.assertEqual((row["error"], row["pack"], row["vibes"]), (None, "uploads", True), name)
+            self.assertEqual((row["error"], row["pack"], row["vibes"]), (None, "uploads", False), name)
             self.assertLessEqual(len(row["inputs"]), S.MAX_INPUTS)
         # one of the three things real files do that the first translator refused is present in the files that stand
         # in: text that is not ASCII in a comment (`out_color` and an input called `color` are in upstream files that
@@ -954,11 +971,11 @@ class EngineTest(Base):
     def test_settings_need_no_migration_and_are_checked(self):
         self.assertEqual(SCHEMA, 13)
         self.assertNotIn("shaders", self.settings.data)               # nothing is written until something changes
-        self.assertEqual(self.engine.state()["config"], {"dwell": 180, "vary": True, "height": 720})
+        self.assertEqual(self.engine.state()["config"], {"dwell": 180, "vary": True, "height": 720, "guard": True, "clock": "carrier", "faster": False})
         r = self.engine.api_set({"action": "config", "dwell": 45, "vary": False, "height": 540}, None, "t")
-        self.assertEqual(r["config"], {"dwell": 45, "vary": False, "height": 540})
+        self.assertEqual(r["config"], {"dwell": 45, "vary": False, "height": 540, "guard": True, "clock": "carrier", "faster": False})
         self.assertEqual((r["render"]["width"], r["render"]["height"]), (960, 540))
-        self.assertEqual(self.settings.data["shaders"], {"dwell": 45, "vary": False, "height": 540, "disabled": []})
+        self.assertEqual(self.settings.data["shaders"], {"dwell": 45, "vary": False, "height": 540, "disabled": [], "v": 2})
         for bad in ({"dwell": 5}, {"dwell": 99999}, {"dwell": "60"}, {"dwell": True}, {"dwell": float("nan")}, {"vary": 1}, {"height": 721}, {"height": True}):
             with self.assertRaises(ApiError, msg=bad):
                 self.engine.api_set(dict({"action": "config"}, **bad), None, "t")
@@ -967,7 +984,7 @@ class EngineTest(Base):
         self.settings.data["shaders"] = {"dwell": "soon", "vary": None, "height": 9, "disabled": ["../x", 5, "ok.fs"]}   # edited by hand
         self.assertEqual(self.engine.config(), {"dwell": 180, "vary": True, "height": 720, "disabled": ["ok.fs"]})
         self.settings.data["shaders"] = "nonsense"
-        self.assertEqual(self.engine.config(), S.default_config())
+        self.assertEqual(self.engine.config(), dict(S.default_config(), height=720))      # the test box is an x86
 
 
 class FakeFader:
@@ -1058,7 +1075,7 @@ class VibesTest(Base):
         enabled = self.engine.vibes_ids()
         n = IN_VIBES
         self.assertEqual(len(enabled), n)
-        self.assertEqual(sorted(enabled), sorted("nxlx-%s.fs" % x for x in FIRST_TEN + AMBIENT))      # no performance shader
+        self.assertEqual(sorted(enabled), sorted("nxlx-%s.fs" % x for x in ROTATION))      # no performance shader, not the heavy two
         seen = self.run_rounds(3 * n)
         for k in range(0, 3 * n, n):
             self.assertEqual(sorted(seen[k:k + n]), sorted(enabled))
@@ -1069,10 +1086,12 @@ class VibesTest(Base):
 
     def test_only_shaders_switched_on_for_vibes_are_picked(self):
         for sid in self.engine.vibes_ids():
-            if sid not in ("nxlx-aurora.fs", "nxlx-drift.fs"):
+            if sid not in ("nxlx-aurora.fs", "nxlx-ember.fs"):
                 self.engine.api_set({"action": "vibes", "id": sid, "on": False}, None, "t")
         self.engine.upload("mine.fs", GOOD)
-        allowed = {"nxlx-aurora.fs", "nxlx-drift.fs", "mine.fs"}
+        self.assertNotIn("mine.fs", self.engine.vibes_ids())           # an upload starts in the library only
+        self.engine.api_set({"action": "vibes", "id": "mine.fs", "on": True}, None, "t")
+        allowed = {"nxlx-aurora.fs", "nxlx-ember.fs", "mine.fs"}
         self.assertEqual(set(self.engine.vibes_ids()), allowed)
         self.assertEqual(set(self.run_rounds(9)), allowed)
         for sid in allowed:
@@ -1088,30 +1107,37 @@ class VibesTest(Base):
         for name in PERFORMANCE:
             self.assertEqual((rows["nxlx-%s.fs" % name]["vibes"], "Performance" in rows["nxlx-%s.fs" % name]["categories"]), (False, True), name)
         for name in FIRST_TEN + AMBIENT:
-            self.assertTrue(rows["nxlx-%s.fs" % name]["vibes"], name)
+            self.assertEqual(rows["nxlx-%s.fs" % name]["vibes"], name not in HEAVY, name)       # all but the two heavy ones (measured)
         self.assertNotIn("included", self.engine.config())
         sid = "nxlx-%s.fs" % PERFORMANCE[0]
         self.engine.show(sid)                                          # playing one by hand needs no switch
         self.assertEqual(self.engine.state()["playing"]["id"], sid)
+        # since the shader engine the rotation is a set: the box has two from the start, Ambient (active) and Show
+        sets = self.engine.state()["sets"]
+        self.assertEqual([(e["name"], sorted(r["id"] for r in e["shaders"])) for e in sets],
+                         [("Ambient", sorted("nxlx-%s.fs" % n for n in ROTATION)), ("Show", sorted("nxlx-%s.fs" % n for n in PERFORMANCE))])
+        self.assertEqual(self.engine.state()["active"], sets[0]["id"])
         self.engine.api_set({"action": "vibes", "id": sid, "on": True}, None, "t")
         self.engine.api_set({"action": "vibes", "id": sid, "on": True}, None, "t")
-        self.assertEqual((self.settings.data["shaders"]["included"], self.settings.data["shaders"]["disabled"]), ([sid], []))
+        ambient = self.settings.data["shaders"]["sets"][0]
+        self.assertEqual([r["id"] for r in ambient["shaders"]].count(sid), 1)
         self.assertIn(sid, self.engine.vibes_ids())
         self.assertEqual(len(self.engine.vibes_ids()), IN_VIBES + 1)
         self.engine.api_set({"action": "vibes", "id": sid, "on": False}, None, "t")
-        self.assertEqual((self.settings.data["shaders"]["included"], self.settings.data["shaders"]["disabled"]), ([], []))
         self.assertNotIn(sid, self.engine.vibes_ids())
-        self.engine.api_set({"action": "vibes", "id": "nxlx-dusk.fs", "on": False}, None, "t")     # an ambient one, as before
-        self.assertEqual((self.settings.data["shaders"]["included"], self.settings.data["shaders"]["disabled"]), ([], ["nxlx-dusk.fs"]))
+        self.engine.api_set({"action": "vibes", "id": "nxlx-dusk.fs", "on": False}, None, "t")     # an ambient one, the same switch
+        self.assertNotIn("nxlx-dusk.fs", self.engine.vibes_ids())
+        # settings from before the sets: "included" still puts a performance shader into the first set
         self.settings.data["shaders"] = {"included": ["../x", 5, sid, "nxlx-aurora.fs"]}            # edited by hand
         self.assertEqual(self.engine.config()["included"], [sid, "nxlx-aurora.fs"])
         self.assertIn(sid, self.engine.vibes_ids())
         self.assertEqual(len(self.engine.vibes_ids()), IN_VIBES + 1)                               # naming an ambient one changes nothing
-        # the rule is for the bundled set: an upload that calls itself Performance is in, like every upload
+        # the rule is for the bundled set: an upload starts in the library only, whatever it calls itself
+        self.settings.data.pop("shaders")
         self.engine.upload("loud.fs", "/*{\"CATEGORIES\": [\"Performance\"]}*/\nvoid main() { gl_FragColor = vec4(1.0); }\n")
+        self.assertNotIn("loud.fs", self.engine.vibes_ids())
+        self.engine.api_set({"action": "vibes", "id": "loud.fs", "on": True}, None, "t")
         self.assertIn("loud.fs", self.engine.vibes_ids())
-        self.engine.api_set({"action": "vibes", "id": "loud.fs", "on": False}, None, "t")
-        self.assertIn("loud.fs", self.engine.config()["disabled"])
 
     def test_each_round_varies_the_numbers_inside_min_and_max_and_shifts_the_palette(self):
         for sid in self.engine.vibes_ids():
@@ -1525,7 +1551,8 @@ class RolesTest(Base):
         self.assertEqual(self.call("POST", "/api/shaders", upload, token=live)[0], 403)
         self.assertEqual(self.call("POST", "/api/shaders", {"action": "config", "dwell": 60}, token=live)[0], 403)
         st, body, _ = self.call("POST", "/api/shaders/play", {"id": "nxlx-aurora.fs", "values": {"speed": 2}}, token=live)
-        self.assertEqual((st, body["playing"]["id"], body["playing"]["values"]), (200, "nxlx-aurora.fs", {"speed": 2.0}))
+        self.assertEqual((st, body["playing"]["id"], body["playing"]["values"]["speed"]), (200, "nxlx-aurora.fs", 2.0))
+        self.assertEqual(sorted(body["playing"]["values"]), ["height", "speed", "tint"])     # every input's value, as it is on the screen
         self.assertEqual(self.call("POST", "/api/shaders/play", {"id": "../../etc/passwd"}, token=live)[0], 400)
         self.assertEqual(self.call("POST", "/api/shaders/play", {"id": "nope.fs"}, token=live)[0], 404)
         self.assertEqual(self.call("POST", "/api/shaders/play", {"id": "nxlx-aurora.fs", "values": {"speed": "fast"}}, token=live)[0], 422)

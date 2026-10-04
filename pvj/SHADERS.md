@@ -6,7 +6,7 @@ Moving pictures drawn by the box's GPU instead of played from a file, and **Vibe
 
 Switch it on under System > Shaders and Vibes (beta, off by default). Switching it off while a shader is on the screen asks first, because it stops at once. It is offered on a Raspberry Pi 4, a Pi 5 and x86; not on a Pi 3.
 
-**Read this first: nothing here has been seen on a display, and no speed has been measured on any board.** It has run only in automated tests: against a real mpv with Mesa's software GPU on a virtual display in CI (the picture is checked through screenshots), and against fakes. How many frames a second each shader reaches on a Pi 4, a Pi 5 or a PC is unknown. The cost notes below are counts of work per pixel, not measurements.
+**Read this first: what is measured and what is not.** The ten bundled shaders were run on a real Raspberry Pi 4 on 2026-10-04 (mpv 0.40, a 2560 x 1440 screen at 75 Hz; judged from the panel's snapshots, nobody watched the monitor): all ten compile and draw correctly, and their speed is in the table below. Everything built since (live values, the speed control, presets, rotation sets, the guard, the carrier that counts its own frames) has run only in automated tests: against a real mpv with Mesa's software GPU in CI, where the picture is checked through screenshots, and against fakes. A Pi 5 and x86 are not measured at all.
 
 ## Using it
 
@@ -25,35 +25,92 @@ Switch it on under System > Shaders and Vibes (beta, off by default). Switching 
 
 ### Vibes
 
-- Picks from the shaders that are **In Vibes** (the project's ten and uploads unless switched out; the ISF-Files pack only when switched in), in a shuffled order; every shader is shown once before any comes again, and never the same one twice in a row.
-- Each stays for the **dwell time** (default 180 seconds, 10 to 3600).
+- Picks from the shaders of the **active set** (or the set a start names; see [Performing](#performing)), in a shuffled order, or in the set's own order if the set says so; shuffled, every shader is shown once before any comes again, and never the same one twice in a row. A third-party pack's shaders (the ISF-Files pack) are in no set until someone puts them in. A shader that is broken, that this box's GPU refused, or that the guard found too heavy here is passed over.
+- Each stays for the set's **dwell time** (default 180 seconds, 10 to 3600).
 - Between shaders: a **dip to black** over the Mix screen's transition duration (down for half of it, up for half). During a Blackout, and after you have faded the picture out, nothing fades and the screen stays dark: the shaders go on changing unseen until you show the picture again.
-- **Variation each round** (can be switched off): every number input gets a new value between its MIN and MAX, pulled towards the default (at most 60 percent of the way to either end, since the author chose the default as the good place); the palette is turned by up to 120 degrees either way around the grey axis (black, white and greys stay as they are); and the shader's time starts somewhere else. The values come from a random generator seeded when the service starts.
+- **Variation each round** (can be switched off): every number input gets a new value between its MIN and MAX, pulled towards the default, or towards the preset's value (at most 60 percent of the way to either end, since the author chose the default as the good place); the palette is turned by up to 120 degrees either way around the grey axis (black, white and greys stay as they are); and the shader's time starts somewhere else. The values come from a random generator seeded when the service starts.
 - **It never fights the operator** (the autostart rule, D18). It ends when anything else is played (a pad, a clip, a stream, a live input, the test pattern, a schedule entry, a sync server's clip), when Stop is pressed, when one shader is chosen by hand, when the module is switched off, and when the player is restarted. It does not come back by itself; after a player restart it starts again only if Autostart is set to Vibes. The reason it ended is shown on the card. A clip tapped in the middle of a change plays, also with the Mix transition on Dip to black (the first version lost such a clip; see the review notes in the project log).
-- A shader the GPU refuses is left out for the rest of that run and the next one is shown; if every shader is refused, Vibes ends and the screen is cleared.
+- A shader the GPU refuses is left out and the next one is shown; the refusal is remembered until the file changes, so no later run tries it again (a Play by hand does, and a success clears it). If every shader is refused, Vibes ends and the screen is cleared.
+- **The dip takes the Mix duration.** Its steps are paced against the clock; the first version slept a full step and then paid the round trip to the player on top, and a 1.0 second dip took 1.15 to 1.49 seconds on the Pi 4. The way up gets what the way down and the change left of the duration, and at least a quarter of it.
+
+## Performing
+
+For the shader that is on the screen (presenters and above; [the API](#api) is below, the page that uses it is in [docs/MANUAL.md](../docs/MANUAL.md)):
+
+- **Every input can be changed while it plays**: numbers, switches (`bool`), choices (`long` with `VALUES` and `LABELS`), colours, points, and events (a button that is true for a quarter of a second). `GET /api/shaders` describes each input with its type, label, range, default, choice labels and the value it has now.
+- **Three controls every shader has**: **speed** (0 to 4; 1 is the shader's own pace, 0 freezes it; **at most 1 for a Performance shader**, see the flash limit below), **hue** (a palette shift of -180 to 180 degrees around the grey axis) and **brightness** (0 to 2; 1 leaves it alone). They are separate from the shader's own inputs: several bundled shaders have an input that is also called `speed`.
+- **A change never restarts the shader, never resets its TIME and never ends Vibes.** A change of the speed goes on from the TIME the shader had reached. (A Play of the shader that is already on also goes on from its TIME, with the palette turn and the controls it has; like every Play by hand it ends Vibes. The page's sliders send a Play today; `/api/shaders/values` is the call made for them.)
+- **Presets**: the values and controls that are on the screen, kept under a name per shader (up to 16 for one shader). A name is 1 to 40 characters with nothing unseen in it (no control characters, direction overrides, zero-width marks or line separators) and no space at either end; two names are the same if they are the same letters in any letter case, however they were typed. A set's name follows the same rules and may not be 8 hex digits (it would read like a set's id; where both could match, the id wins). Applying one sets every input. The preset called **default** is what a plain Play and Vibes use for that shader.
+- **Rotation sets** for Vibes: named lists of shaders ("Ambient", "Show"), each with its own dwell time, variation on or off, and order (shuffled, or as listed). An entry may name the preset to use. One set is active: Vibes, the schedule, autostart, OSC, MIDI and DMX use it unless a start names another. A box has two from the start, neither written to the settings until someone edits a set: **Ambient**, the active one, holds the project's calm shaders (the first ten and the Ambient family) without the two heavy ones (nxlx-nebula and nxlx-drift); **Show** holds the project's Performance shaders and is never active unless someone makes it so or a start names it (`{"on": true, "set": "Show"}`, `/pvj/vibes/set Show`). So one tap on Vibes, the schedule, autostart, DMX and a MIDI button never show a Performance shader on a new box. An uploaded shader and a third-party pack's shader start **in the library only**; put one into a set with its switch.
+- **The shader before and the next one** work with and without Vibes: while Vibes runs they step the rotation, otherwise they put on the neighbour of the shader on screen in the active set.
+- **From a MIDI controller** ([MIDI.md](MIDI.md)): shader control 1 to 8, shader speed, previous and next shader, preset 1 to 8.
+
+### The flash limit and the speed control
+
+Every Performance shader caps its own flashing in its code at 3 a second (6 with its Fast switch), counted in the shader's TIME. The speed control multiplies TIME, so it would multiply the cap: at speed 4, 12 flashes a second with Fast off. **For a shader of the category "Performance" the speed is therefore kept at 1 or below** (slower and frozen are always allowed), however it is asked for: Play, a slider, a MIDI knob, a preset, Vibes. `GET /api/shaders` gives each shader's `speed_max` (1 or 4).
+
+A full-access device can lift this for the box: `{"action": "config", "faster": true}` ("Allow faster than the flash limit"; off by default; `config.faster`). **With it on, a Performance shader can flash faster than 3 times a second, which is a risk for people with photosensitive epilepsy.** Leave it off in a room open to the public. Switching it off again limits the shader that is on at once. The Mix screen's own Speed (it makes the carrier play faster, up to 2 times) is a different control and is not limited by this; keep it at 1 with Performance shaders for the same reason.
+
+### Riding a rate
+
+Changing a rate input of a shader while it plays (Beats a second, a tunnel's or a zoom's speed, the spokes' turn) makes the picture jump to another place in its cycle: the shader computes its phase as TIME times the rate, so a new rate is a new phase at once. It shows most on nxlx-tunnel, nxlx-zoom and nxlx-spokes. The engine cannot smooth this without knowing each shader's code (it would have to add up the rate over time inside the shader), so it does not try. The engine's own **speed** control does not have this problem: it goes on from the TIME reached. To ride the pace of a shader live, use speed (where the flash limit allows it) rather than the shader's rate input.
+
+### What a change costs
+
+mpv's GPU output (`--vo=gpu`) cannot hand a new number to a user shader that is running. Its user shaders get four values from the player (`frame`, `random`, sizes and an offset) and nothing else; `//!PARAM` and the option `glsl-shader-opts` belong to mpv's other output, gpu-next. This was read in mpv's source at 0.37 and 0.40 (`video/out/gpu/user_shaders.c` knows no `PARAM`; `glsl-shader-opts` is declared and never read by this output), and CI checks on its mpv 0.37 that a shader with a `//!PARAM` line is refused. The output is not switched: the mapping, the brightness order and every measurement here are on `--vo=gpu`.
+
+So a change is a new shader text that the GPU compiles. It is made cheap and seamless instead:
+
+- A request only checks the values and notes them down; it answers at once. One worker applies the newest values at most **five times a second**, so a dragged slider or a MIDI knob at 50 messages a second is at most five compiles a second, and the last value lands at the latest 0.2 seconds after it came, plus the compile.
+- Only the shader file is exchanged: the carrier keeps playing, nothing is reloaded, the opacity is not touched. mpv draws the old shader until the new one is compiled.
+- On the Pi 4 the first version answered a slider change in 0.10 to 0.15 seconds, which was a full Play each time (measured 2026-10-04). The exchange alone is fewer round trips to the player; it has not been timed on the Pi. In CI (mpv 0.37, Mesa's software GPU, a 320 x 180 window) writing the new text and exchanging it took about 2 ms for a number, a colour or a point, and about 0.58 s the first time a switch or a choice gave the text a new shape, almost all of it the wait for the player's verdict; `tests/test_shaderlive_gpu.py` prints both. Neither number says anything about a Pi.
+- A plain number, colour or point cannot change what the compiler makes of the code, so the GPU is not asked again. A switch, a choice or an event can, so the first time a shader is shown in that shape the panel waits for the player's verdict as it does for a new shader; if the GPU refuses it, the text before it is put back and the values stay as they were. A refused shape is remembered (until the file changes or the service restarts): the same wish again is answered 422 at once and never reaches the GPU, so a pad that toggles a refused switch does not flash the screen each time.
+- **Not verified on hardware:** that the picture does not hitch for a frame or two while a new text compiles on a Pi 4. In CI no screenshot taken during 100 changes was dark.
+
+### The guard for a weak GPU
+
+While a shader is on, the frames the player drops are counted (and on a Pi the kernel's GPU figures in `/sys/devices/platform/v3dbus/*/gpu_stats` are read and shown, when they are there; their form is not verified against a real Pi by this code). More than **2 dropped frames a second for 6 seconds in a row** is "too heavy on this box at this drawing size". The first 3 seconds after a shader comes on or is changed are not counted.
+
+- **In Vibes** such a shader is marked (with the rate, the drawing height and the board), the rotation goes on to the next one at once, and no rotation shows it again until someone puts it back (its switch, or `{"action": "heavy", "id", "on": false}`). The mark is kept in the settings.
+- **A mark belongs to its drawing height and its board.** It counts at the height it was made at and at greater ones. Choose fewer lines and every marked shader gets another chance (the mark stays in the settings and counts again if you go back up); choose more lines and the marks hold. A mark made on another kind of board is ignored, and a settings import does not bring it along.
+- **When the box drops frames whatever plays, it is not the shaders.** After two shaders in a row were marked with no healthy one between, a third is not marked: the two marks are taken back, and Vibes ends with "the box is dropping frames whatever plays: check the picture detail", leaving the shader that is on on the screen. (Before this, 3 dropped frames a second from any cause marked all eight shaders in 73 seconds.)
+- A start of Vibes when every shader of the set is left out answers 409 and says so ("every shader of this set is left out on this box"), not that no shader is switched on.
+- **A shader chosen by hand** is only reported: `playing.load` is `ok`, `tight` (half a frame a second or more) or `heavy`, with `playing.drops_per_second`.
+- It can be switched off (`{"action": "config", "guard": false}`).
+- **Variation does not make a shader heavier.** An input named in the head of a loop or in a condition can change how much the GPU has to do; such an input is marked `"varies": false` and Vibes leaves it at its value. A shader seen dropping frames in a run is shown without the palette turn for the rest of that run: the turn is one more multiplication for every pixel, and on the Pi 4 variation pushed nxlx-pulse from 0 to about 1 dropped frame a second at 720 lines. That the turn was the cause is likely, not proven.
+- What it cannot see: frames that are not drawn while a snapshot is taken (0.3 to 0.4 seconds each on the Pi 4); the player does not count those.
 
 ## The bundled shaders
 
-Original generator shaders, written for this project (Apache-2.0, in `pvj/shaders.d`): the first ten below, and two families added later (the next section). All use short fixed loops (at most 5 rounds) and no textures. **Cost is a rough count of work per pixel, not a measurement.**
+Original generator shaders, written for this project (Apache-2.0, in `pvj/shaders.d`): the first ten below, and two families added later (the next section). All use short fixed loops (at most 5 rounds) and no textures. The first ten are measured on a Pi 4 (below); the cost notes of the two families are counts of work per pixel, not measurements.
 
 ### The first ten
 
-All slow and quiet, and all in the Vibes rotation until taken out.
+All slow and quiet. Eight are in the Vibes rotation from the start; the two heavy ones (nxlx-nebula, nxlx-drift) are not.
 
-| Shader | Picture | Inputs | Rough cost per pixel |
-| --- | --- | --- | --- |
-| nxlx-aurora | curtains of light over a dark sky | speed, height, tint | low: 4 bands, about 12 sines and 4 colour blends |
-| nxlx-drift | soft clouds of colour | speed, scale, warmth | medium: 2 clouds of 3 octaves, 24 lattice values |
-| nxlx-ember | warm blobs that merge and part | speed, blob size, glow colour | low: 5 blobs, 10 sines |
-| nxlx-horizon | a dusk sky with a slow sun and haze | speed, sun height, haze | low: 4 sines, one length, 4 exponentials |
-| nxlx-lattice | two grids turning against each other (moire) | speed, density, colour | low: 4 sines |
-| nxlx-nebula | clouds bent by more clouds | speed, fold, scale | medium to high: 3 clouds of 2 octaves, 24 lattice values |
-| nxlx-prism | rings of colour around the centre | speed, rings, petals | low: one atan, one length, 2 cosines, a colour blend |
-| nxlx-pulse | ripples from three wandering points | speed, ripples, calm | low: 3 lengths, 9 sines |
-| nxlx-silk | fine flowing lines | speed, lines, sheen | low: 7 sines |
-| nxlx-tide | layers of slow waves | speed, swell, night colours | low: 5 layers, 10 sines |
+**Measured on a Raspberry Pi 4** (2026-10-04, mpv 0.40, 2560 x 1440 at 75 Hz, the first version of this module). mpv made a desktop OpenGL 3.1 context (GLSL 1.40, V3D, Mesa 26), not OpenGL ES. The GPU is the only limit (the CPU was at 2 to 4 percent). Every frame pays two fixed passes whatever the shader: scaling to the screen (12.9 ms at 1440p) and a remainder pass (1.0, 2.3, 4.0 and 8.9 ms at 360, 540, 720 and 1080 lines), which leaves about 16 ms for the shader at 720 lines in a frame of 33.3 ms.
 
-If the picture stutters, draw fewer lines (the **drawing size** on the card: 360, 540, 720 or 1080 lines, 720 by default, never more than the screen has; mpv scales the result to the screen) and take nxlx-nebula and nxlx-drift out of Vibes first.
+| Shader | Picture | Class | Pass at 720 lines | Dropped frames a second at 360 / 540 / 720 lines |
+| --- | --- | --- | --- | --- |
+| nxlx-silk | fine flowing lines | light | 7.5 to 11.2 ms (the six light ones; not noted one by one) | - / - / 0 |
+| nxlx-lattice | two grids turning against each other (moire) | light | as above | - / - / 0 |
+| nxlx-horizon | a dusk sky with a slow sun and haze | light | as above | - / - / 0 |
+| nxlx-prism | rings of colour around the centre | light | as above | - / - / 0 |
+| nxlx-ember | warm blobs that merge and part | light | as above | - / - / 0 |
+| nxlx-pulse | ripples from three wandering points | light, at the edge | as above | - / - / 0 (about 1 with Vibes variation) |
+| nxlx-tide | layers of slow waves | medium | 15.1 ms | - / 0 / 3.3 |
+| nxlx-aurora | curtains of light over a dark sky | medium | 20.6 ms | - / 0 / 6.7 |
+| nxlx-drift | soft clouds of colour | heavy | 30 ms (before its look was changed) | 0 / 2.1 / 10.1 |
+| nxlx-nebula | clouds bent by more clouds | heavy | 32.7 ms | 0 / 3.9 / 11 |
+
+A dash is "not measured". At 1080 lines even nxlx-silk and nxlx-lattice dropped 7 to 8 frames a second. First play of a shader took 0.62 to 0.78 seconds including the GPU check; after 7 hours 43 minutes TIME was still right.
+
+What follows from it:
+
+- **The drawing size depends on the board**: 540 lines by default on a Pi 4 and on a board that is unknown, and 1080 is not offered on a Pi 4. A Pi 5 and x86 start at 720 and keep 1080; **neither is measured**, so those are guesses. mpv scales the result to the screen.
+- **light** kept up at 720 lines, **medium** at 540, **heavy** only at 360. `GET /api/shaders` gives each shader's class as `weight` and these numbers as `measured`; each file's own `COST` note starts with low, medium or high to match. For every other shader (the Ambient and Performance families, the pack, uploads) `weight` is read from the first word of the file's `COST` note (low is light, medium is medium, high is heavy) and `measured` is null: a count from the text, not a measurement.
+- **The default rotation leaves out the two heavy ones.** nxlx-aurora and nxlx-tide are in: at the Pi 4's default of 540 lines they dropped nothing.
+- **nxlx-drift looked dull** in the snapshots (grey, low contrast, blocky). Its two palettes are now laid side by side instead of blended half and half, the cloud is stretched to the full range, and each octave is turned as well as doubled so the grid does not show. The work per pixel was meant to stay the same; **it has not been measured or looked at again on the Pi**, and its 30 ms is from before.
 
 ### Two more families: Ambient and Performance
 
@@ -128,7 +185,7 @@ How these seven were chosen: see "The survey of ISF-Files" below.
 
 ### Adding more ISF files to a box
 
-Mix > Shaders and Vibes > **Upload an ISF shader** (full access), one `.fs` file at a time, at most 32 KB and 24 inputs; an upload joins Vibes at once and can be switched out. Generators from ISF-Files, from https://editor.isf.video or from VDMX go in this way as long as they draw from nothing in one pass (see the table below for what is refused, and why). A file that is refused says why and is not stored. Take care of the licence yourself: many ISF files on the web are ports of shaders published under terms that forbid commercial use.
+Mix > Shaders and Vibes > **Upload an ISF shader** (full access), one `.fs` file at a time, at most 32 KB and 24 inputs; an upload is in the library and can be played at once, and joins Vibes only when its switch puts it into the active set. Generators from ISF-Files, from https://editor.isf.video or from VDMX go in this way as long as they draw from nothing in one pass (see the table below for what is refused, and why). A file that is refused says why and is not stored. Take care of the licence yourself: many ISF files on the web are ports of shaders published under terms that forbid commercial use.
 
 To see beforehand what a whole folder of ISF files would do: `python3 tools/isf-survey.py /path/to/folder` (a developer's tool, in the repository, not on the box).
 
@@ -138,7 +195,7 @@ An ISF file is a GLSL fragment shader with a JSON comment at the top (see isf.vi
 
 | ISF | Here |
 | --- | --- |
-| `INPUTS` of type `float`, `bool`, `long`, `color`, `point2D`, `event` | written into the shader as constants with their `DEFAULT` (an `event` is never pressed). `float` inputs are sliders in the panel and are varied by Vibes; the others keep their default. |
+| `INPUTS` of type `float`, `bool`, `long`, `color`, `point2D`, `event` | written into the shader as constants: the value that is set, else the `DEFAULT`. All can be changed while the shader plays. A `long` takes one of its `VALUES` (its `LABELS` are shown; missing labels are the numbers) or, without `VALUES`, a whole number between `MIN` and `MAX`; a `point2D` is kept inside `MIN` and `MAX` if it has them; an `event` is true for a quarter of a second when pressed. Vibes varies `float` inputs only. |
 | `TIME` | seconds, counted from frames (see below) |
 | `TIMEDELTA`, `FRAMEINDEX` | 1/30, and mpv's frame number |
 | `DATE` | the date and time when the shader was put on (it does not tick) |
@@ -213,17 +270,20 @@ Checked against a real mpv 0.37 in CI (`tests/test_shaders_gpu.py`); the reasons
 
 ### TIME, and how exact it is
 
-mpv gives user shaders no clock, only `frame`, the number of pictures its renderer has drawn. TIME is `frame / 30` (the carrier's rate) plus the round's start offset.
+TIME is `offset + speed x (carrier frames since the anchor) / 30`.
 
-- While the GPU keeps up, TIME runs at real time (CI: within the loose bounds of the test, 0.5 to 1.5 times the wall clock on a busy runner; not measured more closely).
-- **When the GPU is too slow, frames are dropped and TIME runs slower**: the picture slows down instead of jumping. So a shader that is too heavy shows as slow motion, not as wrong positions.
-- Every extra redraw adds a frame (a change of the overlay or the on-screen PIN); Speed scales it; Freeze stops it.
-- `frame` counts since the player started, not since the shader started, so TIME begins anywhere.
-- It is put together in high precision from small whole numbers. What was seen in CI (OpenGL ES on Mesa's software GPU): a shader that computed `mod(float(frame), 1048576.0)` drew a **black picture without any error**, while `float(frame) / 30.0` and `mod(float(frame), 1024.0)` drew correctly; on desktop OpenGL all of them did. The likely reason is that `frame` has medium precision there and a medium-precision number cannot hold more than 65504. With the high-precision build TIME was right in CI at 100000 seconds, and it starts again after 4,194,304 frames (38.8 hours). **Not tested: a large `frame` itself** (every run was short). If a GPU keeps `frame` in 16 bits, TIME would jump back about every 36 minutes; that is a guess, and whether the Pi's GPU does it is not known.
+- **The carrier counts its own frames.** Each frame of the carrier is painted with its own number in its three colour bytes (a `geq` filter in the same `av://lavfi:` address; nobody sees it, the shader draws in its place), and the shader reads the number from the picture it is hooked on. The player reports the same number as its playing position (`time-pos` x 30). So the panel knows what TIME the shader shows, which is what lets the speed change without a jump: the anchor moves to the frame that plays now and the offset to the TIME reached. The first version counted mpv's own `frame` number instead. That number is `frames_uploaded` in mpv's source: every picture the player has uploaded since it started, clips included; nothing outside the shader can read it, so the speed could not have been changed without a jump of TIME.
+- **Verified in CI** on OpenGL ES and desktop OpenGL (and desktop OpenGL 3.1 with GLSL 1.40, what mpv makes on a Pi 4), on Mesa's software GPU: TIME starts at the offset, runs at the wall clock's pace, goes on through a change of a value, runs three times as fast at speed 3 with no jump at the change, and stands still at speed 0. **Not run on a Pi**: the Pi measurements above were made with the first version's clock. If a GPU does not read the carrier's colour correctly, `{"action": "config", "clock": "frame"}` goes back to the first version's clock (the speed control then makes TIME jump).
+- While the GPU keeps up, TIME runs at real time. **When the GPU is too slow** the player drops frames; with the carrier's clock TIME stays at real time and the picture moves in larger steps (with the first version's clock TIME ran slower instead).
+- The Mix screen's Speed scales it (the carrier plays faster or slower); Freeze stops it.
+- A redraw does not add a frame (the first version's notes said it did; mpv's source says `frame` counts uploads, not redraws).
+- **Long runs.** The three colour bytes start again after 16,777,216 frames (6.4 days). The shader counts the frames since its anchor across one such restart; the panel counts them in whole numbers without a limit, and the worker gives a shader that nobody has touched a new anchor every two days (the same picture, the same TIME, a new text), so the shader's own count never gets near the restart. Checked on a fake clock: after 30 days at speed 4 a speed change goes on from 10,368,000 seconds with no jump. In Vibes every change of shader is a new anchor anyway, and TIME starts small each round. What remains: TIME is a 32-bit number in the shader, so a single shader left on by hand for many days moves in coarser steps as TIME grows (about a sixteenth of a second after 12 days at speed 1); playing another shader and coming back starts it small again. Nobody has left one on for days on a real box.
+- **Precision.** The number is put together from small whole numbers (hi x 512 + lo) in high precision. Seen in CI on OpenGL ES: a shader that computed `mod(float(frame), 1048576.0)` drew a black picture without any error, most likely because of medium precision. With the first version's clock TIME started again after 38.8 hours.
+- **A Pi does not use the stricter OpenGL ES language.** mpv made a desktop OpenGL 3.1 context with GLSL 1.40 on the Pi 4. CI runs every shader test on OpenGL ES and on desktop OpenGL, and the live tests a third time with Mesa told to be a 3.1 driver; none of them is the Pi's own driver.
 
 ### A shader the player refuses
 
-A bad shader must never leave a broken show. Before a shader the GPU has not yet taken is put on, the panel opens a second connection to the player that receives its error log (`request_log_messages`), then waits until mpv reports a drawn pass with that shader's name (`vo-passes`) or an error, at most 4 seconds. Only a pass that mpv timed counts as drawn: a refused shader is listed too, with a time of 0. On an error the shader before it is put back if it was on the screen, otherwise the screen goes black (measured in CI: mpv itself draws black for a shader that does not compile, and keeps doing so until the shader is removed), the generated file is removed, and the message says which line of the ISF file the GPU complained about. `GET /api/shaders` keeps the last refusal in `error`. A shader that was taken once is not waited for again, so slider changes and Vibes rounds are quick. Every generated text carries its own name in a comment: mpv remembers a text it could not compile and says nothing the second time (seen in CI, where a second try of the same broken shader passed as taken), so no two texts may be alike.
+A bad shader must never leave a broken show. Before a shader the GPU has not yet taken is put on, the panel opens a second connection to the player that receives its error log (`request_log_messages`), then waits until mpv reports a drawn pass with that shader's name (`vo-passes`) or an error, at most 4 seconds. Only a pass that mpv timed counts as drawn: a refused shader is listed too, with a time of 0. On an error the shader before it is put back if it was on the screen, otherwise the screen goes black (measured in CI: mpv itself draws black for a shader that does not compile, and keeps doing so until the shader is removed; where there is no shader to go back to, a shader that draws black is put on, because the carrier's own colour is its frame number), the generated file is removed, and the message says which line of the ISF file the GPU complained about. `GET /api/shaders` keeps the last refusal in `error`. A shader that was taken once is not waited for again, so slider changes and Vibes rounds are quick. Every generated text carries its own name in a comment: mpv remembers a text it could not compile and says nothing the second time (seen in CI, where a second try of the same broken shader passed as taken), so no two texts may be alike.
 
 With a player that has no GPU output (the tests' `--vo=null`), nothing can be checked and `playing.checked` is null.
 
@@ -242,21 +302,66 @@ With a player that has no GPU output (the tests' `--vo=null`), nothing can be ch
 
 ## API
 
-- `GET /api/shaders` (view): `{"enabled", "shaders": [{"id", "name", "source": "bundled|uploaded", "pack": "nxlx|isf-files|uploads", "description", "credit", "cost", "vibes", "inputs": [{"name", "type", "label", "default", "min"?, "max"?, "values"?}], "error"}], "playing": {"id", "name", "values", "checked", "pass_ms"?} | null, "error": {"id", "message", "at"} | null, "vibes": {"running", "current", "next_in", "rounds", "last"}, "config": {"dwell", "vary", "height"}, "render": {"width", "height", "fps", "heights"}, "limits"}`. `pass_ms` is mpv's own timing of the shader pass, when the GPU reports one.
-- `POST /api/shaders/play` (live): `{"id": "nxlx-tide.fs", "values"?: {"speed": 1.5}}`. Shows one shader. 422 with the reason if the file cannot be translated or the player refuses it.
-- `POST /api/vibes` (live): `{"on": true}` starts (it answers at once; the first shader is on within a second), `{"on": false}` stops and clears the screen if Vibes still has it, `{"next": true}` goes to the next shader, `{"dwell": seconds}` sets how long each shader stays (10 to 3600; saved only when it changes).
-- `POST /api/shaders` (full), one action: `{"action": "upload", "name": "x.fs", "source": "<the file's text>", "replace"?: bool}`, `{"action": "delete", "id"}`, `{"action": "vibes", "id", "on": bool}`, `{"action": "config", "dwell"?, "vary"?, "height"?}`.
+`GET /api/shaders` (view):
+
+```
+{"enabled": true,
+ "shaders": [{"id": "nxlx-tide.fs", "name": "nxlx-tide", "source": "bundled" | "uploaded", "pack": "nxlx" | "isf-files" | "uploads", "description", "credit",
+              "cost": "medium: 5 layers, ...",            the file's own note, as before
+              "weight": "light" | "medium" | "heavy" | "",   measured for the bundled ones, else from the note's first word
+              "measured": {"board": "pi4", "lines": 720, "pass_ms": 15.1 | null, "pass_ms_range"?: [7.5, 11.2],
+                           "drops_per_second": {"540": 0, "720": 3.3}, "stale": false} | null,
+              "vibes": true,                                in the active set
+              "heavy": {"at", "drops", "height", "board"?} | null,   the guard's mark, if it counts at this height on this board
+              "refused": "line 6: ..." | null,              what this box's GPU said about this file
+              "speed_max": 1 | 4,                           1 for a Performance shader unless "faster" is on
+              "categories": ["Generator", "Performance"],
+              "presets": ["default", "Bright"],
+              "inputs": [{"name", "type", "label", "default", "value", "varies",
+                          "min"?, "max"?, "values"?, "labels"?}],
+              "error": null}],
+ "playing": {"id", "name", "values": {input: value, every input but events}, "controls": {"speed", "hue", "brightness"},
+             "preset": name | null, "pending": bool, "checked": true | null, "pass_ms"?,
+             "load"?: "ok" | "tight" | "heavy" | null, "drops_per_second"?} | null,
+ "error": {"id", "message", "at"} | null,
+ "vibes": {"running", "current", "next_in", "rounds", "last", "set"?: {"id", "name"}},
+ "config": {"dwell", "vary", "height", "guard", "clock", "faster"},      dwell and vary are the active set's
+ "render": {"width", "height", "fps", "heights": [360, 540, 720], "default": 540, "measured": true, "board": "pi4"},
+ "sets": [{"id", "name", "shaders": [{"id", "preset"?}], "dwell", "vary", "order": "shuffle" | "listed"}],
+ "active": "00000000",
+ "controls": {"speed": {"min": 0, "max": 4, "default": 1}, "hue": {"min": -180, "max": 180, "default": 0}, "brightness": {"min": 0, "max": 2, "default": 1}},
+ "gpu": {"busy_percent", "render_jobs_per_second"} | null,
+ "limits": {"bytes", "inputs", "uploads", "dwell", "presets", "sets", "set_shaders", "name", "controls"}}
+```
+
+An input's `value` is what is on the screen for the playing shader, and what a plain Play would use for the others. By type: `float` has `min`, `max`; `long` has `values` and `labels`, or `min` and `max`; `point2D` may have `min` and `max` as `[x, y]`; `color` is `[r, g, b, a]`, each 0 to 1; `bool` and `event` are true or false. `pass_ms` is mpv's own timing of the playing shader's pass, when the GPU reports one. `pending` is true while a change waits for the worker.
+
+Live access (presenters):
+
+- `POST /api/shaders/play`: `{"id": "nxlx-tide.fs", "values"?: {...}, "controls"?: {...}, "preset"?: "Bright"}`. Shows one shader and ends Vibes. Without values or a preset it uses the preset called default, else the file's defaults; values given go on top. Answers with the whole state. 422 with the reason if the file cannot be translated or the player refuses it.
+- `POST /api/shaders/values`: `{"values"?: {input: value}, "controls"?: {"speed"?, "hue"?, "brightness"?}, "id"?: the shader it is meant for}`. Changes the shader on screen; only what is named changes. Answers at once with `{"ok", "id", "values", "controls"}` as they will be; the GPU gets it within 0.2 seconds. 400 for a value of the wrong kind or an unknown name, 409 if no shader is on or `id` is not the one on screen, 422 if this box's GPU refused exactly these switch and choice values before. From a controller: `{"control": 1 to 8, "level": 0 to 127}` or `{"control": n, "press": true}` for the shader's n-th input (numbers, switches, choices and events, in the file's order).
+- `POST /api/shaders/step`: `{"dir": 1 | -1}`. The next shader, or the one before. It answers at once, in one of two shapes. **While Vibes runs** it steps the rotation (through the set that run is using) and answers like `/api/vibes`: `{"running", "current", "next_in", "rounds", "last", "set"}`. **Otherwise** it puts on the neighbour of the shader on screen in the **active** set, in the set's own order, and answers `{"ok": true, "id": "<the shader that will come on>"}`; the worker puts it on within 0.2 seconds, and only if nothing else was played or stopped in between (a clip, a Stop or a Vibes start after the request keeps the screen, and the step is dropped). 409 if the active set has no shader that can be shown.
+- `POST /api/shaders/preset`: `{"name": "Bright"}` or `{"index": 1 to 16}`. Answers at once with `{"ok", "id", "preset"}`. For the shader on screen it sets every input and does not end Vibes. With `"id"` of **another** shader that shader is put on with the preset: this is a Play by hand, so **it ends Vibes**, at the moment of the request; the worker puts the shader on within 0.2 seconds, and only if nothing else was played or stopped in between.
+- `POST /api/vibes`: `{"on": true, "set"?: id or name}` starts (it answers at once; the first shader is on within a second; 404 "that set is not there (it may have been deleted)" for a set that is gone, which is also what the schedule's last run then says; a set deleted while it runs ends Vibes with "the set it was running has been deleted" and clears the screen), `{"on": false}` stops and clears the screen if Vibes still has it, `{"next": true}`, `{"previous": true}`, `{"dwell": seconds}` (10 to 3600; of the set that runs).
+
+Full access:
+
+- `POST /api/shaders/presets`: `{"action": "save", "name", "id"?}` keeps what is on the screen (over a preset of that name, in any letter case), `{"action": "rename", "id", "name", "to"}`, `{"action": "delete", "id", "name"}`.
+- `POST /api/shaders`, one action: `{"action": "upload", "name": "x.fs", "source": "<the file's text>", "replace"?: bool}`, `{"action": "delete", "id"}` (also removes its presets and its place in the sets), `{"action": "vibes", "id", "on": bool}` (in or out of the active set), `{"action": "config", "dwell"?, "vary"?, "height"?, "guard"?, "clock"?, "faster"?}`, `{"action": "set", "op": "add", "name", "shaders"?: ["a.fs", {"id": "b.fs", "preset": "x"}], "dwell"?, "vary"?, "order"?}`, `{"action": "set", "op": "update", "id", ...}`, `{"action": "set", "op": "delete", "id"}` (never the last one), `{"action": "set", "op": "activate", "id"}`, `{"action": "heavy", "id", "on": bool}`.
 
 Uploads go through the JSON API (auth, the request header and the Origin check as for every other change), not through the raw media upload path: that path streams gigabytes into the media folder and accepts media extensions only, and a shader is a few kilobytes of text that has to be parsed before it is stored.
 
-Settings live under `"shaders"` in the settings file once something is changed; there is no settings migration (a missing or damaged entry means the defaults). The project's shaders and uploads are in Vibes unless named in `disabled`; a third-party pack's shaders are out unless named in `included`, a key that appears only once one was put in (and is exported and imported with the rest).
+Settings live under `"shaders"` in the settings file once something is changed: `dwell`, `vary`, `height`, `disabled` (and `included`) from the first version, and `presets`, `sets`, `active`, `heavy`, `guard`, `faster`, `clock` and `v` (2 once this version has saved the section). **There is no settings migration and the schema is unchanged** (13): a missing or damaged entry means the defaults. A box whose shader settings the first version saved keeps its rotation: on the first save its list (everything that was not switched off, uploads included, without the two heavy shaders) is written as the set Ambient. A box where shaders were uploaded but no shader setting was ever saved has no such section, and is treated as new: its uploads are in the library and have to be put into the rotation once. The first version's `included` (third-party pack shaders that were put into Vibes) is still read for the first set while no set has been saved; once a set is saved, the set is the list. Settings export and import check every key ([boxcare.py](boxcare.py)); a factory reset removes the section.
 
 ## Not verified
 
-- **Never seen on a display, by anyone.** Checked only through screenshots of a 320 x 180 window on a software GPU in CI.
-- **No speed measured on any board.** Not run on a Raspberry Pi, a Pi's GPU driver, or any real GPU. The 8-bit buffers and the default of 720 lines are choices made from the mapper's measurements on a Pi 4, not from measurements of this module.
-- mpv 0.37 only (Ubuntu's, in CI). Not run on mpv 0.35 (Raspberry Pi OS Bookworm) or 0.40 (Trixie, on the test Pi).
+- **Nobody has watched it on a display.** The first version was measured on one Pi 4 and judged from snapshots. Not run on hardware at all: live values of each type, the speed control and the carrier that counts its frames, presets, rotation sets, the guard, the MIDI actions, nxlx-drift's new look, and a change while the room watches (does the picture hitch).
+- **No Pi 5 and no x86 is measured.** Their default of 720 lines and the offer of 1080 are guesses.
+- CI runs mpv 0.37 (Ubuntu's). The Pi 4 has 0.40; mpv 0.35 (Raspberry Pi OS Bookworm) has not been run.
 - **Sync and the video wall.** A sync server that plays a shader or Vibes sends its clients "stop" (a shader is not a file they could play), so the clients go black; shaders in step on several boxes are not built. The wall crop over the carrier picture has not been tried.
-- TIME over hours; the 16-bit question above; a player crash and restart during Vibes on a real box; Vibes from autostart across a real reboot; OSC from a real controller.
+- A player crash and restart during Vibes on a real box; Vibes from autostart across a real reboot; OSC and MIDI from a real controller.
+- The guard's thresholds (2 frames a second for 6 seconds) are chosen from the Pi 4 table, not tuned on a running box.
+- A GPU refusal is remembered until the file changes or the service restarts (it is not written to the settings; after a restart the shader is tried once more).
 - Uploaded ISF files from other programs: the translator has now been run over one real collection (Vidvox's ISF-Files, see the survey above) and 27 of its files were drawn by a real player in CI. Other collections, and files from the ISF editor's web site, have not been tried.
 - The ISF-Files pack: never seen on a display and never timed on a board; its cost notes are counts from the text.
+- The ISF-Files pack with the live controls: its inputs of every type are adjustable like any other shader's; none of it has been tried on a board, and its weight is read from its cost notes (counts from the text, not measurements).

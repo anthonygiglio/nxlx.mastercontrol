@@ -30,6 +30,7 @@ import re
 import socket
 import threading
 import time
+import unicodedata
 
 from .api import ApiError, valid_name
 from .player import PlayerError
@@ -40,8 +41,12 @@ MAX_INPUTS = 24
 MAX_UPLOADS = 64
 MAX_TEXT = 200                # description, credit
 CARRIER_FPS = 30
-HEIGHTS = (360, 540, 720, 1080)
-DEFAULT_HEIGHT = 720
+HEIGHTS = (360, 540, 720, 1080)         # every drawing height any board may use (a settings file may hold any of them)
+DEFAULT_HEIGHT = 540                    # for a Pi 4 and for a board nobody has measured; see default_height()
+FRAME_WRAP = 1 << 24                    # the carrier's frame number is carried in three bytes (6.4 days at 30 a second)
+SPEED_MIN, SPEED_MAX = 0.0, 4.0         # the speed control: 1 is the shader's own pace, 0 freezes it
+GAIN_MIN, GAIN_MAX = 0.0, 2.0           # the brightness trim: 1 leaves the shader as it is
+CLOCKS = ("carrier", "frame")
 DWELL_MIN, DWELL_MAX, DWELL_DEFAULT = 10, 3600, 180
 VERIFY_SECONDS = 4.0
 BUNDLED_DIR = os.path.join(os.path.dirname(__file__), "shaders.d")
@@ -52,8 +57,14 @@ PACK = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 MAX_PACKS = 16
 FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.\-]{0,59}\.fs")
 INPUT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")
-CARRIER = re.compile(r"av://lavfi:color=c=black:size=[0-9]{1,4}x[0-9]{1,4}:rate=%d,format=rgb0" % CARRIER_FPS)
+# The carrier with a clock: each frame's three colour bytes are its own number (red the lowest), so a shader can read
+# how many frames the carrier has played, and the panel can read the same number from the player (time-pos).
+_COUNTER = "format=gbrp,geq=r=N-256*floor(N/256):g=floor(N/256)-256*floor(N/65536):b=floor(N/65536)-256*floor(N/16777216),"
+CARRIER = re.compile(r"av://lavfi:color=c=black:size=[0-9]{1,4}x[0-9]{1,4}:rate=%d,(?:%s)?format=rgb0" % (CARRIER_FPS, re.escape(_COUNTER)))
 TYPES = ("float", "bool", "long", "color", "point2D", "event")
+# What stands in when a shader is refused and there is none to go back to: the carrier itself is not black any more
+# (its colour is its frame number), so black is drawn over it.
+BLACK = "//!HOOK NATIVE\n//!BIND HOOKED\n//!DESC nxlx black\n\nvec4 hook() {\n    return vec4(0.0, 0.0, 0.0, 1.0);\n}\n"
 # Names an input may not have: GLSL's own words, what mpv and this translator define, and ISF's built-ins.
 RESERVED = frozenset("""
 attribute const uniform varying layout centroid flat smooth noperspective patch sample break continue do for while
@@ -83,6 +94,7 @@ _RENAMED = "out_color"                  # in the code, spelled exactly so; any o
 _INPUT_RENAMED = ("color",)             # as an input's name, in any letter case
 
 
+HIDDEN = ("Cc", "Cf", "Zl", "Zp", "Cs")      # Unicode categories no name or label may hold
 # A bundled shader with this category is made to be performed with (strong, rhythmic): it is in the library but not in
 # the Vibes rotation until someone puts it there. Everything else is in until it is taken out.
 PERFORMANCE = "performance"
@@ -90,6 +102,20 @@ PERFORMANCE = "performance"
 
 class ShaderError(ValueError):
     """An ISF file this box will not take; the message says why in plain words."""
+
+
+# ---- what a board can draw -----------------------------------------------------------------------------------------------
+def heights_for(board):
+    """The drawing heights offered on a board. Measured on a Pi 4 (2560 x 1440 at 75 Hz): at 1080 lines even the
+    lightest shaders dropped 7 to 8 frames a second, so 1080 is never offered there. A Pi 5 and x86 keep every
+    choice; nothing is measured on them."""
+    return HEIGHTS if board in ("pi5", "x86") else HEIGHTS[:3]
+
+
+def default_height(board):
+    """540 lines on a Pi 4 (every bundled shader but the two heavy ones kept up there) and on a board that is unknown
+    or weaker; 720 on a Pi 5 and x86, which is a guess until someone measures them."""
+    return 720 if board in ("pi5", "x86") else DEFAULT_HEIGHT
 
 
 # ---- numbers ---------------------------------------------------------------------------------------------------------
@@ -103,17 +129,20 @@ def _num(v, what, limit=1e6):
     return float(v)
 
 
-def _f(x):
-    """A GLSL float literal (finite numbers only)."""
-    s = "%.7g" % _num(x, "a value", 1e9)
+def _f(x, digits=7):
+    """A GLSL float literal (finite numbers only). A magnitude below 1e-30 is written as 0: a 32-bit number cannot
+    hold 1e-40, and what a compiler makes of such a literal is its own business."""
+    v = _num(x, "a value", 1e9)
+    s = "%.*g" % (digits, 0.0 if abs(v) < 1e-30 else v)
     return s if ("." in s or "e" in s) else s + ".0"
 
 
 def _text(v, limit=MAX_TEXT):
-    """A short line of plain text for the panel (control characters dropped)."""
+    """A short line of plain text for the panel. Dropped: control characters, and the characters that are not seen
+    but change what is seen (text direction overrides, zero-width marks, line and paragraph separators)."""
     if not isinstance(v, str):
         return ""
-    return "".join(ch for ch in v if ch >= " " and ch != "\x7f")[:limit].strip()
+    return "".join(ch for ch in v if unicodedata.category(ch) not in HIDDEN)[:limit].strip()
 
 
 # ---- the ISF header ----------------------------------------------------------------------------------------------------
@@ -156,8 +185,20 @@ def _input(spec, seen):
                     or not all(isinstance(v, int) and not isinstance(v, bool) and abs(v) <= 100000 for v in values)):
                 raise ShaderError("VALUES of %s must be 1 to 64 whole numbers" % name)
             out["values"] = list(values)
+            labels = spec.get("LABELS")
+            labels = labels if isinstance(labels, list) else []
+            out["labels"] = [(_text(labels[n], 40) if n < len(labels) else "") or str(v) for n, v in enumerate(values)]
             if "DEFAULT" not in spec:
                 d = values[0]
+        else:
+            lo = spec.get("MIN", 0) if "MIN" in spec or "MAX" in spec else -100000
+            hi = spec.get("MAX", 100000)
+            lo, hi = _num(lo, "MIN of " + name, 100000), _num(hi, "MAX of " + name, 100000)
+            if lo != int(lo) or hi != int(hi) or lo > hi:
+                raise ShaderError("MIN and MAX of %s must be whole numbers, MIN not above MAX" % name)
+            out.update(min=int(lo), max=int(hi))
+            if "DEFAULT" not in spec:
+                d = min(int(hi), max(int(lo), 0))
         try:
             d = _num(d, "DEFAULT of " + name, 100000)
         except ShaderError:
@@ -166,7 +207,7 @@ def _input(spec, seen):
             raise ShaderError("DEFAULT of %s must be a whole number" % name)
         if values is not None and int(d) not in values:
             raise ShaderError("DEFAULT of %s is not one of its VALUES" % name)
-        out["default"] = int(d)
+        out["default"] = int(d) if values is not None else min(out["max"], max(out["min"], int(d)))
     elif kind == "color":
         d = spec.get("DEFAULT", [1.0, 1.0, 1.0, 1.0])
         if not isinstance(d, list) or len(d) not in (3, 4):
@@ -178,6 +219,15 @@ def _input(spec, seen):
         if not isinstance(d, list) or len(d) != 2:
             raise ShaderError("DEFAULT of %s must be [x, y]" % name)
         out["default"] = [_num(c, "DEFAULT of " + name) for c in d]
+        if "MIN" in spec or "MAX" in spec:
+            lo, hi = spec.get("MIN", [0.0, 0.0]), spec.get("MAX", [1.0, 1.0])
+            if not (isinstance(lo, list) and isinstance(hi, list) and len(lo) == 2 and len(hi) == 2):
+                raise ShaderError("MIN and MAX of %s must be [x, y]" % name)
+            lo, hi = [_num(c, "MIN of " + name) for c in lo], [_num(c, "MAX of " + name) for c in hi]
+            if lo[0] > hi[0] or lo[1] > hi[1]:
+                raise ShaderError("input %s has MIN above MAX" % name)
+            out.update(min=lo, max=hi)
+            out["default"] = [min(hi[n], max(lo[n], out["default"][n])) for n in (0, 1)]
     else:                                   # an event: a button in ISF; it is never pressed here
         out["default"] = False
     return out
@@ -320,21 +370,89 @@ def parse(source):
             "categories": cats, "inputs": clean, "body": body, "code": code, "line": source.count("\n", 0, end + 2) + 1}
 
 
+def clean_value(i, v):
+    """One input's value from untrusted input, by the input's type; raises ShaderError. Numbers are kept inside MIN
+    and MAX; everything else must be exactly of its kind (true is not 1, "2" is not 2)."""
+    name, kind = i["name"], i["type"]
+    if kind == "float":
+        return min(i["max"], max(i["min"], _num(v, name)))
+    if kind in ("bool", "event"):
+        if not isinstance(v, bool):
+            raise ShaderError("%s must be true or false" % name)
+        return v
+    if kind == "long":
+        try:
+            whole = not isinstance(v, bool) and isinstance(v, (int, float)) and v == int(v) and abs(v) <= 100000
+        except (OverflowError, ValueError):
+            whole = False
+        if not whole:
+            raise ShaderError("%s must be a whole number" % name)
+        if "values" in i:
+            if int(v) not in i["values"]:
+                raise ShaderError("%s must be one of %s" % (name, ", ".join(str(x) for x in i["values"])))
+            return int(v)
+        return min(i["max"], max(i["min"], int(v)))
+    if kind == "color":
+        if not isinstance(v, list) or len(v) not in (3, 4):
+            raise ShaderError("%s must be [r, g, b] or [r, g, b, a], each 0 to 1" % name)
+        rgba = [min(1.0, max(0.0, _num(c, name))) for c in v]
+        return rgba + [1.0] * (4 - len(rgba))
+    if not isinstance(v, list) or len(v) != 2:
+        raise ShaderError("%s must be [x, y]" % name)
+    xy = [_num(c, name) for c in v]
+    if "min" in i:
+        xy = [min(i["max"][n], max(i["min"][n], xy[n])) for n in (0, 1)]
+    return xy
+
+
 def clean_values(parsed, values):
-    """{name: number} for the float inputs, from untrusted input: unknown names are refused, numbers are kept inside
-    each input's MIN and MAX."""
+    """{name: value} for the inputs, from untrusted input: unknown names are refused, each value is checked by its
+    input's type (see clean_value)."""
     if values is None:
         return {}
     if not isinstance(values, dict) or len(values) > MAX_INPUTS:
-        raise ShaderError("values must be an object of input name and number")
-    floats = {i["name"]: i for i in parsed["inputs"] if i["type"] == "float"}
+        raise ShaderError("values must be an object of input name and value")
+    inputs = {i["name"]: i for i in parsed["inputs"]}
     out = {}
     for name, v in values.items():
-        if name not in floats:
-            raise ShaderError("no number input called %s" % _text(str(name), 32))
-        i = floats[name]
-        out[name] = min(i["max"], max(i["min"], _num(v, name)))
+        if name not in inputs:
+            raise ShaderError("no input called %s" % _text(str(name), 32))
+        out[name] = clean_value(inputs[name], v)
     return out
+
+
+def clean_controls(controls, base=None):
+    """The controls every shader has, from untrusted input: {"speed": 0 to 4 (1 is the shader's own pace, 0 freezes
+    it), "hue": -180 to 180 degrees of palette shift, "brightness": 0 to 2 (1 leaves it as it is)}. Keys that are
+    left out keep the value in `base` (or the neutral one); an unknown key or a value that is not a number is refused,
+    a number outside its range is kept inside it."""
+    out = dict({"speed": 1.0, "hue": 0.0, "brightness": 1.0} if base is None else base)
+    if controls is None:
+        return out
+    if not isinstance(controls, dict):
+        raise ShaderError("controls must be an object of speed, hue and brightness")
+    for name, v in controls.items():
+        if name == "speed":
+            out[name] = min(SPEED_MAX, max(SPEED_MIN, _num(v, "speed")))
+        elif name == "hue":
+            out[name] = min(180.0, max(-180.0, _num(v, "hue")))
+        elif name == "brightness":
+            out[name] = min(GAIN_MAX, max(GAIN_MIN, _num(v, "brightness")))
+        else:
+            raise ShaderError("no control called %s (there are speed, hue and brightness)" % _text(str(name), 32))
+    return out
+
+
+def turn(*degrees):
+    """Palette shifts added up, brought back into -180 to 180."""
+    return (sum(degrees) + 180.0) % 360.0 - 180.0
+
+
+def shape_of(parsed, values):
+    """The part of a set of values that can change what the GPU compiler makes of the code (switches and whole
+    numbers; plain numbers and colours cannot): a text that was taken with one shape is watched again with another."""
+    kinds = {i["name"]: i["type"] for i in parsed["inputs"]}
+    return repr(sorted((n, v) for n, v in values.items() if kinds.get(n) in ("bool", "long", "event")))
 
 
 def hue_matrix(degrees):
@@ -346,16 +464,23 @@ def hue_matrix(degrees):
     return [c + k, k - r, k + r, k + r, c + k, k - r, k - r, k + r, c + k]
 
 
-def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader", today=None):
-    """The mpv user shader for a parsed ISF generator, drawn at `size` (width, height). `values` replaces float
-    defaults, `hue` (degrees) shifts the palette, `offset` (seconds) moves the start of TIME."""
+def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader", today=None, speed=1.0, gain=1.0, anchor=None):
+    """The mpv user shader for a parsed ISF generator, drawn at `size` (width, height). `values` replaces the inputs'
+    defaults, `hue` (degrees) shifts the palette, `gain` trims the brightness, `speed` is how fast TIME runs.
+    TIME is `offset` plus `speed` times the seconds since `anchor`, a frame number of the carrier (see carrier_url);
+    with no anchor it is counted from mpv's own `frame` number, as the first version did."""
     width, height = int(size[0]), int(size[1])
     if not (16 <= width <= 4096 and 16 <= height <= 4096):
         raise ShaderError("bad drawing size")
     if not re.fullmatch(r"[a-z0-9 ]{1,40}", desc):
         raise ShaderError("bad description")
     values = clean_values(parsed, values)
-    hue, offset = _num(hue, "hue", 360.0), _num(offset, "offset", 100000.0)
+    hue, offset = _num(hue, "hue", 360.0), _num(offset, "offset", 1e9)
+    speed, gain = _num(speed, "speed", SPEED_MAX), _num(gain, "brightness", GAIN_MAX)
+    if speed < SPEED_MIN or gain < GAIN_MIN:
+        raise ShaderError("speed and brightness cannot be below 0")
+    if anchor is not None and (isinstance(anchor, bool) or not isinstance(anchor, int) or not 0 <= anchor < FRAME_WRAP):
+        raise ShaderError("bad anchor")
     t = time.localtime() if today is None else today
     lines = ["// nxlx.mastercontrol shader source (generated; do not edit)",
              "//!HOOK NATIVE", "//!BIND HOOKED", "//!WIDTH %d" % width, "//!HEIGHT %d" % height, "//!DESC %s" % desc, "",
@@ -376,7 +501,7 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
              "#define vv_FragNormCoord pvj_norm",
              "PVJ_HP float pvj_time;", "vec2 pvj_norm;", "vec4 pvj_coord;", "vec4 pvj_color;"]
     for i in parsed["inputs"]:
-        d, name = i["default"], ident(i["name"])
+        d, name = values.get(i["name"], i["default"]), ident(i["name"])
         if i["type"] == "float":
             lines.append("const float %s = %s;" % (name, _f(values.get(i["name"], d))))
         elif i["type"] in ("bool", "event"):
@@ -388,13 +513,24 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
         else:
             lines.append("const vec2 %s = vec2(%s, %s);" % (name, _f(d[0]), _f(d[1])))
     lines += ["#line %d" % parsed["line"], parsed["code"], "",
-              "vec4 hook() {",
-              # frame = hi * 512 + lo, in whole numbers small enough for 16 bits; hi starts again after 8192 (38.8 hours)
-              "    int pvj_hi = frame / 512;",
-              "    int pvj_lo = frame - pvj_hi * 512;",
-              "    pvj_hi = pvj_hi - (pvj_hi / 8192) * 8192;",
-              "    PVJ_HP float pvj_k = 512.0;",
-              "    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / %s + %s;" % (_f(CARRIER_FPS), _f(offset)),
+              "vec4 hook() {"]
+    if anchor is None:
+        # frame = hi * 512 + lo, in whole numbers small enough for 16 bits; hi starts again after 8192 (38.8 hours)
+        lines += ["    int pvj_hi = frame / 512;",
+                  "    int pvj_lo = frame - pvj_hi * 512;",
+                  "    pvj_hi = pvj_hi - (pvj_hi / 8192) * 8192;"]
+    else:
+        # The carrier's frame number, read from its colour (flat, so any place will do), as hi * 512 + lo again;
+        # then the frames since the anchor, which stay right when the three bytes start again from 0.
+        lines += ["    PVJ_HP vec3 pvj_px = floor(HOOKED_tex(vec2(0.5, 0.5)).rgb * 255.0 + 0.5);",
+                  "    int pvj_g = int(pvj_px.g);",
+                  "    int pvj_lo = int(pvj_px.r) + 256 * (pvj_g - (pvj_g / 2) * 2) - %d;" % (anchor % 512),
+                  "    int pvj_hi = pvj_g / 2 + 128 * int(pvj_px.b) - %d;" % (anchor // 512),
+                  "    if (pvj_lo < 0) { pvj_lo += 512; pvj_hi -= 1; }",
+                  "    if (pvj_hi < 0) { pvj_hi += 32768; }"]
+    lines += ["    PVJ_HP float pvj_k = 512.0;",
+              "    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / %s%s + %s;" % (
+                  _f(CARRIER_FPS), "" if speed == 1.0 else " * %s" % _f(speed), _f(offset, 10)),
               "    pvj_norm = vec2(HOOKED_pos.x, 1.0 - HOOKED_pos.y);",
               "    pvj_coord = vec4(pvj_norm * RENDERSIZE, 0.0, 1.0);",
               "    pvj_color = vec4(0.0, 0.0, 0.0, 1.0);",
@@ -403,6 +539,8 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
     if hue:
         h = hue_matrix(hue)
         lines.append("    c = clamp(mat3(%s) * c, 0.0, 1.0);" % ", ".join(_f(h[r * 3 + col]) for col in range(3) for r in range(3)))
+    if gain != 1.0:
+        lines.append("    c = clamp(c * %s, 0.0, 1.0);" % _f(gain))
     # half a step of noise against bands in slow gradients: a fine diagonal pattern from the pixel's own position
     lines += ["    c += (fract(pvj_coord.x * 0.6113 + pvj_coord.y * 0.3791) - 0.5) / 255.0;",
               "    return vec4(c, 1.0);",
@@ -411,23 +549,35 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
 
 
 # ---- the carrier -------------------------------------------------------------------------------------------------------
+def usable(screen):
+    """The screen's size as whole numbers, or 1920 x 1080 for one that is no size at all (a player without a window
+    reports 0 x 0; dividing by it raised, and 0 x 5 gave a carrier of no width)."""
+    try:
+        sw, sh = int(screen[0]), int(screen[1])
+    except (TypeError, ValueError, IndexError):
+        return 1920, 1080
+    return (sw, sh) if 16 <= sw <= 16384 and 16 <= sh <= 16384 else (1920, 1080)
+
+
 def render_size(screen, height):
     """(width, height) the shader is drawn at: `height` lines (never more than the screen has) in the screen's shape."""
-    sw, sh = screen
+    sw, sh = usable(screen)
     h = max(16, min(int(height), sh, 1080))
     w = max(16, min(1920, int(round(h * sw / float(sh) / 2.0)) * 2))
     return w, h
 
 
-def carrier_url(screen):
-    """The blank picture the shader is drawn over: black, RGB, 30 frames a second, in the screen's exact shape and
-    as small as that shape allows (the shader sets its own size, so the carrier costs next to nothing). Built from
-    whole numbers only; it is the same kind of address as the test pattern, which the hardened player already plays."""
-    sw, sh = int(screen[0]), int(screen[1])
+def carrier_url(screen, counter=True):
+    """The blank picture the shader is drawn over: RGB, 30 frames a second, in the screen's exact shape and as small
+    as that shape allows (the shader sets its own size, so the carrier costs next to nothing). With `counter` each
+    frame's colour is its own number (nobody sees it: the shader draws in its place), otherwise it is black. Built
+    from whole numbers only; it is the same kind of address as the test pattern, which the hardened player already
+    plays."""
+    sw, sh = usable(screen)
     g = math.gcd(sw, sh)
     aw, ah = sw // g, sh // g
     m = max(1, -(-36 // ah))
-    return "av://lavfi:color=c=black:size=%dx%d:rate=%d,format=rgb0" % (aw * m, ah * m, CARRIER_FPS)
+    return "av://lavfi:color=c=black:size=%dx%d:rate=%d,%sformat=rgb0" % (aw * m, ah * m, CARRIER_FPS, _COUNTER if counter else "")
 
 
 def is_carrier(path):
@@ -487,23 +637,31 @@ class LogTap:
             pass
 
 
-_COMPILER_LINE = re.compile(r"^(?:ERROR: )?\d+:(\d+)(?:\(\d+\))?: (?:error: )?(.*)$")
+_COMPILER_LINE = re.compile(r"^(?:(ERROR|WARNING): )?\d+:(\d+)(?:\(\d+\))?: (?:(error|warning): )?(.*)$", re.I)
+_SOURCE_LINE = re.compile(r"^\[\s*\d+\]( |$)")                 # mpv prints the shader it could not compile, numbered
+_INTERNAL = re.compile(r"\bpvj_\w*|\bPVJ_\w*|\bHOOKED\w*|//!|^\s*#|[;{}]\s*$")
 
 
 def shader_errors(lines):
     """What the player said about a shader it refused, as one short message, or "" if it said nothing of the kind.
-    mpv prints the whole shader and then the GPU compiler's log, all at error level, from its video output."""
-    mine = [t for p, level, t in lines if level in ("error", "fatal") and p.startswith("vo/")
-            and not re.match(r"^\[\s*\d+\] ", t)]
+    mpv prints the whole shader and then the GPU compiler's log, all at error level, from its video output. Only the
+    compiler's errors are passed on: its warnings are left out (a refused shader's log also carries warnings about
+    this translator's own pvj_ names, which mean nothing to the person), and so is every line of the shader text."""
+    mine = [t for p, level, t in lines if level in ("error", "fatal") and p.startswith("vo/") and not _SOURCE_LINE.match(t)]
     if not any(re.search(r"shader|compile|link log|Unrecognized command|hook", t, re.I) for t in mine):
         return ""
-    said = []
+    said, warned = [], []
     for t in mine:
         m = _COMPILER_LINE.match(t.strip())
         if m:
-            said.append("line %s: %s" % (m.group(1), m.group(2)))
+            warning = "warning" in ((m.group(1) or "") + (m.group(3) or "")).lower()
+            if warning and _INTERNAL.search(m.group(4)):
+                continue
+            (warned if warning else said).append("line %s: %s" % (m.group(2), m.group(4)))
     if not said:
-        said = [t for t in mine if t.strip() and not re.search(r"shader source:|compile log|link log", t)]
+        # No compiler line was understood. Pass on what reads like a message, never a line of the generated shader.
+        said = warned or [t.strip() for t in mine if t.strip() and not _INTERNAL.search(t)
+                          and not re.search(r"shader source:|compile log|link log", t)]
     return "; ".join(said[:4])[:500] or "the GPU refused the shader"
 
 
@@ -526,8 +684,10 @@ class Engine:
         self._lock = threading.RLock()          # one change at a time
         self._serial = 0
         self._cache = {}                        # path -> (mtime, size, parsed or ShaderError)
-        self._checked = set()                   # (source hash) of shaders the GPU has taken
-        self.playing = None                     # {"id", "values", "hue", "path", "carrier", "epoch", "checked"}
+        self._checked = set()                   # (source hash, shape of the values) the GPU has taken
+        # what is on: {"id", "values", "hue", "offset", "controls", "anchor", "path", "carrier", "epoch", "desc",
+        # "checked", "digest", "size", "preset"}
+        self.playing = None
         self.error = None                       # {"id", "message", "at"}: the last shader that was refused
 
     # -- settings --
@@ -732,6 +892,27 @@ class Engine:
             size = None
         return tuple(size) if size else (1920, 1080)
 
+    def frame_now(self, carrier):
+        """The number of the carrier frame the player shows now (what a shader reads from the carrier's colour), or 0
+        when `carrier` is not what plays (a carrier that starts counts from 0) or the player cannot say."""
+        try:
+            ipc = self.api.player.ipc
+            if ipc.request("get_property", "path") != carrier:
+                return 0
+            t = ipc.request("get_property", "time-pos")
+        except Exception:
+            return 0
+        if isinstance(t, bool) or not isinstance(t, (int, float)) or not 0 <= t < 1e9:
+            return 0
+        return int(round(t * CARRIER_FPS)) % FRAME_WRAP
+
+    def compose(self, parsed, size, state, desc):
+        """The player's text for a shader in this state: {"values", "hue", "offset", "controls", "anchor"} (and any
+        events that are held down, in "held")."""
+        c = state["controls"]
+        return translate(parsed, size, dict(state["values"], **state.get("held", {})), turn(state["hue"], c["hue"]), state["offset"],
+                         desc, speed=c["speed"], gain=c["brightness"], anchor=state["anchor"])
+
     def _gpu_output(self):
         """True when the player draws with its GPU output, where a shader is compiled (not the null output of tests)."""
         try:
@@ -746,6 +927,16 @@ class Engine:
             return []
         return [x for key in ("fresh", "redraw") for x in ((p or {}).get(key) or []) if isinstance(x, dict)]
 
+    def _fresh(self, desc):
+        """The passes mpv drew for the newest frame that belong to the shader called `desc` (and to no other: "shader
+        7 1" is not "shader 7 12"). The redraw list is left out: it can still hold the shader before this one."""
+        try:
+            p = self.api.player.ipc.request("get_property", "vo-passes")
+        except Exception:
+            return []
+        mine = re.compile(re.escape(desc) + r"(?![0-9])")
+        return [x for x in ((p or {}).get("fresh") or []) if isinstance(x, dict) and mine.search(str(x.get("desc", "")))]
+
     def _watch(self, tap, desc):
         """Wait until the player has drawn a frame with the shader called `desc` or has complained.
         ("ok" | "refused" | "unknown", message)."""
@@ -755,7 +946,8 @@ class Engine:
             lines += tap.drain(0.1)
             if shader_errors(lines):
                 break
-            mine = [x for x in self._passes() if desc in str(x.get("desc", ""))]
+            named = re.compile(re.escape(desc) + r"(?![0-9])")
+            mine = [x for x in self._passes() if named.search(str(x.get("desc", "")))]
             # A refused shader is listed too, with no time against it (seen in CI): only a pass that took time was
             # drawn. A GPU that reports no times at all gives "unknown" after a second, never "ok".
             drawn = any(isinstance(x.get(k), (int, float)) and x[k] > 0 for x in mine for k in ("avg", "last"))
@@ -782,32 +974,40 @@ class Engine:
             return None
         return p
 
-    def show(self, sid, values=None, hue=0.0, offset=0.0, epoch=None, cut=True):
+    def show(self, sid, values=None, hue=0.0, offset=0.0, epoch=None, cut=True, controls=None, preset=None):
         """Put a shader on the screen. With `epoch`, only if nothing else was played since (None is returned then).
         `cut` (a preview from the panel) sets the picture's opacity like any other play; a rotation that fades by
-        itself passes False. Returns {"ok", "epoch", "id", "error"?}; ok False means the GPU refused it and the
-        screen shows the shader before it, or black."""
+        itself passes False. `controls` are speed, hue and brightness (see clean_controls); `preset` is only the
+        name to remember for the values. Returns {"ok", "epoch", "id", "error"?}; ok False means the GPU refused it
+        and the screen shows the shader before it, or black."""
         if not self.enabled():
             raise ApiError(409, "turn on the Shaders and Vibes module in System first")
         path, _ = self._path(sid)
         with self._lock:
             try:
                 parsed, digest = self._parsed(path)
-                size = render_size(self.screen(), self.config()["height"])
+                cfg = self.config()
+                size = render_size(self.screen(), cfg["height"])
+                carrier = carrier_url(self.screen(), cfg.get("clock", CLOCKS[0]) == "carrier")
                 desc = "nxlx shader %d %d" % (os.getpid(), self._serial + 1)      # mpv outlives this service: no two alike
-                text = translate(parsed, size, values, hue, offset, desc)
                 clean = clean_values(parsed, values)
+                events = {i["name"] for i in parsed["inputs"] if i["type"] == "event"}
+                state = {"values": {n: v for n, v in clean.items() if n not in events},        # an event is never kept
+                         "held": {n: True for n in clean if n in events and clean[n]},
+                         "hue": _num(hue, "hue", 360.0), "offset": _num(offset, "offset", 1e9), "controls": self.limit(parsed, clean_controls(controls)),
+                         "anchor": self.frame_now(carrier) if cfg.get("clock", CLOCKS[0]) == "carrier" else None}
+                text = self.compose(parsed, size, state, desc)
+                clean, key = state["values"], (digest, shape_of(parsed, clean))
             except ShaderError as e:
                 raise ApiError(422, "%s: %s" % (sid, e))
             player = self.api.player
-            carrier = carrier_url(self.screen())
             before = self.on_screen()
             try:
                 out = self._write(text)
             except OSError as e:
                 raise ApiError(500, "could not write the shader: %s" % (e.strerror or e))
             tap = None
-            if digest not in self._checked and self._gpu_output():
+            if key not in self._checked and self._gpu_output():
                 try:
                     tap = self._tap(player.socket_path)
                 except OSError:
@@ -829,26 +1029,40 @@ class Engine:
                     tap.close()
             if verdict == "refused":
                 back = before if before and before["carrier"] == carrier and os.path.exists(before["path"]) else None
+                keep = back["path"] if back else None
                 try:
-                    player.swap_source(back["path"] if back else None, new)
-                except PlayerError:
+                    keep = keep or self._write(BLACK)       # nothing to go back to: black, never the bare carrier
+                    player.swap_source(keep, new)
+                except (PlayerError, OSError):
                     pass
                 self.playing = dict(back, epoch=new) if back else None
-                self._cleanup({back["path"]} if back else set())
+                self._cleanup({keep} if keep else set())
                 self.error = {"id": sid, "message": message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+                self.refused(sid, digest, message)
                 self.log("pvj-web: shader %s refused by the player: %s" % (sid, message))
                 return {"ok": False, "epoch": new, "id": sid, "error": message, "showing": back["id"] if back else None}
             if verdict == "ok":
-                self._checked.add(digest)
+                if len(self._checked) > 2048:
+                    self._checked.clear()
+                self._checked.add(key)
             if self.error and self.error["id"] == sid:
                 self.error = None
-            self.playing = {"id": sid, "values": clean, "hue": float(hue), "path": out, "carrier": carrier, "epoch": new,
-                            "checked": True if (verdict == "ok" or digest in self._checked) else None}
+            self.playing = {"id": sid, "values": clean, "hue": state["hue"], "offset": state["offset"], "controls": state["controls"],
+                            "anchor": state["anchor"], "path": out, "carrier": carrier, "epoch": new, "desc": desc,
+                            "digest": digest, "size": size, "preset": preset, "held": state["held"],
+                            "checked": True if (verdict == "ok" or key in self._checked) else None}
             self._cleanup({out})
             if cut:
                 self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
             self.api._started_playing()
             return {"ok": True, "epoch": new, "id": sid}
+
+    def refused(self, sid, digest, message):
+        """The GPU refused this file (see shaderlive.py, which remembers it until the file changes)."""
+
+    def limit(self, parsed, controls):
+        """The controls as this shader may have them (see shaderlive.py: the flash limit of Performance shaders)."""
+        return controls
 
     def off(self, epoch=None):
         """The module was switched off, or Vibes was stopped: take the shader off the screen if one is on. With
@@ -942,6 +1156,8 @@ class Engine:
                 os.unlink(path)
             except OSError as e:
                 raise ApiError(500, "could not delete: %s" % (e.strerror or e))
+            if self.error and self.error["id"] == sid:      # a refusal of a file that is gone says nothing any more
+                self.error = None
             cfg = self.config()
             hit = self._bundled(sid)        # one of the project's own keeps its entry: there it is that shader's switch
             if sid in cfg["disabled"] and not (hit and hit[1] == PACK_OWN):
@@ -955,8 +1171,8 @@ class Engine:
         playing = None
         if showing:
             playing = {"id": showing["id"], "name": showing["id"][:-3], "values": dict(showing["values"]), "checked": showing["checked"]}
-            for x in self._passes():
-                if "nxlx shader" in str(x.get("desc", "")) and isinstance(x.get("avg"), (int, float)) and x["avg"] > 0:
+            for x in self._fresh(showing.get("desc") or "nxlx shader"):     # its own pass, never the one before it
+                if isinstance(x.get("avg"), (int, float)) and not isinstance(x["avg"], bool) and x["avg"] > 0:
                     playing["pass_ms"] = round(x["avg"] / 1e6, 2)
         vibes = getattr(self.api, "vibes", None)
         size = render_size(self.screen(), cfg["height"])
