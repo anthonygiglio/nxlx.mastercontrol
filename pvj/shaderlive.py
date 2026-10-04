@@ -49,7 +49,7 @@ EVENT_HOLD = 0.25               # how long a pressed event stays true
 MAX_CONTROLS = 8
 V3D_STATS = "/sys/devices/platform/v3dbus/*/gpu_stats"
 
-# The first measurements on a real board (a Raspberry Pi 4, mpv 0.40, 2560 x 1440 at 75 Hz, 2026-10-03): the shader's
+# The first measurements on a real board (a Raspberry Pi 4, mpv 0.40, 2560 x 1440 at 75 Hz, 2026-10-04): the shader's
 # own pass in milliseconds at 720 lines and the frames dropped each second by drawing height. The six light ones took
 # 7.5 to 11.2 ms and were not noted one by one. "light" kept up at 720 lines, "medium" at 540, "heavy" only at 360.
 PI4 = {

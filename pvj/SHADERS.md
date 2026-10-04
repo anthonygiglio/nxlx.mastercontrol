@@ -6,7 +6,7 @@ Moving pictures drawn by the box's GPU instead of played from a file, and **Vibe
 
 Switch it on under System > Shaders and Vibes (beta, off by default). Switching it off while a shader is on the screen asks first, because it stops at once. It is offered on a Raspberry Pi 4, a Pi 5 and x86; not on a Pi 3.
 
-**Read this first: what is measured and what is not.** The ten bundled shaders were run on a real Raspberry Pi 4 on 2026-10-03 (mpv 0.40, a 2560 x 1440 screen at 75 Hz): all ten compile and draw correctly, and their speed is in the table below. Everything built since (live values, the speed control, presets, rotation sets, the guard, the carrier that counts its own frames) has run only in automated tests: against a real mpv with Mesa's software GPU in CI, where the picture is checked through screenshots, and against fakes. A Pi 5 and x86 are not measured at all.
+**Read this first: what is measured and what is not.** The ten bundled shaders were run on a real Raspberry Pi 4 on 2026-10-04 (mpv 0.40, a 2560 x 1440 screen at 75 Hz; judged from the panel's snapshots, nobody watched the monitor): all ten compile and draw correctly, and their speed is in the table below. Everything built since (live values, the speed control, presets, rotation sets, the guard, the carrier that counts its own frames) has run only in automated tests: against a real mpv with Mesa's software GPU in CI, where the picture is checked through screenshots, and against fakes. A Pi 5 and x86 are not measured at all.
 
 ## Using it
 
@@ -53,7 +53,7 @@ So a change is a new shader text that the GPU compiles. It is made cheap and sea
 
 - A request only checks the values and notes them down; it answers at once. One worker applies the newest values at most **five times a second**, so a dragged slider or a MIDI knob at 50 messages a second is at most five compiles a second, and the last value lands at the latest 0.2 seconds after it came, plus the compile.
 - Only the shader file is exchanged: the carrier keeps playing, nothing is reloaded, the opacity is not touched. mpv draws the old shader until the new one is compiled.
-- On the Pi 4 the first version answered a slider change in 0.10 to 0.15 seconds, which was a full Play each time (measured 2026-10-03). The exchange alone is fewer round trips to the player; it has not been timed on the Pi. In CI (mpv 0.37, Mesa's software GPU, a 320 x 180 window) writing the new text and exchanging it took about 2 ms for a number, a colour or a point, and about 0.58 s the first time a switch or a choice gave the text a new shape, almost all of it the wait for the player's verdict; `tests/test_shaderlive_gpu.py` prints both. Neither number says anything about a Pi.
+- On the Pi 4 the first version answered a slider change in 0.10 to 0.15 seconds, which was a full Play each time (measured 2026-10-04). The exchange alone is fewer round trips to the player; it has not been timed on the Pi. In CI (mpv 0.37, Mesa's software GPU, a 320 x 180 window) writing the new text and exchanging it took about 2 ms for a number, a colour or a point, and about 0.58 s the first time a switch or a choice gave the text a new shape, almost all of it the wait for the player's verdict; `tests/test_shaderlive_gpu.py` prints both. Neither number says anything about a Pi.
 - A plain number, colour or point cannot change what the compiler makes of the code, so the GPU is not asked again. A switch, a choice or an event can, so the first time a shader is shown in that shape the panel waits for the player's verdict as it does for a new shader; if the GPU refuses it, the text before it is put back and the values stay as they were.
 - **Not verified on hardware:** that the picture does not hitch for a frame or two while a new text compiles on a Pi 4. In CI no screenshot taken during 100 changes was dark.
 
@@ -71,7 +71,7 @@ While a shader is on, the frames the player drops are counted (and on a Pi the k
 
 Ten original generator shaders, written for this project (Apache-2.0, in `pvj/shaders.d`). All are slow and quiet, use short fixed loops (at most 5 rounds) and no textures.
 
-**Measured on a Raspberry Pi 4** (2026-10-03, mpv 0.40, 2560 x 1440 at 75 Hz, the first version of this module). mpv made a desktop OpenGL 3.1 context (GLSL 1.40, V3D, Mesa 26), not OpenGL ES. The GPU is the only limit (the CPU was at 2 to 4 percent). Every frame pays two fixed passes whatever the shader: scaling to the screen (12.9 ms at 1440p) and a remainder pass (1.0, 2.3, 4.0 and 8.9 ms at 360, 540, 720 and 1080 lines), which leaves about 16 ms for the shader at 720 lines in a frame of 33.3 ms.
+**Measured on a Raspberry Pi 4** (2026-10-04, mpv 0.40, 2560 x 1440 at 75 Hz, the first version of this module). mpv made a desktop OpenGL 3.1 context (GLSL 1.40, V3D, Mesa 26), not OpenGL ES. The GPU is the only limit (the CPU was at 2 to 4 percent). Every frame pays two fixed passes whatever the shader: scaling to the screen (12.9 ms at 1440p) and a remainder pass (1.0, 2.3, 4.0 and 8.9 ms at 360, 540, 720 and 1080 lines), which leaves about 16 ms for the shader at 720 lines in a frame of 33.3 ms.
 
 | Shader | Picture | Class | Pass at 720 lines | Dropped frames a second at 360 / 540 / 720 lines |
 | --- | --- | --- | --- | --- |
@@ -93,7 +93,7 @@ What follows from it:
 - **The drawing size depends on the board**: 540 lines by default on a Pi 4 and on a board that is unknown, and 1080 is not offered on a Pi 4. A Pi 5 and x86 start at 720 and keep 1080; **neither is measured**, so those are guesses. mpv scales the result to the screen.
 - **light** kept up at 720 lines, **medium** at 540, **heavy** only at 360. `GET /api/shaders` gives each shader's class as `weight` and these numbers as `measured`; each file's own `COST` note starts with low, medium or high to match.
 - **The default rotation leaves out the two heavy ones.** nxlx-aurora and nxlx-tide are in: at the Pi 4's default of 540 lines they dropped nothing.
-- **nxlx-drift looked dull** on the screen (grey, low contrast, blocky). Its two palettes are now laid side by side instead of blended half and half, the cloud is stretched to the full range, and each octave is turned as well as doubled so the grid does not show. The work per pixel was meant to stay the same; **it has not been measured or looked at again on the Pi**, and its 30 ms is from before.
+- **nxlx-drift looked dull** in the snapshots (grey, low contrast, blocky). Its two palettes are now laid side by side instead of blended half and half, the cloud is stretched to the full range, and each octave is turned as well as doubled so the grid does not show. The work per pixel was meant to stay the same; **it has not been measured or looked at again on the Pi**, and its 30 ms is from before.
 
 ## ISF: what is supported
 
@@ -213,7 +213,7 @@ Settings live under `"shaders"` in the settings file once something is changed: 
 
 ## Not verified
 
-- **On a display, only the first version**, on one Pi 4 with one screen. Not seen or run on hardware: live values of each type, the speed control and the carrier that counts its frames, presets, rotation sets, the guard, the MIDI actions, nxlx-drift's new look, and a change while the room watches (does the picture hitch).
+- **Nobody has watched it on a display.** The first version was measured on one Pi 4 and judged from snapshots. Not run on hardware at all: live values of each type, the speed control and the carrier that counts its frames, presets, rotation sets, the guard, the MIDI actions, nxlx-drift's new look, and a change while the room watches (does the picture hitch).
 - **No Pi 5 and no x86 is measured.** Their default of 720 lines and the offer of 1080 are guesses.
 - CI runs mpv 0.37 (Ubuntu's). The Pi 4 has 0.40; mpv 0.35 (Raspberry Pi OS Bookworm) has not been run.
 - **Sync and the video wall.** A sync server that plays a shader or Vibes sends its clients "stop" (a shader is not a file they could play), so the clients go black; shaders in step on several boxes are not built. The wall crop over the carrier picture has not been tried.
