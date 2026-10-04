@@ -85,7 +85,7 @@ class SurveyTest(unittest.TestCase):
 
     def test_the_bundled_pack_translates_whole(self):
         rows = survey.survey(os.path.join(REPO, "pvj", "shaders.d", "isf-files"))
-        self.assertGreaterEqual(len(rows), 8)
+        self.assertEqual(len(rows), 8)
         self.assertEqual([r["file"] for r in rows if not r["translates"]], [])
 
 

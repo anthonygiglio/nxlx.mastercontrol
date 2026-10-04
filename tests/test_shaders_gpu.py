@@ -141,7 +141,9 @@ class GpuCase:
         the player takes the shader, draws a frame with it, and the picture is varied and not dark. Every file is
         tried before anything fails, so one run names all that do not draw; a line per file is printed as the record."""
         pack = [s for s in self.engine.library() if s["source"] == "bundled" and s["pack"] != "nxlx"]
-        self.assertGreaterEqual(len(pack), 8)
+        self.assertEqual([s["id"] for s in pack], ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs",
+                                                  "isf-radial-gradient.fs", "isf-ridgelines.fs", "isf-simplex-noise.fs",
+                                                  "isf-sine-warp-gradient.fs", "isf-spiral.fs"])
         rng = random.Random(11)
         failed = []
         for s in pack:

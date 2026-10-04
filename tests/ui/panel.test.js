@@ -916,7 +916,7 @@ function startServer() {
     assert.strictEqual(await page.locator('#shadercard [data-shader^="nxlx-"]').count(), 10, 'the ten bundled shaders are listed');
     // and the third-party pack (Vidvox ISF-Files): every one the API lists, and none of them in the Vibes rotation
     const packed = (await get('/api/shaders')).shaders.filter((s) => s.pack === 'isf-files');
-    assert(packed.length >= 8 && packed.every((s) => s.source === 'bundled' && !s.vibes && !s.error), 'the ISF-Files pack is listed, out of Vibes');
+    assert(packed.length === 8 && packed.every((s) => s.source === 'bundled' && !s.vibes && !s.error), 'the ISF-Files pack is listed, out of Vibes');
     assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10 + packed.length, 'the pack is listed with the ten');
     assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard', 'vibessettings', 'shaderremote'],
       'the page, top to bottom: now, the library, Vibes settings, other ways to control it (no sliders while nothing plays)');

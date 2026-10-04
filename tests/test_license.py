@@ -20,14 +20,17 @@ def tracked():
     return [p for p in out.split("\0") if p]            # whole names: the shader pack's files have spaces in theirs
 
 
-def annotations():
-    """[(licence, [path patterns])] of the REUSE.toml annotations, in the file's order."""
+def annotations(holders=False):
+    """[(licence, [path patterns])] of the REUSE.toml annotations, in the file's order; with `holders`, the text of
+    each annotation's copyright lines as a third item."""
     with open(os.path.join(REPO, "REUSE.toml")) as f:
         text = f.read()
     out = []
     for block in text.split("[[annotations]]")[1:]:
         paths = re.findall(r'"([^"]+)"', re.search(r"path = \[(.*?)\]", block, re.S).group(1))
-        out.append((re.search(r'SPDX-License-Identifier = "([^"]+)"', block).group(1), paths))
+        licence = re.search(r'SPDX-License-Identifier = "([^"]+)"', block).group(1)
+        who = re.search(r"SPDX-FileCopyrightText = (\[.*?\]|\"[^\n]*\")", block, re.S).group(1)
+        out.append((licence, paths, who) if holders else (licence, paths))
     return out
 
 
@@ -44,6 +47,13 @@ def matches(path, pattern):
 
 ISF_PACK = "pvj/shaders.d/isf-files/"
 ISF_LICENSE_SHA256 = "83e4dd21429a91fb7cea67a476032a9641425e5355df2e0f589a738b6ec9fd2c"      # upstream's LICENSE, as cloned
+# github.com/ashima/webgl-noise LICENSE, as fetched on 2026-10-04: the notice for the simplex noise in two of the files
+WEBGL_NOISE_LICENSE_SHA256 = "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916"
+# The checksum list, made from the upstream clone at commit 395072d4 and checked against it then. Pinned here, so the
+# files and the list cannot be changed together unnoticed.
+ISF_SUMS_SHA256 = "1227115195d2345b870e3b55739d040ce89bccc0a7f299dc9871cfc370ad4820"
+ISF_FILES = ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs", "isf-radial-gradient.fs", "isf-ridgelines.fs",
+             "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs", "isf-spiral.fs"]
 
 
 class LicenseTest(unittest.TestCase):
@@ -71,21 +81,38 @@ class LicenseTest(unittest.TestCase):
         unchanged from upstream, with upstream's licence beside them, and every file named in the inventory."""
         files = sorted(p for p in tracked() if p.startswith(ISF_PACK))
         shaders = [p for p in files if p.endswith(".fs")]
-        self.assertGreaterEqual(len(shaders), 8)
+        self.assertEqual([os.path.basename(p) for p in shaders], ISF_FILES)       # the pack, by name: a change is a decision
         # tools/make-release.sh hands the file list to tar split at white space: no shipped file may have any in its name
         self.assertEqual([p for p in tracked() if p.startswith(("pvj/", "bin/", "install/")) and re.search(r"\s", p)], [])
         self.assertTrue(all(re.fullmatch(r"isf-[a-z0-9-]+\.fs", os.path.basename(p)) for p in shaders), shaders)
-        self.assertEqual(sorted(set(files) - set(shaders)), [ISF_PACK + "LICENSE", ISF_PACK + "SHA256SUMS"])
+        # The notices ship with the files: a release holds only pvj/, bin/ and install/, so a notice that is only in
+        # THIRD_PARTY_LICENSES.md at the top of the repository never reaches a box.
+        notices = [ISF_PACK + "LICENSE", ISF_PACK + "LICENSE.webgl-noise"]
+        self.assertEqual(sorted(set(files) - set(shaders)), notices + [ISF_PACK + "SHA256SUMS"])
         by_licence = {}
-        for licence, patterns in annotations():
+        for licence, patterns, holders in annotations(holders=True):
             for p in files:
                 if any(matches(p, pattern) for pattern in patterns):
-                    by_licence.setdefault(p, []).append(licence)
-        for p in shaders + [ISF_PACK + "LICENSE"]:
-            self.assertEqual(by_licence.get(p), ["MIT"], p)
+                    by_licence.setdefault(p, []).append((licence, holders))
+        noise = [ISF_PACK + "isf-ridgelines.fs", ISF_PACK + "isf-simplex-noise.fs", ISF_PACK + "LICENSE.webgl-noise"]
+        for p in shaders + notices:
+            self.assertEqual({licence for licence, _ in by_licence.get(p, [])}, {"MIT"}, p)
+            last = by_licence[p][-1][1]                                   # the last annotation that matches is the one that counts
+            self.assertIn("ISF-Files", last, p)
+            self.assertEqual("Ashima Arts" in last and "Stefan Gustavson" in last, p in noise, p)
         self.assertTrue(os.path.isfile(os.path.join(REPO, "LICENSES", "MIT.txt")))
-        with open(os.path.join(REPO, ISF_PACK, "LICENSE"), "rb") as f:
-            self.assertEqual(hashlib.sha256(f.read()).hexdigest(), ISF_LICENSE_SHA256)
+        for name, digest in (("LICENSE", ISF_LICENSE_SHA256), ("LICENSE.webgl-noise", WEBGL_NOISE_LICENSE_SHA256),
+                             ("SHA256SUMS", ISF_SUMS_SHA256)):
+            with open(os.path.join(REPO, ISF_PACK, name), "rb") as f:
+                data = f.read()
+            self.assertEqual(hashlib.sha256(data).hexdigest(), digest, name)
+            if name != "SHA256SUMS":
+                self.assertIn(b"Permission is hereby granted, free of charge", data, name)
+        with open(os.path.join(REPO, ISF_PACK, "LICENSE.webgl-noise")) as f:
+            self.assertIn("Copyright (C) 2011 by Ashima Arts", f.read())
+        for p in noise[:2]:                                                 # the files that need that notice are these two
+            with open(os.path.join(REPO, p), encoding="utf-8") as f:
+                self.assertIn("Ashima", f.read(), p)
         with open(os.path.join(REPO, ISF_PACK, "SHA256SUMS")) as f:
             sums = dict(reversed(line.rstrip("\n").split("  ", 1)) for line in f)
         self.assertEqual(sorted(sums), [os.path.basename(p) for p in shaders])
@@ -94,6 +121,7 @@ class LicenseTest(unittest.TestCase):
         self.assertIn("https://github.com/Vidvox/ISF-Files", inventory)
         self.assertRegex(inventory, r"\b[0-9a-f]{40}\b")                          # the upstream commit
         self.assertIn("Permission is hereby granted, free of charge", inventory)
+        self.assertIn("Copyright (C) 2011 by Ashima Arts (Simplex noise)", inventory)
         for p in shaders:
             name = os.path.basename(p)
             with open(os.path.join(REPO, p), "rb") as f:

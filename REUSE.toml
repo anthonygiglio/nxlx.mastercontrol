@@ -36,3 +36,19 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2018 the authors of ISF-Files (VIDVOX and the people named in each file's CREDIT)"
 SPDX-License-Identifier = "MIT"
+
+# The two noise shaders also hold the simplex noise of https://github.com/ashima/webgl-noise (MIT), whose notice is
+# kept beside them. This annotation comes last, so it is the one that counts for these three files.
+[[annotations]]
+path = [
+  "pvj/shaders.d/isf-files/isf-simplex-noise.fs",
+  "pvj/shaders.d/isf-files/isf-ridgelines.fs",
+  "pvj/shaders.d/isf-files/LICENSE.webgl-noise",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = [
+  "2018 the authors of ISF-Files (VIDVOX and the people named in each file's CREDIT)",
+  "2011 Ashima Arts",
+  "2011-2016 Stefan Gustavson",
+]
+SPDX-License-Identifier = "MIT"

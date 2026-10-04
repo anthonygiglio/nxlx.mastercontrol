@@ -16,7 +16,9 @@ from tests.test_server import ServerBase
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ISF_PACK = os.path.join(S.BUNDLED_DIR, "isf-files")
 # The third-party pack (Vidvox ISF-Files, MIT): in the library, never in the Vibes rotation by itself.
-PACKED = sorted(n for n in os.listdir(ISF_PACK) if n.endswith(".fs"))
+# Named one by one (tests/test_license.py pins the same list and the checksums): the pack changes by decision only.
+PACKED = ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs", "isf-radial-gradient.fs", "isf-ridgelines.fs",
+          "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs", "isf-spiral.fs"]
 HEAD ={"ISFVSN": "2", "DESCRIPTION": "test", "CREDIT": "tests", "INPUTS": [
     {"NAME": "speed", "TYPE": "float", "MIN": 0.5, "MAX": 2.0, "DEFAULT": 1.0, "LABEL": "Speed"},
     {"NAME": "flip", "TYPE": "bool", "DEFAULT": True},
@@ -150,6 +152,11 @@ class TranslatorTest(unittest.TestCase):
                      "#define frame 0", "#define a__b 1"):
             self.assertIn("is not allowed", refusal(self, isf(body=line + "\n" + ok)), line)
         self.assertIn("not allowed", refusal(self, isf(body="#define TWO \\\n 2.0\n" + ok)))       # no line continuations
+        # `hook` is the function the player calls: no file may define or name it (it was refused only as an input or
+        # a #define, and a file with its own hook() then failed in the GPU compiler instead of here)
+        for line in ("vec4 hook() { return vec4(1.0); }", "float hook = 1.0;", "vec4 Hook(void) { return vec4(0.0); }", "float x = HOOK;"):
+            self.assertIn("used by the player", refusal(self, isf(body=line + "\n" + ok)), line)
+        self.assertTrue(S.parse(isf(body="float hooky = 1.0; float unhook = 2.0;\n" + ok)))        # only the word itself
         self.assertIn("never closed", refusal(self, isf(body=ok + "\n/* open")))
         self.assertNotIn("secret", S.translate(S.parse(isf(body=ok + " // secret\n/* secret */")), (640, 360)))
         # (text that is not ASCII is allowed inside a comment now, since comments are never passed on: see the test of
@@ -168,12 +175,20 @@ class TranslatorTest(unittest.TestCase):
         self.assertTrue(out.isascii())
         self.assertFalse(any(word in out for word in ("Spectrum", "secret", "line */")))
         self.assertTrue(all(" " <= ch <= "~" or ch == "\n" for ch in out), "only printable ASCII and line breaks reach the player")
+        # a backslash too, inside a comment (ASCII art, a Windows path): it was refused there although the comment
+        # never reaches the player; in the code it is refused as before, wherever it stands
+        kept = S.translate(S.parse(isf(body="// a path C:\\shaders\\x and a slope /\\\n/* \\ */ " + ok + " // end \\")), (640, 360))
+        self.assertNotIn("\\", kept)
+        for body in ("#define TWO \\\n 2.0\n" + ok, "float a = 1.0; \\\n" + ok, "/* x */ \\\n" + ok, ok + "\\"):
+            self.assertIn("line continuations", refusal(self, isf(body=body)), body)
+        # a // comment that ends in a backslash does not swallow the next line here: that line is read as code
+        self.assertIn("uniform, varying, in or out", refusal(self, isf(body="// x \\\nuniform float u;\n" + ok)))
+        self.assertIn("gl_FragColor".replace("gl_FragColor", "pvj_color"), S.translate(S.parse(isf(body="// x \\\n" + ok)), (640, 360)))
         # a comment cannot be used to carry something past the checks: what follows it is still read as code
         for body, reason in (("// \u2013\nuniform float u;\n" + ok, "uniform, varying, in or out"),
                              ("/* \u2013 */ #pragma optimize(off)\n" + ok, "not allowed"),
                              ("// \u2028\n#include <x>\n" + ok, "not allowed"),
                              ("/* \u2013 */ float HOOKED_x;\n" + ok, "used by the player"),
-                             ("// \u2013 \\\n" + ok, "line continuations"),
                              ("/* \u2013\n//!HOOK OUTPUT\n*/" + ok, "//!")):
             self.assertIn(reason, refusal(self, isf(body=body)), body)
 
@@ -641,7 +656,7 @@ class EngineTest(Base):
         own = [s for s in rows if s["pack"] == "nxlx"]
         pack = [s for s in rows if s["pack"] == "isf-files"]
         self.assertEqual((len(own), [s["id"] for s in pack]), (10, sorted(PACKED, key=str.lower)))
-        self.assertGreaterEqual(len(pack), 8)
+        self.assertEqual(sorted(n for n in os.listdir(ISF_PACK) if n.endswith(".fs")), PACKED)
         self.assertEqual([s["id"] for s in rows[:10]], [s["id"] for s in own])    # the project's own come first
         for s in pack:
             self.assertEqual((s["source"], s["error"], s["vibes"]), ("bundled", None, False), s["id"])
@@ -696,8 +711,69 @@ class EngineTest(Base):
         with open(os.path.join(self.tmp, "shaders", sid), "w") as f:
             f.write(GOOD)
         rows = [s for s in self.engine.library() if s["id"] == sid]
-        self.assertEqual([(s["pack"], s["source"]) for s in rows], [("isf-files", "bundled")])
+        self.assertEqual([(s["pack"], s["source"], s.get("hides_upload")) for s in rows], [("isf-files", "bundled", True)])
         self.assertEqual(self.engine._path(sid), (os.path.join(ISF_PACK, sid), "bundled"))
+        self.assertNotIn("hides_upload", [s for s in self.engine.library() if s["id"] == PACKED[1]][0])
+
+    def test_an_upload_hidden_behind_a_pack_file_takes_no_slot_and_can_be_removed(self):
+        """An upload made before the pack arrived, under a name the pack now has: it was hidden, could not be
+        deleted or replaced (409), still took one of the upload slots, and its old "not in Vibes" entry waited to
+        come back with it."""
+        sid, folder = PACKED[0], os.path.join(self.tmp, "shaders")
+        os.makedirs(folder)
+        with open(os.path.join(folder, sid), "w") as f:
+            f.write(GOOD)
+        self.settings.data["shaders"] = {"disabled": [sid, "nxlx-tide.fs"]}        # switched out when it was an upload
+        for i in range(S.MAX_UPLOADS):                                             # all 64 slots are still free
+            self.engine.upload("s%d.fs" % i, GOOD)
+        with self.assertRaises(ApiError) as c:
+            self.engine.upload("one-more.fs", GOOD)
+        self.assertIn("at most", c.exception.message)
+        self.assertEqual(len([s for s in self.engine.library() if s["pack"] == "uploads"]), S.MAX_UPLOADS)
+        self.engine.api_set({"action": "delete", "id": sid}, None, "t")            # removes the hidden upload
+        self.assertFalse(os.path.exists(os.path.join(folder, sid)))
+        self.assertTrue(os.path.exists(os.path.join(ISF_PACK, sid)))               # never the pack's file
+        self.assertEqual(self.settings.data["shaders"]["disabled"], ["nxlx-tide.fs"])      # the stale entry went with it
+        row = [s for s in self.engine.library() if s["id"] == sid][0]
+        self.assertEqual((row["pack"], row.get("hides_upload")), ("isf-files", None))
+        with self.assertRaises(ApiError) as c:                                     # nothing hidden any more: as before
+            self.engine.api_set({"action": "delete", "id": sid}, None, "t")
+        self.assertEqual(c.exception.status, 409)
+        # a file put by hand under the name of one of the project's own: removing it leaves that shader's switch alone
+        with open(os.path.join(folder, "nxlx-tide.fs"), "w") as f:
+            f.write(GOOD)
+        self.engine.api_set({"action": "delete", "id": "nxlx-tide.fs"}, None, "t")
+        self.assertFalse(os.path.exists(os.path.join(folder, "nxlx-tide.fs")))
+        self.assertTrue(os.path.exists(os.path.join(S.BUNDLED_DIR, "nxlx-tide.fs")))
+        self.assertEqual(self.settings.data["shaders"]["disabled"], ["nxlx-tide.fs"])
+        os.symlink(os.path.join(ISF_PACK, sid), os.path.join(folder, sid))         # a link is never followed or removed
+        with self.assertRaises(ApiError) as c:
+            self.engine.api_set({"action": "delete", "id": sid}, None, "t")
+        self.assertEqual(c.exception.status, 409)
+        self.assertTrue(os.path.lexists(os.path.join(folder, sid)))
+
+    def test_a_pack_is_found_however_many_of_the_projects_own_files_sort_before_it(self):
+        """The folder listing was cut at 64 names before the folders were picked out: with 64 files sorting before
+        `isf-files` the pack vanished, and an upload under one of its names was then stored."""
+        root = os.path.join(self.tmp, "bundle")
+        os.makedirs(os.path.join(root, "the-pack"))
+        for i in range(70):
+            with open(os.path.join(root, "a-own-%02d.fs" % i), "w") as f:
+                f.write(GOOD)
+        with open(os.path.join(root, "the-pack", "theirs.fs"), "w") as f:
+            f.write(GOOD)
+        for i in range(S.MAX_PACKS + 3):
+            os.makedirs(os.path.join(root, "z-pack-%02d" % i))
+        self.engine.bundled_dir = root
+        packs = [p for p, _ in self.engine.packs()]
+        self.assertEqual(packs[:2], ["nxlx", "the-pack"])
+        self.assertEqual(len(packs), 1 + S.MAX_PACKS)                              # the cap counts packs, not files
+        rows = {s["id"]: s for s in self.engine.library()}
+        self.assertEqual((len(rows), rows["theirs.fs"]["pack"]), (71, "the-pack"))
+        with self.assertRaises(ApiError) as c:
+            self.engine.upload("theirs.fs", GOOD)
+        self.assertEqual(c.exception.status, 409)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "shaders", "theirs.fs")))
 
     def test_real_isf_files_from_another_program_go_through_the_upload_route(self):
         """The way in for everything that is not bundled: a full-access device uploads the .fs file. The pack's files

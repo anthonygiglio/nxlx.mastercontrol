@@ -49,6 +49,7 @@ BUNDLED_DIR = os.path.join(os.path.dirname(__file__), "shaders.d")
 # shaders under its own licence (see THIRD_PARTY_LICENSES.md). Uploads are listed as the pack "uploads".
 PACK_OWN, PACK_UPLOADS = "nxlx", "uploads"
 PACK = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+MAX_PACKS = 16
 FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.\-]{0,59}\.fs")
 INPUT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")
 CARRIER = re.compile(r"av://lavfi:color=c=black:size=[0-9]{1,4}x[0-9]{1,4}:rate=%d,format=rgb0" % CARRIER_FPS)
@@ -74,7 +75,7 @@ _ALLOWED_DIRECTIVES = ("define", "undef", "if", "ifdef", "ifndef", "else", "elif
 _GLOBAL_IO = re.compile(r"\b(?:uniform|varying|attribute|layout)\b|(?:^|[;{}])\s*(?:in|out)\s")
 _IMG = re.compile(r"\bIMG_(?:PIXEL|NORM_PIXEL|THIS_PIXEL|THIS_NORM_PIXEL|SIZE)\b")
 # Names the player and this translator own, in any letter case: the hook, mpv's textures and their companions.
-_OWN = re.compile(r"\b(?:pvj_\w*|hooked\w*|texture\d+|texcoord\d+|texture_(?:size|rot|off)\d+|pixel_size\d+|texmap\d+"
+_OWN = re.compile(r"\b(?:pvj_\w*|hook|hooked\w*|texture\d+|texcoord\d+|texture_(?:size|rot|off)\d+|pixel_size\d+|texmap\d+"
                   r"|out_color|input_size|target_size|tex_offset)\b", re.I)
 # Two names that many ISF files use and the player owns. They are not refused: every use is renamed to a pvj_ name
 # (which a file cannot write itself), so the player's own `out_color` and `color` are never touched by a file.
@@ -266,11 +267,13 @@ def parse(source):
     seen = set()
     clean = [_input(i, seen) for i in inputs]
     body = source[end + 2:]
+    # Comments go first and are never passed on, so they may hold any text (real ISF files have dashes, arrows and
+    # bullets in theirs, and a backslash at times). What is left is what the compiler will read, and that must be
+    # plain ASCII without a backslash. A // comment ends at its line break here whatever its last character is, and
+    # the comment is not passed on, so a backslash at its end continues nothing.
+    body = strip_comments(body)
     if "\\" in body:
         raise ShaderError("the character \\ is not allowed in the code (no line continuations)")
-    # Comments go first and are never passed on, so they may hold any text (real ISF files have dashes, arrows and
-    # bullets in theirs). What is left is what the compiler will read, and that must be plain ASCII.
-    body = strip_comments(body)
     bad = sorted({ch for ch in body if not (" " <= ch <= "~" or ch in "\n\t")})
     if bad:
         raise ShaderError("the shader code may hold plain ASCII text only (found %r)" % bad[0])
@@ -557,10 +560,12 @@ class Engine:
             names = sorted(os.listdir(self.bundled_dir))
         except OSError:
             names = []
-        for n in names[:64]:
-            folder = os.path.join(self.bundled_dir, n)
+        for n in names:                     # folders are picked out first and counted after: the project's own files,
+            folder = os.path.join(self.bundled_dir, n)      # however many, can never push a pack off the list
             if PACK.fullmatch(n) and n not in (PACK_OWN, PACK_UPLOADS) and os.path.isdir(folder) and not os.path.islink(folder):
                 out.append((n, folder))
+                if len(out) > MAX_PACKS:
+                    break
         return out
 
     def _bundled(self, name):
@@ -571,6 +576,13 @@ class Engine:
             if os.path.isfile(path) and not os.path.islink(path):
                 return path, pack
         return None
+
+    def _hidden_upload(self, name):
+        """The path of an uploaded file that has the name of a bundled shader (and so is never listed or played), or None."""
+        path = os.path.join(self.dir, name)
+        if os.path.islink(self.dir) or os.path.islink(path) or not os.path.isfile(path):
+            return None
+        return path
 
     def _path(self, sid):
         """(path, "bundled" or "uploaded") of a shader by its file name; never a path outside the known folders."""
@@ -631,6 +643,8 @@ class Engine:
                 vibes = n in included if pack not in (PACK_OWN, PACK_UPLOADS) else n not in disabled
                 item = {"id": n, "name": n[:-3], "source": source, "pack": pack, "vibes": vibes, "description": "", "credit": "",
                         "cost": "", "inputs": [], "error": None}
+                if source == "bundled" and self._hidden_upload(n):
+                    item["hides_upload"] = True     # an older upload of this name lies unused; delete by this id removes it
                 try:
                     p = self._parsed(path)[0]
                     item.update(description=p["description"], credit=p["credit"], cost=p["cost"],
@@ -856,7 +870,8 @@ class Engine:
                 raise ApiError(409, "a shader with that name already exists")
             if os.path.islink(final):
                 raise ApiError(409, "refusing to replace a link")
-            if not exists and len(self._names(self.dir)) >= MAX_UPLOADS:
+            # a file hidden behind a bundled shader of the same name is not one of the owner's usable uploads
+            if not exists and len([n for n in self._names(self.dir) if not self._bundled(n)]) >= MAX_UPLOADS:
                 raise ApiError(409, "at most %d uploaded shaders; delete one first" % MAX_UPLOADS)
             tmp = os.path.join(self.dir, ".upload-%d-%d" % (os.getpid(), threading.get_ident()))
             try:
@@ -889,14 +904,19 @@ class Engine:
     def delete(self, sid):
         path, source = self._path(sid)
         if source != "uploaded":
-            raise ApiError(409, "a bundled shader cannot be deleted; switch it off for Vibes instead")
+            # An upload of the same name that was there before the bundled file came is hidden behind it (the
+            # library says so with "hides_upload"): deleting by that name removes the upload, never the bundled file.
+            path = self._hidden_upload(sid)
+            if not path:
+                raise ApiError(409, "a bundled shader cannot be deleted; switch it off for Vibes instead")
         with self._lock:
             try:
                 os.unlink(path)
             except OSError as e:
                 raise ApiError(500, "could not delete: %s" % (e.strerror or e))
             cfg = self.config()
-            if sid in cfg["disabled"]:
+            hit = self._bundled(sid)        # one of the project's own keeps its entry: there it is that shader's switch
+            if sid in cfg["disabled"] and not (hit and hit[1] == PACK_OWN):
                 cfg["disabled"] = [n for n in cfg["disabled"] if n != sid]
                 self._save(cfg)
 
