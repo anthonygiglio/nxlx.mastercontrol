@@ -251,28 +251,70 @@ class RuntimeFolderTest(unittest.TestCase):
         with open(os.path.join(REPO, "install", "pvj-tmpfiles.conf")) as f:
             lines = [ln.split() for ln in f if ln.strip() and not ln.startswith("#")]
         self.assertEqual(lines[0], ["d", p.RUN, "0755", "root", "root", "-"])
-        self.assertEqual(lines[1], ["d", p.WEB_DIR, "0750", "pvj-web", "pvj", "-"])
+        self.assertEqual(lines[1], ["f", p.RUN + "/.d45", "0644", "root", "root", "-"])     # the installer's "done"
+        self.assertEqual(lines[2], ["d", p.WEB_DIR, "0750", "pvj-web", "pvj", "-"])
+        # inside the panel's folder root makes links only, and sets no owner or mode there
+        for ln in lines[3:]:
+            self.assertEqual((ln[0], ln[2:5]), ("L+", ["-", "-", "-"]), ln)
         links = {ln[1]: ln[-1] for ln in lines if ln[0] == "L+"}
         self.assertEqual(links, {p.WEB_DIR + "/player.sock": p.PLAYER_DIR + "/" + p.PLAYER_SOCKET,
                                  p.WEB_DIR + "/netd.sock": p.NETD_DIR + "/" + p.NETD_SOCKET})
-        self.assertEqual(len(lines), 4)
+        self.assertEqual(len(lines), 5)
         for ln in lines:                                   # nothing outside the parent and the panel's own folder
-            self.assertTrue(ln[1] == p.RUN or ln[1].startswith(p.WEB_DIR), ln)
+            self.assertTrue(ln[1] in (p.RUN, p.RUN + "/.d45") or ln[1].startswith(p.WEB_DIR), ln)
 
-    def test_the_installer_takes_the_folder_back_after_the_reload_and_before_any_restart(self):
+    def installer(self):
         with open(os.path.join(REPO, "install", "install.sh")) as f:
-            sh = f.read()
-        real = sh[sh.index('[ -d /run/systemd/system ]; then\n\tsystemctl daemon-reload'):]
-        reload_, fix, restart = real.index("systemctl daemon-reload"), real.index("fix_run_folder"), real.index("systemctl restart pvj-player.service")
-        self.assertLess(reload_, fix)      # before the reload a player that restarts by itself takes the folder back
-        self.assertLess(fix, restart)
-        body = sh[sh.index("fix_run_folder() {"):sh.index("\n}\n", sh.index("fix_run_folder() {"))]
-        self.assertLess(body.index("chown root:root"), body.index("-mindepth 1 -delete"))     # first take it, then empty it
-        self.assertLess(body.index("chmod 0755"), body.index("-mindepth 1 -delete"))
-        self.assertLess(body.index("-mindepth 1 -delete"), body.index("systemd-tmpfiles --create"))
+            return f.read()
+
+    @staticmethod
+    def function(sh, name):
+        start = sh.index(name + "() {")
+        return sh[start:sh.index("\n}\n", start)]
+
+    def test_the_installer_stops_the_services_then_reloads_then_takes_the_folder_back_then_restarts(self):
+        sh = self.installer()
+        real = sh[sh.index('[ -d /run/systemd/system ]; then\n\tprepare_run_folder'):]
+        order = [real.index(x) for x in ("prepare_run_folder", "systemctl daemon-reload", "fix_run_folder",
+                                         "systemctl restart pvj-player.service")]
+        # before the reload a player that restarts by itself runs its old unit and takes the folder back; between
+        # the reload and the emptying a restart would let systemd chown a name planted as /run/pvj/player
+        self.assertEqual(order, sorted(order))
+        prepare = self.function(sh, "prepare_run_folder")
+        self.assertIn('systemctl stop "${RUN_UNITS[@]}"', prepare)
+        self.assertLess(prepare.index("is-active"), prepare.index("systemctl stop"))
+        self.assertIn("RUN_UNITS=(pvj-player.service pvj-web.service pvj-netd.service)", sh)
+        self.assertNotIn("systemctl start", sh[:sh.index("fix_run_folder\n\tif systemctl restart systemd-journald")])
+        body = self.function(sh, "fix_run_folder")
+        steps = [body.index(x) for x in ("chown root:root", "chmod 0755", 'rm -f "$RUN_MARK"', "-mindepth 1 -delete || die",
+                                         "systemd-tmpfiles --create")]
+        self.assertEqual(steps, sorted(steps))     # take it, forget "done", empty it or stop, and only then "done"
         # an update from the panel installs with --no-start and restarts only the player and the panel
         self.assertIn("systemctl try-restart pvj-netd.service", sh)
+        self.assertIn('systemctl start "${RUN_WAS_ACTIVE[@]}"', sh)
         self.assertIn('"$TMPFILES"', sh[sh.index("uninstall() {"):sh.index("if [ \"$UNINSTALL\" = 1 ]")])
+
+    def test_root_never_writes_chowns_or_chmods_a_name_inside_a_folder_an_account_owns(self):
+        # Found by the review: the installer wrote a note into /run/pvj/web as root, and a link planted there by
+        # the panel's account sent the write, the chown and the chmod anywhere. In these functions root may only
+        # chown and chmod /run/pvj itself, remove names, and let tmpfiles write the marker in /run/pvj.
+        sh = self.installer()
+        for name in ("run_folder_is_sound", "prepare_run_folder", "fix_run_folder"):
+            body = "\n".join(ln.split("  #")[0] for ln in self.function(sh, name).splitlines() if not ln.lstrip().startswith("#"))
+            for ln in body.splitlines():
+                if re.search(r"\b(chown|chmod|install|cp|mv|ln|mkdir|touch|tee|printf|echo|cat)\b", ln) or re.search(r"(?<![<0-9])>", ln):
+                    if ln.strip().startswith("log ") or "|| die" in ln or "|| log" in ln:
+                        continue
+                    targets = re.findall(r'"(\$[A-Z_]+[^"]*)"', ln)
+                    self.assertTrue(targets, ln)
+                    for t in targets:
+                        self.assertIn(t, ("$RUN_DIR", "$RUN_MARK", "${RUN_UNITS[@]}", "$REAL", "$RUN_EMPTY"), ln)
+            for word in ("/web", "/player", "/netd", "undervoltage", "pvj-web:pvj"):
+                self.assertNotIn(word, body.replace('web) want="pvj-web:pvj 750"', ""), "%s in %s" % (word, name))
+        self.assertNotIn("undervoltage", sh)
+        # the marker is in the folder that is root's, never in a service's
+        self.assertIn('RUN_MARK="$RUN_DIR/.d45"', sh)
+        self.assertIn('RUN_DIR="$ROOT/run/pvj"', sh)
 
     def test_the_pin_command_reads_where_the_panel_writes(self):
         with open(os.path.join(REPO, "bin", "pvj-pin")) as f:
@@ -288,6 +330,25 @@ class RuntimeFolderTest(unittest.TestCase):
                 if '"""' in ln:
                     continue
                 self.assertNotRegex(ln, r"""["']/run/pvj""", "%s: %s" % (os.path.basename(path), ln.strip()))
+
+    def test_every_runtime_path_in_bin_and_install_is_one_the_paths_module_knows(self):
+        # Shell and unit files cannot import pvj/paths.py, so every /run/pvj... they name must be one of its paths.
+        p = self.paths
+        known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR,
+                 p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
+                 p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
+                 p.RUN + "/<name>"}
+        files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*"))
+        seen = set()
+        for path in files:
+            if path.endswith(".md"):
+                continue
+            with open(path) as f:
+                for found in re.findall(r"/run/pvj[A-Za-z0-9_./<>-]*", f.read()):
+                    found = found.rstrip(".")
+                    seen.add(found)
+                    self.assertIn(found, known, "%s names %s" % (os.path.basename(path), found))
+        self.assertTrue({p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_RESULT} <= seen)
 
 
 class InstallerOwnershipTest(unittest.TestCase):

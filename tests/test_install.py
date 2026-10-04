@@ -124,32 +124,64 @@ class InstallTest(unittest.TestCase):
         os.chmod(run, mode)
         return run
 
-    def test_upgrade_over_a_running_older_install_empties_the_shared_folder_and_keeps_only_the_power_note(self):
+    def test_upgrade_over_a_running_older_install_empties_the_shared_folder(self):
         run = self.old_run_folder()
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("a folder per service", r.stdout)
         self.assertEqual(os.stat(run).st_mode & 0o7777, 0o755)                  # on a box also chown root:root
-        self.assertEqual(os.listdir(run), ["web"])                               # no stale file, link or planted folder
-        self.assertFalse(os.path.islink(os.path.join(run, "web")))
-        self.assertEqual(os.stat(os.path.join(run, "web")).st_mode & 0o7777, 0o750)
-        self.assertEqual(os.listdir(os.path.join(run, "web")), ["undervoltage-seen"])
-        self.assertEqual(self.read(os.path.join(run, "web", "undervoltage-seen")), "1759570000")
+        self.assertEqual(os.listdir(run), [".d45"])            # no stale file, link or planted folder; only the marker
         self.assertTrue(os.path.isdir("/etc") and os.path.isfile("/etc/passwd"))   # the links were removed, not followed
 
-    def test_upgrade_does_not_carry_a_note_that_is_a_link_or_not_a_number(self):
+    def test_nothing_is_carried_over_so_a_planted_link_in_the_panels_folder_leads_nowhere(self):
+        # The first version copied the undervoltage note into the panel's folder as root. That folder belongs to
+        # pvj-web: a dangling link planted there made root create its target anywhere (found by the review).
         run = self.old_run_folder()
-        os.unlink(os.path.join(run, "undervoltage-seen"))
-        os.symlink("/etc/passwd", os.path.join(run, "undervoltage-seen"))
+        outside = os.path.join(tempfile.mkdtemp(), "made-by-root")
+        os.chmod(run, 0o770)
+        os.unlink(os.path.join(run, "web"))
+        os.mkdir(os.path.join(run, "web"))
+        os.symlink(outside, os.path.join(run, "web", "undervoltage-seen"))
         self.assertEqual(install(self.src, self.stage).returncode, 0)
-        self.assertEqual(os.listdir(os.path.join(run, "web")), [])
-        stage2 = tempfile.mkdtemp()
-        self.stage = stage2
-        run = self.old_run_folder()
+        self.assertFalse(os.path.lexists(outside))
+        self.assertEqual(os.listdir(run), [".d45"])
+        # and with the new layout in place: a link planted by the account that owns the folder is left alone
+        os.mkdir(os.path.join(run, "web"), 0o750)
+        os.symlink(outside, os.path.join(run, "web", "undervoltage-seen"))
         with open(os.path.join(run, "undervoltage-seen"), "w") as f:
-            f.write("$(reboot); rm -rf /\n")
-        self.assertEqual(install(self.src, stage2).returncode, 0)
-        self.assertEqual(os.listdir(os.path.join(run, "web")), [])
+            f.write("1759570000")
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.assertFalse(os.path.lexists(outside))
+        self.assertEqual(sorted(os.listdir(run)), [".d45", "web"])
+        self.assertEqual(os.readlink(os.path.join(run, "web", "undervoltage-seen")), outside)
+
+    def test_an_emptying_that_was_cut_short_is_finished_by_the_next_run(self):
+        # after the chown and chmod of an interrupted run the folder already looks right from outside: root's, 0755
+        run = self.old_run_folder(mode=0o755)
+        self.assertFalse(os.path.exists(os.path.join(run, ".d45")))
+        r = install(self.src, self.stage)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("a folder per service", r.stdout)
+        self.assertEqual(os.listdir(run), [".d45"])            # the planted netd/ with its fake socket is gone
+
+    def test_a_marker_that_is_a_link_or_a_folder_nobody_should_have_made_means_not_done(self):
+        for plant in ("link", "folder"):
+            stage = tempfile.mkdtemp()
+            self.stage = stage
+            run = self.p("run/pvj")
+            os.makedirs(os.path.join(run, "netd"))
+            if plant == "link":
+                os.symlink("/etc/hostname", os.path.join(run, ".d45"))
+            else:
+                with open(os.path.join(run, ".d45"), "w"):
+                    pass
+                os.mkdir(os.path.join(run, "netd2"))
+            os.chmod(run, 0o755)
+            r = install(self.src, stage)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("a folder per service", r.stdout, plant)
+            self.assertEqual(os.listdir(run), [".d45"], plant)
+            self.assertFalse(os.path.islink(os.path.join(run, ".d45")))
 
     def test_reinstall_over_the_new_layout_leaves_the_services_folders_alone(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)
@@ -160,11 +192,13 @@ class InstallTest(unittest.TestCase):
                 f.write("in use")
         with open(os.path.join(run, "stray"), "w") as f:
             f.write("x")
+        with open(os.path.join(run, ".d45"), "w"):
+            pass
         os.chmod(run, 0o755)
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("a folder per service", r.stdout)
-        self.assertEqual(sorted(os.listdir(run)), ["netd", "player", "web"])     # the stray file went, the folders stayed
+        self.assertEqual(sorted(os.listdir(run)), [".d45", "netd", "player", "web"])     # the stray file went
         for d in ("player", "web", "netd"):
             self.assertEqual(self.read(os.path.join(run, d, "live")), "in use")
 

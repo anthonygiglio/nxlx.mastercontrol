@@ -280,44 +280,88 @@ fi
 
 # Runtime folders (D45). Older versions shared one RuntimeDirectory, /run/pvj, between the player, the panel and the
 # root network helper, and systemd gave it to whichever started last; it stays like that until the next boot unless
-# it is put right here. On a running system call this only AFTER daemon-reload: until then a player or panel that
-# restarts by itself still runs its old unit and takes the folder back. With --stage it works on DIR/run/pvj and
-# leaves owners alone (the tests).
-fix_run_folder() {
-	local dir="$ROOT/run/pvj" note="" have want="root:root 755"
-	if [ -L "$dir" ]; then rm -f "$dir"; fi
-	if [ -d "$dir" ]; then
-		have="$(stat -c '%U:%G %a' "$dir")"
-		if [ "$REAL" = 0 ]; then have="${have##* }"; want=755; fi
-		if [ "$have" != "$want" ]; then
-			log "moving the runtime files to a folder per service ($dir now belongs to root)"
-			# First take the folder away from its owner, then empty it: the old sockets, the PIN, and anything an
-			# account that owned the folder may have left, also under the names of the new folders. Every service
-			# that had a file here is restarted below, or by pvj-update, and makes its own again in its own folder.
-			if [ "$REAL" = 1 ]; then chown root:root "$dir"; fi
-			chmod 0755 "$dir"
-			if [ -f "$dir/undervoltage-seen" ] && [ ! -L "$dir/undervoltage-seen" ]; then
-				note="$(head -c 64 "$dir/undervoltage-seen" | tr -cd '0-9')"     # when low power was first seen since this boot
-			fi
-			find "$dir" -mindepth 1 -delete
-			if [ "$START" = 0 ]; then log "services that were running have lost their sockets: restart them (or the box)"; fi
-		else
-			find "$dir" -mindepth 1 -maxdepth 1 ! -type d -delete     # nothing but the services' folders belongs here
-		fi
-	fi
+# it is put right here. Rules for this part, each from the independent review:
+#   * root never creates, writes, chowns or chmods a name inside a folder that an unprivileged account owns (a link
+#     planted there would send it anywhere); it only takes /run/pvj itself, in /run, and deletes below it;
+#   * the folder counts as done only when a marker says so, and the marker is written last (by tmpfiles, as root, in
+#     the folder that is root's by then), so an emptying that was cut short is finished by the next run;
+#   * the three services are stopped BEFORE the reload and the emptying, so none can restart by itself in between
+#     and have systemd chown a planted name.
+# With --stage all of it works on DIR/run/pvj and leaves owners alone (the tests).
+RUN_DIR="$ROOT/run/pvj"
+RUN_MARK="$RUN_DIR/.d45"
+RUN_UNITS=(pvj-player.service pvj-web.service pvj-netd.service)
+RUN_WAS_ACTIVE=()
+RUN_EMPTY=0
+
+# True when /run/pvj is root's, has the marker, and holds nothing but the services' folders, each with its own owner.
+run_folder_is_sound() {
+	local entry want
+	if [ ! -d "$RUN_DIR" ] || [ -L "$RUN_DIR" ]; then return 1; fi
+	if [ ! -f "$RUN_MARK" ] || [ -L "$RUN_MARK" ]; then return 1; fi
 	if [ "$REAL" = 1 ]; then
-		systemd-tmpfiles --create "$TMPFILES" || log "systemd-tmpfiles failed; /run/pvj is set up at the next boot"
-	elif [ -d "$dir" ]; then
-		mkdir -p "$dir/web"
-		chmod 0750 "$dir/web"
+		if [ "$(stat -c '%U:%G %a' "$RUN_DIR")" != "root:root 755" ]; then return 1; fi
+		if [ "$(stat -c '%U:%G' "$RUN_MARK")" != "root:root" ]; then return 1; fi
+	elif [ "$(stat -c '%a' "$RUN_DIR")" != "755" ]; then
+		return 1
 	fi
-	if [ -n "$note" ] && [ -d "$dir/web" ] && [ ! -L "$dir/web" ] && [ ! -e "$dir/web/undervoltage-seen" ]; then
-		printf '%s' "$note" > "$dir/web/undervoltage-seen"
-		if [ "$REAL" = 1 ]; then chown pvj-web:pvj "$dir/web/undervoltage-seen"; fi
-		chmod 0640 "$dir/web/undervoltage-seen"
+	while IFS= read -r -d '' entry; do
+		case "${entry##*/}" in
+		.d45) continue ;;
+		player) want="$PVJ_USER:pvj 750" ;;
+		web) want="pvj-web:pvj 750" ;;
+		netd) want="root:pvj 750" ;;
+		*)
+			if [ -d "$entry" ] && [ ! -L "$entry" ]; then return 1; fi     # a folder nobody should have made
+			continue ;;                                                    # a stray file or link: removed below
+		esac
+		if [ ! -d "$entry" ] || [ -L "$entry" ]; then return 1; fi
+		if [ "$REAL" = 1 ] && [ "$(stat -c '%U:%G %a' "$entry")" != "$want" ]; then return 1; fi
+	done < <(find "$RUN_DIR" -mindepth 1 -maxdepth 1 -print0)
+	return 0
+}
+
+# Before daemon-reload: decide, and stop what could write there or be restarted by systemd in the middle.
+prepare_run_folder() {
+	local u
+	if [ ! -e "$RUN_DIR" ] && [ ! -L "$RUN_DIR" ]; then return 0; fi
+	if run_folder_is_sound; then return 0; fi
+	RUN_EMPTY=1
+	if [ "$REAL" = 1 ]; then
+		for u in "${RUN_UNITS[@]}"; do
+			if systemctl is-active --quiet "$u"; then RUN_WAS_ACTIVE+=("$u"); fi
+		done
+		log "stopping the player, the panel and the network helper while their runtime folder is rebuilt"
+		systemctl stop "${RUN_UNITS[@]}" 2>/dev/null || true
 	fi
 }
-if [ "$REAL" = 0 ] && [ "$DRY" = 0 ]; then fix_run_folder; fi
+
+# After daemon-reload and before any (re)start.
+fix_run_folder() {
+	if [ "$RUN_EMPTY" = 1 ]; then
+		log "moving the runtime files to a folder per service ($RUN_DIR now belongs to root)"
+		if [ -L "$RUN_DIR" ]; then rm -f "$RUN_DIR"; fi
+		if [ -d "$RUN_DIR" ]; then
+			# First take the folder away from its owner, then empty it: the old sockets, the PIN, and anything an
+			# account that owned the folder may have left, also under the names of the new folders. The marker goes
+			# first, so a run that stops half-way is seen as unfinished.
+			if [ "$REAL" = 1 ]; then chown root:root "$RUN_DIR"; fi
+			chmod 0755 "$RUN_DIR"
+			rm -f "$RUN_MARK"
+			find "$RUN_DIR" -mindepth 1 -delete || die "could not empty $RUN_DIR (something is still writing there); the player, the panel and the network helper are stopped: run the installer again"
+		fi
+	elif [ -d "$RUN_DIR" ]; then
+		# Nothing but the marker and the services' folders belongs here.
+		find "$RUN_DIR" -mindepth 1 -maxdepth 1 ! -type d ! -name .d45 -delete || die "could not tidy $RUN_DIR; run the installer again"
+	fi
+	if [ "$REAL" = 1 ]; then
+		# Creates /run/pvj and the marker if they are missing (see pvj-tmpfiles.conf), as at boot.
+		systemd-tmpfiles --create "$TMPFILES" || log "systemd-tmpfiles reported a problem; /run/pvj is checked again at the next install and set up at the next boot"
+	elif [ -d "$RUN_DIR" ]; then
+		: > "$RUN_MARK"
+	fi
+}
+if [ "$REAL" = 0 ] && [ "$DRY" = 0 ]; then prepare_run_folder; fix_run_folder; fi
 # USB automount: udev starts pvj-usb@<partition>.service, which mounts by label.
 run mkdir -p "$(dirname "$USB_RULE")"
 if [ "$DRY" = 0 ]; then
@@ -326,6 +370,7 @@ if [ "$DRY" = 0 ]; then
 fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
+	prepare_run_folder
 	systemctl daemon-reload
 	fix_run_folder
 	if systemctl restart systemd-journald.service 2>/dev/null; then journalctl --flush 2>/dev/null || true; fi
@@ -341,6 +386,8 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	else
 		log "NetworkManager not found: network settings in the panel stay unavailable"
 	fi
+	# With --no-start: what was stopped above for the runtime folder is started again, and nothing else.
+	if [ "$START" = 0 ] && [ ${#RUN_WAS_ACTIVE[@]} -gt 0 ]; then systemctl start "${RUN_WAS_ACTIVE[@]}" || true; fi
 fi
 
 log "installed. Check the device with: pvj-selftest --play"
