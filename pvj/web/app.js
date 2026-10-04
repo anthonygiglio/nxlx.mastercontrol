@@ -2741,7 +2741,7 @@
     function chooser(id, label, options, value, set) {
       var sel = h('select', { class: 'text-input', id: id }, options.map(function (o) { return h('option', { value: o[0], text: o[1], selected: o[0] === value }); }));
       sel.addEventListener('change', function () { set(parseInt(sel.value, 10)); });
-      return [h('label', { class: 'field', for: id, text: label }), sel];
+      return h('div', { class: 'chooser' }, h('label', { class: 'field', for: id, text: label }), sel);
     }
     function send(path, body, said) {
       return api('POST', path, body).then(function (r) {
