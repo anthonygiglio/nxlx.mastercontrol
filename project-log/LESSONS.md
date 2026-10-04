@@ -71,3 +71,7 @@ The Wi-Fi code wrote its keyfile under `/etc/NetworkManager/system-connections`,
 ## An undo must never be dropped because one command was slow (2026-10-04)
 
 `_attempt_revert` asked nmcli whether the candidate existed inside the `try` meant for a bad saved connection id. A single nmcli timeout there deleted the saved state and forgot the undo, leaving an unconfirmed network up with no timer. Only a bad saved id is a reason to give up planning; anything nmcli does is a failed try. And after many failed tries the helper used to forget the job too, which let a new change overwrite the saved state; now it keeps trying once a minute and refuses new changes until the undo has worked.
+
+## A card that asks the server while it is being built (2026-10-04)
+
+The Updates card called `refresh()` while it was being built, and `refresh()` does nothing until the card is on the page. On the old single System screen a later redraw hid this; with one page per item there was no later redraw, so the card stayed at "Loading..." and the browser test timed out at `#updateversion`. A card that checks `isConnected` must start its first request after it is attached (`setTimeout(refresh, 0)`).
