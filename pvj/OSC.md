@@ -1,6 +1,6 @@
 # OSC control
 
-Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **System > Control (OSC)** (full-access devices only). Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
+Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **System > OSC** (full-access devices only). Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
 
 ## Safety
 
@@ -46,7 +46,7 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 Also from the old receiver: `/startmasteronce01` to `/startmasteronce99` (play the clip numbered so, once; these failed silently before), `/testscreen` and `/testscreenoff` (the test pattern), `/testtone`, `/testtoneleft`, `/testtoneright`, `/overlay` and `/stopoverlay` (the overlay picture chosen on the Mix screen), `/image` (the slideshow of the media folder) and `/stopimage`, `/fliph` and `/flipv` (each press switches the mirror over, like the old buttons).
 
 Not carried over:
-- on purpose, because they change settings or the system, which needs a full-access device: `/audiohdmiout`, `/audiojack`, `/audiousb`, `/audioboth` (System > Sound output), `/startslave` (System > Sync and video wall), `/reboot`, `/shutdown`, `/rebootall`, `/shutdownall`, `/customfunction1` and `/customfunction2` (they ran shell scripts);
+- on purpose, because they change settings or the system, which needs a full-access device: `/audiohdmiout`, `/audiojack`, `/audiousb`, `/audioboth` (System > Sound), `/startslave` (System > Boxes in step), `/reboot`, `/shutdown`, `/rebootall`, `/shutdownall`, `/customfunction1` and `/customfunction2` (they ran shell scripts);
 - not built yet: `/screenon` and `/screenoff` (display sleep), the clock (`/clockdisplay` and colours), `/imageusb` and `/imagemanual`, the audio player (`/startaudio...`, `/stopaudio`), the PDF presenter (`/startpdf...`), the camera and its effects, soft edge, `/getcontent`;
 - replaced: PiWall (`/piwallmaster`, `/piwallloop`) by Sync and video wall; Syphon (`/tcpsserver`) and `/ndisend`, `/ndireceiver` wait for NDI.
 

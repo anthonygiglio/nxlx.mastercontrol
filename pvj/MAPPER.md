@@ -4,7 +4,7 @@
 
 Put pieces of the picture onto the surfaces of a set, a building or a curved screen. This replaces the old Mapping tab (ofxPiMapper, steered by a USB mouse and a fake keyboard): there is no mouse on the box and no separate program; the player's own GPU draws the mapping, and you set it up from a phone or laptop.
 
-Switch the **Projection mapper** module on under System > Modules (beta, off by default). The card is on the **Mix** screen. Full-access devices edit; everyone else sees the state.
+Switch it on under System > Projection mapping (beta, off by default). The card is on the **Mix** screen; the System page has a button that takes you there. Full-access devices edit; everyone else sees the state.
 
 ## Surfaces
 

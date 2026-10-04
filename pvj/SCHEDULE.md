@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Weekly schedule (beta)
 
-Play a clip or a legacy start script, stop, black out or show the screen, or switch the projectors on or off at a set time on chosen days. Switch the **Weekly schedule** module on under System > Modules, then use System > Schedule (full-access devices change it; view devices can read it). Off by default, and nothing runs until the module and the schedule switch are both on.
+Play a clip or a legacy start script, stop, black out or show the screen, or switch the projectors on or off at a set time on chosen days. Switch it on under System > Schedule, then turn the schedule on with the button inside the page (full-access devices change it; view devices can read it). Off by default, and nothing runs until the module and the schedule switch are both on.
 
 ## What an entry can do
 

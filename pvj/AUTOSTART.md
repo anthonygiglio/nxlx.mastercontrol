@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Autostart
 
-What the box plays by itself, with nobody at the panel: after power-up, and after a crash. It replaces the legacy Autostart tab. Set it under System > Autostart (full-access devices change it; everyone can see it). **Off by default.**
+What the box plays by itself, with nobody at the panel: after power-up, and after a crash. It replaces the legacy Autostart tab. Set it under System > At power-up (full-access devices change it; everyone can see it). **Off by default.**
 
 ## Modes
 
