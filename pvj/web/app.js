@@ -1632,7 +1632,7 @@
     ['volume', 'Volume (fader)'], ['blackout_hold', 'Blackout while held up (fader)'],
     ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)'],
     ['bank_pad', 'Play a pad of the controllers\' bank'], ['bank_prev', 'Controllers\' bank: the one before'], ['bank_next', 'Controllers\' bank: the next'],
-    ['clip_prev', 'Previous clip'], ['clip_next', 'Next clip'], ['fadein', 'Fade in'],
+    ['vibes_ambient', 'Vibes: start the set Ambient'], ['vibes_show', 'Vibes: start the set Show'], ['clip_prev', 'Previous clip'], ['clip_next', 'Next clip'], ['fadein', 'Fade in'],
     ['shader_prev', 'Previous shader'], ['shader_next', 'Next shader'], ['shader_speed', 'Shader speed (fader)'],
     ['shader_hue', 'Shader colour turn (fader)'], ['shader_brightness', 'Shader brightness (fader)']]
     .concat(midiEight('shader_control_', 'Shader control '), midiEight('shader_preset_', 'Shader preset '), midiEight('scene_', 'Room scene '));

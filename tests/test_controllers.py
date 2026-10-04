@@ -326,11 +326,12 @@ class MapperTest(unittest.TestCase):
 
     def test_the_new_actions_make_calls_the_api_already_had(self):
         m = self.mapper(NANO, "nanoKONTROL2")
-        for number in (43, 44, 69, 70, 58, 59, 46, 41, 48):    # rewind, forward, R 6, R 7, track < >, cycle, play, M 1
+        for number in (43, 44, 69, 70, 58, 59, 46, 41, 48, 60, 45):    # rewind, forward, R 6, R 7, track < >, cycle, play, M 1, marker set, rec
             self.press(m, "nanoKONTROL2", "cc", number, 1)
         self.assertEqual(self.rec.calls, [("/api/control", {"action": "prev"}), ("/api/control", {"action": "next"}), ("/api/fadein", {"seconds": 2}),
                                           ("/api/fadeout", {"seconds": 2}), ("/api/shaders/step", {"dir": -1}), ("/api/shaders/step", {"dir": 1}),
-                                          ("/api/vibes", {"on": True}), ("/api/control", {"action": "pause"}), ("/api/shaders/preset", {"index": 1})])
+                                          ("/api/vibes", {"on": True}), ("/api/control", {"action": "pause"}), ("/api/shaders/preset", {"index": 1}),
+                                          ("/api/vibes", {"on": True, "set": "Ambient"}), ("/api/vibes", {"on": True, "set": "Show"})])
 
 
 class HubBase(ServerBase):
@@ -450,11 +451,11 @@ class HubTest(HubBase):
         self.present = ["/dev/snd/midiC1D0"]
         self.enable()
         self.wait(lambda: "/dev/snd/midiC1D0" in self.pipes)
-        st, body, _ = self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "rec", "action": {"action": "pad", "bank": 1, "index": 2}}})
+        st, body, _ = self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "r5", "action": {"action": "pad", "bank": 1, "index": 2}}})
         self.assertEqual(st, 200, body)
-        rec = next(x for x in body["controllers"][0]["controls"] if x["id"] == "rec")
+        rec = next(x for x in body["controllers"][0]["controls"] if x["id"] == "r5")
         self.assertEqual((rec["action"], rec["origin"], rec["standard"]), ({"action": "pad", "bank": 1, "index": 2}, "yours", None))
-        self.assertEqual([(e["source"], e["kind"], e["number"]) for e in body["map"]], [("nanoKONTROL2", "cc", 45)])
+        self.assertEqual([(e["source"], e["kind"], e["number"]) for e in body["map"]], [("nanoKONTROL2", "cc", 68)])
         self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "stop", "action": {"action": "none"}}})
         self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "fader7", "action": {"action": "size"}}})
         self.post("/api/midi/map", {"add": {"source": "*", "kind": "cc", "number": 99, "action": "stop"}})

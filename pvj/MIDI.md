@@ -26,7 +26,7 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
   | --- | --- | --- |
   | Opacity | yes | a fader left at the bottom would black the screen out |
   | Volume, clip speed | yes | a jump is heard or seen. The box does not keep these two in memory, so the value a controller last set is used, and 100 percent and 1x before that: after a change in the panel the first move may still jump |
-  | Shader speed, shader brightness | yes | a jump to frozen or to black |
+  | Shader speed, shader brightness | yes | a jump to frozen or to black. For a shader of the category Performance the box keeps the speed at 1 or below unless "faster" is switched on; the fader then does nothing above a quarter of its way |
   | Shader control 1 to 8, shader colour turn | no | a jump is part of playing a shader, and a knob that waits feels broken |
   | Size, position, Vibes time | no | not in a standard layout's faders; they follow at once |
 
@@ -58,11 +58,11 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 | R 8 | CC 71 | Blackout on / off (press twice) |
 | Track <, Track > | CC 58, 59 | Previous shader, next shader |
 | Cycle | CC 46 | Vibes on / off |
-| Marker Set | CC 60 | Spare |
+| Marker Set | CC 60 | Vibes: start the set Ambient |
 | Marker <, Marker > | CC 61, 62 | Controllers' bank: the one before, the next |
 | Rewind, Forward | CC 43, 44 | Previous clip, next clip (of a playlist) |
 | Stop, Play | CC 42, 41 | Stop, Pause / resume |
-| Rec | CC 45 | Spare |
+| Rec | CC 45 | Vibes: start the set Show |
 
 ### Akai MIDI Mix (`akai-midimix`)
 
@@ -82,7 +82,7 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 | Bank Left, Bank Right | Note 25, 26 | Controllers' bank: the one before, the next |
 | Solo | Note 27 | Spare (it is the shift for the row above) |
 
-Room scenes are not on this layout; put one on a spare control from the Room screen or the card.
+Room scenes and the two Vibes sets are not on this layout (it has no free buttons); put one on a spare control from the card or the Room screen.
 
 ### Novation Launchpad Mini (`novation-launchpad-mini`)
 
@@ -98,7 +98,7 @@ The **original** Launchpad Mini, not the MK3 (which sends other numbers and has 
 | Grid row 7 | Notes 96 to 103 | Shader preset 1 to 8 |
 | Grid row 8 | Notes 112 to 119 | Shader control 1 to 8, as a press (a switch toggles, a choice steps, an event fires, a number goes back to its own value) |
 | A to D (right) | Notes 8, 24, 40, 56 | Room scene 1 to 4 (press twice) |
-| E, F | Notes 72, 88 | Spare |
+| E, F | Notes 72, 88 | Vibes: start the set Ambient, start the set Show |
 | G | Note 104 | Stop |
 | H | Note 120 | Blackout on / off (press twice) |
 
@@ -175,6 +175,7 @@ A mapping belongs to one controller (by its ALSA card id, such as `nanoKONTROL2`
 | Room scene 1 to 8 (`scene_1` ...) | trigger | Applies the n-th scene of the Room screen's list (needs the Room module; see below for a scene by its id) |
 | Pad of the controllers' bank (`bank_pad`, with the pad 1 to 12) | trigger | Plays that pad of the bank the controllers are on |
 | Controllers' bank: the one before, the next (`bank_prev`, `bank_next`) | trigger | Steps that bank through A, B, C and round. It starts at A and is not saved; it is not the bank a phone shows |
+| Vibes: start the set Ambient, start the set Show (`vibes_ambient`, `vibes_show`) | trigger | Starts Vibes with that set, by its name; these are the two sets a box starts with. If the set was renamed or removed nothing happens and the log says so |
 | Nothing (`none`) | trigger | Does nothing: switches one control of a standard layout off |
 
 A fourth kind of action, **Apply a Room scene** (`scene`, a trigger that carries the scene's id), is assigned from the Room screen: under "Set up the room" each scene has a MIDI button that starts the same Learn. The mapping is then listed here like the others (as "scene"), and removed here. It needs the Room module; a scene removed later leaves a mapping that does nothing, and the log says so. See [ROOM.md](ROOM.md).

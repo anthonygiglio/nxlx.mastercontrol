@@ -446,20 +446,20 @@ function startServer() {
     assert.strictEqual((await get('/api/midi')).controllers[0].controls.filter((x) => x.id === 'fader1')[0].pickup, true);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), 'the drawn layout made the page scroll sideways');
     // a tap opens the chooser; the choice is saved as this person's mapping, and "Back to the standard" undoes it
-    await page.click(nano + ' .ctl[data-id="rec"]');
-    await page.waitForSelector('#ctldetail #ctlnow:has-text("Rec: Spare")');
+    await page.click(nano + ' .ctl[data-id="r5"]');
+    await page.waitForSelector('#ctldetail #ctlnow:has-text("R 5: Spare")');
     assert.strictEqual(await page.locator('#ctlaction option[value="opacity"]').count(), 0, 'a button is not offered a fader\'s action');
     await page.selectOption('#ctlaction', 'pad');
     await page.selectOption('#ctlbank', '1');
     await page.selectOption('#ctlindex', '2');
     await page.click('#ctlsave');
-    await page.waitForSelector(nano + ' .ctl[data-id="rec"].mine:has-text("Pad B3")');
+    await page.waitForSelector(nano + ' .ctl[data-id="r5"].mine:has-text("Pad B3")');
     await page.waitForSelector(nano + ' .ctlline:has-text("1 control changed by you")');
     let midiMap = (await get('/api/midi')).map;
-    assert.deepStrictEqual(midiMap.map((e) => [e.source, e.kind, e.number, e.action, e.bank, e.index]), [['nanoKONTROL2', 'cc', 45, 'pad', 1, 2]]);
+    assert.deepStrictEqual(midiMap.map((e) => [e.source, e.kind, e.number, e.action, e.bank, e.index]), [['nanoKONTROL2', 'cc', 68, 'pad', 1, 2]]);
     await page.waitForSelector('#midicard .midi-entry:has-text("nanoKONTROL2")');       // and it is listed with the other mappings
     await page.click('#ctlback');
-    await page.waitForSelector(nano + ' .ctl[data-id="rec"]:not(.mine):has-text("Spare")');
+    await page.waitForSelector(nano + ' .ctl[data-id="r5"]:not(.mine):has-text("Spare")');
     assert.strictEqual((await get('/api/midi')).map.length, 0, 'Back to the standard removed the mapping');
     // the whole controller, with the question in place
     await page.click(nano + ' .ctl[data-id="stop"]');

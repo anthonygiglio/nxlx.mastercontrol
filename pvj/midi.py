@@ -73,6 +73,9 @@ ACTIONS.update({
     "shader_hue": ("level", -180.0, 180.0), "shader_brightness": ("level", 0.0, 2.0),
     "bank_pad": ("trigger", None, None), "bank_prev": ("trigger", None, None), "bank_next": ("trigger", None, None),
     "none": ("trigger", None, None),             # "do nothing": switches one control of a standard layout off
+    # Vibes with one of the two sets every box starts with, by name (the API's {"on": true, "set": name}); a box
+    # where that set was renamed or removed answers "no such set" and the log says so
+    "vibes_ambient": ("trigger", "Ambient", None), "vibes_show": ("trigger", "Show", None),
 })
 SCENE_SLOTS = 8
 for _n in range(1, SCENE_SLOTS + 1):
@@ -490,6 +493,8 @@ class MidiMapper:
             return [("/api/vibes", {"on": None})]              # a toggle too
         if a == "vibes_next":
             return [("/api/vibes", {"next": True})]
+        if a in ("vibes_ambient", "vibes_show"):
+            return [("/api/vibes", {"on": True, "set": ACTIONS[a][1]})]
         if a in ("shader_next", "shader_prev"):
             return [("/api/shaders/step", {"dir": 1 if a == "shader_next" else -1})]
         if a.startswith("shader_preset_"):
