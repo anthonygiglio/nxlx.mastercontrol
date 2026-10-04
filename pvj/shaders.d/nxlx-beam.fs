@@ -112,7 +112,13 @@ void main() {
     float a = atan(p.y, p.x + 0.00001);
     // the beams fan out towards the middle of the picture, wherever they start
     vec2 aim = vec2(0.5) - at;
-    float middle = abs(aim.x) * wide > abs(aim.y) ? (aim.x > 0.0 ? 0.0 : 3.14159) : (aim.y >= 0.0 ? 1.5708 : -1.5708);
+    aim.x *= wide;
+    float middle = aim.y >= 0.0 ? 1.5708 : -1.5708;
+    if (abs(aim.x) > 2.0 * abs(aim.y)) {
+        middle = aim.x > 0.0 ? 0.0 : 3.14159;
+    } else if (abs(aim.x) > 0.5 * abs(aim.y)) {
+        middle = (aim.y >= 0.0 ? 1.0 : -1.0) * (aim.x > 0.0 ? 0.7854 : 2.3562);
+    }
     float count = float(beams);
     vec3 glow = vec3(0.0);
     for (int i = 0; i < 4; i++) {
@@ -132,7 +138,7 @@ void main() {
     float reach = 1.0 / (1.0 + 0.9 * r);
     vec3 col = glow * reach * smoothstep(0.0, 0.05, r);
     vec3 both = mix(first.rgb, second.rgb, 0.5 + 0.35 * sin(a * 2.0));
-    col += both * (0.10 + 0.30 * haze) / (1.0 + 5.0 * r * r) + vec3(0.02, 0.02, 0.04);
+    col += both * (0.22 + 0.25 * haze) / (1.0 + 5.0 * r * r) + vec3(0.02, 0.02, 0.04);
     col = col / (1.0 + 0.35 * col);
     gl_FragColor = vec4(col * 1.25, 1.0);
 }

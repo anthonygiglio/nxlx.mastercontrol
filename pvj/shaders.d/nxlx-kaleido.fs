@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "low: one atan, one square root and 5 sines a pixel",
+    "COST": "low: one atan, one square root, 5 sines and one division a pixel",
     "INPUTS": [
         {
             "NAME": "speed",
@@ -43,7 +43,7 @@
             "LABEL": "Size of the shapes",
             "TYPE": "float",
             "MIN": 0.5,
-            "MAX": 3.0,
+            "MAX": 2.4,
             "DEFAULT": 1.2
         },
         {
@@ -116,6 +116,7 @@ void main() {
     col = mix(col, third.rgb, 0.85 * smoothstep(0.25, 0.95, v));
     col *= 0.86 + 0.14 * v;
     col *= 1.0 - 0.45 * min(1.0, r * r * 1.5);
-    col += 0.02;
+    // a little of the third colour glows from the middle, so the picture is never one dark tone
+    col += third.rgb * 0.12 / (1.0 + 6.0 * r * r) + 0.02;
     gl_FragColor = vec4(col, 1.0);
 }
