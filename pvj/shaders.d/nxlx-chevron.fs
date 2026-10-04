@@ -105,7 +105,7 @@ void main() {
     // an arrowhead: the row is pushed back the further a pixel is from the middle of its lane
     float back = abs(inlane - 0.5) * point * span / n * 2.0;
     // the march in whole arrows, folded so it stays exact for hours; 4 arrows are one round of the lit one
-    float travel = fract(TIME * rate * 0.25) * 4.0;
+    float travel = fract(TIME * min(rate, 3.0) * 0.25) * 4.0;
     float v = (way * along + back) * count * 0.5 - travel + 64.0;
     float row = floor(v);
     float inrow = v - row;

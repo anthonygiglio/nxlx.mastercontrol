@@ -100,7 +100,7 @@ void main() {
     float u = dot(p, across);
     float w = dot(p, vec2(-across.y, across.x));
     // the travel in whole stripes, and a slow cycle for the bend; both folded to 0..1 so they stay exact for hours
-    float travel = fract(TIME * rate * 0.5) * 2.0;
+    float travel = fract(TIME * min(rate, 3.0) * 0.5) * 2.0;
     float slow = 6.2831853 * fract(TIME * (0.04 + 0.05 * rate));
     float bend = 0.0;
     if (shape == 0) {

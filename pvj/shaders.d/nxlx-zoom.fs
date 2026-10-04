@@ -118,7 +118,7 @@ void main() {
         size = (abs(q.x) + abs(q.y)) * 0.7071;
     }
     // the zoom in whole shapes, folded to 0..1 so it stays exact for hours
-    float travel = fract(TIME * rate * 0.5);
+    float travel = fract(TIME * min(rate, 3.0) * 0.5);
     if (outward) {
         travel = 1.0 - travel;
     }

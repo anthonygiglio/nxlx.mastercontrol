@@ -125,7 +125,7 @@ void main() {
         float fi = float(i);
         if (fi < count) {
             // each beam's own to and fro, folded to 0..1 before it becomes an angle so it stays exact for hours
-            float swing = sin(6.2831853 * fract(TIME * rate * (1.0 - 0.13 * fi) + 0.29 * fi));
+            float swing = sin(6.2831853 * fract(TIME * min(rate, 1.5) * (1.0 - 0.13 * fi) + 0.29 * fi));
             float aimed = middle + (fi - 0.5 * (count - 1.0)) * 0.45 + sweep * swing;
             float off = abs(mod(a - aimed + 3.14159, 6.2831853) - 3.14159);
             float core = 1.0 - smoothstep(0.0, width, off);

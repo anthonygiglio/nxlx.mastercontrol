@@ -100,7 +100,7 @@ void main() {
     }
     float turn = angle * 0.0174533;
     // the travel in whole bands, folded to 0..1 so it stays exact for hours
-    float travel = fract(TIME * rate);
+    float travel = fract(TIME * min(rate, 3.0));
     if (inward) {
         travel = 1.0 - travel;
     }

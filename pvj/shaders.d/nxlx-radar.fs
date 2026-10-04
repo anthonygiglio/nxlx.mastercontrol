@@ -109,7 +109,7 @@ void main() {
         around = 1.0 - around;
     }
     // where the arm stands: whole turns, folded to 0..1 so it stays exact for hours
-    float turn = fract(TIME * rate);
+    float turn = fract(TIME * min(rate, 1.5));
     // how long ago the arm was here, in turns: 0 just now, close to 1 a moment before it returns
     float ago = fract(turn - around);
     float decay = 1.0 - smoothstep(0.0, trail, ago);

@@ -92,7 +92,7 @@ void main() {
     vec2 p = (isf_FragNormCoord - vec2(0.5)) * vec2(RENDERSIZE.x / RENDERSIZE.y, 1.0);
     // a slow cycle for the bend, and the travel in squares; both are folded so they stay exact for hours
     float slow = 6.2831853 * fract(TIME * (0.05 + 0.1 * rate));
-    float travel = 2.0 * fract(TIME * rate * 0.5);
+    float travel = 2.0 * fract(TIME * min(rate, 3.0) * 0.5);
     float r2 = dot(p, p);
     vec2 q = p;
     if (shape == 0) {

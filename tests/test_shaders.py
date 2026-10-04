@@ -375,6 +375,24 @@ class TranslatorTest(unittest.TestCase):
                 folded = len(re.findall(r"\bfract\(TIME \* ", p["body"])) + len(re.findall(r"\bfloat beats = TIME \* ", p["body"]))
                 self.assertEqual(len(re.findall(r"\bTIME\b", p["body"])), folded, name)
                 self.assertGreater(folded, 0, name)
+                if family == "Performance":
+                    # The rate is capped in the code itself, not only by the slider's MAX: at most 3 a second (a
+                    # sweep or a turn, which passes a point twice or lights a wide trail, at most 1.5). `rate` is
+                    # never multiplied into TIME bare; it may only slow a side motion down, inside a bracket.
+                    rate = next(i for i in p["inputs"] if i["name"] == "rate")
+                    cap = re.findall(r"\bmin\(rate, (\d\.\d)\)", p["body"])
+                    self.assertTrue(cap and all(float(c) <= 3.0 for c in cap), (name, cap))
+                    self.assertEqual(float(cap[0]), rate["max"], name)
+                    self.assertNotRegex(p["body"], r"TIME \* rate\b", name)
+                    if any(i["name"] == "fast" for i in p["inputs"]):
+                        fast = next(i for i in p["inputs"] if i["name"] == "fast")
+                        self.assertEqual((fast["type"], fast["default"]), ("bool", False), name)      # off until asked for
+                        self.assertIn("min(rate, 3.0) * (fast ? 2.0 : 1.0)", p["body"], name)
+                        self.assertIn("not for photosensitive people", p["description"], name)
+                    else:
+                        self.assertNotRegex(p["body"], r"\bfast\b", name)
+                else:
+                    self.assertFalse(any(i["name"] in ("rate", "fast") for i in p["inputs"]), name)       # nothing to flash with
         self.assertEqual(len(set(FIRST_TEN + AMBIENT + PERFORMANCE)), BUNDLED)
 
     def test_the_carrier_is_built_from_whole_numbers_and_has_the_screens_shape(self):

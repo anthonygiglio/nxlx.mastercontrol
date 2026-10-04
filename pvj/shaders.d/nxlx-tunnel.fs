@@ -117,7 +117,7 @@ void main() {
     float around = atan(p.y, p.x + 0.00001) / 6.2831853;
     float z = depth / r;
     // the travel: whole rings a second, folded to 0..1 so it stays exact for hours
-    float travel = fract(TIME * rate);
+    float travel = fract(TIME * min(rate, 3.0));
     if (reverse) {
         travel = 1.0 - travel;
     }

@@ -121,7 +121,7 @@ void main() {
     float band = floor(r * count * 1.6);
     float way = 1.0 - 2.0 * mod(band, 2.0);
     // the turn: whole spokes a second, folded to 0..1 so it stays exact for hours
-    float turn = fract(TIME * rate);
+    float turn = fract(TIME * min(rate, 3.0));
     float s = sin(6.2831853 * (around * n + way * turn + curl * r * 2.0 + band * 0.25));
     // close to the centre the spokes are finer than the pixels: let them melt together there
     float edge = 0.08 + 0.012 * n / r;
