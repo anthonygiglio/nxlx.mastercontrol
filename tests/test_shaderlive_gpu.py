@@ -14,7 +14,7 @@ import threading
 import time
 import unittest
 
-from pvj import shaders as S
+from pvj import shaderlive as L, shaders as S
 from tests.test_server import ServerBase
 from tests.test_shaders_gpu import GPU, GpuCase, H, W
 
@@ -41,7 +41,7 @@ void main() { gl_FragColor = vec4(fract(TIME / 8.0), fract(TIME / 64.0), k, 1.0)
 BRIGHT = """/*{"INPUTS": [{"NAME": "k", "TYPE": "float", "MIN": 0.0, "MAX": 1.0, "DEFAULT": 0.5}]}*/
 void main() { gl_FragColor = vec4(0.6 + 0.2 * k, 0.8, 0.7, 1.0); }
 """
-PARAM = "//!PARAM pvj_level\n//!TYPE float\n0.5\n\n//!HOOK MAIN\n//!BIND HOOKED\n//!DESC param probe\nvec4 hook() { return vec4(pvj_level); }\n"
+PARAM = "//!PARAM level\n//!TYPE float\n0.5\n\n//!HOOK MAIN\n//!BIND HOOKED\n//!DESC param probe\nvec4 hook() { return vec4(level); }\n"
 
 
 class LiveCase(GpuCase):
@@ -189,6 +189,7 @@ class LiveCase(GpuCase):
                 time.sleep(0.02)
             self.engine.change({"values": {"k": 1.0}})
         t = threading.Thread(target=knob)
+        began = time.monotonic()
         t.start()
         shots = 0
         try:
@@ -199,15 +200,16 @@ class LiveCase(GpuCase):
         finally:
             stop.set()
             t.join()
+        took = time.monotonic() - began                              # two seconds and what 100 requests cost on this runner
         time.sleep(0.8)
         applied = self.engine.changer.applied - before
         self.assertGreater(shots, 3)
-        self.assertTrue(2 <= applied <= 14, "100 values in two seconds were %d compiles" % applied)
+        self.assertTrue(2 <= applied <= took / L.APPLY_GAP + 2, "100 values in %.1f s were %d compiles" % (took, applied))
         self.near(self.shot()[H // 2][W // 2], (204, 204, 178))     # the last value landed
         self.assertEqual(self.engine.state()["playing"]["values"]["k"], 1.0)
         self.assertEqual(len(self.shaders_in_player()), 1)
-        print("100 values in 2 s: %d compiles, %d screenshots all lit, %d frames dropped meanwhile"
-              % (applied, shots, (self.real.ipc.request("get_property", "frame-drop-count") or 0) - drops))
+        print("100 values in %.1f s: %d compiles, %d screenshots all lit, %d frames dropped meanwhile"
+              % (took, applied, shots, (self.real.ipc.request("get_property", "frame-drop-count") or 0) - drops))
 
     def test_this_mpv_has_no_live_parameters_for_a_user_shader(self):
         """`//!PARAM` (and `glsl-shader-opts`, which sets one) belong to mpv's other output, gpu-next. With --vo=gpu a
@@ -224,9 +226,13 @@ class LiveCase(GpuCase):
             tap.close()
             self.real.ipc.request("set_property", "glsl-shaders", [])
         said = " ".join(t for _, _, t in lines)
-        self.assertRegex(said, r"Unrecognized command|PARAM|undeclared|pvj_level")
+        self.assertRegex(said, r"Unrecognized command|PARAM|undeclared")
         print("mpv %s on a //!PARAM line: %s" % (self.real.ipc.request("get_property", "mpv-version"), S.shader_errors(lines) or said[:200]))
 
+
+for _name in dir(GpuCase):                    # the first version's tests run in their own step, not here again
+    if _name.startswith("test_"):
+        setattr(LiveCase, _name, None)
 
 ONLY = os.environ.get("PVJ_GPU_ONLY")          # "desktop": the run that makes Mesa a GL 3.1 driver has no use for GLES
 
