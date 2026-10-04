@@ -540,6 +540,43 @@ function startServer() {
     await page.waitForFunction(() => !/muted/.test(document.querySelector('.proj-status').textContent), null, { timeout: 15000 });
     await page.click('button[aria-label="Refresh details Main"]');
     await page.waitForFunction(() => /Refresh details: done/.test(document.getElementById('msg').textContent));
+    // Edit, in place: the add form filled in. Nothing to save until something changed; a refusal is said under the
+    // button; the password is never in the form; a rename keeps the password and the input names.
+    await page.click('button[aria-label="Edit Main"]');
+    await page.waitForSelector('#projedit');
+    if (!(await page.isDisabled('#projeditsave'))) problems.push('Save changes can be pressed with nothing changed');
+    if (await page.inputValue('#projeditpw') !== '') problems.push('the edit form has something in its password field');
+    if (!/A password is set\. Type a new one to change it, or leave empty to keep it\./.test(await page.textContent('#projeditpwhint'))) problems.push('the edit form does not say that a password is set');
+    for (const id of ['projeditname', 'projedithost', 'projeditport', 'projeditpw']) {
+      if (!(await page.locator(`label[for="${id}"]`).isVisible())) problems.push(`no visible label above #${id}`);
+    }
+    if (await page.inputValue('#projedithost') !== '127.0.0.1' || await page.inputValue('#projeditport') !== String(info.projector_ports[0])) problems.push('the edit form is not filled in with the projector\'s address and port');
+    await page.fill('#projedithost', '8.8.8.8');
+    if (await page.isDisabled('#projeditsave')) problems.push('Save changes stays disabled after a change');
+    await page.click('#projeditsave');
+    await page.waitForSelector('#projediterr:has-text("private network")');
+    await page.fill('#projedithost', '127.0.0.1');
+    if (!(await page.isDisabled('#projeditsave'))) problems.push('Save changes is enabled again although the address is back as it was');
+    await page.fill('#projeditname', 'Main wall');
+    await page.click('#projeditclear');                              // "Remove the password": the field is closed, and what was typed stays
+    await page.waitForSelector('#projeditpwhint:has-text("will be removed")');
+    if (!(await page.isDisabled('#projeditpw'))) problems.push('the password field is still open with Remove the password on');
+    if (await page.inputValue('#projeditname') !== 'Main wall') problems.push('the name being typed was lost when the form was drawn again');
+    await page.click('#projeditclear');
+    await page.waitForSelector('#projeditpwhint:has-text("A password is set")');
+    await page.click('#projeditsave');
+    await page.waitForSelector('.proj-entry:has-text("Main wall")');
+    if (await page.$('#projedit')) problems.push('the edit form is still open after saving');
+    if (!/password set/.test(await page.textContent('.proj-entry'))) problems.push('a rename lost the projector password');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the fake projector moved after a rename');
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });      // the label is kept, and it still answers with the kept password
+    await page.click('button[aria-label="Check Main wall"]');
+    await page.waitForFunction(() => /Power: on/.test(document.querySelector('.proj-entry').textContent), null, { timeout: 15000 });
+    await page.click('button[aria-label="Edit Main wall"]');
+    await page.fill('#projeditname', 'Main');
+    await page.click('#projeditsave');
+    await page.waitForSelector('button[aria-label="Edit Main"]');
+    if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page after an edit');
     await onPage('Projectors');
     await sysIndex();
     await chip('Projectors', 'Problem');                             // the projector's own warning reaches the index row

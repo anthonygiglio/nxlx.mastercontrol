@@ -2130,6 +2130,9 @@
   // ---- projectors (PJLink) ---------------------------------------------
   var projForm = { name: '', host: '', port: '4352', password: '' };  // survives redraws
   var projLabels = {};  // projector id -> { code, text }: the input being labelled and the label being typed; survives redraws
+  // The projector being edited, in place of its row: { id, name, host, port, password, clear, error }; null when none.
+  // It survives redraws (the list is read again every 5 seconds). The password is only ever what was typed here.
+  var projEdit = null;
   var projTimer = null;
   function projectorsCard(full) {
     clearTimeout(projTimer);
@@ -2170,6 +2173,10 @@
         var el = document.getElementById(f[0]);
         if (el && body.contains(el)) projForm[f[1]] = el.value;
       });
+      if (projEdit) [['projeditname', 'name'], ['projedithost', 'host'], ['projeditport', 'port'], ['projeditpw', 'password']].forEach(function (f) {
+        var el = document.getElementById(f[0]);
+        if (el && body.contains(el) && !el.disabled) projEdit[f[1]] = el.value;
+      });
       Array.prototype.forEach.call(body.querySelectorAll('.proj-label'), function (el) {
         var which = body.querySelector('.proj-labelfor[data-id="' + el.getAttribute('data-id') + '"]');
         projLabels[el.getAttribute('data-id')] = { code: which ? which.value : '', text: el.value };
@@ -2189,6 +2196,67 @@
         var typing = a && body.contains(a) && /^(INPUT|SELECT)$/.test(a.tagName);
         if (force || (JSON.stringify(r.data) !== shown && !typing)) draw(r.data);
       });
+    }
+    // The add form's fields, filled in, in place of the projector's row. Only what was changed is sent: a password
+    // field left empty is not sent at all, so the stored password stays; "Remove the password" sends an empty one.
+    function editForm(p) {
+      var e = projEdit, ids = 'projedit';
+      var name = h('input', { class: 'text-input', id: ids + 'name', maxlength: 40, value: e.name });
+      var host = h('input', { class: 'text-input mono', id: ids + 'host', value: e.host, autocomplete: 'off' });
+      var port = h('input', { class: 'text-input mono', id: ids + 'port', type: 'number', min: 1, max: 65535, value: e.port });
+      var pw = h('input', { class: 'text-input mono', id: ids + 'pw', type: 'password', autocomplete: 'new-password', disabled: e.clear });
+      pw.value = e.clear ? '' : e.password;      // the property, not an attribute: a typed password never becomes page HTML
+      var err = h('div', { class: 'msg err', id: ids + 'err', role: 'alert', text: e.error || '' });
+      var moved = h('div', { class: 'hint', id: ids + 'moved', text: 'A new address or port: the box asks the projector at the new one who it is. The names you gave its inputs are kept.' });
+      function read() { e.name = name.value; e.host = host.value; e.port = port.value; if (!e.clear) e.password = pw.value; }
+      function change() {           // what would be sent
+        var out = { id: p.id }, n = parseInt(e.port, 10);
+        if (e.name.trim() !== p.name) out.name = e.name;
+        if (e.host.trim() !== p.host) out.host = e.host.trim();
+        if (String(n) !== String(p.port)) out.port = n;
+        if (e.clear) out.password = ''; else if (e.password) out.password = e.password;
+        return out;
+      }
+      var clear = !p.has_password ? null : h('button', { class: 'switch', id: ids + 'clear', role: 'switch', 'aria-checked': e.clear ? 'true' : 'false', 'aria-label': 'Remove the password',
+        onclick: function () { read(); e.clear = !e.clear; if (e.clear) e.password = ''; e.error = ''; draw(JSON.parse(shown), true); } });
+      var save = h('button', { class: 'btn on grow', id: ids + 'save', text: 'Save changes', onclick: function () {
+        read();
+        var out = change();
+        if (out.port !== undefined && !(out.port >= 1 && out.port <= 65535)) { e.error = 'The port is a number from 1 to 65535 (4352 unless it was changed on the projector).'; err.textContent = e.error; return; }
+        save.disabled = true;
+        api('POST', '/api/projectors', { edit: out }).then(function (r) {
+          if (!projEdit || projEdit.id !== p.id) return;
+          if (!r.ok) { e.error = r.data.error || 'Could not save the changes.'; err.textContent = e.error; save.disabled = false; return; }
+          projEdit = null; delete states[p.id];
+          say('Changes saved.'); draw(r.data, true); load();
+        });
+      } });
+      function fresh() {
+        read();
+        var out = change();
+        save.disabled = Object.keys(out).length < 2;
+        moved.hidden = out.host === undefined && out.port === undefined;
+        if (e.error) { e.error = ''; err.textContent = ''; }
+      }
+      [name, host, port, pw].forEach(function (el) { el.addEventListener('input', fresh); });
+      var first = change();
+      save.disabled = Object.keys(first).length < 2;
+      moved.hidden = first.host === undefined && first.port === undefined;
+      return h('div', { class: 'item proj-edit', id: 'projedit', 'data-id': p.id },
+        h('b', { text: 'Edit ' + p.name }),
+        h('label', { class: 'field', for: ids + 'name', text: 'Name' }), name,
+        h('label', { class: 'field', for: ids + 'host', text: 'Address' }), host,
+        h('div', { class: 'hint', text: 'The projector\'s IP address or name on this network. Only a private address (such as 192.168.x.x) is taken.' }),
+        h('label', { class: 'field', for: ids + 'port', text: 'Port' }), port,
+        h('div', { class: 'hint', text: '4352 unless it was changed on the projector.' }),
+        moved,
+        h('label', { class: 'field', for: ids + 'pw', text: 'PJLink password' }), pw,
+        h('div', { class: 'hint', id: ids + 'pwhint', text: e.clear ? 'The password will be removed when you save.' :
+          p.has_password ? 'A password is set. Type a new one to change it, or leave empty to keep it.' : 'No password is set. Type one if the projector asks for it.' }),
+        clear ? h('label', { class: 'rot between' }, h('span', { text: 'Remove the password' }), clear) : null,
+        h('div', { class: 'row' }, save,
+          h('button', { class: 'btn grow', id: ids + 'cancel', text: 'Cancel', onclick: function () { projEdit = null; draw(JSON.parse(shown), true); } })),
+        err);
     }
     function run(pid, action, label, extra) {
       var msg = { id: pid, action: action };
@@ -2210,6 +2278,7 @@
     function draw(d, fresh) {
       if (!fresh) keep();
       shown = JSON.stringify(d);
+      if (projEdit && !d.projectors.some(function (p) { return p.id === projEdit.id; })) projEdit = null;     // removed from another device
       body.textContent = '';
       body.appendChild(h('div', { class: 'k', id: 'projline', text: d.projectors.length ?
         'Controlled over the network with PJLink, like the old Beamer On and Off buttons.' :
@@ -2220,14 +2289,23 @@
       d.projectors.forEach(function (p) {
         var st = p.status || {}, mute = st.mute || {}, warn = warningText(p);
         var line = function (cls, text) { return text ? [h('br'), h('span', { class: cls, text: text })] : null; };
+        if (full && projEdit && projEdit.id === p.id) return body.appendChild(editForm(p));
         body.appendChild(h('div', { class: 'item proj-entry', 'data-id': p.id },
           h('span', {}, p.name, h('br'), h('span', { class: 'addr', text: p.host + (p.port !== 4352 ? ':' + p.port : '') + (p.has_password ? ' · password set' : '') }),
             line('addr proj-details', detailsText(p)), line('k proj-status', statusText(p)), line('k proj-warn', warn),
             line('k proj-note', st.pending_input ? 'Switching to ' + inputText(p, st.pending_input) + ' when the projector is ready (up to 90 seconds)' : (st.notice ? st.notice.text : '')),
             line('k', states[p.id])),
-          full ? h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function () {
-            act('POST', '/api/projectors', { remove: p.id }, function (data) { draw(data); });
-          } }) : null));
+          full ? h('span', { class: 'row' },
+            h('button', { class: 'btn small proj-editbtn', text: 'Edit', 'aria-label': 'Edit ' + p.name, onclick: function () {
+              keep();
+              projEdit = { id: p.id, name: p.name, host: p.host, port: String(p.port), password: '', clear: false, error: '' };
+              draw(JSON.parse(shown), true);
+              var first = document.getElementById('projeditname');
+              if (first) first.focus();
+            } }),
+            h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function () {
+              act('POST', '/api/projectors', { remove: p.id }, function (data) { draw(data); });
+            } })) : null));
         if (!can('live')) return;
         var buttons = [['on', 'On'], ['off', 'Off'],
           mute.picture ? ['unmute_picture', 'Unmute picture'] : ['mute_picture', 'Mute picture'],
