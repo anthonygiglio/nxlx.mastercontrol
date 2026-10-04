@@ -70,7 +70,7 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | Schedule | Check the box clock (System > Schedule shows it), add an entry two minutes ahead, turn the schedule on | It fires once at that minute and shows "Last run"; reboot and confirm nothing fires for old times |
 | Network | **Last, with a monitor and keyboard on the Pi**, never over SSH on the only connection. Try a change, confirm, then one you do not confirm | A change you do not confirm reverts by itself. Never test this remotely on the only link |
 
-### Runtime folders: who owns what in /run (D44)
+### Runtime folders: who owns what in /run (D45)
 
 **Not run on any box yet.** The change that gives each service its own runtime folder was tested only in CI, which cannot start the units. This list is the proof; until someone has run it, nothing may be claimed about how the folders behave on hardware.
 

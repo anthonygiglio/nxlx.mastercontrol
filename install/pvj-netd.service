@@ -16,7 +16,7 @@ User=root
 Group=pvj
 UMask=0007
 # Its own folder, like pvj-sysd's. No other unit may name it: systemd gives a RuntimeDirectory to the unit that
-# starts, and this one used to be shared with the player and the panel, who then owned this socket (D44).
+# starts, and this one used to be shared with the player and the panel, who then owned this socket (D45).
 RuntimeDirectory=pvj/netd
 RuntimeDirectoryMode=0750
 # Saved state of an unconfirmed change: root only, survives a reboot (so never in /run).

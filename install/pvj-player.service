@@ -17,7 +17,7 @@ Group=pvj
 SupplementaryGroups=video render audio input
 # Its own folder for the control socket and the preview picture: only this account can create, replace or remove
 # anything in it; group "pvj" (the panel) can reach the socket. No other unit may name this folder: systemd gives
-# a RuntimeDirectory to the unit that starts, so a shared one ends up owned by whoever started last (D44).
+# a RuntimeDirectory to the unit that starts, so a shared one ends up owned by whoever started last (D45).
 # The parent /run/pvj stays root's (systemd creates it root:root 0755; see pvj-tmpfiles.conf).
 RuntimeDirectory=pvj/player
 RuntimeDirectoryMode=0750

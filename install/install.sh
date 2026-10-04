@@ -273,12 +273,12 @@ if [ "$DRY" = 0 ]; then
 	# The system log survives restarts (capped at 64 MB), so an unexpected restart can be explained afterwards.
 	mkdir -p "$(dirname "$JOURNAL_CONF")"
 	cp "$SRC/install/50-pvj-persistent-log.conf" "$JOURNAL_CONF"
-	# The parent of the services' runtime folders belongs to root, at every boot (D44).
+	# The parent of the services' runtime folders belongs to root, at every boot (D45).
 	mkdir -p "$(dirname "$TMPFILES")"
 	cp "$SRC/install/pvj-tmpfiles.conf" "$TMPFILES"
 fi
 
-# Runtime folders (D44). Older versions shared one RuntimeDirectory, /run/pvj, between the player, the panel and the
+# Runtime folders (D45). Older versions shared one RuntimeDirectory, /run/pvj, between the player, the panel and the
 # root network helper, and systemd gave it to whichever started last; it stays like that until the next boot unless
 # it is put right here. On a running system call this only AFTER daemon-reload: until then a player or panel that
 # restarts by itself still runs its old unit and takes the folder back. With --stage it works on DIR/run/pvj and

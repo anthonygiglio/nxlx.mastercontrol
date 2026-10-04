@@ -4,6 +4,20 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-04 (a runtime folder per service)
+
+Pull request #71 (D45). **Not run on hardware; not merged: it touches the root helpers and waits for an independent review.**
+
+Found on the real Pi by listing owners: `/run/pvj` was root:pvj after boot, belonged to the display account after "Restart player" (with `netd.sock`, `pin` and `player.sock` in it), and to pvj-web after a reinstall. Cause, from systemd.exec(5) and the source: the player, the panel and the network helper all named `RuntimeDirectory=pvj`, and systemd re-owns such a folder and everything in it to the unit that is starting whenever the owner or group differs. With `RuntimeDirectoryPreserve=yes` in all three nothing was ever removed on stop.
+
+Done: `pvj/paths.py` holds every runtime path. Units: `pvj/player` (display account), `pvj/web` (pvj-web), `pvj/netd` (root), each 0750 group pvj, under a `/run/pvj` that is root:root 0755 and no unit's own (systemd makes it so when missing; `install/pvj-tmpfiles.conf` keeps it so). The PIN file is 0600. mpv's preview picture is in the player's folder; everything the panel hands to the player is in the panel's, read through the group. pvj-sysd, pvj-supportd and the update result stay where they were. The installer takes the old shared folder back after the reload, empties it and restarts; an update from the panel now also moves a running network helper. Older code after a rollback keeps working except its preview.
+
+Tests: `tests/test_paths.py`, `tests/test_run_folders.py` (a missing peer is "not running" and its folder is never made, modes, the update restart, the links for an older panel), `tests/test_units.py` (no folder shared by two users, none group-writable, none the parent of another, the parent is no unit's own, environment and sandbox match the paths, start order with what systemd adds by itself, the installer's order), `tests/test_install.py` (an upgrade over the old shared folder with planted names and links, a reinstall that leaves live folders alone).
+
+Not verified: nothing here ran under systemd. That systemd leaves an existing parent alone and creates a missing one as root 0755 is read from its documentation and source (v252, the version in Bookworm), not observed. Whether mpv writes the preview readable for the group when the file is in its own folder was not seen (it was readable in the shared folder before). `tools/DEVICE-TESTING.md`, section "Runtime folders", is the checklist: owners and modes after boot, after a player restart from the panel, after a restart of each unit, after a reinstall, and seven commands that must be refused. On this Mac the install tests ran only with stand-ins for GNU `mv -T` and `stat -c`; CI is the real run.
+
+Open: run the checklist on the Pi (R1 first, it is the upgrade over the running old version). Remove the three rollback lines in the tmpfiles file once no box can go back before D45. The decision number is 45 because the ISF library branch (#70) uses 44.
+
 ## 2026-10-04 (one switch per feature, and the Shaders page)
 
 Two slices the owner approved, in one pull request (#69, D43).

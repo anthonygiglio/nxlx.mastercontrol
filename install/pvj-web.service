@@ -16,7 +16,7 @@ Group=pvj
 SupplementaryGroups=audio video
 UMask=0007
 # Its own folder: the PIN, the live-input pipe, and the overlay, shader and mapping files it hands to the player
-# (which reads them through group "pvj" and cannot change them). No other unit may name this folder (D44).
+# (which reads them through group "pvj" and cannot change them). No other unit may name this folder (D45).
 # Kept across stops: the undervoltage note lasts until the next boot, and pvj-tmpfiles.conf keeps two links in it.
 RuntimeDirectory=pvj/web
 RuntimeDirectoryMode=0750

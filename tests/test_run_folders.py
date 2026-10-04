@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""A runtime folder per service (D44): what the code does with a folder that is its own and one that is a peer's.
+"""A runtime folder per service (D45): what the code does with a folder that is its own and one that is a peer's.
 
 The ownership itself (systemd handing a folder to the unit that starts) cannot be shown here; the units are checked
 in tests/test_units.py and the real box with the checklist in tools/DEVICE-TESTING.md."""

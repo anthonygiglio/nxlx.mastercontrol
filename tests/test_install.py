@@ -97,7 +97,7 @@ class InstallTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.p("run")))          # a fresh install makes nothing under /run itself
 
     def old_run_folder(self, mode=0o770):
-        """What a running version from before D44 leaves in /run/pvj: one shared folder (here DIR/run/pvj)."""
+        """What a running version from before D45 leaves in /run/pvj: one shared folder (here DIR/run/pvj)."""
         run = self.p("run/pvj")
         os.makedirs(run)
         for name in ("pin", "player.pid", "preview.jpg", "overlay.bgra", "overlay-3.bgra", "mapper-7-1.glsl", "shader-7-2.glsl"):

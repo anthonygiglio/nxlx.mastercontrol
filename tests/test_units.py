@@ -171,7 +171,7 @@ def runtime_folder_faults(units):
 
 
 class RuntimeFolderTest(unittest.TestCase):
-    """Each service has a runtime folder nobody else can take (D44; found on a real Pi 4, 2026-10-04)."""
+    """Each service has a runtime folder nobody else can take (D45; found on a real Pi 4, 2026-10-04)."""
 
     def setUp(self):
         from pvj import paths
@@ -233,7 +233,7 @@ class RuntimeFolderTest(unittest.TestCase):
         self.assertEqual(self.env("pvj-supportd.service")["PVJ_SUPPORTD_DIR"], p.SUPPORTD_DIR)
         for unit in ("pvj-update-usb@.service", "pvj-update-inbox@.service"):
             self.assertIn("--result " + p.UPDATE_RESULT, " ".join(self.units[unit]["ExecStart"]))
-        # a version from before D44 that an update rolled back to keeps working in its own folder: for those the
+        # a version from before D45 that an update rolled back to keeps working in its own folder: for those the
         # only name is PVJ_RUNTIME_DIR, and it must never point a service at a folder it cannot write
         for unit, own in (("pvj-player.service", "pvj/player"), ("pvj-web.service", "pvj/web"), ("pvj-netd.service", "pvj/netd")):
             self.assertEqual(self.env(unit)["PVJ_RUNTIME_DIR"], "/run/" + self.units[unit]["RuntimeDirectory"][0])

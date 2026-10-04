@@ -373,7 +373,7 @@ class ServerTest(ServerBase):
         self.assertEqual(st, 200)
         with open(os.path.join(self.rundir, "pin")) as f:
             self.assertEqual(f.read().strip(), body["pin"])
-        self.assertEqual(oct(os.stat(os.path.join(self.rundir, "pin")).st_mode & 0o777), "0o600")   # not for group pvj (D44)
+        self.assertEqual(oct(os.stat(os.path.join(self.rundir, "pin")).st_mode & 0o777), "0o600")   # not for group pvj (D45)
         if body["pin"] != old:
             self.assertEqual(self.call("POST", "/api/pair", {"pin": old})[0], 403)
         self.assertEqual(self.call("GET", "/api/status", token=token)[0], 200)  # paired device stays paired
