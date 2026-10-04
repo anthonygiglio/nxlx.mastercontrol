@@ -2211,7 +2211,8 @@
       var pw = h('input', { class: 'text-input mono', id: ids + 'pw', type: 'password', autocomplete: 'new-password', disabled: e.clear });
       pw.value = e.clear ? '' : e.password;      // the property, not an attribute: a typed password never becomes page HTML
       var err = h('div', { class: 'msg err', id: ids + 'err', role: 'alert', text: e.error || '' });
-      var moved = h('div', { class: 'hint', id: ids + 'moved', text: 'A new address or port: the box asks the projector at the new one who it is. The names you gave its inputs are kept.' });
+      var moved = h('div', { class: 'hint', id: ids + 'moved', text: 'A new address or port: the box asks the projector at the new one who it is. The names you gave its inputs are kept.' +
+        (p.has_password ? ' The stored password is then used at the new address. If the password belongs to the old projector only, remove it or type the new one.' : '') });
       function read() { e.name = name.value; e.host = host.value; e.port = port.value; if (!e.clear) e.password = pw.value; }
       function change() {           // what would be sent
         var out = { id: p.id }, n = parseInt(e.port, 10);

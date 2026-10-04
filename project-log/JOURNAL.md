@@ -22,7 +22,18 @@ Not tested: a real projector; the Pi; a phone. Playwright is not on the new Mac,
 
 A code that the box makes because Show was pressed with none active lasts as long as the show (at least 15 minutes), not one of the three choices; the panel therefore makes the guest code first, for the time chosen, when a presenter presses Show with no code. The decision number is 47 because the shader engine branch (#72) uses 46.
 
-Open for the review and the owner: device records do not say how a device joined, so "any presenter" includes one who came in by a presenter code ten minutes ago; there is no limit on how many devices can be paired, so a presenter (like a guest code holder before) can add guest devices 20 at a time until the owner removes them; the "Remove" buttons on the Paired devices list still do not ask first (the audit's item).
+**After the independent review** (no privilege escalation and no validation bypass; one medium and five low findings). Fixed, each with a test:
+
+- Medium, nothing was bounded: a presenter could loop "new code, 20 uses, pair 20 times" and add 200 guest devices in 0.3 seconds, each a rewrite of the settings file and one more record for every request to scan. Now at most 200 paired devices with 20 places kept for full access (so the PIN always pairs; nothing is evicted, guests are refused first, with a plain message that is not counted as a wrong guess and uses up no code), at most 6 presenter-made guest codes an hour (429 with the wait), and a device that joined with a guest code is dropped after 7 days without use. For that a device record now says `via: "code"`, and such a guest's last use is written to the settings at most once a day (`seen`); both are optional keys, no schema change. D47's cost paragraph was wrong to call the pile-up "already so" and now says what is bounded and what is not.
+- An input change asked for before an edit went to the old address and was then retried at the new one (seven `INPT 31` to a projector that does not list it). `Monitor.set_input` now reads the stored address again under the input lock and stops if it changed, and attaches a retry only if it is unchanged.
+- A device removed mid-request left state behind: its show kept the guest code it had made, and its "replace" destroyed the owner's code before answering 401. The pairing check now runs under the lock before anything is replaced, and a code made by a show is cancelled when the check fails afterwards.
+- A code made by a presenter's show was outside the documented limits (17 minutes for a 1020 second show, the default uses). It now lasts the shortest of 15, 60 and 120 minutes that covers the show, with the presenter's uses, and replaces nothing. The type is checked before the membership (15.0 is in (15, 60, 120)).
+- Logging was thinner than D47 said. Show, hide, a code made through show and a code that replaced another (and whose it was) each write a line with the device id, and never a code's digits.
+- Docs: what happens to a Room scene under way when a projector is edited (ROOM.md), and the edit form and PROJECTORS.md say that a kept password is used at the new address.
+
+The Room screen's "Let someone in" is not drawn for a remote support login, and its People and codes row is hidden; that is read from the code (`room.js`, `rowShown`), not run in a browser, since the browser test has no support login. The server refuses it either way, which is tested.
+
+Still open for the owner: "any presenter" includes one who came in by a presenter code ten minutes ago; the "Remove" buttons on the Paired devices list still do not ask first (the audit's item); the owner's own codes have no hourly limit.
 
 ## 2026-10-04 (more shaders: an Ambient and a Performance family)
 

@@ -34,7 +34,8 @@
     var setup = full ? h('div', { class: 'card', id: 'roomsetup' }) : null;
     // Let a guest in without leaving the room's controls: the guest code part of People and codes, opened on request
     // (nothing is asked of the box until then). For whoever may use the buttons here.
-    var letin = live && c.letIn ? h('details', { class: 'card fold', id: 'roomletin' }, h('summary', { text: 'Let someone in' })) : null;
+    // Not for a support login: the box refuses codes through the support connection, whatever the role.
+    var letin = live && c.letIn && !(c.state.device && c.state.device.remote) ? h('details', { class: 'card fold', id: 'roomletin' }, h('summary', { text: 'Let someone in' })) : null;
     if (letin) letin.addEventListener('toggle', function () {
       var old = letin.querySelector('#accesslive');
       if (old) letin.removeChild(old);

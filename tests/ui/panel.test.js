@@ -551,8 +551,11 @@ function startServer() {
       if (!(await page.locator(`label[for="${id}"]`).isVisible())) problems.push(`no visible label above #${id}`);
     }
     if (await page.inputValue('#projedithost') !== '127.0.0.1' || await page.inputValue('#projeditport') !== String(info.projector_ports[0])) problems.push('the edit form is not filled in with the projector\'s address and port');
+    if (await page.isVisible('#projeditmoved')) problems.push('the new-address hint shows before the address was changed');
     await page.fill('#projedithost', '8.8.8.8');
     if (await page.isDisabled('#projeditsave')) problems.push('Save changes stays disabled after a change');
+    if (!/If the password belongs to the old projector only, remove it or type the new one\./.test(await page.textContent('#projeditmoved')) || !(await page.isVisible('#projeditmoved')))
+      problems.push('a new address does not say that the stored password is used there');
     await page.click('#projeditsave');
     await page.waitForSelector('#projediterr:has-text("private network")');
     await page.fill('#projedithost', '127.0.0.1');
