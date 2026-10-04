@@ -29,16 +29,42 @@ def words(keys, *names):
     return [w for n in names for v in keys.get(n, []) for w in v.split()]
 
 
-def ordering_cycle(units):
-    """A cycle in the start-order graph, as a list of names, or None."""
-    edges = {}   # a -> b means "a must start before b"
+def start_order(units, implicit=False):
+    """The start-order graph: edges[a] holds b when a must start before b. With `implicit`, also what systemd adds
+    by itself to a service that keeps its default dependencies (after sysinit.target and basic.target), and the
+    fact that sysinit.target waits for systemd-tmpfiles-setup.service, which is what creates /run/pvj at boot."""
+    edges = {}
+    if implicit:
+        edges.setdefault("systemd-tmpfiles-setup.service", set()).add("sysinit.target")
+        edges.setdefault("sysinit.target", set()).add("basic.target")
     for name, keys in units.items():
+        if implicit and keys.get("DefaultDependencies", ["yes"])[-1] != "no":
+            edges.setdefault("sysinit.target", set()).add(name)
+            edges.setdefault("basic.target", set()).add(name)
         for other in words(keys, "After"):
             edges.setdefault(other, set()).add(name)
         for other in words(keys, "Before"):
             edges.setdefault(name, set()).add(other)
         for target in words(keys, "WantedBy", "RequiredBy"):
             edges.setdefault(name, set()).add(target)     # a target starts after what it wants
+    return edges
+
+
+def starts_before(edges, first, later):
+    seen, todo = set(), [first]
+    while todo:
+        node = todo.pop()
+        if node == later:
+            return True
+        if node not in seen:
+            seen.add(node)
+            todo.extend(edges.get(node, ()))
+    return False
+
+
+def ordering_cycle(units, implicit=False):
+    """A cycle in the start-order graph, as a list of names, or None."""
+    edges = start_order(units, implicit)
 
     def visit(node, path):
         if node in path:
@@ -66,6 +92,28 @@ class UnitOrderingTest(unittest.TestCase):
     def test_no_ordering_cycle_between_our_units(self):
         self.assertIsNone(ordering_cycle(load_units()))
 
+    def test_no_cycle_with_what_systemd_adds_by_itself_and_the_run_folder_is_made_first(self):
+        units = load_units()
+        self.assertIsNone(ordering_cycle(units, implicit=True))
+        edges = start_order(units, implicit=True)
+        for name, keys in units.items():
+            if any(d.startswith("pvj/") for d in words(keys, "RuntimeDirectory")):
+                self.assertNotIn("DefaultDependencies", keys, name)
+                self.assertTrue(starts_before(edges, "systemd-tmpfiles-setup.service", name), name)
+                self.assertFalse(starts_before(edges, name, "sysinit.target"), name)
+
+    def test_the_services_start_in_any_order(self):
+        # No service needs another to be there: a missing peer is "not running" to the code (tests/test_paths.py,
+        # tests/test_player.py), never a failed start. The one ordering between our units is the panel after the
+        # player, and that is a wish (Wants), not a requirement.
+        units = load_units()
+        ours = set(units)
+        for name, keys in units.items():
+            self.assertEqual(set(words(keys, "Requires", "BindsTo", "PartOf", "Requisite")) & ours, set(), name)
+            self.assertEqual(set(words(keys, "Before")) & ours, set(), name)
+            after = set(words(keys, "After")) & ours
+            self.assertEqual(after, {"pvj-player.service"} if name == "pvj-web.service" else set(), name)
+
     def test_the_check_would_have_caught_the_old_player_unit(self):
         old = {"pvj-player.service": {"After": ["multi-user.target systemd-udev-settle.service"], "WantedBy": ["multi-user.target"]},
                "pvj-web.service": {"After": ["network.target pvj-player.service"], "WantedBy": ["multi-user.target"]}}
@@ -81,6 +129,226 @@ class PlayerUnitTest(unittest.TestCase):
     def test_player_runs_in_the_pvj_group_so_the_panel_can_reach_the_socket(self):
         self.assertEqual(load_units()["pvj-player.service"]["Group"], ["pvj"])
         self.assertEqual(load_units()["pvj-web.service"]["Group"], ["pvj"])
+
+
+def runtime_folders(units):
+    """{folder name under /run: {(unit, user, mode, preserve)}} for every RuntimeDirectory= in the units."""
+    out = {}
+    for name, keys in units.items():
+        for d in words(keys, "RuntimeDirectory"):
+            out.setdefault(d.split(":")[0].strip("/"), set()).add(
+                (name, keys.get("User", ["root"])[-1], keys.get("RuntimeDirectoryMode", ["0755"])[-1],
+                 keys.get("RuntimeDirectoryPreserve", ["no"])[-1]))
+    return out
+
+
+def runtime_folder_faults(units):
+    """What is wrong with the units' runtime folders, as a list of sentences (empty when all is well).
+
+    systemd gives a RuntimeDirectory, and everything in it, to the User= and Group= of the unit that is starting
+    whenever the folder's owner or group differs (systemd.exec(5), src/core/execute.c: path_chown_recursive), so a
+    folder named by units of different users belongs to whichever started last. The parent of a nested folder is
+    only created when missing (root:root 0755) and is otherwise left alone, so it stays root's exactly as long as
+    no unit names it as its own RuntimeDirectory."""
+    faults = []
+    folders = runtime_folders(units)
+    for d, users in sorted(folders.items()):
+        owners = {(u, keys_user) for u, keys_user, _mode, _keep in users}
+        if len({user for _unit, user in owners}) > 1:
+            faults.append("%s is the RuntimeDirectory of units with different users: %s" % (d, sorted(owners)))
+        groups = {tuple(units[u].get("Group", [""])) for u, _user, _mode, _keep in users}
+        if len(groups) > 1:
+            faults.append("%s is the RuntimeDirectory of units with different groups" % d)
+        if len({(mode, keep) for _unit, _user, mode, keep in users}) > 1:
+            faults.append("%s has different modes or lifetimes in different units" % d)
+        for _unit, _user, mode, _keep in users:
+            if int(mode, 8) & 0o022:
+                faults.append("%s is writable by its group or by everybody (%s)" % (d, mode))
+        for other in folders:
+            if other != d and other.startswith(d + "/"):
+                faults.append("%s is a unit's own folder and the parent of %s" % (d, other))
+    return faults
+
+
+class RuntimeFolderTest(unittest.TestCase):
+    """Each service has a runtime folder nobody else can take (D45; found on a real Pi 4, 2026-10-04)."""
+
+    def setUp(self):
+        from pvj import paths
+        self.paths, self.units = paths, load_units()
+
+    def env(self, unit):
+        return dict(w.split("=", 1) for w in words(self.units[unit], "Environment"))
+
+    def test_no_folder_is_shared_between_users_or_writable_by_a_group_or_is_another_folders_parent(self):
+        self.assertEqual(runtime_folder_faults(self.units), [])
+
+    def test_the_check_would_have_caught_the_old_units(self):
+        shared = {"RuntimeDirectory": ["pvj"], "RuntimeDirectoryMode": ["0770"], "RuntimeDirectoryPreserve": ["yes"]}
+        old = {"pvj-player.service": dict(shared, User=["gigbox"], Group=["pvj"]),
+               "pvj-web.service": dict(shared, User=["pvj-web"], Group=["pvj"]),
+               "pvj-netd.service": dict(shared, User=["root"], Group=["pvj"])}
+        faults = "\n".join(runtime_folder_faults(old))
+        self.assertIn("different users", faults)
+        self.assertIn("writable by its group", faults)
+        nested = {"a.service": {"RuntimeDirectory": ["pvj"], "User": ["pvj-web"]},
+                  "b.service": {"RuntimeDirectory": ["pvj/netd"], "User": ["root"]}}
+        self.assertIn("the parent of pvj/netd", "\n".join(runtime_folder_faults(nested)))
+
+    def test_the_parent_is_no_units_own_folder_so_it_stays_roots(self):
+        folders = runtime_folders(self.units)
+        parent = self.paths.RUN[len("/run/"):]
+        self.assertEqual(parent, "pvj")
+        self.assertNotIn(parent, folders)
+        self.assertEqual(sorted(d for d in folders if d.startswith(parent + "/")), ["pvj/netd", "pvj/player", "pvj/web"])
+        # and nothing gives a service write access to the parent through the sandbox either
+        for name, keys in self.units.items():
+            self.assertNotIn(self.paths.RUN, [p.lstrip("-+") for p in words(keys, "ReadWritePaths", "BindPaths")], name)
+
+    def test_each_folder_has_one_owner_and_the_mode_the_code_expects(self):
+        p = self.paths
+        want = {"pvj/player": ("pvj-player.service", "@PVJ_USER@", "0750", "no"),
+                "pvj/web": ("pvj-web.service", "pvj-web", "0750", "yes"),
+                "pvj/netd": ("pvj-netd.service", "root", "0750", "no"),
+                "pvj-sysd": ("pvj-sysd.service", "root", "0750", "no"),
+                "pvj-supportd": ("pvj-supportd.service", "root", "0750", "no")}
+        folders = runtime_folders(self.units)
+        for d, owner in want.items():
+            self.assertEqual(folders[d], {owner}, d)
+            self.assertEqual(self.units[owner[0]]["Group"], ["pvj"], d)      # the panel reaches each through group pvj
+        self.assertEqual({user for _u, user, _m, _k in folders["pvj-update"]}, {"root"})
+        self.assertEqual(set(folders), set(want) | {"pvj-update"})
+        self.assertEqual(["/run/" + d for d in want], [p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR])
+        self.assertEqual("/run/pvj-update", p.UPDATE_DIR)
+
+    def test_every_unit_is_told_its_own_folder_and_the_panel_where_its_peers_are(self):
+        p = self.paths
+        self.assertEqual(self.env("pvj-player.service")["PVJ_RUNTIME_DIR"], p.PLAYER_DIR)
+        self.assertEqual(self.env("pvj-netd.service")["PVJ_RUNTIME_DIR"], p.NETD_DIR)
+        web = self.env("pvj-web.service")
+        self.assertEqual((web["PVJ_RUNTIME_DIR"], web["PVJ_PLAYER_DIR"], web["PVJ_NETD_DIR"]), (p.WEB_DIR, p.PLAYER_DIR, p.NETD_DIR))
+        self.assertEqual(p.player_socket(web), p.player_socket(self.env("pvj-player.service")))
+        self.assertEqual(p.netd_socket(web), p.netd_socket(self.env("pvj-netd.service")))
+        self.assertEqual(self.env("pvj-sysd.service")["PVJ_SYSD_DIR"], p.SYSD_DIR)
+        self.assertEqual(self.env("pvj-supportd.service")["PVJ_SUPPORTD_DIR"], p.SUPPORTD_DIR)
+        for unit in ("pvj-update-usb@.service", "pvj-update-inbox@.service"):
+            self.assertIn("--result " + p.UPDATE_RESULT, " ".join(self.units[unit]["ExecStart"]))
+        # a version from before D45 that an update rolled back to keeps working in its own folder: for those the
+        # only name is PVJ_RUNTIME_DIR, and it must never point a service at a folder it cannot write
+        for unit, own in (("pvj-player.service", "pvj/player"), ("pvj-web.service", "pvj/web"), ("pvj-netd.service", "pvj/netd")):
+            self.assertEqual(self.env(unit)["PVJ_RUNTIME_DIR"], "/run/" + self.units[unit]["RuntimeDirectory"][0])
+            self.assertEqual(self.units[unit]["RuntimeDirectory"], [own])
+
+    def test_a_sandboxed_service_may_write_its_own_folder_and_no_other_runtime_folder(self):
+        for unit, own in (("pvj-web.service", self.paths.WEB_DIR), ("pvj-netd.service", self.paths.NETD_DIR),
+                          ("pvj-sysd.service", self.paths.SYSD_DIR), ("pvj-supportd.service", self.paths.SUPPORTD_DIR)):
+            self.assertEqual(self.units[unit]["ProtectSystem"], ["strict"], unit)
+            run = [w.lstrip("-+") for w in words(self.units[unit], "ReadWritePaths") if w.lstrip("-+").startswith("/run")]
+            self.assertEqual(run, [own], unit)
+
+    def test_tmpfiles_keeps_the_parent_with_root_and_the_links_for_an_older_panel_in_the_panels_folder(self):
+        p = self.paths
+        with open(os.path.join(REPO, "install", "pvj-tmpfiles.conf")) as f:
+            lines = [ln.split() for ln in f if ln.strip() and not ln.startswith("#")]
+        self.assertEqual(lines[0], ["d", p.RUN, "0755", "root", "root", "-"])
+        self.assertEqual(lines[1], ["f", p.RUN + "/.d45", "0644", "root", "root", "-"])     # the installer's "done"
+        self.assertEqual(lines[2], ["d", p.WEB_DIR, "0750", "pvj-web", "pvj", "-"])
+        # inside the panel's folder root makes links only, and sets no owner or mode there
+        for ln in lines[3:]:
+            self.assertEqual((ln[0], ln[2:5]), ("L+", ["-", "-", "-"]), ln)
+        links = {ln[1]: ln[-1] for ln in lines if ln[0] == "L+"}
+        self.assertEqual(links, {p.WEB_DIR + "/player.sock": p.PLAYER_DIR + "/" + p.PLAYER_SOCKET,
+                                 p.WEB_DIR + "/netd.sock": p.NETD_DIR + "/" + p.NETD_SOCKET})
+        self.assertEqual(len(lines), 5)
+        for ln in lines:                                   # nothing outside the parent and the panel's own folder
+            self.assertTrue(ln[1] in (p.RUN, p.RUN + "/.d45") or ln[1].startswith(p.WEB_DIR), ln)
+
+    def installer(self):
+        with open(os.path.join(REPO, "install", "install.sh")) as f:
+            return f.read()
+
+    @staticmethod
+    def function(sh, name):
+        start = sh.index(name + "() {")
+        return sh[start:sh.index("\n}\n", start)]
+
+    def test_the_installer_stops_the_services_then_reloads_then_takes_the_folder_back_then_restarts(self):
+        sh = self.installer()
+        real = sh[sh.index('[ -d /run/systemd/system ]; then\n\tprepare_run_folder'):]
+        order = [real.index(x) for x in ("prepare_run_folder", "systemctl daemon-reload", "fix_run_folder",
+                                         "systemctl restart pvj-player.service")]
+        # before the reload a player that restarts by itself runs its old unit and takes the folder back; between
+        # the reload and the emptying a restart would let systemd chown a name planted as /run/pvj/player
+        self.assertEqual(order, sorted(order))
+        prepare = self.function(sh, "prepare_run_folder")
+        self.assertIn('systemctl stop "${RUN_UNITS[@]}"', prepare)
+        self.assertLess(prepare.index("is-active"), prepare.index("systemctl stop"))
+        self.assertIn("RUN_UNITS=(pvj-player.service pvj-web.service pvj-netd.service)", sh)
+        self.assertNotIn("systemctl start", sh[:sh.index("fix_run_folder\n\tif systemctl restart systemd-journald")])
+        body = self.function(sh, "fix_run_folder")
+        steps = [body.index(x) for x in ("chown root:root", "chmod 0755", 'rm -f "$RUN_MARK"', "-mindepth 1 -delete || die",
+                                         "systemd-tmpfiles --create")]
+        self.assertEqual(steps, sorted(steps))     # take it, forget "done", empty it or stop, and only then "done"
+        # an update from the panel installs with --no-start and restarts only the player and the panel
+        self.assertIn("systemctl try-restart pvj-netd.service", sh)
+        self.assertIn('systemctl start "${RUN_WAS_ACTIVE[@]}"', sh)
+        self.assertIn('"$TMPFILES"', sh[sh.index("uninstall() {"):sh.index("if [ \"$UNINSTALL\" = 1 ]")])
+
+    def test_root_never_writes_chowns_or_chmods_a_name_inside_a_folder_an_account_owns(self):
+        # Found by the review: the installer wrote a note into /run/pvj/web as root, and a link planted there by
+        # the panel's account sent the write, the chown and the chmod anywhere. In these functions root may only
+        # chown and chmod /run/pvj itself, remove names, and let tmpfiles write the marker in /run/pvj.
+        sh = self.installer()
+        for name in ("run_folder_is_sound", "prepare_run_folder", "fix_run_folder"):
+            body = "\n".join(ln.split("  #")[0] for ln in self.function(sh, name).splitlines() if not ln.lstrip().startswith("#"))
+            for ln in body.splitlines():
+                if re.search(r"\b(chown|chmod|install|cp|mv|ln|mkdir|touch|tee|printf|echo|cat)\b", ln) or re.search(r"(?<![<0-9])>", ln):
+                    if ln.strip().startswith("log ") or "|| die" in ln or "|| log" in ln:
+                        continue
+                    targets = re.findall(r'"(\$[A-Z_]+[^"]*)"', ln)
+                    self.assertTrue(targets, ln)
+                    for t in targets:
+                        self.assertIn(t, ("$RUN_DIR", "$RUN_MARK", "${RUN_UNITS[@]}", "$REAL", "$RUN_EMPTY"), ln)
+            for word in ("/web", "/player", "/netd", "undervoltage", "pvj-web:pvj"):
+                self.assertNotIn(word, body.replace('web) want="pvj-web:pvj 750"', ""), "%s in %s" % (word, name))
+        self.assertNotIn("undervoltage", sh)
+        # the marker is in the folder that is root's, never in a service's
+        self.assertIn('RUN_MARK="$RUN_DIR/.d45"', sh)
+        self.assertIn('RUN_DIR="$ROOT/run/pvj"', sh)
+
+    def test_the_pin_command_reads_where_the_panel_writes(self):
+        with open(os.path.join(REPO, "bin", "pvj-pin")) as f:
+            self.assertIn('f="${PVJ_RUNTIME_DIR:-%s}/%s"' % (self.paths.WEB_DIR, self.paths.PIN), f.read())
+
+    def test_no_code_names_a_runtime_path_outside_the_paths_module(self):
+        for path in glob.glob(os.path.join(REPO, "pvj", "*.py")):
+            if os.path.basename(path) == "paths.py":
+                continue
+            with open(path) as f:
+                code = [ln.split("#")[0] for ln in f if not ln.lstrip().startswith("#")]
+            for ln in code:
+                if '"""' in ln:
+                    continue
+                self.assertNotRegex(ln, r"""["']/run/pvj""", "%s: %s" % (os.path.basename(path), ln.strip()))
+
+    def test_every_runtime_path_in_bin_and_install_is_one_the_paths_module_knows(self):
+        # Shell and unit files cannot import pvj/paths.py, so every /run/pvj... they name must be one of its paths.
+        p = self.paths
+        known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR,
+                 p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
+                 p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
+                 p.RUN + "/<name>"}
+        files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*"))
+        seen = set()
+        for path in files:
+            if path.endswith(".md"):
+                continue
+            with open(path) as f:
+                for found in re.findall(r"/run/pvj[A-Za-z0-9_./<>-]*", f.read()):
+                    found = found.rstrip(".")
+                    seen.add(found)
+                    self.assertIn(found, known, "%s names %s" % (os.path.basename(path), found))
+        self.assertTrue({p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_RESULT} <= seen)
 
 
 class InstallerOwnershipTest(unittest.TestCase):
@@ -175,7 +443,7 @@ class NetdUnitTest(unittest.TestCase):
         self.assertEqual(keys["ProtectSystem"], ["strict"])
         paths = [p.lstrip("-") for p in words(keys, "ReadWritePaths")]
         self.assertIn(netcfg.KEYFILE_DIR, paths)
-        self.assertEqual(sorted(paths), sorted(["/run/pvj", "/var/lib/pvj-netd", netcfg.KEYFILE_DIR]))
+        self.assertEqual(sorted(paths), sorted(["/run/pvj/netd", "/var/lib/pvj-netd", netcfg.KEYFILE_DIR]))
 
     def test_the_network_helper_may_read_the_boxs_addresses(self):
         families = words(load_units()["pvj-netd.service"], "RestrictAddressFamilies")

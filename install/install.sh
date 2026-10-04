@@ -10,7 +10,7 @@
 #   --user NAME      account that owns the screen and sound card (default: the
 #                    user who ran sudo, else a new system user "pvj-player")
 #   --web-user NAME  optional: add another account (a separate web app) to group "pvj"; NOT needed for
-#                    the built-in panel, which has its own pvj-web account. Members can read the PIN.
+#                    the built-in panel, which has its own pvj-web account. Members can reach the player's socket.
 #   --media DIR      video folder (default /var/lib/pvj/video)
 #   --offline        never touch the network; fail if a dependency is missing
 #   --no-start       install and enable the service but do not start it
@@ -88,6 +88,7 @@ UPD_USB_UNIT="$ROOT/etc/systemd/system/pvj-update-usb@.service"
 UPD_INBOX_UNIT="$ROOT/etc/systemd/system/pvj-update-inbox@.service"
 WG_LOAD="$ROOT/etc/modules-load.d/pvj-wireguard.conf"
 USB_RULE="$ROOT/etc/udev/rules.d/99-pvj-usb.rules"
+TMPFILES="$ROOT/etc/tmpfiles.d/pvj.conf"
 BIN_LINKS="$ROOT/usr/local/bin"
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/pvj/__init__.py")"
 [ -n "$VERSION" ] || die "cannot read version from pvj/__init__.py"
@@ -98,7 +99,7 @@ uninstall() {
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 		systemctl disable --now pvj-player.service 2>/dev/null || true
 	fi
-	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF"
+	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
@@ -272,7 +273,95 @@ if [ "$DRY" = 0 ]; then
 	# The system log survives restarts (capped at 64 MB), so an unexpected restart can be explained afterwards.
 	mkdir -p "$(dirname "$JOURNAL_CONF")"
 	cp "$SRC/install/50-pvj-persistent-log.conf" "$JOURNAL_CONF"
+	# The parent of the services' runtime folders belongs to root, at every boot (D45).
+	mkdir -p "$(dirname "$TMPFILES")"
+	cp "$SRC/install/pvj-tmpfiles.conf" "$TMPFILES"
 fi
+
+# Runtime folders (D45). Older versions shared one RuntimeDirectory, /run/pvj, between the player, the panel and the
+# root network helper, and systemd gave it to whichever started last; it stays like that until the next boot unless
+# it is put right here. Rules for this part, each from the independent review:
+#   * root never creates, writes, chowns or chmods a name inside a folder that an unprivileged account owns (a link
+#     planted there would send it anywhere); it only takes /run/pvj itself, in /run, and deletes below it;
+#   * the folder counts as done only when a marker says so, and the marker is written last (by tmpfiles, as root, in
+#     the folder that is root's by then), so an emptying that was cut short is finished by the next run;
+#   * the three services are stopped BEFORE the reload and the emptying, so none can restart by itself in between
+#     and have systemd chown a planted name.
+# With --stage all of it works on DIR/run/pvj and leaves owners alone (the tests).
+RUN_DIR="$ROOT/run/pvj"
+RUN_MARK="$RUN_DIR/.d45"
+RUN_UNITS=(pvj-player.service pvj-web.service pvj-netd.service)
+RUN_WAS_ACTIVE=()
+RUN_EMPTY=0
+
+# True when /run/pvj is root's, has the marker, and holds nothing but the services' folders, each with its own owner.
+run_folder_is_sound() {
+	local entry want
+	if [ ! -d "$RUN_DIR" ] || [ -L "$RUN_DIR" ]; then return 1; fi
+	if [ ! -f "$RUN_MARK" ] || [ -L "$RUN_MARK" ]; then return 1; fi
+	if [ "$REAL" = 1 ]; then
+		if [ "$(stat -c '%U:%G %a' "$RUN_DIR")" != "root:root 755" ]; then return 1; fi
+		if [ "$(stat -c '%U:%G' "$RUN_MARK")" != "root:root" ]; then return 1; fi
+	elif [ "$(stat -c '%a' "$RUN_DIR")" != "755" ]; then
+		return 1
+	fi
+	while IFS= read -r -d '' entry; do
+		case "${entry##*/}" in
+		.d45) continue ;;
+		player) want="$PVJ_USER:pvj 750" ;;
+		web) want="pvj-web:pvj 750" ;;
+		netd) want="root:pvj 750" ;;
+		*)
+			if [ -d "$entry" ] && [ ! -L "$entry" ]; then return 1; fi     # a folder nobody should have made
+			continue ;;                                                    # a stray file or link: removed below
+		esac
+		if [ ! -d "$entry" ] || [ -L "$entry" ]; then return 1; fi
+		if [ "$REAL" = 1 ] && [ "$(stat -c '%U:%G %a' "$entry")" != "$want" ]; then return 1; fi
+	done < <(find "$RUN_DIR" -mindepth 1 -maxdepth 1 -print0)
+	return 0
+}
+
+# Before daemon-reload: decide, and stop what could write there or be restarted by systemd in the middle.
+prepare_run_folder() {
+	local u
+	if [ ! -e "$RUN_DIR" ] && [ ! -L "$RUN_DIR" ]; then return 0; fi
+	if run_folder_is_sound; then return 0; fi
+	RUN_EMPTY=1
+	if [ "$REAL" = 1 ]; then
+		for u in "${RUN_UNITS[@]}"; do
+			if systemctl is-active --quiet "$u"; then RUN_WAS_ACTIVE+=("$u"); fi
+		done
+		log "stopping the player, the panel and the network helper while their runtime folder is rebuilt"
+		systemctl stop "${RUN_UNITS[@]}" 2>/dev/null || true
+	fi
+}
+
+# After daemon-reload and before any (re)start.
+fix_run_folder() {
+	if [ "$RUN_EMPTY" = 1 ]; then
+		log "moving the runtime files to a folder per service ($RUN_DIR now belongs to root)"
+		if [ -L "$RUN_DIR" ]; then rm -f "$RUN_DIR"; fi
+		if [ -d "$RUN_DIR" ]; then
+			# First take the folder away from its owner, then empty it: the old sockets, the PIN, and anything an
+			# account that owned the folder may have left, also under the names of the new folders. The marker goes
+			# first, so a run that stops half-way is seen as unfinished.
+			if [ "$REAL" = 1 ]; then chown root:root "$RUN_DIR"; fi
+			chmod 0755 "$RUN_DIR"
+			rm -f "$RUN_MARK"
+			find "$RUN_DIR" -mindepth 1 -delete || die "could not empty $RUN_DIR (something is still writing there); the player, the panel and the network helper are stopped: run the installer again"
+		fi
+	elif [ -d "$RUN_DIR" ]; then
+		# Nothing but the marker and the services' folders belongs here.
+		find "$RUN_DIR" -mindepth 1 -maxdepth 1 ! -type d ! -name .d45 -delete || die "could not tidy $RUN_DIR; run the installer again"
+	fi
+	if [ "$REAL" = 1 ]; then
+		# Creates /run/pvj and the marker if they are missing (see pvj-tmpfiles.conf), as at boot.
+		systemd-tmpfiles --create "$TMPFILES" || log "systemd-tmpfiles reported a problem; /run/pvj is checked again at the next install and set up at the next boot"
+	elif [ -d "$RUN_DIR" ]; then
+		: > "$RUN_MARK"
+	fi
+}
+if [ "$REAL" = 0 ] && [ "$DRY" = 0 ]; then prepare_run_folder; fix_run_folder; fi
 # USB automount: udev starts pvj-usb@<partition>.service, which mounts by label.
 run mkdir -p "$(dirname "$USB_RULE")"
 if [ "$DRY" = 0 ]; then
@@ -281,7 +370,9 @@ if [ "$DRY" = 0 ]; then
 fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
+	prepare_run_folder
 	systemctl daemon-reload
+	fix_run_folder
 	if systemctl restart systemd-journald.service 2>/dev/null; then journalctl --flush 2>/dev/null || true; fi
 	systemctl enable pvj-player.service pvj-web.service pvj-sysd.service pvj-supportd.service
 	modprobe wireguard 2>/dev/null || log "the WireGuard kernel module is not available: remote support stays unavailable"
@@ -289,10 +380,14 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	# The network helper only makes sense with NetworkManager (Raspberry Pi OS, most desktops).
 	if command -v nmcli >/dev/null; then
 		systemctl enable pvj-netd.service
-		if [ "$START" = 1 ]; then systemctl restart pvj-netd.service; fi
+		# Even with --no-start (an update from the panel, which then restarts the player and the panel itself): a
+		# helper that is running must move to the socket the new panel looks for. try-restart starts nothing.
+		if [ "$START" = 1 ]; then systemctl restart pvj-netd.service; else systemctl try-restart pvj-netd.service || true; fi
 	else
 		log "NetworkManager not found: network settings in the panel stay unavailable"
 	fi
+	# With --no-start: what was stopped above for the runtime folder is started again, and nothing else.
+	if [ "$START" = 0 ] && [ ${#RUN_WAS_ACTIVE[@]} -gt 0 ]; then systemctl start "${RUN_WAS_ACTIVE[@]}" || true; fi
 fi
 
 log "installed. Check the device with: pvj-selftest --play"

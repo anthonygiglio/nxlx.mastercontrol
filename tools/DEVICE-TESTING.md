@@ -70,6 +70,94 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | Schedule | Check the box clock (System > Schedule shows it), add an entry two minutes ahead, turn the schedule on | It fires once at that minute and shows "Last run"; reboot and confirm nothing fires for old times |
 | Network | **Last, with a monitor and keyboard on the Pi**, never over SSH on the only connection. Try a change, confirm, then one you do not confirm | A change you do not confirm reverts by itself. Never test this remotely on the only link |
 
+### Runtime folders: who owns what in /run (D45)
+
+**Not run on any box yet.** The change that gives each service its own runtime folder ran in CI only: the unit tests, and one job that runs the installer for real as root under the runner's systemd (`tests/real_install_test.sh`: no display, not a Pi, not the box's systemd). This list is the proof for a box; until someone has run it, nothing may be claimed about how the folders behave on hardware.
+
+Every command below is run on the Pi over SSH. **sudo** in the last column means the step needs root (the listing itself always does). Paste the two setup lines once per SSH session:
+
+```
+L() { sudo find /run/pvj /run/pvj-sysd /run/pvj-supportd /run/pvj-update -printf '%u:%g %m %y %p %l\n' 2>&1 | sort -k4; }
+A=$(sed -n 's/.*"user": "\([^"]*\)".*/\1/p' /etc/pvj/install.json); echo "display account: $A"
+```
+
+`L` prints owner:group, mode, type (`d` folder, `s` socket, `f` file, `l` link, `p` pipe), path and, for a link, where it points. **The table**: what `L` must print whenever the five services are active, with `A` standing for the display account. Lines marked "when" appear only then; a "No such file or directory" line for `/run/pvj-update` is normal until an update has run from the panel.
+
+```
+root:root 755 d /run/pvj
+root:root 644 f /run/pvj/.d45
+root:pvj 750 d /run/pvj/netd
+root:pvj 660 s /run/pvj/netd/netd.sock
+A:pvj 750 d /run/pvj/player
+A:pvj 660 s /run/pvj/player/player.sock
+A:pvj 660 f /run/pvj/player/preview.jpg                  (when the panel has shown a preview)
+pvj-web:pvj 750 d /run/pvj/web
+root:root 777 l /run/pvj/web/netd.sock /run/pvj/netd/netd.sock
+pvj-web:pvj 600 f /run/pvj/web/pin
+root:root 777 l /run/pvj/web/player.sock /run/pvj/player/player.sock
+pvj-web:pvj 640 f /run/pvj/web/shader-N-N.glsl           (when a shader plays; also mapper-N-N.glsl, overlay.bgra, overlay-N.bgra)
+pvj-web:pvj 640 p /run/pvj/web/capture.fifo              (when a live input plays)
+pvj-web:pvj 640 f /run/pvj/web/undervoltage-seen         (when low power was seen since the boot)
+root:pvj 750 d /run/pvj-supportd
+root:pvj 660 s /run/pvj-supportd/supportd.sock
+root:pvj 750 d /run/pvj-sysd
+root:pvj 660 s /run/pvj-sysd/sysd.sock
+root:root 755 d /run/pvj-update                          (when an update has run from the panel)
+root:root 644 f /run/pvj-update/result.json
+```
+
+Three one-line checks used below, each with the output that is good:
+
+```
+systemctl is-active pvj-player pvj-web pvj-netd pvj-sysd pvj-supportd     # active (five times)
+sudo find /run/pvj -mindepth 1 -maxdepth 1 ! -name .d45 ! -name player ! -name web ! -name netd     # prints nothing
+sudo stat -c '%U:%G %a' /run/pvj                                         # root:root 755
+```
+
+| # | When | Commands | Good | Needs |
+| --- | --- | --- | --- | --- |
+| R0 | First | `systemctl --version \| head -n 1; . /etc/os-release; echo "$PRETTY_NAME"; cat /opt/pvj/current/pvj/__init__.py \| grep version` | Write down the systemd version (252 on Bookworm, 257 on Trixie) and the installed version | |
+| R1 | Upgrade over the running OLD version, by the installer | `L` first (old layout: `/run/pvj` mode 770 with `player.sock`, `netd.sock`, `pin` directly in it). Then, in the copy of the new tree: `sudo install/install.sh 2>&1 \| tee /tmp/install.log; grep -c "a folder per service" /tmp/install.log; grep -c "tmpfiles reported" /tmp/install.log; sleep 8; L` and the three checks | `1`, then `0`; the table; five times `active`; nothing; `root:root 755` | sudo |
+| R1b | **Skip unless you have such a bundle.** Instead of R1, on a box that still runs the old version: update from the panel, started on the OLD version. `pvj-update` refuses a bundle that is not newer than what is installed, and this change does not raise the version (0.1.0 both before and after), so this needs a bundle built from this tree with `__version__` raised in `pvj/__init__.py` (`tools/make-release.sh`), signed with a key that is listed in `/etc/pvj/allowed_signers` on the box | System > Updates, install the bundle. Then `cat /run/pvj-update/result.json; L` and the three checks, and open System > Network | The result says done; the table; the Network page shows the addresses without a reboot (the old updater restarts only the player and the panel; the new installer moves the network helper) | sudo, a browser |
+| R2 | After a boot | `sudo reboot`; when it is back, set up `L` and `A` again, then `L; journalctl -b \| grep -ci "ordering cycle"; journalctl -b -u systemd-tmpfiles-setup.service \| grep -ci pvj` and the three checks | The table, including the two links and `.d45`; `0`; `0`; five times `active`; nothing; `root:root 755` | sudo |
+| R3 | It works across the folders | In the panel: play a clip; open the preview (Live); System > Network shows the addresses and "Find networks" answers; play a shader; a PNG overlay; a mapping if one is set up; a live input if a capture stick is there. On the box: `sudo pvj-pin` | Each works; the preview is a picture, not "no picture to show"; four digits. Then `L`: the table with `preview.jpg` and the "when" lines | sudo, a browser |
+| R3b | The preview from inside the panel's sandbox, without a browser | `PIN=$(sudo pvj-pin); T=$(curl -s -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -d "{\"pin\": \"$PIN\", \"name\": \"check\"}" http://localhost/api/pair \| sed -n 's/.*"token": *"\([^"]*\)".*/\1/p'); curl -s -o /tmp/p.jpg -w '%{http_code}\n' -H "Authorization: Bearer $T" http://localhost/api/preview.jpg; head -c 3 /tmp/p.jpg \| od -An -tx1; sleep 4; curl -s -o /tmp/p2.jpg -w '%{http_code}\n' -H "Authorization: Bearer $T" http://localhost/api/preview.jpg` | `200`, ` ff d8 ff`, `200` (the second one is the case where a picture is already there). A `503` with "Read-only file system" is the bug the review found; a `503` with another text and no screen attached means the player has no picture, which is not this bug (attach a screen or play a clip and repeat). If the first `curl` printed nothing, `echo "$T"` is empty: the PIN was refused (after wrong guesses pairing is locked for a while; wait and repeat). CI could not show a picture here (no display), so this step is the only proof that the panel reads the picture through its sandbox. Remove the device "check" afterwards under System > People and codes | sudo |
+| R4 | Player restart from the panel | System > About and power > Restart player now; then `sleep 5; L` | The table. `netd.sock` is still `root:pvj`, `pin` still `pvj-web:pvj 600` | sudo, a browser |
+| R5 | Restart of each unit | `for u in pvj-player pvj-web pvj-netd pvj-sysd pvj-supportd; do sudo systemctl restart $u; sleep 6; echo "== after $u"; L; done` | The table after every one | sudo |
+| R6 | A crash (killed, restarted by systemd) | `sudo systemctl kill -s KILL pvj-player; sleep 5; L; sudo systemctl kill -s KILL pvj-netd; sleep 6; L; sudo systemctl kill -s KILL pvj-web; sleep 5; L` and the three checks | The table each time; five times `active`. Not known from the source: whether `/run/pvj/player` and `/run/pvj/netd` are removed and made again on an automatic restart; either is fine as long as the table holds afterwards | sudo |
+| R7 | Stop, and start in the other order | `sudo systemctl stop pvj-player pvj-web pvj-netd; L; sudo systemctl start pvj-web; sleep 4; systemctl is-active pvj-web; curl -s http://localhost/api/hello; sudo systemctl start pvj-netd pvj-player; sleep 6; L` | After the stop: no `/run/pvj/player` and no `/run/pvj/netd` lines, `/run/pvj` still `root:root 755`, `/run/pvj/web` and `.d45` still there. Then `active` and JSON from the panel without a player. At the end the table | sudo |
+| R8 | Boot with no network | Unplug the network cable (and have no Wi-Fi in range or switch it off first), `sudo reboot`, log in at a keyboard or plug the cable back in after two minutes; `L` and the three checks | The table; five times `active` | sudo, someone at the box |
+| R9 | Reinstall | `sudo install/install.sh 2>&1 \| tee /tmp/install2.log; grep -c "a folder per service" /tmp/install2.log; grep -c "tmpfiles reported" /tmp/install2.log; sleep 8; L` | `0`, `0`; the table | sudo |
+| R10 | The accounts cannot take each other's things | The block under this table | `refused` fourteen times and no line starting with `WORKED`; then `L` is the table and `ls /run/pvj` shows only `netd player web` | sudo |
+| R11 | An emptying that was cut short is finished | `sudo systemctl stop pvj-netd; sudo rm /run/pvj/.d45; sudo install -d -o "$A" -g pvj /run/pvj/netd; sudo -u "$A" touch /run/pvj/netd/netd.sock; sudo install/install.sh 2>&1 \| grep -c "a folder per service"; sleep 8; L` | `1`; the table (`netd.sock` is a socket of `root:pvj` again) | sudo |
+| R12 | **Skip unless R1b was done.** Rollback: there is a previous release to go back to only after an update to a higher version (`cat /opt/pvj/previous` prints a path; after a same-version install there is no such file and `pvj-update rollback` says so) | `sudo pvj-update rollback; sleep 8; L; systemctl is-active pvj-player pvj-web pvj-netd`; play a clip from the panel; then go forward again with the bundle (System > Updates) or `sudo install/install.sh` from the new tree, and `L` | After the rollback the old panel answers and plays a clip (it finds the sockets through the two links); known and written in D45: its preview does not work, and it writes `pin` with mode 640 again. After going forward: the table, `pin` 600 | sudo, a browser |
+| R13 | A box without NetworkManager (only if there is one; not the Pi OS image) | `command -v nmcli \|\| echo none; systemctl is-active pvj-netd; L` | `none`, `inactive`, and no `/run/pvj/netd` line at all | sudo |
+
+R10, paste as one block:
+
+```
+no() { who=$1; shift; if sudo -u "$who" "$@" >/dev/null 2>&1; then echo "WORKED and must not ($who): $*"; else echo "refused ($who): $*"; fi; }
+no "$A" cat /run/pvj/web/pin
+no "$A" touch /run/pvj/x
+no "$A" ln -s /etc /run/pvj/x
+no "$A" mv /run/pvj/netd /run/pvj/n2
+no "$A" rm /run/pvj/netd/netd.sock
+no "$A" touch /run/pvj/web/x
+no "$A" rm /run/pvj/.d45
+no pvj-web touch /run/pvj/x
+no pvj-web ln -s /etc /run/pvj/x
+no pvj-web mv /run/pvj/netd /run/pvj/n2
+no pvj-web rm /run/pvj/netd/netd.sock
+no pvj-web touch /run/pvj/netd/x
+no pvj-web touch /run/pvj/player/x
+no pvj-web rm /run/pvj/player/player.sock
+L; ls /run/pvj
+```
+
+`sudo -u` runs outside the services' sandboxes, so R10 shows what the accounts may do, not what the services may do; the panel's sandbox is tighter still (R3b is the check that runs inside it).
+
+Send back the output of `L` at every step, R0, and the output of R10. If any line differs from the table, stop and send it: do not "fix" an owner by hand.
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

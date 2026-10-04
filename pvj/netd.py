@@ -3,14 +3,14 @@
 """pvj-netd: the small root helper that changes the wired and Wi-Fi network on behalf of the unprivileged panel.
 
 The panel (user pvj-web) cannot and must not run nmcli. It sends one JSON line over a Unix socket in
-/run/pvj (group pvj); this daemon re-validates everything with pvj.netcfg, runs only the fixed nmcli
+its own folder /run/pvj/netd (root:pvj, 0750); this daemon re-validates everything with pvj.netcfg, runs only the fixed nmcli
 commands that come out of it (argument lists, never a shell), and keeps a safety net:
 
 * a change is built as a separate candidate profile; the confirmed profile is never edited in place
 * it is pending until confirmed, and is undone when the timer runs out, when a command fails, when this
   daemon restarts, and when the box reboots (the candidate is not autoconnect until confirmed)
 * an undo that fails is retried until it works, and never reported as done before it is
-* the saved state lives in a root-only directory (never in /run/pvj, which group members can write)
+* the saved state lives in a root-only directory (never in /run, which is gone after a restart)
 * a Wi-Fi password goes only into a root-only keyfile, never into a command line, a reply or a log
 """
 
@@ -27,7 +27,7 @@ import threading
 import time
 import uuid as uuidlib
 
-from . import netcfg
+from . import netcfg, paths
 from .netcfg import NetError
 
 MAX_LINE = 4096
@@ -506,8 +506,8 @@ def main(argv=None):
     import grp
     import pwd
     import sys
-    rundir = os.environ.get("PVJ_RUNTIME_DIR", "/run/pvj")
-    os.makedirs(rundir, exist_ok=True)
+    rundir = os.environ.get("PVJ_RUNTIME_DIR") or paths.NETD_DIR     # its own folder, root:pvj 0750 (the unit)
+    os.makedirs(rundir, mode=0o750, exist_ok=True)
     allowed = {0}
     try:
         allowed.add(pwd.getpwnam("pvj-web").pw_uid)
@@ -516,9 +516,9 @@ def main(argv=None):
     service = NetService(state_dir=safe_state_dir(), log=lambda m: print(m, flush=True))
     if service.recover():
         print("pvj-netd: found an unconfirmed network change from before the restart and undid it", flush=True)
-    server = NetServer(os.path.join(rundir, "netd.sock"), service, lambda uid: uid in allowed)
+    server = NetServer(os.path.join(rundir, paths.NETD_SOCKET), service, lambda uid: uid in allowed)
     try:
-        os.chown(server.server_address, 0, grp.getgrnam("pvj").gr_gid)
+        os.chown(server.server_address, 0, grp.getgrnam("pvj").gr_gid, follow_symlinks=False)
     except (KeyError, OSError):
         pass
 
