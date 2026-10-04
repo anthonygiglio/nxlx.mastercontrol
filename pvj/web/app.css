@@ -317,6 +317,7 @@ details.fold { display: block; }
 .field { font-weight: 600; font-size: 14px; }
 .saved { font-weight: 400; font-size: 13px; color: var(--mu); }
 .shaderadv { gap: 8px; }
+.hint.warn { color: var(--fg); font-weight: 600; border-left: 3px solid #b00020; padding-left: 8px; }
 /* Room screen: big buttons for staff, long names wrap, and five tabs still fit a phone */
 .tabs.many { gap: 3px; padding-left: 8px; padding-right: 8px; }
 .tabs.many .btn { padding: 0 2px; min-width: 0; font-size: 14px; }

@@ -57,6 +57,7 @@ def name_key(name):
 
 
 FIRST_SET = "00000000"
+SHOW_SET = "00000001"
 ORDERS = ("shuffle", "listed")
 APPLY_GAP = 0.2                 # seconds between two compiles: at most five a second
 REANCHOR = 2 * 86400.0          # seconds after which a shader that nobody touched gets a new anchor (see LiveEngine.time_of)
@@ -76,6 +77,10 @@ PI4 = {
 }
 LIGHT_RANGE = (7.5, 11.2)
 RETUNED = ("nxlx-drift.fs",)    # its look was changed after it was measured; the work per pixel was meant to stay
+
+
+def performance(categories):
+    return any(isinstance(c, str) and c.lower() == S.PERFORMANCE for c in (categories or ()))
 
 
 def weight_of(sid, cost):
@@ -290,10 +295,11 @@ def check_extra(v):
         if not isinstance(v["active"], str) or not SET_ID.fullmatch(v["active"]):
             raise ValueError("active must be the id of a set")
         out["active"] = v["active"]
-    if "guard" in v:
-        if not isinstance(v["guard"], bool):
-            raise ValueError("guard must be true or false")
-        out["guard"] = v["guard"]
+    for key in ("guard", "faster"):
+        if key in v:
+            if not isinstance(v[key], bool):
+                raise ValueError("%s must be true or false" % key)
+            out[key] = v[key]
     if "clock" in v:
         if v["clock"] not in S.CLOCKS:
             raise ValueError("clock must be carrier or frame")
@@ -565,8 +571,9 @@ class LiveEngine(S.Engine):
                     cfg[key] = rows
         if isinstance(saved.get("active"), str) and SET_ID.fullmatch(saved["active"]):
             cfg["active"] = saved["active"]
-        if isinstance(saved.get("guard"), bool):
-            cfg["guard"] = saved["guard"]
+        for key in ("guard", "faster"):
+            if isinstance(saved.get(key), bool):
+                cfg[key] = saved[key]
         if saved.get("clock") in S.CLOCKS:
             cfg["clock"] = saved["clock"]
         if saved.get("v") == 2:
@@ -622,6 +629,7 @@ class LiveEngine(S.Engine):
                 except (ShaderError, ApiError):
                     parsed, digest = None, None
                 s["refused"] = self._refusals.get(digest)
+                s["speed_max"] = 1.0 if (performance(s.get("categories")) and not cfg.get("faster", False)) else S.SPEED_MAX
                 work = work_inputs(parsed) if parsed else set()
                 now = {} if not parsed else (self.current_values(parsed, on) if (on and on["id"] == sid) else self.start_values(parsed, cfg, sid)[0])
                 for i in s["inputs"]:
@@ -746,17 +754,29 @@ class LiveEngine(S.Engine):
                 continue
             if s["source"] == "uploaded":
                 keep = old
-            elif s.get("pack", "nxlx") != "nxlx":
-                keep = sid in cfg.get("included", ())
+            elif s.get("pack", "nxlx") != "nxlx" or performance(s.get("categories")):
+                keep = sid in cfg.get("included", ())       # a pack's shader, or one of ours made to perform with: only if put in
             else:
                 keep = weight_of(sid, s["cost"]) != "heavy"
             if keep:
                 out.append({"id": sid})
-        return {"id": FIRST_SET, "name": "Ambient", "shaders": out, "dwell": cfg["dwell"], "vary": cfg["vary"], "order": ORDERS[0]}
+        first = {"id": FIRST_SET, "name": "Ambient", "shaders": out, "dwell": cfg["dwell"], "vary": cfg["vary"], "order": ORDERS[0]}
+        # The second set a box has from the start: the project's shaders made to perform with. It is not the active one.
+        show = [{"id": s["id"]} for s in rows if s["source"] == "bundled" and s.get("pack", "nxlx") == "nxlx" and performance(s.get("categories"))
+                and not s["error"] and s["id"] not in cfg["disabled"] and weight_of(s["id"], s["cost"]) != "heavy"]
+        return [first] + ([{"id": SHOW_SET, "name": "Show", "shaders": show, "dwell": S.DWELL_DEFAULT, "vary": True, "order": ORDERS[0]}] if show else [])
 
     def sets(self, cfg=None, rows=None):
         cfg = cfg or self.config()
-        return [dict(e, shaders=[dict(r) for r in e["shaders"]]) for e in cfg["sets"]] if cfg.get("sets") else [self._first_set(cfg, rows)]
+        return [dict(e, shaders=[dict(r) for r in e["shaders"]]) for e in cfg["sets"]] if cfg.get("sets") else self._first_set(cfg, rows)
+
+    def limit(self, parsed, controls):
+        """The flash limit. Every shader of the category "Performance" caps its own flashing at 3 a second (6 with its
+        Fast switch) by its TIME. The speed control multiplies TIME, so it would multiply the cap: for these shaders
+        the speed stays at 1 or below, unless a full-access device has switched "faster" on for the box."""
+        if controls["speed"] > 1.0 and performance(parsed.get("categories")) and not self.config().get("faster", False):
+            return dict(controls, speed=1.0)
+        return controls
 
     def rotation(self, set_id=None, cfg=None, rows=None):
         """One set, by its id or its name (any letter case); with nothing named, the active one."""
@@ -943,7 +963,7 @@ class LiveEngine(S.Engine):
             try:
                 parsed, digest = self._parsed(self._path(p["id"])[0])
                 state = {"values": dict(p["values"], **job["values"]), "held": dict(job["held"]), "hue": p["hue"],
-                         "controls": dict(p["controls"], **job["controls"]), "offset": p["offset"], "anchor": p["anchor"]}
+                         "controls": self.limit(parsed, dict(p["controls"], **job["controls"])), "offset": p["offset"], "anchor": p["anchor"]}
                 since = p.get("since")
                 if state["anchor"] is not None and (state["controls"]["speed"] != p["controls"]["speed"] or job.get("anchor")):
                     state["offset"], state["anchor"], since = self.time_of(p)       # TIME goes on from where it is, at the new pace
@@ -1124,7 +1144,7 @@ class LiveEngine(S.Engine):
             self.changer.submit(on, values, controls, held)
         wish = self.changer.pending() or {}
         return {"ok": True, "id": on["id"], "values": dict(self.current_values(parsed, on), **wish.get("values", {})),
-                "controls": dict(on["controls"], **wish.get("controls", {}))}
+                "controls": self.limit(parsed, dict(on["controls"], **wish.get("controls", {})))}
 
     def apply_preset(self, body):
         """{"name": preset} or {"index": 1 to 8} for the shader on screen, or with "id" for another shader, which is
@@ -1217,7 +1237,7 @@ class LiveEngine(S.Engine):
                 base["playing"].update(drops_per_second=seen["drops_per_second"], load=seen["state"])
         seen = self.guard.verdict if on else {}
         active = self.rotation(None, cfg, base["shaders"]) if self.enabled() else None
-        base["config"].update(guard=cfg.get("guard", True), clock=cfg.get("clock", S.CLOCKS[0]))
+        base["config"].update(guard=cfg.get("guard", True), clock=cfg.get("clock", S.CLOCKS[0]), faster=cfg.get("faster", False))
         if active:
             base["config"].update(dwell=active["dwell"], vary=active["vary"])
         base["render"].update(heights=list(S.heights_for(board)), default=S.default_height(board), measured=board == "pi4", board=board)
@@ -1291,17 +1311,20 @@ class LiveEngine(S.Engine):
         elif action == "config":
             if "height" in body and (isinstance(body["height"], bool) or body["height"] not in S.heights_for(self.board())):
                 raise ApiError(400, "height must be one of %s on this board" % ", ".join(str(h) for h in S.heights_for(self.board())))
-            for key, ok in (("guard", lambda v: isinstance(v, bool)), ("clock", lambda v: v in S.CLOCKS)):
+            for key, ok in (("guard", lambda v: isinstance(v, bool)), ("faster", lambda v: isinstance(v, bool)), ("clock", lambda v: v in S.CLOCKS)):
                 if key in body and not ok(body[key]):
-                    raise ApiError(400, "guard must be true or false, and clock carrier or frame")
+                    raise ApiError(400, "guard and faster must be true or false, and clock carrier or frame")
             super().api_set(body, device, client)
             with self._cfg:
                 cfg = self.config()
-                for key in ("guard", "clock"):
+                for key in ("guard", "clock", "faster"):
                     if key in body:
                         cfg[key] = body[key]
                 self._save(cfg)
                 self.tune_set(None, cfg["dwell"], cfg["vary"])      # dwell and variation belong to the active set
+            on = self.on_screen()
+            if "faster" in body and on:             # the limit applies to what is on now, not only to the next shader
+                self.changer.submit(on, controls={"speed": on["controls"]["speed"]})
         else:
             return super().api_set(body, device, client)
         return self.state()

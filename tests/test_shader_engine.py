@@ -14,7 +14,7 @@ from pvj import boxcare, midi, osc, scheduler, shaderlive as L, shaders as S, vi
 from pvj.api import ApiError
 from pvj.midi import MidiMapper
 from pvj.settings import SCHEMA
-from tests.test_shaders import GOOD, REFUSAL, Base, FakeTap
+from tests.test_shaders import AMBIENT, FIRST_TEN, GOOD, HEAVY, IN_VIBES, PERFORMANCE, REFUSAL, ROTATION, Base, FakeTap
 
 ALL = """/*{"INPUTS": [
  {"NAME": "level", "TYPE": "float", "MIN": 0.0, "MAX": 2.0, "DEFAULT": 0.5, "LABEL": "Level"},
@@ -187,8 +187,14 @@ class BoardTest(Live):
 
     def test_every_bundled_shader_says_how_heavy_it_is_and_what_was_measured(self):
         rows = {s["id"]: s for s in self.engine.state()["shaders"]}
-        self.assertEqual({w: sorted(n[5:-3] for n, s in rows.items() if s["weight"] == w) for w in ("light", "medium", "heavy")},
-                         {"light": ["ember", "horizon", "lattice", "prism", "pulse", "silk"], "medium": ["aurora", "tide"], "heavy": ["drift", "nebula"]})
+        first = {"nxlx-%s.fs" % n for n in FIRST_TEN}
+        self.assertEqual({w: sorted(n[5:-3] for n, s in rows.items() if s["weight"] == w and n in first) for w in ("light", "medium", "heavy")},
+                         {"light": ["ember", "horizon", "lattice", "prism", "pulse", "silk"], "medium": ["aurora", "tide"], "heavy": sorted(HEAVY)})
+        for name in AMBIENT + PERFORMANCE:                            # the two families: from the first word of their own cost note
+            s = rows["nxlx-%s.fs" % name]
+            self.assertEqual((s["weight"], s["measured"]), ({"low": "light", "medium": "medium", "high": "heavy"}[s["cost"].split(":")[0].split()[0].lower()], None), name)
+            self.assertIn(s["weight"], ("light", "medium"), name)
+        rows = {sid: s for sid, s in rows.items() if sid in first}
         tide = rows["nxlx-tide.fs"]
         self.assertEqual(tide["measured"], {"board": "pi4", "lines": 720, "pass_ms": 15.1, "drops_per_second": {"540": 0, "720": 3.3}, "stale": False})
         self.assertEqual((rows["nxlx-silk.fs"]["measured"]["pass_ms"], rows["nxlx-silk.fs"]["measured"]["pass_ms_range"]), (None, [7.5, 11.2]))
@@ -202,7 +208,7 @@ class BoardTest(Live):
     def test_the_heavy_ones_and_uploads_are_out_of_the_default_rotation(self):
         self.engine.upload("mine.fs", GOOD)
         ids = self.engine.vibes_ids()
-        self.assertEqual(sorted(ids), sorted("nxlx-%s.fs" % n for n in ("aurora", "ember", "horizon", "lattice", "prism", "pulse", "silk", "tide")))
+        self.assertEqual(sorted(ids), sorted("nxlx-%s.fs" % n for n in ROTATION))       # the calm ones without the two heavy ones; none to perform with
         self.assertNotIn("shaders", self.settings.data)               # still nothing saved: it is the default on read
         self.assertEqual([s["id"] for s in self.engine.state()["shaders"] if s["vibes"]], ids)
         self.engine.api_set({"action": "vibes", "id": "nxlx-nebula.fs", "on": True}, None, "t")       # anyone may put one in
@@ -214,10 +220,10 @@ class BoardTest(Live):
         self.settings.data["shaders"] = {"dwell": 45, "vary": False, "height": 540, "disabled": ["nxlx-silk.fs"]}
         ids = self.engine.vibes_ids()
         self.assertIn("mine.fs", ids)
-        self.assertEqual({"nxlx-silk.fs", "nxlx-nebula.fs", "nxlx-drift.fs"} & set(ids), set())
+        self.assertEqual(({"nxlx-silk.fs", "nxlx-nebula.fs", "nxlx-drift.fs"} | {"nxlx-%s.fs" % n for n in PERFORMANCE}) & set(ids), set())
         self.engine.api_set({"action": "config", "dwell": 50}, None, "t")          # the first save makes the list a real set
         saved = self.settings.data["shaders"]
-        self.assertEqual((saved["v"], [e["name"] for e in saved["sets"]], saved["sets"][0]["dwell"], saved["sets"][0]["vary"]), (2, ["Ambient"], 50, False))
+        self.assertEqual((saved["v"], [e["name"] for e in saved["sets"]], saved["sets"][0]["dwell"], saved["sets"][0]["vary"]), (2, ["Ambient", "Show"], 50, False))
         self.assertEqual([r["id"] for r in saved["sets"][0]["shaders"]], ids)
         self.assertEqual(self.engine.vibes_ids(), ids)
         self.assertEqual(SCHEMA, 13)                                  # no settings migration
@@ -483,6 +489,55 @@ class ValuesTest(Live):
         self.assertTrue(self.engine.show("all.fs")["ok"])
         self.assertEqual(self.engine.state()["render"]["width"], 1280)
 
+    def test_the_speed_control_cannot_lift_a_performance_shaders_flash_limit(self):
+        """Every Performance shader caps its flashing at 3 a second (6 with Fast) by its TIME. The speed control
+        multiplies TIME: at 4 it would have been 12 a second."""
+        def speed():
+            return self.engine.playing["controls"]["speed"]
+        loud = "nxlx-%s.fs" % PERFORMANCE[0]
+        row = self.row(loud)
+        self.assertEqual((row["speed_max"], self.row("nxlx-silk.fs")["speed_max"], self.engine.state()["config"]["faster"]), (1.0, 4.0, False))
+        self.engine.play(loud, controls={"speed": 4.0})               # by Play
+        self.assertEqual(speed(), 1.0)
+        self.assertNotIn("/ 30.0 *", self.text())
+        self.assertEqual(self.engine.change({"controls": {"speed": 3.0}})["controls"]["speed"], 1.0)      # by a slider or a MIDI knob
+        self.pump()
+        self.assertEqual(speed(), 1.0)
+        self.engine.change({"controls": {"speed": 0.5}})             # slower is always allowed
+        self.pump()
+        self.assertEqual(speed(), 0.5)
+        self.assertIn("/ 30.0 * 0.5 +", self.text())
+        self.settings.data.setdefault("shaders", {})["presets"] = {loud: [{"name": "default", "values": {}, "controls": {"speed": 4.0}}]}
+        self.engine.play("nxlx-silk.fs")
+        self.engine.play(loud)                                        # by a preset
+        self.assertEqual(speed(), 1.0)
+        self.engine.api_set({"action": "set", "op": "activate", "id": "00000001"}, None, "t")
+        vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=lambda: self.now[0], sleep=lambda s: None, rng=random.Random(1), thread=False, log=lambda *_: None)
+        vibes.start()
+        for _ in range(len(PERFORMANCE)):                             # by Vibes
+            vibes.tick()
+            self.assertLessEqual(speed(), 1.0)
+            self.assertNotRegex(self.text(), r"/ 30\.0 \* ([2-9]|1\.[0-9]*[1-9])")
+            self.now[0] += 200
+        vibes.stop()
+        self.engine.play("nxlx-silk.fs", controls={"speed": 4.0})    # a calm shader keeps the whole range
+        self.assertEqual(speed(), 4.0)
+        # the opt-in, for full access only: with it the range is whole again, and switching it off limits what is on at once
+        live = {"id": "p", "role": "live"}
+        self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": True}, live, "t")[0], 403)
+        with self.assertRaises(ApiError):
+            self.engine.api_set({"action": "config", "faster": "yes"}, None, "t")
+        st = self.engine.api_set({"action": "config", "faster": True}, None, "t")
+        self.assertEqual((st["config"]["faster"], self.row(loud)["speed_max"]), (True, 4.0))
+        self.engine.play(loud, controls={"speed": 4.0})
+        self.assertEqual(speed(), 4.0)
+        self.engine.api_set({"action": "config", "faster": False}, None, "t")
+        self.pump()
+        self.assertEqual(speed(), 1.0)
+        self.assertEqual(boxcare.check_shaders({"faster": True}, None)["faster"], True)
+        with self.assertRaises(ValueError):
+            boxcare.check_shaders({"faster": 1}, None)
+
     def test_a_late_value_never_lands_on_a_clip_or_on_another_shader(self):
         self.engine.change({"values": {"level": 1.0}})
         self.player.play(["/media/clip.mp4"])                        # someone played a clip before the worker came round
@@ -566,7 +621,7 @@ class ValuesTest(Live):
         """Nothing a presenter, a controller, OSC, DMX or the schedule sends waits for the engine's lock (the GPU's
         look at a shader can take four seconds). The dwell knob did: 3.99 s were measured."""
         self.engine.api_presets({"action": "save", "name": "kept"}, None, "t")
-        self.engine.api_set({"action": "set", "op": "add", "name": "Show", "shaders": ["nxlx-silk.fs"]}, None, "t")
+        self.engine.api_set({"action": "set", "op": "add", "name": "Gig", "shaders": ["nxlx-silk.fs"]}, None, "t")
         vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=lambda: self.now[0], sleep=lambda s: None, rng=random.Random(1), thread=True, log=lambda *_: None)
         self.addCleanup(vibes.stop)
         live = {"id": "midi", "role": "live"}
@@ -574,7 +629,7 @@ class ValuesTest(Live):
                  ("/api/shaders/values", {"controls": {"speed": 2.0}}), ("/api/shaders/preset", {"name": "kept"}), ("/api/shaders/preset", {"index": 1}),
                  ("/api/shaders/step", {"dir": 1}), ("/api/shaders/step", {"dir": -1}),
                  ("/api/vibes", {"on": True}), ("/api/vibes", {"dwell": 45}), ("/api/vibes", {"next": True}), ("/api/vibes", {"previous": True}),
-                 ("/api/vibes", {"on": False}), ("/api/vibes", {"on": True, "set": "Show"}), ("/api/vibes", {"dwell": 60}), ("/api/vibes", {"on": False}),
+                 ("/api/vibes", {"on": False}), ("/api/vibes", {"on": True, "set": "Gig"}), ("/api/vibes", {"dwell": 60}), ("/api/vibes", {"on": False}),
                  ("/api/blackout", {"on": True}), ("/api/blackout", {"on": False})]
         took, answers = [], []
         with self.engine._lock:                                       # as if the GPU were looking at a shader
@@ -593,7 +648,7 @@ class ValuesTest(Live):
             self.assertFalse(t.is_alive(), "a request waited for the engine's lock: %s" % (answers[-1:],))
         self.assertEqual([a for a in answers if a[2] != 200], [])
         self.assertLess(max(took), 2.0)
-        self.assertEqual(self.engine.rotation("Show")["dwell"], 60)   # the dwell knob wrote the running set's time meanwhile
+        self.assertEqual(self.engine.rotation("Gig")["dwell"], 60)   # the dwell knob wrote the running set's time meanwhile
 
     def test_a_queued_step_or_preset_never_takes_the_screen_back(self):
         """A step (while Vibes is off) and a preset of another shader are put on by the worker a moment later. They
@@ -722,10 +777,10 @@ class PresetTest(Live):
         self.assertIn("const float level = 0.3;", self.text())
         self.assertIn("const int mode = 5;", self.text())
         self.save("other", level=2.0)
-        self.engine.api_set({"action": "set", "op": "add", "name": "Show", "vary": False, "shaders": [{"id": "all.fs", "preset": "other"}]}, None, "t")
+        self.engine.api_set({"action": "set", "op": "add", "name": "Gig", "vary": False, "shaders": [{"id": "all.fs", "preset": "other"}]}, None, "t")
         vibes = self.api.vibes
         vibes._clock = lambda: self.now[0]
-        vibes.start("Show")
+        vibes.start("Gig")
         vibes.tick()
         self.assertIn("const float level = 2.0;", self.text())
         self.engine.api_presets({"action": "delete", "id": "all.fs", "name": "other"}, None, "t")
@@ -748,7 +803,7 @@ class PresetTest(Live):
         and every set was gone."""
         self.save("good", level=1.0)
         self.save("also good", level=0.2)
-        self.engine.api_set({"action": "set", "op": "add", "name": "Show", "shaders": ["all.fs"]}, None, "t")
+        self.engine.api_set({"action": "set", "op": "add", "name": "Gig", "shaders": ["all.fs"]}, None, "t")
         self.engine.api_set({"action": "heavy", "id": "nxlx-nebula.fs", "on": True}, None, "t")
         data = self.settings.data["shaders"]
         data["presets"]["all.fs"].insert(1, {"name": "", "values": {}})                       # damaged by hand
@@ -756,15 +811,15 @@ class PresetTest(Live):
         data["presets"]["../x"] = [{"name": "a"}]
         data["presets"]["nxlx-tide.fs"] = "not a list"
         data["sets"].insert(0, {"id": "zz", "name": "broken"})
-        data["sets"].append({"id": data["sets"][1]["id"], "name": "same id"})
+        data["sets"].append({"id": data["sets"][2]["id"], "name": "same id"})
         data["heavy"]["bad.fs"] = "nonsense"
         cfg = self.engine.config()
         self.assertEqual([p["name"] for p in cfg["presets"]["all.fs"]], ["good", "also good"])
-        self.assertEqual((sorted(cfg["presets"]), [e["name"] for e in cfg["sets"]], sorted(cfg["heavy"])), (["all.fs"], ["Ambient", "Show"], ["nxlx-nebula.fs"]))
+        self.assertEqual((sorted(cfg["presets"]), [e["name"] for e in cfg["sets"]], sorted(cfg["heavy"])), (["all.fs"], ["Ambient", "Show", "Gig"], ["nxlx-nebula.fs"]))
         self.engine.api_set({"action": "config", "dwell": 33}, None, "t")                     # any save
         saved = self.settings.data["shaders"]
         self.assertEqual(([p["name"] for p in saved["presets"]["all.fs"]], [e["name"] for e in saved["sets"]], sorted(saved["heavy"])),
-                         (["good", "also good"], ["Ambient", "Show"], ["nxlx-nebula.fs"]))
+                         (["good", "also good"], ["Ambient", "Show", "Gig"], ["nxlx-nebula.fs"]))
         # a key that cannot be read at all is left as it is, not written over with nothing
         for key, junk in (("presets", "all of them"), ("sets", {"not": "a list"}), ("heavy", ["a.fs"])):
             self.settings.data["shaders"][key] = junk
@@ -802,15 +857,16 @@ class SetsTest(Live):
 
     def test_the_first_set_is_there_without_anything_saved(self):
         st = self.engine.state()
-        self.assertEqual([(e["id"], e["name"], e["dwell"], e["vary"], e["order"], len(e["shaders"])) for e in st["sets"]], [("00000000", "Ambient", 180, True, "shuffle", 8)])
+        self.assertEqual([(e["id"], e["name"], e["dwell"], e["vary"], e["order"], len(e["shaders"])) for e in st["sets"]], [("00000000", "Ambient", 180, True, "shuffle", IN_VIBES), ("00000001", "Show", 180, True, "shuffle", len(PERFORMANCE))])
+        self.assertEqual(sorted(r["id"] for r in st["sets"][1]["shaders"]), sorted("nxlx-%s.fs" % n for n in PERFORMANCE))
         self.assertEqual(st["active"], "00000000")
         self.assertNotIn("shaders", self.settings.data)
 
     def test_add_update_activate_delete(self):
-        show = self.add("Show", ["nxlx-prism.fs", {"id": "nxlx-silk.fs"}, "nxlx-nebula.fs"], dwell=30, vary=False, order="listed")
+        show = self.add("Gig", ["nxlx-prism.fs", {"id": "nxlx-silk.fs"}, "nxlx-nebula.fs"], dwell=30, vary=False, order="listed")
         self.assertEqual((show["dwell"], show["vary"], show["order"], [r["id"] for r in show["shaders"]]), (30, False, "listed", ["nxlx-prism.fs", "nxlx-silk.fs", "nxlx-nebula.fs"]))
         st = self.engine.state()
-        self.assertEqual((st["active"], st["config"]["dwell"], len(st["sets"])), ("00000000", 180, 2))       # adding one does not make it active
+        self.assertEqual((st["active"], st["config"]["dwell"], len(st["sets"])), ("00000000", 180, 3))       # adding one does not make it active
         st = self.engine.api_set({"action": "set", "op": "activate", "id": show["id"]}, None, "t")
         self.assertEqual((st["active"], st["config"]["dwell"], st["config"]["vary"]), (show["id"], 30, False))
         self.assertEqual([s["id"] for s in st["shaders"] if s["vibes"]], ["nxlx-nebula.fs", "nxlx-prism.fs", "nxlx-silk.fs"])
@@ -819,10 +875,10 @@ class SetsTest(Live):
         self.assertEqual(st["sets"][0]["dwell"], 180)
         st = self.engine.api_set({"action": "vibes", "id": "nxlx-silk.fs", "on": False}, None, "t")          # and so is the switch per shader
         self.assertEqual([r["id"] for r in next(e for e in st["sets"] if e["id"] == show["id"])["shaders"]], ["nxlx-prism.fs", "nxlx-nebula.fs"])
-        st = self.engine.api_set({"action": "set", "op": "update", "id": show["id"], "name": "Late show", "order": "shuffle"}, None, "t")
-        self.assertEqual([e["name"] for e in st["sets"]], ["Ambient", "Late show"])
+        st = self.engine.api_set({"action": "set", "op": "update", "id": show["id"], "name": "Late gig", "order": "shuffle"}, None, "t")
+        self.assertEqual([e["name"] for e in st["sets"]], ["Ambient", "Show", "Late gig"])
         st = self.engine.api_set({"action": "set", "op": "delete", "id": show["id"]}, None, "t")
-        self.assertEqual((st["active"], [e["name"] for e in st["sets"]], st["config"]["dwell"]), ("00000000", ["Ambient"], 180))
+        self.assertEqual((st["active"], [e["name"] for e in st["sets"]], st["config"]["dwell"]), ("00000000", ["Ambient", "Show"], 180))
 
     def test_names_hold_nothing_unseen_and_are_compared_as_written(self):
         """A text direction override, a zero-width mark or a line separator in a name shows as another name, or as
@@ -865,7 +921,7 @@ class SetsTest(Live):
         self.assertNotIn("\u2028", c.exception.message)
 
     def test_a_set_deleted_while_it_runs_ends_vibes_with_its_own_message(self):
-        show = self.add("Show", ["nxlx-prism.fs", "nxlx-silk.fs"])
+        show = self.add("Gig", ["nxlx-prism.fs", "nxlx-silk.fs"])
         entry = scheduler.validate({"enabled": True, "entries": [{"time": "08:00", "days": [0], "action": "vibes", "set": show["id"]}]})["entries"][0]
         self.vibes.start(show["id"])
         self.vibes.tick()
@@ -877,12 +933,38 @@ class SetsTest(Live):
         sched = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)
         sched._execute(entry, datetime.datetime.now())                # the schedule still holds the dead id: "last run" says so
         self.assertEqual((sched.last[entry["id"]]["ok"], sched.last[entry["id"]]["message"]), (False, "that set is not there (it may have been deleted)"))
-        st, body = self.api.handle("POST", "/api/vibes", {"on": True, "set": "Show"}, {"id": "osc", "role": "live"}, "osc")
+        st, body = self.api.handle("POST", "/api/vibes", {"on": True, "set": "Gig"}, {"id": "osc", "role": "live"}, "osc")
         self.assertEqual((st, body["error"]), (404, "that set is not there (it may have been deleted)"))
 
+    def test_a_box_starts_with_a_calm_set_and_a_set_to_perform_with(self):
+        st = self.engine.state()
+        ambient, show = st["sets"]
+        self.assertEqual((ambient["name"], show["name"], st["active"]), ("Ambient", "Show", ambient["id"]))
+        self.assertEqual(sorted(r["id"] for r in ambient["shaders"]), sorted("nxlx-%s.fs" % n for n in ROTATION))
+        self.assertEqual(sorted(r["id"] for r in show["shaders"]), sorted("nxlx-%s.fs" % n for n in PERFORMANCE))
+        self.assertEqual({r["id"] for r in ambient["shaders"]} & {r["id"] for r in show["shaders"]}, set())
+        self.assertFalse(any(s["vibes"] for s in st["shaders"] if "Performance" in s["categories"]))
+        self.assertNotIn("shaders", self.settings.data)               # both are there without anything saved
+        for start in ({"on": True}, {"on": True, "set": ambient["id"]}):           # every way in that names no set runs the calm one
+            self.vibes.api_vibes(start, None, "t")
+            seen = set(self.rounds(IN_VIBES))
+            self.assertEqual(seen, {"nxlx-%s.fs" % n for n in ROTATION})
+            self.vibes.stop()
+        self.vibes.api_vibes({"on": True, "set": "Show"}, None, "t")
+        self.assertEqual(set(self.rounds(len(PERFORMANCE))), {"nxlx-%s.fs" % n for n in PERFORMANCE})
+        self.vibes.stop()
+        self.assertEqual(self.engine.state()["active"], ambient["id"])
+        st = self.engine.api_set({"action": "config", "dwell": 60}, None, "t")     # a setting saved: both are still there, still computed
+        self.assertNotIn("sets", self.settings.data["shaders"])
+        self.assertEqual([(e["id"], e["name"], e["dwell"], len(e["shaders"])) for e in st["sets"]],
+                         [("00000000", "Ambient", 60, IN_VIBES), ("00000001", "Show", 180, len(PERFORMANCE))])
+        st = self.engine.api_set({"action": "vibes", "id": "nxlx-silk.fs", "on": False}, None, "t")      # the first edit writes both
+        self.assertEqual([(e["id"], e["name"], len(e["shaders"])) for e in self.settings.data["shaders"]["sets"]],
+                         [("00000000", "Ambient", IN_VIBES - 1), ("00000001", "Show", len(PERFORMANCE))])
+
     def test_sets_are_checked(self):
-        show = self.add("Show", ["nxlx-prism.fs"])
-        for body, status in (({"op": "add", "name": "show"}, 400), ({"op": "add", "name": ""}, 400), ({"op": "add", "name": "x" * 41}, 400),
+        show = self.add("Gig", ["nxlx-prism.fs"])
+        for body, status in (({"op": "add", "name": "gig"}, 400), ({"op": "add", "name": ""}, 400), ({"op": "add", "name": "x" * 41}, 400),
                              ({"op": "add", "name": "A", "shaders": ["../x.fs"]}, 400), ({"op": "add", "name": "A", "shaders": ["a.fs", "a.fs"]}, 400),
                              ({"op": "add", "name": "A", "shaders": "a.fs"}, 400), ({"op": "add", "name": "A", "shaders": [{"id": "a.fs", "preset": 5}]}, 400),
                              ({"op": "add", "name": "A", "dwell": 5}, 400), ({"op": "add", "name": "A", "vary": 1}, 400), ({"op": "add", "name": "A", "order": "random"}, 400),
@@ -892,8 +974,8 @@ class SetsTest(Live):
             with self.assertRaises(ApiError, msg=body) as c:
                 self.engine.api_set(dict({"action": "set"}, **body), None, "t")
             self.assertEqual(c.exception.status, status, body)
-        self.assertEqual(len(self.engine.state()["sets"]), 2)         # nothing of a refused change was kept
-        for n in range(L.MAX_SETS - 2):
+        self.assertEqual(len(self.engine.state()["sets"]), 3)         # nothing of a refused change was kept
+        for n in range(L.MAX_SETS - 3):
             self.add("set %d" % n, [])
         with self.assertRaises(ApiError) as c:
             self.add("one more", [])
@@ -905,13 +987,13 @@ class SetsTest(Live):
         self.assertEqual(c.exception.status, 409)
 
     def test_vibes_runs_the_active_set_or_the_one_named(self):
-        show = self.add("Show", ["nxlx-prism.fs", "nxlx-silk.fs", "nxlx-ember.fs"], dwell=30, vary=False, order="listed")
+        show = self.add("Gig", ["nxlx-prism.fs", "nxlx-silk.fs", "nxlx-ember.fs"], dwell=30, vary=False, order="listed")
         st = self.vibes.api_vibes({"on": True}, None, "t")
         self.assertEqual(st["set"], {"id": "00000000", "name": "Ambient"})
         self.assertNotIn(self.rounds(1)[0], ())
         self.vibes.stop()
-        st = self.vibes.api_vibes({"on": True, "set": "show"}, None, "t")      # by name, any letter case; or by id
-        self.assertEqual(st["set"], {"id": show["id"], "name": "Show"})
+        st = self.vibes.api_vibes({"on": True, "set": "gig"}, None, "t")      # by name, any letter case; or by id
+        self.assertEqual(st["set"], {"id": show["id"], "name": "Gig"})
         self.assertEqual(self.rounds(5), ["nxlx-prism.fs", "nxlx-silk.fs", "nxlx-ember.fs", "nxlx-prism.fs", "nxlx-silk.fs"])    # in the set's own order
         self.assertEqual(self.vibes.status()["next_in"] is not None and self.engine.playing["hue"], 0.0)     # no variation in this set
         self.assertEqual(self.engine.state()["active"], "00000000")   # naming a set for one run does not change the active one
@@ -931,7 +1013,7 @@ class SetsTest(Live):
         self.assertEqual(c.exception.status, 409)
 
     def test_the_one_before_and_the_next_in_vibes_and_without_it(self):
-        show = self.add("Show", ["nxlx-prism.fs", "nxlx-silk.fs", "nxlx-ember.fs"], order="listed")
+        show = self.add("Gig", ["nxlx-prism.fs", "nxlx-silk.fs", "nxlx-ember.fs"], order="listed")
         self.engine.api_set({"action": "set", "op": "activate", "id": show["id"]}, None, "t")
         self.vibes.start()
         self.assertEqual(self.rounds(2), ["nxlx-prism.fs", "nxlx-silk.fs"])
@@ -959,8 +1041,8 @@ class SetsTest(Live):
             self.engine.step(2)
 
     def test_schedule_osc_and_autostart_can_name_a_set_or_use_the_active_one(self):
-        show = self.add("Show", ["nxlx-prism.fs"])
-        self.assertEqual(osc.translate("/pvj/vibes/set", ["Show"]), ("/api/vibes", {"on": True, "set": "Show"}))
+        show = self.add("Gig", ["nxlx-prism.fs"])
+        self.assertEqual(osc.translate("/pvj/vibes/set", ["Gig"]), ("/api/vibes", {"on": True, "set": "Gig"}))
         self.assertIsNone(osc.translate("/pvj/vibes/set", [5]))
         self.assertEqual(osc.translate("/pvj/vibes/previous", [1]), ("/api/vibes", {"previous": True}))
         self.assertEqual(osc.translate("/pvj/vibes", []), ("/api/vibes", {"on": True}))
@@ -972,7 +1054,7 @@ class SetsTest(Live):
             scheduler.validate({"enabled": True, "entries": [dict(entry, set="Show; rm")]})
         sched = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)
         sched._execute(clean, datetime.datetime.now())
-        self.assertEqual(self.vibes.status()["set"]["name"], "Show")
+        self.assertEqual(self.vibes.status()["set"]["name"], "Gig")
         self.vibes.stop()
         sched._execute(dict(clean, set=None), datetime.datetime.now())
         self.assertEqual(self.vibes.status()["set"]["name"], "Ambient")
@@ -1027,11 +1109,12 @@ class GuardTest(Live):
         self.vibes.stop()
         self.vibes.start()
         seen = set()
-        for _ in range(16):
+        for _ in range(2 * IN_VIBES):
             self.now[0] += 200
             self.vibes.tick()
             seen.add(self.vibes.current)
         self.assertNotIn(bad, seen)
+        self.assertEqual(len(seen), IN_VIBES - 1)
         st = self.engine.api_set({"action": "heavy", "id": bad, "on": False}, None, "t")        # until someone puts it back
         self.assertIn(bad, self.engine.vibes_ids())
         self.assertIsNone(next(s for s in st["shaders"] if s["id"] == bad)["heavy"])
@@ -1048,7 +1131,7 @@ class GuardTest(Live):
                 break
         self.assertFalse(self.vibes.running)
         self.assertEqual(self.vibes.status()["last"]["message"], "ended: the box is dropping frames whatever plays: check the picture detail")
-        self.assertEqual((self.engine.config().get("heavy"), len(self.engine.vibes_ids())), (None, 8))     # the two marks were taken back
+        self.assertEqual((self.engine.config().get("heavy"), len(self.engine.vibes_ids())), (None, IN_VIBES))     # the two marks were taken back
         self.assertIsNotNone(self.engine.state()["playing"])          # the shader that was on stays on
         self.vibes.start()                                            # and it starts again
         self.assertTrue(self.vibes.tick())
@@ -1316,7 +1399,7 @@ class RolesAndSettingsTest(Live):
         self.assertEqual(self.call("POST", presenter[0][0], presenter[0][1], token=live)[0], 200)
         st, body, _ = self.call("POST", "/api/shaders/values", {"values": {"level": 1.0}}, token=live)
         self.assertEqual((st, body["values"]["level"], body["controls"]["speed"]), (200, 1.0, 2.0))
-        owner = (("/api/shaders/presets", {"action": "save", "name": "mine"}), ("/api/shaders", {"action": "set", "op": "add", "name": "Show", "shaders": ["all.fs"]}),
+        owner = (("/api/shaders/presets", {"action": "save", "name": "mine"}), ("/api/shaders", {"action": "set", "op": "add", "name": "Gig", "shaders": ["all.fs"]}),
                  ("/api/shaders", {"action": "heavy", "id": "nxlx-nebula.fs", "on": True}), ("/api/shaders", {"action": "config", "guard": False}))
         for path, body in owner:
             for token in (view, live):
@@ -1327,7 +1410,7 @@ class RolesAndSettingsTest(Live):
         for path, body in (("/api/shaders/presets", {"action": "rename", "id": "all.fs", "name": "mine", "to": "x"}),
                            ("/api/shaders/presets", {"action": "delete", "id": "all.fs", "name": "mine"})):
             self.assertEqual(self.call("POST", path, body, token=live)[0], 403)
-        self.assertEqual(self.call("POST", "/api/vibes", {"on": True, "set": "Show"}, token=live)[0], 200)   # and start a set by name
+        self.assertEqual(self.call("POST", "/api/vibes", {"on": True, "set": "Gig"}, token=live)[0], 200)   # and start a set by name
         self.api.vibes.stop()
         self.api.registry.set_enabled("shaders", False)
         for path, body in presenter[1:4] + (("/api/shaders/preset", {"name": "mine"}), ("/api/shaders/presets", {"action": "save", "name": "x"})):
@@ -1353,12 +1436,12 @@ class RolesAndSettingsTest(Live):
         self.engine.upload("all.fs", ALL)
         self.engine.play("all.fs")
         self.engine.api_presets({"action": "save", "name": "default"}, None, "t")
-        self.engine.api_set({"action": "set", "op": "add", "name": "Show", "dwell": 20, "vary": False, "order": "listed",
+        self.engine.api_set({"action": "set", "op": "add", "name": "Gig", "dwell": 20, "vary": False, "order": "listed",
                              "shaders": [{"id": "all.fs", "preset": "default"}, "nxlx-silk.fs"]}, None, "t")
         self.engine.api_set({"action": "heavy", "id": "nxlx-nebula.fs", "on": True}, None, "t")
-        self.engine.api_set({"action": "config", "guard": False, "clock": "frame"}, None, "t")
+        self.engine.api_set({"action": "config", "guard": False, "clock": "frame", "faster": True}, None, "t")
         saved = json.loads(json.dumps(self.settings.data["shaders"]))
-        self.assertEqual(sorted(saved), ["active", "clock", "disabled", "dwell", "guard", "heavy", "height", "presets", "sets", "v", "vary"])
+        self.assertEqual(sorted(saved), ["active", "clock", "disabled", "dwell", "faster", "guard", "heavy", "height", "presets", "sets", "v", "vary"])
         clean = boxcare.check_shaders(saved, None)
         self.assertEqual(clean, saved)                                # what the box wrote is what an import takes
         self.settings.data["shaders"] = clean

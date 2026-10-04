@@ -905,6 +905,7 @@ function startServer() {
     // the big button on Live, open the page from the link next to it, choose one shader by hand (which ends the
     // rotation), move a slider, change the settings, add and remove a file. The harness player draws nothing
     // (--vo=null), so this checks the panel and the API, not the picture; that is tests/test_shaders_gpu.py.
+    const BUNDLED_SHADERS = 40;         // the files in pvj/shaders.d (named one by one in tests/test_shaders.py)
     await page.click('nav >> text=Live');
     await page.waitForSelector('.pads');
     assert.strictEqual(await page.locator('#vibes').count(), 0, 'no Vibes button while the module is off');
@@ -914,11 +915,11 @@ function startServer() {
     await switchOn('Shaders and Vibes');
     assert(await moduleIsOn('shaders'), 'the shaders module is on');
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
-    assert.strictEqual(await page.locator('#shadercard [data-shader^="nxlx-"]').count(), 10, 'the ten bundled shaders are listed');
+    assert.strictEqual(await page.locator('#shadercard [data-shader^="nxlx-"]').count(), BUNDLED_SHADERS, 'the project\'s own shaders are listed');
     // and the third-party pack (Vidvox ISF-Files): every one the API lists, and none of them in the Vibes rotation
     const packed = (await get('/api/shaders')).shaders.filter((s) => s.pack === 'isf-files');
     assert(packed.length === 7 && packed.every((s) => s.source === 'bundled' && !s.vibes && !s.error), 'the ISF-Files pack is listed, out of Vibes');
-    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10 + packed.length, 'the pack is listed with the ten');
+    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), BUNDLED_SHADERS + packed.length, 'the pack is listed with the project\'s own');
     // somebody else's work says so on its row: the pack and the author's own credit; the project's own rows do not
     assert.strictEqual(await page.locator('#shadercard [data-pack="isf-files"]').count(), packed.length, 'each pack row is marked with its pack');
     assert.strictEqual(await page.textContent('#shadercard [data-shader="isf-simplex-noise.fs"] .shadercredit'),
@@ -942,7 +943,8 @@ function startServer() {
     assert(big.h >= 56 && big.w >= big.vw - 34, 'the Vibes button is big and as wide as the phone screen allows: ' + JSON.stringify(big));
     assert.strictEqual(await page.textContent('#vibeswords'), 'Start Vibes');
     assert(!(await page.isVisible('#vibesskip')) && !(await page.isVisible('#liveprev')), 'no Previous and Next while no shader is on');
-    assert.strictEqual(await page.locator('#liveset:visible').count(), 0, 'with one set, Live says nothing about sets');
+    await page.waitForSelector('#liveset:visible', { timeout: 20000 });
+    assert.deepStrictEqual(await page.$$eval('#liveset option', (os) => os.map((o) => o.textContent)), ['Set: Ambient', 'Set: Show'], 'a new box has two sets, and Live has the simple chooser beside the Vibes button');
     await fitsPhone('Live with the Vibes button');
     await page.click('#vibes');
     await page.waitForFunction(() => /^Vibes: [A-Z]/.test((document.getElementById('np') || {}).textContent), null, { timeout: 15000 });
@@ -1051,10 +1053,10 @@ function startServer() {
     await page.fill('#shaderfilter', '');
     await page.selectOption('#shadercost', 'medium');
     const mediums = await shownRows();
-    assert(mediums.length >= 1 && mediums.length < 10, 'the work filter narrows the list: ' + mediums.length);
+    assert(mediums.length >= 1 && mediums.length < BUNDLED_SHADERS, 'the work filter narrows the list: ' + mediums.length);
     assert((await page.$$eval('#shadercard [data-shader]', (rs) => rs.filter((r) => !r.hidden).every((r) => /Medium work/.test(r.textContent)))), 'and shows only medium work');
     await page.selectOption('#shadercost', 'all');
-    assert.strictEqual((await shownRows()).length, 10 + packed.length);
+    assert.strictEqual((await shownRows()).length, BUNDLED_SHADERS + packed.length);
     // A MIDI controller and a lighting desk are set up on this page: no button that leads to another page
     assert.strictEqual(await page.locator('#shaderto-dmx, #shaderto-midi').count(), 0, 'no buttons that open the MIDI and DMX pages');
     await page.waitForSelector('#shaderdmxline:has-text("Vibes is on channel 9")');
@@ -1227,8 +1229,9 @@ function startServer() {
     assert.deepStrictEqual(await page.$$eval('#shadercommon .ctl', (cs) => cs.map((x) => x.dataset.common)), ['speed', 'hue', 'brightness']);
     assert(await page.evaluate(() => document.getElementById('shadercommon').compareDocumentPosition(document.getElementById('shadersliders')) & Node.DOCUMENT_POSITION_FOLLOWING), 'the common controls are above the shader\'s own');
     {
-      const limits = (await get('/api/shaders')).controls.speed;
-      assert.deepStrictEqual(await page.$eval('#shc-speed', (el) => [+el.min, +el.max]), [limits.min, limits.max], 'Speed runs from 0 to what the box allows');
+      const d = await get('/api/shaders'), limits = d.controls.speed, mine = d.shaders.find((x) => x.id === AID);
+      assert(mine.speed_max === limits.max, 'a shader that is not of the Performance family may run at the box\'s top speed');
+      assert.deepStrictEqual(await page.$eval('#shc-speed', (el) => [+el.min, +el.max]), [limits.min, mine.speed_max], 'Speed runs from 0 to what the box allows this shader');
       assert.strictEqual(await page.locator('#shadercommon [data-common="speed"] .trackmark').count(), 1, 'and 1 is marked');
     }
     await setRange('shc-speed', 2, ['input', 'change']);
@@ -1340,7 +1343,16 @@ function startServer() {
     await page.selectOption('#shaderpack', 'isf-files');
     assert.strictEqual((await shownRows()).length, packed.length, 'the pack filter shows the pack');
     await page.selectOption('#shaderpack', 'all');
-    assert.strictEqual(await page.locator('#shaderfamily').count(), 0, 'no family filter while no shader says Ambient or Performance');
+    {
+      const rows = (await get('/api/shaders')).shaders, of = (f) => rows.filter((x) => (x.categories || []).includes(f)).length;
+      assert(of('Performance') === 15 && of('Ambient') >= 15, 'the box has both families: ' + of('Ambient') + ' and ' + of('Performance'));
+      for (const f of ['Performance', 'Ambient']) {
+        await page.selectOption('#shaderfamily', f);
+        assert.strictEqual((await shownRows()).length, of(f), 'the family filter shows the ' + f + ' shaders');
+      }
+      await page.selectOption('#shaderfamily', 'all');
+      assert(/Performance/.test(await page.textContent('#shadercard [data-shader="nxlx-bars.fs"] .shaderfacts')), 'a row says its family');
+    }
     {
       const render = (await get('/api/shaders')).render;
       assert.deepStrictEqual(await page.$$eval('#shaderheight option', (os) => os.map((o) => +o.value)), render.heights, 'picture detail offers this board\'s own heights');
@@ -1352,13 +1364,12 @@ function startServer() {
       await page.selectOption('#shaderheight', String(render.height));
       await page.waitForFunction((x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), render.height);
     }
-    // What this harness cannot make happen by itself (no GPU): a load that is too high, a GPU refusal, and the
-    // families that the next batch of shaders brings. The box's answer is given those fields on its way to the page.
+    // What this harness cannot make happen by itself (no GPU): a load that is too high and a GPU refusal. The box's
+    // answer is given those fields on its way to the page.
     let faked = true;
     await page.route('**/api/shaders', async (route) => {
       if (!faked || route.request().method() !== 'GET') return route.continue();
       const res = await route.fetch(), d = await res.json();
-      d.shaders.forEach((s, n) => { s.categories = [n % 2 ? 'Performance' : 'Ambient']; });
       d.shaders.find((s) => s.id === 'nxlx-ember.fs').refused = 'line 6: no such thing';
       if (d.playing) { d.playing.load = 'heavy'; d.playing.drops_per_second = 4.2; }
       await route.fulfill({ response: res, json: d });
@@ -1367,23 +1378,25 @@ function startServer() {
     assert(/Dropping frames: try a lower picture detail/.test(await page.textContent('#shaderloadwords')) && /4\.2 dropped frames a second/.test(await page.textContent('#shaderloadwords')), 'the load is said in words');
     assert(await page.evaluate(() => document.getElementById('shadernow').contains(document.getElementById('shaderheight'))), 'picture detail is right there with the load');
     await page.waitForSelector('#shadercard [data-shader="nxlx-ember.fs"] .shaderrefused:has-text("This box\'s GPU refused it: line 6: no such thing")');
-    await page.waitForSelector('#shaderfamily');
-    await page.selectOption('#shaderfamily', 'Performance');
-    {
-      const all = (await get('/api/shaders')).shaders.length;
-      assert.strictEqual((await shownRows()).length, Math.floor(all / 2), 'the family filter shows one family');
-    }
-    await page.selectOption('#shaderfamily', 'all');
     faked = false;
     await page.unroute('**/api/shaders');
-    await page.waitForFunction(() => !document.getElementById('shaderfamily') && document.getElementById('shaderload').getAttribute('data-load') !== 'heavy', null, { timeout: 20000 });
+    await page.waitForFunction(() => document.getElementById('shaderload').getAttribute('data-load') !== 'heavy' && !document.querySelector('.shaderrefused'), null, { timeout: 20000 });
     // Too heavy on this box: said on its row, with the way back
     assert.strictEqual(await post('/api/shaders', { action: 'heavy', id: 'nxlx-silk.fs', on: true }), 200);
     await page.waitForSelector('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy:has-text("Too heavy on this box. Left out of Vibes.")', { timeout: 20000 });
     await page.click('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy button:has-text("Put it back")');
     await page.waitForFunction(() => !document.querySelector('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy'));
     assert.strictEqual((await get('/api/shaders')).shaders.find((s) => s.id === 'nxlx-silk.fs').heavy, null, '"Put it back" took the note off');
-    // Sets. With one, nothing on the page asks anyone to think about sets.
+    // Sets. A new box has two (Ambient, the usual one, and Show with the Performance shaders), so there is a simple
+    // chooser beside Start Vibes. With one set, nothing on the page asks anyone to think about sets.
+    assert.deepStrictEqual(await page.$$eval('#vibesset option', (os) => os.map((o) => o.textContent)), ['Ambient (usual)', 'Show'], 'the chooser: Ambient or Show');
+    assert.strictEqual(await page.textContent('#vibessettings h2'), 'Vibes sets');
+    assert.strictEqual(await page.textContent('#libset'), 'The switches put a shader in or out of the set Ambient.');
+    {
+      const first = (await get('/api/shaders')).sets.find((e) => e.name === 'Show');
+      assert.strictEqual(await post('/api/shaders', { action: 'set', op: 'delete', id: first.id }), 200);
+      await page.waitForFunction(() => !document.getElementById('vibesset') && !document.getElementById('setlist'), null, { timeout: 20000 });
+    }
     assert.strictEqual(await page.locator('#vibesset, #setlist, #setstart').count(), 0, 'one set: no chooser and no list of sets');
     assert.strictEqual(await page.textContent('#vibessettings h2'), 'Vibes settings');
     assert.strictEqual(await page.textContent('#libset'), 'The switch puts a shader in or out of Vibes.');
@@ -1441,6 +1454,21 @@ function startServer() {
       assert.deepStrictEqual(sentTo('/api/shaders/step').slice(n), [{ dir: 1 }], 'Next steps without Vibes');
       assert.strictEqual(await page.textContent('#shaderprev'), '‹ Previous');
     }
+    // A Performance shader flashes, so its Speed stops at 1 until the owner allows faster, under Advanced, with a
+    // plain warning
+    assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-bars.fs' }), 200);
+    await page.waitForFunction(() => document.getElementById('speedlimit') && document.getElementById('shc-speed').max === '1', null, { timeout: 20000 });
+    assert.strictEqual(await page.textContent('#fasterwarning'), 'Lets performance shaders flash faster than 3 times a second. This can trigger seizures in people with photosensitive epilepsy.');
+    assert(await page.evaluate(() => document.getElementById('shaderadvanced').contains(document.getElementById('shaderfaster'))), 'the switch for faster is under Advanced');
+    assert.strictEqual(await page.getAttribute('#shaderfaster', 'aria-checked'), 'false', 'and it is off until someone switches it on');
+    if (!(await page.isVisible('#shaderfaster'))) await page.click('#shaderadvanced summary');
+    await page.click('#shaderfaster');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.faster === true));
+    await page.waitForFunction(() => document.getElementById('shc-speed').max === '4' && !document.getElementById('speedlimit'), null, { timeout: 20000 });
+    await page.waitForSelector('#shaderfaster[aria-checked="true"]');
+    await page.click('#shaderfaster');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.faster === false));
+    await page.waitForFunction(() => document.getElementById('shc-speed').max === '1', null, { timeout: 20000 });
     // A set is renamed and deleted in place
     assert.strictEqual(await post('/api/shaders', { action: 'set', op: 'add', name: 'Temp', shaders: ['nxlx-silk.fs'] }), 200);
     await page.waitForSelector('#setlist .setrow:has-text("Temp")', { timeout: 20000 });

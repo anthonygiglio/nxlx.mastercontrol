@@ -91,6 +91,7 @@
         note('', false, true);
         c.api('POST', '/api/shaders/values', b).then(function (r) {
           st.flying--; st.done = Date.now();
+          if (!r.ok) { st.done = 0; st.last = 0; st.sent = null; }       // refused: the box's own value may go back into the control at once
           if (!r.ok) note(r.status === 409 ? 'Not sent: another shader is on the screen now.' : (r.data.error || 'The box did not take it.'), true);
           else if (!st.flying && !st.has) note('', false, false);
           if (after) after(r);
@@ -330,7 +331,8 @@
       if (v !== undefined) x.ctl.apply(v);
     });
   }
-  function inputShape(s) { return s.inputs.map(function (i) { return [i.name, i.type, i.min, i.max, i.values, i.labels, i['default']]; }); }
+  function inputShape(s) { return [s.speed_max].concat(s.inputs.map(function (i) { return [i.name, i.type, i.min, i.max, i.values, i.labels, i['default']]; })); }
+  function speedSpec(d, s) { var x = d.controls.speed; return { min: x.min, max: typeof s.speed_max === 'number' ? s.speed_max : x.max, 'default': x['default'] }; }
 
   // ---- Live -----------------------------------------------------------------------------------------------------
   // The big button starts and stops Vibes and says what is playing; beside it the shader before and the next one
@@ -390,7 +392,7 @@
       box.appendChild(c.h('div', { class: 'row between' }, c.h('h2', { id: 'livename', text: nice(s.name) }),
         c.h('button', { class: 'btn', id: 'livemore', text: 'All controls ›', onclick: c.openShaders })));
       var list = c.h('div', { class: 'ctls', id: 'livectls' });
-      var speed = commonControl('speed', d.controls.speed, d.playing.controls.speed, { h: c.h, rig: L.rig, compact: true, prefix: 'live-' });
+      var speed = commonControl('speed', speedSpec(d, s), d.playing.controls.speed, { h: c.h, rig: L.rig, compact: true, prefix: 'live-' });
       L.ctls.push({ common: 'speed', ctl: speed });
       list.appendChild(speed.el);
       s.inputs.slice(0, 4).forEach(function (i) {
@@ -732,12 +734,13 @@
       var common = h('div', { class: 'ctls', id: 'shadercommon' });
       ['speed', 'hue', 'brightness'].forEach(function (k) {
         var t = k === 'speed' ? teacher('shader_speed', 'Speed', 'A knob or a fader sets the speed of whichever shader is playing.') : null;
-        var ctl = commonControl(k, d.controls[k], d.playing.controls[k], { h: h, rig: rig, extra: t ? t.btn : null });
+        var ctl = commonControl(k, k === 'speed' ? speedSpec(d, s) : d.controls[k], d.playing.controls[k], { h: h, rig: rig, extra: t ? t.btn : null });
         ctls.push({ common: k, ctl: ctl });
         common.appendChild(ctl.el);
         if (t) common.appendChild(t.box);
       });
       card.appendChild(common);
+      if (s.speed_max < d.controls.speed.max) common.insertBefore(h('p', { class: 'hint', id: 'speedlimit', text: 'This one flashes, so its speed stops at ' + round(s.speed_max) + '\u00d7.' + (full ? ' The switch for faster is under Vibes settings, Advanced.' : '') }), common.children[1] || null);
       var own = h('div', { class: 'ctls', id: 'shadersliders' }), knob = knobOf(s.inputs), shown = [];
       s.inputs.forEach(function (i) {
         var n = knob[i.name];
@@ -1060,6 +1063,10 @@
             h('button', { class: 'switch', id: 'shaderguard', role: 'switch', 'aria-checked': guard ? 'true' : 'false', 'aria-label': 'Leave out shaders that are too heavy for this box',
               onclick: function () { send('/api/shaders', { action: 'config', guard: !guard }, function () { saved('guard'); var m = document.getElementById('saved-guard'); if (m) m.textContent = 'Saved'; }, 'setmsg'); } })),
           h('p', { class: 'hint', text: 'While Vibes runs, a shader that keeps dropping frames is passed over and marked in the list until you put it back.' }),
+          h('label', { class: 'rot between' }, h('span', {}, 'Allow faster than the flash limit ', savedMark('faster')),
+            h('button', { class: 'switch', id: 'shaderfaster', role: 'switch', 'aria-checked': d.config.faster ? 'true' : 'false', 'aria-label': 'Allow faster than the flash limit',
+              onclick: function () { send('/api/shaders', { action: 'config', faster: !d.config.faster }, function () { saved('faster'); var m = document.getElementById('saved-faster'); if (m) m.textContent = 'Saved'; }, 'setmsg'); } })),
+          h('p', { class: 'hint warn', id: 'fasterwarning', text: 'Lets performance shaders flash faster than 3 times a second. This can trigger seizures in people with photosensitive epilepsy.' }),
           h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'shaderupload', text: '+ Add a shader file (.fs)', onclick: function () { picker.click(); } }), picker),
           h('div', { class: 'msg' + (ui.upload && ui.upload.err ? ' err' : ''), id: 'shaderuploadmsg', role: 'status', text: ui.upload ? ui.upload.text : '' }),
           h('p', { class: 'hint', text: 'An ISF file that draws from nothing (a generator), up to ' + Math.round(d.limits.bytes / 1024) + ' KB. Shaders that need a picture or sound are refused, with the reason.' })));
@@ -1138,7 +1145,7 @@
         ctl: JSON.stringify([s && [s.id, inputShape(s)], d.controls]),
         pre: JSON.stringify([st && [st.s.id, st.names, st.used, st.changed]]),
         lib: libShape(d),
-        set: JSON.stringify([sets, d.active, e && e.id, d.config.guard, ui.upload, d.limits])
+        set: JSON.stringify([sets, d.active, e && e.id, d.config.guard, d.config.faster, ui.upload, d.limits])
       };
       var late = false;
       ['now', 'ctl', 'pre', 'lib', 'set'].forEach(function (k) {
