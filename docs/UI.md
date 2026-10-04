@@ -69,7 +69,7 @@ The Live input card (USB capture stick or webcam) appears only when the box has 
 
 System is a short list in three groups (Everyday, Show tools, This box), with Health above them and one page per row. Each row has a word for how it is doing (Off, Set up, Ready, Active, Problem) and a sentence. A module's page has its switch at the top right; while the module is off the page shows what it does and one button to switch it on. That switch is the only one for a feature: DMX, MIDI, the schedule, OSC and Remote support have no second button inside. A control with one safe effect is applied on tap; a Save button is only where several fields change together. The cards below are each on their own page.
 
-Shaders and Vibes has one page for everything (it is no longer a card on Mix): what is on screen, the list of shaders with Play and the rotation switch, sliders for the one that is playing, the Vibes settings, and buttons to the MIDI and DMX pages. CI makes pictures of it (`shaders-page`, `live-vibes` in the `ui-screenshots` artifact); they are not in `docs/images/ui` yet.
+Shaders and Vibes has one page for everything (it is no longer a card on Mix): what is on screen, the list of shaders with Play and the rotation switch, sliders for the one that is playing, the Vibes settings, and the MIDI teach rows and DMX channel for running Vibes from a controller. On a laptop it is two or three columns with the list scrolling by itself. CI makes pictures of it (`shaders-page`, `live-vibes` in the `ui-screenshots` artifact); they are not in `docs/images/ui` yet.
 
 ### Box and sound output
 
