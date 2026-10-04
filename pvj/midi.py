@@ -42,6 +42,7 @@ LEARN_SECONDS = 20
 # action -> (kind, low, high). "trigger" fires on a press; "level" follows the control.
 ACTIONS = {
     "pad": ("trigger", None, None), "stop": ("trigger", None, None), "pause": ("trigger", None, None),
+    "scene": ("trigger", None, None),            # a Room scene, by its id in "scene" (room.py)
     "blackout": ("trigger", None, None), "fadeout": ("trigger", None, None), "reset": ("trigger", None, None),
     "opacity": ("level", 0, 100), "size": ("level", 1, 200), "position": ("level", -100, 100),
     "speed": ("level", 0.25, 2.0), "volume": ("level", 0, 100),
@@ -177,6 +178,10 @@ def validate_entry(e, keep_id=False):
             if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= hi:
                 raise MidiError("pad %s must be 0 to %d" % (key, hi))
             out[key] = v
+    if action == "scene":
+        if not isinstance(e.get("scene"), str) or not re.fullmatch(r"[0-9a-f]{8}", e["scene"]):
+            raise MidiError("choose a scene")
+        out["scene"] = e["scene"]
     return out
 
 
@@ -205,6 +210,8 @@ class MidiMapper:
         a = e["action"]
         if a == "pad":
             return [("/api/play", {"pad": [e["bank"], e["index"]]})]
+        if a == "scene":
+            return [("/api/room/scene", {"scene": e["scene"]})]
         if a in ("pause", "stop", "reset"):
             return [("/api/control", {"action": a})]
         if a == "fadeout":

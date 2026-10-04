@@ -447,6 +447,42 @@ class ImportTest(Base):
             self.assertEqual(st, 400, out)
             self.assertEqual(self.on_disk(), before)
 
+    def test_room_groups_and_scenes_go_round(self):
+        """The Room module's groups and scenes, and the schedule and MIDI entries that apply a scene, import as
+        exported, checked by the module's own rules. Nothing is sent to a projector by an import."""
+        from pvj import room, scheduler
+        d = self.settings.data
+        d["room"] = room.validate({
+            "groups": [{"id": "cccc0001", "name": "Main wall", "projectors": ["aaaa0001"]}],
+            "scenes": [{"id": "dddd0001", "name": "Console night", "box": {"action": "vibes"},
+                        "groups": [{"group": "cccc0001", "power": "on", "input": "31", "sound": "mute"}, {"group": "all", "picture": "unmute"}]},
+                       {"id": "dddd0002", "name": "Close", "groups": [{"group": "all", "power": "off"}], "box": {"action": "stop"}}]})
+        d["schedule"] = scheduler.validate({"enabled": True, "entries": [{"time": "23:00", "days": [4, 5], "action": "scene", "scene": "dddd0002"}]})
+        d["control"]["midi"]["map"] = [{"id": "eeee0009", "source": "*", "kind": "note", "channel": 0, "number": 50, "action": "scene", "scene": "dddd0001"}]
+        want = copy.deepcopy({k: d[k] for k in ("room", "schedule", "control")})
+        file = self.export()
+        self.assertEqual({k: file["settings"][k] for k in want}, want)
+        d["room"], d["schedule"], d["control"]["midi"]["map"] = {"groups": [], "scenes": []}, {"enabled": False, "entries": []}, []
+        st, out = self.send(file)
+        self.assertEqual((st, out["problems"]), (200, []), out)
+        self.assertIn("room", out["imported"])
+        self.assertEqual({k: self.settings.data[k] for k in want}, want)
+        self.assertEqual(self.api.room.threads(), [])
+        d.pop("room")                                                             # a box whose settings never had the section
+        self.assertEqual(self.send(file)[0], 200)
+        self.assertEqual(self.settings.data["room"], want["room"])
+        disk = self.on_disk()
+        for value in ("walls", {"groups": [{"name": "Main wall\n", "projectors": ["aaaa0001"]}]},
+                      {"groups": [{"name": "G%d" % n, "projectors": ["aaaa0001"]} for n in range(room.MAX_GROUPS + 1)]},
+                      {"scenes": [{"name": "X", "box": {"action": "reboot"}}]},
+                      {"scenes": [{"name": "X", "groups": [{"group": "all", "power": "off", "input": "31"}]}]}):
+            bad = copy.deepcopy(file)
+            bad["settings"]["room"] = value
+            st, out = self.send(bad)
+            self.assertEqual(st, 400, (value, out))
+            self.assertTrue(out["error"].startswith("room:"), out)
+            self.assertEqual(self.on_disk(), disk)
+
     def test_every_settings_section_is_either_checked_or_never_exported(self):
         """A new top-level section must be given a check in boxcare.SECTIONS (and KNOWN_SCHEMA raised), or be listed
         in NEVER: otherwise it would silently be missing from every export."""
@@ -535,6 +571,9 @@ class ImportTest(Base):
             ("shaders", []),
             ("sync", {"role": "boss"}),
             ("sync", {"wall": {"cols": 2, "rows": 2, "col": 5, "row": 0}}),
+            ("room", {"groups": [{"name": "Main wall", "projectors": []}]}),
+            ("room", {"scenes": [{"name": "Close", "box": {"action": "poweroff"}}]}),
+            ("room", []),
         ]
         self.assertEqual({section for section, _ in bad}, {name for name, _ in boxcare.SECTIONS})      # no section without a bad value
         for section, value in bad:

@@ -51,6 +51,7 @@ def default_settings():
         "support": {"allowed": False, "endpoint": "", "server_key": "", "address": "", "network": "", "max_minutes": 240},
         "support_log": [],
         "sync": {"role": "off", "group": "main", "port": 5577, "wall": {"cols": 1, "rows": 1, "col": 0, "row": 0, "bezel": 0.0}},
+        "room": {"groups": [], "scenes": []},      # read with defaults everywhere: an older file has no such key (no schema change)
     }
 
 

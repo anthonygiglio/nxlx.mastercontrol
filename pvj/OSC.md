@@ -36,6 +36,11 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/rotate` | 0, 90, 180, 270 | Degrees |
 | `/pvj/loop`, `/pvj/mute` | 0/1 | Set (an argument is required) |
 | `/pvj/mix/reset` | value (press) | Reset opacity, size, position, speed, rotation |
+| `/pvj/scene/<n>` | value (press) | Apply the n-th scene of the Room module (1 is the first; see [ROOM.md](ROOM.md)) |
+| `/pvj/scene` | name (string) or number (2 or 2.0) | The same, by the scene's name or its place in the list. A scene that plays something also takes a blackout off |
+| `/pvj/group/<n>/on`, `/pvj/group/<n>/off` | value (press) | Switch the projectors of the n-th group on or off; `all` in place of the number is every projector |
+| `/pvj/group/<n>/mute`, `/mute_picture`, `/mute_sound` | 0/1 | Mute (1) or unmute (0) picture and sound, the picture, or the sound of that group (an argument is required) |
+| `/pvj/group/<n>/input` | input code (`31`, as a string or a number) | Switch that group's projectors to that input; the codes are listed in System > Projectors |
 
 **Buttons fire on press only.** TouchOSC sends `1.0` when a button is pressed and `0.0` when it is released; a command marked "press" acts on a non-zero value (or no argument) and ignores the release, so a pad does not fire twice.
 

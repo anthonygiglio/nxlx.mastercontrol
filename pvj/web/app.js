@@ -1000,6 +1000,12 @@
         blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. Not yet tried on a real projector.',
         confirmOff: function (ask) { ask('The box stops checking the projectors. They stay as they are.'); },
         body: function () { return [projectorsCard(full)]; } },
+      { id: 'room', group: 'everyday', name: 'Room', role: 'live', module: 'room', url: '/api/room',
+        blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off. It needs Projectors to be on. Not yet tried on a real projector.',
+        body: function () {
+          return [pointerCard('Where the room is run and set up', ['The Room tab at the bottom has the scenes and each wall\'s buttons. A full-access device also makes the groups (the walls) and the scenes there, under "Set up the room".',
+            'A presenter or a guest who joins while this is on starts on the Room tab.'], [['room', 'Open Room']])];
+        } },
       { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'full', module: 'scheduler', url: '/api/schedule',
         blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
         steps: [scheduleStep()], offInner: true,
@@ -1133,6 +1139,11 @@
       if (lit.length) return st('active', lit.length + ' of ' + n + ' on');
       var answered = ps.filter(function (p) { return p.status && p.status.ok; });
       return st('ready', answered.length === n ? plural(n, 'projector') + ', none on' : 'Checking...');
+    },
+    room: function (d) {
+      if (d.job && d.job.running) return st('active', 'Working: ' + d.job.name);
+      if (!d.groups.length && !d.scenes.length) return st('setup', 'No groups or scenes yet');
+      return st('ready', plural(d.groups.length, 'group') + ', ' + plural(d.scenes.length, 'scene'));
     },
     schedule: function (d) {
       if (!d.enabled) return st('off', d.entries.length ? plural(d.entries.length, 'entry', 'entries') + ' saved, not running' : '');
@@ -1299,7 +1310,8 @@
   // -- moving between the index and a page --
   function redrawSystem() {         // only the System screen is rebuilt: the tabs and the rest stay as they are
     var old = app.querySelector('.shell > .screen');
-    if (!old || !S.device || S.tab !== 'system') return render();
+    var roomTab = !!app.querySelector('nav.tabs.many');       // the Room module was just switched: the tabs change too
+    if (!old || !S.device || S.tab !== 'system' || roomTab !== (!!window.pvjRoom && moduleOn('room'))) return render();
     stopTimers();
     keepNetForm();
     keepSyncForm();
@@ -2280,6 +2292,7 @@
       });
     }
     function describe(e) {
+      if (e.action === 'scene') return e.time + ' · ' + e.days.map(function (d) { return DAYS[d]; }).join(' ') + ' · Scene ' + (window.pvjRoom ? window.pvjRoom.sceneName(e.scene) : e.scene);
       var what = e.action === 'play' ? 'Play ' + e.file : e.action === 'preset' ? 'Start script ' + e.preset :
         ({ stop: 'Stop', blackout: 'Blackout', show: 'Show screen', projector_on: 'Projectors on', projector_off: 'Projectors off', vibes: 'Start Vibes' })[e.action] || e.action;
       return e.time + ' · ' + e.days.map(function (d) { return DAYS[d]; }).join(' ') + ' · ' + what;
@@ -2312,6 +2325,7 @@
           ['projector_on', 'Projectors on'], ['projector_off', 'Projectors off'], ['vibes', 'Start Vibes (shaders)']].map(function (a) {
           return h('option', { value: a[0], text: a[1], selected: a[0] === schedForm.action });
         }));
+      var scene = window.pvjRoom ? window.pvjRoom.scheduleField(roomCtx(), action, schedForm, function () { draw(d); }) : null;
       var file = h('select', { class: 'text-input', id: 'schedfile', 'aria-label': 'Clip to play', hidden: schedForm.action !== 'play' },
         S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === schedForm.file }); }));
       if (!schedForm.file && S.media.length) schedForm.file = S.media[0];
@@ -2323,11 +2337,13 @@
       label.addEventListener('input', function () { schedForm.label = label.value; });
       body.appendChild(h('div', { class: 'k', text: 'Add an entry' }));
       body.appendChild(time); body.appendChild(days); body.appendChild(action); body.appendChild(file); body.appendChild(preset); body.appendChild(label);
+      if (scene) body.insertBefore(scene, label);
       body.appendChild(h('button', { class: 'btn on small', id: 'schedadd', text: 'Add entry', onclick: function () {
         if (!schedForm.days.length) return say('Choose at least one day.', true);
         var entry = { time: schedForm.time, days: schedForm.days.slice(), action: schedForm.action, label: schedForm.label };
         if (schedForm.action === 'play') { if (!schedForm.file) return say('Upload a clip first.', true); entry.file = schedForm.file; }
         if (schedForm.action === 'preset') { if (!schedForm.preset) return say('Type the start script name.', true); entry.preset = schedForm.preset.trim(); }
+        if (schedForm.action === 'scene') { if (!schedForm.scene) return say('Add a scene on the Room screen first.', true); entry.scene = schedForm.scene; }
         save({ enabled: d.enabled, entries: d.entries.concat(entry) });
       } }));
     }
@@ -2736,6 +2752,8 @@
   }
 
   // ---- shell ----------------------------------------------------------
+  // The Room screen lives in room.js; it borrows these helpers.
+  function roomCtx() { return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S }; }
   function stopTimers() {
     [netTimer, midiTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer].forEach(clearTimeout);
   }
@@ -2744,9 +2762,19 @@
     keepNetForm();
     keepSyncForm();
     app.textContent = '';
-    if (!S.device) { app.appendChild(connect()); return; }
+    if (!S.device) { S.landing = true; app.appendChild(connect()); return; }
     var screens = { live: live, mix: mix, media: media, system: system };
-    var tabs = h('nav', { class: 'tabs', 'aria-label': 'Sections' }, [['live', 'Live'], ['mix', 'Mix'], ['media', 'Media'], ['system', 'System']].map(function (t) {
+    var names = [['live', 'Live'], ['mix', 'Mix'], ['media', 'Media'], ['system', 'System']];
+    // The Room screen (room.js): one more tab while its module is on. A presenter or a guest starts on it when the
+    // page is first loaded or the device has just been paired; nobody already on another screen is ever moved.
+    var landing = S.landing !== false;
+    if (S.modules.length) S.landing = false;      // decided once the modules are known, not by a render that came before them
+    if (window.pvjRoom && moduleOn('room')) {
+      screens.room = function () { return window.pvjRoom.screen(roomCtx()); };
+      names.unshift(['room', 'Room']);
+      if (landing && !can('full')) S.tab = 'room';
+    } else if (S.tab === 'room') S.tab = 'live';
+    var tabs = h('nav', { class: 'tabs' + (names.length > 4 ? ' many' : ''), 'aria-label': 'Sections' }, names.map(function (t) {
       return h('button', { class: 'btn' + (S.tab === t[0] ? ' on' : ''), text: t[1], 'aria-current': S.tab === t[0] ? 'page' : false,
         onclick: function () { goTab(t[0]); } });
     }));

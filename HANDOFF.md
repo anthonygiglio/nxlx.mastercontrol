@@ -32,7 +32,7 @@ Next, in order:
 
 1. **PJLink Phase 1: built (PR #61, D37), not tested on a real projector.** Identify on add, input selection with labels and the 90 second retry, separate picture and sound mute, lamp hours and warnings in Health, background status; the fake projector is written from the standard; independent review done, all findings fixed with tests. Next for it: the first test with a real Epson (what it answers in standby, how long it is unavailable after power-on, separate mutes, lamp hours), and record what it does in `pvj/PROJECTORS.md`.
 2. **PJLink Phase 2:** class 2 volume steps, freeze, input names, signal resolution, "Find projectors" search, status notices.
-3. **Groups, scenes and the Room screen** for staff (presenter and guest codes), with projector actions on the schedule, OSC, MIDI and DMX.
+3. **Groups, scenes and the Room screen are built** (D40, `pvj/ROOM.md`: the Room module with its row under System > Everyday, scenes from the schedule, OSC and MIDI; no DMX, no volume; independent review done, every finding fixed with a test), **not tried on a real projector or in a real room.** Next for it: with the first real Epson, set up "Main wall" and one scene and watch a tap (is 90 seconds enough for the source and the mute after power-on; does All off behave during warm-up); then let a staff member use the Room screen on a phone and write down what confused them.
 4. **ISF shader playback is built** (D38, `pvj/SHADERS.md`: generator shaders, ten bundled, and Vibes, the endless rotation), but **not seen on any display and its speed is unmeasured on every board**: first put it on the test Pi, watch each bundled shader, and measure dropped frames at 720 and 1080 lines (A, B, A, B, A). Still open: live coding with a last-good fallback, then **projectM** as an optional module on boards with OpenGL ES 3 (measure on the Pi 4 first).
 5. **Painting-wall masks** on the second projector (likely the Pi 3B as a second synced box).
 6. **Network notes** for the private NXLX network (a dedicated router, fixed addresses, projectors without internet, staff Wi-Fi or a wall tablet).
@@ -68,6 +68,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | Autostart (file, all, slideshow, pad, USB, preset) | `pvj/AUTOSTART.md` | off |
 | Weekly schedule | `pvj/SCHEDULE.md` | off (beta) |
 | Projectors (PJLink class 1: power, input with labels, picture and sound mute, live status, lamp hours, warnings; no real projector tested) | `pvj/PROJECTORS.md` | off (beta) |
+| Room: groups of projectors, scenes tapped once (power, source, mutes, what the box plays), a Room screen for staff, scenes from the schedule, OSC and MIDI (D40; no real projector tested) | `pvj/ROOM.md` | off (beta) |
 | Projection mapper (quads, triangles, grids) | `pvj/MAPPER.md` | off (beta) |
 | Shaders and Vibes: ISF generator shaders, ten bundled, an endless rotation from one tap, the API, autostart, the schedule, OSC, MIDI and DMX | `pvj/SHADERS.md` | off (beta) |
 | Multi-box sync and video wall | `pvj/SYNC.md` | off (beta) |

@@ -219,6 +219,46 @@ def pressed(args):
     return _number(v) and v > 0.5
 
 
+_ROOM_SCENE = re.compile(r"/pvj/scene/([1-9][0-9]?)")
+_ROOM_GROUP = re.compile(r"/pvj/group/(all|[1-9][0-9]?)/(on|off|mute|mute_picture|mute_sound|input)")
+
+
+def _room(a, args):
+    """The Room module's scenes and group buttons (ROOM.md): /pvj/scene/<n> (press), /pvj/scene with a name or a
+    number, /pvj/group/<n or all>/on, off (press), mute, mute_picture, mute_sound (1 or 0) and input (a code)."""
+    m = _ROOM_SCENE.fullmatch(a)
+    if m:
+        return ("/api/room/scene", {"number": int(m.group(1))}) if pressed(args) else None
+    if a == "/pvj/scene":
+        v = args[0] if args else None
+        if isinstance(v, str):
+            return "/api/room/scene", {"name": v}
+        if isinstance(v, float) and _number(v) and v == int(v):       # a controller that only sends floats
+            v = int(v)
+        return ("/api/room/scene", {"number": v}) if isinstance(v, int) and not isinstance(v, bool) else None
+    m = _ROOM_GROUP.fullmatch(a)
+    if not m:
+        return None
+    body = {"group": "all"} if m.group(1) == "all" else {"number": int(m.group(1))}
+    what, v = m.group(2), (args[0] if args else None)
+    if what in ("on", "off"):
+        if not pressed(args):
+            return None
+        body["action"] = what
+    elif what == "input":                             # "31", 31 or 31.0 (a controller that only sends floats)
+        if _number(v) and v == int(v):
+            v = str(int(v))
+        if not isinstance(v, str):
+            return None
+        body["action"], body["input"] = "input", v
+    else:
+        on = v if isinstance(v, bool) else ((v > 0.5) if _number(v) else None)
+        if on is None:
+            return None
+        body["action"] = what if on else "un" + what
+    return "/api/room/group", body
+
+
 # Old names that start with /start but are not playback presets: sync and sound output need full access
 # (System > Sync and video wall, Sound output), the audio player and the PDF presenter are not built.
 NOT_HERE = {"/startslave", "/startaudio", "/startaudioslave", "/startaudiousb", "/startpdf", "/startpdfusb"}
@@ -246,6 +286,8 @@ def translate(address, args, mix=None):
         return (v > 0.5) if _number(v) else None
 
     # -- stable names --------------------------------------------------------
+    if a.startswith(("/pvj/scene", "/pvj/group/")):
+        return _room(a, args)
     if a.startswith("/pvj/pad/"):
         parts = a.split("/")[3:]
         if len(parts) == 2 and all(p.isdigit() for p in parts) and pressed(args):

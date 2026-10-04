@@ -44,7 +44,7 @@ from urllib.parse import unquote
 
 from . import dmx as dmx_mod, midi as midi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
-from . import autostart as autostart_mod, shaders as shaders_mod
+from . import autostart as autostart_mod, room as room_mod, shaders as shaders_mod
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 from .settings import SettingsError, default_control, default_settings, migrate
 
@@ -408,14 +408,21 @@ def check_shaders(v, care):
     return out
 
 
+def check_room(v, care):
+    """Groups of projectors and scenes, by the Room module's own rules (room.py). Only the form is checked: a scene or
+    group may name a projector, clip or stream that is not on this box, and it is then skipped when the scene runs."""
+    return room_mod.validate(_obj(v))
+
+
 # Every section that is exported and imported, in the order they are checked.
 SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_theme), ("mix", check_mix), ("osc", check_osc),
             ("schedule", check_schedule), ("streams", check_streams), ("control", check_control),
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
-            ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders))
+            ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
+            ("room", check_room))
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
-                projector_mod.ProjectorError, themes_mod.ThemeError)
+                projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError)
 
 
 def _printable(v):
@@ -912,6 +919,7 @@ class BoxCare:
                 api.vibes.stop()                          # the shader rotation would put the next shader over the PIN
             except Exception:
                 pass
+            api.room.stop()                               # a scene still under way sends nothing more
             for call, body in ((api.blackout, {"on": False}), (api.control, {"action": "reset"}), (api.control, {"action": "stop"})):
                 try:
                     call(body, device, client)

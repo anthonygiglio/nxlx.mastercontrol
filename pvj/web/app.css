@@ -193,3 +193,20 @@ details.fold { display: block; }
 .shaderslider:first-child { border-top: 0; }
 .shaderslider input[type=range] { height: 44px; }
 .shaderadv { gap: 8px; }
+/* Room screen: big buttons for staff, long names wrap, and five tabs still fit a phone */
+.tabs.many { gap: 3px; padding-left: 8px; padding-right: 8px; }
+.tabs.many .btn { padding: 0 2px; min-width: 0; font-size: 14px; }
+.room-groups { display: flex; flex-direction: column; gap: 12px; }
+.room-scenes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.room-scenes .btn, .room-group .btn { min-width: 0; overflow-wrap: anywhere; }
+.room-group .row.between { flex-wrap: wrap; }
+.room-group h2 { min-width: 0; overflow-wrap: anywhere; }
+.room-source { flex: 1 1 40%; }
+.room-text, .room-result { font-size: 14px; overflow-wrap: anywhere; }
+.room-result.err { color: var(--ac); font-weight: 600; }
+.room-state.state-on { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.room-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+@media (min-width: 900px) {
+  .room-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .room-scenes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
