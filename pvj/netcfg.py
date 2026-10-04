@@ -61,6 +61,10 @@ def candidate_name(iface):
     return "pvj-%s-try" % iface
 
 
+def old_name(iface):
+    return "pvj-%s-old" % iface
+
+
 def list_interfaces(sysfs="/sys/class/net"):
     """Wired interfaces first, then wireless, from /sys. No privileges needed."""
     out = []
@@ -215,6 +219,8 @@ def _validate_wifi(request, cfg):
         if not isinstance(password, str) or not (
                 (8 <= len(password) <= 63 and all(" " <= ch <= "~" for ch in password)) or _PSK_HEX.fullmatch(password)):
             raise NetError("the Wi-Fi password must be 8 to 63 plain characters (letters, digits, punctuation, spaces)")
+        if security == "sae" and _PSK_HEX.fullmatch(password):
+            raise NetError("WPA3 takes a password, not a 64-digit hex key")
         cfg["password"] = password
     if hotspot:
         band = request.get("band", "bg")
@@ -265,8 +271,8 @@ def keyfile(cfg, uuid):
     lines.append("")
     if cfg["security"] != "open":
         lines += ["[wifi-security]", "key-mgmt=" + cfg["security"], "psk-flags=0", "psk=" + _kf_escape(cfg["password"])]
-        if hotspot:
-            lines += ["proto=rsn", "pairwise=ccmp", "group=ccmp"]
+        if hotspot:   # pmf=1 (off): with it on, some phones cannot join a Pi's hotspot
+            lines += ["proto=rsn", "pairwise=ccmp", "group=ccmp", "pmf=1"]
         lines.append("")
     lines += ["[ipv4]", "method=auto", "", "[ipv6]", "method=auto", ""]
     return "\n".join(lines)
@@ -314,12 +320,16 @@ def confirm_plan(iface, old_exists, wifi_off=False):
     kept, so joining again later needs no new profile."""
     if wifi_off:
         return [["nmcli", "radio", "wifi", "off"]]
-    cand, final = candidate_name(iface), profile_name(iface)
+    cand, final, old = candidate_name(iface), profile_name(iface), old_name(iface)
     cmds = [["nmcli", "connection", "modify", "id", cand, "connection.autoconnect", "yes",
              "connection.autoconnect-priority", "101"]]
+    # The old profile is only renamed until the candidate has its name, and deleted last: if anything fails
+    # before that, the old one still exists and the change can still be undone (pvj-netd renames it back).
     if old_exists:
-        cmds.append(["nmcli", "connection", "delete", "id", final])
+        cmds.append(["nmcli", "connection", "modify", "id", final, "connection.id", old])
     cmds.append(["nmcli", "connection", "modify", "id", cand, "connection.id", final])
+    if old_exists:
+        cmds.append(["nmcli", "connection", "delete", "id", old])
     return cmds
 
 
@@ -369,15 +379,22 @@ def parse_terse(line):
     return fields
 
 
-def scan_results(text, limit=40):
-    """Networks from `nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY,CHAN device wifi list`: one entry per name (the
-    strongest), strongest first. Names come from the air, so anything odd is left out."""
+def unescape_terse(text):
+    """One value of `nmcli -t -g`, with its backslash escapes undone."""
+    return ":".join(parse_terse(text))
+
+
+def scan_results(text, limit=40, current=None):
+    """Networks from `nmcli -t -f SSID,SIGNAL,SECURITY,CHAN device wifi list`: one entry per name (the strongest),
+    strongest first. Names come from the air, so anything odd is left out, and a name could even hold a line
+    break that looks like a record of its own: so "in use" is not read from the list but marked from what the
+    box is joined to (`current`), and nothing in a record is trusted beyond being shown."""
     best = {}
     for line in text.splitlines():
         f = parse_terse(line)
-        if len(f) != 5:
+        if len(f) != 4:
             continue
-        in_use, ssid, signal, sec, chan = f
+        ssid, signal, sec, chan = f
         ssid = clean_ssid(ssid)
         if ssid is None or not signal.isdigit() or not chan.isdigit():
             continue
@@ -393,11 +410,9 @@ def scan_results(text, limit=40):
         else:
             security = "unsupported"
         entry = {"ssid": ssid, "signal": min(int(signal), 100), "security": security,
-                 "channel": int(chan), "in_use": in_use.strip() == "*"}
+                 "channel": int(chan), "in_use": current is not None and ssid == current}
         old = best.get(ssid)
-        if old is None or entry["signal"] > old["signal"] or entry["in_use"]:
-            if old is not None:
-                entry["in_use"] = entry["in_use"] or old["in_use"]
+        if old is None or entry["signal"] > old["signal"]:
             best[ssid] = entry
     return sorted(best.values(), key=lambda e: (-e["in_use"], -e["signal"], e["ssid"]))[:limit]
 

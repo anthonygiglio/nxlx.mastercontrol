@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
 import os
+import re
 import socket
 import subprocess
 import tempfile
@@ -27,6 +28,7 @@ class FakeNm:
         self.wifi_active = None          # the profile active on wlan0 (profiles with "_dev": "wlan0")
         self.radio_hw, self.radio = "enabled", "enabled"
         self.scan_text = ""
+        self.hang_on = None              # a command that times out
         self.calls = []
         self.fail_on = None
         self.fail_times = None
@@ -65,12 +67,14 @@ class FakeNm:
             if argv[3] == "off":
                 self.wifi_active = None
             return done()
-        if argv[1:7] == ["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY,CHAN", "device", "wifi", "list"]:
+        if argv[1:7] == ["-t", "-f", "SSID,SIGNAL,SECURITY,CHAN", "device", "wifi", "list"]:
             return done(0, self.scan_text)
         if argv[1:4] == ["-t", "-g", "802-11-wireless.ssid,802-11-wireless.mode"]:
             name = self._by_uuid(argv[-1])
             p = self.profiles.get(name, {})
             return done(0, "%s\n%s\n" % (p.get("_ssid", ""), p.get("_mode", ""))) if name else done(10)
+        if self.hang_on and self.hang_on in line:
+            raise subprocess.TimeoutExpired(argv, 10)
         if argv[1:3] == ["device", "disconnect"]:
             self.wifi_active = None
             return done()
@@ -91,6 +95,8 @@ class FakeNm:
                     elif "=" in line:
                         k, v = line.split("=", 1)
                         kf["%s.%s" % (section, k)] = v
+            # GKeyFile string escapes, as NetworkManager reads them
+            kf["_psk"] = re.sub(r"\\(.)", lambda m: {"s": " ", "\\": "\\"}.get(m.group(1), "?"), kf.get("wifi-security.psk", ""))
             ssid = bytes(int(b) for b in kf["wifi.ssid"].rstrip(";").split(";")).decode()
             self.profiles[kf["connection.id"]] = {"uuid": kf["connection.uuid"], "_dev": "wlan0", "_keyfile": path,
                                                   "_ssid": ssid, "_mode": kf["wifi.mode"], "_kf": kf,
@@ -263,15 +269,34 @@ class ServiceTest(unittest.TestCase):
         self.assertFalse(self.svc.status()["reverting"])
         self.assertFalse(os.path.exists(self.state))
 
-    def test_giving_up_keeps_the_state_so_a_restart_finishes_the_job(self):
+    def test_an_undo_that_keeps_failing_is_never_dropped_and_blocks_new_changes(self):
         self.svc.apply(dict(STATIC))
         self.nm.fail_on, self.nm.fail_times = "connection up uuid", None  # always fails
         self.svc.revert()
         for _ in range(60):
             self.now[0] += 3
             self.svc.tick()
-        self.assertTrue(any("GAVE UP" in m for m in self.logs))
-        self.assertFalse(self.svc.status()["reverting"])
+        self.assertTrue(any("STILL FAILING" in m for m in self.logs))
+        self.assertTrue(self.svc.status()["reverting"])        # still owed, now tried once a minute
+        self.assertTrue(os.path.exists(self.state))
+        with self.assertRaises(NetError):                       # found by review: a new change overwrote what was owed
+            self.svc.apply(dict(STATIC, address="192.168.50.21"))
+        with open(self.state) as f:
+            self.assertEqual(json.load(f)["previous_uuid"], UUID_OLD)
+        calls = len(self.nm.calls)
+        self.now[0] += 30
+        self.svc.tick()
+        self.assertEqual(len(self.nm.calls), calls)            # not yet: once a minute
+        self.nm.fail_on = None
+        self.now[0] += 31
+        self.assertTrue(self.svc.tick())
+        self.assertEqual(self.nm.active, "Wired connection 1")
+        self.assertFalse(os.path.exists(self.state))
+
+    def test_a_restart_finishes_an_undo_that_was_still_failing(self):
+        self.svc.apply(dict(STATIC))
+        self.nm.fail_on, self.nm.fail_times = "connection up uuid", None
+        self.svc.revert()
         self.assertTrue(os.path.exists(self.state))
         self.nm.fail_on = None
         reborn = self.make_service()
@@ -579,13 +604,81 @@ class WifiServiceTest(unittest.TestCase):
         self.assertEqual(self.nm.wifi_active, "Home")
 
     def test_scan(self):
-        self.nm.scan_text = "*:Home:70:WPA2:6\n :Leyline Staff:60:WPA2 WPA3:36\n :Guest:20::1\n"
+        self.nm.scan_text = "Home:70:WPA2:6\nLeyline Staff:60:WPA2 WPA3:36\nGuest:20::1\n"
         reply = self.svc.handle({"cmd": "scan", "iface": "wlan0"})
         self.assertEqual([n["ssid"] for n in reply["networks"]], ["Home", "Leyline Staff", "Guest"])
         for bad in ("eth0", "wlan9", None, "wlan0; reboot"):
             self.assertFalse(self.svc.handle({"cmd": "scan", "iface": bad})["ok"], bad)
         self.nm.radio = "disabled"
         self.assertIn("off", self.svc.handle({"cmd": "scan", "iface": "wlan0"})["error"])
+
+    def test_a_timeout_during_an_undo_is_a_failed_try_not_the_end_of_the_undo(self):
+        # found by review: one slow nmcli made the helper drop the undo and delete its state for good
+        self.svc.apply(dict(JOIN))
+        self.nm.hang_on = "connection.id connection show id pvj-wlan0-try"
+        self.now[0] += 121
+        self.assertFalse(self.svc.tick())
+        self.assertTrue(self.svc.status()["reverting"])
+        self.assertTrue(os.path.exists(self.state))
+        self.nm.hang_on = None
+        self.now[0] += 3
+        self.assertTrue(self.svc.tick())
+        self.assertEqual((self.nm.wifi_active, self.keyfiles()), ("Home", []))
+
+    def test_a_confirm_that_fails_part_way_can_still_be_undone(self):
+        # found by review: the old profile was deleted before the new one had its name, so the undo had nothing to go back to
+        self.svc.apply(dict(JOIN))
+        self.svc.confirm()                                   # pvj-wlan0 is now "Leyline Staff"
+        self.svc.apply(dict(JOIN, ssid="Other"))
+        self.nm.fail_on = "modify id pvj-wlan0-try connection.id pvj-wlan0"
+        with self.assertRaises(NetError):
+            self.svc.confirm()
+        self.assertEqual(self.nm.profiles["pvj-wlan0"]["_ssid"], "Leyline Staff")   # renamed back
+        self.assertNotIn("pvj-wlan0-old", self.nm.profiles)
+        self.nm.fail_on = None
+        self.now[0] += 121
+        self.assertTrue(self.svc.tick())
+        self.assertEqual(self.nm.wifi_active, "pvj-wlan0")
+        self.assertEqual(self.nm.profiles["pvj-wlan0"]["_ssid"], "Leyline Staff")
+
+    def test_an_old_profile_that_cannot_be_deleted_does_not_undo_a_confirm(self):
+        self.svc.apply(dict(JOIN))
+        self.svc.confirm()
+        self.svc.apply(dict(JOIN, ssid="Other"))
+        self.nm.fail_on = "delete id pvj-wlan0-old"
+        self.assertIsNone(self.svc.confirm()["pending"])
+        self.assertEqual((self.nm.wifi_active, self.nm.profiles["pvj-wlan0"]["_ssid"]), ("pvj-wlan0", "Other"))
+        self.assertTrue(any("could not delete the old profile" in m for m in self.logs))
+        self.nm.fail_on = None
+        self.svc.apply(dict(JOIN, ssid="Third"))
+        self.svc.confirm()                                   # the leftover goes now
+        self.assertNotIn("pvj-wlan0-old", self.nm.profiles)
+        self.assertEqual(self.nm.profiles["pvj-wlan0"]["_ssid"], "Third")
+
+    def test_the_password_reaches_networkmanager_exactly(self):
+        for pw in ("s3cret pass", " lead and trail ", "back\\slash\\\\s", "#;[x]=y \\ "):
+            self.svc.apply(dict(JOIN, password=pw))
+            self.assertEqual(self.nm.profiles["pvj-wlan0-try"]["_kf"]["_psk"], pw)
+            self.svc.revert()
+
+    def test_scan_marks_in_use_from_the_box_not_from_the_air(self):
+        # a name with a line break inside could look like a record of its own; "in use" never comes from the list
+        self.nm.scan_text = "Leyline Staff:60:WPA2:36\nHome:70:WPA2:6\n"
+        got = {n["ssid"]: n["in_use"] for n in self.svc.scan("wlan0")["networks"]}
+        self.assertEqual(got, {"Home": True, "Leyline Staff": False})
+        self.nm.scan_text = "x\n*:Leyline Staff:99::1\n"
+        self.assertEqual(self.svc.scan("wlan0")["networks"], [])
+
+    def test_a_network_name_with_a_backslash_or_colon_is_shown_as_it_is(self):
+        self.nm.profiles["Home"]["_ssid"] = "a\\\\b\\:c"            # as nmcli -g prints a\b:c
+        self.assertEqual(self.svc.status(wifi=True)["wifi"]["ports"]["wlan0"]["ssid"], "a\\b:c")
+
+    def test_joining_waits_longer_than_a_cable(self):
+        seen = []
+        real = self.nm.__call__
+        self.svc.runner = lambda argv, **kw: (seen.append((argv[:3], kw.get("timeout"))), real(argv, **kw))[1]
+        self.svc.apply(dict(JOIN))
+        self.assertIn((["nmcli", "connection", "up"], 45), seen)
 
     def test_status_reports_what_wifi_is_doing(self):
         st = self.svc.handle({"cmd": "status", "wifi": True})

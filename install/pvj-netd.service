@@ -26,18 +26,19 @@ ExecStart=@PVJ_DIR@/bin/pvj-netd
 Restart=always
 RestartSec=2
 
-# Sandbox: it needs the system D-Bus socket and /run/pvj, nothing else.
+# Sandbox: it needs the system D-Bus socket, /run/pvj, netlink for `ip addr`, and NetworkManager's
+# profile folder (it writes a new Wi-Fi profile there, root only, so a password is never on a command line).
 CapabilityBoundingSet=
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ReadWritePaths=/run/pvj /var/lib/pvj-netd
+ReadWritePaths=/run/pvj /var/lib/pvj-netd -/etc/NetworkManager/system-connections
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
 RestrictNamespaces=yes
 LockPersonality=yes
 SystemCallArchitectures=native

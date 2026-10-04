@@ -132,10 +132,10 @@ class PlanTest(unittest.TestCase):
 
     def test_confirm_swaps_in_the_candidate_without_ever_leaving_no_autoconnect_profile(self):
         first = netcfg.confirm_plan("eth0", old_exists=True)
-        self.assertEqual([c[3] if c[2] != "modify" else "modify" for c in first], ["modify", "id", "modify"])
         self.assertEqual(first[0][3:6], ["id", "pvj-eth0-try", "connection.autoconnect"])
-        self.assertEqual(first[1], ["nmcli", "connection", "delete", "id", "pvj-eth0"])  # only after the candidate autoconnects
-        self.assertEqual(first[2][3:7], ["id", "pvj-eth0-try", "connection.id", "pvj-eth0"])
+        self.assertEqual(first[1][3:], ["id", "pvj-eth0", "connection.id", "pvj-eth0-old"])   # renamed, not deleted, until
+        self.assertEqual(first[2][3:], ["id", "pvj-eth0-try", "connection.id", "pvj-eth0"])   # the candidate has its name
+        self.assertEqual(first[3], ["nmcli", "connection", "delete", "id", "pvj-eth0-old"])   # and only then deleted
         self.assertEqual(len(netcfg.confirm_plan("eth0", old_exists=False)), 2)
 
     def test_revert_drops_the_candidate_and_reactivates_the_previous_connection_by_uuid(self):
@@ -237,6 +237,8 @@ class WifiValidateTest(unittest.TestCase):
         self.assertNotIn("password", wifi(security="open", password=None))
         self.assertEqual(wifi(security="open", password="")["security"], "open")
         self.assertEqual(wifi(security="sae")["security"], "sae")
+        with self.assertRaises(NetError):
+            wifi(security="sae", password="ab" * 32)             # WPA3 has no raw hex key
         for bad in ("wep", "WPA2", "", None, "802.1x"):
             with self.assertRaises(NetError, msg=repr(bad)):
                 wifi(security=bad)
@@ -304,8 +306,8 @@ class WifiPlanTest(unittest.TestCase):
 
     def test_keyfile_for_hotspot_and_open(self):
         kf = self.parse(netcfg.keyfile(wifi(mode="hotspot", band="a"), self.UUID))
-        self.assertEqual((kf["wifi.mode"], kf["wifi.band"], kf["wifi-security.proto"], kf["wifi-security.pairwise"]),
-                         ("ap", "a", "rsn", "ccmp"))
+        self.assertEqual((kf["wifi.mode"], kf["wifi.band"], kf["wifi-security.proto"], kf["wifi-security.pairwise"],
+                          kf["wifi-security.pmf"]), ("ap", "a", "rsn", "ccmp", "1"))
         kf = self.parse(netcfg.keyfile(wifi(security="open", password=None), self.UUID))
         self.assertFalse([k for k in kf if k.startswith("wifi-security")])
 
@@ -338,10 +340,10 @@ class ScanTest(unittest.TestCase):
 
     def test_results_are_deduplicated_cleaned_and_sorted(self):
         text = "\n".join([
-            " :Venue:40:WPA2:1", " :Venue:70:WPA1 WPA2:36", "*:Leyline Staff:55:WPA2 WPA3:11",
-            " :Guest::0:6", " ::90:WPA2:6", " :Corp:80:WPA2 802.1X:6", " :Old:30:WEP:6", " :New:20:WPA3:149",
-            " :Open Cafe:10::1", " :bad\x01name:99:WPA2:1", " :Odd:x:WPA2:1", "garbage", " :a:b:c:d:e"])
-        got = netcfg.scan_results(text)
+            "Venue:40:WPA2:1", "Venue:70:WPA1 WPA2:36", "Leyline Staff:55:WPA2 WPA3:11",
+            "Guest::0:6", ":90:WPA2:6", "Corp:80:WPA2 802.1X:6", "Old:30:WEP:6", "New:20:WPA3:149",
+            "Open Cafe:10::1", "bad\x01name:99:WPA2:1", "Odd:x:WPA2:1", "garbage", "a:b:c:d:e"])
+        got = netcfg.scan_results(text, current="Leyline Staff")
         self.assertEqual([n["ssid"] for n in got], ["Leyline Staff", "Corp", "Venue", "Old", "New", "Open Cafe"])
         by = {n["ssid"]: n for n in got}
         self.assertTrue(by["Leyline Staff"]["in_use"])
@@ -349,7 +351,8 @@ class ScanTest(unittest.TestCase):
         self.assertEqual({k: by[k]["security"] for k in by},
                          {"Leyline Staff": "wpa-psk", "Corp": "unsupported", "Venue": "wpa-psk", "Old": "unsupported",
                           "New": "sae", "Open Cafe": "open"})
-        self.assertEqual(len(netcfg.scan_results("\n".join(" :n%d:50:WPA2:1" % i for i in range(100)))), 40)
+        self.assertEqual(len(netcfg.scan_results("\n".join("n%d:50:WPA2:1" % i for i in range(100)))), 40)
+        self.assertFalse(any(n["in_use"] for n in netcfg.scan_results(text)))
 
 
 if __name__ == "__main__":

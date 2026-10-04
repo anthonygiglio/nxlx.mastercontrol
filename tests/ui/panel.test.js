@@ -221,6 +221,9 @@ function startServer() {
     await page.click('#netscanbtn');
     await page.waitForSelector('#netscan >> text=Leyline Staff');
     assert(await page.isDisabled('#netscan button:has-text("Corp")'), 'a company (802.1X) network cannot be chosen');
+    assert(await page.isVisible('#netscan button:has-text("<img src=x")'), 'a hostile name is shown as text');
+    assert.strictEqual(await page.$$eval('#netcard img', (els) => els.length), 0, 'and never becomes markup');
+    assert(!(await page.evaluate(() => window.pwned)), 'nothing from a network name ran');
     await page.click('#netscan >> text=Leyline Staff');
     assert.strictEqual(await page.inputValue('#netssid'), 'Leyline Staff');
     await page.fill('#netpass', 'short');
