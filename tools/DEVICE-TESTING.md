@@ -106,7 +106,7 @@ Nothing else may be directly in `/run/pvj`: `sudo find /run/pvj -maxdepth 1 ! -t
 | # | When | Do | Good |
 | --- | --- | --- | --- |
 | R1 | Upgrade over the running older version | Before: `L` (expect one shared `/run/pvj`, mode 770, with `player.sock`, `netd.sock`, `pin` in it). Then `sudo install/install.sh`, then `L` | The installer says "moving the runtime files to a folder per service"; `L` matches the table; `systemctl is-active pvj-player pvj-web pvj-netd pvj-sysd pvj-supportd` says `active` five times |
-| R2 | After a boot | `sudo reboot`, then `L`, and `journalctl -b \| grep -i cycle` | The table; no "ordering cycle" line; all five services active |
+| R2 | After a boot | `sudo reboot`, then `L`, `journalctl -b \| grep -i cycle` and `journalctl -b -u systemd-tmpfiles-setup.service \| grep -i pvj` | The table, with the two links in `/run/pvj/web`; no "ordering cycle" line; nothing about pvj from tmpfiles; all five services active |
 | R3 | It still works across the folders | Play a clip; open the preview; `sudo pvj-pin`; the Network page shows the addresses and "Find networks" answers; play a shader; show a PNG overlay; a mapping if one is set up; a live input if a capture stick is there | Each works. Each one crosses from one service's folder to another's |
 | R4 | Player restart from the panel | System > About and power > Restart player now, wait 5 s, `L` | The table. `netd.sock` and `pin` did not change owner |
 | R5 | Restart of each unit | For each of `pvj-player pvj-web pvj-netd pvj-sysd pvj-supportd`: `sudo systemctl restart NAME; sleep 5; L` | The table after every one, and R3's play and Network page still work at the end |
