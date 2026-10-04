@@ -440,7 +440,10 @@ class Monitor:
 
     def retire(self, pid):
         """This projector's address was changed: its worker stops now (it sends nothing more, and saves nothing),
-        and its status, notice and any input change being retried are dropped. apply() afterwards gives the
+        and its status, notice and any input change being retried are dropped. An input change that was asked for
+        the old address and has not gone out yet is not sent anywhere (set_input reads the stored address again
+        under the input lock), and one refused by the old address is not retried at the new one. What cannot be
+        taken back is a command already on the wire to the old address when the edit is saved. apply() afterwards gives the
         projector a new worker, which reads its details anew; while the old worker's thread is still ending a
         command, the projector is "waiting", and that same thread then takes it over, so there are never two."""
         with self.lock:
@@ -552,9 +555,15 @@ class Monitor:
         it says no, a newer choice was made while this one waited, and nothing is sent ("stopped"). `cancel`: an
         Event that, once set, also keeps the command from being sent."""
         pid = entry["id"]
+        def moved():        # edited to another address since `entry` was read: that input was chosen for the old one
+            now = self._entry(pid)
+            return now is None or (now["host"], now["port"]) != (entry["host"], entry["port"])
+        gone = ProjectorError("the projector's address was changed; choose the input again", "stopped")
         with self._input_lock(pid):
             if wanted is not None and not wanted():
                 raise ProjectorError("stopped", "stopped")
+            if moved():                                # nothing goes to the old address, and nothing of this to the new one
+                raise gone
             with self.lock:
                 w = self._workers.get(pid)
                 if w:
@@ -573,6 +582,8 @@ class Monitor:
                     w = self._workers.get(pid)
                     if w is None or w.stop.is_set():
                         raise
+                    if moved():                        # the edit landed while the old address was being asked: no retry at the new one
+                        raise gone
                     w.pending = {"input": code, "until": now + self.retry_for, "next": now + self.retry_every}
                     w.wake.set()
                 return {"pending": True}

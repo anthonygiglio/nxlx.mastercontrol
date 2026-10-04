@@ -1565,6 +1565,56 @@ class ApiTest(ServerBase):
             self.assertEqual(st, 200, body)
             self.assertEqual(self.settings.data["projectors"], before)
 
+    def test_an_input_change_asked_before_an_edit_goes_nowhere_after_it(self):
+        """Review finding 2. The input was chosen from the old projector's list. Queued behind the edit it is not
+        sent to the old address and not to the new one; refused by the old one as the edit lands, it is not
+        retried at the new one (which may not have that input at all)."""
+        self.fast()
+        other = FakeProjector("pw1", inputs=("11", "33"), name="The other one")
+        self.addCleanup(other.close)
+        pid = self.add()[1]["projectors"][0]["id"]
+        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+        asked_before = dict(self.stored())                              # what a request under way holds
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port}})[0], 200)
+        time.sleep(0.3)
+        sent = len(self.fake.raw)
+        with self.assertRaises(projector.ProjectorError) as e:
+            self.api.projectors.set_input(asked_before, "31")
+        self.assertEqual(e.exception.code, "stopped")
+        self.assertIn("address was changed", str(e.exception))
+        self.assertEqual(len(self.fake.raw), sent)                      # the old one got nothing after the edit
+        # the edit lands while the old address is answering "unavailable" (it is in standby)
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": self.fake.port}})[0], 200)
+        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+        held, real = dict(self.stored()), self.api._pjlink
+
+        def link(entry):
+            lk = real(entry)
+            if entry["port"] == self.fake.port:
+                send = lk.set_input
+
+                def set_input(code):
+                    try:
+                        return send(code)                               # the old projector: ERR3
+                    finally:
+                        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port}})[0], 200)
+                lk.set_input = set_input
+            return lk
+        with mock.patch.object(self.api, "_pjlink", link):
+            with self.assertRaises(projector.ProjectorError) as e:
+                self.api.projectors.set_input(held, "31")
+            self.assertEqual(e.exception.code, "stopped")
+            self.assertTrue(wait_for(lambda: (self.projector()["details"] or {}).get("name") == "The other one"))
+            self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+            time.sleep(0.6)                                             # six retry periods of a retry that must not exist
+        self.assertIsNone(self.projector()["status"]["pending_input"])
+        self.assertEqual([r for r in other.received if "INPT 3" in r or "INPT 1" in r], [])       # the new one got no input command
+        sent = len(self.fake.raw)
+        time.sleep(0.3)
+        self.assertEqual(len(self.fake.raw), sent)
+        # an input chosen after the edit, from what is stored now, goes to the new address as before
+        self.assertEqual(self.api.projectors.set_input(self.stored(), "33"), {"pending": True})
+
     def test_groups_keep_pointing_at_an_edited_projector(self):
         with mock.patch.object(self.api.projectors, "apply", lambda: None):
             pid = self.add()[1]["projectors"][0]["id"]
