@@ -1822,7 +1822,7 @@ class Api:
 
     # --- join codes and access on the display --------------------------------
     # These four routes answer a presenter (live) too, for ONE thing: the guest (view) code, to make, see, show on
-    # the room screen and end (D47). So the role is checked again here, per action: the route's minimum role says
+    # the room screen and end (D48). So the role is checked again here, per action: the route's minimum role says
     # only who may ask at all. Everything a presenter is not given is refused with 403, never quietly narrowed.
     PRESENTER_ITEMS = ("view",)       # what a presenter may put on the room screen, and take off it
 

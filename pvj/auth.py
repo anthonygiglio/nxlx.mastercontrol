@@ -9,8 +9,8 @@
   They are meant to be shown on the display, so they can never give full access, they expire, they work a limited
   number of times, and only a few can exist at once. They live in memory only: a restart clears them.
 * A presenter (live) may make and end the GUEST code, within PRESENTER_JOIN_MINUTES and PRESENTER_JOIN_MAX_USES, and
-  nothing else (D47; the API decides what a role may ask for, this module keeps the limits and who made a code).
-* Bounds (review of D47): at most MAX_DEVICES paired devices, of which FULL_RESERVED places are kept for full-access
+  nothing else (D48; the API decides what a role may ask for, this module keeps the limits and who made a code).
+* Bounds (review of D48): at most MAX_DEVICES paired devices, of which FULL_RESERVED places are kept for full-access
   devices, so guests and presenters can never fill the list and keep the owner's PIN from pairing; at most
   PRESENTER_CODES_PER_HOUR guest codes made by presenters in an hour; and a device that joined with a GUEST code is
   dropped once it has not been used for GUEST_IDLE_DAYS (its last use is written down at most once a day).

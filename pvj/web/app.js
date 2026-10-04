@@ -1022,7 +1022,7 @@
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
         },
         body: function () { return window.pvjShaders ? [window.pvjShaders.page(shaderCtx())] : []; } },
-      // A presenter gets this row too (D47): the guest code, to make, show on the room screen and end, and nothing else.
+      // A presenter gets this row too (D48): the guest code, to make, show on the room screen and end, and nothing else.
       { id: 'access', group: 'everyday', name: 'People and codes', role: 'live', url: '/api/access', urlRole: 'live',
         blurb: full ? 'The phones and tablets paired with this box, codes for guests and presenters, and the PIN.' :
           'Let a guest watch from their own phone, with a code that stops working by itself.',
