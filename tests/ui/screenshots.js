@@ -106,7 +106,7 @@ function startServer() {
         await page.waitForTimeout(1200);
       }
       await tabs(false);
-      try { await span(f, '.screen > .card', '#previewcard'); } finally { await tabs(true); }
+      try { await span(f, '.livecols > .card', '#previewcard'); } finally { await tabs(true); }
     });
 
     await page.click('nav >> text=Mix');

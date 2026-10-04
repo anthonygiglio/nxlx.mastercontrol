@@ -407,7 +407,7 @@ class ValuesTest(Live):
         self.assertEqual((p["offset"], p["controls"]), (150.0, {"speed": 1.0, "hue": 180.0, "brightness": 0.0}))
         self.assertIn("c = clamp(c * 0.0, 0.0, 1.0);", self.text())
         # the three bytes of the frame number start again after 6.4 days: the frames since the anchor stay right
-        self.engine.playing["anchor"] = S.FRAME_WRAP - 30
+        self.engine.playing["anchor"] = self.engine.playing["since"] = S.FRAME_WRAP - 30
         self.player.time_pos = (S.FRAME_WRAP + 60) / 30.0
         self.engine.change({"controls": {"speed": 2.0}})
         self.pump()
@@ -433,6 +433,55 @@ class ValuesTest(Live):
         self.player.time_pos = 50.0
         self.engine.api_play({"id": "all.fs", "values": {"level": 0.5}}, None, "t")
         self.assertEqual((self.engine.playing["anchor"], self.engine.playing["offset"]), (None, 7.0))
+
+    def test_thirty_days_on_one_shader_and_the_speed_still_changes_without_a_jump(self):
+        """The three bytes of the frame number start again every 6.4 days. A speed change after 30 days at speed 4
+        gave an offset of 1,430,951 where about 10.4 million was right, and offsets above 10 million were refused."""
+        day = 86400.0
+        self.engine.show("all.fs")
+        self.engine.change({"controls": {"speed": 4.0}})
+        self.pump()
+        anchors = []
+        for n in range(1, 31):                                        # nobody touches it; the worker comes by on its own
+            self.player.time_pos = n * day
+            self.now[0] += day
+            while self.engine.changer.pump():
+                pass
+            anchors.append(self.engine.playing["anchor"])
+            gone = (int(round(n * day * 30)) - self.engine.playing["since"]) / 30.0
+            self.assertLess(gone, 3 * day)                            # never near the 6.4 days the shader could not count
+            self.assertAlmostEqual(self.engine.playing["offset"] + 4.0 * gone, 4.0 * n * day, places=3)       # TIME is where it should be
+        self.assertGreater(len(set(anchors)), 10)                     # a new anchor every two days
+        self.engine.change({"controls": {"speed": 1.0}})
+        self.pump(0.0)
+        p = self.engine.playing
+        self.assertAlmostEqual(p["offset"], 4.0 * 30 * day, places=3)                     # 10,368,000
+        self.assertEqual(p["anchor"], int(30 * day * 30) % S.FRAME_WRAP)
+        self.assertIn("+ 10368000.0;", self.text())                   # written in full, not rounded to seven digits
+        # and without the worker (its thread asleep the whole time): the count is still right, in whole numbers
+        self.engine.show("all.fs")
+        self.engine.changer.clear()
+        self.engine.change({"controls": {"speed": 4.0}})
+        self.pump()
+        self.engine.changer._refresh = None
+        start = self.engine.playing["offset"]
+        self.player.time_pos = 60 * day
+        self.engine.change({"controls": {"speed": 2.0}})
+        self.pump()
+        self.assertAlmostEqual(self.engine.playing["offset"] - start, 4.0 * 30 * day, places=3)
+        self.assertIsNone(self.engine.error)
+
+    def test_tiny_numbers_and_a_screen_of_no_size(self):
+        self.assertEqual((S._f(1e-40), S._f(4.940656e-324), S._f(-1e-35), S._f(1e-20)), ("0.0", "0.0", "0.0", "1e-20"))
+        t = S.translate(S.parse(ALL), (640, 360), {"level": 1e-40, "tint": [5e-324, 0.5, 1e-39]})
+        self.assertIn("const float level = 0.0;", t)
+        self.assertIn("const vec4 tint = vec4(0.0, 0.5, 0.0, 1.0);", t)
+        for screen in ((0, 0), (0, 5), (5, 0), (-1920, 1080), None, ("a", "b"), (10 ** 9, 10 ** 9)):
+            self.assertEqual(S.carrier_url(screen), S.carrier_url((1920, 1080)), screen)
+            self.assertEqual(S.render_size(screen, 720), (1280, 720), screen)
+        self.player.osd_size = lambda: (0, 0)
+        self.assertTrue(self.engine.show("all.fs")["ok"])
+        self.assertEqual(self.engine.state()["render"]["width"], 1280)
 
     def test_a_late_value_never_lands_on_a_clip_or_on_another_shader(self):
         self.engine.change({"values": {"level": 1.0}})
@@ -467,6 +516,41 @@ class ValuesTest(Live):
             self.pump()
         self.assertEqual(taps, [])
 
+    def test_a_choice_the_gpu_refused_is_not_sent_to_it_again(self):
+        """mode=5 was refused six times out of six, each a trip to the GPU with the lock held and a black flash; a
+        MIDI pad that toggles it would repeat that for ever."""
+        self.player.vo = "gpu"
+        self.engine.play("all.fs")
+        taps, test = [], self
+
+        class Tap(FakeTap):                                           # listening takes time on the fake clock too
+            def drain(self, seconds):
+                test.now[0] += seconds
+                return FakeTap.drain(self, seconds)
+        FakeTap.lines = REFUSAL
+        self.engine._tap = lambda path: taps.append(path) or Tap(path)
+        self.engine.change({"values": {"mode": 5}})
+        self.pump()
+        self.assertEqual(len(taps), 1)
+        swaps = len([c for c in self.player.calls if c[0] == "swap_source"])
+        for _ in range(5):
+            with self.assertRaises(ApiError) as c:                    # the same wish again: answered from memory
+                self.engine.change({"values": {"mode": 5}})
+            self.assertEqual(c.exception.status, 422)
+            self.assertIn("oops", c.exception.message)
+            self.pump()
+        self.engine.changer.submit(self.engine.playing, {"mode": 5})   # and one that got past the request (two wishes merged)
+        self.pump()
+        self.assertEqual((len(taps), len([c for c in self.player.calls if c[0] == "swap_source"])), (1, swaps))
+        self.assertEqual(self.engine.state()["error"]["message"], "line 12: `oops' undeclared")
+        FakeTap.lines = []
+        self.engine.change({"values": {"mode": 0}})                   # another choice is tried as before
+        self.pump()
+        self.assertEqual((len(taps), self.engine.state()["playing"]["values"]["mode"]), (2, 0))
+        self.engine.change({"values": {"level": 0.3}})               # and a plain number never was the trouble
+        self.pump()
+        self.assertEqual(self.engine.state()["playing"]["values"]["level"], 0.3)
+
     def test_a_change_during_vibes_does_not_end_the_rotation(self):
         vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=lambda: self.now[0], sleep=lambda s: None, rng=random.Random(1), thread=False, log=lambda *_: None)
         vibes.start()
@@ -479,21 +563,96 @@ class ValuesTest(Live):
         self.assertEqual((vibes.running, vibes.current, self.engine.playing["hue"], self.engine.playing["controls"]["speed"]), (True, sid, hue, 2.0))
 
     def test_requests_answer_while_the_gpu_is_busy_with_a_change(self):
-        """Nothing a presenter or a controller sends waits for the engine's lock (the GPU's look at a shader can take
-        seconds)."""
-        done = []
+        """Nothing a presenter, a controller, OSC, DMX or the schedule sends waits for the engine's lock (the GPU's
+        look at a shader can take four seconds). The dwell knob did: 3.99 s were measured."""
         self.engine.api_presets({"action": "save", "name": "kept"}, None, "t")
-        with self.engine._lock:
-            def calls():
-                self.engine.change({"values": {"level": 1.0}})
-                self.engine.apply_preset({"name": "kept"})
-                self.engine.step(1)
-                self.engine.state()
-                done.append(True)
-            t = threading.Thread(target=calls)
+        self.engine.api_set({"action": "set", "op": "add", "name": "Show", "shaders": ["nxlx-silk.fs"]}, None, "t")
+        vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=lambda: self.now[0], sleep=lambda s: None, rng=random.Random(1), thread=True, log=lambda *_: None)
+        self.addCleanup(vibes.stop)
+        live = {"id": "midi", "role": "live"}
+        calls = [("/api/shaders/values", {"values": {"level": 1.0}}), ("/api/shaders/values", {"control": 1, "level": 64}),
+                 ("/api/shaders/values", {"controls": {"speed": 2.0}}), ("/api/shaders/preset", {"name": "kept"}), ("/api/shaders/preset", {"index": 1}),
+                 ("/api/shaders/step", {"dir": 1}), ("/api/shaders/step", {"dir": -1}),
+                 ("/api/vibes", {"on": True}), ("/api/vibes", {"dwell": 45}), ("/api/vibes", {"next": True}), ("/api/vibes", {"previous": True}),
+                 ("/api/vibes", {"on": False}), ("/api/vibes", {"on": True, "set": "Show"}), ("/api/vibes", {"dwell": 60}), ("/api/vibes", {"on": False}),
+                 ("/api/blackout", {"on": True}), ("/api/blackout", {"on": False})]
+        took, answers = [], []
+        with self.engine._lock:                                       # as if the GPU were looking at a shader
+            def run():
+                for path, body in calls:
+                    t0 = time.monotonic()
+                    answers.append((path, body, self.api.handle("POST", path, body, live, "midi")[0]))
+                    took.append(time.monotonic() - t0)
+                t0 = time.monotonic()
+                self.api.handle("GET", "/api/shaders", {}, live, "t")
+                self.api.handle("GET", "/api/status", {}, live, "t")
+                took.append(time.monotonic() - t0)
+            t = threading.Thread(target=run)
             t.start()
-            t.join(5)
-        self.assertEqual(done, [True])
+            t.join(20)
+            self.assertFalse(t.is_alive(), "a request waited for the engine's lock: %s" % (answers[-1:],))
+        self.assertEqual([a for a in answers if a[2] != 200], [])
+        self.assertLess(max(took), 2.0)
+        self.assertEqual(self.engine.rotation("Show")["dwell"], 60)   # the dwell knob wrote the running set's time meanwhile
+
+    def test_a_queued_step_or_preset_never_takes_the_screen_back(self):
+        """A step (while Vibes is off) and a preset of another shader are put on by the worker a moment later. They
+        used to carry no epoch: the shader replaced a clip played meanwhile, came back after a Stop, and ended a
+        Vibes run that had started in between."""
+        self.engine.api_presets({"action": "save", "name": "kept"}, None, "t")
+        self.engine.play("nxlx-silk.fs")
+        wishes = (lambda: self.engine.step(1), lambda: self.engine.step(-1), lambda: self.engine.apply_preset({"id": "all.fs", "name": "kept"}))
+        for wish in wishes:                                           # a clip played before the worker came round keeps the screen
+            self.engine.play("nxlx-silk.fs")
+            wish()
+            self.player.play(["/media/clip.mp4"])
+            self.assertTrue(self.pump())
+            self.assertEqual((self.player.path, self.player.source_shader, self.engine.state()["playing"]), ("/media/clip.mp4", None, None))
+        for wish in wishes:                                           # after a Stop the screen stays empty
+            self.engine.play("nxlx-silk.fs")
+            wish()
+            self.player.clear()
+            self.pump()
+            self.assertEqual((self.player.path, self.player.source_shader), (None, None))
+        self.assertIsNone(self.engine.error)
+        vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=lambda: self.now[0], sleep=lambda s: None, rng=random.Random(1), thread=False, log=lambda *_: None)
+        for tick_first in (True, False):                              # Vibes started in between runs on, whoever comes first
+            self.engine.play("nxlx-silk.fs")
+            self.engine.step(1)
+            vibes.start()
+            if tick_first:
+                vibes.tick()
+            self.pump()
+            vibes.tick()
+            self.assertEqual((vibes.running, vibes.status()["last"]), (True, None))
+            self.assertEqual(self.engine.state()["playing"]["id"], vibes.current)
+            vibes.stop()
+        # a preset of another shader ends the rotation when it is asked for, not when the worker comes round
+        vibes.start()
+        vibes.tick()
+        self.engine.apply_preset({"id": "all.fs", "name": "kept"})
+        self.assertEqual((vibes.running, vibes.status()["last"]["message"]), (False, "ended: a shader was chosen by hand"))
+        self.pump()
+        self.assertEqual(self.engine.state()["playing"]["id"], "all.fs")
+        # the module switched off with a step waiting: nothing is shown and no error is noted
+        self.engine.step(1)
+        self.api.set_module("shaders", {"enabled": False}, None, "t")
+        self.assertFalse(self.pump())
+        self.assertEqual((self.engine.error, self.player.source_shader), (None, None))
+        self.api.registry.set_enabled("shaders", True)
+        self.engine.play("nxlx-silk.fs")
+        self.engine.changer.show({"id": "all.fs", "epoch": self.player.source_epoch})         # and one that slipped past the switch
+        self.api.registry.set_enabled("shaders", False)
+        self.pump()
+        self.assertIsNone(self.engine.error)
+        # two steps before the worker comes round are still two steps
+        self.api.registry.set_enabled("shaders", True)
+        ids = self.engine.vibes_ids()
+        self.engine.play(ids[0])
+        self.engine.step(1)
+        self.engine.step(1)
+        self.pump()
+        self.assertEqual(self.engine.state()["playing"]["id"], ids[2])
 
 
 class PresetTest(Live):
@@ -584,6 +743,38 @@ class PresetTest(Live):
         self.assertNotIn("presets", self.engine.config())
         self.engine.play("all.fs")
 
+    def test_one_damaged_row_does_not_cost_the_rest(self):
+        """One bad row dropped the whole key on read, and the next save wrote the section without it: every preset
+        and every set was gone."""
+        self.save("good", level=1.0)
+        self.save("also good", level=0.2)
+        self.engine.api_set({"action": "set", "op": "add", "name": "Show", "shaders": ["all.fs"]}, None, "t")
+        self.engine.api_set({"action": "heavy", "id": "nxlx-nebula.fs", "on": True}, None, "t")
+        data = self.settings.data["shaders"]
+        data["presets"]["all.fs"].insert(1, {"name": "", "values": {}})                       # damaged by hand
+        data["presets"]["all.fs"].append({"name": "GOOD", "values": {}})                      # the same name twice
+        data["presets"]["../x"] = [{"name": "a"}]
+        data["presets"]["nxlx-tide.fs"] = "not a list"
+        data["sets"].insert(0, {"id": "zz", "name": "broken"})
+        data["sets"].append({"id": data["sets"][1]["id"], "name": "same id"})
+        data["heavy"]["bad.fs"] = "nonsense"
+        cfg = self.engine.config()
+        self.assertEqual([p["name"] for p in cfg["presets"]["all.fs"]], ["good", "also good"])
+        self.assertEqual((sorted(cfg["presets"]), [e["name"] for e in cfg["sets"]], sorted(cfg["heavy"])), (["all.fs"], ["Ambient", "Show"], ["nxlx-nebula.fs"]))
+        self.engine.api_set({"action": "config", "dwell": 33}, None, "t")                     # any save
+        saved = self.settings.data["shaders"]
+        self.assertEqual(([p["name"] for p in saved["presets"]["all.fs"]], [e["name"] for e in saved["sets"]], sorted(saved["heavy"])),
+                         (["good", "also good"], ["Ambient", "Show"], ["nxlx-nebula.fs"]))
+        # a key that cannot be read at all is left as it is, not written over with nothing
+        for key, junk in (("presets", "all of them"), ("sets", {"not": "a list"}), ("heavy", ["a.fs"])):
+            self.settings.data["shaders"][key] = junk
+        self.assertEqual([k for k in ("presets", "heavy") if k in self.engine.config()], [])
+        self.engine.api_set({"action": "config", "dwell": 34}, None, "t")
+        self.assertEqual((self.settings.data["shaders"]["presets"], self.settings.data["shaders"]["heavy"]), ("all of them", ["a.fs"]))
+        # more marks than the cap: the first ones are read, none is an error
+        self.settings.data["shaders"]["heavy"] = {"s%d.fs" % n: {"at": "x", "drops": 3, "height": 720} for n in range(S.MAX_UPLOADS + 80)}
+        self.assertEqual(len(self.engine.config()["heavy"]), S.MAX_UPLOADS + 64)
+
     def test_deleting_a_shader_takes_its_presets_and_its_place_in_the_sets(self):
         self.save("mine", level=1.0)
         self.engine.api_set({"action": "vibes", "id": "all.fs", "on": True}, None, "t")
@@ -632,6 +823,62 @@ class SetsTest(Live):
         self.assertEqual([e["name"] for e in st["sets"]], ["Ambient", "Late show"])
         st = self.engine.api_set({"action": "set", "op": "delete", "id": show["id"]}, None, "t")
         self.assertEqual((st["active"], [e["name"] for e in st["sets"]], st["config"]["dwell"]), ("00000000", ["Ambient"], 180))
+
+    def test_names_hold_nothing_unseen_and_are_compared_as_written(self):
+        """A text direction override, a zero-width mark or a line separator in a name shows as another name, or as
+        none; a set named like an id was taken for that id."""
+        self.engine.upload("all.fs", ALL)
+        self.engine.play("all.fs")
+        for bad in ("a\u202eb", "a\u200bb", "a\u0085b", "a\u2028b", "a\u2029b", "\u200f", "a\x7fb", "a\tb", "a\ufeffb", "a\ud800b"):
+            for body in ({"action": "save", "name": bad},):
+                with self.assertRaises(ApiError, msg=repr(bad)) as c:
+                    self.engine.api_presets(body, None, "t")
+                self.assertEqual(c.exception.status, 400)
+            for body in ({"op": "add", "name": bad}, {"op": "add", "name": "Ok", "shaders": [{"id": "all.fs", "preset": bad}]}):
+                with self.assertRaises(ApiError, msg=repr(bad)) as c:
+                    self.engine.api_set(dict({"action": "set"}, **body), None, "t")
+                self.assertEqual(c.exception.status, 400)
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                L.check_extra({"sets": [{"id": "00000000", "name": bad}]})
+        for bad in ("00000000", "deadbeef"):                          # a set named like an id
+            with self.assertRaises(ApiError) as c:
+                self.add(bad, [])
+            self.assertEqual(c.exception.status, 400)
+        self.engine.api_presets({"action": "save", "name": "Caf\u00e9 STRASSE"}, None, "t")
+        self.engine.api_presets({"action": "save", "name": "Cafe\u0301 stra\u00dfe"}, None, "t")     # the same name, typed another way
+        self.assertEqual(len(self.row("all.fs")["presets"]), 1)
+        self.assertEqual(self.engine.apply_preset({"name": "CAFE\u0301 STRASSE"})["preset"], "Cafe\u0301 stra\u00dfe")
+        self.add("\u00c9t\u00e9", [])
+        with self.assertRaises(ApiError):
+            self.add("E\u0301TE\u0301", [])
+        self.assertEqual(self.engine.rotation("e\u0301te\u0301")["name"], "\u00c9t\u00e9")
+        # an id is looked for before a name, whatever the order of the list (sets saved before names like ids were refused)
+        self.settings.data["shaders"]["sets"] = [{"id": "aaaaaaaa", "name": "bbbbbbbb"}, {"id": "bbbbbbbb", "name": "Real"}]
+        self.assertEqual(self.engine.config().get("sets", [{}])[0].get("id"), "bbbbbbbb")       # the one named like an id is not read
+        # labels, the heavy note and the "no input" message are stripped of the same characters
+        p = S.parse('/*{"INPUTS": [{"NAME": "a", "TYPE": "long", "VALUES": [0, 1], "LABELS": ["on\u202e", "of\u200bf"], "LABEL": "A\u2028B"}]}*/ void main() {}')
+        self.assertEqual((p["inputs"][0]["labels"], p["inputs"][0]["label"]), (["on", "off"], "AB"))
+        self.assertEqual(L.check_heavy({"a.fs": {"at": "20\u202e26"}})["a.fs"]["at"], "2026")
+        with self.assertRaises(ApiError) as c:
+            self.engine.change({"values": {"le\u202evel\u2028": 1}})
+        self.assertNotIn("\u202e", c.exception.message)
+        self.assertNotIn("\u2028", c.exception.message)
+
+    def test_a_set_deleted_while_it_runs_ends_vibes_with_its_own_message(self):
+        show = self.add("Show", ["nxlx-prism.fs", "nxlx-silk.fs"])
+        entry = scheduler.validate({"enabled": True, "entries": [{"time": "08:00", "days": [0], "action": "vibes", "set": show["id"]}]})["entries"][0]
+        self.vibes.start(show["id"])
+        self.vibes.tick()
+        self.engine.api_set({"action": "set", "op": "delete", "id": show["id"]}, None, "t")
+        self.now[0] += 4000
+        self.assertFalse(self.vibes.tick())
+        self.assertEqual((self.vibes.running, self.vibes.status()["last"]["message"]), (False, "ended: the set it was running has been deleted"))
+        self.assertIsNone(self.player.source_shader)
+        sched = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)
+        sched._execute(entry, datetime.datetime.now())                # the schedule still holds the dead id: "last run" says so
+        self.assertEqual((sched.last[entry["id"]]["ok"], sched.last[entry["id"]]["message"]), (False, "that set is not there (it may have been deleted)"))
+        st, body = self.api.handle("POST", "/api/vibes", {"on": True, "set": "Show"}, {"id": "osc", "role": "live"}, "osc")
+        self.assertEqual((st, body["error"]), (404, "that set is not there (it may have been deleted)"))
 
     def test_sets_are_checked(self):
         show = self.add("Show", ["nxlx-prism.fs"])
@@ -788,6 +1035,65 @@ class GuardTest(Live):
         st = self.engine.api_set({"action": "heavy", "id": bad, "on": False}, None, "t")        # until someone puts it back
         self.assertIn(bad, self.engine.vibes_ids())
         self.assertIsNone(next(s for s in st["shaders"] if s["id"] == bad)["heavy"])
+
+    def test_a_box_that_drops_frames_whatever_plays_does_not_mark_every_shader(self):
+        """Three dropped frames a second from any cause marked all eight shaders in 73 seconds, for good, and Vibes
+        ended saying no shader was switched on."""
+        self.vibes.start()
+        self.vibes.tick()
+        for _ in range(200):
+            self.second(3)
+            self.vibes.tick()
+            if not self.vibes.running:
+                break
+        self.assertFalse(self.vibes.running)
+        self.assertEqual(self.vibes.status()["last"]["message"], "ended: the box is dropping frames whatever plays: check the picture detail")
+        self.assertEqual((self.engine.config().get("heavy"), len(self.engine.vibes_ids())), (None, 8))     # the two marks were taken back
+        self.assertIsNotNone(self.engine.state()["playing"])          # the shader that was on stays on
+        self.vibes.start()                                            # and it starts again
+        self.assertTrue(self.vibes.tick())
+        # one heavy shader between healthy ones is still marked
+        bad = self.vibes.current
+        for _ in range(12):
+            self.second(3)
+            if self.vibes.tick():
+                break
+        for _ in range(12):
+            self.second(0)
+            self.vibes.tick()
+        self.assertEqual(sorted(self.engine.config()["heavy"]), [bad])
+        self.vibes.stop()
+
+    def test_a_heavy_mark_belongs_to_its_height_and_board(self):
+        self.engine.note_heavy("nxlx-tide.fs", {"drops_per_second": 3.3})
+        mark = self.settings.data["shaders"]["heavy"]["nxlx-tide.fs"]
+        self.assertEqual((mark["height"], mark["board"], mark["drops"]), (720, "x86", 3.3))
+        self.assertNotIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.engine.api_set({"action": "config", "height": 540}, None, "t")        # fewer lines: it gets another chance
+        self.assertIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.assertIsNone(self.row("nxlx-tide.fs")["heavy"])
+        self.engine.api_set({"action": "config", "height": 1080}, None, "t")       # more lines: the mark holds
+        self.assertNotIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.assertEqual(self.row("nxlx-tide.fs")["heavy"]["height"], 720)
+        self.api.board = {"kind": "pi5", "model": "t"}                # the settings on another kind of board: not its mark
+        self.assertIn("nxlx-tide.fs", self.engine.vibes_ids())
+        saved = json.loads(json.dumps(self.settings.data["shaders"]))
+
+        class Care:
+            api = self.api
+        self.assertEqual(boxcare.check_shaders(saved, Care)["heavy"], {})          # and an import does not bring it along
+        self.api.board = {"kind": "x86", "model": "t"}
+        self.assertEqual(sorted(boxcare.check_shaders(saved, Care)["heavy"]), ["nxlx-tide.fs"])
+        self.assertEqual(sorted(boxcare.check_shaders(dict(saved, heavy={"a.fs": {"at": "x"}}), Care)["heavy"]), ["a.fs"])     # a mark of the first kind, with no board
+        with self.assertRaises(ValueError):
+            boxcare.check_shaders(dict(saved, heavy={"a.fs": {"board": "pi4; rm"}}), Care)
+        # every shader of a set left out: the start says so, not that nothing is switched on
+        for sid in self.engine.vibes_ids():
+            self.engine.note_heavy(sid)
+        with self.assertRaises(ApiError) as c:
+            self.vibes.start()
+        self.assertEqual(c.exception.status, 409)
+        self.assertIn("left out on this box", c.exception.message)
 
     def test_a_short_burst_or_a_change_is_not_taken_for_a_heavy_shader(self):
         self.vibes.start()
