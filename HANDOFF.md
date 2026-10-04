@@ -30,7 +30,7 @@ State at the end of 2026-10-01: master is green, **no open pull requests**, the 
 
 Next, in order:
 
-1. **PJLink Phase 1:** identify on add, input selection with friendly labels and warm-up retry, separate picture and sound mute, lamp hours and warnings in Health, background status. Extend the fake projector first; independent review (it talks to devices on the network).
+1. **PJLink Phase 1: built (PR #61, D37), not tested on a real projector.** Identify on add, input selection with labels and the 90 second retry, separate picture and sound mute, lamp hours and warnings in Health, background status; the fake projector is written from the standard; independent review done, all findings fixed with tests. Next for it: the first test with a real Epson (what it answers in standby, how long it is unavailable after power-on, separate mutes, lamp hours), and record what it does in `pvj/PROJECTORS.md`.
 2. **PJLink Phase 2:** class 2 volume steps, freeze, input names, signal resolution, "Find projectors" search, status notices.
 3. **Groups, scenes and the Room screen** for staff (presenter and guest codes), with projector actions on the schedule, OSC, MIDI and DMX.
 4. **ISF shader playback** (the owner's preferred format), then live coding with a last-good fallback, then **projectM** as an optional module on boards with OpenGL ES 3 (measure on the Pi 4 first).
@@ -62,7 +62,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | Old OSC command names | `pvj/OSC.md` | with OSC |
 | Autostart (file, all, slideshow, pad, USB, preset) | `pvj/AUTOSTART.md` | off |
 | Weekly schedule | `pvj/SCHEDULE.md` | off (beta) |
-| Projectors (PJLink) | `pvj/PROJECTORS.md` | off (beta) |
+| Projectors (PJLink class 1: power, input with labels, picture and sound mute, live status, lamp hours, warnings; no real projector tested) | `pvj/PROJECTORS.md` | off (beta) |
 | Projection mapper (quads, triangles, grids) | `pvj/MAPPER.md` | off (beta) |
 | Multi-box sync and video wall | `pvj/SYNC.md` | off (beta) |
 | Streams and live input (SRT, RTSP, RTMP, USB capture) | `pvj/STREAMS.md` | off (beta) |

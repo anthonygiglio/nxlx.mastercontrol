@@ -6,6 +6,28 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const assert = require('assert');
+const net = require('net');
+const crypto = require('crypto');
+
+// One PJLink question to the harness's fake projector, straight over TCP (not through the panel): what it really did.
+function pjlink(port, password, body) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(port, '127.0.0.1');
+    let buf = '', sent = false;
+    sock.setTimeout(5000, () => { sock.destroy(); reject(new Error('fake projector: no answer')); });
+    sock.on('error', reject);
+    sock.on('data', (d) => {
+      buf += d;
+      if (!buf.includes('\r')) return;
+      const line = buf.split('\r')[0];
+      buf = buf.slice(line.length + 1);
+      if (sent) { sock.destroy(); return resolve(line.split('=')[1]); }
+      const m = /^PJLINK 1 ([0-9a-f]{8})$/.exec(line);
+      sent = true;
+      sock.write((m ? crypto.createHash('md5').update(m[1] + password).digest('hex') : '') + '%1' + body + '\r');
+    });
+  });
+}
 
 const shots = process.env.SHOTS || '';
 const pyBin = process.env.PYTHON || 'python3';
@@ -277,18 +299,55 @@ function startServer() {
     await page.waitForSelector('.sched-entry:has-text("Start script startlessonce01")');
     await page.click('.sched-entry >> button:has-text("Remove")');
     await page.waitForSelector('#schedempty');
-    // Projectors: a public address is refused; a private one is added (no projector is contacted) and removed
+    // Projectors: a public address is refused; the harness's fake PJLink projector (loopback, allowed there only)
+    // is added, says who it is, shows its state, lamp hours and a warning, takes an input, a label and a mute
     await page.click('.item:has-text("Projector control") >> button');
     await page.waitForSelector('#projline');
     await page.fill('#projname', 'Main');
     await page.fill('#projhost', '8.8.8.8');
     await page.click('#projadd');
     await page.waitForFunction(() => /private/.test(document.getElementById('msg').textContent));
-    await page.fill('#projhost', '192.168.0.50');
+    await page.fill('#projhost', '127.0.0.1');
+    await page.fill('#projport', String(info.projector_ports[0]));
     await page.fill('#projpw', 'secret1');
     await page.click('#projadd');
     await page.waitForSelector('.proj-entry:has-text("password set")');
+    // The password is gone from the form (page.content() does not show what an input holds, so ask the input),
+    // and no answer of the API carries it
+    if (await page.inputValue('#projpw') !== '') problems.push('the projector password is still in the form');
+    const told = await page.evaluate(() => Promise.all(['/api/projectors', '/api/health', '/api/status', '/api/modules'].map((u) => fetch(u).then((r) => r.text()))));
+    if (told.join(' ').includes('secret1')) problems.push('the projector password came back from the API');
+    if (!told[0].includes('"has_password": true') && !told[0].includes('"has_password":true')) problems.push('the projector list did not answer: ' + told[0].slice(0, 200));
     if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page');
+    await page.waitForSelector('.proj-details:has-text("NXLX Test Works FP-1")', { timeout: 15000 });
+    await page.waitForSelector('.proj-status:has-text("lamp 1234 h")', { timeout: 15000 });
+    if (!/^on/i.test(await page.textContent('.proj-status'))) problems.push('the projector status does not say On: ' + await page.textContent('.proj-status'));
+    await page.waitForSelector('.proj-warn:has-text("Warning: filter")');
+    await page.selectOption('.proj-input', '31');
+    await page.waitForSelector('.proj-status:has-text("input Digital 1")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the fake projector is not on input 31');
+    // Labels have their own chooser: naming an input that is not in use must not switch the projector to it
+    await page.selectOption('.proj-labelfor', '32');
+    await page.fill('.proj-label', 'Box');
+    await page.click('.proj-setlabel');
+    await page.waitForSelector('.proj-input option:has-text("Box (Digital 2)")', { state: 'attached', timeout: 15000 });
+    await page.click('button[aria-label="Check Main"]');          // a fresh status, so a wrong switch would show
+    await page.waitForFunction(() => /Power: on/.test(document.querySelector('.proj-entry').textContent), null, { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('labelling an input switched the projector to it');
+    if (!/input Digital 1/.test(await page.textContent('.proj-status'))) problems.push('the status moved after labelling: ' + await page.textContent('.proj-status'));
+    await page.selectOption('.proj-labelfor', '31');
+    await page.fill('.proj-label', 'Matrix');
+    await page.click('.proj-setlabel');
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
+    await page.click('button[aria-label="Mute picture Main"]');
+    await page.waitForSelector('.proj-status:has-text("picture muted")', { timeout: 15000 });
+    await page.click('button[aria-label="Unmute picture Main"]');
+    await page.waitForFunction(() => !/muted/.test(document.querySelector('.proj-status').textContent), null, { timeout: 15000 });
+    await page.click('button[aria-label="Refresh details Main"]');
+    await page.waitForFunction(() => /Refresh details: done/.test(document.getElementById('msg').textContent));
+    await page.waitForSelector('#healthcard .item:has-text("Projector: Main"):has-text("lamp 1234 h"):has-text("Warning: filter")', { timeout: 15000 });
+    if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page');
+    if ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.text()))).includes('secret1')) problems.push('the projector password came back from the API');
     await page.click('.proj-entry >> button:has-text("Remove")');
     await page.waitForFunction(() => !document.querySelector('.proj-entry'));
     // Sync and video wall: switch the module on, be a server, set a wall tile, back to off

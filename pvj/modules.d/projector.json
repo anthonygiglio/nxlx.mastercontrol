@@ -1,7 +1,7 @@
 {
   "id": "projector",
   "name": "Projector control",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "optional",
   "channel": "beta",
   "requires": [
@@ -15,5 +15,5 @@
   ],
   "status": "ready",
   "default_enabled": false,
-  "description": "Switch network projectors on and off and mute their picture over PJLink (class 1). Private addresses only; passwords are never shown again. Adds projector power to the schedule and the old OSC /beameron and /beameroff. Serial (RS-232) control is not built."
+  "description": "Control network projectors over PJLink (class 1): on and off, input, picture and sound mute, and their state, lamp hours and warnings checked in the background. Private addresses only; passwords are never shown again. Adds projector power to the schedule and the old OSC /beameron and /beameroff. Not yet tried on a real projector. Serial (RS-232) control is not built."
 }

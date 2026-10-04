@@ -92,6 +92,9 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px
 .list .item > .row { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
 /* Stream and other addresses keep their case (the small-caps label style would mangle them). */
 .addr { font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--mu); overflow-wrap: anywhere; }
+/* Projectors: a warning from the projector itself stands out; the input label field leaves room for its button */
+.proj-warn { color: var(--ac); font-weight: 700; }
+.proj-label { flex: 1; min-width: 0; }
 /* The screen preview keeps the picture's shape and never overflows the card. */
 #preview { display: block; width: 100%; height: auto; margin-top: 8px; border-radius: 6px; background: #000; }
 /* Access: QR codes and join codes */

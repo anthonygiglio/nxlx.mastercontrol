@@ -169,8 +169,8 @@ function startServer() {
     // Turn the beta modules on and give them something to show.
     for (const id of ['scheduler', 'control-dmx', 'control-midi', 'inputs-srt', 'network', 'projector']) await api('POST', '/api/modules/' + id, { enabled: true });
     // Projectors at private addresses; nothing is sent to them unless a button is pressed.
-    await api('POST', '/api/projectors', { add: { name: 'Main projector', host: '192.168.1.50', port: 4352, password: 'show' } });
-    await api('POST', '/api/projectors', { add: { name: 'Side projector', host: '192.168.1.51', port: 4352, password: '' } });
+    await api('POST', '/api/projectors', { add: { name: 'Main projector', host: '127.0.0.1', port: info.projector_ports[0], password: 'secret1' } });
+    await api('POST', '/api/projectors', { add: { name: 'Side projector', host: '127.0.0.1', port: info.projector_ports[1], password: '' } });
     await api('POST', '/api/midi', { enabled: true });
     for (const m of [{ source: 'nanoKONTROL2', kind: 'cc', number: 0, action: 'opacity' }, { source: 'nanoKONTROL2', kind: 'cc', number: 16, action: 'volume' },
       { source: 'Mini', kind: 'note', number: 11, action: 'pad', bank: 0, index: 0 }, { source: 'Mini', kind: 'cc', number: 104, action: 'blackout' }]) await api('POST', '/api/midi/map', { add: m });
@@ -191,7 +191,7 @@ function startServer() {
     await page.waitForSelector('#netiface');
     // The newer cards: a wait that runs out must not stop the other shots (the picture then shows what is there).
     const soft = (what, p) => p.catch(() => failures.push('wait: ' + what));
-    await soft('projectors', page.waitForSelector('.proj-entry'));
+    await soft('projectors', page.waitForSelector('.proj-status:has-text("lamp")'));   // the harness's fake projectors have answered
     await soft('sound output', page.waitForSelector('#audioline, #audiomsg'));
     await soft('box', page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent)));
     await soft('access codes', page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));

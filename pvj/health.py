@@ -12,6 +12,7 @@ blamed undervoltage for Wi-Fi drops, the rainbow square and damaged SD cards. He
 * CPU load and memory, from /proc;
 * the player: running, hardware decode, dropped frames a second while playing;
 * the helpers (network, system, remote support): answering or not;
+* the projectors (when that module is on): lamp hours and their own warnings, as last read in the background;
 * the box's addresses, to open the panel from another device.
 
 No secrets and nothing that changes anything: every paired device may read it.
@@ -191,14 +192,23 @@ class Health:
             pass
         return out
 
+    def projectors(self):
+        """The projectors' last known state and warnings (lamp hours, fan, lamp, temperature, cover, filter),
+        from the background check; nothing is asked here. Empty while the Projector control module is off."""
+        try:
+            return self.api.projectors.health()
+        except Exception:
+            return []
+
     def report(self):
         load = cpu_load(self.proc)
         mem, total = memory(self.proc)
         parts = {"power": self.power(), "temperature": self.temperature(), "player": self.player(),
                  "cpu_percent": load, "memory_percent": mem, "memory_mb": total,
-                 "helpers": self.helpers(), "addresses": self.addresses()}
+                 "helpers": self.helpers(), "addresses": self.addresses(), "projectors": self.projectors()}
         states = [parts[k]["state"] for k in ("power", "temperature", "player")]
         states += ["bad" for h in parts["helpers"] if not h["running"] and h["name"] != "pvj-netd"]
+        states += [p["state"] for p in parts["projectors"]]      # a projector's own warning or error; "unknown" (no answer) is not one
         parts["overall"] = "bad" if "bad" in states else ("warn" if "warn" in states else "ok")
         return parts
 

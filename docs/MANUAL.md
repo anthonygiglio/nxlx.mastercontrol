@@ -136,7 +136,7 @@ Beta modules are **off** until you switch them on under System > Modules. Module
 | **Weekly schedule**: play, start scripts, stop, blackout, show and projector power at set times | [pvj/SCHEDULE.md](../pvj/SCHEDULE.md) |
 | **Video wall and sync**: boxes play in step (server and client), each can show a tile of the picture | [pvj/SYNC.md](../pvj/SYNC.md) |
 | **Projection mapper**: quads, triangles and grids, lined up from the phone (card on Mix) | [pvj/MAPPER.md](../pvj/MAPPER.md) |
-| **Projector control**: on, off and picture mute over PJLink | [pvj/PROJECTORS.md](../pvj/PROJECTORS.md) |
+| **Projector control** over PJLink: on, off, input, picture and sound mute, live status, lamp hours and warnings. **No real projector has been tested yet** | [pvj/PROJECTORS.md](../pvj/PROJECTORS.md) |
 | **Streams**: SRT, RTSP, RTMP | [pvj/STREAMS.md](../pvj/STREAMS.md) |
 | **DMX over the network**: Art-Net and sACN | [pvj/DMX.md](../pvj/DMX.md) |
 | **MIDI controller** (USB) | [pvj/MIDI.md](../pvj/MIDI.md) |
@@ -150,6 +150,8 @@ The Projection mapping card on Mix, with a grid and a quad:
 Projectors and the schedule (here with projector power, a clip, a start script and a blackout):
 
 ![Projectors](images/ui/projectors.png)
+
+The Projectors card shows what each projector says it is (maker, model), its state without asking (on, off, warming up, cooling down), its input, mutes and lamp hours, and lets a presenter choose the input and mute picture and sound separately (a full-access device can label each input; labelling does not switch the projector); its lamp hours and warnings (fan, lamp, temperature, cover, filter) are also on System > Health. The picture above may be older than this. This is built from the published PJLink standard and tested against a fake projector only: **no real projector has been tested**. Details: [pvj/PROJECTORS.md](../pvj/PROJECTORS.md).
 ![Schedule](images/ui/schedule.png)
 
 Check the box clock before relying on the schedule: a Pi has no battery clock, and until the network sets the time the clock is wrong.
@@ -182,7 +184,8 @@ System > Health says in plain words whether the box is well: the power supply (a
 | Clip will not play | Check the file plays in `mpv` on the box; on a Pi 5 use HEVC (no hardware H.264 decode) |
 | Nothing shows on the projector | `pvj-selftest --play` on the box; check `journalctl -u pvj-player` |
 | DMX or MIDI does nothing | The module must be on **and** the card turned on; read the card's status line and `journalctl -u pvj-web` |
-| A projector does not answer | PJLink must be switched on in the projector's network menu; check its address and password; a projector that is warming up or cooling down answers "busy" |
+| A projector does not answer | PJLink must be switched on in the projector's network menu; check its address and password; a projector that is warming up or cooling down refuses commands for a minute or so (an input change is tried again for 90 seconds by itself) |
+| A projector shows no inputs to choose | Many projectors list their inputs only while switched on: switch it on, wait for "On", then System > Projectors > Refresh details |
 | The mapped picture stutters | Map at 1920x1080 or less on a Pi 4, and leave Edit on the display when you are done (editing costs more) |
 | Schedule fires at the wrong time | Check the box clock shown on the Schedule card and the time zone |
 

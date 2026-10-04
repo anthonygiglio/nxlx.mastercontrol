@@ -390,6 +390,7 @@ def build(env=None, player=None):
         api.sync.apply()                     # lead or follow, as the settings say
     except Exception as e:                   # a busy port must not stop the panel
         print("pvj-web: sync not started: %s" % e, file=sys.stderr)
+    api.projectors.apply()                   # background status of the projectors, if that module is on
     api.sweep_stale_uploads()  # temp files left by a power cut can be gigabytes
     api.osc = osc_mod.OscManager(api, settings)
     api.scheduler = scheduler_mod.Scheduler(api, settings, registry)
@@ -438,6 +439,7 @@ def main(argv=None):
             api.capture.stop()
         api.dmx.stop()
         api.midi.stop()
+        api.projectors.stop(final=True)
         if api.osc:
             api.osc.stop()
     return 0

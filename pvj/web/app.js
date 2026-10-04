@@ -1010,6 +1010,7 @@
         body.appendChild(row('health-' + x.name, x.label, x.running ? 'ok' : (x.name === 'pvj-netd' ? 'unknown' : 'bad'),
           x.running ? 'Running' : (x.name === 'pvj-netd' ? 'Not running (only needed for network settings)' : 'Not running')));
       });
+      (d.projectors || []).forEach(function (x) { body.appendChild(row('healthproj-' + x.id, 'Projector: ' + x.name, x.state, x.text)); });
       body.appendChild(h('div', { class: 'k', text: 'Open the panel from another device at:' }));
       body.appendChild(h('div', { class: 'list mono', id: 'healthaddr' }, d.addresses.map(function (a) { return h('div', { class: 'item' }, h('span', { text: a })); })));
       if (can('full')) body.appendChild(h('button', { class: 'btn small', id: 'healthshowaddr', text: 'Show the address on the display (2 minutes)', onclick: function () {
@@ -1498,7 +1499,10 @@
 
   // ---- projectors (PJLink) ---------------------------------------------
   var projForm = { name: '', host: '', port: '4352', password: '' };  // survives redraws
+  var projLabels = {};  // projector id -> { code, text }: the input being labelled and the label being typed; survives redraws
+  var projTimer = null;
   function projectorsCard(full) {
+    clearTimeout(projTimer);
     var body = h('div', { class: 'list', id: 'projbody' });
     var card = h('div', { class: 'card', id: 'projcard' }, h('h2', { text: 'Projectors' }), body);
     var mod = S.modules.filter(function (m) { return m.id === 'projector'; })[0];
@@ -1507,38 +1511,129 @@
       return card;
     }
     var states = {};  // id -> the last answer shown under it
-    function run(pid, action, label, done) {
-      api('POST', '/api/projector', { id: pid, action: action }).then(function (r) {
-        if (!r.ok) return say(r.data.error || 'The projector did not answer', true);
-        var failed = [];
-        Object.keys(r.data.results).forEach(function (k) {
-          var x = r.data.results[k];
-          states[k] = x.ok ? (x.power ? 'Power: ' + x.power : label + ': done') : 'Failed: ' + x.error;
-          if (!x.ok) failed.push(x.error);
-        });
-        if (failed.length) say(failed.length + ' projector(s) did not answer: ' + failed[0], true); else say(label + ': done');
-        if (done) done();
+    var shown = null; // what is on the page, to leave it alone while nothing changed
+    function inputText(p, code) {
+      var i = p.inputs.filter(function (x) { return x.code === code; })[0];
+      return i ? (i.label ? i.label + ' (' + i.name + ')' : i.name) : code;
+    }
+    function statusText(p) {
+      var st = p.status || {};
+      if (st.ok === undefined) return st.waiting ? 'Waiting for an earlier check to end' : 'Checking...';
+      if (!st.ok) return 'No answer: ' + st.error;
+      var t = st.power.charAt(0).toUpperCase() + st.power.slice(1);
+      if (st.input) t += ' · input ' + inputText(p, st.input);
+      if (st.mute && (st.mute.picture || st.mute.sound)) t += ' · ' + (st.mute.picture && st.mute.sound ? 'picture and sound' : st.mute.picture ? 'picture' : 'sound') + ' muted';
+      if (st.lamps && st.lamps.length) t += ' · lamp ' + st.lamps.map(function (l) { return l.hours; }).join(', ') + ' h';
+      return t;
+    }
+    function warningText(p) {
+      var w = (p.status || {}).warnings || {}, out = [];
+      ['error', 'warning'].forEach(function (level) {
+        var names = Object.keys(w).filter(function (k) { return w[k] === level; });
+        if (names.length) out.push((level === 'error' ? 'Error: ' : 'Warning: ') + names.join(', '));
+      });
+      return out.join('. ');
+    }
+    function detailsText(p) {
+      var d = p.details;
+      if (!d) return 'Details not read yet';
+      var who = [d.maker, d.model].filter(Boolean).join(' ') || 'Unknown make';
+      return who + (d.name ? ' "' + d.name + '"' : '') + (d.info ? ' · ' + d.info : '') + (d['class'] ? ' · PJLink class ' + d['class'] : '');
+    }
+    function keep() {  // what is being typed, copied from the page before it is rebuilt (an input event can be lost)
+      [['projname', 'name'], ['projhost', 'host'], ['projport', 'port'], ['projpw', 'password']].forEach(function (f) {
+        var el = document.getElementById(f[0]);
+        if (el && body.contains(el)) projForm[f[1]] = el.value;
+      });
+      Array.prototype.forEach.call(body.querySelectorAll('.proj-label'), function (el) {
+        var which = body.querySelector('.proj-labelfor[data-id="' + el.getAttribute('data-id') + '"]');
+        projLabels[el.getAttribute('data-id')] = { code: which ? which.value : '', text: el.value };
       });
     }
-    function draw(d) {
+    function load(force) {
+      clearTimeout(projTimer);
+      api('GET', '/api/projectors').then(function (r) {
+        if (!document.body.contains(card)) return;
+        clearTimeout(projTimer);
+        projTimer = setTimeout(function () { if (document.body.contains(card)) load(); }, 5000);
+        if (!r.ok) {
+          if (shown === null) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'projmsg', text: r.data.error || 'Not available' })); }
+          return;
+        }
+        var a = document.activeElement;
+        var typing = a && body.contains(a) && /^(INPUT|SELECT)$/.test(a.tagName);
+        if (force || (JSON.stringify(r.data) !== shown && !typing)) draw(r.data);
+      });
+    }
+    function run(pid, action, label, extra) {
+      var msg = { id: pid, action: action };
+      Object.keys(extra || {}).forEach(function (k) { msg[k] = extra[k]; });
+      api('POST', '/api/projector', msg).then(function (r) {
+        if (!r.ok) { say(r.data.error || 'The projector did not answer', true); return load(true); }
+        var failed = [], waiting = false;
+        Object.keys(r.data.results).forEach(function (k) {
+          var x = r.data.results[k];
+          states[k] = x.ok ? (x.power ? 'Power: ' + x.power : (x.pending ? '' : label + ': done')) : 'Failed: ' + x.error;
+          if (!x.ok) failed.push(x.error);
+          if (x.pending) waiting = true;
+        });
+        if (failed.length) say(failed.length + ' projector(s) did not answer: ' + failed[0], true);
+        else say(waiting ? 'The projector is not ready yet; trying again for up to 90 seconds.' : label + ': done');
+        load(true);
+      });
+    }
+    function draw(d, fresh) {
+      if (!fresh) keep();
+      shown = JSON.stringify(d);
       body.textContent = '';
       body.appendChild(h('div', { class: 'k', id: 'projline', text: d.projectors.length ?
         'Controlled over the network with PJLink, like the old Beamer On and Off buttons.' :
         'No projectors added. Most network projectors speak PJLink; switch it on in the projector\'s network menu.' }));
       if (d.projectors.length > 1 && can('live')) body.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn small grow', id: 'projallon', text: 'All on', onclick: function () { run('all', 'on', 'All on', function () { draw(d); }); } }),
-        h('button', { class: 'btn small grow', id: 'projalloff', text: 'All off', onclick: function () { run('all', 'off', 'All off', function () { draw(d); }); } })));
+        h('button', { class: 'btn small grow', id: 'projallon', text: 'All on', onclick: function () { run('all', 'on', 'All on'); } }),
+        h('button', { class: 'btn small grow', id: 'projalloff', text: 'All off', onclick: function () { run('all', 'off', 'All off'); } })));
       d.projectors.forEach(function (p) {
-        var ctl = can('live') ? h('div', { class: 'row wrap' }, [['on', 'On'], ['off', 'Off'], ['mute', 'Picture mute'], ['unmute', 'Unmute'], ['state', 'Check']].map(function (a) {
-          return h('button', { class: 'btn small', text: a[1], 'aria-label': a[1] + ' ' + p.name, onclick: function () { run(p.id, a[0], a[1], function () { draw(d); }); } });
-        })) : null;
-        body.appendChild(h('div', { class: 'item proj-entry' },
+        var st = p.status || {}, mute = st.mute || {}, warn = warningText(p);
+        var line = function (cls, text) { return text ? [h('br'), h('span', { class: cls, text: text })] : null; };
+        body.appendChild(h('div', { class: 'item proj-entry', 'data-id': p.id },
           h('span', {}, p.name, h('br'), h('span', { class: 'addr', text: p.host + (p.port !== 4352 ? ':' + p.port : '') + (p.has_password ? ' · password set' : '') }),
-            states[p.id] ? h('br') : null, states[p.id] ? h('span', { class: 'k', text: states[p.id] }) : null),
+            line('addr proj-details', detailsText(p)), line('k proj-status', statusText(p)), line('k proj-warn', warn),
+            line('k proj-note', st.pending_input ? 'Switching to ' + inputText(p, st.pending_input) + ' when the projector is ready (up to 90 seconds)' : (st.notice ? st.notice.text : '')),
+            line('k', states[p.id])),
           full ? h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function () {
-            act('POST', '/api/projectors', { remove: p.id }, draw);
+            act('POST', '/api/projectors', { remove: p.id }, function (data) { draw(data); });
           } }) : null));
-        if (ctl) body.appendChild(ctl);
+        if (!can('live')) return;
+        var buttons = [['on', 'On'], ['off', 'Off'],
+          mute.picture ? ['unmute_picture', 'Unmute picture'] : ['mute_picture', 'Mute picture'],
+          mute.sound ? ['unmute_sound', 'Unmute sound'] : ['mute_sound', 'Mute sound'],
+          ['mute', 'Mute both'], ['unmute', 'Unmute both'], ['state', 'Check'], ['identify', 'Refresh details']];
+        body.appendChild(h('div', { class: 'row wrap proj-ctl' }, buttons.map(function (a) {
+          return h('button', { class: 'btn small', text: a[1], 'aria-label': a[1] + ' ' + p.name, onclick: function () { run(p.id, a[0], a[1]); } });
+        })));
+        if (!p.inputs.length) return;
+        var sel = h('select', { class: 'text-input proj-input', 'aria-label': 'Input of ' + p.name, onchange: function () {
+          if (sel.value) run(p.id, 'input', 'Input ' + inputText(p, sel.value), { input: sel.value });
+        } }, [h('option', { value: '', text: 'Input...', selected: !st.input && !st.pending_input })].concat(p.inputs.map(function (i) {
+          return h('option', { value: i.code, text: inputText(p, i.code), selected: i.code === (st.pending_input || st.input) });
+        })));
+        body.appendChild(sel);
+        if (!full) return;
+        // Labels: their own chooser, so naming an input never switches the projector to it
+        var draft = projLabels[p.id] || { code: '', text: '' };
+        var known = p.inputs.filter(function (i) { return i.code === draft.code; })[0];
+        var which = h('select', { class: 'text-input proj-labelfor', 'data-id': p.id, 'aria-label': 'Input of ' + p.name + ' to label', onchange: function () {
+          var i = p.inputs.filter(function (x) { return x.code === which.value; })[0];
+          label.value = i ? i.label : '';
+        } }, [h('option', { value: '', text: 'Label an input...', selected: !known })].concat(p.inputs.map(function (i) {
+          return h('option', { value: i.code, text: i.name + (i.label ? ' = ' + i.label : ''), selected: !!known && i.code === draft.code });
+        })));
+        var label = h('input', { class: 'text-input proj-label', 'data-id': p.id, 'aria-label': 'Label for that input of ' + p.name, placeholder: 'Label (Matrix, Box)', maxlength: 24, value: known ? draft.text : '' });
+        body.appendChild(which);
+        body.appendChild(h('div', { class: 'row' }, label, h('button', { class: 'btn small proj-setlabel', text: 'Set label', 'aria-label': 'Set the label of that input of ' + p.name, onclick: function () {
+          if (!which.value) return say('Choose the input to label first', true);
+          act('POST', '/api/projectors', { label: { id: p.id, input: which.value, label: label.value } }, function (data) { projLabels[p.id] = null; say('Label saved'); draw(data, true); });
+        } })));
       });
       if (!full) return;
       var name = h('input', { class: 'text-input', id: 'projname', 'aria-label': 'Projector name', placeholder: 'Name', maxlength: 40, value: projForm.name });
@@ -1553,16 +1648,13 @@
       body.appendChild(h('div', { class: 'k', text: 'Add a projector on this network (a private address only). The password is stored on the box and never shown again.' }));
       body.appendChild(name); body.appendChild(host); body.appendChild(port); body.appendChild(pw);
       body.appendChild(h('button', { class: 'btn on small', id: 'projadd', text: 'Add projector', onclick: function () {
+        keep();
         act('POST', '/api/projectors', { add: { name: projForm.name || projForm.host, host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password } }, function (data) {
-          projForm = { name: '', host: '', port: '4352', password: '' }; say(''); draw(data);
+          projForm = { name: '', host: '', port: '4352', password: '' }; say(''); draw(data, true); load();
         });
       } }));
     }
-    api('GET', '/api/projectors').then(function (r) {
-      if (!document.getElementById('projcard')) return;
-      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'projmsg', text: r.data.error || 'Not available' })); return; }
-      draw(r.data);
-    });
+    load();
     return card;
   }
   // ---- schedule -------------------------------------------------------
