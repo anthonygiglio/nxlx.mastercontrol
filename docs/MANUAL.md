@@ -179,6 +179,23 @@ The Projectors card shows what each projector says it is (maker, model), its sta
 
 Check the box clock before relying on the schedule: a Pi has no battery clock, and until the network sets the time the clock is wrong.
 
+### Running the room (beta)
+
+This is for the people who run the room. You do not need to know how the box works.
+
+Open the panel on your phone and tap **Room** at the bottom. (If you joined with a presenter code, you start there.)
+
+- **Scenes** are the big buttons at the top, with names such as "Console night" or "Film". Tap one. The projectors it needs switch on, choose the right source and the box starts what belongs to it. A projector takes about a minute to warm up; the line under the buttons says how it is going ("Main wall: switching on (warming up)") and then how it went, for example "Main wall: on, input Console. Painting wall: no answer."
+- Tapped the wrong scene? Just tap the right one. The newer one takes over.
+- Each **wall** has its own box: a word that says how it is (On, Off, Warming up, Cooling down, No answer), **On** and **Off**, a button for each **source** (the console, the box, and so on), **Mute picture** and **Mute sound**.
+- **All off** at the bottom switches every projector off. It first asks "Turn off all projectors?"; tap **Turn off** to do it or **Keep them on** to leave them, so it cannot happen by accident. Projectors cool down for a minute or two before they are really off; leave them plugged in.
+- "No answer" means the box cannot reach that projector. Check that it has power at the wall and that its network cable is in. Then tap the scene again.
+- If you joined with a guest code you can look, and the buttons are not there.
+
+Setting it up is for a full-access device: switch **Projectors** and then **Room** on (System, each on its own page), add the projectors under System > Projectors and give their inputs labels, then on the Room screen, under "Set up the room", make the groups (the walls) and the scenes. A scene can also run from the schedule ("Apply a Room scene"), from OSC and from a MIDI control. Details: [pvj/ROOM.md](../pvj/ROOM.md).
+
+**Not tried in a real room yet.** No real projector has been controlled by any of this; it has been tested against a stand-in projector in software only.
+
 ### Shaders and Vibes (beta)
 
 A shader is a small program that the box's graphics chip runs to draw a moving picture: there is no clip, so it never ends and never repeats exactly. The box takes shaders in the **ISF** format (Interactive Shader Format, `.fs` files) and comes with ten slow, quiet ones made for ambience.

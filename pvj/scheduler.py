@@ -7,6 +7,7 @@ entries through the same Api handlers as the panel and OSC, so every value is va
 same way.
 
 Entries can also start a legacy start script (startlessonce01 and so on) and switch every projector on or off.
+With the Room module an entry can apply a scene (groups of projectors and what the box plays, see room.py).
 
 Safety rules:
 - A schedule does nothing until both the Scheduler module and the schedule switch are on.
@@ -25,7 +26,7 @@ import uuid
 
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 
-ACTIONS = ("play", "stop", "blackout", "show", "preset", "projector_on", "projector_off", "vibes")
+ACTIONS = ("play", "stop", "blackout", "show", "preset", "projector_on", "projector_off", "vibes", "scene")
 MAX_ENTRIES = 50
 MAX_CATCHUP_MINUTES = 2
 _TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -93,6 +94,11 @@ def validate(body):
             except PlayerError:
                 raise ScheduleError(where + "enter a start script name such as startlessonce01")
             item["preset"] = name
+        elif action == "scene":                       # only the form of the id: the scene is looked up when it runs
+            sid = e.get("scene")
+            if not isinstance(sid, str) or not _ID.fullmatch(sid):
+                raise ScheduleError(where + "choose a scene")
+            item["scene"] = sid
         clean.append(item)
     return {"enabled": enabled, "entries": clean}
 
@@ -160,6 +166,13 @@ class Scheduler:
                 failed = [r["error"] for r in out["results"].values() if not r["ok"]]
                 if failed:
                     raise ApiError(502, "; ".join(failed))
+            elif action == "scene":                   # the same call as a tap on the Room screen; the projectors follow in the background
+                from .room import ROOM_DEVICE
+                status, out = self.api.handle("POST", "/api/room/scene", {"scene": entry["scene"]}, ROOM_DEVICE, "schedule")
+                if status != 200:
+                    raise ApiError(status, out.get("error", "error %d" % status))
+                if out.get("box") and not out["box"]["ok"]:
+                    raise ApiError(502, out["box"]["text"])
             else:
                 self.api.blackout({"on": action == "blackout"}, None, "schedule")
             result = {"ok": True, "message": "done"}

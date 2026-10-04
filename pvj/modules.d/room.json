@@ -1,0 +1,20 @@
+{
+  "id": "room",
+  "name": "Room (groups and scenes)",
+  "version": "0.1.0",
+  "type": "optional",
+  "channel": "beta",
+  "requires": [
+    "core",
+    "projector"
+  ],
+  "boards": [
+    "pi3",
+    "pi4",
+    "pi5",
+    "x86"
+  ],
+  "status": "ready",
+  "default_enabled": false,
+  "description": "A Room screen for staff: scenes to tap, each wall on or off, its source and its mutes, and All off. Groups of projectors and scenes are set up by a full-access device. Adds scenes to the schedule, OSC and MIDI. Not yet tried on a real projector."
+}

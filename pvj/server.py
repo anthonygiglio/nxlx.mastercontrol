@@ -471,6 +471,7 @@ def main(argv=None):
             api.capture.stop()
         api.dmx.stop()
         api.midi.stop()
+        api.room.stop()
         api.projectors.stop(final=True)
         if api.osc:
             api.osc.stop()

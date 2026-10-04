@@ -198,7 +198,7 @@ function startServer() {
     await sysIndex();
     await page.waitForSelector('h1:has-text("System")');
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
-    assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Schedule', 'Vibes', 'People and codes', 'Sound',
+    assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Vibes', 'People and codes', 'Sound',
       'At power-up', 'Streams', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
       'Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
@@ -478,6 +478,130 @@ function startServer() {
     await page.waitForSelector('.proj-entry');
     if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page');
     if ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.text()))).includes('secret1')) problems.push('the projector password came back from the API');
+    // The room: the harness's second fake projector (in standby, slow to warm up), two groups, a scene tapped on the
+    // Room screen, a wall's own buttons, All off with a second tap, what a guest and a presenter get, the schedule
+    await page.fill('#projname', 'Painting');
+    await page.fill('#projhost', '127.0.0.1');
+    await page.fill('#projport', String(info.projector_ports[1]));
+    await page.click('#projadd');
+    await page.waitForFunction(() => document.querySelectorAll('.proj-entry').length === 2);
+    await page.waitForFunction(() => document.querySelectorAll('.proj-input').length === 2, null, { timeout: 15000 });   // both input lists are read
+    await sys('Room');
+    await switchOn('Room');
+    await page.waitForFunction(() => /^Room/.test(document.querySelector('nav').textContent));       // the tab is there at once
+    await page.waitForSelector('#syspage .card:has-text("Where the room is run and set up")');
+    await sysIndex();
+    await chip('Room', 'Set up');
+    await page.waitForSelector(`${rowOf('Room')} .navstate:has-text("No groups or scenes yet")`);
+    await sys('Room');
+    await page.click('#syspage button:has-text("Open Room")');
+    await page.waitForSelector('#roomsetup #roomgname');
+    for (const [wall, member] of [['Main wall', 'Main'], ['Painting wall', 'Painting']]) {
+      await page.fill('#roomgname', wall);
+      await page.click(`#roomgmembers >> button:has-text("${member}")`);
+      await page.click('#roomgsave');
+      await page.waitForSelector(`.room-group:has-text("${wall}")`);
+    }
+    await page.waitForSelector('.room-group:has-text("Main wall") .room-state:has-text("On")', { timeout: 15000 });
+    await page.waitForSelector('.room-group:has-text("Painting wall") .room-state:has-text("Off")', { timeout: 15000 });
+    await page.fill('#roomsname', 'Console night');
+    await page.selectOption('select[aria-label="Power of Main wall"]', 'on');
+    await page.selectOption('select[aria-label="Source of Main wall"]', '32');
+    await page.selectOption('select[aria-label="Sound of Main wall"]', 'mute');
+    await page.selectOption('select[aria-label="Power of Painting wall"]', 'on');
+    await page.selectOption('#roomsbox', 'file');
+    await page.selectOption('#roomsfile', 'tunnel.mkv');
+    await page.click('#roomssave');
+    await page.waitForSelector('.room-scene:has-text("Console night")');
+    await page.waitForSelector('.room-sitem:has-text("Main wall: on, Box, sound muted"):has-text("Box: play tunnel.mkv")');
+    await fitsCard('#roomscreen .card', 'Room');
+    const roomWide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    if (roomWide > 1) problems.push('the Room screen is ' + roomWide + ' px wider than the phone');
+    await page.click('.room-scene:has-text("Console night")');
+    await page.waitForFunction(() => /Main wall: on, input Box, sound muted\. Painting wall: switching on \(warming up\)\. Box: playing tunnel\.mkv\./.test((document.getElementById('roomjob') || {}).textContent || ''), null, { timeout: 20000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '32') problems.push('the scene did not switch the main wall to input 32');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'AVMT ?') !== '21') problems.push('the scene did not mute the sound of the main wall only');
+    if (await pjlink(info.projector_ports[1], '', 'POWR ?') !== '3') problems.push('the scene did not switch the painting wall on');
+    await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((d) => /tunnel/.test((d.player || {}).path || '')), null, { timeout: 8000 });
+    await page.waitForSelector('.room-group:has-text("Painting wall") .room-state:has-text("Warming up")', { timeout: 15000 });
+    await page.waitForSelector('.room-group:has-text("Main wall") .room-text:has-text("On · Box · sound muted")', { timeout: 15000 });
+    await page.click('button[aria-label="Main wall: Matrix"]');
+    await page.waitForSelector('.room-group:has-text("Main wall") .room-text:has-text("On · Matrix")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the source button did not switch the main wall to input 31');
+    await page.click('button[aria-label="Main wall: Sound on"]');
+    await page.waitForFunction(() => !/muted/.test(document.querySelector('.room-group .room-text').textContent), null, { timeout: 15000 });
+    // A guest sees the state and no button that does anything; a presenter starts on the Room screen with the buttons
+    const roomTokens = await page.evaluate(() => Promise.all(['view', 'live'].map((role) => fetch('/api/devices/invite', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'room ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));
+    for (const [n, role] of [[0, 'view'], [1, 'live']]) {
+      const roomCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const staff = await roomCtx.newPage();
+      staff.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push('room ' + role + ': ' + m.text()); });
+      staff.on('pageerror', (e) => problems.push('room ' + role + ' pageerror: ' + e.message));
+      await staff.goto(base + '/#token=' + roomTokens[n]);
+      try {
+        await staff.waitForSelector('#roomscreen .room-group:has-text("Painting wall") .room-state:has-text("Warming up")', { timeout: 15000 });
+      } catch (e) {     // say what the device had on its screen, what the box answered, and any error of the page
+        const seen = await staff.evaluate(() => fetch('/api/room').then((r) => r.text()).then((t) => ({
+          nav: (document.querySelector('nav') || {}).textContent, screen: (document.getElementById('app') || {}).textContent.slice(0, 400), room: t.slice(0, 700) })));
+        throw new Error('room ' + role + ': not on the Room screen with the painting wall warming up: ' + JSON.stringify(seen) + ' problems: ' + problems.join('; '));
+      }
+      assert(await staff.isDisabled('.room-scene') === (role === 'view'), role + ': the scene button is ' + (role === 'view' ? 'not ' : '') + 'for tapping');
+      assert.strictEqual(await staff.locator('#roomalloff').count(), role === 'view' ? 0 : 1, role + ': All off');
+      assert.strictEqual(await staff.locator('#roomviewonly').count(), role === 'view' ? 1 : 0, role + ': the view only note');
+      assert.strictEqual(await staff.locator('#roomsetup').count(), 0, role + ': no set-up');
+      await roomCtx.close();
+    }
+    // All off: a double tap sends nothing (its second tap lands on the question, which is not taken yet); the
+    // question names what happens; "Keep them on" puts the buttons back; the deliberate two steps switch off
+    let groupPosts = 0;
+    const countPosts = (r) => { if (r.url().endsWith('/api/room/group') && r.method() === 'POST') groupPosts++; };
+    page.on('request', countPosts);
+    await page.dblclick('#roomalloff');
+    await page.waitForTimeout(700);
+    assert.strictEqual(groupPosts, 0, 'a double tap on All off sent ' + groupPosts + ' request(s)');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('a double tap on All off switched a projector off');
+    if (await page.locator('#roomallask').count()) await page.click('#roomallkeep');
+    await page.waitForSelector('#roomalloff');
+    // the same with the second tap exactly on "Turn off", at once: not taken
+    await page.evaluate(() => { document.getElementById('roomalloff').click(); document.getElementById('roomalloffyes').click(); });
+    await page.waitForSelector('#roomallask:has-text("Turn off all 2 projectors? They need about a minute to cool before they can come on again.")');
+    await page.waitForTimeout(700);
+    assert.strictEqual(groupPosts, 0, 'a tap on Turn off in the same moment as the question sent ' + groupPosts + ' request(s)');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('Turn off was taken in the same moment as the question');
+    await fitsCard('#roomscreen .card', 'Room, All off asking');
+    await page.click('#roomallkeep');
+    await page.waitForSelector('#roomalloff');
+    assert.strictEqual(await page.locator('#roomallask').count(), 0, 'Keep them on puts the buttons back');
+    await page.click('#roomalloff');
+    await page.waitForSelector('#roomalloffyes');
+    await page.waitForTimeout(700);
+    await page.click('#roomalloffyes');
+    page.off('request', countPosts);
+    assert.strictEqual(groupPosts, 1, 'the two deliberate steps send All off once');
+    await page.waitForSelector('.room-group:has-text("Main wall") .room-state:has-text("Off")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '0') problems.push('All off did not switch the main wall off');
+    if (shots) await page.screenshot({ path: path.join(shots, '8-room.png'), fullPage: true });
+    await sysIndex();
+    await chip('Room', 'Ready');
+    await page.waitForSelector(`${rowOf('Room')} .navstate:has-text("2 groups, 1 scene")`);
+    await sys('Schedule');
+    await page.waitForSelector('#schedscene', { state: 'attached' });
+    await page.selectOption('#schedaction', 'scene');
+    await page.click('#schedadd');
+    await page.waitForSelector('.sched-entry:has-text("Scene Console night")');
+    await page.click('.sched-entry >> button:has-text("Remove")');
+    await page.waitForSelector('#schedempty');
+    await page.click('nav >> text=Room');
+    await page.click('button[aria-label="Remove scene Console night"]');
+    await page.waitForSelector('#roomnoscenes');
+    await sys('Room');
+    await page.click('#sysswitch');
+    await page.waitForSelector('#sysoff');
+    await page.waitForFunction(() => !/Room/.test(document.querySelector('nav').textContent));
+    await sys('Projectors');
+    await page.click('button[aria-label="Remove Painting"]');
+    await page.waitForFunction(() => document.querySelectorAll('.proj-entry').length === 1);
     await page.click('.proj-entry >> button:has-text("Remove")');
     await page.waitForFunction(() => !document.querySelector('.proj-entry'));
     // Sync and video wall: switch the module on, be a server, set a wall tile, back to off

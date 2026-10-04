@@ -26,7 +26,7 @@ Switching on takes the projector a minute or so to warm up, and switching off st
 
 - The weekly schedule can switch every projector on or off (`projector_on`, `projector_off`), and can run a legacy start script such as `startlessonce05` (`preset`).
 - The old OSC addresses `/beameron` and `/beameroff` switch every projector on or off (on press).
-- Input selection and the separate mutes are not in the schedule or OSC yet: an input belongs to one projector, so an entry would need a projector and an input of that projector. That comes with groups and scenes (Phase 3 below).
+- Input selection and the separate mutes reach the schedule, OSC and MIDI through the Room module's groups and scenes ([ROOM.md](ROOM.md)): a scene on the schedule, `/pvj/scene/<n>` and `/pvj/group/<n>/input` over OSC, a scene on a MIDI control.
 - From OSC and the schedule the commands are sent in the background, so a projector that is off the network never delays the next cue or entry. A failure is written to the log (OSC) or shown under the entry's "Last run" (schedule).
 
 ## Safety
@@ -81,10 +81,10 @@ Only the PJLink standard, so it works with any brand. Command details to be chec
 - "Find projectors": the class 2 search on the private network, to add one with a tap.
 - Status notices sent by the projector, so the panel updates at once.
 
-**Phase 3, the room.**
-- Groups ("Main wall", "Painting wall", "All").
-- Scenes: power, input, mute and volume per group, together with what the box plays.
-- A Room screen for staff (presenter and guest codes): per group on or off, source, volume, All off.
-- Projector actions from the schedule, OSC, MIDI and DMX.
+**Phase 3, the room. Built as the Room module (see [ROOM.md](ROOM.md)); not tried on a real projector or in a real room.**
+- Groups ("Main wall", "Painting wall", "All"): built.
+- Scenes: power, input and picture and sound mute per group, together with what the box plays: built. Volume is not in a scene: class 1 has no volume, and the class 2 volume steps are Phase 2.
+- A Room screen for staff (presenter and guest codes): scenes, per group on or off, source, mutes, All off with a second tap, the state of each group: built. No volume, for the same reason.
+- Scenes from the schedule, OSC and MIDI, and group buttons from OSC: built. DMX is not: its fixed channel layout has no place for a scene.
 
 **Safety and tests.** The rules above stay (private networks only, passwords never shown, one command at a time per projector, time limits). The fake projector grows a class 2 mode, with tests for every refusal and timeout. Epson's own protocol (exact volume levels) is a possible later add-on, not part of this plan.
