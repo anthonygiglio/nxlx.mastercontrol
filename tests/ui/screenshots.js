@@ -246,6 +246,18 @@ function startServer() {
       await page.waitForTimeout(600);
       await whole(f);
     });
+    await shot('shaders-page-laptop', async (f) => {
+      await page.setViewportSize({ width: 1366, height: 768 });
+      try {
+        await page.click('#shaderslink');
+        await soft('shaders page on a laptop', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
+        await page.waitForTimeout(800);
+        await page.screenshot({ path: f, fullPage: true });
+      } finally {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.click('nav >> text=Live');
+      }
+    });
     await api('POST', '/api/vibes', { on: false });
     await api('POST', '/api/play', { pad: [0, 0] });          // the clip is back for the pictures that follow
     await sysIndex();

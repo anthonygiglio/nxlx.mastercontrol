@@ -384,7 +384,12 @@
   function shaderCtx() {
     return { h: h, api: api, act: act, can: can, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
       rowShown: function (id) { return sysRows().some(function (r) { return r.id === id && rowShown(r); }); },
-      openSys: function (id) { openSys(id, null, true); },          // from the Shaders page to another page: Back skips the page left behind
+      // a feature's one switch, used where its controls are shown on another page (MIDI and DMX on the Shaders page)
+      switchFeature: function (id, on) {
+        var row = sysRows().filter(function (r) { return r.id === id; })[0];
+        S.sysFresh = false;
+        return runSwitch([moduleStep(row.module)].concat(row.steps || []), on, row.offInner, null);
+      },
       openShaders: function () { openSys('vibes', S.tab); } };
   }
   function patchLive() {
@@ -985,10 +990,13 @@
     S.tab = tab; S.msg = ''; S.sys = null; S.sysFresh = false; S.sysFrom = null;
     loadAll().then(render);
   }
-  function pointerCard(title, lines, buttons) {      // a page whose controls live on another screen says where
-    return h('div', { class: 'card' }, h('h2', { text: title }),
-      lines.map(function (t) { return h('p', { class: 'hint', text: t }); }),
-      h('div', { class: 'row wrap' }, buttons.map(function (b) { return h('button', { class: 'btn', text: b[1], onclick: function () { goTab(b[0]); } }); })));
+  // The Room screen's own cards, on the Room page under its switch: the page never sends anyone to another screen.
+  // The screen's title and message line are the page's, so the copies are taken out.
+  function roomInPage() {
+    var el = window.pvjRoom.screen(roomCtx());
+    ['.top', '#msg'].forEach(function (sel) { var x = el.querySelector(sel); if (x && x.parentNode === el) el.removeChild(x); });
+    el.className = 'roominpage';
+    return el;
   }
   function sysRows() {
     var full = can('full'), remote = !!(S.device && S.device.remote);
@@ -1002,10 +1010,7 @@
         body: function () { return [projectorsCard(full)]; } },
       { id: 'room', group: 'everyday', name: 'Room', role: 'live', module: 'room', url: '/api/room',
         blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off. It needs Projectors to be on. Not yet tried on a real projector.',
-        body: function () {
-          return [pointerCard('Where the room is run and set up', ['The Room tab at the bottom has the scenes and each wall\'s buttons. A full-access device also makes the groups (the walls) and the scenes there, under "Set up the room".',
-            'A presenter or a guest who joins while this is on starts on the Room tab.'], [['room', 'Open Room']])];
-        } },
+        body: function () { return window.pvjRoom ? [roomInPage()] : []; } },
       { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'full', module: 'scheduler', url: '/api/schedule',
         blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
         steps: [scheduleStep()], offInner: true,
@@ -1032,9 +1037,7 @@
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
-        body: function () {
-          return [pointerCard('Where the controls are', ['The mapping is placed and switched on with the Projection mapping card on the Mix screen.'], [['mix', 'Open Mix']])];
-        } },
+        body: function () { return [mapperCard()]; } },
       { id: 'sync', group: 'show', name: 'Boxes in step', role: 'live', module: 'wall', url: '/api/sync',
         blurb: 'Several boxes play together: one server leads and the clients follow its clip, position, pause and blackout. Each box can also show one tile of a video wall.',
         confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other boxes stop following.' : null); }); },
@@ -1185,7 +1188,7 @@
     mapping: function (d) {
       var state = (d.status || {}).state;
       if (state === 'error') return st('problem', d.status.message || 'The mapping could not be shown');
-      if (!d.surfaces.length) return st('setup', 'No surfaces yet: add one on Mix');
+      if (!d.surfaces.length) return st('setup', 'No surfaces yet');
       if (d.edit && d.edit.on) return st('active', 'Being placed, with outlines on the display');
       if (d.on || state === 'building') return st('active', state === 'building' ? 'Being worked out' : 'On the screen');
       return st('ready', plural(d.surfaces.length, 'surface') + ', not on the screen');
