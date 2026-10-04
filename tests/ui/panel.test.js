@@ -165,6 +165,17 @@ function startServer() {
       await fitsCard('.card, #syspage', name + ' page');
       await fitsPhone(name + ' page');
     }
+    const post = (path, body) => page.evaluate(([p, b]) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b) }).then((r) => r.status), [path, body]);
+    const get = (path) => page.evaluate((p) => fetch(p).then((r) => r.json()), path);
+    const moduleIsOn = async (id) => (await get('/api/modules')).modules.some((m) => m.id === id && m.enabled);
+    // Switching off with the page's switch: the page then shows only the description and the big button
+    async function switchOff(name) {
+      await page.click('#sysswitch');
+      await page.waitForSelector('#sysoff');
+      await page.waitForFunction(() => /Switched off/.test(document.getElementById('msg').textContent));
+      assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', name + ' is off');
+      assert.strictEqual(await page.textContent('#syspage h1'), name, 'switching off keeps the ' + name + ' page open');
+    }
     // The page's switch: off shows only the description and one big button; switching on keeps the person there
     async function switchOn(name) {
       assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', name + ' starts off');
@@ -198,7 +209,7 @@ function startServer() {
     await sysIndex();
     await page.waitForSelector('h1:has-text("System")');
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
-    assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Vibes', 'People and codes', 'Sound',
+    assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
       'At power-up', 'Streams', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
       'Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
@@ -309,12 +320,21 @@ function startServer() {
     await page.waitForSelector('#syspage h1:text-is("Network")');
     await page.evaluate(() => history.back());
     await page.waitForSelector('#sysindex');
+    // OSC has no module: the page's switch is OSC itself, and there is no second switch inside the card
+    await sysIndex();
+    await chip('OSC', 'Off');
     await sys('OSC');
-    await page.waitForSelector('#oscline:has-text("Off")');
-    await page.click('#osctoggle');
+    assert.strictEqual(await page.locator('#osccard, #oscline').count(), 0, 'OSC off shows no card');
+    await switchOn('OSC');
     await page.waitForFunction(() => /Listening on UDP/.test(document.getElementById('oscline').textContent));
-    await page.click('#osctoggle');
-    await page.waitForFunction(() => document.getElementById('oscline').textContent === 'Off');
+    assert.strictEqual((await get('/api/osc')).enabled, true, 'the page switch turned OSC on');
+    assert.strictEqual(await page.locator('#osctoggle').count(), 0, 'no second switch inside the OSC card');
+    await onPage('OSC');
+    await sysIndex();
+    await chip('OSC', 'Ready');
+    await sys('OSC');
+    await switchOff('OSC');
+    assert.strictEqual((await get('/api/osc')).enabled, false, 'the page switch turned OSC off');
     await onPage('OSC');
     // Autostart: reject a missing clip, then save "play every clip" and see it summarised
     await sys('At power-up');
@@ -341,28 +361,56 @@ function startServer() {
     await page.click('#autosave');
     await page.waitForFunction(() => /^Off/.test(document.getElementById('autoline').textContent));
     await onPage('At power-up');
-    // DMX: switch the module on, reject a bad universe, turn it on and off. The module is on but DMX itself is not
-    // listening yet: the page and the index row both say so.
+    // DMX: ONE switch. It switches the module on and then DMX itself, so the box is listening when it says On.
     await sys('DMX lighting desk');
     await switchOn('DMX lighting desk');
-    await page.waitForSelector('#dmxline:has-text("Off")');
-    await page.waitForSelector('#sysstate:has-text("not listening")');
+    await page.waitForSelector('#dmxline:has-text("Listening on UDP")');
+    assert(await moduleIsOn('control-dmx') && (await get('/api/dmx')).enabled === true, 'the page switch turned on the module and DMX itself');
+    assert.strictEqual(await page.locator('#dmxtoggle').count(), 0, 'no second switch inside the DMX card');
     await page.fill('#dmxuni', '99999');
     await page.click('#dmxsave');
     await page.waitForFunction(() => /universe/i.test(document.getElementById('msg').textContent));
     await page.fill('#dmxuni', '2');
     await page.click('#dmxsave');
-    await page.waitForFunction(() => document.getElementById('dmxuni').value === '2');
+    await page.waitForFunction(() => fetch('/api/dmx').then((r) => r.json()).then((d) => d.universe === 2));
     await onPage('DMX lighting desk');
     await sysIndex();
+    await chip('DMX lighting desk', 'Ready');
+    await page.waitForSelector(`${rowOf('DMX lighting desk')} .navstate:has-text("Listening")`);
+    // A box in the mixed state (the module on, DMX itself off, as boxes set up before this were): the row and the
+    // page say Off, and switching on sends only DMX's own call. A field being edited is never saved by the switch.
+    assert.strictEqual(await post('/api/dmx', { enabled: false }), 200);
+    await sys('DMX lighting desk');
+    await page.waitForSelector('#sysoff');
+    assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', 'module on but DMX off shows Off');
+    await sysIndex();
     await chip('DMX lighting desk', 'Off');
-    await page.waitForSelector(`${rowOf('DMX lighting desk')} .navstate:has-text("On, but not listening")`);
+    assert(!/not listening|inside/.test(await page.textContent(rowOf('DMX lighting desk'))), 'the row no longer points at a second switch');
+    await sys('DMX lighting desk');
+    await page.waitForSelector('#sysswitchon');
+    const dmxCalls = [];
+    const dmxSeen = (r) => { if (r.method() === 'POST' && /\/api\/(dmx|modules\/control-dmx)$/.test(r.url())) dmxCalls.push(r.url().replace(/^.*\/api\//, '') + ' ' + r.postData()); };
+    page.on('request', dmxSeen);
+    await page.click('#sysswitchon');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    await page.waitForSelector('#dmxuni');
+    assert.deepStrictEqual(dmxCalls, ['dmx {"enabled":true}'], 'switching on from the mixed state sends only the inner call, with nothing but the flag');
+    await page.fill('#dmxuni', '7');                                 // typed, not saved
+    dmxCalls.length = 0;
+    await page.click('#sysswitch');
+    await page.waitForSelector('#sysoff');
+    assert.deepStrictEqual(dmxCalls, ['modules/control-dmx {"enabled":false}'], 'switching off switches the module off and saves nothing else');
+    await page.click('#sysswitchon');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    page.off('request', dmxSeen);
+    assert.strictEqual((await get('/api/dmx')).universe, 2, 'the switch did not save the universe that was only typed');
+    await onPage('DMX lighting desk');
     // MIDI: switch the module on; nothing is plugged in here, so check the card and the learn flow, then turn it off
     await sys('MIDI controller');
     await switchOn('MIDI controller');
-    await page.waitForSelector('#midiline:has-text("Off")');
-    await page.click('#miditoggle');
     await page.waitForFunction(() => /waiting for a controller/.test(document.getElementById('midiline').textContent));
+    assert(await moduleIsOn('control-midi') && (await get('/api/midi')).enabled === true, 'the page switch turned on the module and MIDI itself');
+    assert.strictEqual(await page.locator('#miditoggle').count(), 0, 'no second switch inside the MIDI card');
     await page.waitForSelector('#midinomap');
     for (const a of ['vibes', 'vibes_next', 'vibes_dwell']) assert.strictEqual(await page.locator('#midiaction option[value="' + a + '"]').count(), 1, 'the MIDI action list offers ' + a);
     await page.selectOption('#midiaction', 'pad');
@@ -373,8 +421,9 @@ function startServer() {
     await page.waitForSelector('#midilearn');
     await page.click('#midibuiltin');
     await page.waitForFunction(() => /Built-in map: off/.test(document.getElementById('midibuiltin').textContent));
-    await page.click('#miditoggle');
-    await page.waitForFunction(() => document.getElementById('midiline').textContent === 'Off');
+    await onPage('MIDI controller');
+    await switchOff('MIDI controller');
+    assert(!(await moduleIsOn('control-midi')), 'switching off switches the MIDI module off');
     await onPage('MIDI controller');
     // Streams: the index says Off before; switch the module on, reject a bad address, save one with a login (hidden),
     // remove it; the index says Set up after (on, but nothing saved)
@@ -407,10 +456,34 @@ function startServer() {
     await page.fill('#schedlabel', 'Close');
     await page.click('#schedadd');
     await page.waitForSelector('.sched-entry:has-text("Close: 18:00")');
-    await page.click('#schedtoggle');
-    await page.waitForFunction(() => document.getElementById('schedtoggle').getAttribute('aria-pressed') === 'true');
-    await page.click('#schedtoggle');
-    await page.waitForFunction(() => document.getElementById('schedtoggle').getAttribute('aria-pressed') === 'false');
+    assert.strictEqual(await page.locator('#schedtoggle').count(), 0, 'no second switch inside the Schedule card');
+    let sched = await get('/api/schedule');
+    assert(sched.enabled === true && sched.entries.length === 1, 'with no entries the switch turned the schedule on without asking, and the entry was added');
+    // Off: only the schedule's own flag; the module stays on and the entries are kept
+    await switchOff('Schedule');
+    sched = await get('/api/schedule');
+    assert(sched.enabled === false && sched.entries.length === 1 && await moduleIsOn('scheduler'), 'switching off keeps the module on and the entries saved');
+    await sysIndex();
+    await chip('Schedule', 'Off');
+    await page.waitForSelector(`${rowOf('Schedule')} .navstate:has-text("1 entry saved, not running")`);
+    // On with a saved entry: it would start running at once, so the switch asks first, in place
+    await sys('Schedule');
+    await page.click('#sysswitchon');
+    await page.waitForSelector('#confirmrow:has-text("Switch the schedule on? 1 entry will start running at its time.")');
+    await fitsPhone('Schedule page, asking');
+    await page.click('#confirmno');
+    await page.waitForSelector('#sysswitchon');
+    assert.strictEqual(await page.locator('#confirmrow').count(), 0, 'the question is gone after "Not yet"');
+    assert.strictEqual((await get('/api/schedule')).enabled, false, '"Not yet" leaves the schedule off');
+    await page.click('#sysswitchon');
+    await page.click('#confirmyes');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    sched = await get('/api/schedule');
+    assert(sched.enabled === true && sched.entries.length === 1 && sched.entries[0].label === 'Close', 'switching on kept the saved entry');
+    await sysIndex();
+    await chip('Schedule', 'Ready');
+    await page.waitForSelector(`${rowOf('Schedule')} .navstate:has-text("18:00 Stop")`);    // the row shows the next one
+    await sys('Schedule');
     await page.click('.sched-entry >> button:has-text("Remove")');
     await page.waitForSelector('#schedempty');
     await page.selectOption('#schedaction', 'preset');
@@ -489,13 +562,18 @@ function startServer() {
     await sys('Room');
     await switchOn('Room');
     await page.waitForFunction(() => /^Room/.test(document.querySelector('nav').textContent));       // the tab is there at once
-    await page.waitForSelector('#syspage .card:has-text("Where the room is run and set up")');
+    await page.waitForSelector('#syspage #roomsetup #roomgname');    // the Room controls are on the page itself, under its switch
+    assert.strictEqual(await page.locator('#syspage button:has-text("Open Room")').count(), 0, 'the Room page does not send anyone to another screen');
+    assert.strictEqual(await page.locator('#msg').count(), 1, 'one message line on the Room page');
+    await onPage('Room');
     await sysIndex();
     await chip('Room', 'Set up');
     await page.waitForSelector(`${rowOf('Room')} .navstate:has-text("No groups or scenes yet")`);
     await sys('Room');
-    await page.click('#syspage button:has-text("Open Room")');
-    await page.waitForSelector('#roomsetup #roomgname');
+    await page.click('nav >> text=Room');
+    // The System page holds the same set-up card, so wait for the Room tab's own screen: typing into the page that is
+    // about to be replaced lost the group's name (one CI run in three).
+    await page.waitForSelector('#roomscreen.screen #roomsetup #roomgname');
     for (const [wall, member] of [['Main wall', 'Main'], ['Painting wall', 'Painting']]) {
       await page.fill('#roomgname', wall);
       await page.click(`#roomgmembers >> button:has-text("${member}")`);
@@ -657,8 +735,8 @@ function startServer() {
     await sys('Projection mapping');
     await switchOn('Projection mapping');
     await onPage('Projection mapping');
-    await page.click('#syspage >> text=Open Mix');
-    await page.waitForSelector('#mapadd-quad');
+    assert.strictEqual(await page.locator('#syspage button:has-text("Open Mix")').count(), 0, 'the mapping page does not send anyone to Mix');
+    await page.waitForSelector('#syspage #mapadd-quad');             // the controls are on the page itself
     await page.click('#mapadd-quad');
     await page.waitForSelector('.map-entry:has-text("Quad")');
     await page.waitForSelector('#mapsel:has-text("corner 1 of 4")');
@@ -688,21 +766,28 @@ function startServer() {
     await page.waitForFunction(() => !document.querySelector('.map-entry'));
     await sys('Remote support');
     // Remote support: off by default; settings saved and checked; allowing it shows the start controls
-    await page.waitForSelector('#supportcard #supportallow');
+    await page.waitForSelector('#supportcard #supportsave');
     assert(/Remote support is off/.test(await page.textContent('#supportcard')), 'remote support starts off');
+    assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', 'and its switch is the page switch');
+    assert.strictEqual(await page.locator('#supportallow').count(), 0, 'no second switch inside the Remote support card');
     await page.fill('#support-endpoint', 'support.example.com:51820');
     await page.fill('#support-server_key', 'a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s=');
     await page.fill('#support-address', '10.77.0.40');
     await page.fill('#support-network', '10.77.0.0/24');
     await page.click('#supportsave');
-    await page.click('#supportallow');
+    await page.waitForFunction(() => fetch('/api/support').then((r) => r.json()).then((d) => d.config.address === '10.77.0.40'));
+    await page.click('#sysswitch');
+    await page.waitForSelector('#sysswitch[aria-checked="true"]');
+    assert.strictEqual((await get('/api/support')).config.allowed, true, 'the page switch allowed remote support');
     await page.waitForSelector('#supportstart');
     await page.waitForSelector('#supportwhy');                       // no helper in the test harness: said plainly
     await page.fill('#support-address', '10.99.0.40');
     await page.click('#supportsave');
     await page.waitForFunction(() => /inside the support network/.test(document.getElementById('msg').textContent));
-    await page.click('#supportallow');
+    await page.click('#sysswitch');
+    await page.waitForSelector('#sysswitch[aria-checked="false"]');
     await page.waitForFunction(() => /Remote support is off/.test(document.getElementById('supportcard').textContent));
+    assert.strictEqual((await get('/api/support')).config.allowed, false, 'the page switch turned remote support off');
     await onPage('Remote support');
     await sys('Look');
     await page.click('button:has-text("Night red")');
@@ -739,7 +824,6 @@ function startServer() {
     assert.strictEqual(exportedFile.passwords_included, false, 'no passwords unless ticked');
     for (const k of ['auth', 'devices', 'support', 'support_log']) assert(!(k in exportedFile.settings), k + ' must not be exported');
     assert(!/token|pin_hash|a2tra2tr/.test(exportedText), 'no access data or support key in the export');
-    const post = (path, body) => page.evaluate(([p, b]) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b) }).then((r) => r.status), [path, body]);
     const otherDuration = exportedFile.settings.mix.duration === 3 ? 4 : 3;
     assert.strictEqual(await post('/api/mix', { transition: exportedFile.settings.mix.transition, duration: otherDuration }), 200);
     page.once('dialog', (d) => d.accept());
@@ -816,51 +900,204 @@ function startServer() {
     assert(await scanner.isDisabled('#black'), 'a guest code gives view-only access');
     await scanCtx.close();
 
-    // Shaders and Vibes: switch the module on, start the rotation with the big button on Live, then choose one shader
-    // by hand on Mix (which ends the rotation) and stop. The harness player draws nothing (--vo=null), so this
-    // checks the panel and the API, not the picture; the picture is checked in tests/test_shaders_gpu.py.
+    // Shaders and Vibes: one page holds everything about shaders. Switch the module on there, start the rotation with
+    // the big button on Live, open the page from the link next to it, choose one shader by hand (which ends the
+    // rotation), move a slider, change the settings, add and remove a file. The harness player draws nothing
+    // (--vo=null), so this checks the panel and the API, not the picture; that is tests/test_shaders_gpu.py.
     await page.click('nav >> text=Live');
     await page.waitForSelector('.pads');
     assert.strictEqual(await page.locator('#vibes').count(), 0, 'no Vibes button while the module is off');
-    await sys('Vibes');
-    await switchOn('Vibes');
-    await page.waitForFunction(() => fetch('/api/modules').then((r) => r.json()).then((d) => d.modules.some((m) => m.id === 'shaders' && m.enabled)));
-    assert(/big Vibes button on the Live screen/.test(await page.textContent('#sysbody')), 'the Vibes page says it is started on Live');
-    await onPage('Vibes');
-    await page.click('#syspage >> text=Open Live');
+    assert.strictEqual(await page.locator('#shaderslink').count(), 0, 'and no Shaders link');
+    await sys('Shaders and Vibes');
+    assert.strictEqual(await page.locator('#shaderpage').count(), 0, 'the module off shows only the description and the big button');
+    await switchOn('Shaders and Vibes');
+    assert(await moduleIsOn('shaders'), 'the shaders module is on');
+    await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
+    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10, 'the ten bundled shaders are listed');
+    assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard', 'vibessettings', 'shaderremote'],
+      'the page, top to bottom: now, the library, Vibes settings, other ways to control it (no sliders while nothing plays)');
+    assert.strictEqual(await page.textContent('#shaderplaying'), 'No shader on screen');
+    assert.strictEqual(await page.textContent('#vibesbtn'), 'Start Vibes');
+    assert(/Light work/.test(await page.textContent('#shadercard [data-shader="nxlx-tide.fs"]')), 'a shader says how much work it is');
+    await onPage('Shaders and Vibes');
+    // The Mix screen no longer has a shaders card
+    await page.click('nav >> text=Mix');
+    await page.waitForSelector('#mo');
+    assert.strictEqual(await page.locator('#shadercard, #shaderpage').count(), 0, 'the shaders card left Mix');
+    // Live: one large Vibes button, with its state in words, and the Shaders link next to it
+    await page.click('nav >> text=Live');
     await page.waitForSelector('#vibes');
+    const big = await page.evaluate(() => { const r = document.getElementById('vibes').getBoundingClientRect(); return { h: r.height, w: r.width, vw: window.innerWidth }; });
+    assert(big.h >= 56 && big.w >= big.vw - 34, 'the Vibes button is big and as wide as the phone screen allows: ' + JSON.stringify(big));
+    assert.strictEqual(await page.textContent('#vibeswords'), 'Start Vibes');
+    assert(!(await page.isVisible('#vibesskip')), 'no Next one while Vibes is not playing');
+    await fitsPhone('Live with the Vibes button');
     await page.click('#vibes');
-    await page.waitForFunction(() => /^Vibes: nxlx-/.test((document.getElementById('np') || {}).textContent), null, { timeout: 15000 });
-    await page.waitForFunction(() => /Vibes is on/.test((document.getElementById('vibes') || {}).textContent));
-    // Switching Vibes off while it is on the screen asks first, in place; "no" puts the switch back and changes nothing
+    await page.waitForFunction(() => /^Vibes: [A-Z]/.test((document.getElementById('np') || {}).textContent), null, { timeout: 15000 });
+    await page.waitForFunction(() => /^Vibes is playing: [A-Z]/.test((document.getElementById('vibeswords') || {}).textContent));
+    assert.strictEqual(await page.getAttribute('#vibes', 'aria-pressed'), 'true');
+    assert.strictEqual(await page.textContent('#vibessub'), 'Tap to stop');
+    // Starting, stopping, skipping and what is playing are together on Live
+    await page.waitForSelector('#vibesskip:visible');
+    assert((await page.evaluate(() => document.getElementById('vibesskip').getBoundingClientRect().height)) >= 44, 'Next one on Live is easy to hit');
+    const skipped = page.waitForResponse((r) => r.url().endsWith('/api/vibes') && r.request().postData() === '{"next":true}');
+    await page.click('#vibesskip');
+    assert.strictEqual((await skipped).status(), 200, 'Next one on Live goes to the next shader');
+    await fitsPhone('Live while Vibes is playing');
+    if (shots) await page.screenshot({ path: path.join(shots, '8-live-vibes.png') });
+    // The link lands on the same page, and Back returns to Live
+    await page.click('#shaderslink');
+    await page.waitForSelector('#syspage h1:text-is("Shaders and Vibes")');
+    await page.waitForFunction(() => /Vibes is playing/.test((document.getElementById('shaderline') || {}).textContent));
+    assert.strictEqual(await page.textContent('#vibesbtn'), 'Stop Vibes');
+    assert.strictEqual(await page.textContent('#vibesnext'), 'Next one');
+    assert.strictEqual(await page.textContent('#sysback'), '‹ Live');
+    if (shots) await page.screenshot({ path: path.join(shots, '9-shaders.png'), fullPage: true });
+    // A guest sees what is playing, and nothing to press
+    await guest.click('nav >> text=Live');
+    await guest.waitForSelector('#vibes');
+    assert(await guest.isDisabled('#vibes'), 'a guest cannot start or stop Vibes');
+    await guest.click('#shaderslink');
+    await guest.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
+    assert(/Vibes is playing/.test(await guest.textContent('#shaderline')), 'a guest sees that Vibes is playing');
+    assert.strictEqual(await guest.locator('#shaderpage button, #shaderpage input[type=range], #vibesdwell, #shaderheight, #sysswitch').count(), 0, 'a guest gets nothing to press on the Shaders page (only the filter of the list)');
+    await page.click('#sysback');
+    await page.waitForSelector('.pads');
+    assert.strictEqual(await page.textContent('nav button[aria-current="page"]'), 'Live', 'Back from the Shaders page returns to Live');
+    // Switching the module off while Vibes is on the screen asks first, in place; "no" puts the switch back and changes nothing
     await sysIndex();
-    await chip('Vibes', 'Active');
-    await sys('Vibes');
+    await chip('Shaders and Vibes', 'Active');
+    await page.waitForSelector(`${rowOf('Shaders and Vibes')} .navstate:has-text("Vibes is playing")`);
+    await sys('Shaders and Vibes');
     await page.click('#sysswitch');
     await page.waitForSelector('#confirmrow:has-text("Vibes is on the screen. Switching off stops it now.")');
     assert(!(await page.isVisible('#sysswitch')), 'the question takes the place of the switch');
-    await fitsPhone('Vibes page, asking');
+    await fitsPhone('Shaders page, asking');
     await page.click('#confirmno');
     await page.waitForSelector('#sysswitch[aria-checked="true"]');
     assert.strictEqual(await page.locator('#confirmrow').count(), 0, 'the question is gone after "no"');
-    assert(await page.evaluate(() => fetch('/api/modules').then((r) => r.json()).then((d) => d.modules.some((m) => m.id === 'shaders' && m.enabled))), 'Vibes is still on after "no"');
-    assert(await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running)), 'and still playing');
-    await page.click('nav >> text=Mix');
+    assert(await moduleIsOn('shaders'), 'the module is still on after "no"');
+    assert((await get('/api/shaders')).vibes.running, 'and Vibes is still playing');
+    // Play just one. By its label, not its text, so it is the same button whether or not it is the one on screen.
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
-    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10, 'the ten bundled shaders are listed');
-    await page.waitForFunction(() => /Vibes is on/.test((document.getElementById('shaderline') || {}).textContent));
-    // By its label, not its text: when the rotation happens to be showing this very shader (1 time in 10) the button
-    // reads "On screen", and a click on "Play" then waited for 30 seconds and failed.
-    await page.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play nxlx-tide"]');
-    await page.waitForFunction(() => /On screen: nxlx-tide/.test((document.getElementById('shaderline') || {}).textContent));
-    await page.waitForSelector('#shin-speed');                       // its number inputs are sliders
-    const vibesAfter = await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running));
-    assert.strictEqual(vibesAfter, false, 'choosing a shader by hand ends the rotation');
-    await page.fill('#vibesdwell', '45');
-    await page.click('#shadersave');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.dwell === 45));
+    await page.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play Tide"]');
+    await page.waitForFunction(() => (document.getElementById('shaderplaying') || {}).textContent === 'Tide');
+    await page.waitForFunction(() => /One shader, until something else plays/.test((document.getElementById('shaderline') || {}).textContent));
+    assert.strictEqual((await get('/api/shaders')).vibes.running, false, 'choosing a shader by hand ends the rotation');
+    await page.waitForSelector('#vibeslast:has-text("a shader was chosen by hand")');      // why Vibes ended, in words
+    await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"] .chip:text-is("Playing")');
+    // Its number inputs are sliders, with their range and usual value, a Reset each and Reset all; applied when let go
+    await page.waitForSelector('#shin-speed');
+    assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard', 'shadercontrols', 'vibessettings', 'shaderremote']);
+    const speed = (await get('/api/shaders')).shaders.find((x) => x.id === 'nxlx-tide.fs').inputs.find((i) => i.name === 'speed');
+    assert(new RegExp(speed.min + ' to ' + speed.max + ', normally ' + speed.default).test(await page.textContent('#shadersliders')), 'a slider says its range and its usual value');
+    assert(/not saved/.test(await page.textContent('#slidernote')), 'the page says slider values are not saved');
+    const speedNow = () => get('/api/shaders').then((d) => d.playing && d.playing.values.speed);
+    await page.evaluate((v) => { const el = document.getElementById('shin-speed'); el.value = v; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); }, speed.max);
+    await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.max);
+    await page.click('#shadersliders button[aria-label="Reset ' + speed.label + '"]');
+    await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.default);
+    await page.waitForSelector('#shin-speed');
+    await page.evaluate((v) => { const el = document.getElementById('shin-speed'); el.value = v; el.dispatchEvent(new Event('change')); }, speed.min);
+    await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.min);
+    await page.click('#shaderresetall');
+    await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.default);
+    assert.strictEqual(typeof await speedNow(), 'number');
+    // Vibes settings apply on tap, with a brief "Saved"; there is no Save button
+    assert.strictEqual(await page.locator('#shadersave').count(), 0, 'no Save button for the Vibes settings');
+    assert.deepStrictEqual(await page.$$eval('#vibesdwell option', (os) => os.map((o) => o.textContent)),
+      ['30 seconds', '1 minute', '2 minutes', '3 minutes', '5 minutes', '10 minutes', '15 minutes', '30 minutes', '1 hour']);
+    await page.selectOption('#vibesdwell', '60');
+    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.dwell === 60));
+    await page.waitForSelector('#saved-dwell:text-is("Saved")');
+    const vary = (await get('/api/shaders')).config.vary;
+    await page.click('#vibesvary');
+    await page.waitForFunction((was) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.vary === !was), vary);
+    await page.waitForSelector('#vibesvary[aria-checked="' + String(!vary) + '"]');
+    // A time that is not in the list (set from a MIDI knob or the API) shows as it is, never as a wrong one
+    assert.strictEqual(await post('/api/shaders', { action: 'config', dwell: 45 }), 200);
+    await sys('Shaders and Vibes');
+    await page.waitForSelector('#vibesdwell');
+    assert.strictEqual(await page.$eval('#vibesdwell', (el) => el.options[el.selectedIndex].textContent), 'Custom (45 s)');
+    // In or out of the Vibes rotation: a switch per shader, applied on tap
+    const tideSwitch = '#shadercard [data-shader="nxlx-tide.fs"] .switch';
+    assert.strictEqual(await page.getAttribute(tideSwitch, 'aria-checked'), 'true');
+    await page.evaluate(() => { document.querySelector('#shadercard [data-shader="nxlx-tide.fs"]').dataset.seen = '1'; });
+    await page.click(tideSwitch);
+    await page.waitForSelector(tideSwitch + '[aria-checked="false"]');
+    assert.strictEqual(await page.getAttribute('#shadercard [data-shader="nxlx-tide.fs"]', 'data-seen'), '1', 'a rotation switch changes its own row; the list is not drawn again');
+    assert.strictEqual((await get('/api/shaders')).shaders.find((x) => x.id === 'nxlx-tide.fs').vibes, false, 'the switch took the shader out of the rotation');
+    await page.click(tideSwitch);
+    await page.waitForSelector(tideSwitch + '[aria-checked="true"]');
+    // The library will grow: find by name, show by how much work it is; filtering only hides rows
+    const shownRows = () => page.$$eval('#shadercard [data-shader]', (rs) => rs.filter((r) => !r.hidden).map((r) => r.dataset.shader));
+    await page.fill('#shaderfilter', 'tid');
+    assert.deepStrictEqual(await shownRows(), ['nxlx-tide.fs'], 'the filter finds a shader by name');
+    await page.fill('#shaderfilter', 'zzz');
+    await page.waitForSelector('#shadernone:has-text("No shader has")');
+    await page.fill('#shaderfilter', '');
+    await page.selectOption('#shadercost', 'medium');
+    const mediums = await shownRows();
+    assert(mediums.length >= 1 && mediums.length < 10, 'the work filter narrows the list: ' + mediums.length);
+    assert((await page.$$eval('#shadercard [data-shader]', (rs) => rs.filter((r) => !r.hidden).every((r) => /Medium work/.test(r.textContent)))), 'and shows only medium work');
+    await page.selectOption('#shadercost', 'all');
+    assert.strictEqual((await shownRows()).length, 10);
+    // A MIDI controller and a lighting desk are set up on this page: no button that leads to another page
+    assert.strictEqual(await page.locator('#shaderto-dmx, #shaderto-midi').count(), 0, 'no buttons that open the MIDI and DMX pages');
+    await page.waitForSelector('#shaderdmxline:has-text("Vibes is on channel 9")');
+    assert(/Stop: 50 to 99/.test(await page.textContent('#shaderdmxzones')) && /Start: 100 to 149/.test(await page.textContent('#shaderdmxzones')) && /Next one: 150 to 199/.test(await page.textContent('#shaderdmxzones')), 'the ninth channel\'s ranges are shown');
+    assert(/Level now/.test(await page.textContent('#shaderdmxlevel')), 'and its level');
+    assert.strictEqual(await page.getAttribute('#shaderdmxsw', 'aria-checked'), 'true', 'DMX shows as on');
+    assert.strictEqual(await page.getAttribute('#shadermidisw', 'aria-checked'), 'false', 'MIDI shows as off (switched off above)');
+    await page.click('#shadermidisw');
+    await page.waitForSelector('#shadermidisw[aria-checked="true"]');
+    assert(await moduleIsOn('control-midi') && (await get('/api/midi')).enabled === true, 'the MIDI switch here is the same one switch');
+    assert.strictEqual(await page.locator('#shadermidi .teach').count(), 3, 'teach rows for Vibes on and off, next one, and the time each stays');
+    await page.click('#shadermidi [data-teach="vibes_next"] button:has-text("Teach a control")');
+    await page.waitForSelector('#shadermidi [data-teach="vibes_next"] #shaderlearning:has-text("Move or press the control now")');
+    assert.strictEqual((await get('/api/midi')).learn.active, true, 'Teach starts the box listening for a control');
+    await page.click('#shaderteachcancel');
+    await page.waitForFunction(() => !document.getElementById('shaderlearning'));
+    assert.strictEqual(await post('/api/midi/map', { add: { source: '*', kind: 'cc', channel: 0, number: 30, action: 'vibes_dwell' } }), 200);
+    await sys('Shaders and Vibes');
+    await page.waitForSelector('#shadermidi [data-teach="vibes_dwell"]:has-text("any controller, control 30")');     // what is mapped already, in place
+    await page.click('#shadermidi [data-teach="vibes_dwell"] button:has-text("Remove")');
+    await page.waitForSelector('#shadermidi [data-teach="vibes_dwell"]:has-text("Not on any control yet")');
+    assert.strictEqual((await get('/api/midi')).map.filter((e) => e.action === 'vibes_dwell').length, 0, 'Remove took the mapping off');
+    // Advanced is folded; a refused file says why under the button, not in the page's message line
+    assert(!(await page.isVisible('#shaderupload')), 'Advanced starts folded');
+    await page.click('#shaderadvanced summary');
+    await page.waitForSelector('#shaderupload');
+    assert(/Fewer lines is lighter work/.test(await page.textContent('#shaderadvanced')), 'picture detail says what fewer lines does');
+    await page.setInputFiles('#shaderpick', { name: 'bad$name.fs', mimeType: 'text/plain', buffer: Buffer.from('void main() {}') });
+    await page.waitForFunction(() => /bad\$name\.fs was not added: a shader file is named/.test(document.getElementById('shaderuploadmsg').textContent));
+    assert(/err/.test(await page.getAttribute('#shaderuploadmsg', 'class')), 'the refusal is shown as a problem');
+    assert(!/not added|named with/.test(await page.textContent('#msg')), 'and not in the message line at the top');
+    const flat = '/*{"ISFVSN":"2","DESCRIPTION":"A flat grey for the browser test.","CATEGORIES":["Generator"],"INPUTS":[{"NAME":"level","LABEL":"Level","TYPE":"float","MIN":0.0,"MAX":1.0,"DEFAULT":0.5}]}*/\nvoid main() { gl_FragColor = vec4(vec3(level), 1.0); }\n';
+    await page.setInputFiles('#shaderpick', { name: 'flat-grey.fs', mimeType: 'text/plain', buffer: Buffer.from(flat) });
+    const mine = '#shadercard [data-shader="flat-grey.fs"]';
+    await page.waitForSelector(mine);
+    assert(/Flat grey/.test(await page.textContent(mine)) && /your upload/.test(await page.textContent(mine)), 'an uploaded shader is listed as an upload');
+    assert(await page.isVisible('#shaderupload'), 'Advanced stays open after an upload');
+    assert.strictEqual(await page.locator('#shadercard [data-shader="nxlx-tide.fs"] button:has-text("Remove")').count(), 0, 'a bundled shader has no Remove');
+    assert.strictEqual(await page.$eval(mine + ' .shaderacts', (row) => row.lastElementChild.textContent), 'Remove', 'Remove is the last control of an uploaded shader');
+    await onPage('Shaders and Vibes');                               // sliders, settings and Advanced all open
+    const small = await page.$$eval('#syspage button, #syspage select, #syspage summary, #syspage input[type=range]', (els) => els.filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height < 44; })
+      .map((e) => (e.getAttribute('aria-label') || e.textContent || e.id).slice(0, 30)));
+    assert.deepStrictEqual(small, [], 'every control on the Shaders page is at least 44 px high');
+    await page.click(mine + ' button:has-text("Remove")');
+    await page.waitForSelector('#confirmrow:has-text("Remove Flat grey? The file is deleted from the box.")');
+    await fitsPhone('Shaders page, asking about a file');
+    await page.click('#confirmno');
+    await page.waitForFunction(() => !document.getElementById('confirmrow'));
+    assert.strictEqual(await page.locator(mine).count(), 1, '"Keep it" keeps the file');
+    await page.click(mine + ' button:has-text("Remove")');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => !document.querySelector('#shadercard [data-shader="flat-grey.fs"]'));
+    assert.strictEqual((await get('/api/shaders')).shaders.length, 10, 'the uploaded file is gone from the box');
     await page.click('nav >> text=Live');
-    await page.waitForFunction(() => /^Shader: nxlx-tide/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
+    await page.waitForFunction(() => /^Shader: Tide/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
+    assert.strictEqual(await page.textContent('#vibeswords'), 'Start Vibes');
     await page.click('#stop');
     await page.waitForFunction(() => /Player idle/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
 
@@ -873,10 +1110,35 @@ function startServer() {
     presenter.on('pageerror', (e) => problems.push('presenter pageerror: ' + e.message));
     await presenter.goto(base + '/#token=' + presenterToken);
     await presenter.waitForSelector('.pads');
+    // A presenter's Shaders page: start, stop, skip, play one and move sliders; no switches, no settings, no upload
+    await presenter.waitForSelector('#vibes');
+    assert(!(await presenter.isDisabled('#vibes')), 'a presenter can use the Vibes button');
+    await presenter.click('#shaderslink');
+    await presenter.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
+    assert.deepStrictEqual(await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard'], 'a presenter gets no settings and no links to MIDI and DMX');
+    assert.strictEqual(await presenter.locator('#syspage .switch').count(), 0, 'no module switch and no rotation switches for a presenter');
+    assert.strictEqual(await presenter.locator('#shaderupload, #vibesdwell, #vibesvary, #shaderpage button:has-text("Remove")').count(), 0, 'no upload, settings or Remove for a presenter');
+    assert.strictEqual(await presenter.locator('#shadercard button[aria-label^="Play "]').count(), 10, 'a presenter can play each shader');
+    assert(/in the Vibes rotation/.test(await presenter.textContent('#shadercard [data-shader="nxlx-tide.fs"]')), 'a presenter reads whether a shader is in the rotation');
+    assert.strictEqual(await presenter.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a presenter\'s Shaders page');
+    await presenter.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play Tide"]');
+    await presenter.waitForFunction(() => (document.getElementById('shaderplaying') || {}).textContent === 'Tide');
+    await presenter.waitForSelector('#shin-speed');                  // a presenter gets the sliders
+    await presenter.click('#vibesbtn');
+    await presenter.waitForSelector('#vibesbtn:text-is("Stop Vibes")', { timeout: 15000 });
+    await presenter.waitForSelector('#vibesnext');
+    await presenter.click('#vibesbtn');
+    await presenter.waitForSelector('#vibesbtn:text-is("Start Vibes")', { timeout: 15000 });
+    {
+      const wide = await presenter.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert(wide <= 1, 'a presenter\'s Shaders page: ' + wide + ' px wider than the phone');
+    }
+    await presenter.click('#sysback');
+    await presenter.waitForSelector('.pads');
     await presenter.click('nav >> text=System');
     await presenter.waitForSelector('#sysindex');
     assert.deepStrictEqual(await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent)),
-      ['Health', 'Projectors', 'Vibes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
+      ['Health', 'Projectors', 'Shaders and Vibes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
     assert.strictEqual(await presenter.locator('#notbuilt').count(), 0, 'a presenter gets no list of modules');
     await presenter.click('.navrow:has-text("Projectors")');
     await presenter.waitForSelector('#projline');
@@ -885,6 +1147,36 @@ function startServer() {
     await presenter.click('#sysback');
     await presenter.waitForSelector('#sysindex');
     await liveCtx.close();
+
+    // A laptop: the Shaders page is a workspace. The library is a column that scrolls by itself, what is playing and
+    // its controls are beside it and in view, the settings and controllers are a third column; nothing sticks out at
+    // any width, on this page or on Live.
+    await page.setViewportSize({ width: 1366, height: 768 });
+    assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
+    await page.click('nav >> text=Live');
+    await page.waitForSelector('#shaderslink');
+    await fitsPhone('Live at 1366 px');
+    await page.click('#shaderslink');
+    await page.waitForSelector('#shadercontrols #shin-speed');
+    await page.waitForSelector('#shaderdmxline');
+    const lay = await page.evaluate(() => {
+      const r = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom }; };
+      const list = document.getElementById('shaderlist');
+      return { lib: r('shadercard'), now: r('shadernow'), ctl: r('shadercontrols'), set: r('vibessettings'), remote: r('shaderremote'), vh: window.innerHeight,
+        overflow: getComputedStyle(list).overflowY, listShown: list.clientHeight, listAll: list.scrollHeight };
+    });
+    assert(lay.lib.right <= lay.now.left && lay.now.right <= lay.set.left, 'three columns at 1366 px: library, stage, settings: ' + JSON.stringify(lay));
+    assert(Math.abs(lay.ctl.left - lay.now.left) < 1 && lay.ctl.top >= lay.now.bottom, 'the controls are under what is playing, in the middle column');
+    assert(Math.abs(lay.remote.left - lay.set.left) < 1, 'the controllers are under the settings');
+    assert(lay.overflow === 'auto' && lay.listAll > lay.listShown, 'the library scrolls by itself: ' + JSON.stringify(lay));
+    assert(lay.ctl.top < lay.vh && lay.lib.top < lay.vh, 'the playing shader\'s controls are in view without scrolling the library');
+    for (const w of [900, 1100, 1366, 1600]) {
+      await page.setViewportSize({ width: w, height: 768 });
+      await page.waitForTimeout(150);
+      await fitsPhone('Shaders page at ' + w + ' px');
+    }
+    await fitsCard('#shaderpage .card', 'Shaders page on a laptop');
+    assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
 
     // Desktop width
     await page.setViewportSize({ width: 1280, height: 800 });

@@ -8,7 +8,8 @@
   var S = {
     tab: 'live', device: null, status: null, banks: [], bank: 0, media: [], modules: [], theme: null,
     themes: [], devices: [], editing: false, sheet: null, msg: '', msgErr: false, token: null, failures: 0,
-    sys: null, sysData: {}, sysFresh: false   // System: the page that is open (null: the index), what each row last answered
+    sys: null, sysData: {}, sysFresh: false,  // System: the page that is open (null: the index), what each row last answered
+    sysFrom: null                             // the tab a page was opened from, when not from the index ('live': the Shaders link)
   };
   var app = document.getElementById('app');
   var offlineBanner = document.getElementById('offline');
@@ -250,9 +251,7 @@
       if (d.active) return;
       // Settings (only here, at the studio)
       var f = supportForm || { endpoint: c.endpoint, server_key: c.server_key, address: c.address, network: c.network };
-      body.appendChild(h('div', { class: 'k', text: c.allowed ? 'Remote support is allowed on this box.' : 'Remote support is off. Nothing can reach this box from outside until you allow it and start a session.' }));
-      body.appendChild(h('button', { class: 'btn small' + (c.allowed ? ' on' : ''), id: 'supportallow', 'aria-pressed': c.allowed ? 'true' : 'false',
-        text: c.allowed ? 'Allowed. Turn off' : 'Allow remote support', onclick: function () { post('/api/support/config', { allowed: !c.allowed }); } }));
+      body.appendChild(h('div', { class: 'k', text: c.allowed ? 'Remote support is allowed on this box.' : 'Remote support is off. Nothing can reach this box from outside until you switch it on above and start a session.' }));
       var fields = [['endpoint', 'Support server (host:port)', 'support.example.com:51820'], ['server_key', 'Support server key', '44 characters'],
         ['address', 'This box on the support network', '10.77.0.5'], ['network', 'Support network', '10.77.0.0/24']];
       var inputs = {};
@@ -382,7 +381,17 @@
     return bar;
   }
   // Shaders and Vibes lives in shaders.js; it borrows these helpers.
-  function shaderCtx() { return { h: h, api: api, act: act, can: can, say: say, poll: poll, moduleOn: moduleOn, state: S }; }
+  function shaderCtx() {
+    return { h: h, api: api, act: act, can: can, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
+      rowShown: function (id) { return sysRows().some(function (r) { return r.id === id && rowShown(r); }); },
+      // a feature's one switch, used where its controls are shown on another page (MIDI and DMX on the Shaders page)
+      switchFeature: function (id, on) {
+        var row = sysRows().filter(function (r) { return r.id === id; })[0];
+        S.sysFresh = false;
+        return runSwitch([moduleStep(row.module)].concat(row.steps || []), on, row.offInner, null);
+      },
+      openShaders: function () { openSys('vibes', S.tab); } };
+  }
   function patchLive() {
     var st = S.status || {}, pl = st.player || {}, sys = st.system || {};
     var np = document.getElementById('np');
@@ -487,7 +496,6 @@
             onclick: function () { act('POST', '/api/control', { action: 'flip_v', value: !m.flip_v }, function () { poll(); setTimeout(render, 200); }); } }))),
       overlayCard(),
       mapperCard(),
-      window.pvjShaders ? window.pvjShaders.card(shaderCtx()) : null,
       h('div', { class: 'card' },
         h('div', { class: 'k', text: 'Rotate' }),
         choice([0, 90, 180, 270].map(function (d) { return { label: d + '°', value: d }; }), m.rotate === undefined ? 0 : m.rotate,
@@ -979,13 +987,16 @@
   function st(chip, text) { return { chip: chip, text: text }; }
   function goTab(tab) {
     if (history.state && history.state.sys) history.replaceState(null, '');   // the page left behind is not one to come back to
-    S.tab = tab; S.msg = ''; S.sys = null; S.sysFresh = false;
+    S.tab = tab; S.msg = ''; S.sys = null; S.sysFresh = false; S.sysFrom = null;
     loadAll().then(render);
   }
-  function pointerCard(title, lines, buttons) {      // a page whose controls live on another screen says where
-    return h('div', { class: 'card' }, h('h2', { text: title }),
-      lines.map(function (t) { return h('p', { class: 'hint', text: t }); }),
-      h('div', { class: 'row wrap' }, buttons.map(function (b) { return h('button', { class: 'btn', text: b[1], onclick: function () { goTab(b[0]); } }); })));
+  // The Room screen's own cards, on the Room page under its switch: the page never sends anyone to another screen.
+  // The screen's title and message line are the page's, so the copies are taken out.
+  function roomInPage() {
+    var el = window.pvjRoom.screen(roomCtx());
+    ['.top', '#msg'].forEach(function (sel) { var x = el.querySelector(sel); if (x && x.parentNode === el) el.removeChild(x); });
+    el.className = 'roominpage';
+    return el;
   }
   function sysRows() {
     var full = can('full'), remote = !!(S.device && S.device.remote);
@@ -999,20 +1010,18 @@
         body: function () { return [projectorsCard(full)]; } },
       { id: 'room', group: 'everyday', name: 'Room', role: 'live', module: 'room', url: '/api/room',
         blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off. It needs Projectors to be on. Not yet tried on a real projector.',
-        body: function () {
-          return [pointerCard('Where the room is run and set up', ['The Room tab at the bottom has the scenes and each wall\'s buttons. A full-access device also makes the groups (the walls) and the scenes there, under "Set up the room".',
-            'A presenter or a guest who joins while this is on starts on the Room tab.'], [['room', 'Open Room']])];
-        } },
+        body: function () { return window.pvjRoom ? [roomInPage()] : []; } },
       { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'full', module: 'scheduler', url: '/api/schedule',
         blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
+        steps: [scheduleStep()], offInner: true,
         body: function () { return [scheduleCard()]; } },
-      { id: 'vibes', group: 'everyday', name: 'Vibes', role: 'live', module: 'shaders', url: '/api/shaders',
-        blurb: 'Moving patterns the box draws by itself, in place of a clip. Vibes plays them one after another, endlessly, for ambience. How fast they run on this box is not measured yet.',
+      { id: 'vibes', group: 'everyday', name: 'Shaders and Vibes', role: 'view', module: 'shaders', url: '/api/shaders',
+        blurb: 'Moving pictures the box draws by itself, in place of a clip. Vibes plays them one after another, for as long as you like. How fast they run on this box is not measured yet.',
         confirmOff: function (ask) {
           var pl = (S.status && S.status.player) || {};
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
         },
-        body: vibesPage },
+        body: function () { return window.pvjShaders ? [window.pvjShaders.page(shaderCtx())] : []; } },
       { id: 'access', group: 'everyday', name: 'People and codes', role: 'full', url: '/api/access', urlRole: 'full',
         blurb: 'The phones and tablets paired with this box, codes for guests and presenters, and the PIN.',
         body: function () { return [accessCard()]; } },
@@ -1028,21 +1037,22 @@
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
-        body: function () {
-          return [pointerCard('Where the controls are', ['The mapping is placed and switched on with the Projection mapping card on the Mix screen.'], [['mix', 'Open Mix']])];
-        } },
+        body: function () { return [mapperCard()]; } },
       { id: 'sync', group: 'show', name: 'Boxes in step', role: 'live', module: 'wall', url: '/api/sync',
         blurb: 'Several boxes play together: one server leads and the clients follow its clip, position, pause and blackout. Each box can also show one tile of a video wall.',
         confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other boxes stop following.' : null); }); },
         body: function () { return [syncCard()]; } },
       { id: 'midi', group: 'show', name: 'MIDI controller', role: 'full', module: 'control-midi', url: '/api/midi', urlRole: 'full',
         blurb: 'Play pads, fade and mix from a USB pad controller, keyboard or fader box. The box only listens; it sends nothing back.',
+        steps: [flagStep('midi', '/api/midi', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
         body: function () { return [midiCard()]; } },
       { id: 'dmx', group: 'show', name: 'DMX lighting desk', role: 'full', module: 'control-dmx', url: '/api/dmx', urlRole: 'full',
         blurb: 'Control the box from a lighting desk or lighting software over the network (Art-Net or sACN): opacity, size, position, speed, volume, blackout and pads. The box only listens.',
+        steps: [flagStep('dmx', '/api/dmx', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
         body: function () { return [dmxCard()]; } },
       { id: 'osc', group: 'show', name: 'OSC', role: 'full', url: '/api/osc',
         blurb: 'Control the box from TouchOSC, QLab, Resolume and other programs that send OSC messages over the network.',
+        steps: [flagStep('osc', '/api/osc', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
         body: function () { return [oscCard()]; } },
       { id: 'network', group: 'box', name: 'Network', role: 'full', module: 'network', url: '/api/network', urlRole: 'full',
         blurb: 'Change the box\'s wired and Wi-Fi network: automatic, a fixed address, a direct cable, handing out addresses, joining a Wi-Fi network or making its own hotspot. Every change goes back by itself unless you confirm it.',
@@ -1052,6 +1062,10 @@
         body: function () { return [updateCard()]; } },
       { id: 'support', group: 'box', name: 'Remote support', role: 'full', url: '/api/support',
         blurb: 'Let someone you trust help from far away, for a set time. Nothing can reach the box until you allow it and start a session.',
+        // the settings are filled in before it is allowed, so the card shows while the switch is off; a support
+        // session itself may not change this (the server refuses), so it gets no switch
+        steps: full && !remote ? [flagStep('support', '/api/support', function (d) { return !!(d.config && d.config.allowed); }, function (v) { return { allowed: v }; }, '/api/support/config')] : null,
+        bodyWhenOff: true,
         body: function () { return [supportCard()]; } },
       { id: 'backup', group: 'box', name: 'Backup and reset', role: 'full',
         fact: function () { return remote ? 'Settings file, diagnostics' : 'Settings file, diagnostics, factory reset'; },
@@ -1135,7 +1149,7 @@
       return st('ready', plural(d.groups.length, 'group') + ', ' + plural(d.scenes.length, 'scene'));
     },
     schedule: function (d) {
-      if (!d.enabled) return st('off', 'On, but not running: turn the schedule on inside');
+      if (!d.enabled) return st('off', d.entries.length ? plural(d.entries.length, 'entry', 'entries') + ' saved, not running' : '');
       if (!d.entries.length) return st('setup', 'No entries yet');
       var failed = d.entries.filter(function (e) { return d.last && d.last[e.id] && d.last[e.id].ok === false; });
       if (failed.length) return st('problem', 'Last run failed: ' + (failed[0].label || schedWhat(failed[0])));
@@ -1143,9 +1157,10 @@
       return st('ready', next ? 'Next: ' + next : plural(d.entries.length, 'entry', 'entries'));
     },
     vibes: function (d) {
-      if (d.error) return st('problem', 'A shader was refused: ' + d.error.id);
-      if (d.vibes && d.vibes.running) return st('active', 'Vibes is on' + (d.playing ? ': ' + d.playing.name : ''));
-      if (d.playing) return st('active', 'Playing: ' + d.playing.name);
+      var nice = window.pvjShaders ? window.pvjShaders.nice : String;
+      if (d.error) return st('problem', 'A shader was refused: ' + nice(d.error.id));
+      if (d.vibes && d.vibes.running) return st('active', 'Vibes is playing' + (d.playing ? ': ' + nice(d.playing.name) : ''));
+      if (d.playing) return st('active', 'One shader is playing: ' + nice(d.playing.name));
       var n = d.shaders.filter(function (s) { return s.vibes && !s.error; }).length;
       return n ? st('ready', plural(n, 'shader') + ' in the rotation') : st('setup', 'No shader is in the rotation');
     },
@@ -1173,7 +1188,7 @@
     mapping: function (d) {
       var state = (d.status || {}).state;
       if (state === 'error') return st('problem', d.status.message || 'The mapping could not be shown');
-      if (!d.surfaces.length) return st('setup', 'No surfaces yet: add one on Mix');
+      if (!d.surfaces.length) return st('setup', 'No surfaces yet');
       if (d.edit && d.edit.on) return st('active', 'Being placed, with outlines on the display');
       if (d.on || state === 'building') return st('active', state === 'building' ? 'Being worked out' : 'On the screen');
       return st('ready', plural(d.surfaces.length, 'surface') + ', not on the screen');
@@ -1186,14 +1201,14 @@
       return d.server ? st('active', 'Following ' + d.server) : st('problem', 'Listening for a server');
     },
     midi: function (d) {
-      if (!d.enabled) return st('off', 'On, but not listening: turn it on inside');
+      if (!d.enabled) return st('off', '');
       if (!d.devices.length) return st('setup', 'No controller plugged in');
       var deaf = d.devices.filter(function (x) { return !x.connected; });
       if (deaf.length) return st('problem', deaf[0].name + ' is not reading');
       return st('ready', plural(d.devices.length, 'controller') + ': ' + d.devices.map(function (x) { return x.name; }).join(', '));
     },
     dmx: function (d, before) {
-      if (!d.enabled) return st('off', 'On, but not listening: turn it on inside');
+      if (!d.enabled) return st('off', '');
       if (d.error) return st('problem', d.error);
       if (before && before.enabled && d.received > before.received) return st('active', 'Frames arriving');
       return st('ready', d.received ? 'Listening, ' + plural(d.received, 'frame') + ' so far' : 'Listening, nothing received yet');
@@ -1274,11 +1289,20 @@
     if (!line || !row || !row.url) return;
     function show() {
       var state = sysState(row);
-      line.hidden = !state.chip || !!row.module && !moduleOn(row.module);    // an off module's page already says Off
+      line.hidden = !state.chip || pageSwitch.on !== true;    // a page that is off already says Off
       showState(line.querySelector('.chip'), line.querySelector('.hint'), state, state.text.replace(/ inside$/, ' below'));
     }
     if (!rowFetchable(row)) { delete S.sysData[row.id]; return show(); }
-    api('GET', row.url).then(function (r) { if (line.isConnected) { keepAnswer(row, r); show(); } });
+    api('GET', row.url).then(function (r) {
+      if (!line.isConnected) return;
+      keepAnswer(row, r);
+      // The switch is drawn from the last answer. If this one says otherwise (it was not read yet, or it was changed
+      // from another phone), the page is drawn again, once: the next answer then agrees with what is drawn.
+      if (pageSwitch.steps && pageOn(pageSwitch.steps) !== pageSwitch.on) return redrawSystem();
+      var wait = document.getElementById('syschecking');
+      if (wait && !r.ok) wait.textContent = 'Could not read its state: ' + (r.data.error || 'no answer') + '.';
+      show();
+    });
   }
   function pageStateSoon() {
     if (S.tab !== 'system' || !S.sys) return;
@@ -1296,16 +1320,25 @@
     keepSyncForm();
     old.parentNode.replaceChild(system(), old);
   }
-  function openSys(id) {
+  // from: the tab the page is opened from when that is not System (Back then returns there). replace: the page takes
+  // the place of the one that is open, so Back does not stop at it.
+  function openSys(id, from, replace) {
+    var other = S.tab !== 'system';
+    if (other) { S.sysFrom = from || null; S.tab = 'system'; }
     S.sys = id; S.msg = '';
-    history.pushState({ sys: id }, '');
-    redrawSystem();
+    if (replace && history.state && history.state.sys) history.replaceState({ sys: id }, '');
+    else history.pushState({ sys: id }, '');
+    if (other) render(); else redrawSystem();     // from another tab the tab bar changes too
     window.scrollTo(0, 0);
   }
-  function sysBack() {
-    if (history.state && history.state.sys) return history.back();     // the popstate listener draws the index
+  function leaveSysPage() {          // back at the index, or at the tab the page was opened from
     S.sys = null; S.msg = ''; S.sysFresh = false;
-    redrawSystem();
+    if (S.sysFrom) { S.tab = S.sysFrom; S.sysFrom = null; }
+  }
+  function sysBack() {
+    if (history.state && history.state.sys) return history.back();     // the popstate listener draws what is behind
+    leaveSysPage();
+    render();
     window.scrollTo(0, 0);
   }
   function system() {
@@ -1346,37 +1379,83 @@
   }
 
   // -- the page shell --
-  // A page's switch is a list of steps, each { isOn(), set(value) -> the API's answer }. Today there is one step, the
-  // module. A later slice adds the feature's own "enabled" flag as a second step (opts.steps): the switch then shows
-  // On only when every step is on, and switching on runs them in order.
+  // A page has ONE switch. It is a list of steps, each { isOn(), set(value, control) -> the API's answer }: the module,
+  // then, where a feature has its own "enabled" flag (DMX, MIDI, the schedule; OSC and Remote support have only the
+  // flag), that flag. The switch shows On only when every step is on. Switching on runs the steps in order; switching
+  // off switches the module off (or, with offInner, only the flag). A switch sends its own flag and nothing else:
+  // fields being edited on the page are not saved by it.
+  var pageSwitch = { steps: null, on: true };       // what the open page's switch was drawn from
   function moduleStep(id) {
     return { isOn: function () { return moduleOn(id); },
       set: function (value) { return api('POST', '/api/modules/' + id, { enabled: value }).then(function (r) { if (r.ok) S.modules = r.data.modules; return r; }); } };
   }
-  function runSwitch(steps, on) {
-    if (!on) return steps[0].set(false);
+  // A feature's own flag. What it is now comes from the row's last GET answer (null: not read yet); its POST answers
+  // in the same shape, so the answer is kept as the row's state.
+  function flagStep(rowId, url, read, body, postUrl) {
+    return { inner: true,
+      isOn: function () { var d = S.sysData[rowId]; return d ? !!read(d.now) : null; },
+      set: function (value) { return api('POST', postUrl || url, body(value)).then(function (r) { if (r.ok) keepAnswer({ id: rowId }, r); return r; }); } };
+  }
+  // The schedule is saved whole (the entries go with the flag), so the saved entries are read just before each
+  // change and sent back as they are. Saved entries start running as soon as it is on, so that is asked first.
+  function scheduleStep() {
+    var step = flagStep('schedule', '/api/schedule', function (d) { return d.enabled; });
+    step.set = function (value, control) {
+      return api('GET', '/api/schedule').then(function (g) {
+        if (!g.ok) return g;
+        function post(flag) {
+          return api('POST', '/api/schedule', { enabled: flag, entries: g.data.entries }).then(function (r) { if (r.ok) keepAnswer({ id: 'schedule' }, r); return r; });
+        }
+        var n = g.data.entries.length;
+        if (!value || !n || !control || !control.isConnected) return post(value);
+        return new Promise(function (resolve) {
+          confirmRow('Switch the schedule on? ' + (n === 1 ? '1 entry' : n + ' entries') + ' will start running at ' + (n === 1 ? 'its time.' : 'their times.'),
+            'Switch on', 'Not yet', function () { resolve(post(true)); }, control, function () {
+              // "Not yet". A box whose module was off with the schedule left on is running from the moment the
+              // module came on: put the flag off, so the answer is honoured.
+              resolve((g.data.enabled ? post(false) : Promise.resolve(g)).then(function () { return { ok: true, cancelled: true, data: {} }; }));
+            });
+        });
+      });
+    };
+    return step;
+  }
+  function pageOn(steps) {       // true, false, or null while a feature's own flag has not been read yet
+    for (var i = 0; i < steps.length; i++) { var v = steps[i].isOn(); if (v !== true) return v; }
+    return true;
+  }
+  function runSwitch(steps, on, offInner, control) {
+    if (!on) return (offInner ? steps[steps.length - 1] : steps[0]).set(false, control);
+    // The module is skipped when it is already on (a box in the mixed state gets only the feature's own call); the
+    // feature's flag is always sent, because what the panel last read may be old.
     return steps.reduce(function (before, step) {
-      return before.then(function (r) { return !r.ok || step.isOn() ? r : step.set(true); });
+      return before.then(function (r) { return !r.ok || r.cancelled || !step.inner && step.isOn() ? r : step.set(true, control); });
     }, Promise.resolve({ ok: true, data: {} }));
   }
-  // Replaces the tapped control's row with a question, a danger button and a plain one; "no", or 8 seconds, puts it back.
-  function confirmRow(question, yesText, noText, onYes, control) {
+  // Replaces the tapped control's row with a question, a danger button and a plain one; "no", or 8 seconds, puts it
+  // back (and calls onNo, when the caller is waiting for an answer).
+  function confirmRow(question, yesText, noText, onYes, control, onNo) {
     var row = control.closest('.row') || control.parentNode;
     clearTimeout(confirmTimer);
     var box = h('div', { class: 'confirm', id: 'confirmrow', role: 'alert' }, h('span', { text: question }));
     function revert() { clearTimeout(confirmTimer); if (box.parentNode) box.parentNode.removeChild(box); row.hidden = false; }
+    function no() { revert(); if (onNo) onNo(); }
     box.appendChild(h('div', { class: 'row' },
       h('button', { class: 'btn danger grow', id: 'confirmyes', text: yesText, onclick: function () { revert(); onYes(); } }),
-      h('button', { class: 'btn grow', id: 'confirmno', text: noText, onclick: revert })));
+      h('button', { class: 'btn grow', id: 'confirmno', text: noText, onclick: no })));
     row.hidden = true;
     row.parentNode.insertBefore(box, row.nextSibling);
-    confirmTimer = setTimeout(revert, 8000);
+    confirmTimer = setTimeout(no, 8000);
   }
   function flipSwitch(opts, steps, on, control) {
     function go() {
-      runSwitch(steps, on).then(function (r) {
-        if (!r.ok) return say(r.data.error || 'Could not switch it ' + (on ? 'on' : 'off') + '.', true);
-        S.sysFresh = false;
+      runSwitch(steps, on, opts.offInner, control).then(function (r) {
+        S.sysFresh = false;                 // a first step may have gone through even when a later one did not
+        if (r.cancelled) return redrawSystem();
+        if (!r.ok) {                        // the switch stays (or goes back to) Off, with the reason on the page
+          redrawSystem();
+          return say(r.data.error || 'Could not switch it ' + (on ? 'on' : 'off') + '.', true);
+        }
         say(on ? 'Switched on.' : 'Switched off.');
         redrawSystem();
       });
@@ -1390,33 +1469,28 @@
   function sysPage(id, title, blurb, opts) {
     opts = opts || {};
     var full = can('full');
-    var steps = opts.module ? [moduleStep(opts.module)].concat(opts.steps || []) : null;
-    var on = !steps || steps.every(function (s) { return s.isOn(); });
+    var steps = (opts.module ? [moduleStep(opts.module)] : []).concat(opts.steps || []);
+    if (!steps.length) steps = null;
+    var on = steps ? pageOn(steps) : true;
+    pageSwitch = { steps: steps, on: on };
     var head = h('div', { class: 'top syshead' }, h('h1', { text: title }));
-    if (steps && full) {
+    if (steps && full && on !== null) {
       var sw = h('button', { class: 'switch', id: 'sysswitch', role: 'switch', 'aria-checked': on ? 'true' : 'false', 'aria-label': title,
         onclick: function () { flipSwitch(opts, steps, !on, sw); } });
       head.appendChild(h('span', { class: 'row switchwrap' }, h('span', { class: 'switchlabel', id: 'sysswitchlabel', text: on ? 'On' : 'Off' }), sw));
     }
-    var body = on ? h('div', { class: 'grid2', id: 'sysbody' }, opts.body ? opts.body() : null) :
+    var body = on === null ? h('div', { class: 'card' }, h('div', { class: 'hint', id: 'syschecking', text: 'Checking...' })) :
+      on || opts.bodyWhenOff ? h('div', { class: 'grid2', id: 'sysbody' }, opts.body ? opts.body() : null) :
       h('div', { class: 'card', id: 'sysoff' }, h('div', { text: 'Off. Your settings are kept while it is off.' }),
-        full ? h('button', { class: 'btn on big', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } }) : null);
+        full ? h('div', { class: 'row' }, h('button', { class: 'btn on big grow', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } })) : null);
     setTimeout(pageState, 0);
     return h('div', { class: 'screen syspage', id: 'syspage', 'data-page': id },
-      h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: '‹ System', onclick: sysBack })),
+      h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: S.sysFrom === 'live' ? '‹ Live' : '‹ System', onclick: sysBack })),
       head,
       h('p', { class: 'hint', id: 'sysblurb', text: blurb || '' }),
       h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
       h('div', { class: 'row', id: 'sysstate', hidden: true }, h('span', { class: 'chip' }), h('span', { class: 'hint' })),
       body);
-  }
-  // Vibes: started on Live. Its settings are still on Mix; they get their own card here when they move.
-  function vibesPage() {
-    return [
-      pointerCard('Start Vibes on Live', ['Vibes is started with the big Vibes button on the Live screen: one tap plays the shaders endlessly, another tap stops them.',
-        'It can also start by itself: at power-up, from the schedule, or from OSC, MIDI and DMX.'], [['live', 'Open Live']]),
-      pointerCard('Vibes settings', ['Which shaders are in the rotation, how long each one stays, the drawing size and your own uploads are on the Shaders card on the Mix screen.'], [['mix', 'Open Mix']])
-    ];
   }
   function aboutPage() {
     var now = S.status || {}, sys = now.system || {}, pl = now.player || {}, full = can('full');
@@ -1523,7 +1597,7 @@
     function draw(d) {
       body.textContent = '';
       body.appendChild(h('div', { class: 'k', id: 'dmxline', text: d.error ? 'Problem: ' + d.error :
-        (d.listening ? 'Listening on UDP ' + d.port + ' (' + d.received + ' frames for this universe)' : 'Off') }));
+        (d.listening ? 'Listening on UDP ' + d.port + ' (' + d.received + ' frames for this universe)' : 'Not listening') }));
       if (d.channels) body.appendChild(h('div', { class: 'k mono', id: 'dmxlevels', text: 'Channels ' + d.start + '-' + (d.start + d.channels.length - 1) + ': ' + d.channels.join(' ') }));
       var proto = h('select', { class: 'text-input', id: 'dmxproto', 'aria-label': 'Protocol' },
         [['artnet', 'Art-Net'], ['sacn', 'sACN (E1.31)']].map(function (p) { return h('option', { value: p[0], text: p[1], selected: p[0] === d.protocol }); }));
@@ -1541,12 +1615,10 @@
         return { protocol: proto.value, universe: parseInt(uni.value, 10), start: parseInt(start.value, 10),
           allow: allow.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean) };
       }
-      body.appendChild(h('button', { class: 'btn' + (d.enabled ? ' on' : ''), id: 'dmxtoggle', text: d.enabled ? 'DMX is on. Turn off' : 'Turn DMX on',
-        onclick: function () { var f = fields(); f.enabled = !d.enabled; send(f); } }));
       body.appendChild(proto); body.appendChild(h('label', { class: 'k', for: 'dmxuni', text: 'Universe' })); body.appendChild(uni);
       body.appendChild(h('label', { class: 'k', for: 'dmxstart', text: 'Start channel (uses 8 channels; a ninth, if sent, is Vibes)' })); body.appendChild(start); body.appendChild(allow);
       body.appendChild(h('button', { class: 'btn small', id: 'dmxsave', text: 'Save', onclick: function () { send(fields()); } }));
-      body.appendChild(h('div', { class: 'k', text: 'Off until you turn it on. Only private networks may send. The first frame only sets a starting point, and the box holds its last state if the signal stops.' }));
+      body.appendChild(h('div', { class: 'k', text: 'Only private networks may send. The first frame only sets a starting point, and the box holds its last state if the signal stops.' }));
     }
     api('GET', '/api/dmx').then(function (r) {
       if (!document.getElementById('dmxcard')) return;
@@ -1598,8 +1670,6 @@
       var names = d.devices.map(function (x) { return x.name + (x.connected ? '' : ' (not reading)'); });
       body.appendChild(h('div', { class: 'k', id: 'midiline', text: !d.enabled ? 'Off' : (d.devices.length ? d.devices.length + ' controller' + (d.devices.length > 1 ? 's' : '') + ': ' + names.join(', ') + (d.last ? '. Last: ' + d.last : '') : 'On, waiting for a controller to be plugged in') }));
       body.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn' + (d.enabled ? ' on' : ''), id: 'miditoggle', text: d.enabled ? 'MIDI is on. Turn off' : 'Turn MIDI on',
-          onclick: function () { act('POST', '/api/midi', { enabled: !d.enabled }, function (data) { say(''); draw(data); }); } }),
         h('button', { class: 'btn small' + (d.builtin ? ' on' : ''), id: 'midibuiltin', 'aria-pressed': d.builtin ? 'true' : 'false',
           text: 'Built-in map: ' + (d.builtin ? 'on' : 'off'),
           onclick: function () { act('POST', '/api/midi', { builtin: !d.builtin }, function (data) { draw(data); }); } })));
@@ -2233,9 +2303,6 @@
     function draw(d) {
       body.textContent = '';
       body.appendChild(h('div', { class: 'k', id: 'schedclock', text: 'Box clock: ' + d.now + ' (' + d.timezone + '). Times use this clock; check it before a show.' }));
-      body.appendChild(h('button', { class: 'btn' + (d.enabled ? ' on' : ''), id: 'schedtoggle', 'aria-pressed': d.enabled ? 'true' : 'false',
-        text: d.enabled ? 'Schedule is on. Turn off' : 'Turn schedule on',
-        onclick: function () { save({ enabled: !d.enabled, entries: d.entries }); } }));
       if (!d.entries.length) body.appendChild(h('div', { class: 'k', id: 'schedempty', text: 'No entries yet.' }));
       d.entries.forEach(function (e) {
         var last = d.last[e.id];
@@ -2537,13 +2604,8 @@
     var line = h('div', { class: 'k', id: 'oscline', text: 'Loading...' });
     var port = h('input', { class: 'text-input mono', type: 'number', min: 1024, max: 65535, 'aria-label': 'OSC port' });
     var allow = h('input', { class: 'text-input mono', 'aria-label': 'Extra allowed networks, comma separated', placeholder: 'Extra networks, e.g. 192.168.50.0/24' });
-    var toggle = h('button', { class: 'btn', id: 'osctoggle', text: '...' });
-    var current = null;
     function show(d) {
-      current = d;
-      line.textContent = d.error ? 'Problem: ' + d.error : (d.listening ? 'Listening on UDP ' + d.port + ' (' + d.received + ' messages received)' : 'Off');
-      toggle.textContent = d.enabled ? 'OSC is on. Turn off' : 'Turn OSC on';
-      toggle.className = 'btn' + (d.enabled ? ' on' : '');
+      line.textContent = d.error ? 'Problem: ' + d.error : (d.listening ? 'Listening on UDP ' + d.port + ' (' + d.received + ' messages received)' : 'Not listening');
       port.value = d.port;
       allow.value = d.allow.join(', ');
     }
@@ -2551,14 +2613,13 @@
       act('POST', '/api/osc', patch, function (d) { say(''); show(d); });
     }
     api('GET', '/api/osc').then(function (r) { if (r.ok) show(r.data); else line.textContent = 'Not available'; });
-    toggle.addEventListener('click', function () { if (current) push({ enabled: !current.enabled }); });
     var save = h('button', { class: 'btn small', text: 'Save port and networks', onclick: function () {
       var nets = allow.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
       push({ port: parseInt(port.value, 10), allow: nets });
     } });
     return h('div', { class: 'card' }, h('h2', { text: 'Control (OSC)' }),
-      h('div', { text: 'Off by default. Only private networks may send. Shutdown and reboot are never available over OSC.' }),
-      line, toggle, h('label', { class: 'k', for: 'oscport', text: 'UDP port' }), (port.id = 'oscport', port), allow, save);
+      h('div', { text: 'Only private networks may send. Shutdown and reboot are never available over OSC.' }),
+      line, h('label', { class: 'k', for: 'oscport', text: 'UDP port' }), (port.id = 'oscport', port), allow, save);
   }
   function appearanceCard() {
     var t = S.theme || {};
@@ -2736,9 +2797,8 @@
     window.addEventListener('popstate', function (e) {     // the phone's back gesture: from a System page to the index
       if (!S.device) return;
       var id = (e.state && e.state.sys) || null;
-      if (id) S.tab = 'system';
-      S.sys = id; S.msg = '';
-      if (!id) S.sysFresh = false;
+      if (id) { S.tab = 'system'; S.sys = id; S.msg = ''; }
+      else leaveSysPage();
       render();
       window.scrollTo(0, 0);
     });
