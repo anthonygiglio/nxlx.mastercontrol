@@ -85,7 +85,7 @@
         clearTimeout(st.timer); st.timer = null;
         if (!st.has) return;
         var b = body(st.value);
-        st.has = false; st.last = Date.now(); st.flying++;
+        st.has = false; st.last = Date.now(); st.flying++; st.sent = JSON.stringify(st.value);
         b.id = shaderId();
         rig.last = ch; rig.sentAt = st.last;
         note('', false, true);
@@ -103,6 +103,8 @@
           if (wait <= 0) fire(); else if (!st.timer) st.timer = setTimeout(fire, wait);
         },
         send: function (v) { st.value = v; st.has = true; fire(); },
+        // the finger lifted: the last value goes out, unless it is the one that just went
+        settle: function (v) { if (st.has || JSON.stringify(v) !== st.sent) { st.value = v; st.has = true; fire(); } },
         flush: function () { if (st.has) fire(); },
         touch: function (on) { st.touch = !!on; if (!on) ch.flush(); },
         free: function () { return !st.touch && !st.has && !st.flying && Date.now() - Math.max(st.last, st.done) > SETTLE; },
@@ -155,7 +157,7 @@
       var cur = now;
       var input = slider({ id: id, min: lo, max: hi, step: step, value: now }, ch, function (v, done) {
         cur = v; out.textContent = text(v);
-        if (done) ch.send(v); else ch.push(v);
+        if (done) ch.settle(v); else ch.push(v);
       });
       out.textContent = text(now);
       function reset() { cur = def; input.value = def; out.textContent = text(def); ch.send(def); }
@@ -215,11 +217,11 @@
         var pick = h('input', { type: 'color', class: 'swatchpick', id: id, value: hex(col), 'aria-label': label });
         var alpha = slider({ id: id + '-alpha', min: 0, max: 1, step: 0.01, value: col[3], 'aria-label': label + ': alpha (how solid it is)' }, ch, function (v, done) {
           col[3] = v; paint();
-          if (done) ch.send(col.slice()); else ch.push(col.slice());
+          if (done) ch.settle(col.slice()); else ch.push(col.slice());
         });
         var paint = function () { out.textContent = hex(col) + ' · ' + Math.round(col[3] * 100) + '%'; };
         pick.addEventListener('input', function () { col = unhex(pick.value).concat(col[3]); paint(); ch.push(col.slice()); });
-        pick.addEventListener('change', function () { col = unhex(pick.value).concat(col[3]); paint(); ch.send(col.slice()); });
+        pick.addEventListener('change', function () { col = unhex(pick.value).concat(col[3]); paint(); ch.settle(col.slice()); });
         paint();
         var resetCol = function () { col = i['default'].slice(); pick.value = hex(col); alpha.value = col[3]; paint(); ch.send(col.slice()); };
         var cb = wrap('color');
@@ -297,7 +299,7 @@
     var input = slider({ id: id, min: spec.min, max: spec.max, step: which === 'hue' ? 1 : (spec.max - spec.min) / 200, value: now }, ch, function (v, done) {
       shown(v);
       if (which === 'speed' && v > 0) ui.lastSpeed = v;
-      if (done) ch.send(v); else ch.push(v);
+      if (done) ch.settle(v); else ch.push(v);
     });
     function set(v) { input.value = v; shown(v); ch.send(v); }
     function reset() { if (which === 'speed') ui.lastSpeed = spec['default']; set(spec['default']); }
@@ -417,6 +419,8 @@
     // The strip and the set chooser need the shader list: asked for when the shader changes, and every few seconds
     // while one is on (its values may be moved from elsewhere).
     var name = on ? pl.shader : null;
+    // Live was drawn again (another bank, a tab and back): the strip comes back from what is known, without a gap
+    if (!L.shape && L.data && L.data.playing && L.data.playing.name === name) { drawLive(c, L.data, box); L.shader = name; }
     if (name === L.shader && (Date.now() - L.at < (on ? 4000 : 20000))) return;
     L.busy = true;
     c.api('GET', '/api/shaders').then(function (r) {
