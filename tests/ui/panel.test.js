@@ -913,7 +913,17 @@ function startServer() {
     await switchOn('Shaders and Vibes');
     assert(await moduleIsOn('shaders'), 'the shaders module is on');
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
-    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10, 'the ten bundled shaders are listed');
+    assert.strictEqual(await page.locator('#shadercard [data-shader^="nxlx-"]').count(), 10, 'the ten bundled shaders are listed');
+    // and the third-party pack (Vidvox ISF-Files): every one the API lists, and none of them in the Vibes rotation
+    const packed = (await get('/api/shaders')).shaders.filter((s) => s.pack === 'isf-files');
+    assert(packed.length === 7 && packed.every((s) => s.source === 'bundled' && !s.vibes && !s.error), 'the ISF-Files pack is listed, out of Vibes');
+    assert.strictEqual(await page.locator('#shadercard [data-shader]').count(), 10 + packed.length, 'the pack is listed with the ten');
+    // somebody else's work says so on its row: the pack and the author's own credit; the project's own rows do not
+    assert.strictEqual(await page.locator('#shadercard [data-pack="isf-files"]').count(), packed.length, 'each pack row is marked with its pack');
+    assert.strictEqual(await page.textContent('#shadercard [data-shader="isf-simplex-noise.fs"] .shadercredit'),
+      'From the isf-files pack. Credit: by VIDVOX (simplex by Ashima Arts / Stefan Gustavson)', 'a pack shader shows its pack and credit');
+    assert.strictEqual(await page.locator('#shadercard [data-pack="isf-files"] .shadercredit').count(), packed.length, 'every pack row has the line');
+    assert.strictEqual(await page.locator('#shadercard [data-pack="nxlx"] .shadercredit').count(), 0, 'the project\'s own rows carry no credit line');
     assert.deepStrictEqual(await page.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard', 'vibessettings', 'shaderremote'],
       'the page, top to bottom: now, the library, Vibes settings, other ways to control it (no sliders while nothing plays)');
     assert.strictEqual(await page.textContent('#shaderplaying'), 'No shader on screen');
@@ -1041,7 +1051,7 @@ function startServer() {
     assert(mediums.length >= 1 && mediums.length < 10, 'the work filter narrows the list: ' + mediums.length);
     assert((await page.$$eval('#shadercard [data-shader]', (rs) => rs.filter((r) => !r.hidden).every((r) => /Medium work/.test(r.textContent)))), 'and shows only medium work');
     await page.selectOption('#shadercost', 'all');
-    assert.strictEqual((await shownRows()).length, 10);
+    assert.strictEqual((await shownRows()).length, 10 + packed.length);
     // A MIDI controller and a lighting desk are set up on this page: no button that leads to another page
     assert.strictEqual(await page.locator('#shaderto-dmx, #shaderto-midi').count(), 0, 'no buttons that open the MIDI and DMX pages');
     await page.waitForSelector('#shaderdmxline:has-text("Vibes is on channel 9")');
@@ -1094,7 +1104,7 @@ function startServer() {
     await page.click(mine + ' button:has-text("Remove")');
     await page.click('#confirmyes');
     await page.waitForFunction(() => !document.querySelector('#shadercard [data-shader="flat-grey.fs"]'));
-    assert.strictEqual((await get('/api/shaders')).shaders.length, 10, 'the uploaded file is gone from the box');
+    assert.strictEqual((await get('/api/shaders')).shaders.filter((s) => s.id === 'flat-grey.fs').length, 0, 'the uploaded file is gone from the box');
     await page.click('nav >> text=Live');
     await page.waitForFunction(() => /^Shader: Tide/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
     assert.strictEqual(await page.textContent('#vibeswords'), 'Start Vibes');
@@ -1118,7 +1128,7 @@ function startServer() {
     assert.deepStrictEqual(await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard'], 'a presenter gets no settings and no links to MIDI and DMX');
     assert.strictEqual(await presenter.locator('#syspage .switch').count(), 0, 'no module switch and no rotation switches for a presenter');
     assert.strictEqual(await presenter.locator('#shaderupload, #vibesdwell, #vibesvary, #shaderpage button:has-text("Remove")').count(), 0, 'no upload, settings or Remove for a presenter');
-    assert.strictEqual(await presenter.locator('#shadercard button[aria-label^="Play "]').count(), 10, 'a presenter can play each shader');
+    assert.strictEqual(await presenter.locator('#shadercard button[aria-label^="Play "]').count(), 10 + packed.length, 'a presenter can play each shader');
     assert(/in the Vibes rotation/.test(await presenter.textContent('#shadercard [data-shader="nxlx-tide.fs"]')), 'a presenter reads whether a shader is in the rotation');
     assert.strictEqual(await presenter.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a presenter\'s Shaders page');
     await presenter.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play Tide"]');
