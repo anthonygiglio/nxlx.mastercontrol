@@ -1,0 +1,1572 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MasterControl Panel Redesign</title>
+<meta name="description" content="Click-through prototype of a fresh web panel for nxlx.mastercontrol, with a fake box and no network.">
+<style>
+/* ---------- Prototype chrome (outside the device) ---------- */
+:root {
+  --p-bg: #e9e7e1; --p-cd: #fbfaf7; --p-fg: #1c1c1c; --p-mu: #55554f; --p-ln: #c9c6bd; --p-ac: #1c1c1c;
+  /* Panel tokens. They mirror pvj/themes.d (bg, cd, fg, ln, mu, ac, on); ok, wa, bd and hi are four new derived tokens. Default here: Light. */
+  --bg: #f4f3ef; --cd: #ffffff; --fg: #1c1c1c; --ln: #1c1c1c; --mu: #55554f; --ac: #c2410c; --on: #ffffff;
+  --ok: #0f7a3a; --wa: #8a5a00; --bd: #b42318; --hi: #ebe9e2;
+  --t1: 11px; --t2: 14px; --t3: 16px; --t4: 20px; --t5: 28px; --t6: 40px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+  --r: 6px;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --p-bg: #0e0e10; --p-cd: #18181b; --p-fg: #ececea; --p-mu: #a3a39e; --p-ln: #3a3a40; --p-ac: #ececea; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--p-bg); color: var(--p-fg); font: 15px/1.4 var(--sans); }
+button, input, select, textarea { font: inherit; color: inherit; }
+.proto { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; padding: 16px; min-height: 100vh; }
+.stage { display: flex; justify-content: center; align-items: flex-start; min-width: 0; }
+.side { background: var(--p-cd); border: 1.5px solid var(--p-ln); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 14px; align-self: start; position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+.side h2 { font: 600 11px var(--mono); margin: 0 0 6px; color: var(--p-mu); text-transform: uppercase; letter-spacing: .08em; }
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg button, .pbtn { flex: 1 1 auto; min-height: 36px; padding: 0 10px; border-radius: 6px; border: 1.5px solid var(--p-ln); background: transparent; cursor: pointer; font-size: 13px; }
+.seg button[aria-pressed="true"] { background: var(--p-ac); color: var(--p-cd); border-color: var(--p-ac); font-weight: 600; }
+.journeys { display: flex; flex-direction: column; gap: 4px; }
+.journeys button { text-align: left; min-height: 36px; padding: 6px 10px; border-radius: 6px; border: 1.5px solid var(--p-ln); background: transparent; cursor: pointer; font-size: 13px; }
+.journeys button:hover { border-color: var(--p-fg); }
+.hint { font-size: 13px; color: var(--p-mu); margin: 6px 0; }
+.jhint { font-size: 13px; border: 1.5px dashed var(--p-fg); padding: 8px 10px; border-radius: 6px; }
+.jhint:empty { display: none; }
+.notes textarea { width: 100%; min-height: 120px; background: var(--p-bg); border: 1.5px solid var(--p-ln); border-radius: 6px; padding: 8px; resize: vertical; }
+.notes .who { font-weight: 600; font-family: var(--mono); font-size: 12px; }
+.notes pre { white-space: pre-wrap; font-size: 12px; background: var(--p-bg); border: 1.5px solid var(--p-ln); border-radius: 6px; padding: 8px; max-height: 200px; overflow: auto; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; min-height: 32px; }
+.protobar { display: none; }
+.closeside { display: none; }
+@media (max-width: 760px) {
+  .proto { display: block; padding: 0; }
+  .protobar { display: flex; justify-content: space-between; align-items: center; height: 44px; padding: 0 12px; border-bottom: 1.5px solid var(--p-ln); background: var(--p-cd); font-size: 13px; }
+  .protobar button { min-height: 36px; border-radius: 6px; border: 1.5px solid var(--p-ln); background: transparent; padding: 0 12px; cursor: pointer; }
+  .side { display: none; position: fixed; inset: 0; z-index: 50; border-radius: 0; max-height: none; }
+  .side.open { display: flex; }
+  .closeside { display: block; min-height: 44px; }
+  .stage { display: block; }
+  .device { width: 100% !important; height: calc(100dvh - 44px) !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+}
+
+/* ---------- The device ---------- */
+.device { container: app / inline-size; position: relative; overflow: hidden; border: 10px solid #111; border-radius: 28px; background: var(--bg); box-shadow: 0 10px 40px rgba(0,0,0,.18); max-width: 100%; }
+.device[data-size="phone"] { width: 390px; height: min(844px, calc(100vh - 32px)); }
+.device[data-size="tablet"] { width: 820px; height: min(1100px, calc(100vh - 32px)); border-radius: 22px; }
+.device[data-size="laptop"] { width: 1280px; height: min(800px, calc(100vh - 32px)); border-radius: 10px; border-width: 6px; }
+
+/* Panel themes. Each mirrors a pvj/themes.d file; ok, wa, bd and hi are new. */
+.app[data-theme="light"] { --bg: #f4f3ef; --cd: #ffffff; --fg: #1c1c1c; --ln: #1c1c1c; --mu: #55554f; --ac: #c2410c; --on: #ffffff; --ok: #0f7a3a; --wa: #8a5a00; --bd: #b42318; --hi: #ebe9e2; }
+.app[data-theme="dark-stage"] { --bg: #121214; --cd: #1c1c20; --fg: #f2f1ec; --ln: #4a4a54; --mu: #a9a8a3; --ac: #f59e0b; --on: #1a1300; --ok: #5fd08a; --wa: #f5c451; --bd: #ff7a6e; --hi: #26262c; }
+.app[data-theme="night-red"] { --bg: #000000; --cd: #140000; --fg: #ff6a5c; --ln: #6a1a14; --mu: #c2564b; --ac: #ff3b30; --on: #000000; --ok: #ff6a5c; --wa: #ff8a7c; --bd: #ff3b30; --hi: #220402; }
+.app[data-theme="high-contrast"] { --bg: #000000; --cd: #000000; --fg: #ffffff; --ln: #ffffff; --mu: #e6e6e6; --ac: #ffff00; --on: #000000; --ok: #7cfc00; --wa: #ffff00; --bd: #ff6060; --hi: #1a1a1a; }
+
+.app { position: absolute; inset: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); background: var(--bg); color: var(--fg); font: 16px/1.35 var(--sans); -webkit-tap-highlight-color: transparent; }
+.app button { touch-action: manipulation; }
+.app :focus-visible { outline: 3px solid var(--ac); outline-offset: 2px; }
+.top { grid-row: 1; display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4); min-height: 60px; }
+.brand { font-weight: 700; font-size: var(--t4); flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill { min-height: 44px; padding: 0 var(--s3); border-radius: 22px; border: 1.5px solid var(--ln); background: var(--cd); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; color: var(--fg); }
+@container app (max-width: 420px) { .pill .opt { display: none; } }
+.pill.slow { border-color: var(--wa); color: var(--wa); }
+.pill.lost { border-color: var(--bd); color: var(--bd); border-style: dashed; }
+.banner { grid-row: 2; margin: 0 var(--s4) var(--s2); padding: var(--s2) var(--s3); font-size: var(--t2); border: 1.5px dashed var(--ln); border-radius: var(--r); background: var(--hi); display: flex; gap: var(--s2); align-items: center; }
+.banner:empty { display: none; }
+.banner.bad { color: var(--bd); border-color: var(--bd); }
+.banner .grow { flex: 1; }
+.scroll { grid-row: 3; overflow-y: auto; overflow-x: hidden; padding: var(--s2) var(--s4) var(--s4); display: flex; flex-direction: column; gap: var(--s3); overscroll-behavior: contain; }
+.nav { grid-row: 4; display: flex; gap: var(--s2); padding: var(--s3) var(--s4) calc(var(--s3) + env(safe-area-inset-bottom)); border-top: 1.5px solid var(--ln); background: var(--bg); }
+.nav button { flex: 1 1 0; min-height: 48px; border: 1.5px solid var(--ln); background: var(--cd); border-radius: var(--r); font-size: var(--t3); font-weight: 600; cursor: pointer; color: var(--fg); }
+.nav button[aria-current="page"] { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.sidebar { display: none; }
+.ico { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.ico.sm { width: 18px; height: 18px; }
+
+h1 { font-size: var(--t5); margin: 0; line-height: 1.15; }
+h2 { font-size: var(--t3); margin: 0; }
+.lbl { font: 500 var(--t1) var(--mono); color: var(--mu); text-transform: uppercase; letter-spacing: .08em; }
+.sub { font-size: var(--t2); color: var(--mu); margin: 0; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.row { display: flex; gap: var(--s2); align-items: center; }
+.row.wrap { flex-wrap: wrap; }
+.between { justify-content: space-between; }
+.grow { flex: 1 1 auto; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: var(--s2); }
+.card { background: var(--cd); border: 1.5px solid var(--ln); border-radius: var(--r); padding: var(--s3) var(--s4); display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.card.dashed { border-style: dashed; background: var(--hi); }
+.btn { min-height: 48px; padding: 0 var(--s4); border-radius: var(--r); border: 1.5px solid var(--ln); background: var(--cd); color: var(--fg); font-weight: 600; font-size: var(--t3); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); text-align: center; }
+.btn.primary { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--mu); }
+.btn.small { min-height: 44px; font-size: var(--t2); padding: 0 var(--s3); }
+.btn.danger { color: var(--bd); border-color: var(--bd); }
+.btn[aria-pressed="true"] { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.btn.armed, .switch.armed { background: var(--bd); border-color: var(--bd); color: var(--bg); }
+.pending { position: relative; }
+.pending::after { content: ""; position: absolute; inset: -5px; border-radius: 8px; border: 2px dashed var(--ac); animation: pend 1s linear infinite; pointer-events: none; }
+@keyframes pend { 50% { opacity: .2; } }
+.state { font: 600 var(--t1) var(--mono); text-transform: uppercase; letter-spacing: .06em; display: inline-flex; gap: 6px; align-items: center; }
+.state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--mu); flex: none; }
+.state.on::before { background: var(--ok); }
+.state.wait::before { background: var(--wa); animation: pend 1s linear infinite; }
+.state.bad { color: var(--bd); }
+.state.bad::before { background: transparent; border: 2px solid var(--bd); width: 5px; height: 5px; }
+.tag { font: 600 var(--t1) var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 3px 6px; border-radius: 4px; border: 1.5px solid var(--ln); white-space: nowrap; }
+.tag.lit { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.tag.ink { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+
+/* Now playing, on every screen */
+.now { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px var(--s3); align-items: center; cursor: pointer; text-align: left; width: 100%; background: var(--cd); border: 1.5px solid var(--ln); border-radius: var(--r); padding: var(--s3) var(--s4); color: inherit; }
+.now .what { grid-column: 1 / -1; font-weight: 700; font-size: var(--t4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.now .lbl { grid-column: 1 / -1; display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.now .time { font: 500 var(--t2) var(--mono); font-variant-numeric: tabular-nums; }
+.now .next { font: 500 var(--t1) var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--mu); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.bar { grid-column: 1 / -1; height: 10px; border-radius: 5px; border: 1.5px solid var(--ln); overflow: hidden; background: var(--bg); }
+.bar i { display: block; height: 100%; background: var(--fg); }
+
+/* Room */
+.map { position: relative; aspect-ratio: 16 / 10; border: 1.5px dashed var(--ln); border-radius: var(--r); background: var(--hi); }
+.wall { position: absolute; border: 0; cursor: pointer; padding: 0; background: transparent; color: inherit; display: flex; gap: 4px; text-align: left; }
+.wall .strip { display: block; border-radius: 4px; background: var(--cd); border: 1.5px solid var(--ln); flex: none; }
+.wall.on .strip { background: var(--ac); border-color: var(--ac); }
+.wall.wait .strip { background: repeating-linear-gradient(90deg, var(--ac) 0 8px, var(--cd) 8px 14px); animation: pend 1.2s linear infinite; }
+.wall.bad .strip { border: 2px dashed var(--bd); }
+.wall.main { left: 6%; right: 6%; top: 6px; height: 46%; flex-direction: column; }
+.wall.main .strip { width: 100%; height: 14px; }
+.wall.paint { right: 6px; top: 34%; bottom: 6%; width: 50%; flex-direction: row-reverse; align-items: center; text-align: right; gap: 8px; }
+.wall.paint .strip { width: 14px; height: 100%; }
+.wall .wl { font-size: var(--t2); font-weight: 700; display: block; }
+.wall .ws { font: 500 var(--t1) var(--mono); text-transform: uppercase; letter-spacing: .04em; color: var(--mu); display: block; }
+.wall.bad .ws { color: var(--bd); }
+.boxspot { position: absolute; left: 6%; bottom: 8%; width: 42%; display: flex; flex-direction: column; gap: 2px; }
+.boxspot b { font-size: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scenes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
+.scene { min-height: 92px; border-radius: var(--r); border: 1.5px solid var(--ln); background: var(--cd); color: var(--fg); padding: var(--s3); display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: var(--s1); cursor: pointer; text-align: left; }
+.scene b { font-size: var(--t3); }
+.scene small { font-size: 12px; color: var(--mu); line-height: 1.25; }
+.scene[aria-pressed="true"] { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.scene[aria-pressed="true"] small { color: var(--on); }
+.scene.armed { background: var(--bd); border-color: var(--bd); color: var(--bg); }
+.scene.armed small { color: var(--bg); }
+.scene[disabled] { cursor: default; }
+.job { font-size: var(--t2); border: 1.5px solid var(--ln); border-radius: var(--r); padding: var(--s2) var(--s3); background: var(--cd); }
+.job.bad { border-color: var(--bd); }
+.job div + div { margin-top: 2px; }
+
+/* Live */
+.perf { display: flex; flex-direction: column; gap: var(--s3); }
+.perf .left, .perf .right { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.banks { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
+.banks button { min-width: 0; min-height: 44px; padding: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1.5px solid var(--ln); border-radius: var(--r); background: var(--cd); font-weight: 600; cursor: pointer; font-size: var(--t2); color: var(--fg); }
+.banks button[aria-pressed="true"] { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.pads { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s2); position: relative; }
+.pad { min-height: 64px; border-radius: var(--r); border: 1.5px solid var(--ln); background: var(--cd); color: var(--fg); padding: 8px 10px; display: flex; flex-direction: column; justify-content: space-between; align-items: stretch; text-align: left; cursor: pointer; position: relative; overflow: hidden; user-select: none; -webkit-user-select: none; gap: 6px; }
+.pad .pn { display: flex; flex-wrap: wrap; justify-content: space-between; font: 500 11px var(--mono); color: var(--mu); gap: 4px; }
+.pad .pl { font-weight: 700; font-size: var(--t2); line-height: 1.15; overflow-wrap: anywhere; }
+.pad.empty { border-style: dashed; color: var(--mu); background: transparent; }
+.pad.playing { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.pad.playing .pn { color: var(--on); }
+.pad .prog { position: absolute; left: 0; bottom: 0; height: 4px; background: var(--on); opacity: .7; }
+.pad.wide { grid-column: 1 / -1; min-height: 60px; }
+.mixer { background: var(--cd); border: 1.5px solid var(--ln); border-radius: var(--r); padding: var(--s2) 6px; display: flex; flex-direction: column; gap: var(--s1); }
+.params { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1px; }
+.params button { min-width: 0; min-height: 48px; padding: 2px 0; border-radius: var(--r); border: 1.5px solid transparent; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; color: var(--fg); }
+.params button span { font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--mu); }
+.params button b { font-family: var(--mono); font-size: var(--t2); font-variant-numeric: tabular-nums; }
+.params button[aria-pressed="true"] { border-color: var(--ln); background: var(--hi); }
+.params button.changed b { color: var(--ac); }
+.fader { display: flex; gap: var(--s2); align-items: center; }
+.fader input { flex: 1; min-width: 0; height: 44px; accent-color: var(--ac); }
+.fader .val { font: 700 var(--t4) var(--mono); min-width: 4.4ch; text-align: right; font-variant-numeric: tabular-nums; }
+.keys { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); }
+.keys .btn { min-height: 44px; padding: 0 4px; font-size: var(--t2); position: relative; overflow: hidden; }
+.keys .btn small { font: 500 10px var(--mono); opacity: .75; }
+.hold .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--bd); opacity: .35; pointer-events: none; }
+.hold.holding .fill { width: 100%; transition: width .6s linear; }
+.lockcover { position: absolute; inset: 0; z-index: 3; background: color-mix(in srgb, var(--bg) 70%, transparent); border-radius: var(--r); display: flex; align-items: center; justify-content: center; }
+.fadelvl { position: absolute; left: 0; bottom: 0; height: 3px; background: currentColor; opacity: .7; }
+
+/* Sheets and toast */
+.scrim { position: absolute; inset: 0; background: rgba(0,0,0,.5); z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
+.sheet { width: 100%; max-width: 560px; max-height: 88%; overflow: auto; background: var(--bg); border: 1.5px solid var(--ln); border-bottom: 0; border-radius: 14px 14px 0 0; padding: var(--s3) var(--s4) var(--s5); display: flex; flex-direction: column; gap: var(--s3); }
+.sheet .grab { align-self: center; width: 40px; height: 4px; border-radius: 2px; background: var(--ln); }
+.seg2 { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.seg2 .btn { flex: 1 1 0; min-width: 64px; padding: 0 var(--s2); }
+.snap { aspect-ratio: 16 / 9; border-radius: var(--r); border: 1.5px solid var(--ln); display: flex; align-items: flex-end; justify-content: flex-end; padding: 8px; font: 500 var(--t1) var(--mono); color: #fff; background: radial-gradient(circle at 30% 40%, #3a8bd8, transparent 55%), radial-gradient(circle at 70% 60%, #b84bd8, transparent 50%), #050510; }
+.snap.black { background: #000; color: #888; }
+.app[data-theme="night-red"] .snap { filter: grayscale(1) sepia(1) hue-rotate(-50deg) saturate(4) brightness(.6); }
+.toast { position: absolute; left: var(--s4); right: var(--s4); bottom: 92px; z-index: 30; background: var(--fg); color: var(--bg); border-radius: var(--r); padding: var(--s2) var(--s2) var(--s2) var(--s4); min-height: 56px; font-size: var(--t2); font-weight: 600; display: flex; gap: var(--s2); align-items: center; box-shadow: 0 6px 24px rgba(0,0,0,.3); }
+.toast.attop { top: var(--s3); bottom: auto; }
+.app.stale .scroll > * { opacity: .55; filter: saturate(.4); }
+.toast.bad { background: var(--bd); color: var(--bg); }
+.toast .grow { flex: 1; }
+.toast button { min-height: 44px; border-radius: var(--r); border: 1.5px solid currentColor; background: transparent; color: inherit; padding: 0 var(--s3); font-weight: 700; cursor: pointer; }
+
+/* Setup */
+.pagehead { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.pagehead .lbl { flex-basis: 100%; }
+.pagebody { display: flex; flex-direction: column; gap: var(--s3); }
+.list { display: flex; flex-direction: column; border: 1.5px solid var(--ln); border-radius: var(--r); overflow: hidden; background: var(--cd); }
+.item { display: flex; gap: var(--s3); align-items: center; min-height: 60px; padding: var(--s2) var(--s4); border: 0; border-top: 1.5px solid var(--ln); background: transparent; color: inherit; text-align: left; cursor: pointer; width: 100%; }
+.item:first-child { border-top: 0; }
+div.item { cursor: default; }
+.item .grow b { display: block; font-size: var(--t3); }
+.item .grow > span { display: block; font-size: var(--t2); color: var(--mu); }
+.item .chev { color: var(--mu); }
+.item[aria-current="true"] { background: var(--hi); }
+.item .acts { display: flex; gap: var(--s1); flex: none; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label, .field .lbl2 { font-size: var(--t2); font-weight: 600; }
+.field input, .field select { min-height: 48px; border-radius: var(--r); border: 1.5px solid var(--ln); background: var(--cd); padding: 0 var(--s3); width: 100%; color: var(--fg); }
+.days { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.days .btn { padding: 0; min-height: 44px; font-size: var(--t2); }
+.switch { min-width: 68px; min-height: 44px; border-radius: 22px; border: 1.5px solid var(--ln); background: var(--cd); cursor: pointer; position: relative; flex: none; }
+.switch::before { content: ""; position: absolute; inset: -3px -2px; }
+.switch::after { content: ""; position: absolute; top: 6px; left: 6px; width: 29px; height: 29px; border-radius: 50%; background: var(--mu); transition: left .15s; }
+.switch[aria-checked="true"] { background: var(--fg); border-color: var(--fg); }
+.switch[aria-checked="true"]::after { left: 32px; background: var(--bg); }
+.steps { display: flex; gap: var(--s1); }
+.steps i { flex: 1; height: 6px; border-radius: 3px; border: 1.5px solid var(--ln); }
+.steps i.done { background: var(--fg); }
+.progress { height: 10px; border-radius: 5px; border: 1.5px solid var(--ln); overflow: hidden; background: var(--bg); }
+.progress i { display: block; height: 100%; background: var(--fg); }
+.big { font: 700 var(--t6) var(--mono); letter-spacing: .1em; }
+.wk { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.wk div { min-height: 64px; border: 1.5px solid var(--ln); border-radius: 4px; padding: 3px; font: 500 10px var(--mono); display: flex; flex-direction: column; gap: 2px; overflow: hidden; background: var(--cd); }
+.wk div b { font-size: 10px; color: var(--mu); text-transform: uppercase; }
+.wk div span { background: var(--hi); border-radius: 3px; padding: 1px 2px; white-space: nowrap; overflow: hidden; }
+.kv { display: flex; justify-content: space-between; gap: var(--s2); padding: 6px 0; border-top: 1.5px solid var(--ln); font-size: var(--t2); align-items: center; }
+.kv:first-of-type { border-top: 0; }
+.kv .mono { font-size: 12px; color: var(--mu); text-align: right; text-transform: uppercase; letter-spacing: .04em; }
+.meter { height: 10px; border-radius: 5px; border: 1.5px solid var(--ln); overflow: hidden; background: var(--bg); }
+.meter i { display: block; height: 100%; background: var(--fg); }
+.radio { display: flex; justify-content: space-between; align-items: center; min-height: 44px; padding: 0 var(--s3); border: 1.5px solid var(--ln); border-radius: var(--r); background: var(--cd); cursor: pointer; font-size: var(--t2); text-align: left; width: 100%; color: var(--fg); }
+.radio[aria-checked="true"] { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+.radio small { font: 500 var(--t1) var(--mono); text-transform: uppercase; opacity: .8; }
+.ovw { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--s3); }
+.ovw .item { border: 1.5px solid var(--ln); border-radius: var(--r); background: var(--cd); }
+.setuplist { display: flex; flex-direction: column; gap: var(--s3); }
+.widehint { display: none; }
+
+/* Desk layout: sidebar like the wireframes, card grids */
+@container app (min-width: 700px) {
+  .app { grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .top, .nav { display: none; }
+  .sidebar { display: flex; flex-direction: column; grid-row: 1 / -1; grid-column: 1; border-right: 1.5px solid var(--ln); padding: var(--s5) var(--s3) var(--s4); gap: 2px; overflow-y: auto; }
+  .sidebar > * { flex: none; }
+  .sidebar .brand { padding: 0 var(--s3) var(--s3); }
+  .sidebar .lbl { padding: var(--s3) var(--s3) var(--s1); }
+  .sidebar button.nv { min-height: 44px; border: 0; border-radius: var(--r); background: transparent; text-align: left; padding: 0 var(--s3); font-weight: 600; font-size: var(--t2); cursor: pointer; color: var(--fg); display: flex; align-items: center; justify-content: space-between; }
+  .sidebar button.nv[aria-current="page"] { background: var(--fg); color: var(--bg); }
+  .sidebar .foot { margin-top: auto; padding: var(--s4) var(--s3) 0; display: flex; flex-direction: column; gap: var(--s2); align-items: flex-start; }
+  .banner { grid-column: 2; grid-row: 1; margin: var(--s4) var(--s5) 0; }
+  .scroll, .scroll.nonav { grid-column: 2; grid-row: 2; padding: var(--s5); gap: var(--s4); }
+  .toast { left: auto; right: var(--s5); bottom: var(--s5); width: 400px; }
+  .pads { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .pad { min-height: 88px; }
+  .roomgrid { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s4); align-items: start; }
+  .pagebody { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--s4); align-items: start; }
+  .pagebody > .pagehead, .pagebody > .list, .pagebody > .wide, .pagebody > .steps { grid-column: 1 / -1; }
+  .setuplist { display: none; }
+  .widehint { display: block; }
+  .backbtn { display: none !important; }
+  .scrim { align-items: center; }
+  .sheet { border-radius: 14px; border-bottom: 1.5px solid var(--ln); }
+  .media .item { flex-wrap: nowrap !important; }
+  .media .item .grow b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .media .item .meta { display: grid !important; flex: none; grid-template-columns: 56px 84px 52px; gap: var(--s2); font: 500 11px var(--mono); text-transform: uppercase; color: var(--mu); }
+}
+.roomgrid { display: flex; flex-direction: column; gap: var(--s3); }
+.scroll.nonav { grid-row: 3 / -1; }
+.roomgrid > div { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.media .item .meta { display: none; }
+@container app (min-width: 900px) {
+  .perf { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr); gap: var(--s4); align-items: start; }
+  .perf .params { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container app (min-width: 1100px) { .scenes { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="protobar"><span>Prototype: a fake box, nothing is sent</span><button type="button" id="openside">Roles, notes</button></div>
+<div class="proto">
+  <div class="stage">
+    <div class="device" id="device" data-size="phone"><div id="app"></div></div>
+  </div>
+  <aside class="side" id="side" aria-label="Prototype controls">
+    <button type="button" class="pbtn closeside" id="closeside">Back to the prototype</button>
+    <div><h2>Who is holding it</h2><div class="seg" id="roles"></div></div>
+    <div><h2>Device</h2><div class="seg" id="sizes"></div></div>
+    <div><h2>Theme</h2><div class="seg" id="themes"></div></div>
+    <div><h2>Link to the box</h2><div class="seg" id="conns"></div>
+      <label class="check"><input type="checkbox" id="unplug"> Painting wall projector unplugged</label></div>
+    <div><h2>Journeys</h2><div class="journeys" id="journeys"></div><p class="hint">Each one sets up the fake box and says what to tap.</p><div class="jhint" id="jhint"></div></div>
+    <div class="notes"><h2>Notes on this screen</h2>
+      <p class="hint">For: <span class="who" id="notefor"></span>. Kept in this browser only.</p>
+      <textarea id="notes" aria-label="Notes on this screen"></textarea>
+      <p class="hint" id="notestate"></p>
+      <button type="button" class="pbtn" id="allnotes" style="width:100%">Show all notes</button>
+      <pre id="allnotesout" hidden></pre>
+    </div>
+  </aside>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- helpers
+  function store(k, v) {
+    try {
+      if (v === undefined) return window.localStorage.getItem(k);
+      window.localStorage.setItem(k, v); return true;
+    } catch (e) { return v === undefined ? null : false; }
+  }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function mmss(s) {
+    s = Math.max(0, Math.floor(s));
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+    return (h ? h + ':' + pad2(m) : pad2(m)) + ':' + pad2(x);
+  }
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  var ICONS = {
+    projector: 'M3 8h18v9H3zM15 12.5m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M6 17v2M18 17v2',
+    lock: 'M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3',
+    sun: 'M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2',
+    moon: 'M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10z',
+    wave: 'M2 12c3-4 5-4 8 0s5 4 8 0 3-2 4-1M2 17c3-4 5-4 8 0s5 4 8 0',
+    game: 'M6 9h12a4 4 0 0 1 0 8l-3-2H9l-3 2a4 4 0 0 1 0-8zM8 11v3M6.5 12.5h3',
+    frame: 'M4 4h16v16H4zM8 8h8v8H8z',
+    film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4',
+    chev: 'M9 6l6 6-6 6',
+    back: 'M15 6l-6 6 6 6',
+    eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6'
+  };
+  function icon(name, cls) {
+    var s = document.createElementNS(SVGNS, 'svg');
+    s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'ico' + (cls ? ' ' + cls : '')); s.setAttribute('aria-hidden', 'true');
+    var p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', ICONS[name] || ''); s.appendChild(p);
+    return s;
+  }
+  function h(tag, attrs) {
+    var el = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
+      if (v === null || v === undefined || v === false) return;
+      if (k === 'text') el.textContent = v;
+      else if (k === 'class') el.className = v;
+      else if (k === 'value') el.value = v;
+      else el.setAttribute(k, v === true ? '' : v);
+    });
+    for (var i = 2; i < arguments.length; i++) add(el, arguments[i]);
+    return el;
+  }
+  function add(el, kid) {
+    if (kid === null || kid === undefined || kid === false) return;
+    if (Array.isArray(kid)) { kid.forEach(function (k) { add(el, k); }); return; }
+    el.appendChild(typeof kid === 'string' ? document.createTextNode(kid) : kid);
+  }
+  function btn(text, act, arg, cls, extra) {
+    var a = { type: 'button', class: 'btn' + (cls ? ' ' + cls : ''), 'data-act': act };
+    if (arg !== undefined && arg !== null) a['data-arg'] = String(arg);
+    if (extra) Object.keys(extra).forEach(function (k) { a[k] = extra[k]; });
+    var b = h('button', a);
+    if (Array.isArray(text)) add(b, text); else b.textContent = text;
+    return b;
+  }
+  function pressed(on) { return on ? 'true' : 'false'; }
+
+  // ---------------------------------------------------------------- the fake box
+  var SHADERS = ['nxlx-aurora', 'nxlx-drift', 'nxlx-ember', 'nxlx-horizon', 'nxlx-lattice', 'nxlx-nebula', 'nxlx-prism', 'nxlx-pulse', 'nxlx-silk', 'nxlx-tide'];
+  var MEDIA0 = [
+    { name: 'intro.mp4', dur: 42, size: '38 MB', codec: 'H.264', res: '1920x1080', fps: '30' },
+    { name: 'tunnel.mp4', dur: 200, size: '164 MB', codec: 'H.264', res: '1920x1080', fps: '25' },
+    { name: 'loop_a.mp4', dur: 96, size: '81 MB', codec: 'H.264', res: '1920x1080', fps: '30' },
+    { name: 'loop_b.mp4', dur: 120, size: '102 MB', codec: 'H.264', res: '1280x720', fps: '30' },
+    { name: 'sting.mp4', dur: 6, size: '5 MB', codec: 'H.264', res: '1920x1080', fps: '30' },
+    { name: 'outro.mp4', dur: 75, size: '60 MB', codec: 'H.264', res: '1920x1080', fps: '25' },
+    { name: 'rain_ambience.mp4', dur: 600, size: '410 MB', codec: 'H.264', res: '1920x1080', fps: '24' },
+    { name: 'strobe_hits.mp4', dur: 30, size: '88 MB', codec: 'H.264', res: '1920x1080', fps: '60', advice: '1080p at 60 frames a second. May stutter on this box.' },
+    { name: 'feature_film.mp4', dur: 5640, size: '2.1 GB', codec: 'H.264', res: '1920x1080', fps: '24' },
+    { name: 'logo.png', dur: 0, size: '120 KB', codec: 'PNG', res: '1920x1080', fps: 'still', picture: true }
+  ];
+  var MEDIA = MEDIA0.slice();
+  function mediaByName(n) { return MEDIA.filter(function (m) { return m.name === n; })[0]; }
+  function pad(label, file, ending) { return { label: label, file: file, ending: ending || 'loop' }; }
+  function emptyPads(n) { var a = []; for (var i = 0; i < n; i++) a.push(null); return a; }
+  var MODULES = [
+    { id: 'core', name: 'Player and panel', type: 'Core', what: 'Pads, mix, library, health.', where: 'Everywhere', locked: true },
+    { id: 'projector', name: 'Projector control', type: 'Beta', what: 'Projectors on and off, their input, picture and sound mute.', where: 'Room, and Setup > Projectors' },
+    { id: 'room', name: 'Room scenes', type: 'Beta', what: 'Walls and one-tap scenes for staff.', where: 'Room', needs: 'projector' },
+    { id: 'shaders', name: 'Shaders and Vibes', type: 'Beta', what: 'Moving pictures made by the box, and endless Vibes.', where: 'Live > Vibes bank, and scenes' },
+    { id: 'schedule', name: 'Weekly schedule', type: 'Beta', what: 'Scenes, Vibes, clips and projectors at set times.', where: 'Setup > Schedule and startup' },
+    { id: 'network', name: 'Network settings', type: 'Beta', what: 'Wired address, join a Wi-Fi, or the box’s own hotspot.', where: 'Setup > Network' },
+    { id: 'mapper', name: 'Projection mapper', type: 'Beta', what: 'Quads, triangles and grids, lined up from a phone.', where: 'Setup > Mapper' },
+    { id: 'sync', name: 'Video wall and sync', type: 'Beta', what: 'Several boxes in step, or one picture over many screens.', where: 'Setup > Wall and sync' },
+    { id: 'streams', name: 'Streams', type: 'Beta', what: 'SRT, RTSP and RTMP sources.', where: 'Live > Live in bank, Setup > Inputs' },
+    { id: 'midi', name: 'MIDI controllers', type: 'Beta', what: 'Pads, faders and knobs on USB, by learn.', where: 'Setup > Control' },
+    { id: 'dmx', name: 'DMX', type: 'Beta', what: 'A lighting desk over Art-Net or sACN.', where: 'Setup > Control' },
+    { id: 'ndi', name: 'NDI input', type: 'Not built', what: 'Video from Resolume or MadMapper over the network.', where: '', notBuilt: true },
+    { id: 'dante', name: 'Dante and AES67', type: 'Not built', what: 'Network audio.', where: '', notBuilt: true }
+  ];
+  var THEMES = [['light', 'Light'], ['dark-stage', 'Dark stage'], ['night-red', 'Night red'], ['high-contrast', 'High contrast']];
+
+  function freshBox() {
+    MEDIA = MEDIA0.slice();
+    return {
+      player: { kind: 'none', title: '', file: '', pos: 0, dur: 0, paused: false, ending: 'loop', pad: null, shader: '' },
+      black: false, fade: 1, fadeTarget: 1, fadeTime: 2, test: false,
+      vibes: { on: false, left: 180, dwell: 180, idx: 0 },
+      mix: { bright: 100, speed: 100, vol: 80, size: 100, x: 0, y: 0, rotate: 0, flipH: false, flipV: false, overlay: false, transition: 'dip' },
+      banks: [
+        { name: 'A', pads: [pad('Intro', 'intro.mp4', 'once'), pad('Tunnel', 'tunnel.mp4'), pad('Loop A', 'loop_a.mp4'), pad('Loop B', 'loop_b.mp4'), pad('Sting', 'sting.mp4', 'hold'), pad('Outro', 'outro.mp4', 'once'), pad('Rain', 'rain_ambience.mp4'), pad('Strobe hits', 'strobe_hits.mp4'), null, null, null, null] },
+        { name: 'B', pads: [pad('Film', 'feature_film.mp4', 'once'), pad('Logo', 'logo.png', 'hold'), null, null, null, null, null, null, null, null, null, null] },
+        { name: 'C', pads: emptyPads(12) }
+      ],
+      projectors: [
+        { id: 'p1', name: 'Main wall projector', model: 'Epson EB-X39', host: '192.168.1.50', wall: 'main', power: 'off', t: 0, input: '32', pm: false, sm: false, lamp: 1234, queue: null,
+          inputs: [{ code: '11', name: 'Computer 1', label: '' }, { code: '32', name: 'Digital 2', label: 'Box' }, { code: '33', name: 'Digital 3', label: 'Console' }] },
+        { id: 'p2', name: 'Painting wall projector', model: 'Epson EB-X27', host: '192.168.1.51', wall: 'paint', power: 'off', t: 0, input: '32', pm: false, sm: false, lamp: 880, queue: null,
+          inputs: [{ code: '11', name: 'Computer 1', label: '' }, { code: '32', name: 'Digital 2', label: 'Box' }, { code: '21', name: 'Video 1', label: '' }] }
+      ],
+      walls: [{ id: 'main', name: 'Main wall', proj: ['p1'] }, { id: 'paint', name: 'Painting wall', proj: ['p2'] }],
+      scenes: [
+        { id: 'open', name: 'Open room', icon: 'sun', desc: 'Both walls on, Vibes', confirm: false, walls: { main: { power: 'on', input: '32' }, paint: { power: 'on', input: '32' } }, box: 'vibes' },
+        { id: 'amb', name: 'Ambience', icon: 'wave', desc: 'Vibes on both walls', confirm: false, walls: { main: { power: 'on', input: '32', pm: false }, paint: { power: 'on', input: '32', pm: false } }, box: 'vibes' },
+        { id: 'film', name: 'Film night', icon: 'film', desc: 'Film on the main wall, painting wall dark', confirm: true, walls: { main: { power: 'on', input: '32' }, paint: { pm: true } }, box: 'film' },
+        { id: 'console', name: 'Console', icon: 'game', desc: 'Console on the main wall, Vibes on the painting', confirm: false, walls: { main: { power: 'on', input: '33' }, paint: { power: 'on', input: '32' } }, box: 'vibes' },
+        { id: 'paintonly', name: 'Painting only', icon: 'frame', desc: 'Main wall off, Vibes on the painting', confirm: true, walls: { main: { power: 'off' }, paint: { power: 'on', input: '32' } }, box: 'vibes' },
+        { id: 'close', name: 'Close room', icon: 'moon', desc: 'Stop, both projectors off', confirm: true, walls: { main: { power: 'off' }, paint: { power: 'off' } }, box: 'stop' }
+      ],
+      activeScene: null, job: null,
+      modules: { core: true, projector: true, room: true, shaders: true, schedule: true, network: false, mapper: false, sync: false, streams: false, midi: false, dmx: false },
+      osc: false,
+      autostart: 'vibes',
+      schedule: [
+        { id: 's1', time: '10:00', days: [0, 1, 2, 3, 4, 5], what: 'scene:open' },
+        { id: 's2', time: '23:30', days: [0, 1, 2, 3, 4, 5, 6], what: 'scene:close' }
+      ],
+      net: { wired: 'Automatic, 192.168.1.9', wifi: { mode: 'off', ssid: '' }, pending: null },
+      codes: { guest: null, staff: null, onScreen: false },
+      upload: null
+    };
+  }
+
+  var S = {
+    role: 'presenter', size: 'phone', theme: 'light', conn: 'good', unplugged: false,
+    mode: 'room', page: null, sheet: null, toast: null, pending: {}, armed: null, locked: false,
+    param: 'bright', bank: 0, form: {}, wizard: null, joined: true, snapAt: null,
+    box: freshBox()
+  };
+  function B() { return S.box; }
+
+  // ---------------------------------------------------------------- derived views
+  function modesFor(role) {
+    if (role === 'guest') return ['room'];
+    if (role === 'presenter') return ['room', 'live'];
+    return ['room', 'live', 'setup'];
+  }
+  function can(level) { var r = { guest: 0, presenter: 1, owner: 2 }; return r[S.role] >= r[level]; }
+  function proj(id) { return B().projectors.filter(function (p) { return p.id === id; })[0]; }
+  function inputName(p, code) { var i = p.inputs.filter(function (x) { return x.code === code; })[0]; return i ? (i.label || i.name) : 'input ' + code; }
+  function wallOf(id) { return B().walls.filter(function (w) { return w.id === id; })[0]; }
+  function screenShows() {
+    var p = B().player;
+    if (p.kind === 'none') return 'Nothing playing';
+    if (p.kind === 'vibes') return 'Vibes: ' + p.shader;
+    return p.title;
+  }
+  function wallState(w) {
+    var p = proj(w.proj[0]);
+    if (!p) return { cls: 'bad', word: 'No projector', detail: '' };
+    if (p.power === 'noanswer') return { cls: 'bad', word: 'No answer', detail: 'check power and cable' };
+    if (p.power === 'warming') return { cls: 'wait', word: 'Warming up', detail: mmss(p.t) + (p.queue && p.queue.input ? ', then ' + inputName(p, p.queue.input) : '') };
+    if (p.power === 'cooling') return { cls: 'wait', word: 'Cooling down', detail: mmss(p.t) };
+    if (p.power === 'off') return { cls: '', word: 'Off', detail: '' };
+    var what = inputName(p, p.input);
+    if (p.input === '32') what = 'Box: ' + (B().black ? 'black' : screenShows());
+    if (p.pm) what = 'picture muted';
+    return { cls: 'on', word: 'On', detail: what + (p.sm ? ', sound muted' : '') };
+  }
+  function pillText() {
+    if (S.conn === 'lost') return 'No link';
+    if (S.conn === 'slow') return 'Slow link';
+    return can('owner') ? ['Pi 4 · ', h('span', { class: 'opt', text: '1080p60 · ' }), '52°C · OK'] : 'Box OK';
+  }
+
+  // ---------------------------------------------------------------- sending, honestly
+  function latency() { return S.conn === 'slow' ? 2200 : 300; }
+  function send(key, label, fn, undo) {
+    if (S.conn === 'lost') { toast('The box is not answering. Nothing was sent.', true); render(); return; }
+    if (S.pending[key]) return;
+    S.pending[key] = true; render();
+    setTimeout(function () {
+      delete S.pending[key];
+      var res = fn();
+      if (res && res.error) toast(res.error, true);
+      else if (label) toast(label, false, undo);
+      render();
+    }, latency());
+  }
+  var toastTimer = null;
+  function toast(text, bad, undo) {
+    S.toast = { text: text, bad: !!bad, undo: undo || null };
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { S.toast = null; render(); }, undo ? 8000 : 3500);
+  }
+  function arm(key) { S.armed = { key: key, until: Date.now() + 6000 }; }
+  function isArmed(key) { return !!(S.armed && S.armed.key === key && Date.now() < S.armed.until); }
+
+  // ---------------------------------------------------------------- player
+  function playFile(file, title, ending, padRef) {
+    var b = B(), m = mediaByName(file);
+    b.vibes.on = false; b.test = false;
+    b.player = { kind: m && m.picture ? 'picture' : 'clip', title: title || file, file: file, pos: 0, dur: m ? m.dur : 0, paused: false, ending: ending || 'loop', pad: padRef || null, shader: '' };
+  }
+  function playLive(name) { var b = B(); b.vibes.on = false; b.player = { kind: 'live', title: name, file: '', pos: 0, dur: 0, paused: false, ending: 'loop', pad: null, shader: '' }; }
+  function startVibes() {
+    var b = B();
+    b.vibes.on = true; b.vibes.left = b.vibes.dwell; b.vibes.idx = (b.vibes.idx + 1) % SHADERS.length;
+    b.player = { kind: 'vibes', title: 'Vibes', file: '', pos: 0, dur: b.vibes.dwell, paused: false, ending: 'loop', pad: null, shader: SHADERS[b.vibes.idx] };
+  }
+  function stopAll() { var b = B(); b.vibes.on = false; b.test = false; b.player = { kind: 'none', title: '', file: '', pos: 0, dur: 0, paused: false, ending: 'loop', pad: null, shader: '' }; }
+  function darkNote() { var b = B(); return b.black ? ' Blackout is still on.' : (b.fadeTarget === 0 ? ' The picture is still faded out.' : ''); }
+
+  // ---------------------------------------------------------------- projectors
+  function projCmd(p, step) {
+    if (p.id === 'p2' && S.unplugged) { p.power = 'noanswer'; return false; }
+    if (step.power === 'on' && (p.power === 'off' || p.power === 'cooling' || p.power === 'noanswer')) { p.power = 'warming'; p.t = 30; p.queue = { input: step.input, pm: step.pm }; return true; }
+    if (step.power === 'off' && p.power !== 'off') { p.power = 'cooling'; p.t = 20; p.queue = null; return true; }
+    if (p.power === 'warming') { p.queue = p.queue || {}; if (step.input) p.queue.input = step.input; if (step.pm !== undefined) p.queue.pm = step.pm; return true; }
+    if (p.power === 'on') { if (step.input) p.input = step.input; if (step.pm !== undefined) p.pm = step.pm; if (step.sm !== undefined) p.sm = step.sm; }
+    return true;
+  }
+  function applyScene(sc) {
+    var b = B();
+    b.activeScene = sc.id;
+    b.walls.forEach(function (w) { var step = sc.walls[w.id]; if (step) w.proj.forEach(function (pid) { projCmd(proj(pid), step); }); });
+    if (sc.box === 'vibes' && b.modules.shaders) { if (!b.vibes.on) startVibes(); b.black = false; b.fadeTarget = 1; b.fade = 1; }
+    if (sc.box === 'film') { playFile('feature_film.mp4', 'Film', 'once'); b.black = false; b.fadeTarget = 1; b.fade = 1; }
+    if (sc.box === 'stop') stopAll();
+    b.job = { scene: sc.id, name: sc.name };
+  }
+
+  // ---------------------------------------------------------------- ACTIONS (called from data-act)
+  var A = {};
+  A.mode = function (m) { S.mode = m; S.page = null; S.sheet = null; S.wizard = null; };
+  A.sheet = function (t) { S.sheet = { type: t }; };
+  A.close = function () { S.sheet = null; S.form = {}; };
+  A.page = function (p) { S.mode = 'setup'; S.page = p; S.wizard = null; S.form = {}; S.sheet = null; };
+  A.back = function () { S.page = null; S.wizard = null; };
+  A.undo = function () { if (S.toast && S.toast.undo) { var u = S.toast.undo; S.toast = null; u(); } };
+
+  // Room
+  A.scene = function (id) {
+    if (!can('presenter')) return;
+    var sc = B().scenes.filter(function (s) { return s.id === id; })[0];
+    if (sc.confirm && !isArmed('scene:' + id)) { arm('scene:' + id); return; }
+    S.armed = null;
+    send('scene:' + id, sc.name + ': started. Projectors take about 30 seconds.', function () { applyScene(sc); });
+  };
+  A.wall = function (id) { S.sheet = { type: 'wall', arg: id }; };
+  A.wallpower = function (arg) {
+    var parts = arg.split(':'), w = wallOf(parts[0]), on = parts[1] === 'on';
+    if (!on && !isArmed('walloff:' + w.id)) { arm('walloff:' + w.id); return; }
+    S.armed = null;
+    send('wallpower:' + w.id, w.name + (on ? ': switching on.' : ': switching off.'), function () {
+      var ok = true;
+      w.proj.forEach(function (pid) { ok = projCmd(proj(pid), { power: on ? 'on' : 'off', input: proj(pid).input }) && ok; });
+      if (!ok) return { error: w.name + ': no answer. Is the projector plugged in?' };
+    });
+  };
+  A.wallinput = function (arg) {
+    var parts = arg.split(':'), w = wallOf(parts[0]);
+    send('wallinput:' + w.id, null, function () {
+      var p = proj(w.proj[0]); projCmd(p, { input: parts[1] });
+      if (p.power === 'noanswer') return { error: w.name + ': no answer.' };
+      toast(w.name + ' shows ' + inputName(p, parts[1]) + (p.power === 'warming' ? ' once it has warmed up.' : '.'));
+    });
+  };
+  A.wallmute = function (arg) {
+    var parts = arg.split(':'), w = wallOf(parts[0]), p = proj(w.proj[0]), kind = parts[1];
+    send('wallmute:' + w.id + kind, null, function () {
+      if (p.power === 'off') return { error: w.name + ' is switched off.' };
+      var step = {}; step[kind] = !p[kind]; projCmd(p, step);
+      if (p.power === 'noanswer') return { error: w.name + ': no answer.' };
+      toast(w.name + ': ' + (kind === 'pm' ? 'picture ' : 'sound ') + (p[kind] ? 'muted.' : 'back.'));
+    });
+  };
+  A.vol = function (d) { send('vol', null, function () { var m = B().mix; m.vol = Math.max(0, Math.min(100, m.vol + (+d))); toast('Volume ' + m.vol + '.'); }); };
+
+  // Live
+  A.bank = function (i) { S.bank = +i; };
+  A.pad = function (arg) {
+    if (S.locked) return;
+    var bi = +arg.split(':')[0], pi = +arg.split(':')[1], pd = B().banks[bi].pads[pi];
+    if (!pd) { if (can('owner')) { S.sheet = { type: 'pad', arg: arg }; S.form = {}; } return; }
+    send('pad', null, function () { playFile(pd.file, pd.label, pd.ending, [bi, pi]); toast('Playing ' + pd.label + '.' + darkNote()); });
+  };
+  A.live = function (name) { if (S.locked) return; send('pad', null, function () { playLive(name); toast('Showing ' + name + '.' + darkNote()); }); };
+  A.shader = function (name) {
+    if (S.locked) return;
+    send('pad', null, function () { var b = B(); b.vibes.on = false; b.player = { kind: 'shader', title: name, file: '', pos: 0, dur: 0, paused: false, ending: 'loop', pad: null, shader: name }; toast('Showing ' + name + '.' + darkNote()); });
+  };
+  A.vibes = function () {
+    if (S.locked) return;
+    var on = B().vibes.on;
+    send('vibes', null, function () { if (on) { stopAll(); toast('Vibes stopped. The screen is black.'); } else { startVibes(); toast('Vibes started.' + darkNote()); } });
+  };
+  A.vnext = function () { send('vnext', null, function () { var b = B(); b.vibes.idx = (b.vibes.idx + 1) % SHADERS.length; b.vibes.left = b.vibes.dwell; b.player.shader = SHADERS[b.vibes.idx]; b.player.pos = 0; }); };
+  A.param = function (p) { S.param = p; };
+  A.resetparam = function () { var d = PARAMS[S.param]; send('mix', d.name + ' back to ' + d.fmt(d.def) + '.', function () { B().mix[S.param] = d.def; }); };
+  A.blackout = function () { if (S.locked) return; send('black', null, function () { B().black = !B().black; }); };
+  A.fade = function () { if (S.locked) return; send('fade', null, function () { var b = B(); b.fadeTarget = b.fadeTarget === 0 ? 1 : 0; }); };
+  A.freeze = function () { if (S.locked) return; send('freeze', null, function () { var p = B().player; if (p.kind === 'none') return { error: 'Nothing is playing.' }; p.paused = !p.paused; }); };
+  A.stopkey = function (arg, el, ev) {
+    if (ev && ev.detail === 0) { if (!isArmed('stop')) { arm('stop'); return; } S.armed = null; doStop(); }
+    else toast('Hold Stop for a moment to end what is playing.');
+  };
+  function doStop() { send('stop', 'Stopped. The screen is black until you play something.', function () { stopAll(); }); }
+  A.lock = function () { S.locked = true; toast('Locked: pads and keys ignore taps. Hold Unlock to use them.'); };
+  A.seek = function (d) { send('seek', null, function () { var p = B().player; if (p.dur) p.pos = Math.max(0, Math.min(p.dur - 1, p.pos + (+d))); }); };
+  A.restart = function () { send('seek', null, function () { B().player.pos = 0; }); };
+  A.snapshot = function () { send('snap', null, function () { S.snapAt = new Date(); }); };
+  A.mixset = function (arg) {
+    var k = arg.split(':')[0], v = arg.split(':')[1];
+    send('mix:' + k, null, function () {
+      var m = B().mix;
+      if (k === 'flipH' || k === 'flipV' || k === 'overlay') m[k] = !m[k];
+      else if (k === 'rotate') m[k] = +v;
+      else if (k === 'transition') m[k] = v;
+      else if (k === 'fadeTime') B().fadeTime = +v;
+    });
+  };
+  A.test = function () { send('test', null, function () { var b = B(); b.test = !b.test; }); };
+  A.setpad = function (arg) {
+    var s = S.sheet.arg.split(':'), bi = +s[0], pi = +s[1];
+    var file = arg, label = (S.form.padlabel || '').trim() || file.replace(/\.[a-z0-9]+$/i, '').replace(/_/g, ' ');
+    var before = B().banks[bi].pads[pi], ending = S.form.padend || 'loop';
+    B().banks[bi].pads[pi] = file ? pad(label, file, ending) : null;
+    S.sheet = null; S.form = {};
+    toast(file ? 'Pad ' + (pi + 1) + ' of bank ' + B().banks[bi].name + ' now plays ' + label + '.' : 'Pad emptied.', false, function () { B().banks[bi].pads[pi] = before; render(); });
+  };
+  A.padend = function (v) { S.form.padend = v; };
+
+  // Setup: library
+  A.upload = function () { var b = B(); if (b.upload && b.upload.pct < 100) return; b.upload = { name: 'friday_loop.mp4', pct: 0, size: '182 MB' }; };
+  A.uploaddone = function () { B().upload = null; };
+  A.putonpad = function (name) { S.sheet = { type: 'putpad', arg: name }; S.bank = 0; };
+  A.putbank = function (i) { S.bank = +i; };
+  A.putpad = function (arg) {
+    var name = S.sheet.arg, bi = +arg.split(':')[0], pi = +arg.split(':')[1], before = B().banks[bi].pads[pi];
+    var label = name.replace(/\.[a-z0-9]+$/i, '').replace(/_/g, ' ');
+    label = label.charAt(0).toUpperCase() + label.slice(1);
+    B().banks[bi].pads[pi] = pad(label, name, 'loop');
+    S.sheet = null;
+    toast(label + ' is on pad ' + (pi + 1) + ' of bank ' + B().banks[bi].name + '.', false, function () { B().banks[bi].pads[pi] = before; render(); });
+  };
+  A.playmedia = function (name) { send('playmedia', null, function () { var m = mediaByName(name); playFile(name, name, m && m.dur > 600 ? 'once' : 'loop'); toast('Playing ' + name + '.' + darkNote()); }); };
+  A.delmedia = function (name) {
+    if (!isArmed('del:' + name)) { arm('del:' + name); return; }
+    S.armed = null;
+    MEDIA = MEDIA.filter(function (m) { return m.name !== name; });
+    toast(name + ' deleted from the box.');
+  };
+
+  // Setup: projector wizard
+  A.addproj = function () { S.wizard = { step: 1 }; S.form = { host: S.form.host || '192.168.1.52', pw: '' }; };
+  A.wizask = function () {
+    S.wizard = { step: 2, asking: true };
+    setTimeout(function () { if (S.wizard && S.wizard.step === 2) { S.wizard.asking = false; S.wizard.found = { model: 'Epson EB-X39', cls: 'PJLink class 1', inputs: ['Computer 1', 'Digital 2', 'Digital 3'] }; render(); } }, S.conn === 'slow' ? 3000 : 1400);
+  };
+  A.wizname = function () { S.wizard = { step: 3 }; S.form.pname = S.form.pname || 'Side wall projector'; S.form.pwall = S.form.pwall || 'new'; };
+  A.wizwall = function (v) { S.form.pwall = v; };
+  A.wizadd = function () {
+    var b = B(), id = 'p' + (b.projectors.length + 1), wall = S.form.pwall;
+    if (wall === 'new') { b.walls.push({ id: 'side', name: 'Side wall', proj: [id] }); wall = 'side'; }
+    else wallOf(wall).proj.push(id);
+    b.projectors.push({ id: id, name: S.form.pname || 'Projector', model: 'Epson EB-X39', host: S.form.host, wall: wall, power: 'off', t: 0, input: '32', pm: false, sm: false, lamp: 12, queue: null,
+      inputs: [{ code: '11', name: 'Computer 1', label: '' }, { code: '32', name: 'Digital 2', label: 'Box' }, { code: '33', name: 'Digital 3', label: '' }] });
+    S.wizard = { step: 4 };
+  };
+  A.wizdone = function () { S.wizard = null; };
+
+  // Setup: network
+  A.netpick = function (v) { S.form.netkind = v; S.form.scan = null; S.form.ssid = ''; };
+  A.scan = function () {
+    S.form.scanning = true;
+    setTimeout(function () { S.form.scanning = false; S.form.scan = [
+      { ssid: 'Leyline-Staff', sig: 'Strong', sec: 'WPA2' }, { ssid: 'Leyline-Guests', sig: 'Strong', sec: 'Open' },
+      { ssid: 'NXLX-private', sig: 'Medium', sec: 'WPA2/WPA3' }, { ssid: 'Office-8021X', sig: 'Weak', sec: 'Company login, not supported', no: true }]; render(); }, 1200);
+  };
+  A.ssid = function (v) { S.form.ssid = v; };
+  A.netapply = function () {
+    var b = B(), k = S.form.netkind;
+    if (k === 'join' && !S.form.ssid) { toast('Choose a network first.', true); return; }
+    if (k === 'join' && S.form.ssid !== 'Leyline-Guests' && (S.form.wpw || '').length < 8) { toast('The password has at least 8 characters.', true); return; }
+    if (k === 'hotspot' && (S.form.hpw || '').length < 8) { toast('Give the hotspot a password of at least 8 characters.', true); return; }
+    send('net', null, function () {
+      b.net.pending = { kind: k, ssid: k === 'join' ? S.form.ssid : (S.form.hname || 'NXLX-Leyline'), left: 120, before: JSON.parse(JSON.stringify(b.net.wifi)) };
+      b.net.wifi = { mode: k, ssid: b.net.pending.ssid };
+    });
+  };
+  A.netconfirm = function () { send('netc', 'Kept. The new Wi-Fi setting is now the box’s own.', function () { B().net.pending = null; S.form = {}; }); };
+  A.netrevert = function () { send('netc', 'Gone back to the previous setting.', function () { var b = B(); b.net.wifi = b.net.pending.before; b.net.pending = null; }); };
+
+  // Setup: schedule and startup
+  A.newentry = function () { S.form = { stime: '18:00', sdays: [4, 5], swhat: 'scene:amb' }; S.wizard = { sched: true }; };
+  A.sday = function (d) { d = +d; var a = S.form.sdays, i = a.indexOf(d); if (i >= 0) a.splice(i, 1); else a.push(d); };
+  A.savesched = function () {
+    if (!S.form.sdays.length) { toast('Pick at least one day.', true); return; }
+    var t = S.form.stime;
+    B().schedule.push({ id: 's' + Date.now(), time: t, days: S.form.sdays.slice().sort(), what: S.form.swhat });
+    S.wizard = null; S.form = {}; toast('Saved. It runs at ' + t + ' on the days you picked.');
+  };
+  A.delsched = function (id) {
+    if (!isArmed('sched:' + id)) { arm('sched:' + id); return; }
+    S.armed = null; var b = B(), before = b.schedule.slice();
+    b.schedule = b.schedule.filter(function (e) { return e.id !== id; });
+    toast('Entry removed.', false, function () { b.schedule = before; render(); });
+  };
+  A.autostart = function (v) { send('auto', 'At power-up: ' + AUTO.filter(function (a) { return a[0] === v; })[0][1] + '.', function () { B().autostart = v; }); };
+
+  // Setup: add-ons, access, system
+  A.module = function (id) {
+    var b = B(), m = MODULES.filter(function (x) { return x.id === id; })[0];
+    if (m.locked || m.notBuilt) return;
+    if (b.modules[id] && (id === 'projector' || id === 'room' || id === 'shaders') && !isArmed('mod:' + id)) { arm('mod:' + id); return; }
+    S.armed = null;
+    send('mod:' + id, null, function () {
+      if (!b.modules[id] && m.needs && !b.modules[m.needs]) b.modules[m.needs] = true;
+      b.modules[id] = !b.modules[id];
+      if (!b.modules.projector) b.modules.room = false;
+      toast(m.name + (b.modules[id] ? ' is on. Find it in ' + m.where + '.' : ' is off. Its settings are kept.'));
+    });
+  };
+  A.osc = function () { send('osc', null, function () { B().osc = !B().osc; }); };
+  A.code = function (kind) { send('code', null, function () { B().codes[kind] = { code: kind === 'guest' ? '482 913' : '275 640', left: 60 }; }); };
+  A.cancelcode = function (kind) { B().codes[kind] = null; toast('Code cancelled. Phones that joined with it stay until you remove them.'); };
+  A.onscreen = function () { send('code', null, function () { var c = B().codes; c.onScreen = !c.onScreen; }); };
+  A.reset = function () {
+    if (!isArmed('reset')) { arm('reset'); return; }
+    S.armed = null; toast('In the real panel the box resets now. The prototype does nothing.');
+  };
+  A.care = function (what) {
+    toast({ export: 'Saved nxlx-settings-leyline-2026-10-04.json, without passwords.', diag: 'Saved the diagnostics file. It holds no PIN or password.', update: 'No update bundle found on a USB drive.', restart: 'Player restarted. Autostart plays Vibes again.' }[what]);
+  };
+  A.joincode = function () {
+    var v = (S.form.join || '').replace(/\D/g, '');
+    if (v.length !== 6) { S.form.joinerr = 'The code has 6 digits. It is on the big screen, next to the QR code.'; return; }
+    S.joined = true; S.role = v === '000000' ? 'guest' : 'presenter'; S.mode = 'room'; S.form = {}; syncSide();
+    toast(S.role === 'guest' ? 'Joined. You can watch.' : 'Joined. You can use scenes, walls, play and mix.');
+  };
+  A.ownerpin = function () { S.form.pinmode = !S.form.pinmode; };
+  A.theme = function (t) { S.theme = t; syncSide(); };
+  A.forget = function () { S.joined = false; S.sheet = null; S.form = {}; };
+
+  // ---------------------------------------------------------------- mix parameters
+  var PARAMS = {
+    bright: { name: 'Brightness', label: 'Bright', min: 0, max: 100, step: 1, def: 100, fmt: function (v) { return v + '%'; } },
+    speed: { name: 'Speed', label: 'Speed', min: 25, max: 200, step: 5, def: 100, fmt: function (v) { return (v / 100).toFixed(2) + 'x'; } },
+    vol: { name: 'Volume', label: 'Vol', min: 0, max: 100, step: 1, def: 80, fmt: function (v) { return String(v); } },
+    size: { name: 'Size', label: 'Size', min: 10, max: 200, step: 1, def: 100, fmt: function (v) { return v + '%'; }, owner: true },
+    x: { name: 'Position left and right', label: 'Pos X', min: -100, max: 100, step: 1, def: 0, fmt: function (v) { return (v > 0 ? '+' : '') + v; }, owner: true },
+    y: { name: 'Position up and down', label: 'Pos Y', min: -100, max: 100, step: 1, def: 0, fmt: function (v) { return (v > 0 ? '+' : '') + v; }, owner: true }
+  };
+  function paramList() { return Object.keys(PARAMS).filter(function (k) { return !PARAMS[k].owner || can('owner'); }); }
+  var AUTO = [['off', 'Nothing, wait for me'], ['pad', 'Play pad A1'], ['all', 'Play every clip'], ['slides', 'Slideshow of the pictures'], ['usb', 'Play the USB stick'], ['vibes', 'Vibes']];
+
+  // ---------------------------------------------------------------- setup areas (the wireframes' sidebar groups)
+  var AREAS = [
+    { id: 'library', name: 'Library', group: 'Play' },
+    { id: 'scenes', name: 'Walls and scenes', group: 'Room', mod: 'room' },
+    { id: 'projectors', name: 'Projectors', group: 'Room', mod: 'projector' },
+    { id: 'inputs', name: 'Inputs', group: 'Sources and output' },
+    { id: 'display', name: 'Display and sound', group: 'Sources and output' },
+    { id: 'mapper', name: 'Mapper', group: 'Sources and output', mod: 'mapper' },
+    { id: 'wall', name: 'Wall and sync', group: 'Sources and output', mod: 'sync' },
+    { id: 'schedule', name: 'Schedule and startup', group: 'Automate' },
+    { id: 'control', name: 'Control', group: 'Automate' },
+    { id: 'network', name: 'Network', group: 'Box', mod: 'network' },
+    { id: 'access', name: 'People and codes', group: 'Box' },
+    { id: 'system', name: 'System', group: 'Box' },
+    { id: 'addons', name: 'Add-ons', group: 'Box' }
+  ];
+  function areaOn(a) { return !a.mod || !!B().modules[a.mod]; }
+  function areaLine(a) {
+    var b = B();
+    switch (a.id) {
+      case 'library': return MEDIA.length + ' files · 84.4 GB free';
+      case 'scenes': return b.walls.length + ' walls · ' + b.scenes.length + ' scenes';
+      case 'projectors': return b.projectors.length + ' projectors · ' + b.projectors.filter(function (p) { return p.power === 'on'; }).length + ' on' + (S.unplugged ? ' · 1 not answering' : '');
+      case 'inputs': return 'HDMI capture found' + (b.modules.streams ? ' · streams on' : '');
+      case 'display': return 'HDMI-1 1920x1080 · sound to HDMI';
+      case 'schedule': return (b.modules.schedule ? b.schedule.length + ' entries' : 'Schedule off') + ' · power-up: ' + AUTO.filter(function (x) { return x[0] === b.autostart; })[0][1];
+      case 'control': var on = []; if (b.osc) on.push('OSC'); if (b.modules.midi) on.push('MIDI'); if (b.modules.dmx) on.push('DMX'); return on.length ? on.join(', ') + ' on' : 'OSC, MIDI and DMX off';
+      case 'network': return b.net.pending ? 'A change is waiting to be kept' : 'Wired · Wi-Fi ' + (b.net.wifi.mode === 'off' ? 'off' : b.net.wifi.ssid);
+      case 'access': return '3 devices' + (b.codes.staff ? ' · staff code active' : '');
+      case 'system': return 'All good · version 0.1.0';
+      case 'addons': var n = MODULES.filter(function (m) { return !m.notBuilt && !m.locked && !b.modules[m.id]; }).length; return n + ' switched off';
+      default: return '';
+    }
+  }
+
+  // ---------------------------------------------------------------- RENDER
+  var app = document.getElementById('app');
+  function render() {
+    var sc = app.querySelector('.scroll'), keep = sc ? sc.scrollTop : 0, before = render.lastScreen;
+    var focusId = document.activeElement && app.contains(document.activeElement) ? document.activeElement.id : null;
+    if (S.armed && Date.now() > S.armed.until) S.armed = null;
+    var root = h('div', { class: 'app', 'data-theme': S.theme });
+    if (!S.joined) {
+      root.appendChild(h('main', { class: 'scroll', style: 'grid-row: 1 / -1; grid-column: 1 / -1' }, joinScreen()));
+    } else {
+      var modes = modesFor(S.role);
+      root.appendChild(topBar());
+      root.appendChild(sidebar(modes));
+      root.appendChild(banner());
+      var main = h('main', { class: 'scroll', id: 'main' });
+      if (S.mode === 'room') add(main, roomScreen());
+      else if (S.mode === 'live') add(main, liveScreen());
+      else add(main, setupScreen());
+      root.appendChild(main);
+      if (modes.length > 1) root.appendChild(nav(modes)); else main.classList.add('nonav');
+      if (S.sheet) root.appendChild(sheet());
+    }
+    if (S.conn === 'lost') root.classList.add('stale');
+    if (S.toast) root.appendChild(h('div', { class: 'toast' + (S.toast.bad ? ' bad' : '') + (S.sheet ? ' attop' : ''), role: 'status' },
+      h('span', { class: 'grow', text: S.toast.text }),
+      S.toast.undo ? h('button', { type: 'button', 'data-act': 'undo', text: 'Undo' }) : null));
+    app.replaceChildren(root);
+    var now = screenId(), sc2 = app.querySelector('.scroll');
+    if (sc2 && now === before) sc2.scrollTop = keep;
+    if (focusId) { var f = document.getElementById(focusId); if (f) f.focus(); }
+    render.lastScreen = now;
+    notesFor(now);
+  }
+  function topBar() {
+    return h('header', { class: 'top' },
+      h('div', { class: 'brand', text: S.mode === 'setup' ? 'Setup' : S.mode === 'live' ? 'Live' : 'Leyline' }),
+      h('button', { type: 'button', class: 'pill ' + S.conn, 'data-act': 'sheet', 'data-arg': 'link', 'aria-label': 'The box: ' + (S.conn === 'good' ? (can('owner') ? 'Pi 4, 1080p60, 52 degrees, OK' : 'OK') : S.conn + ' link') }, pillText()),
+      h('button', { type: 'button', class: 'pill', 'data-act': 'sheet', 'data-arg': 'me', 'aria-label': 'This device' }, { guest: 'Guest', presenter: 'Staff', owner: 'Owner' }[S.role]));
+  }
+  function sidebar(modes) {
+    var cur = function (on) { return on ? 'page' : null; };
+    var items = [h('div', { class: 'brand', text: 'Leyline' }), h('div', { class: 'lbl', text: 'Play' })];
+    items.push(h('button', { type: 'button', class: 'nv', 'data-act': 'mode', 'data-arg': 'room', 'aria-current': cur(S.mode === 'room') }, 'Room'));
+    if (modes.indexOf('live') >= 0) items.push(h('button', { type: 'button', class: 'nv', 'data-act': 'mode', 'data-arg': 'live', 'aria-current': cur(S.mode === 'live') }, 'Live'));
+    if (can('owner')) {
+      var group = 'Play';
+      AREAS.forEach(function (a) {
+        if (!areaOn(a)) return;
+        if (a.group !== group) { group = a.group; items.push(h('div', { class: 'lbl', text: group })); }
+        items.push(h('button', { type: 'button', class: 'nv', 'data-act': 'page', 'data-arg': a.id, 'aria-current': cur(S.mode === 'setup' && S.page === a.id) }, a.name));
+      });
+    }
+    items.push(h('div', { class: 'foot' },
+      h('button', { type: 'button', class: 'pill ' + S.conn, 'data-act': 'sheet', 'data-arg': 'link' }, pillText()),
+      h('button', { type: 'button', class: 'pill', 'data-act': 'sheet', 'data-arg': 'me' }, { guest: 'Guest', presenter: 'Staff', owner: 'Owner' }[S.role] + ' · this device'),
+      h('span', { class: 'lbl', text: 'v0.1.0 · Pi 4' })));
+    return h('nav', { class: 'sidebar', 'aria-label': 'Screens' }, items);
+  }
+  function banner() {
+    var b = B(), el = h('div', { class: 'banner', role: 'status' });
+    if (S.conn === 'lost') { el.className += ' bad'; add(el, h('span', { class: 'grow', text: 'The box has not answered for 14 s. You see its last known state. Taps are not sent.' })); }
+    else if (b.net.pending && !(S.mode === 'setup' && S.page === 'network')) add(el, [h('span', { class: 'grow', text: 'A Wi-Fi change waits to be kept: ' + mmss(b.net.pending.left) + ' left.' }), btn('Open', 'page', 'network', 'small')]);
+    else if (S.role === 'guest') add(el, [icon('eye', 'sm'), h('span', { class: 'grow', text: 'You are watching. Nothing here changes the room.' })]);
+    return el;
+  }
+  function nav(modes) {
+    var labels = { room: 'Room', live: 'Live', setup: 'Setup' };
+    return h('nav', { class: 'nav', 'aria-label': 'Screens' }, modes.map(function (m) {
+      return h('button', { type: 'button', 'data-act': 'mode', 'data-arg': m, 'aria-current': S.mode === m ? 'page' : null, text: labels[m] });
+    }));
+  }
+
+  // Now playing: "00:19 / 00:32", and Next only when there is one
+  function nowCard() {
+    var b = B(), p = b.player, time = '', next = '';
+    if (p.kind === 'clip') { time = mmss(p.pos) + ' / ' + mmss(p.dur); next = p.ending === 'loop' ? 'Loops' : p.ending === 'hold' ? 'Then holds last frame' : 'Then black'; }
+    else if (p.kind === 'vibes') { time = mmss(p.pos) + ' / ' + mmss(p.dur); next = 'Next: ' + SHADERS[(b.vibes.idx + 1) % SHADERS.length]; }
+    else if (p.kind === 'shader') next = 'One shader, no end';
+    else if (p.kind === 'live') next = 'Live input, no end';
+    else if (p.kind === 'picture') next = 'Picture';
+    var tags = [];
+    if (b.black) tags.push(h('span', { class: 'tag lit', text: 'Blackout' }));
+    if (b.fadeTarget === 0) tags.push(h('span', { class: 'tag lit', text: 'Faded out' }));
+    if (p.paused) tags.push(h('span', { class: 'tag lit', text: 'Frozen' }));
+    if (b.test) tags.push(h('span', { class: 'tag lit', text: 'Test pattern' }));
+    var pct = p.dur ? Math.min(100, p.pos / p.dur * 100) : 0;
+    return h('button', { type: 'button', class: 'now', 'data-act': 'sheet', 'data-arg': 'now', 'aria-label': 'Now playing: ' + screenShows() + (time ? ', ' + time : '') + '. Open for details.' },
+      h('span', { class: 'lbl' }, h('span', { text: 'Now playing · Output 1' }), tags),
+      h('span', { class: 'what', text: screenShows() }),
+      h('span', { class: 'bar' }, h('i', { style: 'width:' + pct + '%' })),
+      h('span', { class: 'time', 'data-live': 'time', text: time || '--:-- / --:--' }),
+      h('span', { class: 'next', text: next }));
+  }
+
+  // ---------------------------------------------------------------- Room
+  function roomScreen() {
+    var b = B();
+    if (!b.modules.projector || !b.modules.room) {
+      return [nowCard(), h('div', { class: 'card' }, h('h2', { text: 'The room is not set up on this box' }),
+        h('p', { class: 'sub', text: can('owner') ? 'Switch on Projector control and Room scenes under Add-ons, then add the projectors. Until then this screen shows only what the box plays.' : 'Ask the owner. You can still see what the box plays.' }),
+        can('owner') ? btn('Open Add-ons', 'page', 'addons', 'primary') : null)];
+    }
+    var map = h('div', { class: 'map', role: 'group', 'aria-label': 'The room seen from above' });
+    b.walls.forEach(function (w) {
+      if (w.id !== 'main' && w.id !== 'paint') return;
+      var st = wallState(w);
+      map.appendChild(h('button', { type: 'button', class: 'wall ' + w.id + ' ' + st.cls + (S.pending['wallpower:' + w.id] ? ' pending' : ''), 'data-act': 'wall', 'data-arg': w.id, 'aria-label': w.name + ': ' + st.word + (st.detail ? ', ' + st.detail : '') },
+        h('span', { class: 'strip' }), h('span', {}, h('span', { class: 'wl', text: w.name }), h('span', { class: 'ws', text: st.word + (st.detail ? ' · ' + st.detail : '') }))));
+    });
+    map.appendChild(h('div', { class: 'boxspot' }, h('span', { class: 'lbl', text: 'The box plays' }), h('b', { text: b.black ? 'Black (Blackout)' : screenShows() })));
+    var extra = b.walls.filter(function (w) { return w.id !== 'main' && w.id !== 'paint'; }).map(function (w) {
+      var st = wallState(w);
+      return h('button', { type: 'button', class: 'item', 'data-act': 'wall', 'data-arg': w.id }, icon('projector'),
+        h('span', { class: 'grow' }, h('b', { text: w.name }), h('span', { text: st.word + (st.detail ? ' · ' + st.detail : '') })), icon('chev', 'sm chev'));
+    });
+    var scenes = h('div', { class: 'scenes' }, b.scenes.map(function (sc) {
+      var armed = isArmed('scene:' + sc.id), active = b.activeScene === sc.id;
+      return h('button', { type: 'button', class: 'scene' + (armed ? ' armed' : '') + (S.pending['scene:' + sc.id] ? ' pending' : ''), 'data-act': 'scene', 'data-arg': sc.id,
+        'aria-pressed': pressed(active), disabled: can('presenter') ? null : true },
+        icon(sc.icon), h('b', { text: armed ? 'Tap again: ' + sc.name : sc.name }),
+        h('small', { text: armed ? 'Or wait, and nothing happens' : sc.desc }));
+    }));
+    var job = null;
+    if (b.job) {
+      var anyBad = b.walls.some(function (w) { return wallState(w).cls === 'bad'; });
+      var running = b.projectors.some(function (p) { return p.power === 'warming' || p.power === 'cooling'; });
+      job = h('div', { class: 'job' + (anyBad ? ' bad' : ''), role: 'status' },
+        h('div', {}, h('b', { text: b.job.name + (running ? ': on its way' : anyBad ? ': done, with a problem' : ': done') })),
+        b.walls.map(function (w) { var st = wallState(w); return h('div', { text: w.name + ': ' + st.word.toLowerCase() + (st.detail ? ', ' + st.detail : '') }); }));
+    }
+    var left = h('div', {},
+      h('div', { class: 'row between' }, h('span', { class: 'lbl', text: 'Walls now' }), h('span', { class: 'lbl', text: 'checked every 45 s' })), map,
+      extra.length ? h('div', { class: 'list' }, extra) : null,
+      can('presenter') ? h('p', { class: 'sub', text: 'Tap a wall for its own buttons.' }) : null,
+      nowCard());
+    var right = h('div', {},
+      h('div', { class: 'row between' }, h('span', { class: 'lbl', text: 'Scenes' }), h('span', { class: 'lbl', text: S.role === 'guest' ? 'for staff' : 'one tap' })), scenes, job,
+      can('presenter') ? h('div', { class: 'card' }, h('div', { class: 'row between' }, h('h2', { text: 'Sound' }), h('span', { class: 'mono', text: 'Volume ' + b.mix.vol })),
+        h('div', { class: 'row' }, btn('Quieter', 'vol', -10, 'grow' + (S.pending.vol ? ' pending' : '')), btn('Louder', 'vol', 10, 'grow'))) : null);
+    return h('div', { class: 'roomgrid' }, left, right);
+  }
+
+  // ---------------------------------------------------------------- Live
+  function liveScreen() {
+    var b = B(), owner = can('owner');
+    var banks = b.banks.map(function (bk, i) { return h('button', { type: 'button', 'data-act': 'bank', 'data-arg': i, 'aria-pressed': pressed(S.bank === i), text: 'Bank ' + bk.name }); });
+    banks.push(h('button', { type: 'button', 'data-act': 'bank', 'data-arg': 3, 'aria-pressed': pressed(S.bank === 3), text: 'Live in' }));
+    if (b.modules.shaders) banks.push(h('button', { type: 'button', 'data-act': 'bank', 'data-arg': 4, 'aria-pressed': pressed(S.bank === 4), text: 'Vibes' }));
+    if (S.bank === 4 && !b.modules.shaders) S.bank = 0;
+    var pads = h('div', { class: 'pads' + (S.pending.pad ? ' pending' : ''), role: 'group', 'aria-label': 'Pads' });
+    if (S.bank === 4) {
+      var v = b.vibes;
+      pads.appendChild(h('button', { type: 'button', class: 'pad wide' + (v.on ? ' playing' : '') + (S.pending.vibes ? ' pending' : ''), 'data-act': 'vibes', 'aria-pressed': pressed(v.on) },
+        h('span', { class: 'pn' }, h('span', { text: 'ENDLESS' }), h('span', { text: v.on ? mmss(b.player.pos) + ' / ' + mmss(b.player.dur) : 'each ' + mmss(v.dwell) })),
+        h('span', { class: 'pl', text: v.on ? 'Vibes: ' + b.player.shader : 'Vibes' })));
+      SHADERS.forEach(function (s, i) {
+        var on = (b.player.kind === 'shader' || b.player.kind === 'vibes') && b.player.shader === s;
+        pads.appendChild(h('button', { type: 'button', class: 'pad' + (on ? ' playing' : ''), 'data-act': 'shader', 'data-arg': s },
+          h('span', { class: 'pn' }, h('span', { text: 'S' + pad2(i + 1) }), h('span', { text: i === 5 ? 'heavy' : '' })), h('span', { class: 'pl', text: s.replace('nxlx-', '') })));
+      });
+      if (v.on) pads.appendChild(btn('Next shader', 'vnext', null, 'small' + (S.pending.vnext ? ' pending' : ''), { style: 'grid-column: span 2' }));
+    } else if (S.bank === 3) {
+      [['HDMI capture 720p', 'found'], ['HDMI capture 1080p', 'found']].forEach(function (x, i) {
+        var on = b.player.kind === 'live' && b.player.title === x[0];
+        pads.appendChild(h('button', { type: 'button', class: 'pad' + (on ? ' playing' : ''), 'data-act': 'live', 'data-arg': x[0] },
+          h('span', { class: 'pn' }, h('span', { text: 'L' + pad2(i + 1) }), h('span', { text: x[1] })), h('span', { class: 'pl', text: x[0] })));
+      });
+      if (b.modules.streams) pads.appendChild(h('button', { type: 'button', class: 'pad', 'data-act': 'live', 'data-arg': 'Stream: stage cam' }, h('span', { class: 'pn' }, h('span', { text: 'L03' }), h('span', { text: 'SRT' })), h('span', { class: 'pl', text: 'Stage cam' })));
+      pads.appendChild(h('div', { class: 'pad empty', style: 'grid-column: 1 / -1; cursor: default; min-height: 0' },
+        h('span', { class: 'pl', style: 'font-weight:400', text: (b.modules.streams ? '' : 'Streams are an add-on that is off. ') + 'NDI is not built yet. Live input has no sound yet.' })));
+    } else {
+      var bk = b.banks[S.bank];
+      bk.pads.forEach(function (pd, i) {
+        var playing = pd && b.player.pad && b.player.pad[0] === S.bank && b.player.pad[1] === i && b.player.kind !== 'none';
+        if (!pd) {
+          pads.appendChild(h('button', { type: 'button', class: 'pad empty', 'data-act': 'pad', 'data-arg': S.bank + ':' + i, 'aria-label': 'Pad ' + (i + 1) + ', empty', disabled: owner ? null : true },
+            h('span', { class: 'pn' }, h('span', { text: pad2(i + 1) })), h('span', { class: 'pl', text: owner ? '+ Add' : 'Empty' })));
+          return;
+        }
+        var m = mediaByName(pd.file), endWord = pd.ending === 'loop' ? 'loop' : pd.ending === 'hold' ? 'hold' : 'once';
+        var el = h('button', { type: 'button', class: 'pad' + (playing ? ' playing' : ''), 'data-act': 'pad', 'data-arg': S.bank + ':' + i, 'data-long': owner ? 'editpad' : null, 'aria-label': 'Pad ' + (i + 1) + ', ' + pd.label + ', ' + endWord },
+          h('span', { class: 'pn' }, h('span', { text: pad2(i + 1) + ' ' + endWord }), h('span', { text: m && m.dur ? mmss(m.dur) : '' })), h('span', { class: 'pl', text: pd.label }));
+        if (playing && b.player.dur) el.appendChild(h('span', { class: 'prog', style: 'width:' + (b.player.pos / b.player.dur * 100) + '%' }));
+        pads.appendChild(el);
+      });
+    }
+    if (S.locked) pads.appendChild(h('div', { class: 'lockcover' }, h('button', { type: 'button', class: 'btn hold', 'data-hold': 'unlock' }, h('span', { class: 'fill' }), icon('lock', 'sm'), 'Hold to unlock')));
+
+    var m = b.mix, P = paramList().indexOf(S.param) >= 0 ? S.param : 'bright', d = PARAMS[P];
+    var mixer = h('div', { class: 'mixer' },
+      h('div', { class: 'params', role: 'group', 'aria-label': 'What the fader moves' }, paramList().map(function (k) {
+        var pd = PARAMS[k];
+        return h('button', { type: 'button', 'data-act': 'param', 'data-arg': k, 'aria-pressed': pressed(P === k), class: m[k] !== pd.def ? 'changed' : null },
+          h('span', { text: pd.label }), h('b', { 'data-pv': k, text: pd.fmt(m[k]) }));
+      }), h('button', { type: 'button', 'data-act': 'sheet', 'data-arg': 'look', 'aria-label': 'More mix and look settings' }, h('span', { text: 'More' }), h('b', { text: '...' }))),
+      h('div', { class: 'fader' },
+        h('input', { type: 'range', id: 'fader', min: d.min, max: d.max, step: d.step, value: m[P], 'data-range': P, 'aria-label': d.name, disabled: S.locked ? true : null }),
+        h('span', { class: 'val', id: 'faderval', text: d.fmt(m[P]) }),
+        btn('Reset', 'resetparam', null, 'small quiet', { disabled: m[P] === d.def ? true : null, 'aria-label': 'Put ' + d.name + ' back to ' + d.fmt(d.def), style: 'padding: 0 6px' })));
+
+    var fadeOut = b.fadeTarget === 0, dis = S.locked ? true : null;
+    var keys = h('div', { class: 'keys', role: 'group', 'aria-label': 'Show keys' },
+      h('button', { type: 'button', class: 'btn' + (S.pending.fade ? ' pending' : ''), 'data-act': 'fade', 'aria-pressed': pressed(fadeOut), disabled: dis, 'aria-label': fadeOut ? 'Fade out is on. Tap to fade in.' : 'Fade out' },
+        'Fade', h('span', { class: 'fadelvl', style: 'width:' + Math.round(b.fade * 100) + '%' })),
+      h('button', { type: 'button', class: 'btn' + (S.pending.freeze ? ' pending' : ''), 'data-act': 'freeze', 'aria-pressed': pressed(b.player.paused), disabled: dis }, 'Freeze'),
+      h('button', { type: 'button', class: 'btn' + (S.pending.black ? ' pending' : ''), id: 'black', 'data-act': 'blackout', 'aria-pressed': pressed(b.black), disabled: dis }, 'Blackout'),
+      h('button', { type: 'button', class: 'btn hold' + (isArmed('stop') ? ' armed' : '') + (S.pending.stop ? ' pending' : ''), 'data-hold': 'stop', 'data-act': 'stopkey', disabled: dis, 'aria-label': 'Stop. Hold to stop.' },
+        h('span', { class: 'fill' }), 'Stop'));
+
+    var head = h('div', { class: 'row', style: 'align-items: stretch' }, h('div', { class: 'grow' }, nowCard()),
+      S.locked ? null : h('button', { type: 'button', class: 'pill', style: 'height:auto; min-width: 48px; border-radius: var(--r); padding: 0 12px', 'data-act': 'lock', 'aria-label': 'Lock pads and keys' }, icon('lock', 'sm')));
+    return h('div', { class: 'perf' },
+      h('div', { class: 'left' }, head, h('div', { class: 'banks', role: 'group', 'aria-label': 'Banks' }, banks), pads),
+      h('div', { class: 'right' }, mixer, keys,
+        owner && S.bank < 3 ? h('p', { class: 'sub', text: 'Hold a pad to change it. Stop needs a short hold.' }) : h('p', { class: 'sub', text: 'Stop needs a short hold.' })));
+  }
+
+  // ---------------------------------------------------------------- Setup
+  function setupScreen() {
+    var b = B();
+    var groups = [], last = null;
+    AREAS.forEach(function (a) {
+      if (!areaOn(a)) return;
+      if (!last || last.name !== a.group) { last = { name: a.group, items: [] }; groups.push(last); }
+      last.items.push(a);
+    });
+    if (!S.page) {
+      return [
+        h('div', { class: 'pagehead' }, h('h1', { text: 'Setup' }), h('span', { class: 'lbl', text: 'Before the gig. Calm, one thing at a time.' })),
+        h('div', { class: 'card' }, h('div', { class: 'row between' }, h('span', { class: 'state on', text: 'The box is well' }), h('span', { class: 'lbl', text: 'Power OK · 52°C · v0.1.0' }))),
+        h('div', { class: 'setuplist' }, groups.map(function (g) {
+          return h('div', { class: 'stack' }, h('span', { class: 'lbl', text: g.name }), h('div', { class: 'list' }, g.items.map(function (a) {
+            return h('button', { type: 'button', class: 'item', 'data-act': 'page', 'data-arg': a.id },
+              h('span', { class: 'grow' }, h('b', { text: a.name }), h('span', { text: areaLine(a) })), icon('chev', 'sm chev'));
+          })));
+        })),
+        h('div', { class: 'widehint' }, h('div', { class: 'ovw' }, AREAS.filter(areaOn).map(function (a) {
+          return h('button', { type: 'button', class: 'item', 'data-act': 'page', 'data-arg': a.id },
+            h('span', { class: 'grow' }, h('span', { class: 'lbl', text: a.group }), h('b', { text: a.name }), h('span', { text: areaLine(a) })), icon('chev', 'sm chev'));
+        })))
+      ];
+    }
+    var f = PAGES[S.page];
+    return [btn([icon('back', 'sm'), 'Setup'], 'back', null, 'small quiet backbtn', { style: 'align-self:flex-start' }), h('div', { class: 'pagebody' }, f ? f() : [])];
+  }
+  function head(title, note, action) {
+    return h('div', { class: 'pagehead' }, h('h1', { text: title }), action || null, note ? h('span', { class: 'lbl', text: note }) : null);
+  }
+  function kv(k, v) { return h('div', { class: 'kv' }, h('span', { text: k }), h('span', { class: 'mono', text: v })); }
+  var PAGES = {};
+  PAGES.library = function () {
+    var b = B(), up = b.upload;
+    var rows = MEDIA.map(function (m) {
+      var on = b.player.file === m.name && b.player.kind !== 'none', armed = isArmed('del:' + m.name), pads = [];
+      b.banks.forEach(function (bk) { bk.pads.forEach(function (p, i) { if (p && p.file === m.name) pads.push(bk.name + (i + 1)); }); });
+      return h('div', { class: 'item', style: 'flex-wrap: wrap' },
+        h('span', { class: 'grow' }, h('b', { text: m.name }),
+          h('span', { text: (m.picture ? 'Picture' : mmss(m.dur)) + ' · ' + m.size + (pads.length ? ' · pad ' + pads.join(', ') : '') + (on ? ' · on screen' : '') }),
+          m.advice ? h('span', { style: 'color: var(--wa)', text: m.advice }) : null),
+        h('span', { class: 'meta' }, h('span', { text: m.codec }), h('span', { text: m.res }), h('span', { text: m.fps === 'still' ? 'still' : m.fps + ' fps' })),
+        h('div', { class: 'acts' }, btn('Play', 'playmedia', m.name, 'small'), btn('Pad', 'putonpad', m.name, 'small', { 'aria-label': 'Put ' + m.name + ' on a pad' }),
+          btn(armed ? 'Delete?' : 'Delete', 'delmedia', m.name, 'small ' + (armed ? 'armed' : 'quiet'), { 'aria-label': armed ? 'Tap again to delete ' + m.name : 'Delete ' + m.name })));
+    });
+    return [head('Library', MEDIA.length + ' files · 84.4 GB free · one file up to 8 GB', btn('Upload', 'upload', null, 'primary small')),
+      up ? h('div', { class: 'card wide', role: 'status' },
+        h('div', { class: 'row between' }, h('b', { text: up.name }), h('span', { class: 'mono', text: up.pct + '%' })),
+        h('div', { class: 'progress' }, h('i', { style: 'width:' + up.pct + '%' })),
+        up.pct < 100 ? h('p', { class: 'sub', text: up.size + '. Keep this page open. A dropped link leaves nothing half saved.' })
+          : h('div', { class: 'row wrap' }, btn('Put on a pad', 'putonpad', up.name, 'primary grow'), btn('Play now', 'playmedia', up.name, 'grow'), btn('Done', 'uploaddone', null, 'quiet'))) : null,
+      h('div', { class: 'list media' }, rows),
+      h('div', { class: 'card dashed' }, h('h2', { text: 'USB drive' }), h('p', { class: 'sub', text: 'None plugged in. A drive shows its own list here, to play straight from it or copy to the box.' })),
+      h('div', { class: 'card' }, h('h2', { text: 'More ways to play' }), h('p', { class: 'sub', text: 'Play every clip, shuffle, play by number, and the slideshow of pictures. Same controls as today, under one card.' }))];
+  };
+  PAGES.projectors = function () {
+    var b = B(), wz = S.wizard;
+    if (wz) {
+      var steps = h('div', { class: 'steps' }, [1, 2, 3, 4].map(function (i) { return h('i', { class: i <= wz.step ? 'done' : '' }); }));
+      if (wz.step === 1) return [head('Add a projector', 'Step 1 of 4 · where it is'), steps, h('div', { class: 'card' },
+        h('p', { class: 'sub', text: 'First switch PJLink on in the projector’s own network menu. Its address and password are in the same menu.' }),
+        h('div', { class: 'field' }, h('label', { for: 'f-host', text: 'Address' }), h('input', { id: 'f-host', 'data-in': 'host', value: S.form.host, inputmode: 'decimal', autocomplete: 'off' }), h('span', { class: 'sub', text: 'A private address, such as 192.168.1.52.' })),
+        h('div', { class: 'field' }, h('label', { for: 'f-pw', text: 'PJLink password, if it has one' }), h('input', { id: 'f-pw', 'data-in': 'pw', type: 'password', value: S.form.pw || '' })),
+        h('div', { class: 'row' }, btn('Cancel', 'wizdone', null, 'quiet'), btn('Ask the projector', 'wizask', null, 'primary grow')))];
+      if (wz.step === 2) return [head('Add a projector', 'Step 2 of 4 · what it says it is'), steps,
+        wz.asking ? h('div', { class: 'card', role: 'status' }, h('span', { class: 'state wait', text: 'Asking ' + S.form.host }), h('p', { class: 'sub', text: 'A projector in standby can take a few seconds to answer.' }))
+          : h('div', { class: 'card' }, h('span', { class: 'state on', text: 'It answered' }), h('b', { text: wz.found.model + ' · ' + wz.found.cls }), h('span', { class: 'sub', text: 'Inputs: ' + wz.found.inputs.join(', ') }),
+            h('div', { class: 'row' }, btn('Back', 'addproj', null, 'quiet'), btn('Next', 'wizname', null, 'primary grow')))];
+      if (wz.step === 3) return [head('Name it and place it', 'Step 3 of 4'), steps, h('div', { class: 'card' },
+        h('div', { class: 'field' }, h('label', { for: 'f-pname', text: 'Name' }), h('input', { id: 'f-pname', 'data-in': 'pname', value: S.form.pname })),
+        h('div', { class: 'field' }, h('span', { class: 'lbl2', text: 'Which wall does it light?' }),
+          h('div', { class: 'seg2' }, b.walls.map(function (w) { return btn(w.name, 'wizwall', w.id, 'small', { 'aria-pressed': pressed(S.form.pwall === w.id) }); }), btn('A new wall', 'wizwall', 'new', 'small', { 'aria-pressed': pressed(S.form.pwall === 'new') }))),
+        h('p', { class: 'sub', text: 'Staff see walls, not projectors. Two projectors on one wall switch together.' }),
+        h('div', { class: 'row' }, btn('Back', 'wizname', null, 'quiet'), btn('Add projector', 'wizadd', null, 'primary grow')))];
+      return [head('Added', 'Step 4 of 4'), steps, h('div', { class: 'card' }, h('span', { class: 'state on', text: S.form.pname + ' lights ' + (S.form.pwall === 'new' ? 'Side wall' : wallOf(S.form.pwall).name) }),
+        h('p', { class: 'sub', text: 'Next: label its inputs (Box, Console) so staff see plain names, and add the wall to the scenes that need it. The new wall is on the Room screen now.' }),
+        btn('Done', 'wizdone', null, 'primary'))];
+    }
+    return [head('Projectors', 'PJLink · not yet tested on a real projector', btn('Add', 'addproj', null, 'primary small')),
+      h('div', { class: 'list' }, b.projectors.map(function (p) {
+        var st = p.power === 'noanswer' ? 'No answer' : p.power === 'warming' ? 'Warming up ' + mmss(p.t) : p.power === 'cooling' ? 'Cooling down ' + mmss(p.t) : p.power === 'on' ? 'On · ' + inputName(p, p.input) : 'Off';
+        return h('div', { class: 'item' }, icon('projector'),
+          h('span', { class: 'grow' }, h('b', { text: p.name }), h('span', { text: p.model + ' · ' + p.host + ' · ' + ((wallOf(p.wall) || {}).name || '') + ' · lamp ' + p.lamp + ' h' }),
+            h('span', { class: 'state ' + (p.power === 'on' ? 'on' : p.power === 'noanswer' ? 'bad' : p.power === 'off' ? '' : 'wait'), text: st })));
+      })),
+      h('div', { class: 'card' }, h('h2', { text: 'Input labels' }), h('p', { class: 'sub', text: 'Main wall: Digital 2 is Box, Digital 3 is Console. Labelling sends nothing to the projector.' }))];
+  };
+  PAGES.scenes = function () {
+    var b = B();
+    return [head('Walls and scenes', 'What staff see on Room'),
+      h('div', { class: 'card' }, h('h2', { text: 'Walls' }), b.walls.map(function (w) { return kv(w.name, w.proj.map(function (id) { return proj(id).model; }).join(', ')); })),
+      h('div', { class: 'card' }, h('h2', { text: 'Scenes, in the order staff see them' }), b.scenes.map(function (s) { return kv(s.name, s.confirm ? 'asks first' : 'one tap'); })),
+      h('div', { class: 'card dashed' }, h('h2', { text: 'Editing a scene' }), h('p', { class: 'sub', text: 'For each wall: on, off or leave; its input; picture and sound mute. One thing for the box: a clip, a pad, a stream, Vibes, Stop or Blackout. A scene that switches anything off asks for a second tap.' }))];
+  };
+  PAGES.inputs = function () {
+    var b = B();
+    return [head('Inputs', 'Anything here can be a pad on the Live in bank'),
+      h('div', { class: 'card' }, h('h2', { text: 'Capture and cameras' }), kv('HDMI capture (USB)', 'found'), kv('Sizes', '720p30, 1080p30'), h('p', { class: 'sub', text: 'Read by a separate helper, so a capture fault cannot stop the player. No sound from the input yet.' })),
+      h('div', { class: 'card' }, h('h2', { text: 'Streams' }), b.modules.streams ? [kv('Stage cam', 'SRT'), btn('Add a stream', 'none', null, 'small')] : [h('p', { class: 'sub', text: 'SRT, RTSP and RTMP. An add-on that is off.' }), btn('Switch on in Add-ons', 'page', 'addons', 'small')]),
+      h('div', { class: 'card dashed' }, h('h2', { text: 'Not built yet' }), h('p', { class: 'sub', text: 'NDI from Resolume or MadMapper, screen sharing, camera filters. They will appear here when they exist.' }))];
+  };
+  PAGES.display = function () {
+    var m = B().mix;
+    return [head('Display and sound', 'Set once for the room'),
+      h('div', { class: 'card' }, h('h2', { text: 'Outputs' }), kv('HDMI-1', '1920x1080 at 60'), kv('HDMI-2', 'not connected'), btn('Test pattern', 'test', null, 'small', { 'aria-pressed': pressed(B().test) })),
+      h('div', { class: 'card' }, h('h2', { text: 'Picture geometry' }),
+        h('div', { class: 'seg2' }, [0, 90, 180, 270].map(function (r) { return btn(r + '°', 'mixset', 'rotate:' + r, 'small', { 'aria-pressed': pressed(m.rotate === r) }); })),
+        h('div', { class: 'seg2' }, btn('Flip H', 'mixset', 'flipH', 'small', { 'aria-pressed': pressed(m.flipH) }), btn('Flip V', 'mixset', 'flipV', 'small', { 'aria-pressed': pressed(m.flipV) }))),
+      h('div', { class: 'card' }, h('h2', { text: 'Sound' }), kv('Goes to', 'HDMI-1 (automatic)'), h('div', { class: 'seg2' }, btn('Tone left', 'none', null, 'small'), btn('Both', 'none', null, 'small'), btn('Right', 'none', null, 'small')))];
+  };
+  var DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function whatName(w) {
+    var p = w.split(':');
+    if (p[0] === 'scene') { var sc = B().scenes.filter(function (s) { return s.id === p[1]; })[0]; return sc ? 'Scene: ' + sc.name : 'Scene removed'; }
+    return { vibes: 'Start Vibes', black: 'Blackout', off: 'Projectors off', stop: 'Stop' }[p[0]] || w;
+  }
+  PAGES.schedule = function () {
+    var b = B();
+    if (S.wizard && S.wizard.sched) {
+      return [head('New entry', 'Schedule'), h('div', { class: 'card' },
+        h('div', { class: 'field' }, h('label', { for: 'f-stime', text: 'Time' }), h('input', { id: 'f-stime', type: 'time', 'data-in': 'stime', value: S.form.stime })),
+        h('div', { class: 'field' }, h('span', { class: 'lbl2', text: 'Days' }), h('div', { class: 'days' }, DAYS.map(function (d, i) { return btn(d.slice(0, 2), 'sday', i, 'small', { 'aria-pressed': pressed(S.form.sdays.indexOf(i) >= 0), 'aria-label': d }); }))),
+        h('div', { class: 'field' }, h('label', { for: 'f-swhat', text: 'What happens' }),
+          h('select', { id: 'f-swhat', 'data-in': 'swhat' }, b.scenes.map(function (s) { return h('option', { value: 'scene:' + s.id, text: 'Scene: ' + s.name, selected: S.form.swhat === 'scene:' + s.id ? true : null }); }),
+            [['vibes', 'Start Vibes'], ['stop', 'Stop'], ['black', 'Blackout'], ['off', 'Projectors off']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: S.form.swhat === o[0] ? true : null }); }))),
+        h('p', { class: 'sub', text: 'Missed times are never played later: if the box is off at 18:00, nothing happens at 18:05.' }),
+        h('div', { class: 'row' }, btn('Cancel', 'page', 'schedule', 'quiet'), btn('Save entry', 'savesched', null, 'primary grow')))];
+    }
+    var wk = h('div', { class: 'wk', 'aria-label': 'The week' }, DAYS.map(function (d, i) {
+      return h('div', {}, h('b', { text: d }), b.schedule.filter(function (e) { return e.days.indexOf(i) >= 0; }).sort(function (x, y) { return x.time < y.time ? -1 : 1; }).map(function (e) { return h('span', { text: e.time }); }));
+    }));
+    return [head('Schedule and startup', 'Box clock 21:04 Saturday, set from the network'),
+      h('div', { class: 'card' }, h('h2', { text: 'When the box powers on' }),
+        AUTO.map(function (a) { return h('button', { type: 'button', class: 'radio' + (S.pending.auto ? ' pending' : ''), role: 'radio', 'aria-checked': pressed(b.autostart === a[0]), 'data-act': 'autostart', 'data-arg': a[0] }, h('span', { text: a[1] }), h('small', { text: b.autostart === a[0] ? 'on' : '' })); }),
+        h('p', { class: 'sub', text: 'Also after a player crash. Never just because you pressed Stop.' })),
+      b.modules.schedule ? h('div', { class: 'card wide' }, h('div', { class: 'row between' }, h('h2', { text: 'Timetable' }), btn('Add', 'newentry', null, 'primary small')), wk,
+        h('div', {}, b.schedule.map(function (e) {
+          var armed = isArmed('sched:' + e.id);
+          return h('div', { class: 'kv' }, h('span', { class: 'mono', style: 'font-weight:700; color: var(--fg)', text: e.time }),
+            h('span', { class: 'grow' }, h('b', { text: whatName(e.what) }), h('br'), h('span', { class: 'sub', text: e.days.length === 7 ? 'Every day' : e.days.map(function (d) { return DAYS[d]; }).join(', ') })),
+            btn(armed ? 'Remove?' : 'Remove', 'delsched', e.id, 'small ' + (armed ? 'armed' : 'quiet')));
+        }))) : h('div', { class: 'card dashed' }, h('h2', { text: 'Timetable' }), h('p', { class: 'sub', text: 'The weekly schedule is an add-on that is off.' }), btn('Switch on in Add-ons', 'page', 'addons', 'small'))];
+  };
+  PAGES.control = function () {
+    var b = B();
+    return [head('Control', 'OSC, MIDI and DMX can never reboot, power off or change settings'),
+      h('div', { class: 'card' }, h('div', { class: 'row between' }, h('h2', { text: 'OSC' }), h('button', { type: 'button', role: 'switch', class: 'switch' + (S.pending.osc ? ' pending' : ''), 'aria-checked': pressed(b.osc), 'data-act': 'osc', 'aria-label': 'OSC' })),
+        kv('Listens on', 'UDP 9876'), kv('Accepts from', 'private networks'), h('p', { class: 'sub', text: 'TouchOSC, QLab, Resolume, Companion. The old addresses still work.' })),
+      h('div', { class: 'card' + (b.modules.midi ? '' : ' dashed') }, h('h2', { text: 'MIDI' }), b.modules.midi ? [kv('nanoKONTROL2', 'connected'), kv('CC 0', 'Bright'), btn('Learn a control', 'none', null, 'small')] : [h('p', { class: 'sub', text: 'An add-on that is off.' }), btn('Switch on in Add-ons', 'page', 'addons', 'small')]),
+      h('div', { class: 'card' + (b.modules.dmx ? '' : ' dashed') }, h('h2', { text: 'DMX' }), b.modules.dmx ? [kv('Art-Net universe 0', 'idle'), kv('Channels 1 to 9', 'fixed map')] : [h('p', { class: 'sub', text: 'An add-on that is off.' }), btn('Switch on in Add-ons', 'page', 'addons', 'small')])];
+  };
+  PAGES.mapper = function () { return [head('Mapper', 'Projection mapping (beta)'), h('div', { class: 'card dashed wide' }, h('p', { class: 'sub', text: 'The mapping editor: a canvas of the screen with surfaces, nudge buttons and saved mappings, as built today. Not drawn in this prototype.' }))]; };
+  PAGES.wall = function () { return [head('Wall and sync', 'Several boxes in step (beta)'), h('div', { class: 'card dashed wide' }, h('p', { class: 'sub', text: 'Server or client, group name, wall columns, rows, tile and bezel, as built today. Not drawn in this prototype.' }))]; };
+  PAGES.network = function () {
+    var b = B(), n = b.net, k = S.form.netkind;
+    var out = [head('Network', 'Wired show network first. Wi-Fi is for staff phones and tablets.')];
+    if (n.pending) {
+      var pn = n.pending;
+      out.push(h('div', { class: 'card wide', role: 'status', style: 'border-color: var(--ac)' },
+        h('div', { class: 'row between' }, h('b', { text: pn.kind === 'hotspot' ? 'Hotspot ' + pn.ssid + ' is up' : 'Joined ' + pn.ssid }), h('span', { class: 'mono', style: 'font-size: var(--t5); font-weight:700', text: mmss(pn.left) })),
+        h('p', { class: 'sub', text: pn.kind === 'hotspot' ? 'To keep it, join ' + pn.ssid + ' with this phone, open http://10.43.0.1 and tap Keep there. If nobody keeps it, the box goes back by itself when the time runs out.' : 'You can still see the box, so it reached the network. Keep it, or it goes back by itself when the time runs out.' }),
+        h('div', { class: 'row' }, btn('Go back now', 'netrevert', null, 'grow' + (S.pending.netc ? ' pending' : '')), btn('Keep', 'netconfirm', null, 'primary grow'))));
+      return out;
+    }
+    out.push(h('div', { class: 'card wide' }, h('h2', { text: 'How the box connects' }),
+      kv('Wired', n.wired + ' · this device uses it'),
+      kv('Wi-Fi', n.wifi.mode === 'off' ? 'off' : n.wifi.mode === 'hotspot' ? 'own hotspot ' + n.wifi.ssid : 'joined ' + n.wifi.ssid),
+      h('div', { class: 'seg2' },
+        btn('Wired address', 'netpick', 'wired', 'small', { 'aria-pressed': pressed(k === 'wired') }),
+        btn('Own hotspot', 'netpick', 'hotspot', 'small', { 'aria-pressed': pressed(k === 'hotspot') }),
+        btn('Join a Wi-Fi', 'netpick', 'join', 'small', { 'aria-pressed': pressed(k === 'join') }))));
+    if (k === 'join') out.push(h('div', { class: 'card' },
+      h('div', { class: 'row between' }, h('h2', { text: 'Networks in range' }), btn(S.form.scanning ? 'Looking' : 'Find', 'scan', null, 'small' + (S.form.scanning ? ' pending' : ''))),
+      S.form.scan ? h('div', { class: 'list' }, S.form.scan.map(function (w) {
+        return h('button', { type: 'button', class: 'item', 'data-act': 'ssid', 'data-arg': w.ssid, 'aria-current': S.form.ssid === w.ssid ? 'true' : null, disabled: w.no ? true : null, style: w.no ? 'opacity:.5' : null },
+          h('span', { class: 'grow' }, h('b', { text: w.ssid }), h('span', { text: w.sig + ' · ' + w.sec })), S.form.ssid === w.ssid ? h('span', { class: 'tag ink', text: 'chosen' }) : null);
+      })) : h('p', { class: 'sub', text: 'Tap Find. A hidden network can be typed in by hand.' }),
+      S.form.ssid && S.form.ssid !== 'Leyline-Guests' ? h('div', { class: 'field' }, h('label', { for: 'f-wpw', text: 'Password for ' + S.form.ssid }), h('input', { id: 'f-wpw', 'data-in': 'wpw', type: 'password', value: S.form.wpw || '' })) : null));
+    if (k === 'hotspot') out.push(h('div', { class: 'card' },
+      h('div', { class: 'field' }, h('label', { for: 'f-hname', text: 'Network name' }), h('input', { id: 'f-hname', 'data-in': 'hname', value: S.form.hname || 'NXLX-Leyline' })),
+      h('div', { class: 'field' }, h('label', { for: 'f-hpw', text: 'Password' }), h('input', { id: 'f-hpw', 'data-in': 'hpw', type: 'password', value: S.form.hpw || '' }), h('span', { class: 'sub', text: '8 characters or more. The box never shows it again.' })),
+      h('p', { class: 'sub', text: 'Phones that join get an address from the box. The panel is then at http://10.43.0.1.' })));
+    if (k === 'wired') out.push(h('div', { class: 'card' }, h('p', { class: 'sub', text: 'Automatic, fixed address, direct cable, or hand out addresses, with the same Try it and Keep. Not drawn in this prototype.' })));
+    if (k === 'join' || k === 'hotspot') out.push(h('div', { class: 'card' },
+      h('p', { class: 'sub', text: 'Nothing is final yet. After Try it you have 2 minutes to tap Keep. If this device loses the box, it goes back to the old setting by itself.' }),
+      btn('Try it', 'netapply', null, 'primary' + (S.pending.net ? ' pending' : ''))));
+    return out;
+  };
+  PAGES.access = function () {
+    var c = B().codes;
+    function codeCard(kind, title, what) {
+      var code = c[kind];
+      return h('div', { class: 'card' }, h('h2', { text: title }), h('p', { class: 'sub', text: what }),
+        code ? [h('div', { class: 'big', text: code.code }), h('p', { class: 'sub', text: 'Works for ' + code.left + ' minutes, up to 20 phones.' }), btn('Cancel this code', 'cancelcode', kind, 'quiet')]
+          : btn('Make a code', 'code', kind, 'primary' + (S.pending.code ? ' pending' : '')));
+    }
+    return [head('People and codes', 'The PIN is for the owner. Everyone else joins with a code.'),
+      codeCard('staff', 'Staff code', 'Room and Live: scenes, walls, play and mix. No Setup.'),
+      codeCard('guest', 'Guest code', 'Watch only: what plays and how the walls are.'),
+      h('div', { class: 'card' }, h('div', { class: 'row between' }, h('span', { class: 'grow' }, h('b', { text: 'Show codes on the big screen' }), h('br'), h('span', { class: 'sub', text: 'With a QR code, top right, for 5 minutes.' })),
+        h('button', { type: 'button', role: 'switch', class: 'switch', 'aria-checked': pressed(c.onScreen), 'data-act': 'onscreen', 'aria-label': 'Show codes on the big screen' }))),
+      h('div', { class: 'card' }, h('h2', { text: 'Paired devices' }), kv('Anthony’s phone', 'owner · this one'), kv('Bar tablet', 'staff · 2 min ago'), kv('Front desk', 'staff · yesterday'))];
+  };
+  PAGES.system = function () {
+    var armed = isArmed('reset');
+    function meter(name, val, pct) { return h('div', { class: 'stack', style: 'gap:4px' }, h('div', { class: 'row between' }, h('span', { text: name }), h('span', { class: 'mono', style: 'font-size:12px', text: val })), h('div', { class: 'meter' }, h('i', { style: 'width:' + pct + '%' }))); }
+    return [head('System', 'Health, updates and backup', btn('Restart player', 'care', 'restart', 'small')),
+      h('div', { class: 'card' }, h('h2', { text: 'Vitals' }), meter('Temperature', '52°C', 52), meter('Load', '0.6', 15), meter('Media disk', '9 of 93 GB', 10), kv('Power', 'ok, no drop'), kv('Player', 'hardware decode · 0 dropped')),
+      h('div', { class: 'card' }, h('h2', { text: 'Updates' }), kv('Installed', '0.1.0'), kv('Checked against', 'your signing key'),
+        btn('Look on the USB drive', 'care', 'update', 'small'), h('p', { class: 'sub', text: 'If the panel does not come back after an update, the box goes back to the version before by itself.' })),
+      h('div', { class: 'card' }, h('h2', { text: 'Backup and help' }), btn('Save settings file', 'care', 'export', 'small'), btn('Load settings file', 'none', null, 'small'), btn('Diagnostics file', 'care', 'diag', 'small')),
+      h('div', { class: 'card', style: 'border-color: var(--bd)' }, h('h2', { text: 'Start over' }),
+        h('p', { class: 'sub', text: 'Factory reset unpairs every device, this one too, and the box shows a new PIN. Network settings stay.' }),
+        btn(armed ? 'Tap again to reset the box' : 'Factory reset', 'reset', null, armed ? 'armed' : 'danger'))];
+  };
+  PAGES.addons = function () {
+    var b = B();
+    return [head('Add-ons', 'Off means: on no screen, doing nothing. Settings are kept.'),
+      h('div', { class: 'list' }, MODULES.map(function (m) {
+        var on = m.locked || !!b.modules[m.id], armed = isArmed('mod:' + m.id);
+        return h('div', { class: 'item' },
+          h('span', { class: 'grow' }, h('b', {}, m.name + ' '), h('span', { text: armed ? 'Tap again to switch off. Staff lose these buttons.' : m.what }), on && !m.locked ? h('span', { text: 'In: ' + m.where }) : null),
+          h('span', { class: 'tag' + (m.type === 'Core' ? ' ink' : ''), text: m.type }),
+          m.notBuilt ? h('span', { class: 'lbl', style: 'min-width:64px; text-align:center', text: 'later' }) :
+          h('button', { type: 'button', role: 'switch', class: 'switch' + (armed ? ' armed' : '') + (S.pending['mod:' + m.id] ? ' pending' : ''), 'aria-checked': pressed(on), 'data-act': 'module', 'data-arg': m.id, 'aria-label': m.name, disabled: m.locked ? true : null }));
+      }))];
+  };
+
+  // ---------------------------------------------------------------- Join
+  function joinScreen() {
+    var pin = S.form.pinmode;
+    return h('div', { class: 'stack', style: 'max-width: 420px; margin: 0 auto; width: 100%; gap: var(--s4); padding-top: 16px' },
+      h('h1', { text: 'Join Leyline' }),
+      h('p', { class: 'sub', style: 'font-size: var(--t3)', text: 'Scan the QR code on the big screen with your camera, or type the code shown next to it. No internet needed.' }),
+      h('div', { class: 'card dashed' }, h('div', { class: 'row' }, h('div', { style: 'width:96px; height:96px; border:1.5px solid var(--ln); background: var(--cd); display:flex; align-items:center; justify-content:center; flex:none', class: 'lbl', text: 'QR' }),
+        h('div', { class: 'stack', style: 'gap:2px' }, h('span', { class: 'lbl', text: 'Wi-Fi' }), h('span', { class: 'mono', text: 'Leyline-Staff' }), h('span', { class: 'lbl', text: 'Address' }), h('span', { class: 'mono', text: 'nxlx-leyline.local' })))),
+      h('div', { class: 'field' }, h('label', { for: 'f-join', text: pin ? 'Owner PIN, 4 digits' : 'Code, 6 digits' }),
+        h('input', { id: 'f-join', 'data-in': 'join', inputmode: 'numeric', autocomplete: 'one-time-code', value: S.form.join || '', style: 'font: 700 var(--t5) var(--mono); letter-spacing: .2em; min-height: 60px' })),
+      S.form.joinerr ? h('p', { role: 'alert', style: 'color:var(--bd); margin:0', text: S.form.joinerr }) : null,
+      btn(pin ? 'Pair as owner' : 'Join', pin ? 'none' : 'joincode', null, 'primary'),
+      h('p', { class: 'sub', text: 'In this prototype 000000 joins as a guest, any other 6 digits as staff.' }),
+      btn(pin ? 'I have a code' : 'I am the owner, use the PIN', 'ownerpin', null, 'quiet'),
+      h('p', { class: 'lbl', style: 'text-align:center', text: 'Connection lost? The box keeps playing.' }));
+  }
+
+  // ---------------------------------------------------------------- Sheets
+  function sheet() {
+    var t = S.sheet.type, body = [], b = B();
+    if (t === 'wall') {
+      var w = wallOf(S.sheet.arg), p = proj(w.proj[0]), st = wallState(w), off = isArmed('walloff:' + w.id);
+      body.push(h('div', { class: 'row between' }, h('h2', { text: w.name }), h('span', { class: 'state ' + st.cls, text: st.word })),
+        h('p', { class: 'sub', text: st.detail || (p.power === 'off' ? 'Switched off. On takes about 30 seconds.' : '') }));
+      if (can('presenter')) {
+        var shown = p.queue && p.queue.input ? p.queue.input : p.input;
+        body.push(h('div', { class: 'row' }, btn('On', 'wallpower', w.id + ':on', 'grow' + (S.pending['wallpower:' + w.id] ? ' pending' : ''), { 'aria-pressed': pressed(p.power === 'on' || p.power === 'warming') }),
+          btn(off ? 'Tap again: Off' : 'Off', 'wallpower', w.id + ':off', 'grow' + (off ? ' armed' : ''))),
+          h('span', { class: 'lbl', text: 'Shows' }),
+          h('div', { class: 'seg2' }, p.inputs.filter(function (i) { return i.label; }).map(function (i) { return btn(i.label, 'wallinput', w.id + ':' + i.code, 'small' + (S.pending['wallinput:' + w.id] ? ' pending' : ''), { 'aria-pressed': pressed(shown === i.code) }); })),
+          h('div', { class: 'row' }, btn('Picture mute', 'wallmute', w.id + ':pm', 'grow small', { 'aria-pressed': pressed(p.pm) }), btn('Sound mute', 'wallmute', w.id + ':sm', 'grow small', { 'aria-pressed': pressed(p.sm) })));
+      } else body.push(h('p', { class: 'sub', text: 'Only staff can switch the walls.' }));
+      body.push(h('p', { class: 'lbl', text: w.proj.map(function (id) { var q = proj(id); return q.model + ' · lamp ' + q.lamp + ' h'; }).join('; ') }));
+    } else if (t === 'now') {
+      var pl = b.player;
+      body.push(nowCard());
+      if (can('presenter') && pl.dur && pl.kind === 'clip') body.push(
+        h('input', { type: 'range', id: 'seek', min: 0, max: pl.dur, value: Math.floor(pl.pos), 'data-range': 'seek', 'aria-label': 'Position in the clip', style: 'width:100%; height:44px; accent-color: var(--ac)' }),
+        h('div', { class: 'row' }, btn('From start', 'restart', null, 'small grow'), btn('Back 10 s', 'seek', -10, 'small grow'), btn('On 10 s', 'seek', 10, 'small grow')));
+      body.push(h('div', { class: 'snap' + (b.black || pl.kind === 'none' ? ' black' : ''), text: S.snapAt ? 'Snapshot ' + S.snapAt.toTimeString().slice(0, 8) : 'No snapshot yet' }),
+        btn('Take a snapshot', 'snapshot', null, 'small' + (S.pending.snap ? ' pending' : '')),
+        h('p', { class: 'sub', text: 'One picture of what the box shows. It stalls the picture for a moment, so it is never automatic.' }));
+    } else if (t === 'look') {
+      var m = b.mix;
+      body.push(h('h2', { text: 'Mix and look' }),
+        h('span', { class: 'lbl', text: 'Change to the next clip' }),
+        h('div', { class: 'seg2' }, btn('Cut', 'mixset', 'transition:cut', 'small', { 'aria-pressed': pressed(m.transition === 'cut') }), btn('Dip to black', 'mixset', 'transition:dip', 'small', { 'aria-pressed': pressed(m.transition === 'dip') })),
+        h('p', { class: 'sub', text: 'Crossfade is not built: it needs a second player.' }),
+        h('span', { class: 'lbl', text: 'The Fade key takes' }),
+        h('div', { class: 'seg2' }, [0.5, 1, 2, 5].map(function (s) { return btn(s + ' s', 'mixset', 'fadeTime:' + s, 'small', { 'aria-pressed': pressed(b.fadeTime === s) }); })),
+        btn('Test pattern', 'test', null, 'small', { 'aria-pressed': pressed(b.test) }));
+      if (can('owner')) body.push(h('span', { class: 'lbl', text: 'Room geometry, owner only' }),
+        h('div', { class: 'seg2' }, btn('Flip H', 'mixset', 'flipH', 'small', { 'aria-pressed': pressed(m.flipH) }), btn('Flip V', 'mixset', 'flipV', 'small', { 'aria-pressed': pressed(m.flipV) }), btn('Logo overlay', 'mixset', 'overlay', 'small', { 'aria-pressed': pressed(m.overlay) })),
+        h('div', { class: 'seg2' }, [0, 90, 180, 270].map(function (r) { return btn(r + '°', 'mixset', 'rotate:' + r, 'small', { 'aria-pressed': pressed(m.rotate === r) }); })));
+    } else if (t === 'pad') {
+      var s = S.sheet.arg.split(':'), cur = b.banks[+s[0]].pads[+s[1]];
+      if (S.form.padend === undefined) S.form.padend = cur ? cur.ending : 'loop';
+      body.push(h('h2', { text: 'Pad ' + (+s[1] + 1) + ' of bank ' + b.banks[+s[0]].name }),
+        h('div', { class: 'field' }, h('label', { for: 'f-padlabel', text: 'Name on the pad' }), h('input', { id: 'f-padlabel', 'data-in': 'padlabel', value: S.form.padlabel !== undefined ? S.form.padlabel : (cur ? cur.label : ''), placeholder: 'From the file name' })),
+        h('span', { class: 'lbl', text: 'At the end' }),
+        h('div', { class: 'seg2' }, [['loop', 'Loop'], ['once', 'Once, black'], ['hold', 'Once, hold']].map(function (e) { return btn(e[1], 'padend', e[0], 'small', { 'aria-pressed': pressed(S.form.padend === e[0]) }); })),
+        h('span', { class: 'lbl', text: 'Clip: tap one to save' }),
+        h('div', { class: 'list' }, MEDIA.map(function (mm) { return h('button', { type: 'button', class: 'item', 'data-act': 'setpad', 'data-arg': mm.name, 'aria-current': cur && cur.file === mm.name ? 'true' : null }, h('span', { class: 'grow' }, h('b', { text: mm.name }), h('span', { text: mm.picture ? 'Picture' : mmss(mm.dur) }))); })),
+        cur ? btn('Empty this pad', 'setpad', '', 'quiet') : null);
+    } else if (t === 'putpad') {
+      var bi = Math.min(S.bank, 2);
+      body.push(h('h2', { text: 'Put ' + S.sheet.arg + ' on a pad' }), h('p', { class: 'sub', text: 'Tap a pad. A taken pad is replaced, and you can undo it.' }),
+        h('div', { class: 'banks' }, b.banks.map(function (bk, i) { return h('button', { type: 'button', 'data-act': 'putbank', 'data-arg': i, 'aria-pressed': pressed(bi === i), text: 'Bank ' + bk.name }); })),
+        h('div', { class: 'pads' }, b.banks[bi].pads.map(function (p, i) {
+          return h('button', { type: 'button', class: 'pad' + (p ? '' : ' empty'), 'data-act': 'putpad', 'data-arg': bi + ':' + i }, h('span', { class: 'pn' }, h('span', { text: pad2(i + 1) })), h('span', { class: 'pl', text: p ? p.label : 'Free' }));
+        })));
+    } else if (t === 'link') {
+      body.push(h('h2', { text: 'The box' }),
+        h('p', { text: S.conn === 'good' ? 'Answering in about 40 ms. Last heard just now.' : S.conn === 'slow' ? 'Slow: answers take about 2 seconds. A dashed outline means a tap is on its way. Nothing shows as done before the box says so.' : 'No answer for 14 s. The screens show the last known state. Taps are not sent and not queued, so nothing fires late.' }),
+        kv('Board', 'Raspberry Pi 4'), kv('Output', 'HDMI-1 1080p60'), kv('Temperature', '52°C'), kv('Address', '192.168.1.9'));
+    } else if (t === 'me') {
+      var words = { guest: ['Guest', 'You can see what plays and how the walls are. You cannot change anything.'], presenter: ['Staff', 'You can use scenes, switch walls, play and mix. Settings stay with the owner.'], owner: ['Owner', 'You can do everything, including Setup.'] }[S.role];
+      body.push(h('h2', { text: 'This device: ' + words[0] }), h('p', { text: words[1] }),
+        h('span', { class: 'lbl', text: 'Theme on this device' }),
+        h('div', { class: 'seg2' }, THEMES.map(function (t2) { return btn(t2[1], 'theme', t2[0], 'small', { 'aria-pressed': pressed(S.theme === t2[0]) }); })),
+        S.role !== 'owner' ? btn('Forget this device', 'forget', null, 'quiet') : null);
+    }
+    return h('div', { class: 'scrim', 'data-act': 'close' },
+      h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': t, 'data-stop': '1' },
+        h('div', { class: 'grab' }), body, btn('Close', 'close', null, 'quiet')));
+  }
+  A.none = function () { toast('Not part of this prototype.'); };
+
+  // ---------------------------------------------------------------- events (no inline handlers)
+  var LIVE_ACTS = ['pad', 'live', 'shader', 'vibes', 'vnext', 'blackout', 'fade', 'freeze', 'stopkey', 'scene', 'wallpower', 'wallinput', 'wallmute', 'vol', 'mixset', 'resetparam', 'netapply', 'netconfirm', 'netrevert', 'module', 'code', 'test', 'playmedia', 'autostart', 'osc'];
+  var holdTimer = null, holding = null, suppressClick = false, pointerDown = false;
+  app.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-act]');
+    if (!t || !app.contains(t)) return;
+    if (e.target.closest('[data-stop]') && !t.closest('[data-stop]')) return;
+    if (t.disabled) return;
+    if (suppressClick) { suppressClick = false; return; }
+    var name = t.getAttribute('data-act');
+    if (S.conn === 'lost' && LIVE_ACTS.indexOf(name) >= 0) { toast('The box is not answering. Nothing was sent.', true); render(); return; }
+    if (A[name]) { A[name](t.getAttribute('data-arg'), t, e); render(); }
+  });
+  app.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.hasAttribute('data-in')) { S.form[t.getAttribute('data-in')] = t.value; if (t.getAttribute('data-in') === 'join') S.form.joinerr = null; return; }
+    var k = t.getAttribute('data-range');
+    if (!k || k === 'seek') return;
+    var d = PARAMS[k], v = +t.value;
+    document.getElementById('faderval').textContent = d.fmt(v);
+    var pv = app.querySelector('[data-pv="' + k + '"]'); if (pv) pv.textContent = d.fmt(v);
+    if (S.conn !== 'lost') B().mix[k] = v;
+  });
+  app.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.tagName === 'SELECT' && t.hasAttribute('data-in')) { S.form[t.getAttribute('data-in')] = t.value; return; }
+    var k = t.getAttribute('data-range');
+    if (!k) return;
+    if (S.conn === 'lost') { toast('The box is not answering. Nothing was sent.', true); render(); return; }
+    if (k === 'seek') { var v = +t.value; send('seek', null, function () { B().player.pos = v; }); return; }
+    send('mix', null, function () {});
+  });
+  // hold: Stop and Unlock fire after 0.6 s of pressing; a long press on a pad edits it (owner)
+  app.addEventListener('pointerdown', function (e) {
+    pointerDown = true;
+    var t = e.target.closest('[data-hold], [data-long]');
+    if (!t || t.disabled) return;
+    if (S.conn === 'lost' && t.getAttribute('data-hold') === 'stop') return;
+    holding = t; t.classList.add('holding');
+    var what = t.getAttribute('data-hold') || t.getAttribute('data-long');
+    holdTimer = setTimeout(function () {
+      suppressClick = true; t.classList.remove('holding'); holding = null;
+      if (what === 'stop') doStop();
+      else if (what === 'unlock') { S.locked = false; toast('Unlocked.'); render(); }
+      else if (what === 'editpad') { S.sheet = { type: 'pad', arg: t.getAttribute('data-arg') }; S.form = {}; render(); }
+    }, what === 'editpad' ? 650 : 600);
+  });
+  function endHold() { pointerDown = false; clearTimeout(holdTimer); if (holding) { holding.classList.remove('holding'); holding = null; } }
+  app.addEventListener('pointerup', endHold);
+  app.addEventListener('pointercancel', endHold);
+  app.addEventListener('pointerleave', endHold);
+  app.addEventListener('contextmenu', function (e) { if (e.target.closest('[data-long], [data-hold]')) e.preventDefault(); });
+
+  // ---------------------------------------------------------------- the clock of the fake box
+  setInterval(function () {
+    var b = B(), p = b.player, changed = false;
+    if (p.kind === 'clip' && !p.paused) {
+      p.pos += b.mix.speed / 100; changed = true;
+      if (p.pos >= p.dur) { if (p.ending === 'loop') p.pos = 0; else if (p.ending === 'hold') { p.pos = p.dur; p.paused = true; } else stopAll(); }
+    }
+    if (p.kind === 'vibes' && !p.paused) {
+      b.vibes.left -= 1; p.pos = b.vibes.dwell - b.vibes.left; changed = true;
+      if (b.vibes.left <= 0) { b.vibes.idx = (b.vibes.idx + 1) % SHADERS.length; b.vibes.left = b.vibes.dwell; p.shader = SHADERS[b.vibes.idx]; p.pos = 0; }
+    }
+    if (b.fade !== b.fadeTarget) { var st = 1 / Math.max(0.5, b.fadeTime); b.fade = b.fadeTarget > b.fade ? Math.min(1, b.fade + st) : Math.max(0, b.fade - st); changed = true; }
+    b.projectors.forEach(function (q) {
+      if (q.id === 'p2' && S.unplugged && q.power !== 'noanswer' && q.power !== 'off') { q.power = 'noanswer'; changed = true; }
+      if (q.power === 'warming' || q.power === 'cooling') {
+        q.t -= 1; changed = true;
+        if (q.t <= 0) {
+          if (q.power === 'warming') { q.power = 'on'; if (q.queue) { if (q.queue.input) q.input = q.queue.input; if (q.queue.pm !== undefined) q.pm = q.queue.pm; } q.queue = null; }
+          else q.power = 'off';
+        }
+      }
+    });
+    if (b.net.pending) { b.net.pending.left -= 1; changed = true; if (b.net.pending.left <= 0) { b.net.wifi = b.net.pending.before; b.net.pending = null; toast('Nobody kept the change, so the box went back to its previous Wi-Fi setting.', true); } }
+    if (b.upload && b.upload.pct < 100) { b.upload.pct = Math.min(100, b.upload.pct + (S.conn === 'slow' ? 3 : 9)); if (b.upload.pct === 100 && !mediaByName(b.upload.name)) MEDIA.unshift({ name: b.upload.name, dur: 64, size: b.upload.size, codec: 'H.264', res: '1920x1080', fps: '30' }); changed = true; }
+    if (S.armed && Date.now() > S.armed.until) { S.armed = null; changed = true; }
+    if (!changed) return;
+    var ae = document.activeElement;
+    var typing = ae && app.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT');
+    if (pointerDown || holding || typing) { liveUpdate(); return; }
+    render();
+  }, 1000);
+  function liveUpdate() {
+    var t = app.querySelectorAll('[data-live="time"]'), p = B().player;
+    for (var i = 0; i < t.length; i++) t[i].textContent = p.dur ? mmss(p.pos) + ' / ' + mmss(p.dur) : '--:-- / --:--';
+  }
+
+  // ---------------------------------------------------------------- prototype chrome
+  function screenId() {
+    if (!S.joined) return 'join';
+    var id = S.mode;
+    if (S.mode === 'setup' && S.page) id += '/' + S.page + (S.wizard ? '/form' : '');
+    if (S.sheet) id += ' + ' + S.sheet.type + ' sheet';
+    return id;
+  }
+  var NOTE_PREFIX = 'nxlx-fresh-ui-notes:';
+  var notesEl = document.getElementById('notes'), noteFor = document.getElementById('notefor'), noteState = document.getElementById('notestate');
+  var storeWorks = store('nxlx-fresh-ui-probe', '1');
+  var currentNote = null;
+  // Notes are kept in the page's shared store when the viewer offers one (so Claude can read them back), and in this
+  // browser as well. Each screen is one document in "notes", keyed by a safe form of the screen's name.
+  var cache = {}, db = null, timers = {};
+  function docId(id) { return id.replace(/[^A-Za-z0-9_\-.~:@+]+/g, '_').slice(0, 200) || 'screen'; }
+  function notesFor(id) {
+    if (id === currentNote || document.activeElement === notesEl) return;
+    currentNote = id; noteFor.textContent = id;
+    notesEl.value = cache[id] !== undefined ? cache[id] : (store(NOTE_PREFIX + id) || '');
+    noteState.textContent = db ? 'Notes are shared with Claude.' : storeWorks ? '' : 'This browser does not keep notes (a private window?). Copy them out before you close it.';
+  }
+  notesEl.addEventListener('input', function () {
+    var id = currentNote, text = notesEl.value;
+    cache[id] = text;
+    var ok = store(NOTE_PREFIX + id, text);
+    if (!db) { noteState.textContent = ok ? 'Saved in this browser.' : 'Could not save here. Copy your notes out before closing.'; return; }
+    noteState.textContent = 'Saving...';
+    clearTimeout(timers[id]);
+    timers[id] = setTimeout(function () {
+      db.doc('notes/' + docId(id)).set({ screen: id, text: text, saved: new Date().toISOString() })
+        .then(function () { if (currentNote === id) noteState.textContent = 'Saved. Claude can read it.'; },
+              function () { if (currentNote === id) noteState.textContent = ok ? 'Saved in this browser only (the shared save failed).' : 'Could not save. Copy your notes out.'; });
+    }, 700);
+  });
+  notesEl.addEventListener('blur', function () { currentNote = null; notesFor(screenId()); });
+  try {
+    var use = window.claude && window.claude.use ? window.claude.use('db') : Promise.resolve(null);
+    use.then(function (d) {
+      if (!d) return;
+      db = d;
+      return db.collection('notes').get().then(function (snap) {
+        (snap.docs || snap || []).forEach(function (doc) {
+          var v = typeof doc.data === 'function' ? doc.data() : doc;
+          if (v && typeof v.screen === 'string' && typeof v.text === 'string') cache[v.screen] = v.text;
+        });
+        var keep = currentNote; currentNote = null;
+        if (document.activeElement !== notesEl) notesFor(keep || screenId());
+      });
+    }).catch(function () { db = null; });
+  } catch (e) { db = null; }
+  document.getElementById('allnotes').addEventListener('click', function () {
+    var out = document.getElementById('allnotesout'), lines = [], seen = {};
+    Object.keys(cache).forEach(function (k) { seen[k] = 1; if (cache[k]) lines.push('[' + k + ']\n' + cache[k]); });
+    try {
+      for (var i = 0; i < window.localStorage.length; i++) {
+        var k = window.localStorage.key(i);
+        if (k && k.indexOf(NOTE_PREFIX) === 0 && !seen[k.slice(NOTE_PREFIX.length)]) { var v = window.localStorage.getItem(k); if (v) lines.push('[' + k.slice(NOTE_PREFIX.length) + ']\n' + v); }
+      }
+    } catch (e) { if (!lines.length) lines.push('Notes cannot be read in this browser.'); }
+    out.textContent = lines.length ? lines.join('\n\n') : 'No notes yet.';
+    out.hidden = !out.hidden;
+  });
+
+  var device = document.getElementById('device');
+  function seg(id, items, current, onpick) {
+    var el = document.getElementById(id); el.replaceChildren();
+    items.forEach(function (it) {
+      var b = h('button', { type: 'button', 'aria-pressed': pressed(it[0] === current), text: it[1] });
+      b.addEventListener('click', function () { onpick(it[0]); syncSide(); render(); });
+      el.appendChild(b);
+    });
+  }
+  function syncSide() {
+    seg('roles', [['guest', 'Guest'], ['presenter', 'Staff or presenter'], ['owner', 'Owner']], S.role, function (r) {
+      S.role = r; S.joined = true; S.sheet = null; if (modesFor(r).indexOf(S.mode) < 0) S.mode = 'room';
+    });
+    seg('sizes', [['phone', 'Phone'], ['tablet', 'Tablet'], ['laptop', 'Laptop']], S.size, function (s) { S.size = s; device.setAttribute('data-size', s); });
+    seg('themes', THEMES, S.theme, function (t) { S.theme = t; });
+    seg('conns', [['good', 'Good'], ['slow', 'Slow'], ['lost', 'Lost']], S.conn, function (c) { S.conn = c; });
+  }
+  function roomOpen() { applyScene(S.box.scenes[0]); S.box.projectors.forEach(function (p) { p.power = 'on'; p.queue = null; }); S.box.job = null; }
+  var JOURNEYS = [
+    ['Staff opens the room', function () { S.role = 'presenter'; S.mode = 'room'; S.theme = 'light'; },
+      'Tap Open room. Both walls warm up on the map (30 s) and the box starts Vibes. Tap a wall for its own buttons. Set the link to Slow to see dashed outlines while a tap is on its way.'],
+    ['Staff closes the room', function () { roomOpen(); S.role = 'presenter'; S.mode = 'room'; S.theme = 'dark-stage'; },
+      'Tap Close room: it turns red and asks for a second tap within 6 s. Wait instead, and nothing happens.'],
+    ['VJ performs at night', function () { S.role = 'owner'; S.mode = 'live'; S.bank = 0; S.theme = 'night-red'; playFile('tunnel.mp4', 'Tunnel', 'loop', [0, 1]); S.box.player.pos = 19; },
+      'Night red. Tap pads, switch banks, open the Vibes bank. Pick Bright, Speed or Volume above the fader. Blackout stays lit while it is on. Stop needs a short hold. Lock the pads with the padlock. Hold a pad to edit it.'],
+    ['Guest watches', function () { roomOpen(); S.role = 'guest'; S.mode = 'room'; S.theme = 'dark-stage'; },
+      'A guest sees the walls, what the box plays and the scene names, with nothing that changes the room.'],
+    ['Someone joins with a code', function () { S.joined = false; S.theme = 'light'; },
+      'Type six digits and Join. 000000 joins as a guest.'],
+    ['Owner adds media', function () { S.role = 'owner'; S.mode = 'setup'; S.page = 'library'; S.theme = 'light'; },
+      'Tap Upload. When it is done, Put on a pad, pick a pad. Then open Live and find it. Delete asks for a second tap.'],
+    ['Owner adds a projector', function () { S.role = 'owner'; S.mode = 'setup'; S.page = 'projectors'; S.theme = 'light'; },
+      'Tap Add, Ask the projector, Next, name it and choose A new wall. The new wall appears on Room.'],
+    ['Owner joins Wi-Fi or starts the hotspot', function () { S.box.modules.network = true; S.role = 'owner'; S.mode = 'setup'; S.page = 'network'; S.theme = 'light'; },
+      'Join a Wi-Fi, Find, Leyline-Staff, any 8 character password, Try it. Keep it before the countdown ends, or let it go back. Or try Own hotspot.'],
+    ['Owner adds a schedule entry', function () { S.role = 'owner'; S.mode = 'setup'; S.page = 'schedule'; S.theme = 'light'; },
+      'Tap Add, choose a time, days and a scene, then Save entry. The week strip shows it. The power-on choice is on the same page.'],
+    ['Owner switches an add-on on', function () { S.role = 'owner'; S.mode = 'setup'; S.page = 'addons'; S.theme = 'light'; },
+      'Switch Network settings on: Network appears in Setup. Switching Projector control off asks first, because staff lose buttons.']
+  ];
+  var jEl = document.getElementById('journeys'), jHint = document.getElementById('jhint');
+  JOURNEYS.forEach(function (j, i) {
+    var b = h('button', { type: 'button', text: (i + 1) + '. ' + j[0] });
+    b.addEventListener('click', function () {
+      S.box = freshBox(); S.page = null; S.sheet = null; S.wizard = null; S.form = {}; S.armed = null; S.locked = false; S.toast = null; S.joined = true; S.pending = {};
+      j[1](); jHint.textContent = j[2]; syncSide(); render();
+      document.getElementById('side').classList.remove('open');
+    });
+    jEl.appendChild(b);
+  });
+  document.getElementById('unplug').addEventListener('change', function (e) {
+    S.unplugged = e.target.checked;
+    var p2 = proj('p2'); if (p2 && !S.unplugged && p2.power === 'noanswer') p2.power = 'off';
+    render();
+  });
+  document.getElementById('openside').addEventListener('click', function () { document.getElementById('side').classList.add('open'); });
+  document.getElementById('closeside').addEventListener('click', function () { document.getElementById('side').classList.remove('open'); });
+
+  window.__proto = { S: S, render: render, syncSide: syncSide, journeys: JOURNEYS, applyScene: applyScene, playFile: playFile, startVibes: startVibes, freshBox: freshBox, device: device };
+  syncSide(); render();
+})();
+</script>
+</body>
+</html>
