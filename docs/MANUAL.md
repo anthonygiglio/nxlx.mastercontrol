@@ -200,7 +200,7 @@ Setting it up is for a full-access device: switch **Projectors** and then **Room
 
 ### Shaders and Vibes (beta)
 
-A shader is a small program that the box's graphics chip runs to draw a moving picture: there is no clip, so it never ends and never repeats exactly. The box takes shaders in the **ISF** format (Interactive Shader Format, `.fs` files) and comes with ten slow, quiet ones made for ambience.
+A shader is a small program that the box's graphics chip runs to draw a moving picture: there is no clip, so it never ends and never repeats exactly. The box takes shaders in the **ISF** format (Interactive Shader Format, `.fs` files) and comes with 40 of its own: 25 slow, quiet ones made for ambience (the first ten and the **Ambient** family), and 15 stronger, rhythmic ones made to be played by hand (the **Performance** family: tunnels, bars and tiles on a beat, beams, checker and stripe bends, bursts, an oscilloscope, glitch blocks, dots, mirrors). The Performance ones are in the list to play, but **not in the Vibes rotation until you switch one in**, so one tap on Vibes never starts something that flashes. None of them flashes more than 3 times a second; a few have a switch **Fast** that doubles that, off unless you turn it on (do not, where someone may be sensitive to flashing light). The list with what each one shows and what can be set is in [pvj/SHADERS.md](../pvj/SHADERS.md).
 
 Switch it on under System > Shaders and Vibes (beta, off by default; not offered on a Raspberry Pi 3). Everything about shaders is on that one page. It also opens from the **Shaders** link next to the Vibes button on Live, and Back then returns to Live.
 
