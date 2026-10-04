@@ -23,7 +23,7 @@ OUT="$(mktemp)"
 PLANTED=/root/pvj-planted-by-root
 
 listing() {
-	find /run/pvj /run/pvj-sysd /run/pvj-supportd /run/pvj-update -printf '%u:%g %m %y %p %l\n' 2>&1 | sort -k4
+	{ find /run/pvj /run/pvj-sysd /run/pvj-supportd /run/pvj-update -printf '%u:%g %m %y %p %l\n' 2>&1 || true; } | sort -k4
 }
 fail() {
 	echo "FAIL: $*" >&2

@@ -50,7 +50,7 @@ Not ported yet: slave, stream and wifi presets, network sync between boxes (mast
 
 ## Running as a service
 
-`install/pvj-player.service` runs `pvj-player serve` under systemd as the account that owns the screen and sound card (`@PVJ_USER@`, `@PVJ_DIR@` are filled in by the installer, which is not written yet). It restarts the player if it dies, and puts the control socket in its own folder `/run/pvj/player` (the player's account, group `pvj`, mode 0750: the group can reach the socket, only the player can replace it). The web panel runs as its own user in that group and uses the socket. Every service has such a folder of its own under a `/run/pvj` that belongs to root; all the paths are in `pvj/paths.py` (D45). A world-accessible runtime directory is refused.
+`install/pvj-player.service` runs `pvj-player serve` under systemd as the account that owns the screen and sound card (`@PVJ_USER@`, `@PVJ_DIR@` are filled in by the installer, which is not written yet). It restarts the player if it dies, and puts the control socket in its own folder `/run/pvj/player` (the player's account, group `pvj`, mode 0750: the group can reach the socket, only the player can replace it; the preview picture is written there too, and the panel only reads it). The web panel runs as its own user in that group and uses the socket. Every service has such a folder of its own under a `/run/pvj` that belongs to root; all the paths are in `pvj/paths.py` (D45). A world-accessible runtime directory is refused.
 
 Not verified on a real device: the unit passes `systemd-analyze verify` here, but restart-on-crash, the group permissions and DRM access need a test on a Pi.
 
