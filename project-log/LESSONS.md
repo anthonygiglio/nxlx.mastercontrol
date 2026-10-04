@@ -75,3 +75,7 @@ The Wi-Fi code wrote its keyfile under `/etc/NetworkManager/system-connections`,
 ## A card that asks the server while it is being built (2026-10-04)
 
 The Updates card called `refresh()` while it was being built, and `refresh()` does nothing until the card is on the page. On the old single System screen a later redraw hid this; with one page per item there was no later redraw, so the card stayed at "Loading..." and the browser test timed out at `#updateversion`. A card that checks `isConnected` must start its first request after it is attached (`setTimeout(refresh, 0)`).
+
+## A switch built on an API that saves a whole section (2026-10-04)
+
+`POST /api/schedule` replaces the whole schedule: `entries` left out means no entries. A page switch that sent only `enabled`, or entries the panel had read some minutes earlier, would have wiped or rolled back the schedule. The DMX toggle had the opposite fault: it sent every field on the page along with the flag, so switching on also saved a half-typed universe. Before a control is folded into a switch, read the handler: send exactly the flag where the handler merges (DMX, MIDI, OSC, Remote support), and where it replaces, read the saved state just before the change and send that back unchanged.

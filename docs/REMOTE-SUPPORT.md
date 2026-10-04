@@ -6,7 +6,7 @@ Help a studio from anywhere, without opening anything on their router and withou
 
 ## For the studio
 
-Remote support is **off** until someone with full access, at the studio, allows it (System > Remote support). Even then nothing can reach the box until you start a session.
+Remote support is **off** until someone with full access, at the studio, allows it with the switch at the top of System > Remote support. Even then nothing can reach the box until you start a session.
 
 1. Support asks for a session. In System > Remote support, choose how long (1 hour unless you choose otherwise, 4 hours at most) and what support may do:
    - **Full**: support can check and change settings (most useful when something is wrong). That includes everything a full-access device can do except the list below: for example the network settings (a wrong change reverts by itself unless confirmed), projectors and streams (the box then connects to addresses on your network), uploads, the schedule, restarting;

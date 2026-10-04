@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # MIDI controllers (beta)
 
-Play pads, fade and mix from USB MIDI controllers: pad grids, fader boxes, keyboards. Switch it on under System > MIDI controller (full-access devices only), then turn MIDI on with the button inside the page. Off until you turn it on.
+Play pads, fade and mix from USB MIDI controllers: pad grids, fader boxes, keyboards. Switch it on under System > MIDI controller (full-access devices only) with the switch at the top of the page: it is the only switch, and the box reads controllers as soon as it says On. Off until you switch it on; switching off switches the module off and keeps your mappings. In the API these are still two things: the `control-midi` module and `enabled` in `POST /api/midi`.
 
 **Every controller that is plugged in is read at once**, and a controller unplugged and replugged is picked up again within a couple of seconds. Nothing is written back to a controller (no lights or motor faders yet).
 

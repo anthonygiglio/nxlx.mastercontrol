@@ -1,10 +1,10 @@
 # OSC control
 
-Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **System > OSC** (full-access devices only). Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
+Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **System > OSC** with the switch at the top of the page (full-access devices only); there is no other switch, and the port and networks have their own Save button. Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
 
 ## Safety
 
-- **Off until you turn it on**, and it only listens while on.
+- **Off until you switch it on**, and it only listens while on.
 - **Only private networks may send**: loopback, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local `169.254.0.0/16` (a direct Ethernet cable between laptop and box) and their IPv6 equivalents. Add your show network under "Extra networks". Ranges wider than a /8 are refused. UDP source addresses can be forged, so this keeps the internet out; it does not stop a hostile device on your own network, so keep the show network private.
 - **Nothing dangerous is reachable.** `/shutdown`, `/reboot`, `/rebootall`, `/shutdownall`, factory reset, password changes and updates do not exist over OSC. They need a paired full-access device in the panel.
 - **No replies are ever sent**, so the receiver cannot be used to bounce traffic at someone else.
