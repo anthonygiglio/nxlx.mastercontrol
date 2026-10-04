@@ -45,6 +45,11 @@ DEFAULT_HEIGHT = 720
 DWELL_MIN, DWELL_MAX, DWELL_DEFAULT = 10, 3600, 180
 VERIFY_SECONDS = 4.0
 BUNDLED_DIR = os.path.join(os.path.dirname(__file__), "shaders.d")
+# Packs: the project's own shaders lie in BUNDLED_DIR itself; each folder inside it is a pack of somebody else's
+# shaders under its own licence (see THIRD_PARTY_LICENSES.md). Uploads are listed as the pack "uploads".
+PACK_OWN, PACK_UPLOADS = "nxlx", "uploads"
+PACK = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+MAX_PACKS = 16
 FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.\-]{0,59}\.fs")
 INPUT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")
 CARRIER = re.compile(r"av://lavfi:color=c=black:size=[0-9]{1,4}x[0-9]{1,4}:rate=%d,format=rgb0" % CARRIER_FPS)
@@ -70,8 +75,12 @@ _ALLOWED_DIRECTIVES = ("define", "undef", "if", "ifdef", "ifndef", "else", "elif
 _GLOBAL_IO = re.compile(r"\b(?:uniform|varying|attribute|layout)\b|(?:^|[;{}])\s*(?:in|out)\s")
 _IMG = re.compile(r"\bIMG_(?:PIXEL|NORM_PIXEL|THIS_PIXEL|THIS_NORM_PIXEL|SIZE)\b")
 # Names the player and this translator own, in any letter case: the hook, mpv's textures and their companions.
-_OWN = re.compile(r"\b(?:pvj_\w*|hooked\w*|texture\d+|texcoord\d+|texture_(?:size|rot|off)\d+|pixel_size\d+|texmap\d+"
+_OWN = re.compile(r"\b(?:pvj_\w*|hook|hooked\w*|texture\d+|texcoord\d+|texture_(?:size|rot|off)\d+|pixel_size\d+|texmap\d+"
                   r"|out_color|input_size|target_size|tex_offset)\b", re.I)
+# Two names that many ISF files use and the player owns. They are not refused: every use is renamed to a pvj_ name
+# (which a file cannot write itself), so the player's own `out_color` and `color` are never touched by a file.
+_RENAMED = "out_color"                  # in the code, spelled exactly so; any other letter case stays refused
+_INPUT_RENAMED = ("color",)             # as an input's name, in any letter case
 
 
 # A bundled shader with this category is made to be performed with (strong, rhythmic): it is in the library but not in
@@ -114,7 +123,9 @@ def _input(spec, seen):
     name, kind = spec.get("NAME"), spec.get("TYPE")
     if not isinstance(name, str) or not INPUT_NAME.fullmatch(name):
         raise ShaderError("an input name must be 1 to 32 letters, digits or _ and start with a letter")
-    if (name.lower() in RESERVED_LOWER or name.lower().startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name
+    if name.lower() in _INPUT_RENAMED:
+        pass                                # written into the shader under another name, see ident()
+    elif (name.lower() in RESERVED_LOWER or name.lower().startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name
             or _OWN.fullmatch(name)):
         raise ShaderError("the input name %s is taken by the shader language or the player" % name)
     if name in seen:
@@ -170,6 +181,11 @@ def _input(spec, seen):
     else:                                   # an event: a button in ISF; it is never pressed here
         out["default"] = False
     return out
+
+
+def ident(name):
+    """The name an input has inside the generated shader: its own, or a pvj_ name where the player owns the word."""
+    return "pvj_in_" + name if name.lower() in _INPUT_RENAMED else name
 
 
 def _no_constant(word):
@@ -262,12 +278,18 @@ def parse(source):
     seen = set()
     clean = [_input(i, seen) for i in inputs]
     body = source[end + 2:]
+    # Comments go first and are never passed on, so they may hold any text (real ISF files have dashes, arrows and
+    # bullets in theirs, and a backslash at times). What is left is what the compiler will read, and that must be
+    # plain ASCII without a backslash. A // comment ends at its line break here whatever its last character is, and
+    # the comment is not passed on, so a backslash at its end continues nothing.
+    body = strip_comments(body)
+    if "\\" in body:
+        raise ShaderError("the character \\ is not allowed in the code (no line continuations)")
     bad = sorted({ch for ch in body if not (" " <= ch <= "~" or ch in "\n\t")})
     if bad:
         raise ShaderError("the shader code may hold plain ASCII text only (found %r)" % bad[0])
-    if "\\" in body:
-        raise ShaderError("the character \\ is not allowed in the code (no line continuations)")
-    body = strip_comments(body)
+    if "##" in body:                        # two pieces joined into a name that the checks below never saw
+        raise ShaderError("the text ## is not allowed in the code (no joining of names)")
     for m in _DIRECTIVE.finditer(body):
         if m.group(1) not in _ALLOWED_DIRECTIVES:
             raise ShaderError("the line #%s is not allowed (no includes, versions, extensions or pragmas)" % (m.group(1) or "?"))
@@ -279,7 +301,7 @@ def parse(source):
         raise ShaderError("the code declares its own uniform, varying, in or out, which the player cannot fill")
     if _IMG.search(body):
         raise ShaderError("it reads a picture (IMG_PIXEL and the like): only generator shaders are supported")
-    own = _OWN.search(body)
+    own = next((m for m in _OWN.finditer(body) if m.group(0) != _RENAMED), None)
     if own:
         raise ShaderError("the name %s is used by the player; rename it" % own.group(0))
     if len(_MAIN.findall(body)) != 1:
@@ -287,6 +309,10 @@ def parse(source):
     # The code as the player will get it, made once per file: comments gone, ISF's names exchanged for ours.
     code = re.sub(r"\bgl_FragColor\b", "pvj_color", body)
     code = re.sub(r"\bgl_FragCoord\b", "pvj_coord", code)
+    code = re.sub(r"\b%s\b" % _RENAMED, "pvj_u_" + _RENAMED, code)
+    for i in clean:
+        if ident(i["name"]) != i["name"]:
+            code = re.sub(r"\b%s\b" % i["name"], ident(i["name"]), code)
     code = _MAIN.sub("void pvj_main()", code).rstrip()
     cats = head.get("CATEGORIES")
     cats = [c for c in (_text(c, 40) for c in (cats if isinstance(cats, list) else [])[:16]) if c]
@@ -350,17 +376,17 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
              "#define vv_FragNormCoord pvj_norm",
              "PVJ_HP float pvj_time;", "vec2 pvj_norm;", "vec4 pvj_coord;", "vec4 pvj_color;"]
     for i in parsed["inputs"]:
-        d = i["default"]
+        d, name = i["default"], ident(i["name"])
         if i["type"] == "float":
-            lines.append("const float %s = %s;" % (i["name"], _f(values.get(i["name"], d))))
+            lines.append("const float %s = %s;" % (name, _f(values.get(i["name"], d))))
         elif i["type"] in ("bool", "event"):
-            lines.append("const bool %s = %s;" % (i["name"], "true" if d else "false"))
+            lines.append("const bool %s = %s;" % (name, "true" if d else "false"))
         elif i["type"] == "long":
-            lines.append("const int %s = %d;" % (i["name"], d))
+            lines.append("const int %s = %d;" % (name, d))
         elif i["type"] == "color":
-            lines.append("const vec4 %s = vec4(%s);" % (i["name"], ", ".join(_f(c) for c in d)))
+            lines.append("const vec4 %s = vec4(%s);" % (name, ", ".join(_f(c) for c in d)))
         else:
-            lines.append("const vec2 %s = vec2(%s, %s);" % (i["name"], _f(d[0]), _f(d[1])))
+            lines.append("const vec2 %s = vec2(%s, %s);" % (name, _f(d[0]), _f(d[1])))
     lines += ["#line %d" % parsed["line"], parsed["code"], "",
               "vec4 hook() {",
               # frame = hi * 512 + lo, in whole numbers small enough for 16 bits; hi starts again after 8192 (38.8 hours)
@@ -540,13 +566,44 @@ class Engine:
             return []
         return sorted((n for n in names if FILE.fullmatch(n) and valid_name(n)), key=str.lower)
 
+    def packs(self):
+        """[(pack name, folder)] of the bundled shaders: the project's own first, then each pack folder by name."""
+        out = [(PACK_OWN, self.bundled_dir)]
+        try:
+            names = sorted(os.listdir(self.bundled_dir))
+        except OSError:
+            names = []
+        for n in names:                     # folders are picked out first and counted after: the project's own files,
+            folder = os.path.join(self.bundled_dir, n)      # however many, can never push a pack off the list
+            if PACK.fullmatch(n) and n not in (PACK_OWN, PACK_UPLOADS) and os.path.isdir(folder) and not os.path.islink(folder):
+                out.append((n, folder))
+                if len(out) > MAX_PACKS:
+                    break
+        return out
+
+    def _bundled(self, name):
+        """(path, pack) of a bundled shader by its file name, or None. A name is looked for in the project's own
+        folder first, so no pack can stand in for one of the project's shaders."""
+        for pack, folder in self.packs():
+            path = os.path.join(folder, name)
+            if os.path.isfile(path) and not os.path.islink(path):
+                return path, pack
+        return None
+
+    def _hidden_upload(self, name):
+        """The path of an uploaded file that has the name of a bundled shader (and so is never listed or played), or None."""
+        path = os.path.join(self.dir, name)
+        if os.path.islink(self.dir) or os.path.islink(path) or not os.path.isfile(path):
+            return None
+        return path
+
     def _path(self, sid):
-        """(path, "bundled" or "uploaded") of a shader by its file name; never a path outside the two folders."""
+        """(path, "bundled" or "uploaded") of a shader by its file name; never a path outside the known folders."""
         if not isinstance(sid, str) or not FILE.fullmatch(sid) or not valid_name(sid):
             raise ApiError(400, "invalid shader name")
-        path = os.path.join(self.bundled_dir, sid)
-        if os.path.isfile(path):
-            return path, "bundled"
+        hit = self._bundled(sid)
+        if hit:
+            return hit[0], "bundled"
         path = os.path.join(self.dir, sid)
         if os.path.islink(self.dir) or os.path.islink(path) or not os.path.isfile(path):
             raise ApiError(404, "no such shader")
@@ -580,27 +637,33 @@ class Engine:
         return hit[1]
 
     def library(self):
-        """[{"id", "name", "source", "description", "credit", "cost", "categories", "vibes", "inputs", "error"}], bundled
-        first. A shader is in Vibes until it is taken out ("disabled"); a bundled one of the category "Performance" is
-        out until it is put in ("included")."""
+        """[{"id", "name", "source", "pack", "description", "credit", "cost", "categories", "vibes", "inputs", "error"}],
+        bundled first: the project's own, then each third-party pack, then the uploads. The project's shaders and uploads
+        are in Vibes until they are taken out ("disabled"). Two kinds are in the library but not in Vibes until put in
+        ("included"): a third-party pack's shaders, and the project's own of the category "Performance"."""
         cfg = self.config()
         disabled, included = set(cfg["disabled"]), set(cfg.get("included", ()))
         out = []
-        folders = [(self.bundled_dir, "bundled")] + ([] if os.path.islink(self.dir) else [(self.dir, "uploaded")])
+        folders = [(folder, "bundled", pack) for pack, folder in self.packs()]
+        if not os.path.islink(self.dir):
+            folders.append((self.dir, "uploaded", PACK_UPLOADS))
         seen = set()
-        for folder, source in folders:
+        for folder, source, pack in folders:
             for n in self._names(folder)[:MAX_UPLOADS + 64]:
                 path = os.path.join(folder, n)
                 if n in seen or os.path.islink(path) or not os.path.isfile(path):
                     continue
                 seen.add(n)
-                item = {"id": n, "name": n[:-3], "source": source, "vibes": n not in disabled, "description": "", "credit": "",
+                vibes = n in included if pack not in (PACK_OWN, PACK_UPLOADS) else n not in disabled
+                item = {"id": n, "name": n[:-3], "source": source, "pack": pack, "vibes": vibes, "description": "", "credit": "",
                         "cost": "", "categories": [], "inputs": [], "error": None}
+                if source == "bundled" and self._hidden_upload(n):
+                    item["hides_upload"] = True     # an older upload of this name lies unused; delete by this id removes it
                 try:
                     p = self._parsed(path)[0]
                     item.update(description=p["description"], credit=p["credit"], cost=p["cost"], categories=list(p["categories"]),
                                 inputs=[dict(i) for i in p["inputs"]])
-                    if source == "bundled" and not default_in_vibes(p):
+                    if pack == PACK_OWN and not default_in_vibes(p):
                         item["vibes"] = n in included
                 except ShaderError as e:
                     item["error"] = str(e)
@@ -613,10 +676,14 @@ class Engine:
         return [s["id"] for s in self.library() if s["vibes"] and not s["error"]]
 
     def _opt_in(self, sid):
-        """True for a shader that is out of Vibes until it is put in (see library)."""
-        path, source = self._path(sid)
+        """True for a bundled shader that is out of Vibes until it is put in (see library)."""
+        hit = self._bundled(sid)
+        if not hit:
+            return False
+        if hit[1] != PACK_OWN:
+            return True
         try:
-            return source == "bundled" and not default_in_vibes(self._parsed(path)[0])
+            return not default_in_vibes(self._parsed(hit[0])[0])
         except ShaderError:
             return False
 
@@ -809,7 +876,7 @@ class Engine:
             raise ApiError(400, "send the shader text")
         if not isinstance(replace, bool):
             raise ApiError(400, "replace must be true or false")
-        if os.path.isfile(os.path.join(self.bundled_dir, name)):
+        if self._bundled(name):
             raise ApiError(409, "%s is the name of a bundled shader; choose another name" % name)
         try:
             data = source.encode("utf-8")
@@ -831,7 +898,8 @@ class Engine:
                 raise ApiError(409, "a shader with that name already exists")
             if os.path.islink(final):
                 raise ApiError(409, "refusing to replace a link")
-            if not exists and len(self._names(self.dir)) >= MAX_UPLOADS:
+            # a file hidden behind a bundled shader of the same name is not one of the owner's usable uploads
+            if not exists and len([n for n in self._names(self.dir) if not self._bundled(n)]) >= MAX_UPLOADS:
                 raise ApiError(409, "at most %d uploaded shaders; delete one first" % MAX_UPLOADS)
             tmp = os.path.join(self.dir, ".upload-%d-%d" % (os.getpid(), threading.get_ident()))
             try:
@@ -864,14 +932,19 @@ class Engine:
     def delete(self, sid):
         path, source = self._path(sid)
         if source != "uploaded":
-            raise ApiError(409, "a bundled shader cannot be deleted; switch it off for Vibes instead")
+            # An upload of the same name that was there before the bundled file came is hidden behind it (the
+            # library says so with "hides_upload"): deleting by that name removes the upload, never the bundled file.
+            path = self._hidden_upload(sid)
+            if not path:
+                raise ApiError(409, "a bundled shader cannot be deleted; switch it off for Vibes instead")
         with self._lock:
             try:
                 os.unlink(path)
             except OSError as e:
                 raise ApiError(500, "could not delete: %s" % (e.strerror or e))
             cfg = self.config()
-            if sid in cfg["disabled"]:
+            hit = self._bundled(sid)        # one of the project's own keeps its entry: there it is that shader's switch
+            if sid in cfg["disabled"] and not (hit and hit[1] == PACK_OWN):
                 cfg["disabled"] = [n for n in cfg["disabled"] if n != sid]
                 self._save(cfg)
 
@@ -933,7 +1006,7 @@ class Engine:
             if not isinstance(on, bool):
                 raise ApiError(400, "on must be true or false")
             cfg = self.config()
-            if self._opt_in(sid):
+            if self._opt_in(sid):                   # a third-party pack's shader, or one of ours made for performing
                 cfg["included"] = [n for n in cfg.get("included", []) if n != sid] + ([sid] if on else [])
             else:
                 cfg["disabled"] = [n for n in cfg["disabled"] if n != sid] + ([] if on else [sid])

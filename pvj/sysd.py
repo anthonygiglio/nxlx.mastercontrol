@@ -3,7 +3,7 @@
 """pvj-sysd: the small root helper for reboot, power off and setting the clock, on behalf of the unprivileged panel.
 
 The old panel had Reboot, Power off and Set time buttons (it ran `sudo reboot` and `date -s` from PHP). Here the panel
-(user pvj-web) sends one JSON line over a Unix socket in /run/pvj; this daemon answers only root and pvj-web (checked
+(user pvj-web) sends one JSON line over a Unix socket in /run/pvj-sysd; this daemon answers only root and pvj-web (checked
 with SO_PEERCRED), and runs only these fixed commands, as argument lists, never a shell:
 
 * reboot, poweroff: `systemctl reboot|poweroff`, one second after answering, so the panel gets its reply;
@@ -26,6 +26,7 @@ import subprocess
 import threading
 import time
 
+from . import paths
 from .netd import NetServer, peer_uid  # noqa: F401  (the same small, reviewed socket server)
 
 MIN_EPOCH = 1735689600      # 2025-01-01: anything earlier is a wrong clock, not a date to set
@@ -219,8 +220,8 @@ def main(argv=None):
     import grp
     import pwd
     # Its own folder (root:pvj 0750): nobody but root can create or replace anything in it, so no member of group
-    # pvj can put a fake socket in its place. The shared /run/pvj is group-writable.
-    rundir = os.environ.get("PVJ_SYSD_DIR", "/run/pvj-sysd")
+    # pvj can put a fake socket in its place.
+    rundir = paths.sysd_dir()
     os.makedirs(rundir, exist_ok=True)
     allowed = {0}
     try:
@@ -229,7 +230,7 @@ def main(argv=None):
         pass
     service = SysService(log=lambda m: print(m, flush=True), rundir=rundir)
     service.recover()
-    server = NetServer(os.path.join(rundir, "sysd.sock"), service, lambda uid: uid in allowed)
+    server = NetServer(os.path.join(rundir, paths.SYSD_SOCKET), service, lambda uid: uid in allowed)
     try:
         os.chown(server.server_address, 0, grp.getgrnam("pvj").gr_gid, follow_symlinks=False)
     except (KeyError, OSError):

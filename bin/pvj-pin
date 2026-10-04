@@ -2,5 +2,7 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 # Print the current pairing PIN (kept in a RAM file that vanishes at reboot).
-f="${PVJ_RUNTIME_DIR:-/run/pvj}/pin"
-if [ -r "$f" ]; then cat "$f"; else echo "pvj-pin: cannot read $f (run with sudo, and check that pvj-web is running)" >&2; exit 1; fi
+f="${PVJ_RUNTIME_DIR:-/run/pvj/web}/pin"     # the panel's own folder (pvj/paths.py)
+# Run as root on a name the panel's account controls: only a plain file (a link could show another file, a pipe
+# would hang the terminal), and only its first bytes.
+if [ -f "$f" ] && [ ! -L "$f" ] && [ -r "$f" ]; then head -c 32 "$f"; else echo "pvj-pin: cannot read $f (run with sudo, and check that pvj-web is running)" >&2; exit 1; fi
