@@ -64,6 +64,27 @@ class PreviewTest(ServerBase):
         self.assertEqual(st, 503)
         self.assertIn("not running", body["error"])
 
+    def test_a_player_that_plays_nothing_is_a_409_in_plain_words(self):
+        # seen on the Pi 4: with nothing playing, mpv refuses the screenshot with "error running command"
+        def nothing(path, quality=60, with_text=True):
+            raise PlayerError("mpv: error running command")
+        self.player.screenshot = nothing
+        self.player.running = True                      # the player is there, and status() says no clip
+        st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
+        self.assertEqual((st, body["error"]), (409, "nothing is on the screen right now"))
+        st, body, _ = self.call("GET", "/api/preview.jpg", token=self.invite("view"))      # remembered, like any failure
+        self.assertEqual(st, 409)
+
+    def test_a_failed_snapshot_while_something_plays_stays_a_503(self):
+        def broken(path, quality=60, with_text=True):
+            raise PlayerError("mpv: error running command")
+        self.player.screenshot = broken
+        self.player.running = True
+        self.player.status = lambda: {"running": True, "path": "/media/intro.mp4"}
+        st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
+        self.assertEqual(st, 503)
+        self.assertIn("error running command", body["error"])
+
     def test_a_file_that_is_not_a_jpeg_is_refused(self):
         self.next_bytes = b"<html>not a picture</html>"
         self.assertEqual(self.call("GET", "/api/preview.jpg", token=self.full)[0], 503)

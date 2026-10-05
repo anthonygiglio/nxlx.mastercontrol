@@ -51,8 +51,8 @@ function startServer() {
     const problems = [];
     // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a value sent to a
     // shader that has left the screen and the 503 for a screen preview from a harness player with no window are
-    // provoked on purpose.
-    const expected = /status of (400|401|403|409|503)/;
+    // provoked on purpose; so is the 502 for "Try again" on a projector that nothing answers for.
+    const expected = /status of (400|401|403|409|502|503)/;
     page.on('console', (m) => { if (['error', 'warning'].includes(m.type()) && !expected.test(m.text())) problems.push(m.text()); });
     page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
     const base = 'http://127.0.0.1:' + info.port;
@@ -103,6 +103,17 @@ function startServer() {
     await page.click('#stop');
     await page.waitForFunction(() => /Player idle/.test(document.getElementById('np').textContent), null, { timeout: 8000 });
 
+    // A snapshot with nothing playing is not an error: the Screen card says so in plain words. (An earlier answer
+    // is remembered by the box for a few seconds, so this asks until the box has looked again.)
+    for (let tries = 0; ; tries++) {
+      await page.waitForFunction(() => !document.getElementById('previewbtn').disabled);
+      await page.click('#previewbtn');
+      try {
+        await page.waitForFunction(() => { const m = document.getElementById('previewmsg'); return m && !m.hidden && m.textContent === 'Nothing is on the screen right now.'; }, null, { timeout: 2500 });
+        break;
+      } catch (e) { if (tries >= 4) throw new Error('an idle snapshot does not say that nothing is on the screen: ' + await page.textContent('#previewmsg')); }
+    }
+    assert(!(await page.isVisible('#preview')), 'no broken picture for an idle snapshot');
     // Pad endings: the pad editor offers loop, once, and hold
     await page.click('text=Edit pads');
     await page.click('.pad >> nth=1');
@@ -116,11 +127,19 @@ function startServer() {
     await page.waitForSelector('#uploadbtn');
     await page.setInputFiles('#filepick', { name: 'from-phone.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(300000, 7) });
     await page.waitForSelector('.item:has-text("from-phone.mp4") >> text=Rename', { timeout: 8000 });
-    page.once('dialog', (d) => d.accept('renamed-on-phone.mp4'));
+    // No browser dialog anywhere in the panel: one would be a problem at the end of the test
+    page.on('dialog', (d) => { problems.push('a browser dialog opened: ' + d.message()); d.dismiss(); });
     await page.click('.item:has-text("from-phone.mp4") >> text=Rename');
+    await page.fill('.renamebox input', 'renamed-on-phone.mp4');
+    await page.click('.renamebox button:text-is("Rename")');
     await page.waitForSelector('.item:has-text("renamed-on-phone.mp4")');
-    page.once('dialog', (d) => d.accept());
+    // Delete asks first, in place, naming the file; "Keep it" changes nothing
     await page.click('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
+    await page.waitForSelector('#confirmrow:has-text("Delete renamed-on-phone.mp4? The file is removed from the box.")');
+    await page.click('#confirmno');
+    await page.waitForSelector('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
+    await page.click('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
+    await page.click('#confirmyes');
     await page.waitForFunction(() => !/renamed-on-phone/.test(document.body.textContent));
     await page.setInputFiles('#filepick', { name: 'virus.exe', mimeType: 'application/octet-stream', buffer: Buffer.alloc(100, 1) });
     await page.waitForFunction(() => /only video, image and audio files/.test(document.getElementById('uploads').textContent), null, { timeout: 8000 });
@@ -147,6 +166,23 @@ function startServer() {
       const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert(wide <= 1, what + ': ' + wide + ' px wider than the phone');
     }
+    // The same two checks for any page of any device (the owner's, a presenter's, a guest's), at any width.
+    const fitsOn = async (pg, what) => {
+      const bad = await pg.evaluate(() => {
+        const out = [];
+        if (document.documentElement.scrollWidth > window.innerWidth + 1) out.push('the page is wider than the window');
+        document.querySelectorAll('.card').forEach((card) => {
+          const box = card.getBoundingClientRect();
+          card.querySelectorAll('button, input, select, span, img').forEach((el) => {
+            if (el.closest('.ctlscroll')) return;               // a controller's drawing scrolls sideways inside its card, on purpose
+            const r = el.getBoundingClientRect();
+            if (r.width && (r.right > box.right + 1 || r.left < box.left - 1)) out.push((el.textContent || el.id || el.tagName).trim().slice(0, 30));
+          });
+        });
+        return out;
+      });
+      assert.deepStrictEqual(bad, [], what + ': ' + bad.join('; '));
+    };
     // System is an index of rows and one page per row. sysIndex() goes to the index, sys(name) opens a row's page,
     // onPage() checks the open page fits, chip() waits for what a row's chip says.
     const rowOf = (name) => `.navrow:has(.navname:text-is("${name}"))`;
@@ -233,7 +269,15 @@ function startServer() {
     await switchOn('Network');
     await page.waitForSelector('#netiface');
     await page.waitForSelector('#netcard >> text=192.168.1.9/24', { timeout: 8000 });  // the address arrives after the card first draws
+    // Every field has a visible label; the box tries a setting, it does not just "apply" it; the rest is under Advanced
     await page.click('#netmodes >> text=Fixed address');
+    await page.waitForSelector('#netgw');
+    for (const [id, text] of [['netaddr', 'Address'], ['netprefix', 'Size of the network'], ['netgw', 'Router (optional)'], ['netdns', 'Name servers (optional)']]) {
+      assert.strictEqual(await page.textContent(`label[for="${id}"]`), text, 'the label of #' + id);
+    }
+    assert.strictEqual(await page.textContent('#netapply'), 'Try this setting');
+    assert(!(await page.isVisible('#netpreview')) && !(await page.isVisible('#netsecs')), 'the commands and the time to go back are under Advanced');
+    assert(await page.isVisible('#netiface'), 'two ports: the choice of port is shown');
     await page.fill('#netaddr', '192.168.50.20');
     await page.fill('#netprefix', '24');
     // The gateway is set without any input event (as a lost or late event would): the redraw must still keep it.
@@ -261,6 +305,7 @@ function startServer() {
     }
     // The card can still be redrawn once more after loading (which clears the preview), so press again until it sticks
     for (let tries = 0; ; tries++) {
+      if (!(await page.isVisible('#netpreview'))) await page.click('#netadv > summary');      // the commands are under Advanced
       await page.click('#netpreview');
       try {
         await page.waitForFunction(() => { const e = document.getElementById('netplan'); return e && /ipv4\.addresses 192\.168\.50\.20\/24/.test(e.textContent); }, null, { timeout: 2500 });
@@ -327,8 +372,20 @@ function startServer() {
     await sys('OSC');
     assert.strictEqual(await page.locator('#osccard, #oscline').count(), 0, 'OSC off shows no card');
     await switchOn('OSC');
-    await page.waitForFunction(() => /Listening on UDP/.test(document.getElementById('oscline').textContent));
+    await page.waitForFunction(() => /^Listening on UDP port \d+\. Nothing received yet\.$/.test(document.getElementById('oscline').textContent));
     assert.strictEqual((await get('/api/osc')).enabled, true, 'the page switch turned OSC on');
+    // Fields have labels; Save changes waits for a change; the extra networks are under Advanced
+    assert.strictEqual(await page.textContent('label[for="oscport"]'), 'UDP port');
+    assert(await page.isDisabled('#oscsave') && !(await page.isVisible('#oscallow')), 'nothing to save yet, and the networks are folded');
+    await page.click('#oscadv > summary');
+    assert.strictEqual(await page.textContent('label[for="oscallow"]'), 'Also accept from these networks');
+    const oscPort = await page.inputValue('#oscport');
+    await page.fill('#oscport', '80');
+    assert(await page.isVisible('#oscsavedirty'), 'a changed port says Not saved yet');
+    await page.click('#oscsave');
+    await page.waitForFunction(() => /Nothing was changed/.test(document.getElementById('oscsaveresult').textContent));
+    await page.fill('#oscport', oscPort);
+    assert(await page.isDisabled('#oscsave'), 'back to the saved port: nothing to save');
     assert.strictEqual(await page.locator('#osctoggle').count(), 0, 'no second switch inside the OSC card');
     await onPage('OSC');
     await sysIndex();
@@ -340,7 +397,13 @@ function startServer() {
     // Autostart: reject a missing clip, then save "play every clip" and see it summarised
     await sys('At power-up');
     await page.waitForSelector('#autoline:has-text("Off")');
+    assert(await page.isDisabled('#autosave'), 'nothing to save until something changed');
+    assert.strictEqual(await page.textContent('#autosave'), 'Save changes');
+    assert.strictEqual(await page.textContent('label[for="automode"]'), 'What happens at power-up', 'a visible label above the choice');
     await page.selectOption('#automode', 'file');
+    assert(await page.isVisible('#autosavedirty') && /Not saved yet/.test(await page.textContent('#autosavedirty')), 'a change says Not saved yet');
+    assert(await page.isDisabled('#autotest') && /Save first to try it/.test(await page.textContent('#autotestnote')), 'Try it now waits for the save');
+    for (const id of ['autofile', 'autoloop', 'autodelay']) assert(await page.isVisible('label[for="' + id + '"]'), 'a visible label for #' + id);
     await page.selectOption('#autofile', { index: 0 });
     await page.fill('#autodelay', '999');
     await page.click('#autosave');
@@ -349,6 +412,13 @@ function startServer() {
     await page.selectOption('#automode', 'all');
     await page.click('#autosave');
     await page.waitForFunction(() => /Play every clip.*after 3 s/.test(document.getElementById('autoline').textContent));
+    assert.strictEqual(await page.textContent('#autosaveresult'), 'Saved', 'the result is said under the button');
+    assert(await page.isDisabled('#autosave') && !(await page.isDisabled('#autotest')), 'saved: nothing more to save, and it can be tried');
+    // Vibes needs its module, which is off here: the choice is marked, and choosing it offers the switch in place
+    assert(/Start Vibes \(Vibes is off\)/.test(await page.textContent('#automode option[value="vibes"]')), 'the Vibes choice is marked off');
+    await page.selectOption('#automode', 'vibes');
+    assert(/Vibes is switched off, so this will do nothing/.test(await page.textContent('#autovibesoff')), 'choosing it says so');
+    assert.strictEqual(await page.textContent('#autovibesoffon'), 'Switch Vibes on');
     await page.selectOption('#automode', 'slideshow');
     assert(await page.isVisible('#autoseconds') && await page.isVisible('#autoshuffle') && !(await page.isVisible('#autofile')), 'slideshow fields');
     await page.fill('#autoseconds', '8');
@@ -365,15 +435,30 @@ function startServer() {
     // DMX: ONE switch. It switches the module on and then DMX itself, so the box is listening when it says On.
     await sys('DMX lighting desk');
     await switchOn('DMX lighting desk');
-    await page.waitForSelector('#dmxline:has-text("Listening on UDP")');
+    await page.waitForSelector('#dmxline:text-is("Listening for Art-Net on universe 0. Nothing received yet.")');
     assert(await moduleIsOn('control-dmx') && (await get('/api/dmx')).enabled === true, 'the page switch turned on the module and DMX itself');
     assert.strictEqual(await page.locator('#dmxtoggle').count(), 0, 'no second switch inside the DMX card');
+    for (const id of ['dmxproto', 'dmxuni', 'dmxstart']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
+    assert(await page.isDisabled('#dmxsave') && !(await page.isVisible('#dmxallow')), 'nothing to save yet, and the networks are folded under Advanced');
+    // The channel table: number, what it does, the live level; eight channels from the start channel, and the ninth
+    assert.deepStrictEqual(await page.$$eval('#dmxchannels tbody tr', (rs) => rs.map((r) => r.children[0].textContent + ' ' + r.querySelector('.field').textContent)),
+      ['1 Opacity', '2 Size', '3 Position X', '4 Speed', '5 Volume', '6 Blackout', '7 Pad', '8 Function', '9 Vibes (optional)'], 'the channels, by name');
     await page.fill('#dmxuni', '99999');
+    assert(await page.isVisible('#dmxsavedirty'), 'a change says Not saved yet');
     await page.click('#dmxsave');
     await page.waitForFunction(() => /universe/i.test(document.getElementById('msg').textContent));
+    assert(/universe/i.test(await page.textContent('#dmxsaveresult')), 'the refusal is under the button too');
     await page.fill('#dmxuni', '2');
+    await page.fill('#dmxstart', '101');
     await page.click('#dmxsave');
-    await page.waitForFunction(() => fetch('/api/dmx').then((r) => r.json()).then((d) => d.universe === 2));
+    await page.waitForFunction(() => fetch('/api/dmx').then((r) => r.json()).then((d) => d.universe === 2 && d.start === 101));
+    await page.waitForSelector('#dmxline:has-text("Listening for Art-Net on universe 2.")');
+    await page.waitForSelector('#dmxchannels tr[data-ch="101"]');
+    assert.strictEqual(await page.textContent('#dmxchannels tbody tr >> nth=0 >> td >> nth=0'), '101', 'the table follows the start channel');
+    assert.strictEqual(await page.textContent('#dmxsaveresult'), 'Saved');
+    await page.fill('#dmxstart', '1');                                // back to channel 1, where the rest of this test expects it
+    await page.click('#dmxsave');
+    await page.waitForSelector('#dmxchannels tr[data-ch="1"]');
     await onPage('DMX lighting desk');
     await sysIndex();
     await chip('DMX lighting desk', 'Ready');
@@ -420,8 +505,10 @@ function startServer() {
     await page.waitForSelector('#midilearning');
     await page.click('#midicancel');
     await page.waitForSelector('#midilearn');
+    assert.strictEqual(await page.getAttribute('#midibuiltin', 'role'), 'switch', 'the built-in map is a real switch');
     await page.click('#midibuiltin');
-    await page.waitForFunction(() => /Built-in map: off/.test(document.getElementById('midibuiltin').textContent));
+    await page.waitForFunction(() => { const b = document.getElementById('midibuiltin'); return b && b.getAttribute('aria-checked') === 'false'; });
+    assert.strictEqual((await get('/api/midi')).builtin, false, 'the switch applied on tap');
     // Controller profiles: the harness's fake Korg nanoKONTROL2 (pipes, no hardware) is plugged in while the page is
     // open. It is recognised and its layout is drawn; a moved control lights up; a tap changes what a control does.
     const fs = require('fs');
@@ -513,10 +600,14 @@ function startServer() {
     await sys('Streams');
     await switchOn('Streams');
     await page.waitForSelector('#streamempty');
+    assert(/No streams yet\. A stream is live video/.test(await page.textContent('#streamempty')), 'the empty state says what a stream is');
+    assert.strictEqual(await page.textContent('label[for="streamurl"]'), 'Address');
+    assert.strictEqual(await page.textContent('#streamadd'), 'Add');
     await page.fill('#streamname', 'Cam');
     await page.fill('#streamurl', 'file:///etc/passwd');
     await page.click('#streamadd');
     await page.waitForFunction(() => /must start with/.test(document.getElementById('msg').textContent));
+    assert(/must start with/.test(await page.textContent('#streamerr')), 'the refusal is under the Add button too');
     await page.fill('#streamurl', 'rtsp://admin:hunter2@10.0.0.5/live');
     await page.click('#streamadd');
     await page.waitForSelector('.stream-entry:has-text("rtsp://***@10.0.0.5/live")');
@@ -524,8 +615,19 @@ function startServer() {
     await sysIndex();
     await chip('Streams', 'Ready');
     await sys('Streams');
-    await page.click('.stream-entry >> button:has-text("Remove")');
+    // The row: one primary action (Play) and More; Remove is under More and asks first, naming the stream
+    await page.waitForSelector('.stream-entry .lacts');
+    assert.deepStrictEqual(await page.$$eval('.stream-entry .lacts button', (bs) => bs.map((b) => b.textContent)), ['Play', 'More'], 'a stream row has Play and More');
+    assert.strictEqual(await page.locator('#streamopen').count(), 1, 'with a stream saved the Add form is folded behind "+ Add a stream"');
+    await page.click('.stream-entry .morebtn');
+    await page.click('.stream-entry .moreacts button:has-text("Remove")');
+    await page.waitForSelector('#confirmrow:has-text("Remove Cam? Its address is forgotten.")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/streams')).streams.length, 1, '"Keep it" removes nothing');
+    await page.click('.stream-entry .moreacts button:has-text("Remove")');
+    await page.click('#confirmyes');
     await page.waitForSelector('#streamempty');
+    assert(await page.isVisible('#streamname'), 'an empty list has the Add form open');
     await onPage('Streams');
     await sysIndex();
     await chip('Streams', 'Set up');
@@ -533,10 +635,47 @@ function startServer() {
     await sys('Schedule');
     await switchOn('Schedule');
     await page.waitForSelector('#schedclock');
+    const schedRow = (n) => `.sched-entry >> nth=${n}`;
+    const schedNames = () => page.$$eval('.sched-entry .lname', (ns) => ns.map((x) => x.textContent));
+    const schedDays = () => page.$$eval('#scheddays button[aria-pressed="true"]', (bs) => bs.map((b) => b.textContent));
+    async function removeEntry(n) {
+      await page.click(`${schedRow(n)} >> .morebtn`);
+      await page.click(`${schedRow(n)} >> button:text-is("Remove")`);
+      await page.waitForSelector('#confirmrow');
+      await page.click('#confirmyes');
+    }
+    assert(/^Box time now: (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d+ [A-Z][a-z]{2}, \d\d:\d\d \(.+\)$/.test(await page.textContent('#schedclock')), 'the box time, readable, with its zone: ' + await page.textContent('#schedclock'));
+    assert(/^No entries yet\. An entry makes something happen by itself at a set time/.test(await page.textContent('#schedempty')), 'the empty state says what an entry is for');
+    for (const id of ['schedtime', 'schedaction', 'schedlabel']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
+    assert(/An entry runs only if the box is on at that minute\. A missed entry is not caught up\./.test(await page.textContent('#schedform')), 'the form says what happens to a missed entry');
+    // What happens, in plain words; a choice whose feature is off is marked; the old start script is under Advanced
+    assert.deepStrictEqual(await page.$$eval('#schedaction option', (os) => os.map((o) => o.textContent)),
+      ['Play a clip', 'Start Vibes (Vibes is off)', 'Apply a Room scene (Room is off)', 'Projectors on (Projectors is off)', 'Projectors off (Projectors is off)',
+        'Screen to black', 'Screen back on', 'Stop playing', 'Old start script'], 'the choices of the schedule');
+    assert.strictEqual(await page.locator('#schedaction optgroup[label="Advanced"] option[value="preset"]').count(), 1, 'the old start script is under Advanced');
+    // Choosing one that is off says so and has the switch right there; it is switched on without leaving the page
+    await page.selectOption('#schedaction', 'vibes');
+    assert(/Vibes is switched off, so this will do nothing\./.test(await page.textContent('#schedoff')), 'choosing Vibes while it is off says so');
+    assert.strictEqual(await page.textContent('#schedoffon'), 'Switch Vibes on');
+    await page.click('#schedoffon');
+    await page.waitForFunction(() => !document.getElementById('schedoff') && /Vibes is switched on/.test(document.getElementById('msg').textContent));
+    assert(await moduleIsOn('shaders'), 'the button switched Vibes on in place');
+    assert.strictEqual(await page.textContent('#schedaction option[value="vibes"]'), 'Start Vibes', 'the mark is gone once it is on');
+    assert.strictEqual(await page.textContent('#syspage h1'), 'Schedule', 'still on the Schedule page');
+    // Days: three shortcuts above seven chips
+    await page.click('#schedshort button:text-is("Weekdays")');
+    assert.deepStrictEqual(await schedDays(), ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], 'Weekdays');
+    await page.click('#schedshort button:text-is("Weekend")');
+    assert.deepStrictEqual(await schedDays(), ['Sat', 'Sun'], 'Weekend');
+    await page.click('#schedshort button:text-is("Every day")');
+    assert.strictEqual((await schedDays()).length, 7, 'Every day');
     await page.selectOption('#schedaction', 'stop');
     await page.fill('#schedlabel', 'Close');
     await page.click('#schedadd');
-    await page.waitForSelector('.sched-entry:has-text("Close: 18:00")');
+    await page.waitForSelector('.sched-entry:has-text("18:00 \u00b7 Stop playing")');
+    assert.strictEqual(await page.textContent('.sched-entry .state'), 'Every day \u00b7 Close', 'the days in words, then the note');
+    await page.waitForSelector('#schednext');
+    assert(/^Next: (today|tomorrow) 18:00, Stop playing$/.test(await page.textContent('#schednext')), 'what happens next: ' + await page.textContent('#schednext'));
     assert.strictEqual(await page.locator('#schedtoggle').count(), 0, 'no second switch inside the Schedule card');
     let sched = await get('/api/schedule');
     assert(sched.enabled === true && sched.entries.length === 1, 'with no entries the switch turned the schedule on without asking, and the entry was added');
@@ -565,65 +704,180 @@ function startServer() {
     await chip('Schedule', 'Ready');
     await page.waitForSelector(`${rowOf('Schedule')} .navstate:has-text("18:00 Stop")`);    // the row shows the next one
     await sys('Schedule');
-    await page.click('.sched-entry >> button:has-text("Remove")');
+    // A second entry, earlier in the day: the list is in time order, and its days read "Mon to Fri"
+    await page.waitForSelector('.sched-entry');
+    await page.click('#schedopen');
+    await page.fill('#schedtime', '09:30');
+    await page.click('#schedshort button:text-is("Weekdays")');
+    await page.selectOption('#schedaction', 'blackout');
+    await page.click('#schedadd');
+    await page.waitForFunction(() => document.querySelectorAll('.sched-entry').length === 2);
+    assert.deepStrictEqual(await schedNames(), ['09:30 \u00b7 Screen to black', '18:00 \u00b7 Stop playing'], 'entries are sorted by time');
+    assert.strictEqual(await page.textContent(`${schedRow(0)} >> .state`), 'Mon to Fri');
+    // Edit: the same form, filled in. Saving changes that entry, keeps its id, and leaves the other one alone.
+    const schedBefore = await get('/api/schedule');
+    await page.click(`${schedRow(0)} >> .morebtn`);
+    assert.deepStrictEqual(await page.$$eval('.sched-entry .moreacts button', (bs) => bs.map((b) => b.textContent)), ['Edit', 'Remove'], 'Edit and Remove are under More');
+    await page.click(`${schedRow(0)} >> button:text-is("Edit")`);
+    await page.waitForSelector('#schedformtitle:text-is("Change the entry")');
+    assert.strictEqual(await page.inputValue('#schedtime'), '09:30', 'the form holds the entry\'s time');
+    assert.strictEqual(await page.inputValue('#schedaction'), 'blackout', 'and what it does');
+    assert.deepStrictEqual(await schedDays(), ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], 'and its days');
+    assert.strictEqual(await page.textContent('#schedadd'), 'Save changes');
+    await page.fill('#schedtime', '19:15');
+    await page.click('#scheddays button:text-is("Sat")');
+    await page.selectOption('#schedaction', 'show');
+    await page.click('#schedadd');
+    await page.waitForSelector('.sched-entry:has-text("19:15 \u00b7 Screen back on")');
+    const schedAfter = await get('/api/schedule');
+    const wasEntry = schedBefore.entries.find((e) => e.action === 'blackout'), isEntry = schedAfter.entries.find((e) => e.action === 'show');
+    assert(schedAfter.entries.length === 2 && isEntry && isEntry.id === wasEntry.id && isEntry.time === '19:15' && isEntry.days.join() === '0,1,2,3,4,5',
+      'the edit changed that entry and kept its id: ' + JSON.stringify(schedAfter.entries));
+    assert(schedAfter.entries.some((e) => e.label === 'Close' && e.action === 'stop' && e.time === '18:00'), 'the other entry is untouched by the edit');
+    assert.deepStrictEqual(await schedNames(), ['18:00 \u00b7 Stop playing', '19:15 \u00b7 Screen back on'], 'the edited entry moved to its place in time order');
+    assert.strictEqual(await page.textContent(`${schedRow(1)} >> .state`), 'Mon to Sat');
+    assert.strictEqual(await page.textContent('#schedformtitle, #schedopen'), '+ Add an entry', 'the form is folded again after the edit');
+    await onPage('Schedule');
+    // A laptop: the list on the left, the form beside it, nothing sticking out
+    await page.setViewportSize({ width: 1366, height: 800 });
+    await page.waitForFunction(() => { const l = document.getElementById('schedlist'), f = document.getElementById('schedopen'); return l && f && f.getBoundingClientRect().left > l.getBoundingClientRect().right - 2; });
+    await fitsCard('.card, #syspage', 'Schedule page on a laptop');
+    assert.strictEqual(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Schedule on a laptop is not wider than the window');
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Remove is under More, asks first and names the entry; "Keep it" removes nothing
+    await page.click(`${schedRow(1)} >> .morebtn`);
+    await page.click(`${schedRow(1)} >> button:text-is("Remove")`);
+    await page.waitForSelector('#confirmrow:has-text("Remove 19:15 Screen back on (Mon to Sat)? It will no longer happen.")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/schedule')).entries.length, 2, '"Keep it" removes nothing');
+    await page.click(`${schedRow(1)} >> button:text-is("Remove")`);
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => document.querySelectorAll('.sched-entry').length === 1);
+    await removeEntry(0);
     await page.waitForSelector('#schedempty');
     await page.selectOption('#schedaction', 'preset');
     await page.fill('#schedpreset', 'startlessonce01');
     await page.click('#schedadd');
-    await page.waitForSelector('.sched-entry:has-text("Start script startlessonce01")');
-    await page.click('.sched-entry >> button:has-text("Remove")');
+    await page.waitForSelector('.sched-entry:has-text("Old start script startlessonce01")');
+    await removeEntry(0);
+    await page.waitForSelector('#schedempty');
+    // Vibes was switched on from the schedule's form: off again, on its own page, as the rest of this test expects
+    await sys('Shaders and Vibes');
+    await switchOff('Shaders and Vibes');
+    await sys('Schedule');
     await page.waitForSelector('#schedempty');
     await onPage('Schedule');
     // Projectors: a public address is refused; the harness's fake PJLink projector (loopback, allowed there only)
-    // is added, says who it is, shows its state, lamp hours and a warning, takes an input, a label and a mute
+    // is added, says who it is, shows its state, lamp hours and a warning in its one state line, has ONE power button
+    // that follows its state, takes an input, names for its inputs and a blanked picture
     await sys('Projectors');
     await switchOn('Projectors');
     await page.waitForSelector('#projline');
+    assert.strictEqual(await page.textContent('#projline'), 'No projectors yet. On the projector, open its network menu and switch PJLink on. Then add it here.', 'the empty state says the first step');
+    assert(!/Beamer/.test(await page.textContent('#sysbody')), 'no word about the old Beamer buttons');
+    for (const id of ['projname', 'projhost', 'projport', 'projpw']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
+    assert.strictEqual(await page.textContent('#projadd'), 'Add');
     await page.fill('#projname', 'Main');
     await page.fill('#projhost', '8.8.8.8');
     await page.click('#projadd');
     await page.waitForFunction(() => /private/.test(document.getElementById('msg').textContent));
+    assert(/private/.test(await page.textContent('#projerr')), 'the refusal is under the Add button too');
     await page.fill('#projhost', '127.0.0.1');
     await page.fill('#projport', String(info.projector_ports[0]));
     await page.fill('#projpw', 'secret1');
     await page.click('#projadd');
     await page.waitForSelector('.proj-entry:has-text("password set")');
     // The password is gone from the form (page.content() does not show what an input holds, so ask the input),
-    // and no answer of the API carries it
+    // and no answer of the API carries it. With a projector in the list the form is behind "+ Add a projector".
+    await page.click('#projopen');
     if (await page.inputValue('#projpw') !== '') problems.push('the projector password is still in the form');
+    await page.click('#projcancel');
+    await page.waitForSelector('#projopen');
     const told = await page.evaluate(() => Promise.all(['/api/projectors', '/api/health', '/api/status', '/api/modules'].map((u) => fetch(u).then((r) => r.text()))));
     if (told.join(' ').includes('secret1')) problems.push('the projector password came back from the API');
     if (!told[0].includes('"has_password": true') && !told[0].includes('"has_password":true')) problems.push('the projector list did not answer: ' + told[0].slice(0, 200));
     if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page');
     await page.waitForSelector('.proj-details:has-text("NXLX Test Works FP-1")', { timeout: 15000 });
     await page.waitForSelector('.proj-status:has-text("lamp 1234 h")', { timeout: 15000 });
-    if (!/^on/i.test(await page.textContent('.proj-status'))) problems.push('the projector status does not say On: ' + await page.textContent('.proj-status'));
-    await page.waitForSelector('.proj-warn:has-text("Warning: filter")');
+    if (!/^On/.test(await page.textContent('.proj-status'))) problems.push('the projector status does not say On: ' + await page.textContent('.proj-status'));
+    await page.waitForSelector('.proj-status .proj-warn:has-text("Warning: filter")');       // the warning is in the state line
+    // One power button, from the state: it is on, so the button turns it off; the row has that and More, nothing else
+    await page.waitForSelector('.proj-power:text-is("Turn off")');
+    assert.deepStrictEqual(await page.$$eval('.proj-entry .lacts button', (bs) => bs.map((b) => b.textContent)), ['Turn off', 'More'], 'a projector row has one power button and More');
+    // Inputs: a plain hint from the PJLink kind until somebody names them; the choice applies when made
+    assert.deepStrictEqual(await page.$$eval('.proj-input option', (os) => os.map((o) => o.textContent)),
+      ['Choose...', 'RGB 1 (computer, VGA)', 'Digital 1 (HDMI or DVI)', 'Digital 2 (HDMI or DVI)'], 'unnamed inputs say what kind of socket they are');
+    assert(await page.isVisible('label[for^="projinput-"]'), 'the input choice has a visible label');
     await page.selectOption('.proj-input', '31');
-    await page.waitForSelector('.proj-status:has-text("input Digital 1")', { timeout: 15000 });
+    await page.waitForSelector('.proj-status:has-text("input Digital 1 (HDMI or DVI)")', { timeout: 15000 });
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the fake projector is not on input 31');
-    // Labels have their own chooser: naming an input that is not in use must not switch the projector to it
-    await page.selectOption('.proj-labelfor', '32');
-    await page.fill('.proj-label', 'Box');
-    await page.click('.proj-setlabel');
+    // More: the secondary actions in plain words, Remove last
+    await page.click('.proj-entry .morebtn');
+    assert.deepStrictEqual(await page.$$eval('.proj-entry .moreacts button', (bs) => bs.map((b) => b.textContent)),
+      ['Blank the picture', 'Mute the sound', 'Name the inputs', 'Check now', 'Read details again', 'Edit', 'Remove'], 'what is under More, in order');
+    // Name the inputs: one row per input, one Save names; naming an input that is not in use does not switch to it
+    await page.click('.proj-namebtn');
+    await page.waitForSelector('#projnames');
+    assert(/Naming an input does not switch the projector\./.test(await page.textContent('#projnames')), 'the naming panel says it does not switch');
+    assert.strictEqual(await page.locator('.proj-nameinput').count(), 3, 'one field per input');
+    assert(await page.isDisabled('#projnamessave'), 'no names to save yet');
+    await page.fill('.proj-nameinput[data-code="32"]', 'Box');
+    await page.fill('.proj-nameinput[data-code="31"]', 'Matrix');
+    await page.click('#projnamessave');
     await page.waitForSelector('.proj-input option:has-text("Box (Digital 2)")', { state: 'attached', timeout: 15000 });
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('naming an input switched the projector to it');
+    assert.strictEqual(await page.locator('#projnames').count(), 0, 'the naming panel closes after Save names');
+    // "Show" in the naming panel does switch, so the person can see which socket is which
+    await page.click('.proj-entry .morebtn');
+    await page.click('.proj-namebtn');
+    await page.click('button[aria-label="Show Digital 2 (HDMI or DVI) on Main"]');
+    await page.waitForSelector('.proj-status:has-text("input Box (Digital 2)")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '32') problems.push('Show did not switch the projector to that input');
+    await page.click('button[aria-label="Show Digital 1 (HDMI or DVI) on Main"]');
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
+    await page.click('#projnamescancel');
+    await page.click('.proj-entry .morebtn');
     await page.click('button[aria-label="Check Main"]');          // a fresh status, so a wrong switch would show
     await page.waitForFunction(() => /Power: on/.test(document.querySelector('.proj-entry').textContent), null, { timeout: 15000 });
-    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('labelling an input switched the projector to it');
-    if (!/input Digital 1/.test(await page.textContent('.proj-status'))) problems.push('the status moved after labelling: ' + await page.textContent('.proj-status'));
-    await page.selectOption('.proj-labelfor', '31');
-    await page.fill('.proj-label', 'Matrix');
-    await page.click('.proj-setlabel');
-    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
-    await page.click('button[aria-label="Mute picture Main"]');
+    await page.click('button[aria-label="Blank the picture on Main"]');
     await page.waitForSelector('.proj-status:has-text("picture muted")', { timeout: 15000 });
-    await page.click('button[aria-label="Unmute picture Main"]');
+    await page.click('button[aria-label="Show the picture on Main"]');
     await page.waitForFunction(() => !/muted/.test(document.querySelector('.proj-status').textContent), null, { timeout: 15000 });
-    await page.click('button[aria-label="Refresh details Main"]');
-    await page.waitForFunction(() => /Refresh details: done/.test(document.getElementById('msg').textContent));
+    await page.click('button[aria-label="Read the details of Main again"]');
+    await page.waitForFunction(() => /Read details again: done/.test(document.getElementById('msg').textContent));
+    // Turn off asks first, in place, naming the projector and what it costs; "Keep it on" sends nothing
+    await page.click('.proj-power');
+    await page.waitForSelector('#confirmrow:has-text("Turn off Main? It needs about a minute to cool before it can come on again.")');
+    await page.click('#confirmno');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('"Keep it on" switched the projector off');
+    await page.click('.proj-power');
+    await page.click('#confirmyes');
+    await page.waitForSelector('.proj-power:text-is("Turn on")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '0') problems.push('Turn off did not switch the projector off');
+    assert(/\bon\b/.test(await page.getAttribute('.proj-power', 'class')), 'Turn on is the accent button');
+    assert(/^Off/.test(await page.textContent('.proj-status')), 'the state line says Off');
+    // Cooling down: this fake goes straight to standby, so the box's answer is given that state on its way to the
+    // page. The button waits, disabled, and says so. (Warming up is the second fake projector, further down.)
+    const cooling = async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const res = await route.fetch(), d = await res.json();
+      d.projectors.forEach((x) => { if (x.status && x.status.ok) x.status.power = 'cooling down'; });
+      await route.fulfill({ response: res, json: d });
+    };
+    await page.route('**/api/projectors', cooling);
+    await page.waitForSelector('.proj-power:text-is("Cooling down...")', { timeout: 15000 });
+    assert(await page.isDisabled('.proj-power'), 'no power button to press while it cools');
+    assert(/^Cooling down/.test(await page.textContent('.proj-status')));
+    await page.unroute('**/api/projectors', cooling);
+    await page.waitForSelector('.proj-power:text-is("Turn on")', { timeout: 15000 });
+    await page.click('.proj-power');                                 // on needs no question
+    await page.waitForSelector('.proj-power:text-is("Turn off")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('Turn on did not switch the projector on');
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
     // Edit, in place: the add form filled in. Nothing to save until something changed; a refusal is said under the
     // button; the password is never in the form; a rename keeps the password and the input names.
-    await page.click('button[aria-label="Edit Main"]');
+    await page.click('button[aria-label="Edit Main"]');                 // More is still open
     await page.waitForSelector('#projedit');
     if (!(await page.isDisabled('#projeditsave'))) problems.push('Save changes can be pressed with nothing changed');
     if (await page.inputValue('#projeditpw') !== '') problems.push('the edit form has something in its password field');
@@ -654,12 +908,13 @@ function startServer() {
     if (!/password set/.test(await page.textContent('.proj-entry'))) problems.push('a rename lost the projector password');
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the fake projector moved after a rename');
     await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });      // the label is kept, and it still answers with the kept password
+    await page.click('.proj-entry .morebtn');
     await page.click('button[aria-label="Check Main wall"]');
     await page.waitForFunction(() => /Power: on/.test(document.querySelector('.proj-entry').textContent), null, { timeout: 15000 });
     await page.click('button[aria-label="Edit Main wall"]');
     await page.fill('#projeditname', 'Main');
     await page.click('#projeditsave');
-    await page.waitForSelector('button[aria-label="Edit Main"]');
+    await page.waitForSelector('.proj-entry .lname:text-is("Main")');
     if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page after an edit');
     await onPage('Projectors');
     await sysIndex();
@@ -674,6 +929,7 @@ function startServer() {
     if ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.text()))).includes('secret1')) problems.push('the projector password came back from the API');
     // The room: the harness's second fake projector (in standby, slow to warm up), two groups, a scene tapped on the
     // Room screen, a wall's own buttons, All off with a second tap, what a guest and a presenter get, the schedule
+    await page.click('#projopen');
     await page.fill('#projname', 'Painting');
     await page.fill('#projhost', '127.0.0.1');
     await page.fill('#projport', String(info.projector_ports[1]));
@@ -797,20 +1053,83 @@ function startServer() {
     await page.selectOption('#schedaction', 'scene');
     await page.click('#schedadd');
     await page.waitForSelector('.sched-entry:has-text("Scene Console night")');
-    await page.click('.sched-entry >> button:has-text("Remove")');
+    await removeEntry(0);
     await page.waitForSelector('#schedempty');
+    // A box whose clock was not set from the network says so on this page (this harness has no clock helper, so the
+    // box's answer is given that on its way to the page)
+    const noClock = async (route) => {
+      const res = await route.fetch(), d = await res.json();
+      d.clock = Object.assign({}, d.clock, { clock_from_network: false });
+      await route.fulfill({ response: res, json: d });
+    };
+    await page.route('**/api/system', noClock);
+    await sys('Schedule');
+    await page.waitForSelector('#schedclockwarn:has-text("The box clock was not set from the network, so it may be wrong.")');
+    await onPage('Schedule');
+    await page.unroute('**/api/system', noClock);
     await page.click('nav >> text=Room');
     await page.click('button[aria-label="Remove scene Console night"]');
+    await page.waitForSelector('#confirmrow:has-text("Remove the scene Console night?")');
+    await page.click('#confirmyes');
     await page.waitForSelector('#roomnoscenes');
     await sys('Room');
     await page.click('#sysswitch');
     await page.waitForSelector('#sysoff');
     await page.waitForFunction(() => !/Room/.test(document.querySelector('nav').textContent));
     await sys('Projectors');
+    // The second fake projector was switched on by the scene and is slow: it is still warming up, and says so on
+    // a button that cannot be pressed. The first one was switched off by All off.
+    const rowP = (name) => `.proj-entry:has(.lname:text-is("${name}"))`;
+    await page.waitForSelector(`${rowP('Painting')} .proj-power:text-is("Warming up...")`, { timeout: 15000 });
+    assert(await page.isDisabled(`${rowP('Painting')} .proj-power`), 'no power button to press while it warms up');
+    await page.waitForSelector(`${rowP('Main')} .proj-power:text-is("Turn on")`, { timeout: 15000 });
+    // All on and All off ask first and name the count
+    await page.click('#projalloff');
+    await page.waitForSelector('#confirmrow:has-text("Turn off all 2 projectors? They need about a minute to cool before they can come on again.")');
+    await page.click('#confirmno');
+    await page.click('#projallon');
+    await page.waitForSelector('#confirmrow:has-text("Turn on all 2 projectors?")');
+    await page.click('#confirmno');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '0') problems.push('a question that was answered no switched a projector');
+    // Laptop: the list and the Add form side by side, nothing sticking out
+    await page.setViewportSize({ width: 1366, height: 800 });
+    await page.waitForFunction(() => { const l = document.getElementById('projlist'), f = document.getElementById('projopen'); return l && f && f.getBoundingClientRect().left > l.getBoundingClientRect().right - 2; });
+    await fitsCard('.card, #syspage', 'Projectors page on a laptop');
+    assert.strictEqual(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Projectors on a laptop is not wider than the window');
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Remove is under More and asks first, naming the projector
+    await page.click(`${rowP('Painting')} .morebtn`);
     await page.click('button[aria-label="Remove Painting"]');
+    await page.waitForSelector('#confirmrow:has-text("Remove Painting? The box forgets its address, its password and the names of its inputs.")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/projectors')).projectors.length, 2, '"Keep it" removes nothing');
+    await page.click('button[aria-label="Remove Painting"]');
+    await page.click('#confirmyes');
     await page.waitForFunction(() => document.querySelectorAll('.proj-entry').length === 1);
-    await page.click('.proj-entry >> button:has-text("Remove")');
+    // A projector that does not answer (nothing listens at this port): the row says what to check, and the one
+    // button is Try again
+    await page.click('#projopen');
+    await page.fill('#projname', 'Ghost');
+    await page.fill('#projhost', '127.0.0.1');
+    await page.fill('#projport', '1');
+    await page.click('#projadd');
+    await page.waitForSelector(`${rowP('Ghost')} .problem`, { timeout: 20000 });
+    assert(/^Not answering at 127\.0\.0\.1:1\. Is it plugged in at the wall, and is PJLink switched on in its network menu\?/.test(await page.textContent(`${rowP('Ghost')} .problem`)),
+      'a silent projector says what to check: ' + await page.textContent(`${rowP('Ghost')} .problem`));
+    assert.strictEqual(await page.textContent(`${rowP('Ghost')} .proj-power`), 'Try again');
+    await page.click(`${rowP('Ghost')} .proj-power`);
+    await page.waitForSelector(`${rowP('Ghost')} .problem`, { timeout: 20000 });
+    await onPage('Projectors');
+    await page.click(`${rowP('Ghost')} .morebtn`);
+    await page.click('button[aria-label="Remove Ghost"]');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => document.querySelectorAll('.proj-entry').length === 1);
+    await page.click('.proj-entry .morebtn');
+    await page.click('button[aria-label="Remove Main"]');
+    await page.click('#confirmyes');
     await page.waitForFunction(() => !document.querySelector('.proj-entry'));
+    await page.waitForSelector('#projline:has-text("No projectors yet")');
+    assert(await page.isVisible('#projname'), 'an empty list has the Add form open');
     // Sync and video wall: switch the module on, be a server, set a wall tile, back to off
     // This step failed twice in CI only. If it fails again it says what the form held, what the message was, what is
     // saved, and every /api/sync request the page made with its answer.
@@ -836,9 +1155,19 @@ function startServer() {
     await sys('Boxes in step');
     await switchOn('Boxes in step');
     await page.waitForSelector('#syncrole-server');
+    // The first thing asked is what this box does: two large choices, and nothing else to fill in yet
+    assert.strictEqual(await page.textContent('#syncask'), 'What does this box do?');
+    assert.deepStrictEqual(await page.$$eval('#syncroles button', (bs) => bs.map((b) => b.textContent)), ['LeadOther boxes follow this one.', 'FollowThis box follows another.'], 'lead or follow');
+    assert.strictEqual(await page.locator('#syncgroup, #wallfold').count(), 0, 'the group and the wall come after the choice');
     await page.click('#syncrole-server');
-    await page.waitForSelector('#syncline:has-text("Server")');
+    await page.waitForSelector('#syncline:has-text("server of group")');
+    await page.waitForSelector('label[for="syncgroup"]:text-is("Group name")');
+    // The video wall is folded until it is used; a screen's place is offered only inside the chosen size
+    assert(!(await page.isVisible('#wallcols')), 'the wall is folded while it is not in use');
+    await page.click('#wallfold > summary');
+    assert.strictEqual(await page.locator('#wallcol option').count(), 1, 'one column: one place to choose');
     await page.selectOption('#wallcols', '2');
+    assert.strictEqual(await page.locator('#wallcol option').count(), 2, 'two columns: two places');
     await page.selectOption('#wallcol', '1');
     await page.fill('#wallbezel', '3');
     await page.click('#wallsave');
@@ -848,14 +1177,20 @@ function startServer() {
     // The card is rebuilt by the answer to the save above and, while it is a server, every 2 seconds. A column chosen
     // just before such a rebuild must still be there at the click. It is set without an event (as the Network step
     // does), the line at the top of the card is marked, and the step waits until that line is a new one.
-    await page.evaluate(() => { document.getElementById('syncline').dataset.seen = '1'; document.getElementById('wallcol').value = '2'; });
+    await page.evaluate(() => { document.getElementById('syncline').dataset.seen = '1'; document.getElementById('wallcol').value = '0'; });
     await page.waitForFunction(() => { const l = document.getElementById('syncline'); return l && !l.dataset.seen; }, null, { timeout: 8000 });
-    if (await page.evaluate(() => document.getElementById('wallcol').value) !== '2') throw new Error('a redraw of the Sync card lost the chosen column: ' + await syncState());
+    if (await page.evaluate(() => document.getElementById('wallcol').value) !== '0') throw new Error('a redraw of the Sync card lost the chosen column: ' + await syncState());
+    assert(await page.isVisible('#wallcols'), 'a wall in use stays unfolded through a redraw');
     await page.click('#wallsave');
     try {
-      await page.waitForFunction(() => /inside the wall/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
-    } catch (e) { throw new Error(e.message.split('\n')[0] + ' | no refusal shown: ' + await syncState()); }
+      await page.waitForFunction(() => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.col === 0), null, { timeout: 15000 });
+    } catch (e) { throw new Error(e.message.split('\n')[0] + ' | the column was not saved: ' + await syncState()); }
+    // a tile outside the wall can no longer be chosen in the panel; the box still refuses one
+    assert.strictEqual(await post('/api/sync', { wall: { cols: 2, rows: 1, col: 2, row: 0, bezel: 3 } }), 400, 'the box refuses a tile outside the wall');
+    // Stopping asks first: the other boxes stop following
     await page.click('#syncrole-off');
+    await page.waitForSelector('#confirmrow:has-text("Stop leading? The other boxes stop following this one.")');
+    await page.click('#confirmyes');
     await page.waitForSelector('#syncline:has-text("Off")');
     await fitsCard('#synccard', 'Sync card');
     await onPage('Boxes in step');
@@ -895,8 +1230,13 @@ function startServer() {
     await page.waitForFunction(() => !document.querySelector('.map-entry'));
     await sys('Remote support');
     // Remote support: off by default; settings saved and checked; allowing it shows the start controls
-    await page.waitForSelector('#supportcard #supportsave');
+    await page.waitForSelector('#supportcard #supportline');
     assert(/Remote support is off/.test(await page.textContent('#supportcard')), 'remote support starts off');
+    // What staff see first is the state; the support server is under Advanced
+    assert(!(await page.isVisible('#support-endpoint')), 'the support server fields are folded');
+    await page.click('#supportadv > summary');
+    for (const id of ['support-endpoint', 'support-server_key', 'support-address', 'support-network']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
+    assert(await page.isDisabled('#supportsave'), 'nothing to save until something is typed');
     assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', 'and its switch is the page switch');
     assert.strictEqual(await page.locator('#supportallow').count(), 0, 'no second switch inside the Remote support card');
     await page.fill('#support-endpoint', 'support.example.com:51820');
@@ -909,6 +1249,8 @@ function startServer() {
     await page.waitForSelector('#sysswitch[aria-checked="true"]');
     assert.strictEqual((await get('/api/support')).config.allowed, true, 'the page switch allowed remote support');
     await page.waitForSelector('#supportstart');
+    assert(await page.isVisible('label[for="supportminutes"]') && await page.isVisible('label[for="supportrole"]'), 'how long and what support may do have labels');
+    assert(await page.isVisible('#support-address'), 'Advanced stays open through a redraw');
     await page.waitForSelector('#supportwhy');                       // no helper in the test harness: said plainly
     await page.fill('#support-address', '10.99.0.40');
     await page.click('#supportsave');
@@ -958,15 +1300,17 @@ function startServer() {
     assert(!/token|pin_hash|a2tra2tr/.test(exportedText), 'no access data or support key in the export');
     const otherDuration = exportedFile.settings.mix.duration === 3 ? 4 : 3;
     assert.strictEqual(await post('/api/mix', { transition: exportedFile.settings.mix.transition, duration: otherDuration }), 200);
-    page.once('dialog', (d) => d.accept());
     await page.setInputFiles('#importpick', { name: 'my-settings.json', mimeType: 'application/json', buffer: Buffer.from(exportedText) });
+    await page.waitForSelector('#confirmrow:has-text("Replace this box\'s settings with my-settings.json?")');
+    await page.click('#confirmyes');
     await page.waitForFunction(() => /Settings imported/.test(document.getElementById('msg').textContent));
     await page.waitForFunction(() => /no passwords/.test(document.getElementById('importresult').textContent));
     const mixNow = await page.evaluate(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.duration));
     assert.strictEqual(mixNow, exportedFile.settings.mix.duration, 'the import put the exported value back');
     assert.strictEqual(await page.evaluate(() => fetch('/api/status').then((r) => r.status)), 200, 'still paired after an import');
-    page.once('dialog', (d) => d.accept());
+    await page.waitForSelector('#importbtn');
     await page.setInputFiles('#importpick', { name: 'twice.json', mimeType: 'application/json', buffer: Buffer.from(exportedText.replace('{', '{"format": "x", ')) });
+    await page.click('#confirmyes');
     await page.waitForFunction(() => /appears twice/.test(document.getElementById('msg').textContent));
     const [diag] = await Promise.all([page.waitForEvent('download'), page.click('#diagbtn')]);
     assert(/^nxlx-diagnostics-.+\.json$/.test(diag.suggestedFilename()), 'diagnostics file name');
@@ -980,10 +1324,12 @@ function startServer() {
     await page.click('#resetbtn');
     await page.waitForFunction(() => /Choose what happens to the clips/.test(document.getElementById('msg').textContent));
     await page.selectOption('#resetmedia', 'keep');
-    let asked = '';
-    page.once('dialog', (d) => { asked = d.message(); d.dismiss(); });
     await page.click('#resetbtn');
-    await page.waitForFunction(() => document.getElementById('resetmedia').value === 'keep');
+    await page.waitForSelector('#confirmrow');
+    const asked = await page.textContent('#confirmrow > span');
+    await page.click('#confirmno');
+    await page.waitForSelector('#resetbtn');
+    assert.strictEqual(await page.inputValue('#resetmedia'), 'keep');
     assert(/every device is unpaired/.test(asked) && /The clips stay/.test(asked), 'the reset question says what it does: ' + asked);
     assert.strictEqual(resets, 0, 'a cancelled reset sends nothing');
     await fitsCard('#settingscard, #diagcard, #resetcard', 'Box care');
@@ -1007,6 +1353,27 @@ function startServer() {
     await guest.click('.navrow:has-text("About and power")');
     await guest.waitForSelector('#boxcard');
     assert.strictEqual(await guest.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a guest page');
+    // A guest's two pages, on a phone and on a laptop: they fit, there is no power action, and the one button asks first
+    for (const width of [390, 1366]) {
+      await guest.setViewportSize({ width, height: 844 });
+      await guest.waitForSelector('#boxcard .kvv');
+      await fitsOn(guest, "a guest's About and power page at " + width);
+      await guest.click('#sysback');
+      await guest.click('.navrow:has-text("Health")');
+      await guest.waitForSelector('#healthpower');
+      await fitsOn(guest, "a guest's Health page at " + width);
+      assert.strictEqual(await guest.locator('#healthshowaddr, #sysswitch').count(), 0, 'nothing to press on a guest\'s Health page');
+      await guest.click('#sysback');
+      await guest.click('.navrow:has-text("About and power")');
+    }
+    await guest.setViewportSize({ width: 390, height: 844 });
+    await guest.waitForSelector('#boxcard .kvv');
+    assert.strictEqual(await guest.locator('#powercard, #sysswitch, #setclock, #rebootbtn, #poweroffbtn, #restartplayer').count(), 0, 'a guest gets no power action');
+    assert(!/Vitals/.test(await guest.textContent('#sysbody')), 'no second card repeating the board and the player');
+    await guest.click('#forgetdevice');
+    await guest.waitForSelector('#confirmrow:has-text("Leave this panel on this phone? You will need a code or the PIN to get back in.")');
+    await guest.click('#confirmno');
+    await guest.waitForSelector('#forgetdevice');
 
     // Scan-to-join: the owner makes a guest code; a phone opens the QR code's link and joins with one tap as view only
     await sys('People and codes');
@@ -1777,7 +2144,27 @@ function startServer() {
     await presenter.click('.navrow:has-text("Projectors")');
     await presenter.waitForSelector('#projline');
     assert.strictEqual(await presenter.locator('.switch').count(), 0, 'a presenter gets no switch');
-    assert.strictEqual(await presenter.locator('#projadd').count(), 0, 'and no form to add a projector');
+    assert.strictEqual(await presenter.locator('#projadd, #projopen').count(), 0, 'and no form to add a projector');
+    await presenter.click('#sysback');
+    await presenter.waitForSelector('#sysindex');
+    // A presenter's view of every page this pass changed, on a phone and on a laptop: it fits, and nothing on it sets
+    // the box up (no switch, no Add form, no Save, no Edit or Remove, no power action)
+    for (const width of [390, 1366]) {
+      await presenter.setViewportSize({ width, height: 844 });
+      for (const [name, marker] of [['Health', '#healthpower'], ['Projectors', '#projline'], ['People and codes', '#accesshint'], ['Sound', '#audioline'],
+        ['Streams', '#streamempty, .stream-entry'], ['Boxes in step', '#syncline'], ['About and power', '#boxcard .kvv']]) {
+        await presenter.click(`.navrow:has(.navname:text-is("${name}"))`);
+        await presenter.waitForSelector(marker);
+        await fitsOn(presenter, `a presenter's ${name} page at ${width}`);
+        assert.strictEqual(await presenter.locator('#sysswitch, .addform, .addopen, .savebar, #powercard, #audiodev, #syncroles, #devicescard, #syspage button:text-is("Remove"), #syspage button:text-is("Edit")').count(), 0,
+          `nothing to set the box up with on a presenter's ${name} page`);
+        await presenter.click('#sysback');
+        await presenter.waitForSelector('#sysindex');
+      }
+    }
+    await presenter.click(`.navrow:has(.navname:text-is("Sound"))`);
+    await presenter.waitForSelector('#tone-both');
+    assert.strictEqual(await presenter.locator('#tonerow button:disabled').count(), 0, 'a presenter can play the test sound');
     await presenter.click('#sysback');
     await presenter.waitForSelector('#sysindex');
     await liveCtx.close();
@@ -1826,6 +2213,23 @@ function startServer() {
     await fitsCard('#shaderpage .card', 'Shaders page on a laptop');
     assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
 
+    // A laptop: every System page this pass changed, as the box is at the end of this test, fits its cards and the
+    // window (the Shaders page, Projection mapping and Room have their own steps)
+    await page.setViewportSize({ width: 1366, height: 800 });
+    await page.click('nav >> text=System');                    // from wherever the last step left the panel (a page opened from Live goes back to Live)
+    await page.waitForSelector('#sysindex');
+    const laptopRows = (await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent))).filter((n) => !['Shaders and Vibes', 'Projection mapping', 'Room'].includes(n));
+    for (const name of laptopRows) {
+      await sys(name);
+      await page.waitForTimeout(700);          // the page's own cards arrive after it opens
+      await fitsOn(page, name + ' page at 1366');
+    }
+    // People and codes and the MIDI page are two columns on a laptop; a list that grows scrolls by itself
+    await sys('People and codes');
+    await page.waitForSelector('#devicelist');
+    assert(await page.evaluate(() => { const a = document.getElementById('accesscard').getBoundingClientRect(), b = document.getElementById('devicescard').getBoundingClientRect(); return b.left > a.right - 2; }),
+      'People and codes: the two cards are side by side on a laptop');
+    assert.strictEqual(await page.evaluate(() => getComputedStyle(document.getElementById('devicelist')).overflowY), 'auto', 'the device list scrolls by itself on a laptop');
     // Desktop width
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.click('nav >> text=Live');

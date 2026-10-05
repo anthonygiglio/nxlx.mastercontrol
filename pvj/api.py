@@ -299,6 +299,7 @@ class Api:
         """A JPEG of what the player is showing on the screen. One screenshot at a time; viewers who ask within
         PREVIEW_MIN_INTERVAL of the last one get the same frame, so ten phones cost no more than one. A failure
         (no picture yet) is remembered for a few seconds too, so requests cannot queue up behind a slow player.
+        A player that runs and plays nothing answers 409 "nothing is on the screen right now", not an error.
         While the PIN or join codes are on the display, a device without full access gets the video only (no
         on-screen text or QR codes): otherwise a guest could read the full PIN or a presenter code off a snapshot."""
         with_text = not self.access_on_screen() or Auth.allows(device, "full")
@@ -325,7 +326,14 @@ class Api:
                     # file fails ("Read-only file system"). mpv writes over the old picture instead, and the
                     # panel tells a new one from the one that was there by what the file looks like now.
                     before = self._preview_mark(path)
-                self._player_call(self.player.screenshot, path, 60, with_text)
+                try:
+                    self._player_call(self.player.screenshot, path, 60, with_text)
+                except ApiError:
+                    # An idle player has no picture to save and answers "error running command" (seen on a Pi 4).
+                    # That is not a fault: say so in its own way, so the panel can say "nothing is on the screen".
+                    if self._nothing_on_screen():
+                        raise ApiError(409, "nothing is on the screen right now")
+                    raise
                 fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
                 try:
                     st = os.fstat(fd)
@@ -348,6 +356,14 @@ class Api:
                 raise err
             self._preview = (time.monotonic(), data, with_text)
             return data
+
+    def _nothing_on_screen(self):
+        """True when the player runs and plays nothing (asked only after a snapshot failed)."""
+        try:
+            st = self.player.status()
+        except Exception:
+            return False
+        return bool(st.get("running")) and not st.get("path")
 
     @staticmethod
     def _preview_mark(path):

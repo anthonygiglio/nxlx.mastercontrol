@@ -11,7 +11,9 @@ const path = require('path');
 
 // The page side: walk the visible DOM and describe it. Runs inside the browser.
 function describe() {
-  const SECTIONS = '.top, .pads, .card, nav.tabs';
+  // The sections of a screen: each becomes a named group at the top of the SVG and a layer group in the PSD. A System
+  // page has a Back button, a header with the switch, a description, a message and a state line above its cards.
+  const SECTIONS = '.top, .pads, .card, nav.tabs, .btn.back, #sysblurb, #sysstate, #msg, .danger-h, .support-banner, .banks';
   const CONTROL = 'button, input, select, textarea, canvas, img, svg, .pad';
   const used = {};
   const uniq = (s) => { s = s.replace(/\s+/g, ' ').trim().slice(0, 48) || 'item'; used[s] = (used[s] || 0) + 1; return used[s] > 1 ? s + ' ' + used[s] : s; };
@@ -24,8 +26,28 @@ function describe() {
   const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + sx, y: r.top + sy, w: r.width, h: r.height }; };
   const ownText = (el) => Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent).join(' ').trim();
   function nameOf(el) {
-    if (el.matches('.card')) { const h = el.querySelector('h2'); return 'Card: ' + (h ? h.textContent : 'untitled'); }
+    if (el.matches('.card.navgroup')) { const h = el.querySelector('h2'); return 'Group: ' + (h ? h.textContent : 'top'); }
+    if (el.matches('.card.ctlcard')) { const h = el.querySelector('h2'); return 'Controller: ' + (h ? h.textContent : 'unknown'); }
+    if (el.matches('.card')) { const h = el.querySelector('h2'); return 'Card: ' + (h ? h.textContent : el.id || 'untitled'); }
+    if (el.matches('.top.syshead')) return 'Page header';
     if (el.matches('.top')) return 'Header';
+    if (el.matches('.btn.back')) return 'Back button';
+    if (el.matches('#sysblurb')) return 'Description';
+    if (el.matches('#sysstate')) return 'State line';
+    if (el.matches('#msg')) return 'Message line';
+    if (el.matches('.banks')) return 'Banks';
+    if (el.matches('.navrow')) { const n = el.querySelector('.navname'); return 'Row: ' + (n ? n.textContent : el.textContent); }
+    if (el.matches('.chip')) return 'Chip: ' + el.textContent;
+    if (el.matches('.switch')) return 'Switch: ' + (el.getAttribute('aria-label') || el.id || '') + (el.getAttribute('aria-checked') === 'true' ? ' (on)' : ' (off)');
+    if (el.matches('.ctlgrid')) return 'Controller drawing';
+    if (el.matches('.ctl')) { const n = el.querySelector('.ctlname'); return 'Control: ' + (n ? n.textContent : el.textContent); }
+    if (el.matches('.item.lrow')) { const n = el.querySelector('.lname'); return 'List row: ' + (n ? n.textContent : ''); }
+    if (el.matches('.addform')) return 'Form: ' + ((el.querySelector('.field') || {}).textContent || el.id || '');
+    if (el.matches('.confirm')) return 'Question';
+    if (el.matches('details')) { const sm = el.querySelector('summary'); return 'Fold: ' + (sm ? sm.textContent : ''); }
+    if (el.matches('label.field, .field')) return 'Label: ' + el.textContent;
+    if (el.matches('.hint')) return 'Hint: ' + el.textContent;
+    if (el.matches('.state')) return 'State: ' + el.textContent;
     if (el.matches('.pads')) return 'Pads';
     if (el.matches('nav.tabs')) return 'Tab bar';
     if (el.matches('.pad')) return 'Pad ' + el.textContent;
@@ -58,7 +80,13 @@ function describe() {
     }
     const font = { family: cs.fontFamily, size: parseFloat(cs.fontSize), weight: cs.fontWeight, color: cs.color, spacing: cs.letterSpacing };
     const tx = (s) => cs.textTransform === 'uppercase' ? s.toUpperCase() : s;
-    if (el.matches('input[type=range]')) {
+    if (el.matches('.switch')) {
+      // the track and the thumb are CSS pseudo-elements: draw them from their computed styles
+      const tr = getComputedStyle(el, '::before'), th = getComputedStyle(el, '::after');
+      out.push({ k: 'rect', x: b.x, y: b.y + 6, w: 52, h: 32, rx: 16, fill: tr.backgroundColor });
+      out.push({ k: 'rect', x: b.x + 0.75, y: b.y + 6.75, w: 50.5, h: 30.5, rx: 15.25, stroke: tr.borderTopColor, sw: 1.5 });
+      out.push({ k: 'circle', cx: b.x + (parseFloat(th.left) || 4) + 12, cy: b.y + 22, r: 12, fill: th.backgroundColor });
+    } else if (el.matches('input[type=range]')) {
       const v = (+el.value - +(el.min || 0)) / ((+(el.max || 100)) - (+(el.min || 0)) || 1);
       const accent = cs.accentColor && cs.accentColor !== 'auto' ? cs.accentColor : font.color;
       out.push({ k: 'rect', x: b.x, y: b.y + b.h / 2 - 2, w: b.w, h: 4, rx: 2, fill: 'rgba(128,128,128,0.35)' });
@@ -103,7 +131,7 @@ function describe() {
   function flat(n) {
     const kids = [];
     for (const k of n.kids.map(flat)) {
-      const boring = !k.draw.length && !k.control && !/^(Card|Header|Pads|Tab bar|Title|Text|Button|Field|Slider|Switch|Menu|Picture|Pad )/.test(k.name);
+      const boring = !k.draw.length && !k.control && !/^(Card|Group|Controller|Header|Page header|Back button|Description|State line|Message line|Banks|Row|Chip|Control|List row|Form|Question|Fold|Label|Hint|State|Pads|Tab bar|Title|Text|Button|Field|Slider|Switch|Menu|Picture|Pad )/.test(k.name);
       if (boring) kids.push(...k.kids); else kids.push(k);
     }
     return { ...n, kids };

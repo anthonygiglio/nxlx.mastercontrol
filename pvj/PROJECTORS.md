@@ -99,3 +99,16 @@ Only the PJLink standard, so it works with any brand. Command details to be chec
 - Scenes from the schedule, OSC and MIDI, and group buttons from OSC: built. DMX is not: its fixed channel layout has no place for a scene.
 
 **Safety and tests.** The rules above stay (private networks only, passwords never shown, one command at a time per projector, time limits). The fake projector grows a class 2 mode, with tests for every refusal and timeout. Epson's own protocol (exact volume levels) is a possible later add-on, not part of this plan.
+
+## The Projectors page (2026-10-04)
+
+One row per projector: its name; what it said it is and its address; one line with the state, the input, the mutes, the lamp hours and any warning; a red line when it does not answer.
+
+- **One power button, from the state the projector last reported.** Off (standby): **Turn on**. Warming up: **Warming up...**, which cannot be pressed. On: **Turn off**, which asks first, in place ("Turn off Main wall? It needs about a minute to cool before it can come on again."). Cooling down: **Cooling down...**, which cannot be pressed. No answer: **Try again**. With two or more projectors, **All on** and **All off** ask first and name how many.
+- **Input** is a list that switches when a choice is made. An input that has no name yet is shown with a hint from the kind PJLink gives it: `1x` "RGB 1 (computer, VGA)", `2x` "Video 1", `3x` "Digital 2 (HDMI or DVI)", `4x` "Storage 1 (USB)", `5x` "Network 1". **This mapping is taken from the kinds the PJLink standard names (RGB, Video, Digital, Storage, Network); the standard does not say which socket a number is, and none of it has been checked on a real projector.** Name the inputs once and the hint is replaced by your name.
+- While no inputs are known the row says "Inputs appear once the projector is on. Turn it on, wait for On, then tap Read inputs." and has **Read inputs** (the `identify` action).
+- **More**: Blank the picture / Show the picture, Mute the sound / Unmute the sound, **Name the inputs** (one field per input, **Show** switches to that input, one **Save names**; the panel sends one `label` request per changed name; naming does not switch the projector), Check now, Read details again, Edit, and Remove, which asks first.
+- A projector that does not answer: "Not answering at 192.168.1.51. Is it plugged in at the wall, and is PJLink switched on in its network menu?", with what the box got in brackets.
+- An empty list: "No projectors yet. On the projector, open its network menu and switch PJLink on. Then add it here.", with the Add form open (Name, Address, Port, PJLink password, each with its label).
+
+Tested in the browser test against the fake projectors only (the four power states, the question before Turn off, All on and All off, naming, Show, a silent projector, Remove). "Cooling down" is put into the box's answer by the test, because the fake that is on goes straight to standby. Not seen with a real projector.
