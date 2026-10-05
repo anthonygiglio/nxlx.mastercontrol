@@ -506,7 +506,7 @@ class FxCase(GpuCase):
             self.put("invert.fs", drawn=False, controls={"amount": 0.0})
             d = differ(self.still(), plain)
             print("capped, ES %s: %-36s %-22s max %3d mean %5.2f" % (self.ES, what, "amount 0", d[0], d[1]))
-            if not alike(d):
+            if d[0] > 6 or d[1] > ALIKE_MEAN:           # the bar the shapes have without a cap, in the test above
                 failed.append("%s, amount 0: not the clip as it is (max %d, mean %.2f)" % (what, d[0], d[1]))
             self.fx.change({"controls": {"amount": 1.0}})                                # and from 0 the filter comes back, looked at by the GPU
             self.pump()
@@ -514,19 +514,21 @@ class FxCase(GpuCase):
                 failed.append("%s: the filter did not come back from amount 0" % what)
             self.fx.off()
             # The size the generated code believes it draws at against the size the player draws at: a hook with the
-            # same size lines and the same arithmetic paints green where the two agree to a hundredth of a pixel.
+            # same size lines and the same arithmetic paints light where the two agree to a hundredth of a pixel and
+            # dark where they do not (the clip is a video: what a hook returns here is brightness, then two colour
+            # differences, and one half is no colour).
             tall = size[1] > size[0]
             made = E.translate(S.parse(SAME, S.FILTER), lines=lines, tall=tall)
             code = [l for l in made.split("\n") if "pvj_work = " in l][:2]
             self.raw("//!HOOK NATIVE\n//!BIND HOOKED\n%s\n//!DESC nxlx size probe\n\nvec4 hook() {\n    vec2 pvj_work;\n%s\n"
                      "    vec2 at = HOOKED_pos * pvj_work;\n    float dx = abs(at.x - gl_FragCoord.x);\n"
                      "    float dy = min(abs(at.y - gl_FragCoord.y), abs(pvj_work.y - at.y - gl_FragCoord.y));\n"
-                     "    return (max(dx, dy) < 0.01) ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);\n}\n"
+                     "    return (max(dx, dy) < 0.01) ? vec4(0.85, 0.5, 0.5, 1.0) : vec4(0.15, 0.5, 0.5, 1.0);\n}\n"
                      % ("\n".join(E.size_lines(lines, tall)), "\n".join(code)))
             self.settle()
             rows = self.still()
             inside = [rows[y][x] for y in range(ends[0] + 2, H - ends[1] - 2, 3) for x in range(sides[0] + 2, W - sides[1] - 2, 3)]
-            red = sum(1 for px in inside if not (px[1] > 2 * px[0] and px[1] > 2 * px[2]))
+            red = sum(1 for px in inside if not min(px) > 150)
             self.real.ipc.request("set_property", "glsl-shaders", [])
             print("capped, ES %s: %-36s %-22s %d of %d points disagree" % (self.ES, what, "the code's size", red, len(inside)))
             if red:
@@ -560,10 +562,21 @@ class FxCase(GpuCase):
                 self.fx.off()
                 print("turned, ES %s: %-5s by %3d at 60 lines: unchanged mean %.2f, inverted against the uncapped invert mean %.2f, amount 0 max %d mean %.2f" % (
                     self.ES, name, turn, same[1], inverted[1], zero[0], zero[1]))
-                if same[1] > 6.0 or inverted[1] > 6.0 or not alike(zero):
+                if same[1] > 6.0 or inverted[1] > 6.0 or zero[0] > 6 or zero[1] > ALIKE_MEAN:
                     failed.append("%s turned by %d: unchanged %.2f, inverted %.2f, amount 0 max %d mean %.2f" % (name, turn, same[1], inverted[1], zero[0], zero[1]))
                 if (on["width"], on["height"]) != E.work_size(size[0], size[1], 60):
                     failed.append("%s turned by %d: the panel is told %s" % (name, turn, on))
+                # What the arithmetic rests on: where the effect hooks, a turned picture is still as it is stored
+                # (light: wider than high). Were it handed over turned, the text would cap the wrong side.
+                self.raw("//!HOOK NATIVE\n//!BIND HOOKED\n//!DESC nxlx turn probe\n\nvec4 hook() {\n"
+                         "    return (HOOKED_size.x > HOOKED_size.y) ? vec4(0.85, 0.5, 0.5, 1.0) : vec4(0.15, 0.5, 0.5, 1.0);\n}\n")
+                self.settle()
+                middle = self.still()[H // 2][W // 2]
+                self.real.ipc.request("set_property", "glsl-shaders", [])
+                lying = min(middle) > 150
+                print("turned, ES %s: %-5s by %3d: at the hook the picture is %s (stored %dx%d)" % (self.ES, name, turn, "wider than high" if lying else "higher than wide", size[0], size[1]))
+                if lying != (size[0] > size[1]):
+                    failed.append("%s turned by %d: at the hook the picture is not as it is stored" % (name, turn))
             self.real.rotate(0)
         self.assertEqual(failed, [])
 
