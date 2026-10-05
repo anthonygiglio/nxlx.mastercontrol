@@ -383,7 +383,7 @@ class LifeTest(Base):
         self.assertEqual(self.mpv.props["path"], "/media/a.mp4")                       # the clip plays on
         self.assertEqual(self.player.source_epoch, epoch)                              # and the screen has not changed hands
         self.assertEqual(self.mpv.loaded, self.texts())
-        self.assertEqual(self.mpv.props["fbo-format"], "auto")                         # the buffers are left alone (see Player._apply_fbo)
+        self.assertEqual(self.mpv.props["fbo-format"], "auto")                         # on this board (x86) the buffers are left alone
         on = self.state()["on"]
         self.assertEqual((on["id"], on["name"], on["values"]["strength"], on["controls"]), ("fx-wash.fs", "fx-wash", 0.5, {"amount": 1.0, "speed": 1.0, "half": False}))
         self.assertEqual((on["checked"], on["pass_ms"], on["picture"]), (True, 1.5, {"matrix": "bt.709", "levels": "limited", "fps": 25.0}))
@@ -395,7 +395,33 @@ class LifeTest(Base):
         self.assertEqual(self.state()["limits"]["at_once"], 1)
         self.assertEqual(self.fx.off(), {"ok": True})
         self.assertEqual((self.mpv.loaded, self.mpv.props["fbo-format"], self.texts(), self.state()["on"], self.state()["last"]), ([], "auto", [], None, None))
-        self.assertEqual([c for c in self.mpv.commands if c[:2] == ("set_property", "fbo-format")], [], "an effect never sets the buffers' format")
+        self.assertEqual([c for c in self.mpv.commands if c[:2] == ("set_property", "fbo-format")], [], "on this board an effect never sets the buffers' format")
+
+    def test_on_a_pi_4_the_player_draws_in_8_bit_buffers_while_an_effect_is_on(self):
+        """As for the mapping there (16-bit buffers cost it frames on the Pi 4). Set once when the effect goes on and
+        once when it comes off; a change of a value, which is a new text of the same effect, leaves them."""
+        self.api.board = dict(self.api.board, kind="pi4")
+        self.assertTrue(self.fx.eight_bit())
+        sets = lambda: [c[2] for c in self.mpv.commands if c[:2] == ("set_property", "fbo-format")]
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.mpv.props["fbo-format"], sets()), ("rgba8", ["rgba8"]))
+        self.fx.change({"controls": {"amount": 0.5}})
+        self.pump()
+        self.fx.put("fx-vignette.fs")                                                  # another effect in its place
+        self.assertEqual(sets(), ["rgba8"])
+        self.fx.off()
+        self.assertEqual((self.mpv.props["fbo-format"], sets()), ("auto", ["rgba8", "auto"]))
+        self.player.set_mapping_mode(True)                                             # with a mapping on they are 8-bit already, and stay so
+        self.fx.put("fx-wash.fs")
+        self.fx.off()
+        self.assertEqual(self.mpv.props["fbo-format"], "rgba8")
+        self.player.set_mapping_mode(False)
+        self.fx.put("fx-wash.fs")
+        self.api.control({"action": "stop"}, None, "t")                                # Stop takes the effect and its buffers
+        self.assertEqual(self.mpv.props["fbo-format"], "auto")
+        for kind, want in (("pi3", True), ("pi5", False), ("x86", False), (None, False)):
+            self.api.board = dict(self.api.board, kind=kind)
+            self.assertEqual(self.fx.eight_bit(), want, kind)
         self.assertNotIn("effect", self.api.status({}, None, "t")["player"])
 
     def test_it_needs_a_picture_to_be_put_on(self):

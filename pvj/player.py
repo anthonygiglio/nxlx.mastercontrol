@@ -131,7 +131,7 @@ class Player:
     # Defaults for a Player made without __init__ (some tests do); __init__ gives every player its own lock.
     _lock = threading.RLock()
     _mapping_shaders, _mapping_mode, _source, _source_pid, _carrier, source_epoch = [], False, None, None, None, 0
-    _effect, _effect_pid, effect_serial, effect_ended = None, None, 0, ""
+    _effect, _effect_pid, effect_serial, effect_ended, effect_8bit = None, None, 0, "", False
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
         self.mpv_bin = mpv_bin
@@ -161,6 +161,7 @@ class Player:
         self._effect_pid = None     # the mpv it was given to
         self.effect_serial = 0      # goes up each time an effect goes on or comes off; the effect's worker checks it
         self.effect_ended = ""      # why the last one came off: "off", "stop", "generator", "restart", "refused"
+        self.effect_8bit = False    # 8-bit GPU buffers while an effect is on (the effects engine says: see _apply_fbo)
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
@@ -480,18 +481,22 @@ class Player:
             self._drop_effect(why)
             try:
                 self._push_shaders()
+                if self.effect_8bit:
+                    self._apply_fbo()
             except PlayerError:
                 pass
 
     def _apply_fbo(self):
-        """8-bit GPU buffers while a mapping or a shader source adds a pass, mpv's own choice otherwise. An effect
-        leaves the buffers as they are, on purpose. Setting fbo-format makes mpv build its renderer anew with empty
-        textures for the picture, and until the next new frame arrives it draws black (seen in CI on mpv 0.37: a
-        screenshot right after the setting was black, and with the clip frozen it would stay so). A source brings
-        its own carrier, so new frames follow at once and it draws without the picture anyway; a filter has only the
-        picture, and it goes on and comes off in the middle of a clip."""
+        """8-bit GPU buffers while a mapping or a shader source adds a pass, mpv's own choice otherwise (16-bit ones
+        made the mapping's extra pass drop frames on a Pi 4). For an effect only where `effect_8bit` says so: the
+        effects engine sets it on the boards that run mpv with its cheap scaling (a Pi 4). There the setting was
+        harmless in CI, over a playing and over a frozen clip. With mpv's default scalers (other boards) a
+        screenshot right after an effect went on with this setting was black, and a filter has only the picture to
+        draw from and goes on in the middle of a clip, so there the buffers are left as they are."""
         self._check_source()
-        self.ipc.request("set_property", "fbo-format", "rgba8" if (self._mapping_mode or self._source) else "auto")
+        self._check_effect()
+        want = self._mapping_mode or self._source or (self._effect and self.effect_8bit)
+        self.ipc.request("set_property", "fbo-format", "rgba8" if want else "auto")
 
     def set_shaders(self, paths):
         """Use these GLSL user shader files (the projection mapping), or none. The files must be readable by the
@@ -535,6 +540,8 @@ class Player:
             self._effect, self._effect_pid = shader, pid
             try:
                 self._push_shaders()
+                if self.effect_8bit and previous is None:       # the first text of an effect; a change of text leaves them
+                    self._apply_fbo()
             except PlayerError:
                 self._effect = previous
                 try:

@@ -37,7 +37,7 @@ import re
 import threading
 import time
 
-from . import shaderlive as L, shaders as S
+from . import hardware, shaderlive as L, shaders as S
 from .api import ApiError
 from .player import PlayerError
 from .shaders import ShaderError
@@ -342,6 +342,16 @@ class Effects(S.Engine):
 
     def faster(self):
         return bool(self._live().config().get("faster", False))
+
+    def eight_bit(self):
+        """Whether the player switches to 8-bit GPU buffers while an effect is on: on the boards that run mpv with
+        its cheap scaling (pvj/hardware.py: a Pi 4), where the mapping's measurement says 16-bit buffers cost frames
+        and where the switch was harmless in CI. See Player._apply_fbo for why not elsewhere."""
+        kind = (getattr(self.api, "board", None) or {}).get("kind")
+        try:
+            return "--profile=fast" in hardware.playback_profile({"kind": kind}, True)["mpv_args"]
+        except Exception:
+            return False
 
     # -- the library --
     def read(self, data):
@@ -650,6 +660,7 @@ class Effects(S.Engine):
                     tap = None
             try:
                 try:
+                    player.effect_8bit = self.eight_bit()
                     new = player.put_effect(out, serial, epoch)
                 except PlayerError as e:
                     self._cleanup({before["path"]} if before else set())

@@ -139,6 +139,17 @@ OTHER = {
 }
 
 
+# "The picture again": what a filter that changes nothing, and any filter at amount 0, must give. Not to the last
+# bit: with an effect the picture takes one more pass through the GPU, and for a video with colour at half the detail
+# (4:2:0, 8 bit) the rounding came out up to 3 of 255 away, 1.1 on average, in every way of drawing; for 10 bit and for
+# two-plane video half of that, for RGB nothing. A wrong matrix, a wrong range or a shifted picture is far outside it.
+ALIKE_MAX, ALIKE_MEAN = 4, 1.5
+
+
+def alike(d):
+    return d[0] <= ALIKE_MAX and d[1] <= ALIKE_MEAN
+
+
 def grid(rows, step=5):
     """A grid of points of a screenshot. The step is odd, so the points lie on even and on odd lines alike (a filter
     that treats every other line differently is not missed)."""
@@ -161,6 +172,8 @@ def upside_down(rows):
 
 
 class FxCase(GpuCase):
+    maxDiff = None
+
     def setUp(self):
         """The generators' rig with two differences, both found the hard way (a diagnosis job printed what the player
         said at every look). It starts with the test picture itself, not with the generators' small RGB clip: on
@@ -169,6 +182,7 @@ class FxCase(GpuCase):
         "flat colour" the generators' own clip test could not explain). And the player runs with --profile=fast,
         as it does on a Raspberry Pi 4 (pvj/hardware.py): with that cheap scaling the black picture did not come."""
         super(GpuCase, self).setUp()
+        self.api.board = dict(self.api.board, kind="pi4")       # and the panel takes the box for one: 8-bit buffers under an effect
         self.real = Player(extra_args=["--vo=gpu", "--gpu-context=x11egl", "--opengl-es=" + self.ES, "--ao=null", "--geometry=%dx%d" % (W, H),
                                        "--no-border", "--profile=fast"], rundir=self.rundir)
         self.addCleanup(self.real.stop)
@@ -346,7 +360,7 @@ class FxCase(GpuCase):
             print("kinds, ES %s: %-11s %s/%s %s (the output: %s %s) as %s: unchanged max %d mean %.2f; inverted max %d mean %.2f; with a text for %s" % (
                 self.ES, name, params.get("pixelformat"), params.get("colormatrix"), params.get("colorlevels"), (out or {}).get("colormatrix"),
                 (out or {}).get("colorlevels"), picture, same[0], same[1], inv[0], inv[1], ", ".join(other) or "nothing else"))
-            if same[0] > 3 or same[1] > 1.0:
+            if not alike(same):
                 failed.append("%s: a filter that changes nothing changed the picture (max %d, mean %.2f)" % (name, same[0], same[1]))
             if inv[1] > 3.0:
                 failed.append("%s: the invert is off by %.2f on average" % (name, inv[1]))
@@ -390,11 +404,11 @@ class FxCase(GpuCase):
                 for way in (0, 1, 2, 3, 4):
                     self.put("reads.fs", values={"way": way})
                     d = differ(self.still(), mirrored(plain) if way == 4 else plain)
-                    if d[0] > 6 or d[1] > 1.0:
+                    if d[0] > 6 or d[1] > ALIKE_MEAN:
                         failed.append("%s, way %d: max %d mean %.2f" % (what, way, d[0], d[1]))
                 self.put("swap.fs")
                 d = differ(self.still(), upside_down(plain))
-                if d[0] > 6 or d[1] > 1.0:
+                if d[0] > 6 or d[1] > ALIKE_MEAN:
                     failed.append("%s, top and bottom exchanged: max %d mean %.2f" % (what, d[0], d[1]))
                 self.put("reads.fs", values={"way": 4}, controls={"half": True})
                 d = differ(self.still(), mirrored(plain))
@@ -482,7 +496,7 @@ class FxCase(GpuCase):
                     failed.append("%s (%s): the player never drew a frame with it" % (sid, what))
                 if self.fx.error is not None and self.fx.error["id"] == sid:
                     failed.append("%s (%s): %s" % (sid, what, self.fx.error))
-                same = d[0] <= 3 and d[1] <= 1.0
+                same = alike(d)
                 if what == "amount 0" or (what == "defaults" and sid in NEUTRAL):
                     if not same:
                         failed.append("%s (%s): not the picture as it was (max %d, mean %.2f)" % (sid, what, d[0], d[1]))
@@ -523,7 +537,7 @@ class FxCase(GpuCase):
     def test_it_stays_over_the_next_clip_and_comes_off_with_stop_a_generator_and_a_restart(self):
         self.fx.upload("invert.fs", INVERT)
         self.put("invert.fs")
-        self.assertEqual(self.real.ipc.request("get_property", "fbo-format"), "auto")       # an effect leaves the buffers alone
+        self.assertEqual(self.real.ipc.request("get_property", "fbo-format"), "rgba8")      # as on a Pi 4 (see Player._apply_fbo)
         self.assertEqual(self.api.status({}, None, "t")["player"]["effect"], "invert")
         self.play(dict(SHAPES)["tall"])                                               # another clip: the effect stays
         self.assertEqual(len(self.loaded()), 1)
@@ -581,7 +595,7 @@ class FxCase(GpuCase):
         self.assertIn("line 4:", c.exception.message)                                # the line of the file, on every way of drawing
         self.assertIn("No effect is on", c.exception.message)
         self.assertEqual(self.loaded(), [])
-        self.assertLess(differ(self.still(), plain)[1], 1.0)                           # the picture as it was, not black
+        self.assertTrue(alike(differ(self.still(), plain)))                            # the picture as it was, not black
         self.put("invert.fs")
         inverted = self.still()
         for _ in range(2):                                                             # and every time again (mpv keeps quiet about a text it knows)
@@ -591,7 +605,7 @@ class FxCase(GpuCase):
         self.assertEqual(self.fx.state()["on"]["id"], "invert.fs")
         self.assertEqual(self.fx.state()["error"]["id"], "broken.fs")
         self.assertEqual(len(self.loaded()), 1)
-        self.assertLess(differ(self.still(), inverted)[1], 1.0)
+        self.assertTrue(alike(differ(self.still(), inverted)))
         row = next(s for s in self.fx.state()["effects"] if s["id"] == "broken.fs")
         self.assertIn("nonsense", row["refused"])
 
@@ -619,7 +633,7 @@ class FxCase(GpuCase):
         self.fx.change({"controls": {"amount": 0.0}})
         self.pump()
         d = differ(self.still(), plain)
-        self.assertTrue(d[0] <= 3 and d[1] <= 1.0, d)
+        self.assertTrue(alike(d), d)
         self.fx.change({"controls": {"amount": 1.0}})
         self.pump()
         self.fx.change({"values": {"bang": True}})
@@ -630,10 +644,9 @@ class FxCase(GpuCase):
         self.assertIsNone(self.fx.error)
 
     def test_the_picture_is_never_dark_while_an_effect_goes_on_changes_and_comes_off(self):
-        """No screenshot in the middle of it may be dark, with the clip playing and with it frozen. (The first version
-        switched the player to 8-bit buffers for an effect, as for a generator; a screenshot right after that switch
-        was black, since mpv then draws from empty textures until the next new frame. An effect no longer touches
-        the buffers.)"""
+        """No screenshot in the middle of it may be dark, with the clip playing and with it frozen, and that with the
+        switch to 8-bit buffers that a Pi 4 makes for an effect. (With mpv's default scalers, which this rig does
+        not use, a screenshot right after that switch was black in an earlier run; see Player._apply_fbo.)"""
         self.fx.upload("same.fs", SAME)
         self.fx.upload("invert.fs", INVERT)
         plain = self.still()
@@ -650,11 +663,11 @@ class FxCase(GpuCase):
             time.sleep(0.02)
         time.sleep(0.4)
         d = differ(self.shot(), plain)
-        self.assertLess(d[1], 1.0, "amount 0 over a frozen clip: not the picture (max %d, mean %.2f)" % (d[0], d[1]))
+        self.assertTrue(alike(d), "amount 0 over a frozen clip: not the picture (max %d, mean %.2f)" % (d[0], d[1]))
         self.fx.off()
         time.sleep(0.4)
         d = differ(self.shot(), plain)
-        self.assertLess(d[1], 1.0, "an effect taken off a frozen clip: not the picture (max %d, mean %.2f)" % (d[0], d[1]))
+        self.assertTrue(alike(d), "an effect taken off a frozen clip: not the picture (max %d, mean %.2f)" % (d[0], d[1]))
         # Why an effect does not set the buffers' format: what a screenshot shows after that setting, over the frozen
         # clip, with and without a filter in the list. Printed, not asserted: it is the player's behaviour, not ours.
         seen = []
