@@ -58,8 +58,9 @@ class Rig:
             return "?(%s)" % e
 
     def play(self, url, pause=True):
-        self.p.ipc.request("set_property", "glsl-shaders", [])
-        self.p.ipc.request("set_property", "pause", False)
+        if self.p.is_running():
+            self.p.ipc.request("set_property", "glsl-shaders", [])
+            self.p.ipc.request("set_property", "pause", False)
         self.p.play([url], windowed=True)
         end = time.monotonic() + 15
         while time.monotonic() < end:
