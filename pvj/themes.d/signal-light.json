@@ -1,0 +1,27 @@
+{
+  "id": "signal-light",
+  "name": "Signal light",
+  "style": "signal",
+  "tokens": {
+    "bg": "#f2f0ea",
+    "cd": "#ffffff",
+    "fg": "#0b0b0d",
+    "ln": "#0b0b0d",
+    "mu": "#4a4a52",
+    "ac": "#ffd60a",
+    "on": "#0b0b0d"
+  },
+  "areas": {
+    "room": "#ffd60a",
+    "shaders": "#ff4fa3",
+    "clips": "#3ddc97",
+    "mix": "#b78cff",
+    "system": "#7aa2ff"
+  },
+  "states": {
+    "off": "#d6d6dc",
+    "setup": "#ffb020",
+    "problem": "#ff3b30",
+    "error": "#b00020"
+  }
+}

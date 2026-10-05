@@ -91,7 +91,7 @@
       if (r[1].ok) S.banks = r[1].data.banks;
       if (r[2].ok) { S.media = r[2].data.files; S.mediaInfo = r[2].data; }
       if (r[3].ok) S.modules = r[3].data.modules;
-      if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; }
+      if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; markLook(); }
       if (r[5] && r[5].ok) S.devices = r[5].data.devices;
     });
   }
@@ -1379,6 +1379,7 @@
     var old = app.querySelector('.shell > .screen');
     var roomTab = !!app.querySelector('nav.tabs.many');       // the Room module was just switched: the tabs change too
     if (!old || !S.device || S.tab !== 'system' || roomTab !== (!!window.pvjRoom && moduleOn('room'))) return render();
+    markArea();
     stopTimers();
     keepNetForm();
     keepSyncForm();
@@ -3430,27 +3431,46 @@
     });
     return card;
   }
+  // A theme may name a style (D54): one of the few looks app.css has a block for. The name goes on the root element,
+  // where the server also writes it into the page, and only a name from this list is ever put there; anything else
+  // gives the default look. With a style that has a colour per area, the root also says which area is open.
+  var STYLES = ['signal'];
+  function chosenTheme() { return S.themes.filter(function (x) { return S.theme && x.id === S.theme.name; })[0] || null; }
+  function markLook() {
+    var root = document.documentElement, th = chosenTheme();
+    if (!S.themes.length) return;                 // not read yet (the connect screen): what the server wrote stays
+    var style = th && STYLES.indexOf(th.style) >= 0 ? th.style : null;
+    if (style) root.setAttribute('data-style', style); else root.removeAttribute('data-style');
+  }
+  function markArea() {
+    var area = !S.device ? null : S.tab === 'room' ? 'room' : S.tab === 'mix' ? 'mix' : S.tab === 'system' ? (S.sys === 'vibes' ? 'shaders' : 'system') : 'clips';
+    if (area) document.documentElement.setAttribute('data-area', area); else document.documentElement.removeAttribute('data-area');
+  }
   function appearanceCard() {
     var t = S.theme || {};
     var apply = function (name, accent) {
       act('POST', '/api/theme', { name: name, accent: accent }, function (d) {
         S.theme = d.theme;
         document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now());
+        markLook();
         render();
       });
     };
+    var now = chosenTheme();
     return h('div', { class: 'card' }, h('h2', { text: 'Appearance' }),
-      h('div', { class: 'row wrap' }, S.themes.map(function (th) {
-        return h('button', { class: 'btn small' + (th.id === t.name ? ' on' : ''), text: th.name, onclick: function () { apply(th.id, t.accent); } });
+      h('div', { class: 'row wrap', id: 'lookthemes' }, S.themes.map(function (th) {
+        return h('button', { class: 'btn small' + (th.id === t.name ? ' on' : ''), text: th.name, 'data-theme': th.id, 'aria-pressed': th.id === t.name ? 'true' : 'false',
+          onclick: function () { apply(th.id, t.accent); } });
       })),
-      h('div', { class: 'k', text: 'Accent' }),
-      h('div', { class: 'swatches' },
-        h('button', { class: 'btn small', text: 'Default', onclick: function () { apply(t.name, null); } }),
-        ACCENTS.map(function (c) {
-          var sw = h('button', { class: 'swatch' + (t.accent === c ? ' cur' : ''), 'aria-label': 'Accent ' + c, onclick: function () { apply(t.name, c); } });
-          sw.style.background = c;
-          return sw;
-        })));
+      now && now.areas ? h('div', { class: 'hint', id: 'lookareas', text: now.name + ' gives each part of the panel its own colour (Room, Shaders, clips, Mix, System), so there is no accent to choose.' }) : [
+        h('div', { class: 'k', text: 'Accent' }),
+        h('div', { class: 'swatches' },
+          h('button', { class: 'btn small', text: 'Default', onclick: function () { apply(t.name, null); } }),
+          ACCENTS.map(function (c) {
+            var sw = h('button', { class: 'swatch' + (t.accent === c ? ' cur' : ''), 'aria-label': 'Accent ' + c, onclick: function () { apply(t.name, c); } });
+            sw.style.background = c;
+            return sw;
+          }))]);
   }
   var accessForm = { pin: false, view: true, live: false, seconds: 300, minutes: 60 };  // survives redraws
   var accessTimer = null;
@@ -3654,6 +3674,7 @@
     [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
   }
   function render() {
+    markArea();
     stopTimers();
     keepNetForm();
     keepSyncForm();
@@ -3670,7 +3691,8 @@
       names.unshift(['room', 'Room']);
       if (landing && !can('full')) S.tab = 'room';
     } else if (S.tab === 'room') S.tab = 'live';
-    var tabs = h('nav', { class: 'tabs' + (names.length > 4 ? ' many' : ''), 'aria-label': 'Sections' }, names.map(function (t) {
+    markArea();        // again: the tab may just have been decided
+    var tabs =h('nav', { class: 'tabs' + (names.length > 4 ? ' many' : ''), 'aria-label': 'Sections' }, names.map(function (t) {
       return h('button', { class: 'btn' + (S.tab === t[0] ? ' on' : ''), text: t[1], 'aria-current': S.tab === t[0] ? 'page' : false,
         onclick: function () { goTab(t[0]); } });
     }));

@@ -5,6 +5,12 @@
 Built-in themes live in pvj/themes.d; user themes are dropped into the add-ons
 folder (<addons>/themes), which updates never touch. Colours are strictly
 validated as #rrggbb so a theme file can never inject CSS.
+
+A theme may also name a style: one of the few looks that pvj/web/app.css knows
+(STYLES). The name only chooses a block of the panel's own CSS; a theme file
+never carries CSS of its own. A theme of a style with a colour per area gives
+those colours under "areas", and its state colours under "states"; both are
+fixed sets of names with #rrggbb values. See pvj/THEMES.md.
 """
 
 import glob
@@ -13,6 +19,10 @@ import os
 import re
 
 TOKENS = ("bg", "cd", "fg", "ln", "mu", "ac", "on")
+STYLES = ("default", "signal")          # the looks app.css has a block for; "default" is the look with no block
+AREAS = ("room", "shaders", "clips", "mix", "system")
+STATES = ("off", "setup", "problem", "error")   # fills for three chips, and the colour of an error line of text
+READABLE = 4.5                          # text against its ground, WCAG AA
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 _ID = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 BUILTIN_DIR = os.path.join(os.path.dirname(__file__), "themes.d")
@@ -57,7 +67,33 @@ def validate(theme):
     extra = set(tokens) - set(TOKENS)
     if extra:
         problems.append("unknown tokens: %s" % ", ".join(sorted(extra)))
+    if "style" in theme and (not isinstance(theme["style"], str) or not _ID.fullmatch(theme["style"])):
+        problems.append("bad style")                 # an unknown but well-formed name is not a problem: see style_of
+    for key, names in (("areas", AREAS), ("states", STATES)):
+        if key not in theme:
+            continue
+        group = theme[key]
+        if not isinstance(group, dict):
+            problems.append("%s must be an object" % key)
+            continue
+        for n in sorted(group, key=str):
+            if n not in names:
+                problems.append("unknown name in %s: %s" % (key, str(n)[:40]))
+            elif not isinstance(group[n], str) or not _HEX.match(group[n]):
+                problems.append("%s.%s must be #rrggbb" % (key, n))
     return problems
+
+
+def style_of(theme):
+    """The style a theme asks for, or "default" when it names none or one this version does not know (a theme
+    written for a later version still gives its colours, in the look this version has)."""
+    style = theme.get("style") if isinstance(theme, dict) else None
+    return style if isinstance(style, str) and style in STYLES else "default"
+
+
+def _best(colour, candidates):
+    """Of the candidates, the one that reads best on the colour."""
+    return max(candidates, key=lambda c: contrast(colour, c))
 
 
 def _load_dir(directory, source, out, strict):
@@ -92,6 +128,26 @@ def css(theme, accent=None):
     if accent is not None:
         if not isinstance(accent, str) or not _HEX.match(accent):
             raise ThemeError("accent must be #rrggbb")
-        tokens["ac"] = accent.lower()
-        tokens["on"] = text_on(accent)
-    return ":root{%s}" % ";".join("--%s:%s" % (k, tokens[k]) for k in TOKENS)
+        if not theme.get("areas"):       # a theme with a colour per area has no one accent to replace
+            tokens["ac"] = accent.lower()
+            tokens["on"] = text_on(accent)
+    out = ["--%s:%s" % (k, tokens[k]) for k in TOKENS]
+    bg, cd, fg = (theme["tokens"][k].lower() for k in ("bg", "cd", "fg"))
+    # A colour per area: the fill, the text that reads on it, and "ink": the same colour where it is readable as
+    # text or as a thin line on the page and on a card, else the text colour (a yellow line on a white page is lost).
+    for name in AREAS:
+        c = (theme.get("areas") or {}).get(name)
+        if c is None:
+            continue
+        c = c.lower()
+        ink = c if min(contrast(c, bg), contrast(c, cd)) >= READABLE else fg
+        out += ["--ar-%s:%s" % (name, c), "--ar-%s-on:%s" % (name, _best(c, (bg, fg))), "--ar-%s-ink:%s" % (name, ink)]
+    for name in STATES:
+        c = (theme.get("states") or {}).get(name)
+        if c is None:
+            continue
+        c = c.lower()
+        out.append("--st-%s:%s" % (name, c))
+        if name != "error":
+            out.append("--st-%s-on:%s" % (name, _best(c, (bg, fg))))
+    return ":root{%s}" % ";".join(out)

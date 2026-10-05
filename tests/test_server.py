@@ -366,6 +366,81 @@ class ServerTest(ServerBase):
                      {"name": "light", "accent": "#fff;}*{display:none"}):
             self.assertEqual(self.call("POST", "/api/theme", body, token=token)[0], 400, body)
 
+    def real_panel(self):
+        """From here on the test talks to a server that serves the real pvj/web (the others use a two-file folder)."""
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, server.WEB_DIR))
+        httpd.daemon_threads = True
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.port = httpd.server_address[1]
+
+    def test_a_style_comes_from_the_theme_and_reaches_the_page_as_a_fixed_name(self):
+        self.real_panel()
+        token, _ = self.pair()
+        st, body, _ = self.call("GET", "/api/theme", token=token)
+        styles = {t["id"]: (t["style"], t["areas"]) for t in body["available"]}
+        self.assertEqual(styles["dark-stage"], ("default", False))
+        self.assertEqual(styles["signal"], ("signal", True))
+        self.assertEqual(styles["signal-light"], ("signal", True))
+        st, page, _ = self.call("GET", "/")
+        self.assertIn(b'<html lang="en">', page)                    # the default look: the page as the file has it
+        self.assertNotIn(b"data-style", page)
+        with open(os.path.join(server.WEB_DIR, "index.html"), "rb") as f:
+            self.assertEqual(page, f.read())
+        self.assertEqual(self.call("POST", "/api/theme", {"name": "signal", "accent": "#ff0000"}, token=token)[0], 200)
+        st, page, _ = self.call("GET", "/")
+        self.assertEqual(page.count(b'<html lang="en" data-style="signal">'), 1)
+        self.assertEqual(page.count(b"data-style"), 1)
+        st, css, _ = self.call("GET", "/theme.css")
+        self.assertIn(b"--ar-shaders:#ff4fa3", css)
+        self.assertIn(b"--ac:#ffd60a", css)                         # the accent chosen earlier does not replace an area theme's
+        self.assertEqual(self.call("POST", "/api/theme", {"name": "signal-light", "accent": None}, token=token)[0], 200)
+        self.assertIn(b'data-style="signal"', self.call("GET", "/")[1])
+        # a stored theme this box no longer has, or one whose style this version does not know: the default look
+        self.settings.data["theme"] = {"name": "gone", "accent": None}
+        self.assertNotIn(b"data-style", self.call("GET", "/")[1])
+        self.assertEqual(self.api.theme_style(), "default")
+        self.api.themes["later"] = dict(self.api.themes["signal"], id="later", style="neon")
+        self.settings.data["theme"] = {"name": "later", "accent": None}
+        self.assertEqual(self.api.theme_style(), "default")
+        self.assertNotIn(b"data-style", self.call("GET", "/")[1])
+        self.api.themes["later"]["style"] = 'x"><script>'           # not a name from the fixed set: never written
+        self.assertNotIn(b"script>", self.call("GET", "/")[1].split(b"<head>")[0])
+        self.assertEqual(server.styled_html(b'<html lang="en">', 'x"><script>'), b'<html lang="en">')
+        self.assertEqual(server.styled_html(b'<html lang="en">', "default"), b'<html lang="en">')
+        del self.api.themes["later"]
+        self.assertEqual(self.call("POST", "/api/theme", {"name": "dark-stage"}, token=token)[0], 200)
+        self.assertNotIn(b"data-style", self.call("GET", "/")[1])
+
+    def test_fonts_are_served_from_the_box_and_nothing_else_from_that_folder(self):
+        self.real_panel()
+        st, page, r = self.call("GET", "/")
+        self.assertIn("font-src 'self'", r.getheader("Content-Security-Policy"))
+        self.assertIn("default-src 'none'", r.getheader("Content-Security-Policy"))
+        for name in ("archivo-latin.woff2", "jetbrains-mono-500-latin.woff2"):
+            st, body, r = self.call("GET", "/fonts/" + name)
+            self.assertEqual(st, 200, name)
+            self.assertEqual(r.getheader("Content-Type"), "font/woff2")
+            self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff")
+            self.assertEqual(r.getheader("Cache-Control"), "max-age=86400")
+            self.assertEqual(body[:4], b"wOF2")
+            with open(os.path.join(server.WEB_DIR, "fonts", name), "rb") as f:
+                self.assertEqual(body, f.read())
+        self.assertEqual(self.call("GET", "/app.css")[2].getheader("Cache-Control"), "no-store")
+        for path in ("/fonts", "/fonts/", "/fonts/OFL-Archivo.txt", "/fonts/../app.css", "/fonts/%2e%2e/app.css", "/fonts/..%2fapp.css",
+                     "/fonts/../../settings.json", "/fonts/archivo-latin.woff2/", "/fonts//archivo-latin.woff2", "/fonts/nope.woff2",
+                     "/fonts/archivo-latin.woff2%00", "/FONTS/archivo-latin.woff2"):
+            self.assertEqual(self.call("GET", path)[0], 404, path)
+        # the map is made of files only: a folder, or a file with another ending, is never in it
+        web = tempfile.mkdtemp()
+        os.makedirs(os.path.join(web, "fonts", "deep.woff2"))
+        os.makedirs(os.path.join(web, "sub"))
+        for name in ("index.html", "fonts/a.woff2", "fonts/notes.txt", "sub/x.js"):
+            with open(os.path.join(web, name), "w") as f:
+                f.write("x")
+        self.assertEqual(server.static_files(web), {"/": "index.html", "/index.html": "index.html", "/fonts/a.woff2": os.path.join("fonts", "a.woff2")})
+
     def test_pin_rotation_writes_pin_file_and_invalidates_old_pin(self):
         token, _ = self.pair()
         old = self.pin

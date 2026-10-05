@@ -1274,7 +1274,8 @@ class Api:
 
     def get_theme(self, body, device, client):
         t = self.settings.data["theme"]
-        return {"theme": t, "available": [{"id": k, "name": v["name"], "source": v["source"]}
+        return {"theme": t, "available": [{"id": k, "name": v["name"], "source": v["source"],
+                                           "style": themes_mod.style_of(v), "areas": bool(v.get("areas"))}
                                           for k, v in self.themes.items()]}
 
     def set_theme(self, body, device, client):
@@ -1289,6 +1290,11 @@ class Api:
             self.settings.data["theme"] = {"name": name, "accent": accent}
             self.settings.save()
         return {"theme": self.settings.data["theme"]}
+
+    def theme_style(self):
+        """The style of the chosen theme: always one of themes.STYLES, "default" for anything unknown."""
+        t = self.settings.data["theme"]
+        return themes_mod.style_of(self.themes.get(t["name"]) or self.themes["dark-stage"])
 
     def theme_css(self):
         t = self.settings.data["theme"]
