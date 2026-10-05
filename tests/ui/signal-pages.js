@@ -151,6 +151,14 @@ async function playClip(t) {                             // a clip on the displa
   await post(t, '/api/control', { action: 'stop' });
   await post(t, '/api/play', { pad: [0, 0] });
 }
+async function putEffectOn(t) {                          // on Mix, with the card's own button, as someone would
+  await tab(t.page, 'Mix');
+  await has(t, t.page, '#fxlist [data-effect]', 20000);
+  if (!(await t.page.locator('#fx-amount').count())) {
+    await soft(t, 'the effect could not be put on', t.page.click('#fxlist [data-put="fx-vignette.fs"]:not([disabled])', { timeout: 20000 }));
+    await has(t, t.page, '#fx-amount', 15000);
+  }
+}
 async function projectorsPage(t) {
   await sys(t.page, 'Projectors');
   await has(t, t.page, '.proj-entry');
@@ -217,10 +225,9 @@ function pages() {
   // ---- Live ----
   add('live', 'clips', async (t) => {                   // a clip playing with an effect over it: the effects strip with Amount
     await playClip(t);
+    await putEffectOn(t);
     await tab(t.page, 'Live');
     await has(t, t.page, '.pads');
-    await has(t, t.page, '#livefxon:not([disabled]), #livefxoff', 20000);
-    await post(t, '/api/effects', { id: 'fx-vignette.fs' });
     await has(t, t.page, '#live-fx-amount', 15000);
   }, { light: true });
   add('live-shader', 'clips', async (t) => {            // a shader chosen by hand: its strip, and Vibes off
@@ -263,10 +270,7 @@ function pages() {
   // ---- Mix ----
   add('mix', 'mix', async (t) => {                      // an effect on in the Effects card, and the mapping card with its pointer
     await playClip(t);
-    await tab(t.page, 'Mix');
-    await has(t, t.page, '#fxlist [data-effect]', 20000);
-    await post(t, '/api/effects', { id: 'fx-vignette.fs' });
-    await has(t, t.page, '#fx-amount', 15000);
+    await putEffectOn(t);
     await has(t, t.page, '#mapcanvas');
   }, { light: true });
 
