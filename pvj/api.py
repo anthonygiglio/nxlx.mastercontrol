@@ -90,15 +90,18 @@ class Fader:
         self._apply = apply
         self._token = 0
         self._lock = threading.Lock()
+        self.label = None       # "out" from a fade out until something else sets the picture, "in" while a fade in runs (read by the controller lights)
 
     def cancel(self):
         with self._lock:
             self._token += 1
+            self.label = None
 
-    def ramp(self, start, end, seconds, then=None):
+    def ramp(self, start, end, seconds, then=None, label=None):
         with self._lock:
             self._token += 1
             token = self._token
+            self.label = label
         steps = max(1, int(seconds * 20))
 
         def run():
@@ -108,10 +111,12 @@ class Fader:
                         return
                 self._apply(start + (end - start) * i / steps)
                 time.sleep(seconds / steps)
+            with self._lock:
+                if token != self._token:
+                    return
+                if self.label == "in":
+                    self.label = None
             if then:
-                with self._lock:
-                    if token != self._token:
-                        return
                 then()
         threading.Thread(target=run, daemon=True).start()
 
@@ -972,7 +977,7 @@ class Api:
     def fadeout(self, body, device, client):
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
-        self.fader.ramp(self.mix["opacity"], 0, seconds)
+        self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
         return {"ok": True}
 
     def fadein(self, body, device, client):
@@ -983,7 +988,7 @@ class Api:
         self.fader.cancel()
         self.mix["blackout"] = False
         self._apply_opacity(0)
-        self.fader.ramp(0, self.mix["opacity"], seconds)
+        self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
         return {"ok": True}
 
     def test_tone(self, body, device, client):
@@ -2043,6 +2048,21 @@ class Api:
         (self.midi.start_learn if start else self.midi.cancel_learn)()
         return self.midi.status()
 
+    def midi_lights(self, body, device, client):
+        """{"controller": name, "test": true}: run the short sweep over that controller's lights. The request names a
+        controller and nothing else; what is written comes from its profile file."""
+        self._need_control("control-midi", self.midi)
+        name = body.get("controller")
+        if not isinstance(name, str) or not midi_mod.SOURCE.fullmatch(name):
+            raise bad("name the controller")
+        if body.get("test") is not True or set(body) != {"controller", "test"}:
+            raise bad("send controller and test: true")
+        try:
+            self.midi.test_lights(name)
+        except midi_mod.MidiError as e:
+            raise ApiError(409, str(e))
+        return self.midi.status()
+
     def midi_map(self, body, device, client):
         """Add, remove or clear mappings. {"add": {kind, number, channel, source, action, ...}}, {"remove": id}, {"clear": true}.
         For a recognised controller: {"set": {"controller", "control", "action": {...}}} makes one control of its
@@ -2288,6 +2308,7 @@ class Api:
             ("POST", "/api/midi"): ("full", self.set_midi),
             ("POST", "/api/midi/learn"): ("full", self.midi_learn),
             ("POST", "/api/midi/map"): ("full", self.midi_map),
+            ("POST", "/api/midi/lights"): ("full", self.midi_lights),
             ("GET", "/api/streams"): ("view", self.get_streams),
             ("POST", "/api/streams"): ("full", self.set_streams),
             ("GET", "/api/schedule"): ("view", self.get_schedule),

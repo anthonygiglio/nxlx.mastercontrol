@@ -58,5 +58,33 @@
     {"id": "m8", "name": "M 8", "row": 2, "col": 12, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 55}, "action": {"action": "shader_preset_8"}, "unverified": true},
     {"id": "r8", "name": "R 8", "row": 3, "col": 12, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 71}, "action": {"action": "blackout"}, "guard": true, "unverified": true},
     {"id": "fader8", "name": "Fader 8", "row": 4, "col": 12, "kind": "fader", "send": {"type": "cc", "channel": 0, "number": 7}, "action": null, "unverified": true}
-  ]
+  ],
+  "lights": {
+    "default": false,
+    "unverified": true,
+    "note": "Set LED mode to External in Korg's editor first (KORG KONTROL Editor: Common, LED Mode, External, then write the scene to the controller); until then the lights follow the buttons and ignore the box. Lit: there is something here; slowly pulsing: it is the one on now. Unverified: Korg's guide names the mode, not the messages, and which buttons have a light (S, M, R, Cycle and the five transport buttons here) is from descriptions, not from a real unit.",
+    "sources": ["Korg nanoKONTROL2 Parameter Guide (E1), 'LED Mode [Internal, External]', p. 9: in External mode a button's LED follows a message from the computer with the control change number assigned to that button", "Secondary: forum and blog reports that a control change with the button's number and value 127 lights it and 0 darkens it, on the global MIDI channel (factory: 1), and that a few buttons have no LED (nickhwang.com, 'Korg nanoKontrol2 and Max', 2012)"],
+    "channel": 1,
+    "brightness": false,
+    "off": 0,
+    "styles": {
+      "clip": {"off": 0, "on": 127, "active": 127, "busy": 127, "pulse": {"active": 0}},
+      "preset": {"off": 0, "on": 127, "active": 127, "busy": 127, "pulse": {"active": 0}},
+      "room": {"off": 0, "on": 127, "active": 127, "busy": 127, "pulse": {"busy": 0}},
+      "vibes": {"off": 0, "on": 0, "active": 127, "busy": 127},
+      "set": {"off": 0, "on": 0, "active": 127, "busy": 127},
+      "step": {"off": 0, "on": 127, "active": 127, "busy": 127},
+      "play": {"off": 0, "on": 0, "active": 127, "busy": 127, "pulse": {"busy": 0}},
+      "stop": {"off": 0, "on": 0, "active": 127, "busy": 127},
+      "blackout": {"off": 0, "on": 0, "active": 127, "busy": 127},
+      "fadeout": {"off": 0, "on": 0, "active": 127, "busy": 127},
+      "fadein": {"off": 0, "on": 0, "active": 127, "busy": 127}
+    },
+    "controls": {
+      "cycle": "vibes", "rewind": "step", "forward": "step", "stop": "stop", "play": "play", "rec": "set", "s1": "clip", "m1": "preset",
+      "r1": "room", "s2": "clip", "m2": "preset", "r2": "room", "s3": "clip", "m3": "preset", "r3": "room", "s4": "clip",
+      "m4": "preset", "r4": "room", "s5": "clip", "m5": "preset", "r5": "spare", "s6": "clip", "m6": "preset", "r6": "fadein",
+      "s7": "clip", "m7": "preset", "r7": "fadeout", "s8": "clip", "m8": "preset", "r8": "blackout"
+    }
+  }
 }

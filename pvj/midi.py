@@ -11,7 +11,10 @@ pads, and so on) can stay on underneath. See MIDI.md.
 Limits:
 * Off until switched on. Only paths of the form /dev/snd/midiC<n>D<n> are ever opened (never an arbitrary file),
   and only if they are character devices.
-* Receive only; nothing is written to a device.
+* Nothing is written to a device, with one exception: the lights of a controller that matched a profile with a
+  "lights" section (see "lights" below). Only the fixed messages of that section are written, on a second,
+  write-only handle, by a rate-limited writer on its own thread. A controller without a profile is never opened
+  for writing.
 * Only play (pads), stop, pause, fade, blackout, reset, opacity, size, position, speed, volume, the clip before and
   after in the playlist, a Room scene, the shader rotation (Vibes on or off, next shader, dwell time) and the shader
   on screen (its first eight inputs, its speed, hue and brightness, the shader before and after it in the active set,
@@ -19,7 +22,8 @@ Limits:
 * A known controller gets a ready-made layout from a profile file in controllers.d (see "Controller profiles" in
   MIDI.md): matched by its ALSA card id and name, applied when it is plugged in, under the person's own mappings.
 * No more than 50 commands a second reach the player, whatever the controllers send.
-* The web service needs the `audio` group and read access to ALSA devices (the systemd unit has both).
+* The web service needs the `audio` group and access to ALSA devices: read for the controls, write for the lights
+  (the systemd unit has `DeviceAllow=char-alsa rw` since D53; under an older unit the lights say so and stay off).
 """
 
 import glob
@@ -208,7 +212,7 @@ def clean_action(a, kind="note"):
 
 def validate_profile(p, stem=None):
     """A clean profile from a parsed file. Raises MidiError with the reason."""
-    _keys(p, "profile", ("id", "name", "match", "description", "sources", "layout", "controls"), ("note",))
+    _keys(p, "profile", ("id", "name", "match", "description", "sources", "layout", "controls"), ("note", "lights"))
     if not isinstance(p["id"], str) or not PROFILE_ID.fullmatch(p["id"]) or (stem is not None and p["id"] != stem):
         raise MidiError("id must be the file's name: small letters, digits and dashes")
     out = {"id": p["id"], "name": _text(p["name"], "name", 60), "description": _text(p["description"], "description", 1200),
@@ -277,6 +281,7 @@ def validate_profile(p, stem=None):
         controls.append({"id": c["id"], "name": _text(c["name"], what + " name", 24), "row": cell[0], "col": cell[1], "kind": c["kind"],
                          "send": send, "action": action, "guard": bool(c.get("guard")), "unverified": bool(c.get("unverified"))})
     out["controls"] = controls
+    out["lights"] = validate_lights(p["lights"], controls) if "lights" in p else None      # see "lights" below
     return out
 
 
@@ -329,6 +334,188 @@ def profile_entries(profile, source):
         e["pickup"] = e["action"] in PICKUP
         out.append(e)
     return out
+
+
+# --- lights: what a profile may say about a controller's lights --------------
+# The optional "lights" section of a profile file. It is the ONLY source of bytes that are ever written to a
+# controller: for each control with a light, a note-on or a control change on the section's channel with the control's
+# own number, and as its value one of the numbers written out in a style; plus the few fixed set-up and clear messages
+# the maker's reference gives. Nothing from a request, a clip name or a shader name can reach these bytes. See MIDI.md.
+LIGHT_STATES = ("off", "on", "active", "busy")
+LIGHT_LEVELS = ("low", "medium", "high")
+# what a light can be about; which one a control shows follows from what the control does (light_meaning)
+LIGHT_MEANINGS = ("clip", "preset", "control", "vibes", "set", "step", "play", "stop", "blackout", "fadeout", "fadein", "room", "bank", "spare")
+MAX_FIXED = 8               # set-up or clear messages in a profile
+_MEANING = {"vibes": "vibes", "vibes_ambient": "set", "vibes_show": "set", "vibes_next": "step", "shader_prev": "step",
+            "shader_next": "step", "clip_prev": "step", "clip_next": "step", "pause": "play", "stop": "stop",
+            "blackout": "blackout", "fadeout": "fadeout", "fadein": "fadein", "bank_prev": "bank", "bank_next": "bank"}
+
+
+def light_meaning(action):
+    """What the light of a control that does `action` (a clean action, or None) is about, or None for no light."""
+    a = action["action"] if action else None
+    if a is None or a == "none":
+        return "spare"
+    if a in ("pad", "bank_pad"):
+        return "clip"
+    if a.startswith("shader_preset_"):
+        return "preset"
+    if a.startswith("shader_control_"):
+        return "control"
+    if a == "scene" or a.startswith("scene_"):
+        return "room"
+    return _MEANING.get(a)
+
+
+def _fixed(v, what):
+    """Fixed three-byte messages of a profile: note-off, note-on or control change only. No system messages, so no
+    SysEx can be written whatever a file says."""
+    if not isinstance(v, list) or len(v) > MAX_FIXED:
+        raise MidiError("lights.%s must list at most %d messages" % (what, MAX_FIXED))
+    out = []
+    for m in v:
+        if not isinstance(m, list) or len(m) != 3:
+            raise MidiError("lights.%s: a message is three numbers" % what)
+        status = _whole(m[0], "lights.%s status" % what, 0x80, 0xBF)
+        if status & 0xF0 not in (0x80, 0x90, 0xB0):
+            raise MidiError("lights.%s: only note-off, note-on and control change may be written" % what)
+        out.append(bytes((status, _whole(m[1], "lights.%s data" % what, 0, 127), _whole(m[2], "lights.%s data" % what, 0, 127))))
+    return out
+
+
+def _style(v, what):
+    _keys(v, what, LIGHT_STATES, ("pulse",))
+    out = {k: _whole(v[k], "%s %s" % (what, k), 0, 127) for k in LIGHT_STATES}
+    pulse = v.get("pulse", {})
+    if not isinstance(pulse, dict) or any(k not in LIGHT_STATES[1:] for k in pulse):
+        raise MidiError("%s pulse: on, active or busy, each with the value it alternates with" % what)
+    out["pulse"] = {k: _whole(pulse[k], "%s pulse %s" % (what, k), 0, 127) for k in pulse}
+    return out
+
+
+def validate_lights(v, controls):
+    """A clean lights section, checked as strictly as the rest of the file. `controls` are the profile's clean
+    controls: a light belongs to a button or pad of the layout, and the meaning written next to it must be the one
+    its standard action has, so the file says truthfully what each light shows."""
+    _keys(v, "lights", ("default", "unverified", "note", "sources", "channel", "brightness", "off", "styles", "controls"), ("setup", "clear"))
+    for flag in ("default", "unverified", "brightness"):
+        if not isinstance(v[flag], bool):
+            raise MidiError("lights.%s must be true or false" % flag)
+    out = {"default": v["default"], "unverified": v["unverified"], "brightness": v["brightness"], "note": _text(v["note"], "lights.note", 600),
+           "channel": _whole(v["channel"], "lights.channel", 1, 16), "off": _whole(v["off"], "lights.off", 0, 127)}
+    if not isinstance(v["sources"], list) or not 1 <= len(v["sources"]) <= 8:
+        raise MidiError("lights.sources must list one to eight documents")
+    out["sources"] = [_text(s, "a lights source", 400) for s in v["sources"]]
+    out["setup"], out["clear"] = _fixed(v.get("setup", []), "setup"), _fixed(v.get("clear", []), "clear")
+    if not isinstance(v["styles"], dict) or not v["styles"]:
+        raise MidiError("lights.styles must be an object")
+    styles = {}
+    for name, style in v["styles"].items():
+        if name not in LIGHT_MEANINGS or name == "spare":
+            raise MidiError("lights.styles: %r is not something a light can show" % (name,))
+        what = "lights.styles.%s" % name
+        if out["brightness"]:
+            _keys(style, what, LIGHT_LEVELS)
+            styles[name] = {level: _style(style[level], "%s.%s" % (what, level)) for level in LIGHT_LEVELS}
+        else:
+            one = _style(style, what)
+            styles[name] = {level: one for level in LIGHT_LEVELS}
+    out["styles"] = styles
+    if not isinstance(v["controls"], dict) or not 1 <= len(v["controls"]) <= MAX_CONTROLS:
+        raise MidiError("lights.controls must name 1 to %d controls" % MAX_CONTROLS)
+    by_id = {c["id"]: c for c in controls}
+    lit = {}
+    for cid, meaning in v["controls"].items():
+        ctl = by_id.get(cid)
+        if ctl is None:
+            raise MidiError("lights.controls: no control called %r" % (cid,))
+        if ctl["kind"] not in ("button", "pad"):
+            raise MidiError("lights.controls: %s is a fader or knob; only a button or pad has a light" % cid)
+        if meaning != light_meaning(ctl["action"]):
+            raise MidiError("lights.controls: %s shows %r by its action, not %r" % (cid, light_meaning(ctl["action"]), meaning))
+        if meaning != "spare" and meaning not in styles:
+            raise MidiError("lights.controls: %s shows %s, and lights.styles has no %s" % (cid, meaning, meaning))
+        lit[cid] = meaning
+    out["controls"] = lit
+    return out
+
+
+def light_message(lights, ctl, value):
+    """The three bytes that set one light: a note-on or a control change on the section's channel, the control's own
+    number, a value that came out of a style. Every part is a checked number from the profile file."""
+    status = (0x90 if ctl["send"]["type"] == "note" else 0xB0) | (lights["channel"] - 1)
+    return bytes((status, ctl["send"]["number"] & 0x7F, value & 0x7F))
+
+
+def light_state(action, snap, bank=0):
+    """What the light of a control that does `action` should say now: "off", "on" (there is something here), "active"
+    (it is the one on now) or "busy". `snap` is the hub's picture of the box (MidiHub._snapshot); only plain values
+    are read here, so this cannot wait for anything."""
+    a = action["action"] if action else None
+    if a is None or a == "none":
+        return "off"
+    if a in ("pad", "bank_pad"):
+        b = action["bank"] if a == "pad" else bank
+        try:
+            name = snap["pads"][b][action["index"]]
+        except (IndexError, KeyError, TypeError):
+            name = ""
+        if not name:
+            return "off"
+        return "active" if snap["running"] and snap["playing"] == name else "on"
+    if a.startswith("shader_preset_"):
+        n = ACTIONS[a][1]
+        if not snap["shader"] or n > len(snap["presets"]):
+            return "off"
+        return "active" if snap["preset"] is not None and snap["presets"][n - 1] == snap["preset"] else "on"
+    if a.startswith("shader_control_"):
+        return "on" if snap["shader"] else "off"
+    if a == "scene" or a.startswith("scene_"):
+        if a == "scene":
+            sid = action.get("scene") if action.get("scene") in snap["scenes"] else None
+        else:
+            sid = snap["scenes"][ACTIONS[a][1] - 1] if ACTIONS[a][1] <= len(snap["scenes"]) else None
+        if sid is None:
+            return "off"
+        return "busy" if snap["applying"] == sid else "on"
+    if a == "vibes":
+        return "active" if snap["vibes"] else ("on" if snap["vibes_ready"] else "off")
+    if a in ("vibes_ambient", "vibes_show"):
+        sid = snap["sets"].get(ACTIONS[a][1])
+        if sid is None or not snap["vibes_ready"]:
+            return "off"
+        return "active" if snap["vibes"] and snap["set"] == sid else "on"
+    if a == "vibes_next":
+        return "on" if snap["vibes"] else "off"
+    if a in ("shader_prev", "shader_next"):
+        return "on" if snap["vibes"] or snap["shader"] else "off"
+    if a in ("clip_prev", "clip_next"):
+        return "on" if snap["running"] and snap["playlist"] else "off"
+    if a == "pause":
+        return "off" if not snap["running"] else ("busy" if snap["paused"] else "active")
+    if a == "stop":
+        return "on" if snap["running"] else "active"
+    if a == "blackout":
+        return "active" if snap["blackout"] else "on"
+    if a == "fadeout":
+        return "active" if snap["fade"] == "out" else "on"
+    if a == "fadein":
+        return "busy" if snap["fade"] == "in" else "on"
+    if a in ("bank_prev", "bank_next"):                 # a place mark: the left one on A, both on B, the right one on C
+        return "active" if bank == 1 or bank == (0 if a == "bank_prev" else 2) else "on"
+    return "off"
+
+
+def light_value(lights, meaning, state, level="low", phase=0):
+    """The number a light is sent for a state, from the profile's style for what it shows (the section's own "off"
+    when it has no style for that); a pulsing state alternates with its second value on the hub's slow beat."""
+    style = lights["styles"].get(meaning)
+    if style is None or state not in LIGHT_STATES:
+        return lights["off"]
+    style = style[level if level in LIGHT_LEVELS else "low"]
+    if phase and state in style["pulse"]:
+        return style["pulse"][state]
+    return style[state]
 
 
 class MidiParser:
@@ -704,12 +891,222 @@ class MidiInput:
             self._thread = None
 
 
+# --- lights: the writer ------------------------------------------------------
+LIGHT_RATE = 180.0          # messages a second to one controller, with LIGHT_BURST on top: never more than 200 in a second
+LIGHT_BURST = 20
+LIGHT_TICK = 0.3            # how often the hub looks at the box's state for the lights (and half the pulse)
+LIGHT_PLAYER_EVERY = 0.6    # how often, at most, the player is asked what is playing (one status call for all lights)
+LIGHT_RETRY = 10.0          # a writer that could not open its device for another reason than permission tries again after this
+LIGHT_SWEEP_STEP = 0.03     # Test lights: one light after another
+LIGHT_SWEEP_HOLD = 1.0      # and all of them stay on this long
+ALSA_MAJOR = 116            # every /dev/snd node is a character device with this major number
+
+
+class LightWriter:
+    """Writes one controller's lights, on its own thread and its own write-only handle (never the reader's).
+
+    There is no queue to grow: `show()` replaces a table of the value each light should have, the thread sends what
+    differs from what it last sent, a few at a time under the rate limit, and when anything is in doubt (a full
+    buffer, a fresh device) it forgets what it sent and sends the whole table again. `show()` and `test()` only swap
+    a table under a lock held for moments; nothing here is ever called while waiting for the device."""
+
+    def __init__(self, path, source, lights, keys, open_fn=None, clock=time.monotonic, log=print):
+        self.path, self.source, self.lights, self.log, self._clock = path, source, lights, log, clock
+        self.keys = list(keys)          # every light of the layout as its two leading bytes, in the drawn order
+        self._open = open_fn or self._open_device
+        self._lock = threading.Lock()
+        self._want = {}                 # key -> value the light should have
+        self._over = {}                 # key -> value while Test lights runs
+        self._sweep = None              # (steps, value per key, started) while Test lights runs
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._clear = True
+        self._thread = None
+        self.state = "opening"          # opening, on, installer (no permission), busy, failed, gone, stopped
+        self.error = ""
+        self.sent = 0                   # messages written, for the page and the tests
+        self.since = clock()            # when it was made, then when it ended
+        self.reader = None              # the MidiInput it belongs to: a controller plugged in again gets a new writer
+
+    @staticmethod
+    def _open_device(path):
+        """Open a controller for writing: only /dev/snd/midiC<n>D<n>, no link, a character device of ALSA's."""
+        if not isinstance(path, str) or not DEVICE_PATH.fullmatch(path):
+            raise OSError("not a MIDI device path")
+        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        st = os.fstat(fd)
+        if not stat.S_ISCHR(st.st_mode) or os.major(st.st_rdev) != ALSA_MAJOR:
+            os.close(fd)
+            raise OSError("not an ALSA character device")
+        return fd
+
+    def show(self, table):
+        """The value every light should have now ({key: value}). Never waits."""
+        with self._lock:
+            if table != self._want:
+                self._want = dict(table)
+                self._wake.set()
+
+    def test(self, values):
+        """Test lights: all off, then one light after another in the drawn order to `values[key]`, a pause, and back
+        to what they were showing. False while a sweep is running already."""
+        with self._lock:
+            if self._sweep is not None or self.state != "on":
+                return False
+            self._over = {k: self.lights["off"] for k in self.keys}
+            self._sweep = ([k for k in self.keys if k in values], dict(values), self._clock())
+        self._wake.set()
+        return True
+
+    @property
+    def testing(self):
+        return self._sweep is not None
+
+    def _advance(self, now):
+        """With the lock held: where the sweep is. Returns the seconds until its next step, or None when none runs."""
+        if self._sweep is None:
+            return None
+        steps, values, started = self._sweep
+        done = int((now - started) / LIGHT_SWEEP_STEP)
+        for k in steps[:done]:
+            self._over[k] = values[k]
+        if done >= len(steps):
+            if now - started >= len(steps) * LIGHT_SWEEP_STEP + LIGHT_SWEEP_HOLD:
+                self._sweep, self._over = None, {}
+                return 0.0
+            return LIGHT_SWEEP_STEP * 4
+        return LIGHT_SWEEP_STEP
+
+    def _pending(self, have):
+        """With the lock held: the messages that would make the device match the table, in the drawn order."""
+        want = dict(self._want, **self._over) if self._over else self._want
+        return [(k, want[k]) for k in self.keys if k in want and have.get(k) != want[k]]
+
+    def _write(self, fd, data):
+        """Write whole messages or nothing more: returns how many bytes went. A full buffer is not waited for."""
+        try:
+            return os.write(fd, data)
+        except BlockingIOError:
+            return 0
+
+    def _run(self):
+        try:
+            self._work()
+        finally:
+            self.since = self._clock()
+
+    def _work(self):
+        try:
+            fd = self._open(self.path)
+        except PermissionError as e:       # the service file is older than this program (or the account is not in "audio")
+            self.state, self.error = "installer", str(e)
+            return
+        except OSError as e:
+            self.state, self.error = ("busy" if getattr(e, "errno", None) in (11, 16) else "failed"), str(e)
+            return
+        except Exception as e:
+            self.state, self.error = "failed", repr(e)
+            return
+        self.state = "on"
+        have, tail, tokens, last = {}, b"".join(self.lights["setup"]), float(LIGHT_BURST), self._clock()
+        try:
+            while not self._stop.is_set():
+                now = self._clock()
+                tokens = min(float(LIGHT_BURST), tokens + (now - last) * LIGHT_RATE)
+                last = now
+                with self._lock:
+                    wait = self._advance(now)
+                    todo = self._pending(have)
+                if tail:                                # what a full buffer cut off goes first, whole, before anything new
+                    n = self._write(fd, tail)
+                    tail = tail[n:]
+                    if tail:
+                        self._stop.wait(0.05)
+                        continue
+                room = int(tokens)
+                batch = todo[:room]
+                if batch:
+                    data = b"".join(k + bytes((v,)) for k, v in batch)
+                    n = self._write(fd, data)
+                    whole = n // 3
+                    for k, v in batch[:whole]:
+                        have[k] = v
+                    tokens -= whole
+                    self.sent += whole
+                    if n < len(data):                   # the device is not taking it: finish the cut message, then start
+                        if n % 3:                       # from nothing known, so the whole table goes again
+                            tail = data[n:whole * 3 + 3]
+                            tokens -= 1
+                            self.sent += 1
+                        have = {}
+                        self._stop.wait(0.05)
+                        continue
+                if len(todo) > len(batch):
+                    self._stop.wait(max(0.005, (1 - (tokens - int(tokens))) / LIGHT_RATE))
+                    continue
+                self._wake.clear()
+                with self._lock:                        # a table that came in between is not slept through
+                    again = bool(self._pending(have))
+                if not again and not self._stop.is_set():
+                    self._wake.wait(wait if wait is not None else 1.0)
+            if self._clear:
+                self._off(fd, tail)
+            self.state = "stopped"
+        except OSError as e:                            # unplugged, or the device refuses: this writer ends, the others go on
+            self.state, self.error = "gone", str(e)
+        except Exception as e:
+            self.state, self.error = "failed", repr(e)
+            self.log("midi: lights of %s: internal error: %r" % (self.source, e))
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def _off(self, fd, tail=b""):
+        """Every light off, within a second: the profile's own clear message if it has one, else each light's off."""
+        data = tail + (b"".join(self.lights["clear"]) or b"".join(k + bytes((self.lights["off"],)) for k in self.keys))
+        end = self._clock() + 1.0
+        while data and self._clock() < end:
+            n = self._write(fd, data[:LIGHT_BURST * 3])
+            data = data[n:]
+            self.sent += n // 3
+            time.sleep(LIGHT_BURST / LIGHT_RATE if n else 0.02)
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True, name="midi-lights")
+        self._thread.start()
+
+    @property
+    def alive(self):
+        return bool(self._thread and self._thread.is_alive())
+
+    def halt(self, clear=True):
+        """Tell the writer to switch everything off and end, without waiting for it."""
+        self._clear = clear
+        self._stop.set()
+        self._wake.set()
+
+    def stop(self, clear=True):
+        self.halt(clear)
+        if self._thread:
+            self._thread.join(timeout=2.5)
+            self._thread = None
+
+
 class MidiHub:
     """Owns the settings-driven set of controllers, the map, and learn mode."""
 
     def __init__(self, api, settings, log=print, open_fn=None, lister=list_devices, namer=source_name,
-                 clock=time.monotonic, scan_interval=2.0, profiles=None, describer=card_info):
+                 clock=time.monotonic, scan_interval=2.0, profiles=None, describer=card_info, light_open_fn=None):
         self.api, self.settings, self.log = api, settings, log
+        self._light_open_fn = light_open_fn       # opens a controller for WRITING (tests: a pipe); None is the real device file
+        self.lights = {}          # device path -> LightWriter, only for a recognised controller whose lights are on
+        self._ending = []         # writers that were told to switch off and end, until they have
+        self._lit = {}            # device path -> {control id: the state its light shows}, for the drawn layout
+        self._light_thread = None
+        self._light_wake = threading.Event()
+        self._player_seen = None  # (time, what the player last said), for the lights
         self._open_fn, self._lister, self._namer, self._clock = open_fn, lister, namer, clock
         self.profiles = load_profiles(log=log) if profiles is None else profiles
         self._describer = describer
@@ -758,6 +1155,223 @@ class MidiHub:
 
     def cfg(self):
         return self.settings.data["control"]["midi"]
+
+    # --- lights -------------------------------------------------------------
+    # One block: which controllers get a writer, the picture of the box the lights are made from, and the tables.
+    # A light is only ever written to a device whose card matched a profile that has a lights section.
+    def light_choice(self, source, profile):
+        """(on, brightness) for a controller: what the person chose, else the profile's default and "low"."""
+        saved = self.cfg().get("lights")
+        entry = saved.get(source) if isinstance(saved, dict) else None
+        entry = entry if isinstance(entry, dict) else {}
+        on = entry["on"] if isinstance(entry.get("on"), bool) else bool(profile["lights"] and profile["lights"]["default"])
+        level = entry.get("brightness") if entry.get("brightness") in LIGHT_LEVELS else "low"
+        return on, level
+
+    def _doing(self, source, profile, c):
+        """{control id: the action it has now, or None}: the person's own mapping, else the standard (if it is on)."""
+        mine = {}
+        for e in c["map"]:
+            try:
+                e = validate_entry(e, keep_id=True)
+            except MidiError:
+                continue
+            if e["source"] in (source, "*"):
+                key = (e["kind"], e["number"])
+                if key not in mine or (mine[key]["source"] == "*" and e["source"] == source):
+                    mine[key] = e
+        out = {}
+        for ctl in profile["controls"]:
+            e = mine.get((ctl["send"]["type"], ctl["send"]["number"]))
+            out[ctl["id"]] = {k: e[k] for k in ("action", "bank", "index", "scene") if k in e} if e else ctl["action"]
+        return out
+
+    def _snapshot(self, now, fresh=False):
+        """The box as the lights need it, from memory, plus ONE status call to the player at most every
+        LIGHT_PLAYER_EVERY seconds for all lights together. Runs on the lights thread only, never under the hub's lock,
+        and never takes the shader engine's lock. A part that cannot be read keeps its quiet default."""
+        api = self.api
+        snap = {"pads": [], "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
+                "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
+                "scenes": [], "applying": None}
+        try:
+            snap["pads"] = [[str(p.get("file") or "") for p in b["pads"]] for b in api.settings.data["pads"]["banks"]]
+        except Exception:
+            pass
+        if fresh or self._player_seen is None or now - self._player_seen[0] >= LIGHT_PLAYER_EVERY:
+            seen = {"running": False, "paused": False, "playing": None, "playlist": False}
+            try:
+                st = api.player.status()
+                path = st.get("path")
+                seen = {"running": bool(st.get("running")) and isinstance(path, str) and bool(path), "paused": bool(st.get("paused")),
+                        "playing": os.path.basename(path) if isinstance(path, str) else None,
+                        "playlist": isinstance(st.get("playlist_count"), int) and st["playlist_count"] > 1}
+            except Exception:
+                pass
+            self._player_seen = (now, seen)
+        snap.update(self._player_seen[1])
+        try:
+            snap["blackout"] = bool(api.mix.get("blackout"))
+            snap["fade"] = getattr(getattr(api, "fader", None), "label", None)
+        except Exception:
+            pass
+        try:
+            if api.registry.enabled("shaders"):
+                from . import shaderlive
+                snap["vibes_ready"], snap["vibes"] = True, bool(api.vibes.running)
+                cfg = api.shaders.config()
+                rows = cfg.get("sets") or [{"id": shaderlive.FIRST_SET, "name": "Ambient"}, {"id": shaderlive.SHOW_SET, "name": "Show"}]
+                snap["sets"] = {e["name"]: e["id"] for e in rows}
+                snap["set"] = api.vibes.set_id or cfg.get("active") or rows[0]["id"]
+                on = api.shaders.playing
+                if on:
+                    snap["shader"], snap["preset"] = on["id"], on.get("preset")
+                    snap["presets"] = [p["name"] for p in cfg.get("presets", {}).get(on["id"], [])]
+        except Exception:
+            pass
+        try:
+            room = api.room
+            if room.enabled():
+                snap["scenes"] = [s["id"] for s in room.config()["scenes"]]
+                with room.lock:                     # held for moments only (room.py: never while talking to a projector)
+                    job = room._scene_job
+                    if job is not None and "scene" in job and room._report(job)["running"]:
+                        snap["applying"] = job["scene"]
+        except Exception:
+            pass
+        return snap
+
+    def _light_table(self, source, profile, level, snap, bank, phase, c):
+        """({the two leading bytes of a light's message: its value}, {control id: its state}) for one controller."""
+        lights, doing = profile["lights"], self._doing(source, profile, c)
+        table, states = {}, {}
+        for ctl in profile["controls"]:
+            if ctl["id"] not in lights["controls"]:
+                continue
+            action = doing[ctl["id"]]
+            state = light_state(action, snap, bank)
+            table[light_message(lights, ctl, 0)[:2]] = light_value(lights, light_meaning(action), state, level, phase)
+            states[ctl["id"]] = state
+        return table, states
+
+    @staticmethod
+    def _light_keys(profile):
+        lit = [c for c in profile["controls"] if c["id"] in profile["lights"]["controls"]]
+        return [light_message(profile["lights"], c, 0)[:2] for c in sorted(lit, key=lambda c: (c["row"], c["col"]))]
+
+    def _lights_tick(self, fresh=False):
+        """Start a writer for each recognised controller whose lights are on, end the others, and hand every writer
+        its table. The hub's lock is held only to look at the lists; the player is asked and the tables are made
+        without it, and nothing here waits for a device."""
+        if self._stop.is_set() or not self._lock.acquire(timeout=0.2):
+            return
+        try:
+            if self._stop.is_set():
+                return
+            now, want = self._clock(), {}
+            for path, inp in self.inputs.items():
+                src, profile = self._matched.get(path, (None, None))
+                if profile is not None and profile["lights"] and src == inp.source and self.standard_on(src):
+                    on, level = self.light_choice(src, profile)
+                    if on:
+                        want[path] = (src, profile, level)
+            self._ending = [w for w in self._ending if w.alive]
+            for path in list(self.lights):
+                w = self.lights[path]
+                if path not in want or w.reader is not self.inputs[path] or w.lights is not want[path][1]["lights"]:
+                    w.halt()
+                    self._ending.append(self.lights.pop(path))
+                    self._lit.pop(path, None)
+                elif not w.alive and w.state in ("busy", "failed", "gone") and now - w.since >= LIGHT_RETRY:
+                    del self.lights[path]               # tried again below; "installer" is not, until it is replugged or switched
+            for path, (src, profile, level) in want.items():
+                if path not in self.lights and not any(w.path == path for w in self._ending):
+                    w = LightWriter(path, src, profile["lights"], self._light_keys(profile), open_fn=self._light_open_fn, clock=self._clock, log=self.log)
+                    w.reader = self.inputs[path]
+                    self.lights[path] = w
+                    w.start()
+            live = [(path, self.lights[path]) + want[path] for path in self.lights if self.lights[path].alive]
+            c, bank = self.cfg(), self.mapper.bank
+        finally:
+            self._lock.release()
+        if not live:
+            return
+        snap = self._snapshot(now, fresh)
+        phase = int(now / (2 * LIGHT_TICK)) % 2
+        for path, w, src, profile, level in live:
+            table, states = self._light_table(src, profile, level, snap, bank, phase, c)
+            w.show(table)
+            self._lit[path] = states
+
+    def _lights_loop(self):
+        while not self._stop.is_set():
+            fresh = self._light_wake.wait(LIGHT_TICK)
+            self._light_wake.clear()
+            if self._stop.is_set():
+                return
+            if fresh:
+                self._stop.wait(0.05)                   # a press was acted on: give the player a moment, then look at once
+            try:
+                self._lights_tick(fresh)
+            except Exception as e:
+                self._note("lights: %r" % (e,))
+
+    def _lights_off(self):
+        """Every writer switches its lights off and ends (within about a second each). Called without the hub's lock."""
+        with self._lock:
+            writers = list(self.lights.values()) + list(self._ending)
+            self.lights.clear()
+            self._ending = []
+            self._lit.clear()
+            self._player_seen = None
+        for w in writers:
+            w.halt()
+        for w in writers:
+            w.stop()
+
+    def test_lights(self, source):
+        """Test lights for one controller: a sweep over every light, in the drawn order. Raises MidiError with the
+        reason when it cannot run. The values are the profile's own (the brightest of each light's style)."""
+        with self._lock:
+            found = next(((p, w) for p, w in self.lights.items() if w.source == source), None)
+            profile = self._matched.get(found[0], (None, None))[1] if found else None
+            if found is None or profile is None or not found[1].alive:
+                raise MidiError("the lights of that controller are not on")
+            lights, level = profile["lights"], self.light_choice(source, profile)[1]
+            first = next(iter(lights["styles"]))
+            values = {}
+            for ctl in profile["controls"]:
+                meaning = lights["controls"].get(ctl["id"])
+                if meaning is None:
+                    continue
+                style = lights["styles"].get(meaning, lights["styles"][first])[level]
+                values[light_message(lights, ctl, 0)[:2]] = next((style[k] for k in ("active", "on", "busy") if style[k] != lights["off"]), style["active"])
+            writer = found[1]
+        if not writer.test(values):
+            raise MidiError("the lights are being tested already")
+
+    def _light_status(self, path, source, profile):
+        """What the controller's card says about its lights, or None when its profile has none."""
+        lights = profile["lights"]
+        if not lights:
+            return None
+        on, level = self.light_choice(source, profile)
+        w = self.lights.get(path)
+        if not on:
+            state, line = "off", "Lights off."
+        elif not self.standard_on(source):
+            state, line = "off", "Lights are off while the standard layout is off."
+        elif w is None or w.state == "opening":
+            state, line = "opening", "Lights are starting."
+        elif w.state == "installer":
+            state, line = "installer", "Lights need the box's installer to run once."
+        elif w.state == "on":
+            state, line = "on", "Lights on."
+        else:
+            state, line = "failed", "Lights could not be opened (another program may be using the controller). Trying again."
+        return {"on": on, "default": lights["default"], "brightness": level, "levels": lights["brightness"], "state": state, "line": line,
+                "note": lights["note"], "unverified": lights["unverified"], "sources": list(lights["sources"]),
+                "testing": bool(w and w.testing), "sent": w.sent if w else 0}
 
     # --- profiles ---------------------------------------------------------
     def profile_for(self, source, path=None):
@@ -845,6 +1459,8 @@ class MidiHub:
             if path == "/api/vibes" and "on" in body and body["on"] is None:
                 body = {"on": not self.api.vibes.running}
             self._do(path, body)
+        if calls and self.lights:
+            self._light_wake.set()                  # the lights follow a press at once (on their own thread)
 
     def on_message(self, source, msg):
         # MIDI switched off, or this controller unplugged: a message still on its way is dropped. Without this a late
@@ -955,6 +1571,10 @@ class MidiHub:
                             self.log("midi: scan error: %r" % (e,))
                 self._scanner = threading.Thread(target=loop, daemon=True, name="midi-scan")
                 self._scanner.start()
+            if self._light_thread is None or not self._light_thread.is_alive():
+                self._light_thread = threading.Thread(target=self._lights_loop, daemon=True, name="midi-lights-state")
+                self._light_thread.start()
+        self._light_wake.set()                          # a switch or a brightness that changed shows at once
 
     def _stop_all(self):
         """Stop the scanner and every reader. The threads call back into this hub (messages, scans), so they are
@@ -962,13 +1582,18 @@ class MidiHub:
         with self._lock:
             self._stop.set()
             scanner, self._scanner = self._scanner, None
+            lighter, self._light_thread = self._light_thread, None
             inputs = list(self.inputs.values())
             self.inputs.clear()
             for inp in inputs:
                 inp.halt()
             self.learn_until, self.captured = 0.0, None
+        self._light_wake.set()
         if scanner:
             scanner.join(timeout=3)
+        if lighter:
+            lighter.join(timeout=3)
+        self._lights_off()                              # every light off, each writer on its own, before the readers end
         for inp in inputs:
             inp.stop()
         with self._lock:                                # only now, with every reader ended, do the layouts go
@@ -986,9 +1611,11 @@ class MidiHub:
         source = device["name"]
         profile = self.profile_for(source, device["path"]) if device["path"] in self.inputs else None
         out = {"name": source, "path": device["path"], "connected": device["connected"], "messages": device["messages"],
-               "profile": None, "standard": self.standard_on(source), "controls": []}
+               "profile": None, "standard": self.standard_on(source), "controls": [], "lights": None}
         if profile is None:
             return out
+        out["lights"] = self._light_status(device["path"], source, profile)
+        lit, has = self._lit.get(device["path"], {}), (profile["lights"] or {}).get("controls", {})
         out["profile"] = {k: profile[k] for k in ("id", "name", "description", "note", "sources")}
         out["profile"].update(profile["layout"])
         mine = {}
@@ -1019,6 +1646,8 @@ class MidiHub:
             item["value"] = seen[1] if seen else None
             item["ago"] = round(now - seen[0], 2) if seen else None
             item["waiting"] = self.mapper.waiting(source, *key)
+            item["light"] = ctl["id"] in has                                 # this control has a light the box can set
+            item["lit"] = lit.get(ctl["id"]) if out["lights"] and out["lights"]["state"] == "on" else None
             out["controls"].append(item)
         return out
 
@@ -1047,12 +1676,16 @@ def validate(body, current, known=None):
             if not isinstance(body[key], bool):
                 raise MidiError("%s must be true or false" % key)
             new[key] = body[key]
+    if "controller" in body and "standard" not in body and ("lights" in body or "brightness" in body):
+        return validate_light_choice(body, new, known)   # one controller's lights, on or off, and their brightness
     if "controller" in body or "standard" in body:      # the standard layout of one controller, on or off
         name = body.get("controller")
         if not isinstance(name, str) or not SOURCE.fullmatch(name):
             raise MidiError("bad controller name")
         if not isinstance(body.get("standard"), bool):
             raise MidiError("standard must be true or false")
+        if "lights" in body or "brightness" in body:
+            raise MidiError("change the standard layout and the lights one at a time")
         try:
             switches = validate_controllers(current.get("controllers", {}))
         except MidiError:                                # junk in the settings file must not lock the switch for good
@@ -1085,6 +1718,56 @@ def validate_controllers(v):
             raise MidiError("a controller has one switch: standard, true or false")
         out[name] = {"standard": entry["standard"]}
     return out
+
+
+# --- lights: the person's choice per controller --------------------------------
+def validate_lights_choice(v):
+    """The per-controller light choices as stored: {"<controller name>": {"on"?: bool, "brightness"?: low, medium or
+    high}}. Kept beside "controllers" (not in it): switching a standard layout back on removes that entry, and an
+    older version of this program reads "controllers" strictly. Raises MidiError."""
+    if not isinstance(v, dict) or len(v) > MAX_CONTROLLERS:
+        raise MidiError("lights must be an object with at most %d controllers" % MAX_CONTROLLERS)
+    out = {}
+    for name, entry in v.items():
+        if not isinstance(name, str) or not SOURCE.fullmatch(name):
+            raise MidiError("bad controller name")
+        if not isinstance(entry, dict) or not entry or any(k not in ("on", "brightness") for k in entry):
+            raise MidiError("a controller's lights have on (true or false) and brightness (low, medium or high)")
+        if "on" in entry and not isinstance(entry["on"], bool):
+            raise MidiError("lights must be true or false")
+        if "brightness" in entry and (not isinstance(entry["brightness"], str) or entry["brightness"] not in LIGHT_LEVELS):
+            raise MidiError("brightness must be low, medium or high")
+        out[name] = {k: entry[k] for k in ("on", "brightness") if k in entry}
+    return out
+
+
+def validate_light_choice(body, new, known=None):
+    """{"controller": name, "lights"?: bool, "brightness"?: level} from untrusted input, into a copy of the settings.
+    These are the only things a request can say about lights: a switch and one of three words."""
+    name = body.get("controller")
+    if not isinstance(name, str) or not SOURCE.fullmatch(name):
+        raise MidiError("bad controller name")
+    if "lights" in body and not isinstance(body["lights"], bool):
+        raise MidiError("lights must be true or false")
+    if "brightness" in body and (not isinstance(body["brightness"], str) or body["brightness"] not in LIGHT_LEVELS):
+        raise MidiError("brightness must be low, medium or high")
+    try:
+        choices = validate_lights_choice(new.get("lights", {}))
+    except MidiError:                                # junk in the settings file must not lock the switch for good
+        choices = {}
+    if known is not None and name not in known and name not in choices:
+        raise MidiError("that controller is not plugged in")
+    entry = dict(choices.get(name, {}))
+    if "lights" in body:
+        entry["on"] = body["lights"]
+    if "brightness" in body:
+        entry["brightness"] = body["brightness"]
+    choices[name] = entry
+    if len(choices) > MAX_CONTROLLERS and known is not None:        # full: the ones not seen this run go first
+        for old in [n for n in choices if n not in known and n != name][:len(choices) - MAX_CONTROLLERS]:
+            del choices[old]
+    new["lights"] = validate_lights_choice(choices)
+    return new
 
 
 def override_entry(profile, source, control_id, action):

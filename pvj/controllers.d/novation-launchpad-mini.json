@@ -87,5 +87,43 @@
     {"id": "pad87", "name": "Pad 8.7", "row": 8, "col": 6, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 118}, "action": {"action": "shader_control_7"}},
     {"id": "pad88", "name": "Pad 8.8", "row": 8, "col": 7, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 119}, "action": {"action": "shader_control_8"}},
     {"id": "side_h", "name": "H", "row": 8, "col": 8, "kind": "button", "send": {"type": "note", "channel": 0, "number": 120}, "action": {"action": "blackout"}, "guard": true}
-  ]
+  ],
+  "lights": {
+    "default": true,
+    "unverified": false,
+    "note": "Amber: there is something here. Green: it is on now. Red: this darkens the screen; bright red: the screen is dark. The messages are from Novation's reference and have not been seen on a real Launchpad Mini yet: press Test lights and say what you see.",
+    "sources": ["Novation, Launchpad S Programmer's Reference Manual 1.02 (https://fael-downloads-prod.focusrite.com/customer/dev/s3fs-public/novation/downloads/10753/launchpad-s-prm.pdf): 'Set grid LEDs' (note-on 90h, the pad's key, velocity = 16 x green + red + 12, green and red 0 to 3)", "The same manual: 'Set Automap/Live control LEDs' (B0h, 68h to 6Fh, the same value), 'Reset Launchpad' (B0h 00h 00h: all LEDs off, power-on settings), at most 400 messages a second"],
+    "channel": 1,
+    "brightness": true,
+    "off": 12,
+    "setup": [[176, 0, 0]],
+    "clear": [[176, 0, 0]],
+    "styles": {
+      "clip": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "preset": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "control": {"low": {"off": 12, "on": 29, "active": 29, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 29, "busy": 29}, "high": {"off": 12, "on": 46, "active": 46, "busy": 46}},
+      "vibes": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "set": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "step": {"low": {"off": 12, "on": 29, "active": 29, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 29, "busy": 29}, "high": {"off": 12, "on": 46, "active": 46, "busy": 46}},
+      "play": {"low": {"off": 12, "on": 29, "active": 28, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 29}, "high": {"off": 12, "on": 46, "active": 60, "busy": 46}},
+      "stop": {"low": {"off": 12, "on": 13, "active": 12, "busy": 12}, "medium": {"off": 12, "on": 13, "active": 12, "busy": 12}, "high": {"off": 12, "on": 14, "active": 12, "busy": 12}},
+      "blackout": {"low": {"off": 12, "on": 13, "active": 15, "busy": 15}, "medium": {"off": 12, "on": 13, "active": 15, "busy": 15}, "high": {"off": 12, "on": 14, "active": 15, "busy": 15}},
+      "fadeout": {"low": {"off": 12, "on": 13, "active": 15, "busy": 15}, "medium": {"off": 12, "on": 13, "active": 15, "busy": 15}, "high": {"off": 12, "on": 14, "active": 15, "busy": 15}},
+      "fadein": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "room": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "bank": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}}
+    },
+    "controls": {
+      "top1": "step", "top2": "step", "top3": "vibes", "top4": "step", "top5": "step", "top6": "play", "top7": "fadein", "top8": "fadeout",
+      "pad11": "clip", "pad12": "clip", "pad13": "clip", "pad14": "clip", "pad15": "clip", "pad16": "clip", "pad17": "spare", "pad18": "spare",
+      "side_a": "room", "pad21": "clip", "pad22": "clip", "pad23": "clip", "pad24": "clip", "pad25": "clip", "pad26": "clip", "pad27": "spare",
+      "pad28": "spare", "side_b": "room", "pad31": "clip", "pad32": "clip", "pad33": "clip", "pad34": "clip", "pad35": "clip", "pad36": "clip",
+      "pad37": "spare", "pad38": "spare", "side_c": "room", "pad41": "clip", "pad42": "clip", "pad43": "clip", "pad44": "clip", "pad45": "clip",
+      "pad46": "clip", "pad47": "spare", "pad48": "spare", "side_d": "room", "pad51": "clip", "pad52": "clip", "pad53": "clip", "pad54": "clip",
+      "pad55": "clip", "pad56": "clip", "pad57": "spare", "pad58": "spare", "side_e": "set", "pad61": "clip", "pad62": "clip", "pad63": "clip",
+      "pad64": "clip", "pad65": "clip", "pad66": "clip", "pad67": "spare", "pad68": "spare", "side_f": "set", "pad71": "preset", "pad72": "preset",
+      "pad73": "preset", "pad74": "preset", "pad75": "preset", "pad76": "preset", "pad77": "preset", "pad78": "preset", "side_g": "stop", "pad81": "control",
+      "pad82": "control", "pad83": "control", "pad84": "control", "pad85": "control", "pad86": "control", "pad87": "control", "pad88": "control", "side_h": "blackout"
+    }
+  }
 }
