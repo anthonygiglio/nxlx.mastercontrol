@@ -351,10 +351,11 @@ div.ctl.compact { padding: 4px 0; }
 .fxstage, .fxlib { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .fxstage > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .fxstage > div:empty { display: none; }
-/* each choice keeps the width of its word (a wider face, as in the Signal look, would cut "Medium" in a narrow column)
-   and the row wraps when the four do not fit */
-.fxlib .seg { flex-wrap: wrap; row-gap: 6px; }
-.fxlib .seg .segbtn { flex: 1 1 auto; min-width: max-content; }
+/* The four choices by work sit in cells wide enough for the longest word in the widest face (MEDIUM in the Signal
+   look is 79 px, 113 with its padding and border): four across where there is room, two by two in a narrow column.
+   A grid cannot push a cell out of the card, which a row that keeps its words' widths did. */
+.fxlib .seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 6px 0; }
+.fxlib .seg .segbtn { min-width: 0; }
 .list .item.fxrow { align-items: flex-start; padding: 10px 0; }
 .list .item.fxrow.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
 .fxrow .chip { margin-left: 8px; }
