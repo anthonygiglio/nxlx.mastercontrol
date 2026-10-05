@@ -424,6 +424,10 @@ def build(env=None, player=None):
     api.support.close_leftover()
     api.health.start()                       # notices a short undervoltage with nobody looking
     try:
+        api.shaders.tidy()                   # shader texts an earlier panel process left in the runtime folder
+    except Exception as e:
+        print("pvj-web: old shader texts not removed: %s" % e, file=sys.stderr)
+    try:
         api.sync.apply()                     # lead or follow, as the settings say
     except Exception as e:                   # a busy port must not stop the panel
         print("pvj-web: sync not started: %s" % e, file=sys.stderr)

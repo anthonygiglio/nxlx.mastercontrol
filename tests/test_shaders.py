@@ -566,6 +566,57 @@ class Base(ServerBase):
 
 
 class EngineTest(Base):
+    def test_shader_texts_nobody_uses_go_at_start_and_on_stop(self):
+        """Seen on the Pi: the text an earlier panel process generated stayed in the panel's runtime folder until the
+        first play, and the last one stayed after Stop."""
+        loaded = []
+        real = self.player.ipc.request
+
+        def request(*command):
+            if command[:2] == ("get_property", "glsl-shaders"):
+                if loaded == ["cannot say"]:
+                    raise RuntimeError("no answer")
+                return list(loaded)
+            return real(*command)
+        self.player.ipc.request = request
+        self.player.is_running = lambda: True
+
+        def leave(*names):
+            for n in names:
+                with open(os.path.join(self.rundir, n), "w") as f:
+                    f.write("// old")
+        other = ("shader-1-7.glsl", "shader-1-8.glsl.tmp", "shader-99999-1.glsl")
+        leave(*other)
+        leave("overlay-1.bgra", "notes.glsl")
+        # at start: what the player still has loaded stays, the rest goes, and nothing else in the folder is touched
+        loaded[:] = [os.path.join(self.rundir, "shader-1-7.glsl"), "/somewhere/else/mapping.glsl"]
+        self.engine.tidy()
+        self.assertEqual(self.generated(), ["shader-1-7.glsl"])
+        self.assertEqual(sorted(n for n in os.listdir(self.rundir) if not n.startswith("shader-") and n != "player.sock"), ["notes.glsl", "overlay-1.bgra"])
+        # a player that runs and cannot say what it has loaded: nothing is removed
+        leave(*other)
+        loaded[:] = ["cannot say"]
+        self.engine.tidy()
+        self.assertEqual(self.generated(), sorted(other))
+        # a player that is down has nothing loaded
+        self.player.is_running = lambda: False
+        self.engine.tidy()
+        self.assertEqual(self.generated(), [])
+        self.player.is_running = lambda: True
+        # the build of the panel does it (pvj/server.py), so an old text does not wait for the first play
+        import inspect
+        from pvj import server
+        self.assertIn("api.shaders.tidy()", inspect.getsource(server.build))
+        # a shader that is on keeps its text; Stop removes it
+        loaded[:] = []
+        self.engine.show("nxlx-aurora.fs")
+        (mine,) = self.generated()
+        leave("shader-1-7.glsl")
+        self.engine.tidy()
+        self.assertEqual(self.generated(), [mine])
+        self.api.control({"action": "stop"}, None, "t")
+        self.assertEqual((self.player.source_shader, self.generated()), (None, []))
+
     def test_nothing_is_offered_until_the_module_is_on_and_the_pi_3_never_gets_it(self):
         self.api.registry.set_enabled("shaders", False)
         self.assertEqual((self.engine.state()["enabled"], self.engine.state()["shaders"]), (False, []))
