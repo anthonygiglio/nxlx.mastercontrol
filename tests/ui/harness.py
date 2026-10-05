@@ -59,8 +59,50 @@ projector.PRIVATE = projector.PRIVATE + [ipaddress.ip_network("127.0.0.0/8")]
 _fakes = [FakeProjector("secret1"), FakeProjector(slow=True, lamps=(310, 295))]
 _fakes[0].power, _fakes[0].errors = "1", "000010"
 
+# Two fake MIDI controllers, pipes in place of device files: a Korg nanoKONTROL2 (a controller with a shipped profile)
+# and "keys" (one without). They are "plugged in" while the file <midi_dir>/plug exists, and every line of hex bytes
+# appended to <midi_dir>/in ("B0 00 40", or "keys: 90 3C 7F" for the second one) is what the controller sends. The
+# harness keeps the writing end of each pipe, so a reader never sees the end of the stream.
+import time  # noqa: E402
+from pvj import midi as midi_mod  # noqa: E402
+
+_midi_dir = os.path.join(tmp, "midi")
+os.makedirs(_midi_dir)
+_midi_names = {"/dev/snd/midiC7D0": "nanoKONTROL2", "/dev/snd/midiC8D0": "keys"}
+_midi_pipes = {}
+
+
+def _midi_open(path):
+    r, w = os.pipe()
+    _midi_pipes[_midi_names[path]] = w
+    return r
+
+
+def _midi_feed():
+    done = 0
+    while True:
+        time.sleep(0.1)
+        try:
+            with open(os.path.join(_midi_dir, "in")) as f:
+                lines = f.read().split("\n")[:-1]
+        except OSError:
+            continue
+        for line in lines[done:]:
+            name, _, data = line.rpartition(":")
+            w = _midi_pipes.get(name.strip() or "nanoKONTROL2")
+            if w is not None:
+                os.write(w, bytes.fromhex(data.replace(" ", "")))
+        done = len(lines)
+
+
+api.midi.stop()
+api.midi = midi_mod.MidiHub(api, api.settings, open_fn=_midi_open, namer=lambda p: _midi_names[p], describer=lambda p: _midi_names[p],
+                            lister=lambda: sorted(_midi_names) if os.path.exists(os.path.join(_midi_dir, "plug")) else [], scan_interval=0.3)
+api.midi.apply()
+threading.Thread(target=_midi_feed, daemon=True).start()
+
 httpd = server.PvjServer(("127.0.0.1", 0), server.make_handler(api, auth))
-print(json.dumps({"port": httpd.server_address[1], "pin": auth.current_pin, "projector_ports": [f.port for f in _fakes]}), flush=True)
+print(json.dumps({"port": httpd.server_address[1], "pin": auth.current_pin, "projector_ports": [f.port for f in _fakes], "midi_dir": _midi_dir}), flush=True)
 try:
     httpd.serve_forever()
 finally:

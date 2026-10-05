@@ -35,6 +35,32 @@ The Room screen's "Let someone in" is not drawn for a remote support login, and 
 
 Still open for the owner: "any presenter" includes one who came in by a presenter code ten minutes ago; the "Remove" buttons on the Paired devices list still do not ask first (the audit's item); the owner's own codes have no hourly limit.
 
+## 2026-10-04 (controller profiles: a known MIDI controller works when it is plugged in)
+
+Pull request #77 (D49), on top of the shader engine (#72). The owner's words: "I would like to be able to connect a controller like the Korg nanoKONTROL2 and have it automatically/preset/natively mapped to control mastercontrol."
+
+**Nothing in this entry was tried on a real controller.** The three are on the owner's Pi, which this session did not touch.
+
+**Built:**
+
+1. Profile files, `pvj/controllers.d/<id>.json`, for the Korg nanoKONTROL2 (51 controls), the Akai MIDI Mix (60) and the original Novation Launchpad Mini (80): match patterns, a drawing, what each control sends, its default action. Checked strictly on load; adding a controller is one file (how: `pvj/MIDI.md`).
+2. The hub applies a profile when a matching controller appears and drops it when it goes. Per control: your mapping, then the profile, then the built-in map, which is not used for a controller whose profile is on. A switch per controller. Several controllers each use their own.
+3. Pickup for opacity, volume, clip speed, shader speed and shader brightness; the same press twice for blackout and Room scenes; a controllers' bank for the two controllers with one row of pad buttons.
+4. New actions over calls the API had: previous and next clip, fade in, shader hue and brightness, Room scene 1 to 8, nothing, bank pad, bank step, and Vibes started with the set Ambient or Show (by name; on Marker Set and Rec of the nanoKONTROL2 and E and F of the Launchpad; the MIDI Mix has no free button). The shader speed limit for Performance shaders is the engine's own, so a fader cannot pass it.
+5. The MIDI page: a card per controller with its layout drawn as a grid, what each control does, lights while it is moved (the hub keeps the last message per control), a tap to choose another action, "Back to the standard" for one control and for the controller (a question in place), the real switch "Standard layout". An unknown controller: "No built-in layout for this one yet. Teach it below." The old "Remove all mappings" asks in place now too.
+6. API: `GET /api/midi` (now for presenters too) gains `controllers`, `bank`, `profiles`; `POST /api/midi` takes `{"controller", "standard"}`; `POST /api/midi/map` takes `set` and `reset`. Settings: `control.midi.controllers`, optional, no schema change, in boxcare's check with a round trip.
+7. Tests (`tests/test_controllers.py`, 33): the files, matching, precedence on the numbers that collide with the built-in map, pickup, both edges of the double press, hot-plug with pipes, the cap, roles, the settings round trip, and every control of every layout sent while the shader engine's lock is held. The browser test plugs a fake nanoKONTROL2 into the harness.
+
+**Sources, plainly.** Launchpad Mini: Novation's Launchpad S Programmer's Reference 1.02 (X-Y layout figure, message examples) plus the recording from 2026-09-30, which fits it. nanoKONTROL2: Korg's Parameter Guide has **no** factory CC table; the numbers are the widely reported ones, cross-checked with the Mixxx mapping; all marked unverified. MIDI Mix: no Akai document with numbers found; from a public Live script for the factory preset; all marked unverified.
+
+**After the independent review (2026-10-05), fixed with tests:** Save on an unchanged guarded control no longer stores a mapping (it removed the press-twice guard), an own blackout or Room scene has a "Press twice" switch that is on by default, and Save is offered only for a change. A message that arrives after MIDI is switched off or the controller is unplugged is dropped (knob 5 of a nanoKONTROL2 is CC 20, the built-in map's opacity), and a layout goes only once its reader has ended. The card list is read as bytes, only the card's own row counts, a list that was read but gives no usable name no longer matches by card id, and the profiles hold exact card ids, product names and USB ids from the owner's Pi (0944:0117, 09e8:0031, 1235:0036) and no patterns. Volume and clip speed pickup read what the API last set (`Api.levels`). A scan no longer joins a reader under the hub's lock. One control has one own mapping. A non-text action name is a 400, and a bad profile file costs only itself. The switch list cannot be locked by junk or filled with made-up names. The last steps of a fader count as its end.
+
+**What changes on a box that updates** (also in `pvj/MIDI.md` and the manual): learned mappings keep working and win; learned opacity, volume, clip speed, shader speed and shader brightness on the three controllers now wait for pickup; every control never mapped gets an action; the built-in map no longer applies to the three (on the Launchpad Mini notes 36 to 71 change from the built-in pads to other pads or spare, and note 72 from the built-in Stop to "Vibes: start the set Ambient").
+
+**Not built:** lights (D49 and `pvj/MIDI.md` say why and what it would take). The System page is still shown to full-access devices only; a presenter can read the layout through the API.
+
+**Open, for the owner:** the two-minute check per controller in `pvj/MIDI.md` (move each control once, watch its box light). Start with the nanoKONTROL2 in CC mode. The card ids, product names and USB ids are now the ones read on the Pi; the matching code itself has not run there.
+
 ## 2026-10-04 (the Shaders page becomes an instrument)
 
 Panel only (`pvj/web/shaders.js`, `app.css`, a few lines of `app.js`), on top of the shader engine (#72, D46). The owner's words: "don't be shy about really making the control panels engaging and userfriendly"; "no telling the user to go to a different page to find the controls"; "someone doing more intense work will have a laptop, usually." No backend change.

@@ -492,6 +492,31 @@ class ImportTest(Base):
             self.assertEqual(st, 400, out)
             self.assertEqual(self.on_disk(), before)
 
+    def test_controller_switches_and_overrides_go_round(self):
+        """A controller's standard layout switched off, and controls changed on a recognised controller (the actions
+        that came with the profiles), import as exported. A file without the switches gets none made up."""
+        d = self.settings.data["control"]["midi"]
+        d.update(enabled=True, controllers={"Mini": {"standard": False}},
+                 map=[{"id": "eeee0001", "source": "nanoKONTROL2", "kind": "cc", "channel": 0, "number": 45, "action": "bank_pad", "index": 11},
+                      {"id": "eeee0002", "source": "nanoKONTROL2", "kind": "cc", "channel": 0, "number": 6, "action": "shader_hue"},
+                      {"id": "eeee0003", "source": "Mix", "kind": "note", "channel": 0, "number": 27, "action": "scene_8"},
+                      {"id": "eeee0004", "source": "Mix", "kind": "note", "channel": 0, "number": 1, "action": "none"}])
+        want = copy.deepcopy(self.settings.data["control"])
+        file = self.export()
+        self.assertEqual(file["settings"]["control"], want)
+        d.update(controllers={}, map=[])
+        st, out = self.send(file)
+        self.assertEqual((st, out["problems"]), (200, []), out)
+        self.assertEqual(self.settings.data["control"], want)
+        del file["settings"]["control"]["midi"]["controllers"]                 # a file from before the profiles
+        st, out = self.send(file)
+        self.assertEqual((st, out["problems"]), (200, []), out)
+        self.assertNotIn("controllers", self.settings.data["control"]["midi"])
+        file["settings"]["control"]["midi"]["controllers"] = {"Mini": {"standard": "no"}}
+        st, out = self.send(file)
+        self.assertNotEqual((st, out.get("problems")), (200, []), out)         # one wrong value stops the import
+        self.assertNotIn("controllers", self.settings.data["control"]["midi"])
+
     def test_room_groups_and_scenes_go_round(self):
         """The Room module's groups and scenes, and the schedule and MIDI entries that apply a scene, import as
         exported, checked by the module's own rules. Nothing is sent to a projector by an import."""

@@ -202,7 +202,7 @@ class HubTest(ServerBase):
             self.pipes[path] = (r, w)
             return r
         self.hub = MidiHub(self.api, self.settings, log=lambda *_: None, open_fn=open_fn, lister=lambda: list(self.present),
-                           namer=lambda p: names[p], scan_interval=0.05)
+                           namer=lambda p: names[p], scan_interval=0.05, profiles=[])    # no profiles: the map by itself (see test_controllers.py)
         self.api.midi = self.hub
         self.addCleanup(self.hub.stop)
 
@@ -382,7 +382,7 @@ class MidiApiTest(ServerBase):
         live = self.post("/api/devices/invite", {"name": "g", "role": "live"})[1]["token"]
         for path, body in (("/api/midi", {"enabled": False}), ("/api/midi/learn", {"start": True}), ("/api/midi/map", {"clear": True})):
             self.assertEqual(self.post(path, body, token=live)[0], 403, path)
-        self.assertEqual(self.call("GET", "/api/midi", token=live)[0], 403)
+        self.assertEqual(self.call("GET", "/api/midi", token=live)[0], 200)               # a presenter may look (the drawn layout); see test_controllers.py
         self.assertEqual(self.call("GET", "/api/midi")[0], 401)
 
 
