@@ -116,8 +116,49 @@ def run(es, extra, label):
         shutil.rmtree(r.tmp, ignore_errors=True)
 
 
+COUNT = ("//!HOOK NATIVE\n//!BIND HOOKED\n//!DESC count %d\nvec4 hook() { int hi = frame / 256; int lo = frame - hi * 256; int top = hi / 256; hi = hi - top * 256;\n"
+         "    return vec4(float(lo) / 255.0, float(hi) / 255.0, float(top) / 255.0, 1.0); }\n")
+
+
+def frames(es):
+    """How fast mpv's `frame` number goes, for clips of 25 and 60 pictures a second (an RGB clip, so the number can be
+    read from the colour as it is)."""
+    r = Rig(es)
+    try:
+        for rate in (25, 60, 50, 30):
+            r.p.play(["av://lavfi:testsrc=size=160x90:rate=%d" % rate], windowed=True)
+            for k, v in (("screenshot-format", "png"), ("screenshot-high-bit-depth", False), ("screenshot-png-filter", 0)):
+                r.p.ipc.request("set_property", k, v)
+            time.sleep(1.5)
+            r.n += 1
+            path = os.path.join(r.tmp, "count-%d.glsl" % r.n)
+            with open(path, "w") as f:
+                f.write(COUNT % r.n)
+            r.p.ipc.request("set_property", "glsl-shaders", [path])
+            time.sleep(1.0)
+            seen = []
+            for _ in range(5):
+                shot = os.path.join(r.tmp, "shot.png")
+                r.p.ipc.request("screenshot-to-file", shot, "window")
+                px = quick_rows(shot)[2][H // 2][W // 2]
+                seen.append((time.monotonic(), px[0] + 256 * px[1] + 65536 * px[2], r.get("time-pos"), r.get("frame-drop-count"), r.get("estimated-vf-fps"),
+                             r.get("container-fps"), r.get("display-fps"), r.get("speed")))
+                time.sleep(0.8)
+            a, b = seen[0], seen[-1]
+            print("DIAG frames, ES %s: a clip of %d a second: `frame` %d to %d in %.2f s = %.1f a second; time-pos %s to %s; drops %s to %s; estimated-vf-fps %s container-fps %s display-fps %s speed %s"
+                  % (es, rate, a[1], b[1], b[0] - a[0], (b[1] - a[1]) / (b[0] - a[0]), a[2], b[2], a[3], b[3], b[4], b[5], b[6], b[7]), flush=True)
+            r.p.ipc.request("set_property", "glsl-shaders", [])
+    finally:
+        r.p.stop()
+        shutil.rmtree(r.tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     es = sys.argv[1] if len(sys.argv) > 1 else "yes"
+    try:
+        frames(es)
+    except Exception as e:
+        print("DIAG frames FAILED %r" % (e,), flush=True)
     for label, extra in (("as the tests run it", ()), ("frames never dropped", ("--framedrop=no",)), ("untimed", ("--untimed",)),
                          ("display-resample", ("--video-sync=display-resample",))):
         try:
