@@ -138,6 +138,12 @@ canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2
 .ctl.lit { background: var(--ac); border-color: var(--ac); color: var(--on); }
 .ctl.lit .ctlname, .ctl.lit .ctlwhat, .ctl.lit .ctlval { color: var(--on); }
 .ctl:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+/* a control with a light on the controller itself: a small ring, filled while the box has that light on */
+.ctl.haslight { position: relative; }
+.ctl.haslight::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--mu); box-sizing: border-box; }
+.ctl.haslight[data-lit="on"]::after { background: var(--mu); }
+.ctl.haslight[data-lit="active"]::after, .ctl.haslight[data-lit="busy"]::after { background: var(--ac); border-color: var(--ac); }
+.ctl.lit.haslight::after { border-color: var(--on); }
 .ctldetail { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--ln); padding-top: 8px; }
 button.linkish { background: none; border: 0; padding: 4px 0; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 /* Remote support: impossible to miss while a session is open */

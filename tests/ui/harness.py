@@ -95,9 +95,32 @@ def _midi_feed():
         done = len(lines)
 
 
+def _midi_light_open(path):
+    """The lights: what the box writes to a fake controller ends up in <midi_dir>/out, one message a line in hex
+    ("b0 20 7f"). Another pipe; no device."""
+    r, w = os.pipe()
+    os.set_blocking(w, False)
+
+    def drain():
+        rest = b""
+        while True:
+            chunk = os.read(r, 4096)
+            if not chunk:
+                return
+            rest += chunk
+            whole = len(rest) - len(rest) % 3
+            with open(os.path.join(_midi_dir, "out"), "a") as f:
+                for i in range(0, whole, 3):
+                    f.write(rest[i:i + 3].hex(" ") + "\n")
+            rest = rest[whole:]
+    threading.Thread(target=drain, daemon=True).start()
+    return w
+
+
 api.midi.stop()
 api.midi = midi_mod.MidiHub(api, api.settings, open_fn=_midi_open, namer=lambda p: _midi_names[p], describer=lambda p: _midi_names[p],
-                            lister=lambda: sorted(_midi_names) if os.path.exists(os.path.join(_midi_dir, "plug")) else [], scan_interval=0.3)
+                            lister=lambda: sorted(_midi_names) if os.path.exists(os.path.join(_midi_dir, "plug")) else [], scan_interval=0.3,
+                            light_open_fn=_midi_light_open)
 api.midi.apply()
 threading.Thread(target=_midi_feed, daemon=True).start()
 
