@@ -70,6 +70,27 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | Schedule | Check the box clock (System > Schedule shows it), add an entry two minutes ahead, turn the schedule on | It fires once at that minute and shows "Last run"; reboot and confirm nothing fires for old times |
 | Network | **Last, with a monitor and keyboard on the Pi**, never over SSH on the only connection. Try a change, confirm, then one you do not confirm | A change you do not confirm reverts by itself. Never test this remotely on the only link |
 
+### Controller lights (D53)
+
+**Nothing of this has been seen on a real controller.** The messages come from the makers' documents (Launchpad Mini), from Korg's guide plus secondary reports (nanoKONTROL2) and from a secondary source alone (MIDI Mix). Five minutes; please say what you see at each step, also when it is right.
+
+Before: the box runs a version with D53 installed **by the installer** (an update from the panel or `install/install.sh --offline`), MIDI is on, a clip is on pad A1, and Shaders and Vibes is on.
+
+| # | Do | See on the controller | See on its card |
+| --- | --- | --- | --- |
+| L1 | Plug in the Launchpad Mini | Within about three seconds: pad 1 (top left of the grid) amber; H (bottom right, round) dim red; the third round button along the top amber; everything without a clip dark. Dim, not glaring | "Lights on.", the switch Lights on, Brightness Low |
+| L2 | If the card says "Lights need the box's installer to run once." | Nothing lights | Run the installer once, then unplug and plug in. Tell us: this is the older service file |
+| L3 | Press **Test lights** | Every light comes on in turn, the top row first, then row by row, left to right; all 80 stay on for a second; then back to L1. Note any that stay dark or come on out of turn, and the colours you see (amber, green, red) | "Testing: each light comes on in turn." |
+| L4 | Press pad 1 | It plays, and pad 1 turns green. G (round, right, second from the bottom) turns dim red; the sixth round button along the top turns green | The ring on pad 1 is filled |
+| L5 | Press the third round button along the top (Vibes) | Vibes starts and that button turns green; pad 1 should go back to amber (the clip no longer plays) | |
+| L6 | Press H twice within a second (blackout) | The screen goes black and H turns **full red**. Twice again: back to dim red | |
+| L7 | Brightness: Medium, then High | Green gets brighter at Medium; amber and dim red too at High | |
+| L8 | Unplug the Launchpad, wait five seconds, plug it in | The same lights as before come back by themselves | The card goes and comes back |
+| L9 | Switch Lights off | Every light goes dark | "Lights off." |
+| L10 | nanoKONTROL2: first set **LED Mode to External** in the KORG KONTROL Editor (Common), write the scene; then switch Lights on on its card and press Test lights | S, M, R of each strip, Cycle, Rewind, Forward, Stop, Play, Rec come on in turn (30). Tell us if Track or Marker buttons have a light too. Afterwards S 1 is lit (pad A1 holds a clip) and Stop is lit while nothing plays | "Lights on." |
+| L11 | MIDI Mix: switch Lights on on its card, press Test lights | Mute 1 to 8, Rec Arm 1 to 8, Bank Left and Bank Right come on in turn (18). Afterwards Mute 1 and Bank Left are lit | "Lights on." |
+| L12 | `journalctl -u pvj-web -b \| grep -i -e light -e midi` | | No permission errors, no line that repeats |
+
 ### Runtime folders: who owns what in /run (D45)
 
 **Not run on any box yet.** The change that gives each service its own runtime folder ran in CI only: the unit tests, and one job that runs the installer for real as root under the runner's systemd (`tests/real_install_test.sh`: no display, not a Pi, not the box's systemd). This list is the proof for a box; until someone has run it, nothing may be claimed about how the folders behave on hardware.
