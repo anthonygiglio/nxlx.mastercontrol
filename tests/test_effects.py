@@ -480,7 +480,7 @@ class LibraryTest(Base):
         for s in rows:
             self.assertIsNone(s["error"], s["id"])
             self.assertEqual(s["source"], "bundled")
-            self.assertIn(s["weight"], ("light", "medium"), s["id"])                   # nothing bundled is heavy by the count
+            self.assertIn(s["estimate"]["weight"], ("light", "medium"), s["id"])       # nothing bundled is heavy by the count
             self.assertTrue(s["estimate"]["sure"] and s["estimate"]["reads"] <= 12 and s["estimate"]["rounds"] <= 16, s["id"])
             self.assertNotIn("vibes", s)                                               # an effect is never in a rotation
             self.assertTrue(all("value" in i for i in s["inputs"]), s["id"])
@@ -492,6 +492,42 @@ class LibraryTest(Base):
         # none of it is a generator, and no generator is an effect
         self.assertEqual([s["id"] for s in self.gen.library() if s["id"].startswith("fx-")], [])
         self.assertEqual(self.gen.state()["shaders"][0]["id"][:5], "nxlx-")
+
+    def test_every_bundled_filter_says_what_a_pi_4_measured_and_an_upload_keeps_its_count(self):
+        """All 37, each with the class and the numbers a Pi 4 measured (2026-10-05): over a 1080 line clip and a 720
+        line clip, at full size and with Half resolution. The class is what the two full-size drop rates make."""
+        rows = {s["id"]: s for s in self.state()["effects"]}
+        self.assertEqual(sorted(E.PI4), sorted(rows))                                  # every bundled file, and nothing else
+        for sid, (weight, large, small) in E.PI4.items():
+            self.assertEqual(E.weigh(small[0][1], large[0][1]), weight, sid)
+            for full, half in (large, small):                                          # a quarter of the pixels never costs more
+                self.assertTrue(0 < half[0] < full[0] < 100 and 0 <= half[1] <= full[1] < 30, sid)
+            self.assertTrue(small[0][0] < large[0][0] and small[0][1] <= large[0][1], sid)         # nor does a smaller clip
+            row = rows[sid]
+            self.assertEqual(row["weight"], weight, sid)
+            self.assertEqual(row["measured"], {"board": "pi4",
+                                               "pass_ms": {"1080": large[0][0], "1080_half": large[1][0], "720": small[0][0], "720_half": small[1][0]},
+                                               "drops_per_second": {"1080": large[0][1], "1080_half": large[1][1], "720": small[0][1], "720_half": small[1][1]},
+                                               "holds": 1080 if weight == "light" else (720 if weight == "medium" else None),
+                                               "holds_half": 1080 if large[1][1] < E.HOLDS else (720 if small[1][1] < E.HOLDS else None)}, sid)
+            self.assertEqual(row["estimate"]["weight"], E.estimate(self.fx._parsed(self.fx._path(sid)[0])[0])["weight"], sid)       # the count is still told
+        self.assertEqual((E.weigh(0, 0), E.weigh(0, 0.49), E.weigh(0, 0.5), E.weigh(0.49, 9), E.weigh(0.5, 9)), ("light", "light", "medium", "medium", "heavy"))
+        self.assertEqual((E.HOLDS, E.HOLDS), (L.HOLDS, L.Guard.TIGHT))                 # "holds" is where the guard says "ok", as for a generator
+        # What the Pi 4 said, named: one filter held a 1080 line clip at full size, none dropped frames over a 720
+        # line clip, and every one held the 1080 line clip with Half resolution.
+        self.assertEqual({w: sorted(sid for sid, row in E.PI4.items() if row[0] == w) for w in ("light", "heavy")}, {"light": ["isf-duotone.fs"], "heavy": []})
+        self.assertEqual({rows[sid]["measured"]["holds_half"] for sid in E.PI4}, {1080})
+        # the count from the text and the measurement disagree, which is why the table exists: the heaviest and the
+        # third heaviest pass at 1080 lines belong to filters the count calls medium and light
+        heaviest = sorted(E.PI4, key=lambda sid: -E.PI4[sid][1][0][0])[:3]
+        self.assertEqual([(sid, rows[sid]["estimate"]["weight"]) for sid in heaviest],
+                         [("isf-edge-blowout.fs", "medium"), ("fx-edge-glow.fs", "medium"), ("isf-corner-color-tint.fs", "light")])
+        self.assertIsNone(E.measured("mine.fs"))
+        # an upload was never measured: it keeps the count, also when it is a copy of a bundled file
+        with open(os.path.join(E.EFFECTS_DIR, "fx-edge-glow.fs")) as f:
+            self.fx.upload("mine.fs", f.read())
+        row = next(s for s in self.state()["effects"] if s["id"] == "mine.fs")
+        self.assertEqual((row["source"], row["weight"], row["measured"], row["estimate"]["weight"]), ("uploaded", "medium", None, "medium"))
 
     def test_an_upload_that_cannot_be_counted_is_a_422_with_its_reason_never_a_500(self):
         for body, why in (("\nvoid main() {\n" + "for(;;){" * 1500 + "}" * 1500 + "\n gl_FragColor = vec4(1.0);\n}\n", "does not say how often it runs"),

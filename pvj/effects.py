@@ -72,6 +72,81 @@ GENERATOR_HAS_IT = ("A generator shader has the screen. An effect changes a pict
                     "from nothing, so there is no picture to change. Play a clip, a stream or a live input first.")
 
 
+# Measured on a real board: a Raspberry Pi 4 (mpv 0.40, desktop OpenGL 3.1 on V3D, a 2560 x 1440 screen at 75 Hz), every
+# bundled filter with its defaults (the seven that change nothing with them, with the values of the GPU test) over an
+# H.264 clip of 1920 x 1080 and one of 1280 x 720, both 30 pictures a second and decoded in software, on 2026-10-05,
+# for 15 seconds each (60 where the first look was near the line). Per filter: the class, then for the 1080 line clip
+# and for the 720 line clip ((the filter's own pass in milliseconds, frames dropped a second) at full size, the same
+# with Half resolution). The clips by themselves dropped nothing. The method and what else was seen are in
+# project-log/JOURNAL.md ("effects on the Pi 4").
+#   light   holds 30 frames a second over a 1080 line clip
+#   medium  holds over a 720 line clip only
+#   heavy   drops frames over a 720 line clip
+# "Holds" is fewer than HOLDS dropped frames a second, the generators' line (shaderlive.HOLDS), where the guard says "ok".
+# A filter's own pass is not its whole cost: with any effect on, the player merges the clip's planes and converts the
+# colours in passes of their own. All its passes together took 12 ms for the 720 line clip and 13 ms for the 1080 line
+# clip by themselves, and with an effect on, the filter's own pass plus about 14 ms at 720 lines and plus about 21 ms
+# at 1080 lines (plus 12 and 18 with Half resolution).
+HOLDS = L.HOLDS
+PI4 = {
+    "fx-edge-glow.fs": ("medium", ((21.1, 7.93), (5.3, 0.0)), ((9.2, 0.0), (2.4, 0.0))),
+    "fx-grade.fs": ("medium", ((11.1, 2.53), (2.8, 0.0)), ((4.7, 0.0), (1.2, 0.0))),
+    "fx-kaleido.fs": ("medium", ((17.6, 6.73), (4.5, 0.0)), ((7.7, 0.0), (2.0, 0.0))),
+    "fx-mirror-quad.fs": ("medium", ((9.7, 1.27), (2.4, 0.0)), ((4.0, 0.0), (1.1, 0.0))),
+    "fx-pixel-grid.fs": ("medium", ((11.5, 2.53), (2.9, 0.0)), ((4.9, 0.0), (1.3, 0.0))),
+    "fx-rgb-split.fs": ("medium", ((15.4, 4.93), (3.9, 0.0)), ((6.6, 0.0), (1.8, 0.0))),
+    "fx-ring.fs": ("medium", ((15.5, 5.13), (4.0, 0.0)), ((6.7, 0.0), (1.8, 0.0))),
+    "fx-ripple.fs": ("medium", ((14.6, 4.93), (3.6, 0.0)), ((6.3, 0.0), (1.6, 0.0))),
+    "fx-slit-bands.fs": ("medium", ((13.5, 4.26), (3.4, 0.0)), ((5.8, 0.0), (1.5, 0.0))),
+    "fx-twirl.fs": ("medium", ((16.0, 5.4), (4.0, 0.0)), ((6.9, 0.0), (1.8, 0.0))),
+    "fx-vignette.fs": ("medium", ((10.9, 2.22), (2.7, 0.0)), ((4.6, 0.0), (1.2, 0.0))),
+    "fx-wash.fs": ("medium", ((9.1, 0.83), (2.3, 0.0)), ((3.7, 0.0), (1.0, 0.0))),
+    "isf-chromatic-aberration.fs": ("medium", ((12.2, 3.13), (3.5, 0.0)), ((5.2, 0.0), (1.5, 0.0))),
+    "isf-color-monochrome.fs": ("medium", ((11.1, 2.53), (2.8, 0.0)), ((4.8, 0.0), (1.2, 0.0))),
+    "isf-corner-color-tint.fs": ("medium", ((20.7, 8.33), (5.2, 0.0)), ((9.0, 0.0), (2.3, 0.0))),
+    "isf-double-vision.fs": ("medium", ((16.4, 5.93), (4.4, 0.0)), ((7.1, 0.0), (1.9, 0.0))),
+    "isf-duotone.fs": ("light", ((8.2, 0.18), (2.1, 0.0)), ((3.3, 0.0), (1.0, 0.0))),
+    "isf-edge-blowout.fs": ("medium", ((30.4, 11.33), (7.7, 0.0)), ((13.5, 0.35), (3.4, 0.0))),
+    "isf-false-color.fs": ("medium", ((10.0, 1.6), (2.5, 0.0)), ((4.2, 0.0), (1.1, 0.0))),
+    "isf-flip-h.fs": ("medium", ((8.9, 0.72), (2.2, 0.0)), ((3.6, 0.0), (1.0, 0.0))),
+    "isf-flip-v.fs": ("medium", ((8.9, 0.7), (2.2, 0.0)), ((3.6, 0.0), (1.0, 0.0))),
+    "isf-gamma-correction.fs": ("medium", ((10.3, 1.73), (2.5, 0.0)), ((4.2, 0.0), (1.1, 0.0))),
+    "isf-hyperspace.fs": ("medium", ((14.3, 4.6), (4.2, 0.0)), ((6.1, 0.0), (1.8, 0.0))),
+    "isf-interlace-mirror.fs": ("medium", ((9.9, 1.57), (3.2, 0.0)), ((4.1, 0.0), (1.4, 0.0))),
+    "isf-kaleidoscope-tile.fs": ("medium", ((17.5, 6.06), (4.5, 0.0)), ((7.6, 0.0), (2.0, 0.0))),
+    "isf-kaleidoscope.fs": ("medium", ((17.1, 6.0), (4.3, 0.0)), ((7.4, 0.0), (1.9, 0.0))),
+    "isf-lgg.fs": ("medium", ((11.5, 2.8), (2.9, 0.0)), ((4.9, 0.0), (1.3, 0.0))),
+    "isf-mirror.fs": ("medium", ((9.0, 0.78), (2.2, 0.0)), ((3.6, 0.0), (1.0, 0.0))),
+    "isf-posterize.fs": ("medium", ((12.0, 2.86), (2.9, 0.0)), ((5.1, 0.0), (1.3, 0.0))),
+    "isf-quad-tile.fs": ("medium", ((17.0, 6.32), (6.8, 0.0)), ((7.2, 0.0), (2.8, 0.0))),
+    "isf-rgb-eq.fs": ("medium", ((9.5, 1.15), (2.4, 0.0)), ((3.9, 0.0), (1.0, 0.0))),
+    "isf-rgb-halftone.fs": ("medium", ((18.5, 7.26), (4.6, 0.0)), ((8.1, 0.0), (2.1, 0.0))),
+    "isf-rgb-invert.fs": ("medium", ((9.5, 1.15), (2.4, 0.0)), ((3.9, 0.0), (1.0, 0.0))),
+    "isf-sine-warp-tile.fs": ("medium", ((16.5, 5.86), (4.2, 0.0)), ((7.2, 0.0), (1.9, 0.0))),
+    "isf-triple-rotate.fs": ("medium", ((18.5, 6.72), (4.6, 0.0)), ((8.1, 0.0), (2.0, 0.0))),
+    "isf-white-point-adjust.fs": ("medium", ((9.1, 0.85), (2.3, 0.0)), ((3.7, 0.0), (1.0, 0.0))),
+    "isf-zoom.fs": ("medium", ((11.8, 3.13), (2.9, 0.0)), ((5.0, 0.0), (1.3, 0.0))),
+}
+
+
+def weigh(small, large):
+    """The class that two dropped-frame rates (over a 720 line clip and over a 1080 line clip, at full size) make."""
+    return "light" if large < HOLDS else ("medium" if small < HOLDS else "heavy")
+
+
+def measured(sid):
+    """What was measured for a bundled filter on a Pi 4, or None: the filter's own pass in milliseconds and the frames
+    dropped a second by the clip's lines, at full size and with Half resolution ("1080", "1080_half", "720",
+    "720_half"), and the largest of the two clips it held 30 frames a second over, at full size and at half."""
+    if sid not in PI4:
+        return None
+    _, large, small = PI4[sid]
+    by = {"1080": large[0], "1080_half": large[1], "720": small[0], "720_half": small[1]}
+    holds = lambda a, b: 1080 if a[1] < HOLDS else (720 if b[1] < HOLDS else None)
+    return {"board": "pi4", "pass_ms": {k: v[0] for k, v in by.items()}, "drops_per_second": {k: v[1] for k, v in by.items()},
+            "holds": holds(large[0], small[0]), "holds_half": holds(large[1], small[1])}
+
+
 # ---- colours ---------------------------------------------------------------------------------------------------------
 def _inverse(m):
     """The inverse of a 3 x 3 matrix given as three rows."""
@@ -578,7 +653,8 @@ def estimate(parsed):
     """{"reads", "rounds", "weight", "sure", "why"}: the count of `measure` and the class it makes: light (at most 2
     reads, no loop to speak of), medium (at most 12 reads and 16 rounds), heavy. When the text cannot be counted,
     `sure` is false, `why` says what stands in the way and the weight is heavy; such a file is refused at upload.
-    Kept with the parsed file, so it is made once for a file's content. A count from the text, not a measurement."""
+    Kept with the parsed file, so it is made once for a file's content. A count from the text, not a measurement:
+    a bundled filter's class in the library is the measured one (PI4), and this count is what an upload gets."""
     if "_estimate" not in parsed:
         try:
             reads, rounds = measure(parsed)
@@ -678,8 +754,10 @@ class Effects(S.Engine):
 
     def library(self, cfg=None):
         """[{"id", "name", "source", "pack", "description", "credit", "categories", "inputs", "error", "weight",
-        "estimate", "moves", "flashes", "speed_max", "presets", "refused"}]: the project's own filters, then each
-        third-party pack, then the uploads. An input carries "value": what is on now, or what putting it on would use."""
+        "estimate", "measured", "moves", "flashes", "speed_max", "presets", "refused"}]: the project's own filters, then
+        each third-party pack, then the uploads. "weight" is the class a Pi 4 measured for a bundled filter ("measured"
+        has its numbers) and the count from the text ("estimate") for an upload. An input carries "value": what is on
+        now, or what putting it on would use."""
         cfg = cfg or self._live().config()
         on = self.current()
         rows = super().library()
@@ -688,7 +766,7 @@ class Effects(S.Engine):
             sid = s["id"]
             s.pop("vibes", None)
             s.pop("cost", None)
-            s.update(weight="", estimate=None, moves=False, flashes=False, speed_max=None, refused=None,
+            s.update(weight="", estimate=None, measured=None, moves=False, flashes=False, speed_max=None, refused=None,
                      presets=[p["name"] for p in kept.get(sid, [])])
             if s["error"]:
                 continue
@@ -697,7 +775,9 @@ class Effects(S.Engine):
             except (ShaderError, ApiError):
                 continue
             e = estimate(parsed)
-            s.update(weight=e["weight"], estimate={"reads": e["reads"], "rounds": e["rounds"], "sure": e["sure"], "why": e["why"]},
+            seen = measured(sid) if s["source"] == "bundled" else None      # an upload is never one of the files that were measured
+            s.update(weight=PI4[sid][0] if seen else e["weight"], measured=seen,
+                     estimate={"reads": e["reads"], "rounds": e["rounds"], "weight": e["weight"], "sure": e["sure"], "why": e["why"]},
                      moves=bool(parsed.get("clock")), flashes=bool(parsed.get("flashes")), speed_max=self.speed_max(parsed),
                      refused=self._refusals.get(digest))
             now = self.current_values(parsed, on) if (on and on["id"] == sid) else self.start(parsed, cfg, sid)[0]
