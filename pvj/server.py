@@ -464,6 +464,10 @@ def build(env=None, player=None):
     except Exception as e:
         print("pvj-web: old shader texts not removed: %s" % e, file=sys.stderr)
     try:
+        api.effects.tidy()                   # an effect an earlier panel process left on comes off: nobody knows its values
+    except Exception as e:
+        print("pvj-web: an old effect was not taken off: %s" % e, file=sys.stderr)
+    try:
         api.sync.apply()                     # lead or follow, as the settings say
     except Exception as e:                   # a busy port must not stop the panel
         print("pvj-web: sync not started: %s" % e, file=sys.stderr)

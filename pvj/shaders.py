@@ -62,6 +62,11 @@ INPUT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")
 _COUNTER = "format=gbrp,geq=r=N-256*floor(N/256):g=floor(N/256)-256*floor(N/65536):b=floor(N/65536)-256*floor(N/16777216),"
 CARRIER = re.compile(r"av://lavfi:color=c=black:size=[0-9]{1,4}x[0-9]{1,4}:rate=%d,(?:%s)?format=rgb0" % (CARRIER_FPS, re.escape(_COUNTER)))
 TYPES = ("float", "bool", "long", "color", "point2D", "event")
+# The two kinds of ISF file. A generator draws from nothing and takes the screen (this file and shaderlive.py); a
+# filter changes the picture that is playing and is put on over it (effects.py). A filter has exactly one picture
+# input, called inputImage as ISF's own convention has it, and reads it with the IMG_ calls below.
+GENERATOR, FILTER = "generator", "filter"
+IMAGE = "inputImage"
 # What stands in when a shader is refused and there is none to go back to: the carrier itself is not black any more
 # (its colour is its frame number), so black is drawn over it.
 BLACK = "//!HOOK NATIVE\n//!BIND HOOKED\n//!DESC nxlx black\n\nvec4 hook() {\n    return vec4(0.0, 0.0, 0.0, 1.0);\n}\n"
@@ -85,6 +90,26 @@ _DIRECTIVE = re.compile(r"^[ \t]*#[ \t]*(\w*)(?:[ \t]+(\w+))?", re.M)
 _ALLOWED_DIRECTIVES = ("define", "undef", "if", "ifdef", "ifndef", "else", "elif", "endif")
 _GLOBAL_IO = re.compile(r"\b(?:uniform|varying|attribute|layout)\b|(?:^|[;{}])\s*(?:in|out)\s")
 _IMG = re.compile(r"\bIMG_(?:PIXEL|NORM_PIXEL|THIS_PIXEL|THIS_NORM_PIXEL|SIZE)\b")
+# The five ways a filter may read the playing picture, each with what it becomes in the player's text (effects.py
+# defines those functions). The picture's name is the first argument and is not passed on: no other texture can be
+# named. A call that names anything else is left as it is, and what is left is refused.
+_IMG_CALLS = ((re.compile(r"\bIMG_THIS_(?:NORM_)?PIXEL(\s*)\((\s*)%s(\s*)\)" % IMAGE), "pvj_img_this()"),
+              (re.compile(r"\bIMG_NORM_PIXEL(\s*)\((\s*)%s(\s*)," % IMAGE), "pvj_img_norm("),
+              (re.compile(r"\bIMG_PIXEL(\s*)\((\s*)%s(\s*)," % IMAGE), "pvj_img_px("),
+              (re.compile(r"\bIMG_SIZE(\s*)\((\s*)%s(\s*)\)" % IMAGE), "pvj_img_size()"))
+_HOST_NAMES = re.compile(r"\b_%s_\w*" % IMAGE)
+# What mpv defines for a texture a hook binds. An effect's text binds the picture's own planes besides the hooked
+# picture (effects.py), so a filter could otherwise read those through the player's names.
+# Every texture mpv has a name for at some stage, with every companion it defines for a bound one: a filter that says
+# LUMA_gather(...) or PREV_tex(...), or has an input called RGB_size, is refused here with its reason instead of by
+# the GPU later. (Only these prefixes: a name such as cell_size or ring_pos is an honest one and stays allowed.)
+_PLANES = re.compile(r"\b(?:HOOKED|LUMA|CHROMA|RGB|XYZ|ALPHA|NATIVE|MAINPRESUB|MAIN|LINEAR|SIGMOID|PREKERNEL|POSTKERNEL|SCALED|PREV|OUTPUT)"
+                     r"_(?:raw|pos|size|rot|off|pt|map|mul|tex|texOff|gather|lod)\w*")
+# mpv's own uniforms that change with every frame. They are not ISF, and a filter that read them would move (or
+# flicker) outside TIME, where the flash limit could not see it.
+_PLAYER_CLOCK = re.compile(r"\b(?:frame|random)\b")
+_CLOCK = re.compile(r"\b(?:TIME|TIMEDELTA|FRAMEINDEX|DATE)\b")
+_FLASH = re.compile(r"strob|flash|flicker|blink", re.I)
 # Names the player and this translator own, in any letter case: the hook, mpv's textures and their companions.
 _OWN = re.compile(r"\b(?:pvj_\w*|hook|hooked\w*|texture\d+|texcoord\d+|texture_(?:size|rot|off)\d+|pixel_size\d+|texmap\d+"
                   r"|out_color|input_size|target_size|tex_offset)\b", re.I)
@@ -146,10 +171,10 @@ def _text(v, limit=MAX_TEXT):
 
 
 # ---- the ISF header ----------------------------------------------------------------------------------------------------
-def _input(spec, seen):
+def _input(spec, seen, kind=GENERATOR):
     if not isinstance(spec, dict):
         raise ShaderError("each input must be an object")
-    name, kind = spec.get("NAME"), spec.get("TYPE")
+    name = spec.get("NAME")
     if not isinstance(name, str) or not INPUT_NAME.fullmatch(name):
         raise ShaderError("an input name must be 1 to 32 letters, digits or _ and start with a letter")
     if name.lower() in _INPUT_RENAMED:
@@ -160,8 +185,19 @@ def _input(spec, seen):
     if name in seen:
         raise ShaderError("two inputs are called %s" % name)
     seen.add(name)
+    want, kind = kind, spec.get("TYPE")
+    if want == FILTER:
+        if kind == "image" and name == IMAGE:
+            return {"name": name, "type": "image"}
+        if kind == "image":
+            raise ShaderError("input %s is a second picture: an effect reads only the picture that is playing (the input called %s)" % (name, IMAGE))
+        if kind == "cube":
+            raise ShaderError("input %s is a cube map, which is not supported" % name)
+        if name == IMAGE:
+            raise ShaderError("the input called %s must be of the TYPE image (it is the picture that is playing)" % IMAGE)
     if kind in ("image", "cube"):
-        raise ShaderError("input %s is a picture: only generator shaders are supported, not filters that need an image" % name)
+        raise ShaderError("input %s is a picture: only generator shaders are supported, not filters that need an image%s"
+                          % (name, " (a filter of the playing picture is added under Effects)" if kind == "image" and name == IMAGE else ""))
     if kind in ("audio", "audioFFT"):
         raise ShaderError("input %s wants sound (audio or FFT), which is not supported" % name)
     if kind not in TYPES:
@@ -279,9 +315,22 @@ def strip_comments(body):
     return "".join(out)
 
 
-def parse(source):
-    """An ISF generator from untrusted text: {"description", "credit", "cost", "inputs", "body", "line"}. `body` is
-    the shader code after the JSON comment and `line` the line of the file it starts on. Raises ShaderError."""
+def _read_calls(text, keep=True):
+    """`text` with every permitted read of the playing picture exchanged for the player's own function, or (with
+    `keep` false, to see what is left) for nothing. Line breaks inside a call are kept, so the compiler's line
+    numbers stay those of the file."""
+    for pattern, new in _IMG_CALLS:
+        text = pattern.sub(lambda m, new=new: (new if keep else " ") + "\n" * "".join(m.groups()).count("\n"), text)
+    return text
+
+
+def parse(source, kind=GENERATOR):
+    """An ISF file from untrusted text: {"description", "credit", "cost", "inputs", "body", "line", "kind"}. `body` is
+    the shader code after the JSON comment and `line` the line of the file it starts on. `kind` is what the caller
+    will use it as: a generator (no picture input, no IMG_ call) or a filter (exactly one picture input, inputImage,
+    read with the IMG_ calls on that input only). Raises ShaderError."""
+    if kind not in (GENERATOR, FILTER):
+        raise ShaderError("unknown kind of shader")
     if isinstance(source, bytes):
         if len(source) > MAX_SOURCE:
             raise ShaderError("the file is larger than %d KB" % (MAX_SOURCE // 1024))
@@ -326,7 +375,11 @@ def parse(source):
     if not isinstance(inputs, list) or len(inputs) > MAX_INPUTS:
         raise ShaderError("INPUTS must be a list of at most %d" % MAX_INPUTS)
     seen = set()
-    clean = [_input(i, seen) for i in inputs]
+    clean = [_input(i, seen, kind) for i in inputs]
+    pictures = [i for i in clean if i["type"] == "image"]
+    clean = [i for i in clean if i["type"] != "image"]
+    if kind == FILTER and len(pictures) != 1:
+        raise ShaderError("not a filter: it has no picture input called %s (a shader that draws from nothing is added under Shaders)" % IMAGE)
     body = source[end + 2:]
     # Comments go first and are never passed on, so they may hold any text (real ISF files have dashes, arrows and
     # bullets in theirs, and a backslash at times). What is left is what the compiler will read, and that must be
@@ -349,7 +402,25 @@ def parse(source):
             raise ShaderError("#%s %s is not allowed: the name belongs to the shader language or the player" % (m.group(1), word))
     if _GLOBAL_IO.search(body):
         raise ShaderError("the code declares its own uniform, varying, in or out, which the player cannot fill")
-    if _IMG.search(body):
+    if kind == FILTER:
+        if _HOST_NAMES.search(body):
+            raise ShaderError("it uses %s, a name of the program it was written in (ISF version 1), which the player does not have"
+                              % _HOST_NAMES.search(body).group(0))
+        if _PLANES.search(body):
+            raise ShaderError("the name %s belongs to the player; rename it" % _PLANES.search(body).group(0))
+        taken = next((i["name"] for i in clean if _PLANES.fullmatch(i["name"]) or _PLAYER_CLOCK.fullmatch(i["name"])), None)
+        if taken:
+            raise ShaderError("an input is called %s, a name that belongs to the player; rename it" % taken)
+        if _PLAYER_CLOCK.search(body):
+            raise ShaderError("the name %s belongs to the player (it changes with every frame, and is not part of ISF); rename it, and use TIME "
+                              "or FRAMEINDEX for something that moves" % _PLAYER_CLOCK.search(body).group(0))
+        rest = _read_calls(body, False)
+        if _IMG.search(rest):
+            raise ShaderError("it reads a picture other than the one that is playing: %s is allowed on %s only" % (_IMG.search(rest).group(0), IMAGE))
+        if re.search(r"\b%s\b" % IMAGE, rest):
+            raise ShaderError("%s may only be read with IMG_PIXEL, IMG_NORM_PIXEL, IMG_THIS_PIXEL, IMG_THIS_NORM_PIXEL and IMG_SIZE"
+                              " (not as a texture of its own, and not under another name)" % IMAGE)
+    elif _IMG.search(body):
         raise ShaderError("it reads a picture (IMG_PIXEL and the like): only generator shaders are supported")
     own = next((m for m in _OWN.finditer(body) if m.group(0) != _RENAMED), None)
     if own:
@@ -363,11 +434,19 @@ def parse(source):
     for i in clean:
         if ident(i["name"]) != i["name"]:
             code = re.sub(r"\b%s\b" % i["name"], ident(i["name"]), code)
+    if kind == FILTER:
+        code = _read_calls(code)
     code = _MAIN.sub("void pvj_main()", code).rstrip()
     cats = head.get("CATEGORIES")
     cats = [c for c in (_text(c, 40) for c in (cats if isinstance(cats, list) else [])[:16]) if c]
-    return {"description": _text(head.get("DESCRIPTION")), "credit": _text(head.get("CREDIT")), "cost": _text(head.get("COST")),
-            "categories": cats, "inputs": clean, "body": body, "code": code, "line": source.count("\n", 0, end + 2) + 1}
+    out = {"description": _text(head.get("DESCRIPTION")), "credit": _text(head.get("CREDIT")), "cost": _text(head.get("COST")),
+           "categories": cats, "inputs": clean, "body": body, "code": code, "line": source.count("\n", 0, end + 2) + 1, "kind": kind}
+    if kind == FILTER:
+        # Flash safety (see SHADERS.md): a filter that reads the clock moves by itself, and one whose own words say
+        # strobe or flash is made to; both are kept at their own pace unless the box's "faster" opt-in is on.
+        out["clock"] = bool(_CLOCK.search(body))
+        out["flashes"] = bool(_FLASH.search(" ".join(cats + [out["description"]])))
+    return out
 
 
 def clean_value(i, v):
@@ -464,11 +543,31 @@ def hue_matrix(degrees):
     return [c + k, k - r, k + r, k + r, c + k, k - r, k - r, k + r, c + k]
 
 
+def input_lines(parsed, values):
+    """The inputs as constants of the shader text: the value given, else the file's DEFAULT. `values` are checked."""
+    lines = []
+    for i in parsed["inputs"]:
+        d, name = values.get(i["name"], i["default"]), ident(i["name"])
+        if i["type"] == "float":
+            lines.append("const float %s = %s;" % (name, _f(d)))
+        elif i["type"] in ("bool", "event"):
+            lines.append("const bool %s = %s;" % (name, "true" if d else "false"))
+        elif i["type"] == "long":
+            lines.append("const int %s = %d;" % (name, d))
+        elif i["type"] == "color":
+            lines.append("const vec4 %s = vec4(%s);" % (name, ", ".join(_f(c) for c in d)))
+        else:
+            lines.append("const vec2 %s = vec2(%s, %s);" % (name, _f(d[0]), _f(d[1])))
+    return lines
+
+
 def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader", today=None, speed=1.0, gain=1.0, anchor=None):
     """The mpv user shader for a parsed ISF generator, drawn at `size` (width, height). `values` replaces the inputs'
     defaults, `hue` (degrees) shifts the palette, `gain` trims the brightness, `speed` is how fast TIME runs.
     TIME is `offset` plus `speed` times the seconds since `anchor`, a frame number of the carrier (see carrier_url);
     with no anchor it is counted from mpv's own `frame` number, as the first version did."""
+    if parsed.get("kind", GENERATOR) != GENERATOR:
+        raise ShaderError("this is a filter of the playing picture, not a generator: it is put on under Effects")
     width, height = int(size[0]), int(size[1])
     if not (16 <= width <= 4096 and 16 <= height <= 4096):
         raise ShaderError("bad drawing size")
@@ -500,18 +599,7 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
              "#define isf_FragNormCoord pvj_norm",
              "#define vv_FragNormCoord pvj_norm",
              "PVJ_HP float pvj_time;", "vec2 pvj_norm;", "vec4 pvj_coord;", "vec4 pvj_color;"]
-    for i in parsed["inputs"]:
-        d, name = values.get(i["name"], i["default"]), ident(i["name"])
-        if i["type"] == "float":
-            lines.append("const float %s = %s;" % (name, _f(values.get(i["name"], d))))
-        elif i["type"] in ("bool", "event"):
-            lines.append("const bool %s = %s;" % (name, "true" if d else "false"))
-        elif i["type"] == "long":
-            lines.append("const int %s = %d;" % (name, d))
-        elif i["type"] == "color":
-            lines.append("const vec4 %s = vec4(%s);" % (name, ", ".join(_f(c) for c in d)))
-        else:
-            lines.append("const vec2 %s = vec2(%s, %s);" % (name, _f(d[0]), _f(d[1])))
+    lines += input_lines(parsed, values)
     lines += ["#line %d" % parsed["line"], parsed["code"], "",
               "vec4 hook() {"]
     if anchor is None:
@@ -673,6 +761,8 @@ def default_config():
 class Engine:
     """The library of shaders and the one that is on screen. Everything the player reads is written to its runtime
     folder under a fresh name; a shader the GPU refuses is replaced by the one before it, or by black."""
+    KIND = GENERATOR            # what its files are read as (effects.py keeps a library of filters the same way)
+    STEM = "shader"             # the generated texts are <STEM>-<pid>-<n>.glsl in the panel's runtime folder
 
     def __init__(self, api, log=print, clock=time.monotonic, tap=LogTap):
         self.api = api
@@ -782,7 +872,7 @@ class Engine:
             if hit is None or hit[0] != (st.st_mtime_ns, st.st_size):
                 data = self._read(path)
                 try:
-                    result = (parse(data), hashlib.sha256(data).hexdigest())
+                    result = (self.read(data), hashlib.sha256(data).hexdigest())
                 except ShaderError as e:
                     result = e
                 except Exception as e:      # one file that trips the parser must not take the whole list down
@@ -851,7 +941,7 @@ class Engine:
     def _write(self, text):
         rundir = self.api.player.rundir
         self._serial += 1
-        name = os.path.join(rundir, "shader-%d-%d.glsl" % (os.getpid(), self._serial))
+        name = os.path.join(rundir, "%s-%d-%d.glsl" % (self.STEM, os.getpid(), self._serial))
         tmp = name + ".tmp"
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o640)
         try:
@@ -876,7 +966,7 @@ class Engine:
             return
         for n in names:
             full = os.path.join(rundir, n)
-            if re.fullmatch(r"shader-\d+-\d+\.glsl(\.tmp)?", n) and full not in keep:
+            if re.fullmatch(r"%s-\d+-\d+\.glsl(\.tmp)?" % self.STEM, n) and full not in keep:
                 try:
                     os.unlink(full)
                 except OSError:
@@ -1053,6 +1143,9 @@ class Engine:
                     self.api.fader.cancel()
                 try:
                     new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                    fx = getattr(self.api, "effects", None)
+                    if new is not None and fx is not None and fx is not self and fx.on is not None:
+                        fx.sweep()                  # the generator took an effect off the screen: its text goes too
                 except PlayerError as e:
                     self._cleanup({before["path"]} if before else set())
                     raise ApiError(503, str(e))
@@ -1130,7 +1223,7 @@ class Engine:
             raise ApiError(409, "%s is the name of a bundled shader; choose another name" % name)
         try:
             data = source.encode("utf-8")
-            translate(parse(data), (1280, 720))
+            self.check_upload(data)
         except UnicodeEncodeError:
             raise ApiError(422, "%s: the file is not plain text" % name)
         except ShaderError as e:
@@ -1178,6 +1271,14 @@ class Engine:
                 except OSError:
                     pass
         return {"name": name, "size": len(data)}
+
+    def read(self, data):
+        """A file's text, parsed as the kind this library holds."""
+        return parse(data)
+
+    def check_upload(self, data):
+        """Raise ShaderError unless this file's text can be shown."""
+        translate(self.read(data), (1280, 720))
 
     def delete(self, sid):
         path, source = self._path(sid)

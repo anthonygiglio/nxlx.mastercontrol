@@ -106,6 +106,7 @@
         var left = document.getElementById('supportleft');
         if (left && now) left.textContent = (S.device && S.device.remote ? 'You are connected as remote support' : 'Remote support session is open') + ' · ' + mins(r.data.support.seconds_left) + ' left';
         patchLive();
+        if (window.pvjEffects) window.pvjEffects.patch(shaderCtx());       // the strip on Live and the card on Mix
         if (window.pvjRoom && window.pvjRoom.patch) window.pvjRoom.patch();
       }
     });
@@ -350,6 +351,7 @@
           } }))),
       window.pvjShaders ? window.pvjShaders.liveRow(shaderCtx()) : null,
       window.pvjShaders ? window.pvjShaders.liveStrip(shaderCtx()) : null,
+      window.pvjEffects ? window.pvjEffects.liveStrip(shaderCtx()) : null,
       previewBlock(),
       h('div', { class: 'banks' }, S.banks.map(function (b, i) {
         return h('button', { class: 'btn' + (i === S.bank ? ' on' : ''), text: b.name.replace('Bank ', 'Bank '), 'aria-pressed': i === S.bank ? 'true' : 'false',
@@ -428,7 +430,8 @@
         S.sysFresh = false;
         return runSwitch([moduleStep(row.module)].concat(row.steps || []), on, row.offInner, null);
       },
-      openShaders: function () { openSys('vibes', S.tab); } };
+      openShaders: function () { openSys('vibes', S.tab); },
+      openMix: function () { goTab('mix'); } };
   }
   function patchLive() {
     var st = S.status || {}, pl = st.player || {}, sys = st.system || {};
@@ -448,6 +451,7 @@
     if (pl.test_tone) np.textContent = 'Test tone (' + pl.test_tone + ')';
     if (pl.capture) np.textContent = 'Live input' + (pl.capture.device ? ' (' + pl.capture.device + ', ' + pl.capture.mode + ')' : '');
     if (window.pvjShaders) window.pvjShaders.patch(shaderCtx(), pl, np);
+    if (pl.effect && window.pvjEffects && pl.running && typeof pl.shader !== 'string') np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     document.getElementById('pill').textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
@@ -519,6 +523,7 @@
         slider('mv', 'Speed', 25, 200, 5, Math.round((pl.speed || 1) * 100), function (v) { return (v / 100).toFixed(2) + 'x'; },
           function (v) { ctl('speed')(v / 100); }),
         slider('mvol', 'Volume', 0, 130, 1, Math.round(pl.volume === undefined || pl.volume === null ? 100 : pl.volume), function (v) { return v + '%'; }, ctl('volume'))),
+      window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null,
       h('div', { class: 'card' },
         h('div', { class: 'k', text: 'Transition between clips' }),
         choice([{ label: 'Cut', value: 'cut' }, { label: 'Dip to black', value: 'dip' }, { label: 'Crossfade (soon)', value: 'x', disabled: true }],
@@ -1852,12 +1857,15 @@
       ['vibes_ambient', 'Vibes: start the set Ambient'], ['vibes_show', 'Vibes: start the set Show'],
       ['clip_prev', 'Previous clip'], ['clip_next', 'Next clip'], ['fadein', 'Fade in'],
       ['bank_pad', 'Play a pad of the controllers\' bank'], ['bank_prev', 'Controllers\' bank: the one before'], ['bank_next', 'Controllers\' bank: the next']])
-    .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['scene_' + n, 'Room scene ' + n]; }));
+    .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['scene_' + n, 'Room scene ' + n]; }))
+    .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one']])
+    .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['effect_control_' + n, 'Effect: control ' + n + ' of the one that is on (knob)']; }));
   // the actions that follow a fader or knob; a shader control does both (a knob sets it, a button steps or toggles it)
-  var MIDI_LEVELS = ['opacity', 'size', 'position', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness'];
+  var MIDI_LEVELS = ['opacity', 'size', 'position', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
   // What an action is called on the drawn layout of a controller: short, since a control is a small box.
   var MIDI_SHORT = { shader_speed: 'Shader speed', shader_prev: 'Previous shader', shader_next: 'Next shader', shader_hue: 'Shader colour turn',
-    shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank' };
+    shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
+    effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect' };
   function midiWhat(a) {
     if (!a) return 'Spare';
     if (a.action === 'none') return 'Nothing';
@@ -1867,6 +1875,8 @@
     if (MIDI_SHORT[a.action]) return MIDI_SHORT[a.action];
     var slot = /^shader_(control|preset)_([1-8])$/.exec(a.action);
     if (slot) return 'Shader ' + slot[1] + ' ' + slot[2];
+    var fx = /^effect_control_([1-8])$/.exec(a.action);
+    if (fx) return 'Effect control ' + fx[1];
     var found = MIDI_ACTIONS.filter(function (x) { return x[0] === a.action; })[0];
     return found ? found[1].replace(' (fader)', '') : a.action;
   }
@@ -1918,7 +1928,7 @@
       if (!can('full')) return box;
       var level = x.kind === 'fader' || x.kind === 'knob';
       var choices = [['none', 'Nothing (switch this control off)']].concat(MIDI_ACTIONS.filter(function (a) {
-        return a[0].indexOf('shader_control_') === 0 || (MIDI_LEVELS.indexOf(a[0]) >= 0) === level;
+        return a[0].indexOf('shader_control_') === 0 || a[0].indexOf('effect_control_') === 0 || (MIDI_LEVELS.indexOf(a[0]) >= 0) === level;
       }));
       var now = x.action ? x.action.action : (x.standard ? x.standard.action : choices[1][0]);
       var action = h('select', { class: 'text-input', id: 'ctlaction', 'aria-label': 'What ' + x.name + ' does' },

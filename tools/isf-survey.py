@@ -10,6 +10,10 @@
 A developer's tool: it is not installed on a box and reads files only. "Translates" means the translator took the
 file, which is not the same as drawing: only a real player with a GPU can say that (tests/test_shaders_gpu.py in CI).
 
+"Translates" is said of a generator: a shader that draws from nothing and takes the screen. A file that is refused
+as a generator is tried once more as an effect, a filter of the playing picture (pvj/effects.py), and the report
+says how many of those the box takes that way, each with the work counted from its text.
+
 What a file needs is read from its JSON header and its code independently of the translator (which stops at the
 first reason), so a file that needs two things is counted under both, and "what would unlock it" is exact:
   filter      one picture to work on (an `image` input, usually inputImage)
@@ -28,7 +32,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from pvj import shaders as S  # noqa: E402
+from pvj import effects as E, shaders as S  # noqa: E402
 
 FEATURES = ("filter", "transition", "passes", "persistent", "audio", "imported", "vertex", "limits", "checks")
 _CALLS = re.compile(r"\b(sin|cos|tan|atan|asin|acos|pow|exp|log|sqrt|length|distance|normalize|mod|fract|smoothstep|mix)\s*\(")
@@ -167,6 +171,16 @@ def survey(folder):
             verdict = ""
         except S.ShaderError as e:
             verdict = str(e)
+        effect, work = "", None
+        if verdict:                         # not a generator: is it a filter the box can put over a picture?
+            try:
+                parsed = S.parse(data, S.FILTER)
+                E.translate(parsed)
+                work = E.estimate(parsed)
+                if os.path.exists(path[:-3] + ".vs"):
+                    effect = "it has a vertex shader of its own (.vs), which is not read"
+            except S.ShaderError as e:
+                effect = str(e)
         left = header_problem(text) or checks(head, body)
         if verdict and not left and not need - {"vertex"}:
             left = verdict                  # nothing else explains the refusal: it is a check
@@ -175,7 +189,8 @@ def survey(folder):
         rows.append({"file": name, "bytes": len(data), "credit": S._text(head.get("CREDIT")),
                      "categories": [c for c in head.get("CATEGORIES") or [] if isinstance(c, str)],
                      "translates": not verdict, "refused": verdict, "needs": sorted(need), "checks": left if "checks" in need else "",
-                     "cost": cost(body)})
+                     "cost": cost(body), "as_effect": bool(verdict) and not effect, "effect_refused": effect,
+                     "effect_work": work if (verdict and not effect) else None})
     return rows
 
 
@@ -201,7 +216,12 @@ def report(rows, out=sys.stdout):
             r["file"], c["level"], c["loops"], c["largest_bound"], c["calls"],
             "; has a .vs file that is not read" if "vertex" in r["needs"] else "",
             "".join("; " + n for n in c["notes"])))
-    w("\nREFUSED, BY WHAT THE FILE NEEDS (a file that needs two things is in both lists)\n")
+    fx = [r for r in rows if r.get("as_effect")]
+    w("\nTRANSLATES AS AN EFFECT, A FILTER OVER THE PLAYING PICTURE: %d files (work is a count from the text: reads of the picture and loop rounds for one pixel)\n" % len(fx))
+    for r in fx:
+        e = r["effect_work"]
+        w("  %-34s %-6s reads %d, rounds %d%s\n" % (r["file"], e["weight"], e["reads"], e["rounds"], "" if e["sure"] else "; NOT COUNTED, an upload would be refused: %s" % e["why"]))
+    w("\nREFUSED, BY WHAT THE FILE NEEDS (a file that needs two things is in both lists; the effects above are counted under filter)\n")
     refused = [r for r in rows if not r["translates"]]
     for f in FEATURES:
         hits = [r for r in refused if f in r["needs"]]

@@ -84,8 +84,10 @@
   // dragged (at most ten sends a second, the newest value wins), send() for a tap, touch(false) when the finger lifts
   // (the last value always goes out). free() says whether the box's own value may be put into the control: not while
   // it is touched, not while a send waits or is under way, and not for a moment after one.
-  function makeRig(c, shaderId, after) {
+  // `where` is for another sender of the same kind (effects.js): {path, gone: what to say when the answer is 409}.
+  function makeRig(c, shaderId, after, where) {
     var rig = { last: null, sentAt: 0 };
+    var path = (where && where.path) || '/api/shaders/values', gone = (where && where.gone) || 'Not sent: another shader is on the screen now.';
     rig.channel = function (key, body, note) {
       var st = { touch: false, has: false, value: null, timer: null, last: 0, flying: 0, done: 0 };
       function fire() {
@@ -96,10 +98,10 @@
         b.id = shaderId();
         rig.last = ch; rig.sentAt = st.last;
         note('', false, true);
-        c.api('POST', '/api/shaders/values', b).then(function (r) {
+        c.api('POST', path, b).then(function (r) {
           st.flying--; st.done = Date.now();
           if (!r.ok) { st.done = 0; st.last = 0; st.sent = null; }       // refused: the box's own value may go back into the control at once
-          if (!r.ok) note(r.status === 409 ? 'Not sent: another shader is on the screen now.' : (r.data.error || 'The box did not take it.'), true);
+          if (!r.ok) note(r.status === 409 ? gone : (r.data.error || 'The box did not take it.'), true);
           else if (!st.flying && !st.has) note('', false, false);
           if (after) after(r);
         });
@@ -1211,5 +1213,7 @@
   // For the Room screen's ambience control (room.js): the same player state, set choice and request body as the
   // Vibes row on Live, so a set chosen on one screen is the set the other starts.
   var lend = { player: player, activeSet: activeSet, startSet: startSet, body: vibesBody, choose: function (id) { ui.startSet = id; }, detailHigh: detailHigh };
-  window.pvjShaders = { liveRow: liveRow, liveStrip: liveStrip, patch: patch, page: page, nice: nice, vibes: lend };
+  // `kit` is what effects.js draws its controls with: the same controls, the same way of sending.
+  window.pvjShaders = { liveRow: liveRow, liveStrip: liveStrip, patch: patch, page: page, nice: nice, vibes: lend,
+    kit: { makeRig: makeRig, inputControl: inputControl, noteLine: noteLine, slider: slider, syncControls: syncControls, knobOf: knobOf, round: round } };
 })();
