@@ -445,10 +445,11 @@ def build(env=None, player=None):
     board = hardware.detect_board()
     auth = Auth(settings, rotate_on_start=True)
     registry = Registry(settings, board["kind"])
-    themes = themes_mod.load_themes(os.path.join(state, "addons"))
+    addons = os.path.join(state, "addons")
+    themes = themes_mod.load_themes()        # the looks the box comes with; the owner's own are read by the Api's store
     player = player or Player()
     rundir = player.rundir
-    api = Api(player, settings, auth, registry, themes, media, board,
+    api = Api(player, settings, auth, registry, themes, media, board, addons_dir=addons,
               spawn=env.get("PVJ_DEV_SPAWN") == "1", on_pin=lambda pin: write_pin_file(rundir, pin))
     api.net = netd_mod.NetdClient(os.path.join(env.get("PVJ_NETD_DIR") or rundir, paths.NETD_SOCKET))
     from . import capture as capture_mod

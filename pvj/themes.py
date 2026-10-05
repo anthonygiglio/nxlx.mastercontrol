@@ -395,6 +395,8 @@ class Store:
                 except ThemeError:
                     continue
                 if theme["id"] in out:
+                    if out[theme["id"]].get("source") == "addon":       # read before, by load_themes: remember its file
+                        self.files.setdefault(theme["id"], name)
                     continue
                 out[theme["id"]] = dict(theme, source="addon")
                 self.files[theme["id"]] = name

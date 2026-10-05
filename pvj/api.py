@@ -8,6 +8,7 @@ calls this. Every input is validated here; nothing user-supplied reaches a shell
 or a path unchecked.
 """
 
+import copy
 import json
 import os
 import re
@@ -130,6 +131,9 @@ class Api:
         self.auth = auth
         self.registry = registry
         self.themes = themes
+        self.theme_store = themes_mod.Store(addons_dir)     # the owner's own themes (System > Look, "Add a theme")
+        if addons_dir:
+            self.theme_store.load(self.themes)              # so the store knows the file of each; what is there already stays
         self.media_dir = media_dir
         self.usb_root = usb_root or os.environ.get("PVJ_USB_BASE", "/media/pvj")     # one folder per mounted drive
         self.usb_link = usb_link or os.environ.get("PVJ_USB_DIR", "/media/usb")      # the newest drive, for the old presets
@@ -1288,11 +1292,97 @@ class Api:
                     print("pvj-web: %s: %s" % (mid, e))
         return {"modules": self.registry.list()}
 
+    def _looks(self):
+        """Every look on the box for the Look page. "look" is what a preview is drawn from: the theme's colours and
+        the design tokens in force, all of them values the validator passed."""
+        return [{"id": k, "name": v["name"], "source": v["source"], "style": themes_mod.style_of(v), "areas": bool(v.get("areas")),
+                 "look": {"tokens": dict(v["tokens"]), "areas": dict(v.get("areas") or {}), "states": dict(v.get("states") or {}),
+                          "design": themes_mod.design_of(v) if themes_mod.style_of(v) == "signal" else None}}
+                for k, v in list(self.themes.items())]
+
     def get_theme(self, body, device, client):
         t = self.settings.data["theme"]
-        return {"theme": t, "available": [{"id": k, "name": v["name"], "source": v["source"],
-                                           "style": themes_mod.style_of(v), "areas": bool(v.get("areas"))}
-                                          for k, v in self.themes.items()]}
+        return {"theme": t, "available": self._looks(), "max_added": themes_mod.MAX_ADDED}
+
+    def _theme_local(self, client):
+        """Adding or removing a theme writes a file on the box: not through the remote-support tunnel (the route
+        table refuses it too; this holds even if that changes)."""
+        if self.support.is_remote(client):
+            raise ApiError(403, "a theme cannot be added or removed through remote support; ask someone at the studio")
+
+    def add_theme(self, body, device, client):
+        """{"file": "<the text of a theme file>"}: check it and keep it as one of the owner's themes. The text is
+        parsed here, strictly (the request's own JSON would let a key appear twice)."""
+        self._theme_local(client)
+        text = body.get("file")
+        if not isinstance(text, str):
+            raise bad('send {"file": "<the text of the theme file>"}')
+        if len(text) > themes_mod.MAX_FILE:
+            raise ApiError(413, "the file is too large for a theme (at most %d KB)" % (themes_mod.MAX_FILE // 1024))
+        try:
+            theme = themes_mod.checked(text)
+        except ThemeError as e:
+            raise ApiError(422, "This theme cannot be used: %s" % e)
+        try:
+            replaced = self.theme_store.add(theme, self.themes)
+        except ThemeError as e:
+            raise ApiError(getattr(e, "status", 500), str(e))
+        print("pvj-web: theme %s %s by %s" % (theme["id"], "replaced" if replaced else "added", device["name"]), flush=True)
+        return {"added": theme["id"], "name": theme["name"], "replaced": replaced, "warnings": themes_mod.warnings(theme),
+                "available": self._looks()}
+
+    def remove_theme(self, body, device, client):
+        """{"id": ...}: take one of the owner's themes off the box. If it is the look in use, the box goes back to
+        the look it came with first, so no page is ever served with a theme that is gone."""
+        self._theme_local(client)
+        tid = body.get("id")
+        theme = self.themes.get(tid) if isinstance(tid, str) else None
+        if theme is None:
+            raise ApiError(404, "there is no such theme")
+        if theme.get("source") != "addon":
+            raise ApiError(409, "%s comes with the box and cannot be removed" % theme["name"])
+        with self.settings.lock:
+            stored = self.settings.data.get("theme")
+            if isinstance(stored, dict) and stored.get("name") == tid:
+                self.settings.data["theme"] = {"name": themes_mod.FALLBACK, "accent": None}
+                self.settings.save()
+        try:
+            self.theme_store.remove(tid, self.themes)
+        except ThemeError as e:
+            raise ApiError(getattr(e, "status", 500), str(e))
+        print("pvj-web: theme %s removed by %s" % (tid, device["name"]), flush=True)
+        return {"removed": tid, "theme": self.settings.data["theme"], "available": self._looks()}
+
+    def export_theme(self, body, device, client):
+        """{"id": ...} (or nothing: the look in use): that theme as a file to keep, change and add again. A look
+        that comes with the box is given an id and a name of its own ("my-signal"), because its own id is never
+        accepted back; a Signal theme is written with every design token, so each one is there to change."""
+        tid = body.get("id")
+        if tid is None:
+            theme, accent = self._stored_theme()
+        else:
+            theme = self.themes.get(tid) if isinstance(tid, str) else None
+            if theme is None:
+                raise ApiError(404, "there is no such theme")
+            stored = self.settings.data.get("theme")
+            accent = stored.get("accent") if isinstance(stored, dict) and stored.get("name") == tid else None
+        out = copy.deepcopy(themes_mod.clean(theme))
+        if theme.get("source") != "addon":
+            out["id"], out["name"] = ("my-" + out["id"])[:41], ("My " + out["name"])[:40]
+        if themes_mod.style_of(theme) == "signal":
+            out["design"] = themes_mod.design_of(theme)
+        note = ""
+        if isinstance(accent, str) and not out.get("areas"):
+            try:
+                themes_mod.css(theme, accent)
+                with_accent = dict(out, tokens=dict(out["tokens"], ac=accent.lower(), on=themes_mod.text_on(accent)))
+                if themes_mod.validate(with_accent):
+                    note = "The accent chosen here is too faint to write with, so the file has the look's own accent."
+                else:
+                    out = with_accent
+            except ThemeError:
+                pass
+        return {"name": "nxlx-theme-%s.json" % out["id"], "file": out, "note": note}
 
     def set_theme(self, body, device, client):
         name, accent = body.get("name"), body.get("accent")
@@ -1319,7 +1409,7 @@ class Api:
         name = t.get("name") if isinstance(t, dict) else None
         theme = self.themes.get(name) if isinstance(name, str) else None
         if theme is None:
-            return self.themes["dark-stage"], None
+            return self.themes[themes_mod.FALLBACK], None
         return theme, t.get("accent")
 
     def theme_css(self):
@@ -2356,6 +2446,9 @@ class Api:
             ("POST", "/api/media/rename"): ("full", self.rename_media),
             ("POST", "/api/pads"): ("full", self.set_pad),
             ("POST", "/api/theme"): ("full", self.set_theme),
+            ("POST", "/api/theme/add"): ("full", self.add_theme),
+            ("POST", "/api/theme/remove"): ("full", self.remove_theme),
+            ("POST", "/api/theme/export"): ("full", self.export_theme),
             ("GET", "/api/devices"): ("full", self.devices),
             ("POST", "/api/devices/invite"): ("full", self.invite),
             ("POST", "/api/devices/revoke"): ("full", self.revoke),
