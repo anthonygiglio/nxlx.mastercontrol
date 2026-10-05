@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-05, end of day: everything merged, the hand-off for a new machine
+
+- Master and the test Pi 4 are at the merge of #88. Merged today: #83, #84, #85, #86, #87, #88. Only #65 (a reference) stays open.
+- HANDOFF.md has a new first section, "Read this first", because the development machine is moving from the Mac to an HP laptop (Windows with WSL). It lists what waits for the owner, the state of the Figma UI kit and what is still open.
+- Figma's connector refused all calls on the Starter plan after about 27 calls in the month, writes included, although Figma's page says writes are exempt. The owner chose a local bridge (`figma-console-mcp` and its Desktop Bridge plugin) to go on.
+- The Mac's 24 hour keep-awake ran out once during the day and was started again.
+
 ## 2026-10-05 (themes the owner can build and share: design tokens, add and save on the Look page, a converter for Figma)
 
 Pull request #88. **Not merged, and it must not be before an independent security review: it adds a route that takes a file (`POST /api/theme/add`) and puts added themes into the settings file.** Nothing here ran on the Pi or on a phone; the browser step ran in CI's Chromium only. The test Pi was not touched. Two other pull requests were open, #86 (flaky tests) and #87 (effects pick their working size). When the first report was written master had not moved, so there was nothing to merge; #87 landed afterwards and master was merged in then (conflicts only in the three log files, both sides kept; D58 is #87's). Then #86 merged and took D59, master was merged in again the same way, and this decision became D60.
