@@ -29,6 +29,8 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
   | Volume, clip speed | yes | a jump is heard or seen. The box remembers what was last set through it (the panel, OSC, a controller); before anything was set it takes the player's own start values, 100 percent and 1x |
   | Shader speed, shader brightness | yes | a jump to frozen or to black. For a shader of the category Performance the box keeps the speed at 1 or below unless "faster" is switched on; the fader then does nothing above a quarter of its way |
   | Shader control 1 to 8, shader colour turn | no | a jump is part of playing a shader, and a knob that waits feels broken |
+  | Effect amount | yes | a fader left at the bottom would take the effect out of the picture at the first touch, one left at the top would put it in full |
+  | Effect control 1 to 8 | no | as for a shader control |
   | Size, position, Vibes time | no | not in a standard layout's faders; they follow at once |
 
   Mappings you make on a recognised controller pick up the same way. Plain Learn mappings on a controller with no profile behave as before (no pickup).
@@ -50,11 +52,12 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 | Fader 4 | CC 3 | Shader speed (pickup) |
 | Fader 5 | CC 4 | Shader colour turn |
 | Fader 6 | CC 5 | Shader brightness (pickup) |
-| Fader 7, 8 | CC 6, 7 | Spare |
+| Fader 7 | CC 6 | Effect amount (pickup) |
+| Fader 8 | CC 7 | Spare |
 | S 1 to 8 | CC 32 to 39 | Pad 1 to 8 of the controllers' bank |
 | M 1 to 8 | CC 48 to 55 | Shader preset 1 to 8 |
 | R 1 to 4 | CC 64 to 67 | Room scene 1 to 4 (press twice) |
-| R 5 | CC 68 | Spare |
+| R 5 | CC 68 | Effect on / off |
 | R 6, R 7 | CC 69, 70 | Fade in, fade out |
 | R 8 | CC 71 | Blackout on / off (press twice) |
 | Track <, Track > | CC 58, 59 | Previous shader, next shader |
@@ -74,16 +77,17 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 | Knob A1 to A8 (top row) | CC 16, 20, 24, 28, 46, 50, 54, 58 | Shader control 1 to 8 |
 | Knob B1, B2, B3 (middle row) | CC 17, 21, 25 | Size, position X, Vibes: time each shader stays |
 | Knob B4 to B8 | CC 29, 47, 51, 55, 59 | Spare |
-| Knob C1 to C8 (bottom row) | CC 18, 22, 26, 30, 48, 52, 56, 60 | Spare |
+| Knob C1 to C8 (bottom row) | CC 18, 22, 26, 30, 48, 52, 56, 60 | Effect control 1 to 8 of the effect that is on |
 | Fader 1 to 6 | CC 19, 23, 27, 31, 49, 53 | As on the nanoKONTROL2: opacity, volume, clip speed, shader speed, colour turn, shader brightness |
-| Fader 7, 8, Master | CC 57, 61, 62 | Spare |
+| Fader 7 | CC 57 | Effect amount (pickup) |
+| Fader 8, Master | CC 61, 62 | Spare |
 | Mute 1 to 8 | Note 1, 4, 7, 10, 13, 16, 19, 22 | Pad 1 to 8 of the controllers' bank |
 | Rec Arm 1 to 8 | Note 3, 6, 9, 12, 15, 18, 21, 24 | Shader preset 1 to 8 |
 | Solo+Mute 1 to 8 | Note 2, 5, 8, 11, 14, 17, 20, 23 | Stop, Pause / resume, Vibes on / off, previous shader, next shader, fade in, fade out, blackout (press twice) |
 | Bank Left, Bank Right | Note 25, 26 | Controllers' bank: the one before, the next |
 | Solo | Note 27 | Spare (it is the shift for the row above) |
 
-Room scenes and the two Vibes sets are not on this layout (it has no free buttons); put one on a spare control from the card or the Room screen.
+Room scenes, the two Vibes sets, and the effect's on / off, previous and next are not on this layout (it has no free buttons); put one on a control from the card or the Room screen.
 
 ### Novation Launchpad Mini (`novation-launchpad-mini`)
 
@@ -95,7 +99,9 @@ The **original** Launchpad Mini, not the MK3 (which sends other numbers and has 
 | Grid rows 1 and 2, columns 1 to 6 | Notes 0 to 5, 16 to 21 | Bank A, pads 1 to 6 and 7 to 12 |
 | Grid rows 3 and 4, columns 1 to 6 | Notes 32 to 37, 48 to 53 | Bank B, pads 1 to 12 |
 | Grid rows 5 and 6, columns 1 to 6 | Notes 64 to 69, 80 to 85 | Bank C, pads 1 to 12 |
-| Grid rows 1 to 6, columns 7 and 8 | Notes 6, 7, 22, 23 ... 86, 87 | Spare |
+| Grid row 1, columns 7 and 8 | Notes 6, 7 | Effect on / off; spare |
+| Grid row 2, columns 7 and 8 | Notes 22, 23 | Previous effect, next effect |
+| Grid rows 3 to 6, columns 7 and 8 | Notes 38, 39, 54, 55, 70, 71, 86, 87 | Effect control 1 to 8, as a press (as in row 8 for a shader) |
 | Grid row 7 | Notes 96 to 103 | Shader preset 1 to 8 |
 | Grid row 8 | Notes 112 to 119 | Shader control 1 to 8, as a press (a switch toggles, a choice steps, an event fires, a number goes back to its own value) |
 | A to D (right) | Notes 8, 24, 40, 56 | Room scene 1 to 4 (press twice) |
@@ -109,7 +115,7 @@ A box that already had MIDI switched on behaves differently for these three cont
 
 - **Every control you never mapped now does something** (the tables above). Before, most did nothing.
 - **Learned opacity, volume, clip speed, shader speed and shader brightness on these three controllers now wait for pickup**: the fader does nothing until it reaches the value the box has.
-- **The built-in map no longer applies to them.** On the Launchpad Mini notes 36 to 71 used to be the built-in pads 1 to 36; now note 36 is bank B pad 5, notes 38 and 39 are spare, and so on by the grid; note 72 was the built-in Stop and is now "Vibes: start the set Ambient" (button E); notes 73 to 76 (pause, blackout, fade out, reset) are not on its grid. On the nanoKONTROL2 CC 20 to 23 were the built-in opacity, size, position and speed and are now knobs 5 to 8 (shader controls 5 to 8). On the MIDI Mix CC 20 to 25 change the same way.
+- **The built-in map no longer applies to them.** On the Launchpad Mini notes 36 to 71 used to be the built-in pads 1 to 36; now note 36 is bank B pad 5, notes 38 and 39 are effect controls 1 and 2, and so on by the grid; note 72 was the built-in Stop and is now "Vibes: start the set Ambient" (button E); notes 73 to 76 (pause, blackout, fade out, reset) are not on its grid. On the nanoKONTROL2 CC 20 to 23 were the built-in opacity, size, position and speed and are now knobs 5 to 8 (shader controls 5 to 8). On the MIDI Mix CC 20 to 25 change the same way.
 - To have the old behaviour back for one controller, switch its **Standard layout** off.
 
 ### The two-minute check, per controller
@@ -186,11 +192,17 @@ A mapping belongs to one controller (by its ALSA card id, such as `nanoKONTROL2`
 | Pad of the controllers' bank (`bank_pad`, with the pad 1 to 12) | trigger | Plays that pad of the bank the controllers are on |
 | Controllers' bank: the one before, the next (`bank_prev`, `bank_next`) | trigger | Steps that bank through A, B, C and round. It starts at A and is not saved; it is not the bank a phone shows |
 | Vibes: start the set Ambient, start the set Show (`vibes_ambient`, `vibes_show`) | trigger | Starts Vibes with that set, by its name; these are the two sets a box starts with. If the set was renamed or removed nothing happens and the log says so |
+| Effect amount (`effect_amount`) | level | The mix between the picture as it is (the bottom) and the filtered picture (the top) of the effect that is on ([SHADERS.md](SHADERS.md#effects)) |
+| Effect control 1 to 8 (`effect_control_1` ...) | follows the control | The n-th input of the effect that is on, exactly as a shader control does for a shader |
+| Effect on / off (`effect_toggle`) | trigger | Takes the effect off; with none on, puts the one that was on last back (the first of the list if there was none) |
+| Previous effect, Next effect (`effect_prev`, `effect_next`) | trigger | The neighbour in the list of effects, put on in place of the one that is on (the first or the last when none is) |
 | Nothing (`none`) | trigger | Does nothing: switches one control of a standard layout off |
 
 A fourth kind of action, **Apply a Room scene** (`scene`, a trigger that carries the scene's id), is assigned from the Room screen: under "Set up the room" each scene has a MIDI button that starts the same Learn. The mapping is then listed here like the others (as "scene"), and removed here. It needs the Room module; a scene removed later leaves a mapping that does nothing, and the log says so. See [ROOM.md](ROOM.md).
 
 The Vibes and shader actions are assigned with Learn like any other; they are not in the built-in map. They need the **Shaders and Vibes** module to be on: while it is off they do nothing, and the log says so once. They go through the same calls as the panel (`/api/shaders/values`, `/api/shaders/step`, `/api/shaders/preset`), as a presenter: every value is checked there, and a call only notes the wish and answers, so the thread that reads the controller never waits for the GPU. A knob sweep reaches the box at 20 changes a second and the GPU at five at most; the last position always lands. The MIDI page's action list offers all of them; the Shaders page teaches the three Vibes actions.
+
+The **effect** actions are the same in every way: they need the Shaders and Vibes module, go through the panel's own calls (`/api/effects`, `/api/effects/values`, `/api/effects/step`) as a presenter, and never wait for the GPU. They do nothing, and the log says why, while no effect can be put on: a generator shader or Vibes has the screen, or nothing with a picture is playing. The Effects card on Mix has a MIDI button beside the amount, beside each of the first eight inputs a knob can drive, and under Previous, On / Off and Next. **On the three shipped layouts the effect actions sit only on controls that were spare** (the tables above); no control that had an action was moved. None of them has been pressed on a real controller.
 
 A trigger fires once per press (a note-on, or a CC that goes from below 64 to 64 or more), not on release or repeat, and a button cannot fire again within a quarter of a second, so contact bounce cannot repeat it. Right after Learn captures a control, that control is ignored for about half a second so a fader you are still moving does not run its old mapping. A fader sweep is thinned to 20 changes a second and the last position always lands.
 
