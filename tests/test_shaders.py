@@ -1147,15 +1147,18 @@ class VibesTest(Base):
         self.assertIn("loud.fs", self.engine.vibes_ids())
 
     def test_each_round_varies_the_numbers_inside_min_and_max_and_shifts_the_palette(self):
+        # Two shaders stay in, and only aurora's rounds are read: a rotation of one no longer loads its shader again
+        # each round (it stays on without a dip; tests/test_shader_engine.py), so the second one is here on purpose.
         for sid in self.engine.vibes_ids():
-            if sid != "nxlx-aurora.fs":
+            if sid not in ("nxlx-aurora.fs", "nxlx-silk.fs"):
                 self.engine.api_set({"action": "vibes", "id": sid, "on": False}, None, "t")
         texts = []
         self.vibes.start()
-        for _ in range(25):
+        while len(texts) < 25:
             self.assertTrue(self.vibes.tick())
-            with open(self.player.source_shader) as f:
-                texts.append(f.read())
+            if self.vibes.current == "nxlx-aurora.fs":
+                with open(self.player.source_shader) as f:
+                    texts.append(f.read())
             self.now[0] += 180
         speeds = [float(re.search(r"const float speed = ([0-9.e-]+);", t).group(1)) for t in texts]
         self.assertTrue(all(0.2 <= v <= 2.0 for v in speeds), speeds)
@@ -1164,6 +1167,10 @@ class VibesTest(Base):
         self.assertGreater(len({re.search(r"/ 30\.0 \+ ([0-9.]+);", t).group(1) for t in texts}), 20)   # where time starts
         self.engine.api_set({"action": "config", "vary": False}, None, "t")
         self.assertTrue(self.vibes.tick())
+        if self.vibes.current != "nxlx-aurora.fs":
+            self.now[0] += 180
+            self.assertTrue(self.vibes.tick())
+        self.assertEqual(self.vibes.current, "nxlx-aurora.fs")
         with open(self.player.source_shader) as f:
             plain = f.read()
         self.assertIn("const float speed = 1.0;", plain)

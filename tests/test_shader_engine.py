@@ -863,6 +863,36 @@ class SetsTest(Live):
             self.now[0] += 4000
         return out
 
+    def test_a_set_of_one_shader_stays_on_without_a_dip_or_a_reload(self):
+        """On the Pi a set with one shader went dark for the Mix duration at every dwell and came back the same."""
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+        for vary in (False, True):
+            one = self.add("Solo %s" % vary, ["nxlx-silk.fs"], dwell=30, vary=vary)
+            self.vibes.api_vibes({"on": True, "set": one["id"]}, None, "t")
+            self.assertTrue(self.vibes.tick())
+            self.pump()
+            epoch, text, calls = self.player.source_epoch, self.text(), len(self.player.calls)
+            for n in range(3):
+                self.now[0] += 31
+                self.assertFalse(self.vibes.tick())                   # nothing was put on
+                self.assertEqual(self.vibes.due, self.now[0] + 30)    # and the next look is a dwell away
+                self.pump()
+            after = [c[0] for c in self.player.calls[calls:]]
+            self.assertNotIn("opacity", after)                        # no dip
+            self.assertNotIn("play_source", after)                    # not loaded again
+            self.assertEqual((self.player.source_epoch, self.vibes.current, self.vibes.running), (epoch, "nxlx-silk.fs", True))
+            self.assertEqual(self.vibes.status()["rounds"], 4)
+            if vary:                                                  # its numbers still move, through the live change
+                self.assertIn("swap_source", after)
+                self.assertNotEqual(self.text(), text)
+            else:
+                self.assertEqual((after, self.text()), ([], text))
+            self.vibes.stop()
+        two = self.add("Pair", ["nxlx-silk.fs", "nxlx-ember.fs"], dwell=30, vary=False, order="listed")      # two members: the usual change
+        self.vibes.api_vibes({"on": True, "set": two["id"]}, None, "t")
+        self.assertEqual(self.rounds(3), ["nxlx-silk.fs", "nxlx-ember.fs", "nxlx-silk.fs"])
+        self.vibes.stop()
+
     def test_the_first_set_is_there_without_anything_saved(self):
         st = self.engine.state()
         self.assertEqual([(e["id"], e["name"], e["dwell"], e["vary"], e["order"], len(e["shaders"])) for e in st["sets"]], [("00000000", "Ambient", 180, True, "shuffle", IN_VIBES), ("00000001", "Show", 180, True, "shuffle", len(PERFORMANCE))])
@@ -1299,11 +1329,18 @@ class GuardTest(Live):
 
     def test_variation_leaves_alone_what_changes_the_work_and_drops_the_palette_turn_when_frames_drop(self):
         self.engine.upload("all.fs", ALL)
-        show = self.engine.api_set({"action": "set", "op": "add", "name": "One", "shaders": ["all.fs"]}, None, "t")["sets"][-1]
+        # Two members, and only all.fs is looked at: a set of one no longer comes on again each round (it stays on,
+        # see test_a_set_of_one_shader_stays_on_without_a_dip_or_a_reload), so this set got a second shader on purpose.
+        show = self.engine.api_set({"action": "set", "op": "add", "name": "One", "order": "listed", "shaders": ["all.fs", "nxlx-silk.fs"]}, None, "t")["sets"][-1]
         self.vibes.start(show["id"])
         steps, levels, hues = set(), set(), []
-        for n in range(12):
+        n = -1
+        while n < 11:
             self.assertTrue(self.vibes.tick())
+            if self.vibes.current != "all.fs":
+                self.now[0] += 200
+                continue
+            n += 1
             steps.add(self.engine.playing["values"].get("steps", 3.0))
             levels.add(self.engine.playing["values"]["level"])
             hues.append(self.engine.playing["hue"])
