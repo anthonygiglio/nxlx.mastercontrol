@@ -4,7 +4,8 @@
 
 Prints one JSON line {"port": ..., "pin": ..., "projector_ports": [...]} once it is listening. The projector ports
 are two fake PJLink projectors on loopback (the one from tests/test_projector.py, written from the standard):
-the first is switched on, has the password "secret1" and a filter warning; the second is in standby. Loopback is
+the first is switched on, has the password "secret1" and a filter warning; the second is in standby; a third (on)
+and a fourth (in standby) stay in cooling down and warming up once switched. Loopback is
 allowed as a projector address in this harness only, so the browser test never contacts a device on the network.
 """
 import json
@@ -58,6 +59,10 @@ from tests.test_projector import FakeProjector  # noqa: E402
 projector.PRIVATE = projector.PRIVATE + [ipaddress.ip_network("127.0.0.0/8")]
 _fakes = [FakeProjector("secret1"), FakeProjector(slow=True, lamps=(310, 295))]
 _fakes[0].power, _fakes[0].errors = "1", "000010"
+# Two more, for the pictures and checks of every power state (tests/ui/signal-pages.js): both slow, so the third,
+# switched off, stays "cooling down" and the fourth, switched on, stays "warming up". Nothing uses them otherwise.
+_fakes += [FakeProjector(slow=True, lamps=(2210,)), FakeProjector(slow=True, lamps=(48,))]
+_fakes[2].power = "1"
 
 # Two fake MIDI controllers, pipes in place of device files: a Korg nanoKONTROL2 (a controller with a shipped profile)
 # and "keys" (one without). They are "plugged in" while the file <midi_dir>/plug exists, and every line of hex bytes
