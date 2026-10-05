@@ -2222,7 +2222,7 @@ function startServer() {
       await page.waitForSelector('nav >> text=Room');
       await page.click('nav >> text=Room');
       await page.waitForSelector('#roomscreen #roomambdetail:visible', { timeout: 15000 });
-      assert.strictEqual(await page.textContent('#roomambdetailwords'), 'Picture detail ' + above + ' is high for this box.');
+      assert.strictEqual(await page.textContent('#roomambdetailwords'), 'Picture detail ' + above + ' is high here.');
       assert.strictEqual(await page.textContent('#roomambuse'), 'Use ' + usual);
       {
         const one = await page.evaluate(() => { const w = document.getElementById('roomambdetailwords'), b = document.getElementById('roomambuse').getBoundingClientRect(), r = w.getBoundingClientRect();
