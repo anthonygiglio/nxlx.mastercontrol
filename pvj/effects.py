@@ -339,8 +339,11 @@ class Effects(S.Engine):
         return bool(self._live().config().get("faster", False))
 
     # -- the library --
+    def read(self, data):
+        return S.parse(data, S.FILTER)
+
     def check_upload(self, data):
-        parsed = S.parse(data, S.FILTER)
+        parsed = self.read(data)
         translate(parsed)
         e = estimate(parsed)
         if e["reads"] > MAX_READS:

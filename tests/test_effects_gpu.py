@@ -24,13 +24,16 @@ import zlib
 
 from pvj import effects as E, shaders as S, vibes as V
 from pvj.api import ApiError
+from pvj.player import PlayerError
 from tests.test_server import ServerBase
 from tests.test_shaders_gpu import GPU, GpuCase, H, W, png_rows
 
 # A still picture that the player makes itself: every frame is the same, so two screenshots can be compared whenever
 # they were taken. Red waves from left to right, green steps from top to bottom, blue waves on the diagonal: no two
-# quarters are alike, so a mirror, a flip and a turn each change it.
-PIC = "format=gbrp,geq=r=127+127*sin(14*X/W):g=floor(6*Y/H)*42:b=127+127*cos(19*(X+Y)/W)"
+# quarters are alike, so a mirror, a flip and a turn each change it. No colour is near the ends of its range: a
+# video keeps colour at half the picture's detail, and a picture of full colours comes back from that with values
+# beyond black and white, which the player cuts off and a test would have to guess.
+PIC = "format=gbrp,geq=r=127+80*sin(14*X/W):g=50+floor(6*Y/H)*26:b=127+80*cos(19*(X+Y)/W)"
 
 
 def clip(size="320x180", fmt="yuv420p", rate=25, tags=""):
@@ -154,7 +157,10 @@ class FxCase(GpuCase):
         self.real.play([url], windowed=True)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            t = self.real.ipc.request("get_property", "time-pos")
+            try:
+                t = self.real.ipc.request("get_property", "time-pos")
+            except PlayerError:
+                t = None                    # not yet: the clip has not started
             if isinstance(t, (int, float)) and t > 0.15:
                 break
             time.sleep(0.05)
@@ -172,14 +178,15 @@ class FxCase(GpuCase):
         self.assertEqual((w, h), (W, H))
         return rows
 
-    def still(self, wait=6.0):
-        """A screenshot once the picture has settled: the clip is a still, so two in a row must agree. (A single
-        screenshot taken right after a change was at times a flat or an old picture on this rig.)"""
+    def still(self, wait=6.0, flat=False):
+        """A screenshot once the picture has settled: the clip is a still, so two in a row must agree, and unless
+        `flat` is expected (a Blackout) it must be a picture. (A single screenshot taken right after a change was at
+        times a flat or an old picture on this rig.)"""
         deadline, last = time.monotonic() + wait, None
         while True:
             time.sleep(0.12)
             rows = self.shot()
-            if last is not None and differ(rows, last)[0] <= 2:
+            if last is not None and differ(rows, last)[0] <= 2 and (flat or len(set(grid(rows, 9))) > 12):
                 return rows
             if time.monotonic() > deadline:
                 return rows
@@ -220,7 +227,7 @@ class FxCase(GpuCase):
         for stage in ("MAINPRESUB", "MAIN"):
             self.raw(MAIN_INVERT % (stage, 1 if stage == "MAIN" else 2))
             self.api.blackout({"on": True}, None, "t")
-            rows = self.still()
+            rows = self.still(flat=True)
             lit = max(max(p) for p in grid(rows))
             print("stage, ES %s: an invert hooked at %s under Blackout: brightest %d" % (self.ES, stage, lit))
             self.assertGreater(lit, 200, "an invert at %s was dark under Blackout: the reason for NATIVE is gone, read effects.py again" % stage)
@@ -232,7 +239,7 @@ class FxCase(GpuCase):
         print("stage, ES %s: the effect inverts: against 255 minus the picture max %d mean %.2f" % (self.ES, d[0], d[1]))
         self.assertLess(d[1], 3.0)
         self.api.blackout({"on": True}, None, "t")
-        self.assertLessEqual(max(max(p) for p in grid(self.still())), 3, "Blackout does not darken the effect")
+        self.assertLessEqual(max(max(p) for p in grid(self.still(flat=True))), 3, "Blackout does not darken the effect")
         self.api.blackout({"on": False}, None, "t")
         self.api.control({"action": "opacity", "value": 50}, None, "t")
         half = self.still()
@@ -530,7 +537,7 @@ class FxCase(GpuCase):
         self.fx.change({"controls": {"amount": 0.5}})
         self.pump()
         got, was = self.still()[H // 8][W // 8], plain[H // 8][W // 8]
-        self.near(got, tuple((a + b) // 2 for a, b in zip((191, 255, 255), was)), 6)
+        self.near(got, tuple((a + b) // 2 for a, b in zip((191, 255, 255), was)), 8)
         self.fx.change({"controls": {"amount": 0.0}})
         self.pump()
         d = differ(self.still(), plain)

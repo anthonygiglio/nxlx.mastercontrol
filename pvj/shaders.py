@@ -859,7 +859,7 @@ class Engine:
             if hit is None or hit[0] != (st.st_mtime_ns, st.st_size):
                 data = self._read(path)
                 try:
-                    result = (parse(data, self.KIND), hashlib.sha256(data).hexdigest())
+                    result = (self.read(data), hashlib.sha256(data).hexdigest())
                 except ShaderError as e:
                     result = e
                 except Exception as e:      # one file that trips the parser must not take the whole list down
@@ -1256,9 +1256,13 @@ class Engine:
                     pass
         return {"name": name, "size": len(data)}
 
+    def read(self, data):
+        """A file's text, parsed as the kind this library holds."""
+        return parse(data)
+
     def check_upload(self, data):
         """Raise ShaderError unless this file's text can be shown."""
-        translate(parse(data, self.KIND), (1280, 720))
+        translate(self.read(data), (1280, 720))
 
     def delete(self, sid):
         path, source = self._path(sid)
