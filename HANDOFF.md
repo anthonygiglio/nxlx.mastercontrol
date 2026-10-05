@@ -57,7 +57,9 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 
 - Every number is from a 75 Hz monitor at 2560x1440, where 30 pictures a second fit badly. A 60 Hz or a 1080p projector may behave differently: measure there before trusting the classes.
 - Three shaders sit at the line between two classes: nxlx-radar, nxlx-scope and isf-simplex-noise. Their class may flip on another screen or another run.
-- The test box still has 720 lines saved from the first version; the Shaders page now says so and offers 540 (see the journal entry for #80).
+- The test box still has 720 lines saved from the first version; the Shaders page (and, for the owner, the Room screen) now says so and offers 540 (#80). Nobody has pressed it on the box.
+- "Cannot load libcuda.so.1" is still logged at each clip start. It was left alone on purpose: read `hwdec-current` on the Pi while an H.264 clip plays and find how the line reaches the journal, then name that decoder in `playback_profile` (the journal entry for #80, item 5).
+- Changed after the run and not yet on the box (#80): the guard judges the average drop rate over its window (lantern at 720 lines should now be marked), a set of one shader stays on without a dip, a heavy mark keeps whole lines, old shader texts are removed at start and on Stop, and the panel has an icon. Each is tested with fakes only: run Vibes on Ambient at 720 lines and watch for lantern, and a set of one for a dwell.
 - Its shader settings are saved in the engine's form with both sets written out, so a later change of the default sets will not reach it by itself.
 - The raw data of the second run is in `/tmp/nxlx-measure.FCbYZw` on the Mac (about 35 MB), which macOS will empty in time: move it if it is wanted. The first run's is in `~/nxlx-shader-measure-2026-10-04`.
 
