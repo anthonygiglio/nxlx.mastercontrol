@@ -2535,12 +2535,13 @@ function startServer() {
         await post('/api/projector', { id: 'all', action: 'identify' });          // (an edit of a projector's address drops what it said it is; read it again)
         await page.waitForFunction(() => fetch('/api/projectors').then((r) => r.json()).then((d) => d.projectors.length > 0 && d.projectors.slice(0, 2).every((p) => p.inputs.length > 0)), null, { timeout: 25000, polling: 1000 }).catch(() => {});   // each projector has said which inputs it has
         const ps = ((await get('/api/projectors')).projectors || []).slice(0, 2);
-        const have = ((await get('/api/room')).groups || []).map((g) => g.name);
+        const have = (await get('/api/room')).groups || [];
         for (let i = 0; i < ps.length; i++) {
           const codes = (ps[i].inputs || []).map((x) => x.code).slice(0, 2);
           for (let k = 0; k < codes.length; k++) await post('/api/projectors', { label: { id: ps[i].id, input: codes[k], label: ['Laptop', 'Console'][k] } });
           const wall = ['Main wall', 'Painting wall'][i];
-          if (!have.includes(wall)) await post('/api/room', { group: { name: wall, projectors: [ps[i].id] } });
+          const old = have.filter((g) => g.name === wall)[0];      // a group an earlier step left is given this projector
+          await post('/api/room', { group: old ? { id: old.id, name: wall, projectors: [ps[i].id] } : { name: wall, projectors: [ps[i].id] } });
         }
         await page.goto(base + '/');
         await page.waitForSelector('nav.tabs');
@@ -2557,7 +2558,9 @@ function startServer() {
       const onRoom = await page.evaluate(() => ({ named: Array.prototype.filter.call(document.querySelectorAll('.room-group'), (g) => /wall/.test(g.textContent)).length,
         sources: document.querySelectorAll('.room-source').length, results: document.querySelectorAll('.room-result').length,
         labelled: Array.prototype.some.call(document.querySelectorAll('.room-source'), (b) => /Laptop|Console/.test(b.textContent)) }));
-      if (onRoom.named < 2 || !onRoom.sources || !onRoom.results || !onRoom.labelled) signalBad.push('Signal, Room: the screen that was checked did not have two named groups, labelled source buttons and a result line: ' + JSON.stringify(onRoom));
+      if (onRoom.named < 2 || !onRoom.sources || !onRoom.results || !onRoom.labelled) signalBad.push('Signal, Room: the screen that was checked did not have two named groups, labelled source buttons and a result line: ' + JSON.stringify(onRoom)
+        + ' projectors: ' + JSON.stringify(((await get('/api/projectors')).projectors || []).map((x) => [x.name, x.inputs.length, x.status && x.status.power]))
+        + ' groups: ' + JSON.stringify(((await get('/api/room')).groups || []).map((g) => [g.name, g.projectors.length, g.inputs && g.inputs.length, g.state])));
       await signalChecks('Room', 'room', { room: true });
       await page.keyboard.press('Tab');
       const ring = await page.evaluate(() => { const cs = getComputedStyle(document.activeElement); return [document.activeElement.tagName, cs.outlineStyle, cs.outlineWidth, cs.outlineColor]; });
