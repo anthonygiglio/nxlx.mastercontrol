@@ -91,7 +91,7 @@
       if (r[1].ok) S.banks = r[1].data.banks;
       if (r[2].ok) { S.media = r[2].data.files; S.mediaInfo = r[2].data; }
       if (r[3].ok) S.modules = r[3].data.modules;
-      if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; }
+      if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; markLook(); }
       if (r[5] && r[5].ok) S.devices = r[5].data.devices;
     });
   }
@@ -1384,6 +1384,7 @@
     var old = app.querySelector('.shell > .screen');
     var roomTab = !!app.querySelector('nav.tabs.many');       // the Room module was just switched: the tabs change too
     if (!old || !S.device || S.tab !== 'system' || roomTab !== (!!window.pvjRoom && moduleOn('room'))) return render();
+    markArea();
     stopTimers();
     keepNetForm();
     keepSyncForm();
@@ -2026,6 +2027,7 @@
         }
         var grid = h('div', { class: 'ctlgrid', role: 'group', 'aria-label': 'The controls of ' + c.profile.name });
         grid.style.gridTemplateColumns = 'repeat(' + c.profile.cols + ', minmax(58px, 1fr))';
+        grid.style.setProperty('--cols', String(c.profile.cols));       // for a style that gives the cells another width (D54)
         var open = null;
         c.controls.forEach(function (x) {
           var chosen = !!midiSel && midiSel.ctl === c.name && midiSel.id === x.id;
@@ -3467,27 +3469,60 @@
     });
     return card;
   }
+  // A theme may name a style (D54): one of the few looks app.css has a block for. The name goes on the root element,
+  // where the server also writes it into the page, and only a name from this list is ever put there; anything else
+  // gives the default look. With a style that has a colour per area, the root also says which area is open.
+  var STYLES = ['signal'];
+  function chosenTheme() { return S.themes.filter(function (x) { return S.theme && x.id === S.theme.name; })[0] || null; }
+  function markLook() {
+    var root = document.documentElement, th = chosenTheme();
+    if (!S.themes.length) return;                 // not read yet (the connect screen): what the server wrote stays
+    var style = th && STYLES.indexOf(th.style) >= 0 ? th.style : null;
+    if (style) root.setAttribute('data-style', style); else root.removeAttribute('data-style');
+  }
+  // A style that draws a slider itself needs to know how full it is: --fill on each slider, from its value. Set
+  // through the script (the policy allows that, not a style attribute), on every input and four times a second,
+  // because most sliders here are also moved by the box (a poll, a controller). The default look does nothing.
+  function fillRanges() {
+    if (!document.documentElement.hasAttribute('data-style')) return;
+    var rs = document.querySelectorAll('input[type=range]');
+    for (var i = 0; i < rs.length; i++) {
+      var r = rs[i], min = r.min === '' ? 0 : parseFloat(r.min), max = r.max === '' ? 100 : parseFloat(r.max), v = parseFloat(r.value);
+      var part = max > min && isFinite(v) ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
+      var fill = (Math.round(part * 1000) / 10) + '%';
+      if (r.getAttribute('data-fill') !== fill) { r.setAttribute('data-fill', fill); r.style.setProperty('--fill', fill); }
+    }
+  }
+  function markArea() {
+    var area = !S.device ? null : S.tab === 'room' ? 'room' : S.tab === 'mix' ? 'mix' : S.tab === 'system' ? (S.sys === 'vibes' ? 'shaders' : 'system') : 'clips';
+    if (area) document.documentElement.setAttribute('data-area', area); else document.documentElement.removeAttribute('data-area');
+  }
   function appearanceCard() {
     var t = S.theme || {};
     var apply = function (name, accent) {
       act('POST', '/api/theme', { name: name, accent: accent }, function (d) {
         S.theme = d.theme;
         document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now());
+        markLook();
         render();
+        fillRanges();
       });
     };
+    var now = chosenTheme();
     return h('div', { class: 'card' }, h('h2', { text: 'Appearance' }),
-      h('div', { class: 'row wrap' }, S.themes.map(function (th) {
-        return h('button', { class: 'btn small' + (th.id === t.name ? ' on' : ''), text: th.name, onclick: function () { apply(th.id, t.accent); } });
+      h('div', { class: 'row wrap', id: 'lookthemes' }, S.themes.map(function (th) {
+        return h('button', { class: 'btn small' + (th.id === t.name ? ' on' : ''), text: th.name, 'data-theme': th.id, 'aria-pressed': th.id === t.name ? 'true' : 'false',
+          onclick: function () { apply(th.id, t.accent); } });
       })),
-      h('div', { class: 'k', text: 'Accent' }),
-      h('div', { class: 'swatches' },
-        h('button', { class: 'btn small', text: 'Default', onclick: function () { apply(t.name, null); } }),
-        ACCENTS.map(function (c) {
-          var sw = h('button', { class: 'swatch' + (t.accent === c ? ' cur' : ''), 'aria-label': 'Accent ' + c, onclick: function () { apply(t.name, c); } });
-          sw.style.background = c;
-          return sw;
-        })));
+      now && now.areas ? h('div', { class: 'hint', id: 'lookareas', text: now.name + ' gives each part of the panel its own colour (Room, Shaders, clips, Mix, System), so there is no accent to choose.' }) : [
+        h('div', { class: 'k', text: 'Accent' }),
+        h('div', { class: 'swatches' },
+          h('button', { class: 'btn small', text: 'Default', onclick: function () { apply(t.name, null); } }),
+          ACCENTS.map(function (c) {
+            var sw = h('button', { class: 'swatch' + (t.accent === c ? ' cur' : ''), 'aria-label': 'Accent ' + c, onclick: function () { apply(t.name, c); } });
+            sw.style.background = c;
+            return sw;
+          }))]);
   }
   var accessForm = { pin: false, view: true, live: false, seconds: 300, minutes: 60 };  // survives redraws
   var accessTimer = null;
@@ -3691,6 +3726,7 @@
     [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
   }
   function render() {
+    markArea();
     stopTimers();
     keepNetForm();
     keepSyncForm();
@@ -3707,7 +3743,8 @@
       names.unshift(['room', 'Room']);
       if (landing && !can('full')) S.tab = 'room';
     } else if (S.tab === 'room') S.tab = 'live';
-    var tabs = h('nav', { class: 'tabs' + (names.length > 4 ? ' many' : ''), 'aria-label': 'Sections' }, names.map(function (t) {
+    markArea();        // again: the tab may just have been decided
+    var tabs =h('nav', { class: 'tabs' + (names.length > 4 ? ' many' : ''), 'aria-label': 'Sections' }, names.map(function (t) {
       return h('button', { class: 'btn' + (S.tab === t[0] ? ' on' : ''), text: t[1], 'aria-current': S.tab === t[0] ? 'page' : false,
         onclick: function () { goTab(t[0]); } });
     }));
@@ -3739,6 +3776,8 @@
       return api('GET', '/api/hello').then(function (h2) { S.remote = !!(h2.ok && h2.data.remote); render(); });
     });
     setInterval(poll, 1000);
+    document.addEventListener('input', function (e) { if (e.target && e.target.type === 'range') fillRanges(); }, true);
+    setInterval(fillRanges, 250);
   }
   boot();
 })();

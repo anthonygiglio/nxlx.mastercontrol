@@ -43,6 +43,12 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(update.inspect_bundle(work)["version"], version())
         self.assertFalse(os.path.exists(os.path.join(work, "backend.php")), "legacy code must not ship")
         self.assertFalse(os.path.exists(os.path.join(work, "sync")))
+        # the Signal look's fonts and their licence texts ship, byte for byte: a box at a venue has no internet
+        fonts = os.path.join(work, "pvj", "web", "fonts")
+        self.assertEqual(sorted(os.listdir(fonts)), ["OFL-Archivo.txt", "OFL-JetBrainsMono.txt", "archivo-latin.06fa7831.woff2", "jetbrains-mono-500-latin.6c95bc2f.woff2"])
+        for name in os.listdir(fonts):
+            with open(os.path.join(fonts, name), "rb") as shipped, open(os.path.join(REPO, "pvj", "web", "fonts", name), "rb") as ours:
+                self.assertEqual(shipped.read(), ours.read(), name)
 
     def test_wrong_or_missing_version_refused(self):
         self.assertNotEqual(build("9.9.9").returncode, 0)

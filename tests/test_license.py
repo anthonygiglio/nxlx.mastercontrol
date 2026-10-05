@@ -45,6 +45,15 @@ def matches(path, pattern):
     return re.fullmatch(rx, path) is not None
 
 
+FONTS = "pvj/web/fonts/"
+# The two fonts as built from github.com/google/fonts at commit 9710da1e (THIRD_PARTY_LICENSES.md says how), and each
+# family's OFL.txt as fetched there on 2026-10-04.
+FONT_SUMS = {"archivo-latin.06fa7831.woff2": "06fa7831060c673ef6e553b846635fb1e7eaf558e717ddfeb7c0a24fd9280529",
+             "jetbrains-mono-500-latin.6c95bc2f.woff2": "6c95bc2faff7653603df02e7dca2fef5341d7ba49ebe8c952907f8ded2c0eb20",
+             "OFL-Archivo.txt": "108b4e57c9c796d3d38d0428ca7ee39de47ad93187302718d9b2d8864b9b716b",
+             "OFL-JetBrainsMono.txt": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"}
+OFL_SHA256 = "8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd"      # SPDX's text of OFL-1.1 (license-list-data)
+
 ISF_PACK = "pvj/shaders.d/isf-files/"
 ISF_LICENSE_SHA256 = "83e4dd21429a91fb7cea67a476032a9641425e5355df2e0f589a738b6ec9fd2c"      # upstream's LICENSE, as cloned
 # github.com/ashima/webgl-noise LICENSE, as fetched on 2026-10-04: the notice for the simplex noise in two of the files
@@ -202,6 +211,36 @@ class LicenseTest(unittest.TestCase):
         for p in own:                                                              # and no file of ours claims to be upstream's
             with open(os.path.join(REPO, p)) as f:
                 self.assertIn("SPDX-License-Identifier: Apache-2.0", f.read(), p)
+
+    def test_the_fonts_keep_their_own_licence_and_are_declared(self):
+        """Archivo and JetBrains Mono (SIL OFL 1.1) are somebody else's work: never labelled Apache-2.0, each with its
+        own OFL.txt beside it (a release holds only pvj/, bin/ and install/), pinned by checksum and in the inventory."""
+        files = sorted(p for p in tracked() if p.startswith(FONTS))
+        self.assertEqual(files, sorted(FONTS + n for n in FONT_SUMS))
+        with open(os.path.join(REPO, "THIRD_PARTY_LICENSES.md")) as f:
+            inventory = f.read()
+        for name, digest in FONT_SUMS.items():
+            with open(os.path.join(REPO, FONTS, name), "rb") as f:
+                data = f.read()
+            self.assertEqual(hashlib.sha256(data).hexdigest(), digest, name)
+            self.assertIn("`%s`" % name, inventory, name)
+            self.assertIn(digest, inventory, name)
+            licences = [(licence, who) for licence, patterns, who in annotations(holders=True) if any(matches(FONTS + name, p) for p in patterns)]
+            self.assertEqual([licence for licence, _ in licences], ["OFL-1.1"], name)
+            self.assertIn("JetBrains Mono Project Authors" if "jetbrains" in name.lower() else "Archivo Project Authors", licences[0][1], name)
+            if name.endswith(".txt"):
+                self.assertIn(b"SIL OPEN FONT LICENSE Version 1.1", data, name)
+                self.assertNotIn(b"with Reserved Font Name", data, name)      # a subset may keep the family's name
+            else:
+                self.assertEqual(data[:4], b"wOF2", name)
+                # the name holds the first eight digits of the checksum: fonts may be kept by a browser for a day, so
+                # a font that changes must change its name (and a test must notice a file replaced under an old name)
+                self.assertEqual(name.split(".")[-2], digest[:8], name)
+        self.assertIn("https://github.com/google/fonts", inventory)
+        self.assertIn("9710da1eacb3be272583c3224dcb70f9da6eadbb", inventory)
+        self.assertIn("Modified Versions", inventory)
+        with open(os.path.join(REPO, "LICENSES", "OFL-1.1.txt"), "rb") as f:
+            self.assertEqual(hashlib.sha256(f.read()).hexdigest(), OFL_SHA256)
 
     def test_no_compiled_or_cache_files_are_tracked(self):
         junk = [p for p in tracked() if "__pycache__" in p or p.endswith((".pyc", ".DS_Store"))

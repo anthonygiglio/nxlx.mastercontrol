@@ -125,25 +125,27 @@ canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2
 .ctlwrap { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .ctlscroll { overflow-x: auto; max-width: 100%; padding-bottom: 4px; }
 .ctlgrid { display: grid; gap: 4px; grid-auto-rows: minmax(44px, auto); }
-.ctl { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; min-height: 44px; padding: 3px 4px; border: 1.5px solid var(--ln); border-radius: 6px; background: var(--cd); color: inherit; font: inherit; font-size: 11px; line-height: 1.2; text-align: center; cursor: pointer; overflow: hidden; }
-.ctl-fader { min-height: 88px; }
-.ctl-knob { border-radius: 22px; }
-.ctl .ctlname { color: var(--mu); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ctl .ctlwhat { font-weight: 600; overflow-wrap: anywhere; }
-.ctl .ctlval { color: var(--mu); font-size: 10px; }
-.ctl.spare .ctlwhat { font-weight: 400; color: var(--mu); }
-.ctl.mine { border-style: dashed; border-color: var(--ac); }
-.ctl.wait { border-style: dotted; border-color: var(--ac); }
-.ctl.sel { box-shadow: inset 0 0 0 2px var(--ac); }
-.ctl.lit { background: var(--ac); border-color: var(--ac); color: var(--on); }
-.ctl.lit .ctlname, .ctl.lit .ctlwhat, .ctl.lit .ctlval { color: var(--on); }
-.ctl:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+/* (a cell here and a shader's control further down both have the class ctl; each set of rules names its own:
+   a cell is inside .ctlgrid, a shader's control is a div. The cell's padding and top rule are what it always drew.) */
+.ctlgrid .ctl { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; min-height: 44px; padding: 8px 0; border: 1.5px solid var(--ln); border-radius: 6px; background: var(--cd); color: inherit; font: inherit; font-size: 11px; line-height: 1.2; text-align: center; cursor: pointer; overflow: hidden; border-top-width: 1px; }
+.ctlgrid .ctl-fader { min-height: 88px; }
+.ctlgrid .ctl-knob { border-radius: 22px; }
+.ctlgrid .ctl .ctlname { color: var(--mu); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctlgrid .ctl .ctlwhat { font-weight: 600; overflow-wrap: anywhere; }
+.ctlgrid .ctl .ctlval { color: var(--mu); font-size: 10px; }
+.ctlgrid .ctl.spare .ctlwhat { font-weight: 400; color: var(--mu); }
+.ctlgrid .ctl.mine { border-style: dashed; border-color: var(--ac); }
+.ctlgrid .ctl.wait { border-style: dotted; border-color: var(--ac); }
+.ctlgrid .ctl.sel { box-shadow: inset 0 0 0 2px var(--ac); }
+.ctlgrid .ctl.lit { background: var(--ac); border-color: var(--ac); color: var(--on); }
+.ctlgrid .ctl.lit .ctlname, .ctlgrid .ctl.lit .ctlwhat, .ctlgrid .ctl.lit .ctlval { color: var(--on); }
+.ctlgrid .ctl:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 /* a control with a light on the controller itself: a small ring, filled while the box has that light on */
-.ctl.haslight { position: relative; }
-.ctl.haslight::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--mu); box-sizing: border-box; }
-.ctl.haslight[data-lit="on"]::after { background: var(--mu); }
-.ctl.haslight[data-lit="active"]::after, .ctl.haslight[data-lit="busy"]::after { background: var(--ac); border-color: var(--ac); }
-.ctl.lit.haslight::after { border-color: var(--on); }
+.ctlgrid .ctl.haslight { position: relative; }
+.ctlgrid .ctl.haslight::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--mu); box-sizing: border-box; }
+.ctlgrid .ctl.haslight[data-lit="on"]::after { background: var(--mu); }
+.ctlgrid .ctl.haslight[data-lit="active"]::after, .ctlgrid .ctl.haslight[data-lit="busy"]::after { background: var(--ac); border-color: var(--ac); }
+.ctlgrid .ctl.lit.haslight::after { border-color: var(--on); }
 .ctldetail { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--ln); padding-top: 8px; }
 button.linkish { background: none; border: 0; padding: 4px 0; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 /* Remote support: impossible to miss while a session is open */
@@ -255,8 +257,8 @@ details.fold { display: block; }
 .load-heavy > span:last-child { color: var(--ac); }
 /* Controls, drawn by type. Each is a block: its name and value, then the thing to move with its buttons beside it. */
 .ctls { display: flex; flex-direction: column; }
-.ctl { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--ln); min-width: 0; }
-.ctls > .ctl:first-child { border-top: 0; }
+div.ctl { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--ln); min-width: 0; }
+.ctls > div.ctl:first-child { border-top: 0; }
 .ctlhead { display: flex; align-items: baseline; gap: 8px; font-weight: 600; font-size: 14px; min-width: 0; }
 .ctllabel { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-weight: 600; font-size: 14px; }
 .ctlnote { font-size: 13px; font-weight: 600; min-width: 0.8em; overflow-wrap: anywhere; }
@@ -291,7 +293,7 @@ details.fold { display: block; }
   background-image: linear-gradient(var(--ln), var(--ln)), linear-gradient(var(--ln), var(--ln)); background-size: 1px 100%, 100% 1px; background-position: center; background-repeat: no-repeat; }
 .xypad:focus-visible { outline: 3px solid var(--ac); outline-offset: 2px; }
 .xydot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--ac); border: 2px solid var(--on); pointer-events: none; }
-.ctl.compact { padding: 4px 0; }
+div.ctl.compact { padding: 4px 0; }
 .ctl.compact .xypad { max-width: 140px; }
 /* Presets: a row of buttons; the one in use is filled, the one that was changed since is outlined */
 .presetrow { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -448,4 +450,277 @@ table.chan .lvl { width: 36%; }
 @media (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 @media (min-width: 900px) {
   #devicelist, #midimaplist { max-height: calc(100dvh - 420px); min-height: 180px; overflow-y: auto; padding-right: 8px; }
+}
+
+/* ==== STYLE: signal ==================================================================================================
+   Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
+   element carries data-style="signal", which the server writes for a theme that names that style. The look above is
+   untouched: no rule here matches without the attribute, and the two font files are fetched only when a rule that
+   applies names them. A test (test_modules_themes) reads this block and refuses a selector that is not scoped.
+   Source: the Figma file's direction "D. Signal" (the values are in pvj/THEMES.md). The rules: square corners, 3 px
+   rules, flat fills; capitals in Archivo Black for titles, names and buttons; numbers in JetBrains Mono; one colour
+   per area (data-area on the root: room, shaders, clips, mix, system), which this block puts in --ac and --on, so
+   every rule above that uses the accent follows the area. --ink is that colour where it reads as a thin line or as
+   text on the page, else the text colour (a yellow ring on an off-white page is lost); --err is an error line's
+   colour. A state never borrows the area colour: Off, Set up, Active and Problem each have their own, with the word.
+   Keep additions inside this block, and every selector under the scope. */
+@font-face { font-family: "Archivo"; src: url(/fonts/archivo-latin.06fa7831.woff2) format("woff2"); font-weight: 400 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url(/fonts/jetbrains-mono-500-latin.6c95bc2f.woff2) format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+html[data-style="signal"] {
+  --sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ink: var(--fg); --err: var(--st-error, var(--fg)); --rule: 3px;
+}
+html[data-style="signal"][data-area="room"] { --ac: var(--ar-room, #ffd60a); --on: var(--ar-room-on, #0b0b0d); --ink: var(--ar-room-ink, var(--fg)); }
+html[data-style="signal"][data-area="shaders"] { --ac: var(--ar-shaders, #ff4fa3); --on: var(--ar-shaders-on, #0b0b0d); --ink: var(--ar-shaders-ink, var(--fg)); }
+html[data-style="signal"][data-area="clips"] { --ac: var(--ar-clips, #3ddc97); --on: var(--ar-clips-on, #0b0b0d); --ink: var(--ar-clips-ink, var(--fg)); }
+html[data-style="signal"][data-area="mix"] { --ac: var(--ar-mix, #b78cff); --on: var(--ar-mix-on, #0b0b0d); --ink: var(--ar-mix-ink, var(--fg)); }
+html[data-style="signal"][data-area="system"] { --ac: var(--ar-system, #7aa2ff); --on: var(--ar-system-on, #0b0b0d); --ink: var(--ar-system-ink, var(--fg)); }
+
+/* -- type -- */
+html[data-style="signal"] body { font-family: var(--sans); font-size: 16px; line-height: 1.35; }
+html[data-style="signal"] h1, html[data-style="signal"] h2 { font-family: var(--sans); font-weight: 900; text-transform: uppercase; line-height: 1.1; overflow-wrap: anywhere; }
+html[data-style="signal"] .mono, html[data-style="signal"] .addr, html[data-style="signal"] .kvv, html[data-style="signal"] .slidervalue, html[data-style="signal"] pre, html[data-style="signal"] #time, html[data-style="signal"] #plpos, html[data-style="signal"] .big-code, html[data-style="signal"] .support-code, html[data-style="signal"] .lvlbar span,
+html[data-style="signal"] table.chan .num, html[data-style="signal"] .trackmark, html[data-style="signal"] .slot, html[data-style="signal"] .pad .n, html[data-style="signal"] .pin-row input { font-family: var(--mono); font-weight: 500; text-transform: none; letter-spacing: 0; }
+html[data-style="signal"] .addr, html[data-style="signal"] .kvv, html[data-style="signal"] pre, html[data-style="signal"] .trackmark, html[data-style="signal"] .slot, html[data-style="signal"] .pad .n, html[data-style="signal"] .lvlbar span { font-size: 13px; }
+html[data-style="signal"] #time, html[data-style="signal"] #plpos { font-size: 16px; color: var(--fg); }
+html[data-style="signal"] .slidervalue { font-size: 20px; }
+/* The small label: a sentence stays a sentence (older screens use this class for whole lines); a card's first line and
+   a pill are labels and get the capitals. */
+html[data-style="signal"] .k { font: 600 14px/1.35 var(--sans); letter-spacing: 0; text-transform: none; color: var(--mu); }
+html[data-style="signal"] .card > .k:first-child, html[data-style="signal"] .card .navhead, html[data-style="signal"] .ctltitle, html[data-style="signal"] .card h2, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .switchlabel, html[data-style="signal"] .freezelabel {
+  font: 900 14px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--fg); overflow-wrap: anywhere;
+}
+html[data-style="signal"] .hint, html[data-style="signal"] .state, html[data-style="signal"] .navstate, html[data-style="signal"] .saved, html[data-style="signal"] .msg, html[data-style="signal"] .empty, html[data-style="signal"] .room-text, html[data-style="signal"] .room-result, html[data-style="signal"] .detailbox > label, html[data-style="signal"] .vibessub, html[data-style="signal"] .ctlnote, html[data-style="signal"] .ctlrange, html[data-style="signal"] .alphalabel { font-size: 14px; }
+html[data-style="signal"] .msg.err, html[data-style="signal"] .room-result.err, html[data-style="signal"] .proj-warn, html[data-style="signal"] .ctlnote.err, html[data-style="signal"] .load-heavy > span:last-child, html[data-style="signal"] .danger-h { color: var(--err); font-weight: 600; }
+html[data-style="signal"] .ctlnote.pending { color: var(--ink); }
+html[data-style="signal"] button:focus-visible, html[data-style="signal"] input:focus-visible, html[data-style="signal"] a:focus-visible, html[data-style="signal"] select:focus-visible, html[data-style="signal"] summary:focus-visible, html[data-style="signal"] .xypad:focus-visible, html[data-style="signal"] canvas.mapcanvas:focus-visible, html[data-style="signal"] .ctl:focus-visible {
+  outline: 3px solid var(--ink); outline-offset: 2px;
+}
+
+/* -- the title block: the area's colour, full width, the screen's name in very large capitals -- */
+html[data-style="signal"] .screen { gap: 16px; }
+html[data-style="signal"] .screen > .top:first-child { margin: -16px -16px 0; padding: 20px 16px 16px; background: var(--ac); color: var(--on); flex-wrap: wrap; align-items: flex-end; }
+html[data-style="signal"] .screen > .top:first-child h1 { font-size: 44px; line-height: 1.05; min-width: 0; }
+/* the line under the title says whose panel this is. Live's heading is that name itself, so there the area's name
+   is put before it and the heading's own words become the small line. */
+html[data-style="signal"] .screen > .top:first-child h1::after { content: "nxlx.mastercontrol"; display: block; margin-top: 4px; font: 600 15px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .screen > .top:first-child:has(#pill) h1 { font: 600 15px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::before { content: "Live"; display: block; margin-bottom: 4px; font: 900 44px/1.05 var(--sans); text-transform: uppercase; }
+html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::after { content: none; }
+html[data-style="signal"] .screen > h1 { font-size: 30px; margin: 0; }
+html[data-style="signal"] .top .pill { border: 0; border-radius: 0; padding: 4px 8px; background: var(--on); color: var(--ac); font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+html[data-style="signal"] .screen > .top:first-child .btn { border-color: var(--on); color: var(--on); background: transparent; }
+html[data-style="signal"] .syshead { align-items: stretch; gap: 10px; }
+html[data-style="signal"] .syshead h1 { font-size: 30px; line-height: 1.15; padding: 6px 14px; background: var(--ac); color: var(--on); flex: 1 1 12rem; }
+html[data-style="signal"] .switchwrap { align-self: center; }
+html[data-style="signal"] .switchwrap .switchlabel { display: none; }      /* the switch says Off and On itself */
+
+/* -- cards: on a phone a section is its label and what follows, with no box; on a laptop it is a ruled panel -- */
+html[data-style="signal"] .card { border: 0; border-radius: 0; background: none; padding: 0; gap: 10px; }
+html[data-style="signal"] .card h2 { margin: 0; }
+html[data-style="signal"] .navgroup { padding: 0; gap: 0; }
+/* a fold is something to tap: an outlined bar with a plus that turns into a minus, not a label with nothing under it */
+html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary { min-height: 44px; padding: 4px 14px; border: 3px solid var(--fg); list-style: none; }
+html[data-style="signal"] .fold summary::-webkit-details-marker { display: none; }
+html[data-style="signal"] .fold:not(#setaddfold) summary::after { content: "+"; margin-left: auto; padding-left: 10px; font: 900 22px/1 var(--sans); }
+html[data-style="signal"] .fold[open] > summary::after, html[data-style="signal"] details.fold[open] > summary::after { content: "\2212"; }
+html[data-style="signal"] .fold[open] > summary { margin-bottom: 10px; }
+html[data-style="signal"] .card .navhead { padding: 0 0 10px; }
+html[data-style="signal"] .picker .sheet, html[data-style="signal"] .moreacts, html[data-style="signal"] .teachbox, html[data-style="signal"] .confirm { border-radius: 0; border-width: 3px; }
+html[data-style="signal"] .picker .sheet { border-color: var(--fg); border-bottom: 0; background: var(--bg); }
+html[data-style="signal"] .moreacts, html[data-style="signal"] .teachbox { border-color: var(--fg); padding: 10px; }
+html[data-style="signal"] .teachbox { border-style: dashed; }
+html[data-style="signal"] .confirm { border-color: var(--st-problem, var(--fg)); background: var(--cd); padding: 12px; }
+html[data-style="signal"] .hint.warn { border-left: 6px solid var(--st-problem, var(--fg)); padding-left: 10px; }
+html[data-style="signal"] .offline, html[data-style="signal"] .support-banner { border-radius: 0; background: var(--st-setup, var(--ac)); color: var(--st-setup-on, var(--on)); font-weight: 900; text-transform: uppercase; letter-spacing: .04em; font-size: 14px; }
+html[data-style="signal"] .support-banner .btn { border-color: var(--st-setup-on, var(--on)); color: var(--st-setup-on, var(--on)); }
+html[data-style="signal"] .support-code { border: 3px dashed var(--ink); border-radius: 0; }
+
+/* -- buttons: a plain one is a 3 px outline, the primary one and the chosen one are a block of the area's colour -- */
+html[data-style="signal"] .btn {
+  border: 3px solid var(--fg); border-radius: 0; background: transparent; color: var(--fg); min-height: 44px; padding: 4px 14px;
+  font: 900 16px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: break-word; min-width: 0;
+}
+html[data-style="signal"] .btn.small { min-height: 44px; padding: 4px 10px; font-size: 14px; }
+html[data-style="signal"] .btn.big { min-height: 56px; font-size: 18px; }
+html[data-style="signal"] .btn.on, html[data-style="signal"] .pad.on, html[data-style="signal"] .btn.solid { background: var(--ac); border-color: var(--ac); color: var(--on); }
+html[data-style="signal"] .btn.danger { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+html[data-style="signal"] .btn.back { border-width: 0 0 3px; padding: 4px 2px; }
+html[data-style="signal"] .list .item .btn { white-space: normal; }
+/* a row of buttons goes to a second line before a word in capitals is cut: no button is narrower than its longest word */
+html[data-style="signal"] .card .row, html[data-style="signal"] .sheet .row { flex-wrap: wrap; }
+html[data-style="signal"] .row > .btn, html[data-style="signal"] .row > .btn.small { min-width: min-content; }
+html[data-style="signal"] #netscan .btn, html[data-style="signal"] .btn.keepcase { text-transform: none; letter-spacing: 0; font-weight: 600; }
+html[data-style="signal"] button.linkish { min-height: 44px; font-weight: 600; text-decoration-thickness: 3px; }
+html[data-style="signal"] .seg .segbtn, html[data-style="signal"] .seg .segbtn:first-child, html[data-style="signal"] .seg .segbtn:last-child { border-radius: 0; margin-left: -3px; }
+html[data-style="signal"] .seg .segbtn:first-child { margin-left: 0; }
+html[data-style="signal"] .midibtn { font-size: 13px; padding: 4px 8px; color: var(--fg); }
+html[data-style="signal"] .midibtn.mapped { border-color: var(--ink); border-style: double; }
+html[data-style="signal"] .midibtn[aria-expanded="true"] { background: var(--ac); color: var(--on); border-color: var(--ac); }
+html[data-style="signal"] .daychips .btn { font-size: 13px; letter-spacing: 0; padding: 4px 0; }
+html[data-style="signal"] .bigchoice { align-items: flex-start; padding: 10px 12px; }
+html[data-style="signal"] .bigchoice b { font-size: 18px; }
+html[data-style="signal"] .bigchoice span { font-weight: 400; font-size: 14px; text-transform: none; letter-spacing: 0; }
+html[data-style="signal"] .vibesbig { border-width: 3px; border-color: var(--ink); font-size: 20px; }
+html[data-style="signal"] .vibesbig.on { border-color: var(--ac); }
+html[data-style="signal"] .vibessub { font-weight: 600; text-transform: none; letter-spacing: 0; }
+html[data-style="signal"] .transport3 .btn { padding: 4px 4px; font-size: 14px; letter-spacing: 0; overflow-wrap: break-word; }
+/* Fade out, Freeze, Stop and Blackout: two by two on a phone, so no word is cut in capitals */
+html[data-style="signal"] .row:has(> #fade) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+html[data-style="signal"] #shaderslink, html[data-style="signal"] #vibesskip, html[data-style="signal"] #liveprev { padding: 4px 6px; }
+/* staff press these: 56 px at least */
+html[data-style="signal"] #roomscreen .btn, html[data-style="signal"] .room-amb .row .btn { min-height: 56px; }
+html[data-style="signal"] #roomscreen .btn { font-size: 18px; padding: 4px 8px; }
+html[data-style="signal"] #roomscreen .btn.small { font-size: 16px; }
+
+/* -- the tab bar: a rule across the top, five plain words, the open one a block of its area's colour -- */
+html[data-style="signal"] .tabs, html[data-style="signal"] .tabs.many { gap: 0; padding: 0 0 env(safe-area-inset-bottom); border-top: 3px solid var(--fg); }
+html[data-style="signal"] .tabs .btn, html[data-style="signal"] .tabs.many .btn { border: 0; min-height: 56px; padding: 0 2px; font-size: 14px; letter-spacing: 0; }
+html[data-style="signal"] .tabs .btn.on { background: var(--ac); color: var(--on); }
+
+/* -- the switch: two halves that say Off and On; the half in force is filled -- */
+html[data-style="signal"] .switch { width: 96px; height: 44px; }
+html[data-style="signal"] .switch::before, html[data-style="signal"] .switch::after {
+  top: 0; width: 48px; height: 44px; box-sizing: border-box; border: 3px solid var(--fg); border-radius: 0; background: transparent; color: var(--mu);
+  display: flex; align-items: center; justify-content: center; font: 900 13px/1 var(--sans); text-transform: uppercase; transition: none;
+}
+html[data-style="signal"] .switch::before { content: "Off"; left: 0; }
+html[data-style="signal"] .switch::after { content: "On"; left: 48px; }
+html[data-style="signal"] .switch[aria-checked="false"]::before { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+html[data-style="signal"] .switch[aria-checked="true"]::before { background: transparent; border-color: var(--fg); color: var(--mu); }
+html[data-style="signal"] .switch[aria-checked="true"]::after { left: 48px; background: var(--ac); border-color: var(--fg); color: var(--on); }
+
+/* -- state: a solid block with the word, in the state's own colour, never the area's -- */
+html[data-style="signal"] .chip, html[data-style="signal"] .badge { border: 0; border-radius: 0; padding: 4px 8px; font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; background: var(--st-off, var(--cd)); color: var(--st-off-on, var(--fg)); }
+html[data-style="signal"] .chip:empty { display: none; }
+html[data-style="signal"] .chip-off { background: var(--st-off, var(--cd)); color: var(--st-off-on, var(--fg)); }
+html[data-style="signal"] .chip-setup, html[data-style="signal"] .chip-check, html[data-style="signal"] .health-warn .badge { background: var(--st-setup, var(--cd)); color: var(--st-setup-on, var(--fg)); }
+html[data-style="signal"] .chip-ready, html[data-style="signal"] .health-ok .badge { background: var(--fg); color: var(--bg); }
+html[data-style="signal"] .chip-active, html[data-style="signal"] .room-state.state-on { background: var(--st-active, var(--fg)); color: var(--st-active-on, var(--bg)); }
+html[data-style="signal"] .chip-problem, html[data-style="signal"] .health-bad .badge { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+html[data-style="signal"] .loadmeter i { border-radius: 0; border-width: 2px; border-color: var(--fg); }
+html[data-style="signal"] .load-tight .loadmeter i:nth-child(-n+2) { background: var(--st-setup, var(--fg)); border-color: var(--fg); }
+html[data-style="signal"] .load-heavy .loadmeter i { background: var(--st-problem, var(--fg)); border-color: var(--fg); }
+
+/* -- rows: a 3 px rule above each, the name in capitals, one quiet line under it -- */
+html[data-style="signal"] .navrow { border-top: 3px solid var(--fg); padding: 12px 0; min-height: 56px; }
+html[data-style="signal"] .navgroup > .navrow:first-child { border-top: 3px solid var(--fg); }
+html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .room-group h2, html[data-style="signal"] .liveside h2 { font: 900 20px/1.2 var(--sans); text-transform: uppercase; letter-spacing: 0; overflow-wrap: anywhere; }
+html[data-style="signal"] .list .item, html[data-style="signal"] .list .item:first-child { border-top: 3px solid var(--fg); padding: 12px 0; font-size: 16px; }
+html[data-style="signal"] .list.sp > .item { padding: 12px 0 4px; }
+html[data-style="signal"] .setrow, html[data-style="signal"] .setrow:first-child { border-top: 3px solid var(--fg); padding: 12px 0; }
+html[data-style="signal"] .setrow.on, html[data-style="signal"] .list .item.shader-entry.on, html[data-style="signal"] .list .item.map-entry.on, html[data-style="signal"] .sched-entry.editing { box-shadow: inset 8px 0 0 var(--ink); padding-left: 16px; }
+html[data-style="signal"] .addform, html[data-style="signal"] .ctldetail, html[data-style="signal"] #shaderdmx { border-top: 3px solid var(--fg); }
+html[data-style="signal"] .addform:first-child { border-top: 0; }
+html[data-style="signal"] table.chan th, html[data-style="signal"] table.chan td { border-top: 3px solid var(--fg); font-size: 14px; }
+html[data-style="signal"] table.chan th { border-top: 0; font: 900 13px var(--sans); text-transform: uppercase; letter-spacing: .04em; color: var(--fg); }
+
+/* -- fields -- */
+html[data-style="signal"] .text-input, html[data-style="signal"] select, html[data-style="signal"] .pin-row input, html[data-style="signal"] .swatchpick,
+html[data-style="signal"] input[type=text], html[data-style="signal"] input[type=number], html[data-style="signal"] input[type=search], html[data-style="signal"] input[type=password], html[data-style="signal"] input[type=time] {
+  border: 3px solid var(--fg); border-radius: 0; background: var(--cd); color: var(--fg); min-height: 44px;
+}
+html[data-style="signal"] .text-input, html[data-style="signal"] input[type=text], html[data-style="signal"] input[type=number], html[data-style="signal"] input[type=search], html[data-style="signal"] input[type=password], html[data-style="signal"] input[type=time] {
+  font: 400 16px var(--sans); text-transform: none; padding: 0 10px; min-width: 44px;
+}
+html[data-style="signal"] .pin-row input { padding: 0; }
+html[data-style="signal"] select { font: 600 16px var(--sans); padding: 0 8px; }
+html[data-style="signal"] .pin-row input { font-size: 28px; }
+html[data-style="signal"] input[type=checkbox] { -webkit-appearance: none; appearance: none; flex: none; width: 44px; height: 44px; margin: 0; border: 3px solid var(--fg); border-radius: 0; background: transparent; cursor: pointer; }
+html[data-style="signal"] input[type=checkbox]:checked { background: var(--ac); box-shadow: inset 0 0 0 6px var(--bg); }
+html[data-style="signal"] .slot { opacity: 1; border-width: 2px; border-radius: 0; }
+html[data-style="signal"] .swatch { border-radius: 0; border: 3px solid var(--fg); }
+html[data-style="signal"] .swatch.cur { outline: 3px solid var(--ink); outline-offset: 3px; }
+html[data-style="signal"] .progress { height: 16px; border: 3px solid var(--fg); border-radius: 0; background: transparent; }
+html[data-style="signal"] #preview, html[data-style="signal"] img.qr, html[data-style="signal"] canvas.mapcanvas, html[data-style="signal"] .xypad { border-radius: 0; }
+html[data-style="signal"] canvas.mapcanvas, html[data-style="signal"] .xypad { border: 3px solid var(--fg); }
+html[data-style="signal"] .xydot { border-radius: 0; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 3px solid var(--fg); }
+
+/* -- sliders: a ruled bar 28 px high inside a 44 px touch target, filled with the area's colour up to the value.
+   The fill is the track's own background, cut at --fill, which the panel sets on each slider from its value
+   (fillRanges in app.js; a style set through the page's script is allowed by the policy, a style attribute is not).
+   Nothing here is special to one browser: a track, a background and a thumb. -- */
+html[data-style="signal"] input[type=range] {
+  -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 44px; margin: 0; padding: 0; border: 0; border-radius: 0;
+  background: transparent; cursor: pointer;
+}
+html[data-style="signal"] input[type=range]::-webkit-slider-runnable-track {
+  height: 28px; box-sizing: border-box; border: 3px solid var(--fg); border-radius: 0;
+  background: linear-gradient(to right, var(--ac) var(--fill, 0%), transparent var(--fill, 0%));
+}
+html[data-style="signal"] input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 6px; height: 22px; margin: 0; border: 0; border-radius: 0; background: var(--fg); box-shadow: none; }
+html[data-style="signal"] input[type=range]::-moz-range-track {
+  height: 22px; border: 3px solid var(--fg); border-radius: 0;
+  background: linear-gradient(to right, var(--ac) var(--fill, 0%), transparent var(--fill, 0%));
+}
+html[data-style="signal"] input[type=range]::-moz-range-thumb { width: 6px; height: 22px; border: 0; border-radius: 0; background: var(--fg); }
+html[data-style="signal"] input[type=range]:disabled { opacity: .5; cursor: not-allowed; }
+html[data-style="signal"] .slider label, html[data-style="signal"] .ctlhead, html[data-style="signal"] .ctllabel { font: 900 16px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+html[data-style="signal"] .slider label .k { font: 500 16px/1.35 var(--mono); letter-spacing: 0; text-transform: none; color: var(--fg); }
+html[data-style="signal"] .ctlhead .slidervalue, html[data-style="signal"] .slider label span + span { letter-spacing: 0; }
+html[data-style="signal"] div.ctl { border-top: 0; padding: 8px 0; gap: 6px; }
+html[data-style="signal"] div.ctl.compact { padding: 4px 0; }
+html[data-style="signal"] .track { padding-bottom: 18px; }
+html[data-style="signal"] .trackmark { border-top: 6px solid var(--fg); color: var(--mu); }
+
+/* -- Live and Media: the pads -- */
+html[data-style="signal"] .pad { border: 3px solid var(--fg); border-radius: 0; background: transparent; font: 900 15px/1.2 var(--sans); text-transform: uppercase; }
+html[data-style="signal"] .pad.empty { border-style: dashed; border-color: var(--mu); color: var(--mu); }
+html[data-style="signal"] .pad.on { background: var(--ac); border-color: var(--ac); color: var(--on); }
+html[data-style="signal"] .pad .n { color: var(--mu); }
+html[data-style="signal"] .pad.on .n { color: var(--on); }
+html[data-style="signal"] .banks { gap: 0; }
+html[data-style="signal"] .banks .btn + .btn { margin-left: -3px; }
+html[data-style="signal"] .row.transport { flex-wrap: wrap; }
+html[data-style="signal"] .row.transport .btn { flex: 1 1 4.5rem; padding: 4px 6px; }
+html[data-style="signal"] #np { font: 900 20px/1.2 var(--sans); text-transform: uppercase; overflow-wrap: anywhere; }
+html[data-style="signal"] .stageline { font-size: 16px; font-weight: 600; }
+html[data-style="signal"] .shaderstage .shadername { font-size: 30px; line-height: 1.1; }
+html[data-style="signal"] .shader-entry > span:first-child > b { font: 900 20px/1.2 var(--sans); text-transform: uppercase; }
+html[data-style="signal"] .preset.was { border-color: var(--ink); border-style: dashed; }
+html[data-style="signal"] .presetrow .btn, html[data-style="signal"] .preset { text-align: left; }
+
+/* -- the MIDI controller drawn as its own surface: every control a ruled cell; a knob keeps its round shape, the one
+   exception to the square corners, because the shape is what tells a knob from a button -- */
+/* (the panel gives the number of columns as --cols; a cell is wide enough for its longest word, and a wide
+   controller scrolls sideways inside its card, as it does in the default look) */
+html[data-style="signal"] .ctlgrid { gap: 6px; grid-template-columns: repeat(var(--cols, 8), minmax(88px, 1fr)) !important; }
+html[data-style="signal"] .ctlgrid .ctl { border: 3px solid var(--fg); border-radius: 0; background: transparent; font-size: 13px; padding: 4px 5px; min-height: 56px; }
+html[data-style="signal"] .ctlgrid .ctl-fader { min-height: 104px; }
+html[data-style="signal"] .ctlgrid .ctl-knob { border-radius: 28px; }
+html[data-style="signal"] .ctlgrid .ctl .ctlname { font: 500 13px var(--mono); color: var(--mu); text-transform: uppercase; }
+html[data-style="signal"] .ctlgrid .ctl .ctlwhat { font-weight: 700; line-height: 1.15; overflow-wrap: break-word; }      /* sentence case: capitals would need a cell half as wide again */
+html[data-style="signal"] .ctlgrid .ctl .ctlval { font: 500 13px var(--mono); color: var(--mu); }
+html[data-style="signal"] .ctlgrid .ctl.spare { border-color: var(--mu); }
+html[data-style="signal"] .ctlgrid .ctl.spare .ctlwhat { font-weight: 600; color: var(--mu); }
+html[data-style="signal"] .ctlgrid .ctl.mine { border-style: dashed; border-color: var(--ink); }
+html[data-style="signal"] .ctlgrid .ctl.wait { border-style: dotted; border-color: var(--ink); }
+html[data-style="signal"] .ctlgrid .ctl.sel { box-shadow: inset 0 0 0 3px var(--ink); }
+html[data-style="signal"] .ctlgrid .ctl.lit { background: var(--ac); border-color: var(--ac); color: var(--on); }
+/* a control that has a light on the controller: a small square at its corner, filled while that light is on
+   (the Active colour while the box drives it: a light is a state, not a place) */
+html[data-style="signal"] .ctlgrid .ctl.haslight::after { top: 4px; right: 4px; width: 10px; height: 10px; border: 2px solid var(--mu); border-radius: 0; }
+html[data-style="signal"] .ctlgrid .ctl.haslight[data-lit="on"]::after { background: var(--fg); border-color: var(--fg); }
+html[data-style="signal"] .ctlgrid .ctl.haslight[data-lit="active"]::after, html[data-style="signal"] .ctlgrid .ctl.haslight[data-lit="busy"]::after { background: var(--st-active, var(--fg)); border-color: var(--st-active, var(--fg)); }
+html[data-style="signal"] .ctlgrid .ctl.lit.haslight::after { border-color: var(--on); }
+html[data-style="signal"] .ctlgrid .ctl.lit .ctlname, html[data-style="signal"] .ctlgrid .ctl.lit .ctlwhat, html[data-style="signal"] .ctlgrid .ctl.lit .ctlval { color: var(--on); }
+
+/* -- a laptop: panels with a 3 px rule round them, the title block as a label at the top left -- */
+@media (min-width: 900px) {
+  html[data-style="signal"] .screen > .top:first-child { margin: 0; padding: 0; background: none; color: var(--fg); align-items: center; }
+  html[data-style="signal"] .screen > .top:first-child h1 { font-size: 30px; line-height: 1.35; padding: 4px 14px; background: var(--ac); color: var(--on); }
+  html[data-style="signal"] .screen > .top:first-child:has(#pill) h1 { display: flex; align-items: baseline; gap: 12px; padding: 4px 14px; background: var(--ac); color: var(--on); }
+  html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::before { margin: 0; font-size: 30px; line-height: 1.35; }
+  html[data-style="signal"] .screen > .top:first-child h1::after { display: inline; margin: 0 0 0 12px; }
+  html[data-style="signal"] .screen > .top:first-child .btn { border-color: var(--fg); color: var(--fg); }
+  html[data-style="signal"] .top .pill { background: var(--ac); color: var(--on); }
+  html[data-style="signal"] .syshead h1 { flex: 0 1 auto; padding: 4px 14px; line-height: 1.35; }
+  html[data-style="signal"] .card { border: 3px solid var(--fg); padding: 16px; gap: 12px; }
+  html[data-style="signal"] .navgroup { padding: 16px; }
+  html[data-style="signal"] .card .card { border: 0; padding: 0; }
+  html[data-style="signal"] .shaderstage .shadername { font-size: 48px; }
+  html[data-style="signal"] .liveside h2 { font-size: 30px; }
+  html[data-style="signal"] .shell:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
+  html[data-style="signal"] .row:has(> #fade) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

@@ -32,6 +32,9 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 | --- | --- |
 | #65 | The UX proposal (a click-through prototype and a written spec for Live, Media, Mix and the Shaders page). A reference, not to merge as is. |
 | #81 | Effects: ISF filters over what plays (D55). Reviewed independently (one high, four medium, several low: each fixed with a test, in the journal), green in CI, **not merged by its author**, and nothing of it has run on the Pi. See "Effects" below. |
+| #83 | The Signal look (D54): a second style for the whole panel, chosen under System > Look, not the default. Needs an independent review of the `pvj/server.py` change before merging, and the owner's eye on a real phone. |
+
+**The look (2026-10-05).** The owner picked direction D, Signal, in the Figma file, to try. It is in #83 as two themes (Signal, Signal light) of a new style; [pvj/THEMES.md](pvj/THEMES.md) holds what Figma says, what was decided here, the contrast figures and how a style is added. A new part of the panel must be given its Signal rules in the marked block at the end of `app.css` and looked at in the `signal-` screenshots; the browser test's Signal pass checks sizes, overflow and contrast, not whether it looks finished. Not tried on a phone or the Pi.
 
 **The owner's direction, in their words.** From 2026-10-03 and 04, still standing: "the way users interact with each module doesn't seem intuitive or easy to use"; "don't be shy about really making the control panels engaging and userfriendly, the panel design and layout and pages should be organized in a logical fashion"; "someone doing more intense work will have a laptop, usually"; "a more robust shader playback and control system. i want to have more shaders available to perform with or have as auto-playing vibes"; "don't forget about ISF shaders (https://github.com/Vidvox/ISF-Files)"; every screen should get "the same audit and design treatment". New on 2026-10-04:
 
