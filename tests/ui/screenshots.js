@@ -461,6 +461,8 @@ function startServer() {
       // a button pressed, so the picture has named group cards, source buttons and a result line.
       const roomAsStaffSeeIt = async () => {
         try {
+          await sys('Projectors');
+          await page.waitForFunction(() => fetch('/api/projectors').then((r) => r.json()).then((d) => d.projectors.length > 0 && d.projectors.slice(0, 2).every((p) => p.inputs.length > 0)), null, { timeout: 25000, polling: 1000 }).catch(() => {});   // each projector has said which inputs it has
           const ps = ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.json()))).projectors || []).slice(0, 2);
           const have = ((await page.evaluate(() => fetch('/api/room').then((r) => r.json()))).groups || []).map((g) => g.name);
           for (let i = 0; i < ps.length; i++) {
