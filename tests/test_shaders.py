@@ -40,7 +40,15 @@ FIRST_TEN = ["aurora", "drift", "ember", "horizon", "lattice", "nebula", "prism"
 AMBIENT = ["bloom", "caustic", "contour", "dusk", "fringe", "kaleido", "lantern", "moire", "petal", "pool", "ribbon", "ridge", "stars", "tiles", "veil"]
 PERFORMANCE = ["bars", "beam", "burst", "checker", "chevron", "glitch", "grid", "halftone", "mirror", "radar", "scope", "spokes", "stripes", "tunnel", "zoom"]
 BUNDLED = len(FIRST_TEN) + len(AMBIENT) + len(PERFORMANCE)
-HEAVY = ["drift", "nebula"]                   # measured on a Pi 4: out of the rotation until someone puts them in
+# The classes a Raspberry Pi 4 measured (PI4 in pvj/shaderlive.py), named one by one: a light shader holds 30 frames a
+# second at 720 lines, a medium one at 540 lines only, a heavy one drops frames at 540 lines too. All that is not
+# named here is light.
+# measured classes: begin
+MEDIUM = ["aurora", "beam", "bloom", "lantern", "petal", "pool", "ridge", "scope", "stars", "tide"]
+HEAVY = ["drift", "nebula"]                   # out of the rotation until someone puts them in
+PACK_MEDIUM = ["isf-simplex-noise"]
+PACK_HEAVY = ["isf-ridgelines"]
+# measured classes: end
 ROTATION = [n for n in FIRST_TEN + AMBIENT if n not in HEAVY]
 IN_VIBES = len(ROTATION)
 # Numbers from the hash and noise one-liners that are passed around everywhere: the bundled shaders build their own.
@@ -356,9 +364,8 @@ class TranslatorTest(unittest.TestCase):
                 self.assertEqual(S.default_in_vibes(p), family == "Ambient", name)
                 self.assertEqual(head["CREDIT"], "NXLX.Systems and contributors", name)
                 self.assertTrue(4 <= len(p["inputs"]) <= 8, (name, len(p["inputs"])))
-                self.assertIn(p["cost"].split(":")[0], ("low", "medium"), name)
-                if family == "Ambient":
-                    self.assertEqual(p["cost"].split(":")[0], "low", name)        # only light ones go into the rotation
+                self.assertEqual(p["cost"].split(":")[0], "medium" if name in MEDIUM else "low", name)      # what the Pi 4 measured
+                self.assertNotIn(name, HEAVY)                 # a heavy one would be left out of its set (Ambient or Show)
                 self.assertTrue(20 <= len(head["DESCRIPTION"]) <= S.MAX_TEXT and head["DESCRIPTION"].endswith("."), name)
                 for spec, i in zip(head["INPUTS"], p["inputs"]):
                     self.assertTrue(spec.get("LABEL") and i["label"] != i["name"], (name, i["name"]))

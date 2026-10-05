@@ -4,6 +4,133 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-05 (every bundled shader on the Pi 4, and the shader engine's first run on hardware)
+
+Pull request #79. A measuring run on the owner's test Pi 4 over SSH while the owner was away (00:27 to 02:15 UTC; the evening of the 4th at the desk), and its numbers written into the code and the docs. Nothing of the engine's behaviour was changed. Judged from snapshots and the player's counters; **nobody watched the monitor.**
+
+**The box.** Raspberry Pi 4 Model B Rev 1.5, kernel 6.18.50, mpv 0.40.0 (libplacebo 7.349) on DRM with `--vo=gpu --profile=fast`, Mesa 26.2.2, a 2560 x 1440 screen at 74.99 Hz, `pvj/` identical to master `b62c353` (133 files compared by SHA-256). 36.5 degrees and not throttled at the start, 40.4 and not throttled at the end. The picture detail in force was 720 lines (saved under the first version; this board's default is 540). The two sets were the computed ones: Ambient with 21 shaders on this box (the 23 a new box has, without nxlx-ember and nxlx-horizon, which this box's settings have switched off) and Show with the 15 Performance shaders, both 180 seconds, shuffled, variation on. The mapping was off, opacity 100, nothing playing. That the context is desktop OpenGL 3.1 was read from the player's start-up log in the first run and not again (it would have needed a player restart).
+
+**Method.** A temporary full-access device was paired with the PIN, and a helper script ran on the box as root (it needs the player's socket), detached, writing its results as it went. Per shader and drawing height: `POST /api/shaders/play` with the defaults, 4 seconds of settling, then a 20 second window with no snapshot in it: the change of mpv's `frame-drop-count`, the average of the shader's own pass from `vo-passes`, GPU busy and jobs from `/sys/devices/platform/v3dbus/*/gpu_stats`, the temperature, and `GET /api/shaders` every 3 seconds for the engine's own `playing.load`, `drops_per_second` and `pass_ms`. Then one snapshot through the panel, copied to the Mac and looked at on contact sheets. Each Performance shader was run again with its rate at the highest and, where it has one, with Fast on. Where the first window showed between 0.05 and 2.5 dropped frames a second (13 shaders at 720 lines, 4 at 540) a 60 second window followed, and the rate in the table is over all 80 seconds. The engine tests used screenshots taken straight from mpv (the panel's snapshot is shared for 3 seconds, so two in a row are one picture) and read the generated shader texts from the panel's runtime folder to check TIME.
+
+**All 47 were taken by the GPU at both heights; no refusal, no warning from the player about a shader, every picture right** (varied, the colours the file names, no garbage, none black). Pass times in ms, dropped frames a second; "load" is the worst the engine said in the window.
+
+| Shader | Family | Taken by the GPU | Looks right | 540: pass ms | 540: dropped /s | 540: GPU busy % | 720: pass ms | 720: dropped /s | 720: GPU busy % | Engine's load at 540 / 720 | Class |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| nxlx-aurora | First ten | yes | yes: green curtains over a dark sky | 12.9 | 0 | 86 | 22.8 | 4.87 | 99 | ok / heavy | medium |
+| nxlx-drift | First ten | yes | yes: blue and orange clouds, colourful (the new look) | 20.1 | 2.01 | 99 | 35.7 | 10.55 | 99 | heavy / heavy | heavy |
+| nxlx-ember | First ten | yes | yes: warm merging blobs | 6.5 | 0 | 67 | 11.4 | 0.39 | 91 | ok / tight | light |
+| nxlx-horizon | First ten | yes | yes: dusk sky, sun, striped ground | 5.5 | 0 | 68 | 9.4 | 0 | 84 | ok / ok | light |
+| nxlx-lattice | First ten | yes | yes: blue moire dots on black | 4.9 | 0 | 61 | 8.3 | 0 | 77 | ok / ok | light |
+| nxlx-nebula | First ten | yes | yes: purple clouds | 19.6 | 1.48 | 98 | 34.8 | 11.55 | 99 | heavy / heavy | heavy |
+| nxlx-prism | First ten | yes | yes: yellow star ring, pink centre, blue rim | 5.4 | 0 | 64 | 9.4 | 0 | 80 | ok / ok | light |
+| nxlx-pulse | First ten | yes | yes: teal ripples from three points | 6.2 | 0 | 67 | 10.9 | 0.27 | 96 | ok / tight | light |
+| nxlx-silk | First ten | yes | yes: pink flowing lines | 4.5 | 0 | 66 | 7.5 | 0 | 75 | ok / ok | light |
+| nxlx-tide | First ten | yes | yes: dark blue wave layers (low contrast by design) | 8.7 | 0 | 75 | 15.4 | 1.17 | 93 | ok / heavy | medium |
+| nxlx-bloom | Ambient | yes | yes: soft orange and blue discs | 8.2 | 0 | 75 | 14.8 | 1.17 | 91 | ok / heavy | medium |
+| nxlx-caustic | Ambient | yes | yes: net of light on blue | 5.8 | 0 | 61 | 10.4 | 0 | 83 | ok / ok | light |
+| nxlx-contour | Ambient | yes | yes: cream contour lines | 4.6 | 0 | 61 | 8.2 | 0 | 78 | ok / ok | light |
+| nxlx-dusk | Ambient | yes | yes: purple to orange sky | 5.3 | 0 | 64 | 9.9 | 0 | 89 | ok / ok | light |
+| nxlx-fringe | Ambient | yes | yes: blue ripple fringes | 6 | 0 | 61 | 11.4 | 0.2 | 89 | ok / tight | light |
+| nxlx-kaleido | Ambient | yes | yes: teal mirrored shapes | 5.9 | 0 | 67 | 10.5 | 0 | 79 | ok / ok | light |
+| nxlx-lantern | Ambient | yes | yes: four orange lanterns | 11.5 | 0 | 80 | 20.5 | 3.84 | 99 | ok / heavy | medium |
+| nxlx-moire | Ambient | yes | yes: fine tan rings | 4.7 | 0 | 65 | 7.5 | 0 | 78 | ok / ok | light |
+| nxlx-petal | Ambient | yes | yes: pink and cream flower | 7.9 | 0 | 76 | 13.8 | 0.81 | 89 | ok / tight | medium |
+| nxlx-pool | Ambient | yes | yes: blue water, two rings | 7.2 | 0 | 74 | 13.5 | 1.1 | 92 | ok / tight | medium |
+| nxlx-ribbon | Ambient | yes | yes: orange to violet bands | 4.8 | 0 | 63 | 8.2 | 0 | 80 | ok / ok | light |
+| nxlx-ridge | Ambient | yes | yes: misty hills and sun | 7.1 | 0 | 64 | 13.2 | 0.79 | 90 | ok / tight | medium |
+| nxlx-stars | Ambient | yes | yes: star field with a band | 7.2 | 0 | 70 | 13.3 | 0.77 | 90 | ok / tight | medium |
+| nxlx-tiles | Ambient | yes | yes: tan and slate tiles | 4.5 | 0 | 62 | 7.8 | 0 | 76 | ok / ok | light |
+| nxlx-veil | Ambient | yes | yes: pink to violet folds | 4.5 | 0 | 62 | 8.3 | 0 | 78 | ok / ok | light |
+| nxlx-bars | Performance | yes | yes: blue bars, three lit | 4 | 0 | 59 | 7.2 | 0 | 76 | ok / ok | light |
+| nxlx-beam | Performance | yes | yes: three beams, blue and pink | 6.9 | 0 | 69 | 12.5 | 1 | 95 | ok / tight | medium |
+| nxlx-burst | Performance | yes | yes: cream streaks on plum | 6.3 | 0 | 71 | 11.1 | 0.15 | 86 | ok / tight | light |
+| nxlx-checker | Performance | yes | yes: bent yellow and navy checkerboard | 4.1 | 0 | 58 | 7.4 | 0 | 76 | ok / ok | light |
+| nxlx-chevron | Performance | yes | yes: orange arrowheads | 4.6 | 0 | 62 | 7.8 | 0 | 72 | ok / ok | light |
+| nxlx-glitch | Performance | yes | yes: torn cyan and pink stripes | 5.7 | 0 | 63 | 10 | 0 | 82 | ok / ok | light |
+| nxlx-grid | Performance | yes | yes: plum tiles, some lit | 4.9 | 0 | 63 | 8.4 | 0 | 81 | ok / ok | light |
+| nxlx-halftone | Performance | yes | yes: yellow dots on red | 4.3 | 0 | 61 | 7.5 | 0 | 74 | ok / ok | light |
+| nxlx-mirror | Performance | yes | yes: green and violet mirrored bands | 4.3 | 0 | 56 | 7.8 | 0 | 77 | ok / ok | light |
+| nxlx-radar | Performance | yes | yes: green sweep, rings, blips | 6.8 | 0 | 66 | 12.6 | 0.46 | 90 | ok / tight | light |
+| nxlx-scope | Performance | yes | yes: green traces on a grid | 6.6 | 0 | 74 | 11.8 | 0.56 | 89 | ok / tight | medium |
+| nxlx-spokes | Performance | yes | yes: red and navy wheel | 4.9 | 0 | 63 | 8.7 | 0 | 80 | ok / ok | light |
+| nxlx-stripes | Performance | yes | yes: orange wavy stripes | 4.2 | 0 | 60 | 7.4 | 0 | 76 | ok / ok | light |
+| nxlx-tunnel | Performance | yes | yes: cyan and violet tunnel | 5.1 | 0 | 63 | 9.1 | 0 | 81 | ok / ok | light |
+| nxlx-zoom | Performance | yes | yes: blue and cream squares | 4.6 | 0 | 60 | 8 | 0 | 76 | ok / ok | light |
+| isf-color-bars | ISF pack | yes | yes: colour bars (a still) | 2 | 0 | 54 | 3.5 | 0 | 64 | ok / ok | light |
+| isf-corner-colors | ISF pack | yes | yes: four-corner blend (a still) | 4.6 | 0 | 60 | 8.3 | 0 | 78 | ok / ok | light |
+| isf-linear-gradient | ISF pack | yes | yes: blue to yellow gradient (a still) | 1.7 | 0 | 54 | 2.7 | 0 | 64 | ok / ok | light |
+| isf-radial-gradient | ISF pack | yes | yes: yellow spot on blue (a still) | 2.2 | 0 | 55 | 3.7 | 0 | 64 | ok / ok | light |
+| isf-ridgelines | ISF pack | yes | yes: white ridges on black | 16.8 | 1.11 | 94 | 29.8 | 7.76 | 99 | heavy / heavy | heavy |
+| isf-simplex-noise | ISF pack | yes | yes: grey noise clouds | 15.7 | 0.45 | 90 | 27.9 | 7.18 | 99 | tight / heavy | medium |
+| isf-sine-warp-gradient | ISF pack | yes | yes: bent orange, white and blue gradient (a still) | 3.6 | 0 | 60 | 6.5 | 0 | 72 | ok / ok | light |
+
+Classes: light holds 30 frames a second at 720 lines (fewer than 0.5 dropped a second, the engine's own line for "ok"): 33. Medium holds at 540 only: 11 (nxlx-aurora, nxlx-tide, nxlx-bloom, nxlx-lantern, nxlx-petal, nxlx-pool, nxlx-ridge, nxlx-stars, nxlx-beam, nxlx-scope, isf-simplex-noise). Heavy drops at 540: 3 (nxlx-drift, nxlx-nebula, isf-ridgelines). At the line and decided by a few frames: nxlx-radar (light), nxlx-scope and isf-simplex-noise (medium).
+
+The Performance shaders with a rate at its highest or Fast on (20 second windows): no different from their defaults.
+
+| Shader | Variant | 540: pass ms | 540: dropped /s | 720: pass ms | 720: dropped /s |
+| --- | --- | --- | --- | --- | --- |
+| nxlx-bars | Fast on | 3.9 | 0 | 6.8 | 0 |
+| nxlx-bars | rate at its highest | 4.3 | 0 | 7.7 | 0 |
+| nxlx-beam | rate at its highest | 6.9 | 0 | 12.7 | 0.8 |
+| nxlx-burst | rate at its highest | 6.2 | 0 | 11.2 | 0 |
+| nxlx-checker | rate at its highest | 4.1 | 0 | 7.8 | 0 |
+| nxlx-chevron | rate at its highest | 4.6 | 0 | 8.7 | 0 |
+| nxlx-glitch | Fast on | 5.8 | 0 | 10.3 | 0 |
+| nxlx-glitch | rate at its highest | 5.8 | 0 | 10.2 | 0 |
+| nxlx-grid | Fast on | 4.9 | 0 | 8.7 | 0 |
+| nxlx-grid | rate at its highest | 5 | 0 | 8.6 | 0 |
+| nxlx-halftone | rate at its highest | 4.6 | 0 | 7.5 | 0 |
+| nxlx-mirror | rate at its highest | 4.5 | 0 | 7.8 | 0 |
+| nxlx-radar | rate at its highest | 6.8 | 0 | 12.1 | 0.45 |
+| nxlx-scope | rate at its highest | 6.7 | 0 | 11.4 | 0.05 |
+| nxlx-spokes | rate at its highest | 4.9 | 0 | 8.8 | 0 |
+| nxlx-stripes | rate at its highest | 4 | 0 | 7.1 | 0 |
+| nxlx-tunnel | rate at its highest | 5 | 0 | 9.2 | 0 |
+| nxlx-zoom | rate at its highest | 4.5 | 0 | 8.2 | 0 |
+
+Around the table: the CPU at 4 to 11 percent of the four cores, mpv at 11 to 20 percent of one, 39 to 43 degrees, never throttled. The first play of a shader 0.55 to 0.89 seconds (the GPU's look included), a later one 0.07 to 0.27. The two fixed passes: the scale to the screen 8.4 to 12.8 ms (10 in the middle; 12.9 in the first run), the remainder pass 1.8 ms at 540 lines and 3.2 at 720 (2.3 and 4.0 in the first run). The carrier's 30 pictures a second on a 75 Hz screen get two and three refreshes in turn (26.7 and 40 ms), which is why a shader pass between 11 and 15 ms at 720 lines drops frames in bursts; see SHADERS.md.
+
+**The engine, on nxlx-silk, nxlx-tunnel and nxlx-nebula at 720 lines.**
+
+- A value change: answered in 7 to 12 ms (slowest of 210: 41 ms); mpv reported the new text drawn 0.34 to 0.37 seconds after the request for silk and tunnel, for a number, a switch, a choice, a colour and a point alike, and 0.54 to 0.61 for nebula (which draws about 18 frames a second there). That is an upper limit; it includes mpv's own delay in timing a pass.
+- Thirty changes at ten a second: 12 to 15 texts drawn. Dropped frames in those 4.5 seconds: tunnel 0 for each of the five kinds, silk 1; nebula 56, against its 52 with nothing changing. GPU jobs stayed at 147 to 150 a second. Of 21 snapshots taken inside such bursts none was dark; before and after one change the picture differed by the change. A single black frame cannot be ruled out this way.
+- Speed 0, 0.5, 2, 4 and back to 1: in the generated texts TIME went on from the TIME reached, exactly (silk 43.500, 43.500, 46.367, 57.833, 80.633). Frozen, two snapshots a second apart were identical. The first freeze after 43 seconds, where the picture passes from the carrier's count to a number the panel computed, moved the picture by 3.4 of 255 on silk and 0.4 on nebula over a second: the shader reads the carrier's frame number correctly on V3D. Tunnel, a Performance shader, was answered 1.0 for 2 and 4.
+- A preset: saved with speed 0, a turn of 40 degrees and changed values, left for the defaults (the preset's name went to null), applied (0.36 seconds, values and controls as saved, the snapshot identical to the saved one), deleted.
+- Previous and Next without Vibes: the neighbours in the active set's order, drawn 0.38 to 0.45 seconds after the request.
+- Refusals: 400 with a sentence for a wrong kind of value, an unknown input or control, a choice outside its `VALUES`, a colour of two parts, control 9, level 200; 409 for another shader's id. Out of range is not refused but put at the nearest end. No GPU refusal could be provoked without an upload.
+- `playing.pass_ms` reads a millisecond or more high for under a second after a change (the first frame of a new text took 10 to 14 ms on silk). `gpu` in `GET /api/shaders` agreed with the kernel's file.
+- `GET /api/shaders` with 47 shaders: 65.8 KB, 57 to 115 ms (98 in the middle) for 20 calls 3 seconds apart while silk played, about 30 to 50 ms of the panel's CPU each: 2.1 percent of one core against 0.6 with nobody asking. No frame was dropped by it.
+
+**Vibes and the guard** (dwell 12 seconds, 29 changes watched).
+
+- At 540 lines on Ambient and on Show: 13 changes, not one dropped frame in 200 seconds, every shader "ok", nothing marked. The picture was below full brightness for 0.85 to 0.91 seconds per change (Mix duration 1.0) and reached black each time; a new shader every 13.0 to 13.5 seconds.
+- A clip (`testpattern.mkv`) played into Vibes on Show: Vibes ended with "something else was played or stopped", the clip had the screen, Stop cleared it. The clip's own dip took 1.43 seconds.
+- nxlx-nebula and nxlx-silk in a temporary set at 720 lines: nebula marked 9 seconds after it came on ("left out: it dropped 10.7 frames a second"), the rotation went on to silk at once, silk was never marked. The set was deleted and the mark taken back.
+- Ambient at 720 lines, 150 seconds, 12 shaders: nxlx-aurora marked the same way (6.7 a second) and taken back afterwards. **nxlx-lantern dropped up to 8 frames a second and was not marked:** "tight" for all 12 seconds, never 6 seconds in a row above 2 when asked every second. bloom, ridge, pulse and tide dropped nothing in their 12 seconds.
+- The marks that appeared and were cleared: nxlx-nebula.fs and nxlx-aurora.fs, both at 720 lines on board pi4. None at 540.
+
+**Found, not fixed here** (this pull request records; each is small):
+
+1. The guard lets a shader that drops frames in bursts stay, and its verdict depends on how often it is asked (`pvj/shaderlive.py`, `Guard.sample`: one look under `LIMIT` sets `_over` back to None). A rate averaged over the last `WINDOW` seconds would not.
+2. The owner's box still has 720 lines from the first version's default. Eight of Ambient's shaders drop frames there. Nothing tells a person that the saved detail is above the board's default.
+3. The first save of the shader settings by this version writes the two sets out (`LiveEngine._save`), and from then on that box's sets no longer follow a change of the default sets. Changing the picture detail is such a save. It is as designed (D46) and it happened to the test box in this run; see below.
+4. A heavy mark stores its drawing height as `720.0` (`check_heavy` rounds every number to one decimal). Harmless; the comparison still works.
+5. With one shader left in a set, Vibes dips to black every dwell and shows the same shader again.
+6. Playing a clip logs "Cannot load libcuda.so.1" at error level (mpv probing hardware decoders under `--hwdec=auto-safe`); one line per clip reaches the journal.
+7. The panel answers 404 for `/favicon.ico` and the two `apple-touch-icon` names a phone asks for.
+8. A generated shader text from an earlier run of the panel (`shader-10905-4.glsl`) lay in `/run/pvj/web` until the first shader was played; the last text stays there after Stop.
+
+No traceback and no error line from the panel in the journal for the run.
+
+**In this pull request:** `PI4` in `pvj/shaderlive.py` for all 47 (class, pass and dropped frames at 540 and 720 lines; `measured` in the API carries both heights, `pass_ms_range` is gone); the `COST` note of seven of the project's shaders now starts with medium (nxlx-bloom, nxlx-lantern, nxlx-petal, nxlx-pool, nxlx-ridge, nxlx-stars, nxlx-beam); the pack's files are untouched; tests name the classes one by one and check that each class is what its two drop rates make; SHADERS.md, the manual, D51, lessons, HANDOFF. **The default sets did not change:** every shader of Ambient and of Show holds 30 frames a second at 540 lines, so none was moved out.
+
+**The box afterwards.** Playback stopped; picture detail back at 720; both sets as they were (members, 180 seconds, variation, shuffled, Ambient active); no presets, no heavy marks; the temporary set and the temporary device gone; the owner's five devices and the PIN unchanged, compared field by field in the settings file; the helper's files removed from `/tmp`; no service restarted. Every part of `GET /api/shaders` compared equal to its state before, except Vibes' note of its last run ("stopped", 12 rounds), which lives until the panel restarts. **One thing is not as found and cannot be put back without a restart:** the `shaders` section of the settings file was `{disabled, dwell, height, vary}` and is now the same values plus `v: 2`, `active`, `guard`, `clock`, `faster` and the two sets written out. In effect nothing differs today; a later change of the default sets will not reach this box by itself. A paired full-access device at 192.168.0.159 opened the panel for seven seconds at 02:11 UTC and only read.
+
+**The Mac.** Its disk ran full twice during the run (not from this work, which used 180 MB): for some minutes no command could be started. A watchdog on the Pi would have put the box back by itself had the session died there (see LESSONS). The snapshots and raw results are in a scratch folder on the Mac, not in git.
+
+**Not measured:** 360 and 1080 lines; a 60 Hz or a 1920 x 1080 screen; a single black or torn frame; the Shaders page in a browser on the box; MIDI, OSC, DMX; events (no bundled shader has one); the inputs of the pack's shaders (`octaves`); a GPU refusal of a switch or choice; a dwell of minutes at 720 lines; hours of running with the carrier's clock.
+
 ## 2026-10-04 (the System pages: one set of patterns, and the rest of the audit)
 
 Pull request #78 (D50). **Not merged. Nothing here ran on the Pi, on a phone or with a real projector. The browser test and the screenshots ran only in CI: this Mac has no Playwright and no mpv.**

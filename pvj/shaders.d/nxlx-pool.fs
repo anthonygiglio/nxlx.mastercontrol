@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "low: 3 drops, 3 square roots, 3 sines and 4 divisions a pixel",
+    "COST": "medium: 3 drops, 3 square roots, 3 sines and 4 divisions a pixel",
     "INPUTS": [
         {
             "NAME": "speed",

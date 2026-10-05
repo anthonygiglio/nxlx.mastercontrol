@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "low: 4 lanterns, 9 sines and 5 divisions a pixel",
+    "COST": "medium: 4 lanterns, 9 sines and 5 divisions a pixel",
     "INPUTS": [
         {
             "NAME": "speed",

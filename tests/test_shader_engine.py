@@ -14,7 +14,8 @@ from pvj import boxcare, midi, osc, scheduler, shaderlive as L, shaders as S, vi
 from pvj.api import ApiError
 from pvj.midi import MidiMapper
 from pvj.settings import SCHEMA
-from tests.test_shaders import AMBIENT, FIRST_TEN, GOOD, HEAVY, IN_VIBES, PERFORMANCE, REFUSAL, ROTATION, Base, FakeTap
+from tests.test_shaders import (AMBIENT, FIRST_TEN, GOOD, HEAVY, IN_VIBES, MEDIUM, PACK_HEAVY, PACK_MEDIUM, PACKED, PERFORMANCE, REFUSAL,
+                                ROTATION, Base, FakeTap)
 
 ALL = """/*{"INPUTS": [
  {"NAME": "level", "TYPE": "float", "MIN": 0.0, "MAX": 2.0, "DEFAULT": 0.5, "LABEL": "Level"},
@@ -186,21 +187,28 @@ class BoardTest(Live):
         self.assertNotIn("height", boxcare.check_shaders({"dwell": 60}, None))                # and none is made up for it
 
     def test_every_bundled_shader_says_how_heavy_it_is_and_what_was_measured(self):
+        """All 47, each with the class and the numbers a Pi 4 measured (2026-10-05), named one by one in
+        tests/test_shaders.py."""
         rows = {s["id"]: s for s in self.engine.state()["shaders"]}
-        first = {"nxlx-%s.fs" % n for n in FIRST_TEN}
-        self.assertEqual({w: sorted(n[5:-3] for n, s in rows.items() if s["weight"] == w and n in first) for w in ("light", "medium", "heavy")},
-                         {"light": ["ember", "horizon", "lattice", "prism", "pulse", "silk"], "medium": ["aurora", "tide"], "heavy": sorted(HEAVY)})
-        for name in AMBIENT + PERFORMANCE:                            # the two families: from the first word of their own cost note
-            s = rows["nxlx-%s.fs" % name]
-            self.assertEqual((s["weight"], s["measured"]), ({"low": "light", "medium": "medium", "high": "heavy"}[s["cost"].split(":")[0].split()[0].lower()], None), name)
-            self.assertIn(s["weight"], ("light", "medium"), name)
-        rows = {sid: s for sid, s in rows.items() if sid in first}
-        tide = rows["nxlx-tide.fs"]
-        self.assertEqual(tide["measured"], {"board": "pi4", "lines": 720, "pass_ms": 15.1, "drops_per_second": {"540": 0, "720": 3.3}, "stale": False})
-        self.assertEqual((rows["nxlx-silk.fs"]["measured"]["pass_ms"], rows["nxlx-silk.fs"]["measured"]["pass_ms_range"]), (None, [7.5, 11.2]))
-        self.assertTrue(rows["nxlx-drift.fs"]["measured"]["stale"])   # its look was changed after the measurement
-        for sid, s in rows.items():                                   # the file's own note starts with the same class
-            self.assertEqual(L.weight_of("other.fs", s["cost"]), s["weight"], sid)
+        own = ["nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT + PERFORMANCE]
+        self.assertEqual(sorted(L.PI4), sorted(own + PACKED))             # every bundled file, and nothing else
+        want = {"medium": sorted(["nxlx-%s.fs" % n for n in MEDIUM] + ["%s.fs" % n for n in PACK_MEDIUM]),
+                "heavy": sorted(["nxlx-%s.fs" % n for n in HEAVY] + ["%s.fs" % n for n in PACK_HEAVY])}
+        want["light"] = sorted(set(L.PI4) - set(want["medium"]) - set(want["heavy"]))
+        self.assertEqual({w: sorted(sid for sid, s in rows.items() if s["weight"] == w) for w in ("light", "medium", "heavy")}, want)
+        for sid, (weight, low, high) in L.PI4.items():
+            self.assertEqual(L.weigh(low[1], high[1]), weight, sid)       # the class is what the two drop rates make
+            self.assertTrue(0 < low[0] < high[0] < 100 and 0 <= low[1] <= high[1] < 30, sid)      # more lines never cost less
+            self.assertEqual(rows[sid]["measured"], {"board": "pi4", "lines": 720, "pass_ms": high[0], "pass_ms_by_lines": {"540": low[0], "720": high[0]},
+                                                     "drops_per_second": {"540": low[1], "720": high[1]}, "stale": False}, sid)
+        self.assertEqual((L.weigh(0, 0), L.weigh(0, 0.49), L.weigh(0, 0.5), L.weigh(0.49, 9), L.weigh(0.5, 9)), ("light", "light", "medium", "medium", "heavy"))
+        self.assertEqual(L.HOLDS, L.Guard.TIGHT)                          # "holds" is where the guard says "ok"
+        for sid in own:                                               # the file's own note starts with the same class
+            self.assertEqual(L.weight_of("other.fs", rows[sid]["cost"]), rows[sid]["weight"], sid)
+        for name in AMBIENT + PERFORMANCE:                            # no heavy one in the two families (it would be left out of its set)
+            self.assertIn(rows["nxlx-%s.fs" % name]["weight"], ("light", "medium"), name)
+        for sid in PACKED:                                            # a pack's files are not ours to edit: only the table says it
+            self.assertEqual(rows[sid]["cost"], "", sid)
         self.engine.upload("mine.fs", GOOD)
         mine = self.row("mine.fs")
         self.assertEqual((mine["weight"], mine["measured"], mine["heavy"], mine["refused"]), ("", None, None, None))
@@ -234,7 +242,7 @@ class BoardTest(Live):
         pack = [s for s in self.engine.state()["shaders"] if s.get("pack") not in ("nxlx", "uploads")]
         self.assertTrue(pack)
         self.assertFalse(any(s["vibes"] for s in pack))
-        self.assertTrue(all(s["weight"] in ("light", "medium", "heavy", "") and s["measured"] is None for s in pack))
+        self.assertTrue(all(s["weight"] in ("light", "medium", "heavy") and s["measured"]["board"] == "pi4" for s in pack))     # measured too
         s = next(x for x in pack if any(i["type"] != "float" for i in x["inputs"]) and any(i["type"] == "float" and i["max"] > i["min"] for i in x["inputs"]))
         sid = s["id"]
         self.assertTrue(all("value" in i and "varies" in i for i in s["inputs"]))
