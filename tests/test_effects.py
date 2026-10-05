@@ -141,7 +141,20 @@ class TranslatorTest(unittest.TestCase):
             (fx(body=BODY.replace("* k", "* k * _inputImage_imgRect.x")), "ISF version 1"),
             (fx(body=BODY.replace("* k", "* k * LUMA_tex(vec2(0.5)).r")), "belongs to the player"),
             (fx(body=BODY.replace("* k", "* k * RGB_size.x")), "belongs to the player"),
-            (fx(body=BODY.replace("* k", "* k * HOOKED_tex(vec2(0.5)).r")), "used by the player"),
+            (fx(body=BODY.replace("* k", "* k * HOOKED_tex(vec2(0.5)).r")), "belongs to the player"),
+            # names that only the GPU refused before (a 422 at upload now, with the name)
+            (fx(body=BODY.replace("* k", "* k * LUMA_gather(vec2(0.5), 0).r")), "LUMA_gather belongs to the player"),
+            (fx(body=BODY.replace("* k", "* k * PREV_tex(vec2(0.5)).r")), "PREV_tex belongs to the player"),
+            (fx(body=BODY.replace("* k", "* k * OUTPUT_tex(vec2(0.5)).r")), "OUTPUT_tex belongs to the player"),
+            (fx(body=BODY.replace("* k", "* k * MAINPRESUB_tex(vec2(0.5)).r")), "MAINPRESUB_tex belongs to the player"),
+            (fx(body=BODY.replace("* k", "* k * CHROMA_texOff(vec2(1.0)).r")), "CHROMA_texOff belongs to the player"),
+            (fx(body=BODY.replace("* k", "* k * NATIVE_pt.x")), "NATIVE_pt belongs to the player"),
+            (fx([PICTURE, K, {"NAME": "LUMA_pos", "TYPE": "float", "DEFAULT": 0.5}]), "an input is called LUMA_pos"),
+            (fx([PICTURE, K, {"NAME": "RGB_size", "TYPE": "float", "DEFAULT": 0.5}]), "an input is called RGB_size"),
+            # the player's own clocks: a filter that read them would move outside TIME, where the flash limit cannot see it
+            (fx(body=BODY.replace("* k", "* k * mod(float(frame), 2.0)")), "the name frame belongs to the player"),
+            (fx(body=BODY.replace("* k", "* k * step(0.5, random)")), "the name random belongs to the player"),
+            (fx(body="\nfloat random(vec2 p) { return fract(p.x * 7.0); }" + BODY), "the name random belongs to the player"),
             (fx(body=BODY.replace("IMG_THIS_PIXEL(inputImage)", "pvj_at(vec2(2.0))")), "used by the player"),
             (fx(body="\n//!HOOK OUTPUT" + BODY), "//!"),
             (fx(DESCRIPTION="//!TEXTURE x"), "//!"),
@@ -191,6 +204,138 @@ class TranslatorTest(unittest.TestCase):
         self.assertEqual(E.clean_picture("bt.2020-ncl", "full", 59.94), {"matrix": "bt.2020-ncl", "levels": "full", "fps": 59.94})
         self.assertEqual(E.clean_picture(None, 7, True), {"matrix": "bt.709", "levels": "limited", "fps": 30.0})
         self.assertEqual(E.clean_picture("rgb", "full", 1000), {"matrix": "rgb", "levels": "full", "fps": 30.0})
+
+    def test_an_honest_name_that_ends_like_one_of_the_players_is_allowed(self):
+        """Only the player's own texture names are refused with those endings. `cell_size`, `ring_pos` and the like
+        are what people call things (the review asked for every name ending so to be refused; that would have
+        refused them too)."""
+        for name in ("cell_size", "ring_pos", "tile_off", "wave_mul", "grid_pt", "glow_tex", "luma_size", "frames", "randomness", "frame_no"):
+            p = S.parse(fx(body=BODY.replace("* k", "* k * %s" % name).replace("void main() {", "void main() {\n    float %s = 1.0;" % name)), S.FILTER)
+            E.translate(p)
+            self.assertFalse(p["clock"], name)
+
+    def test_a_filter_that_counts_frames_moves_and_its_frames_follow_the_speed(self):
+        p = S.parse(fx(body=BODY.replace("* k", "* k * mod(float(FRAMEINDEX), 2.0)")), S.FILTER)
+        self.assertTrue(p["clock"])
+        text = E.translate(p, {}, {"amount": 1.0, "speed": 0.5, "half": False}, E.clean_picture("bt.709", "limited", 25.0))
+        self.assertIn("#define FRAMEINDEX int(pvj_time * 25.0 + 0.5)", text)
+        self.assertNotIn("#define FRAMEINDEX frame", text)
+        self.assertIn("/ 25.0 * 0.5;", text)                                           # TIME, and with it the frame number, at half speed
+
+    def test_an_upload_whose_work_cannot_be_counted_is_refused(self):
+        """The limits for an upload (64 reads, 256 rounds a pixel) bound something only if every loop says how often
+        it runs. The review's table: each of these counted as little or nothing before and was taken."""
+        loop = "\nvoid main() {\n    vec4 c = vec4(0.0);\n    for (int i = 0; i < 9; ++i) { c += IMG_NORM_PIXEL(inputImage, vec2(float(i) / 9.0)); }\n    gl_FragColor = c / 9.0;\n}\n"
+        read = "IMG_NORM_PIXEL(inputImage, vec2(0.5))"
+        taps = [PICTURE, {"NAME": "taps", "TYPE": "float", "MIN": 1, "MAX": 20, "DEFAULT": 4}]
+
+        def count(body, inputs=None):
+            return E.estimate(S.parse(fx(inputs, body), S.FILTER))
+
+        def refused(body, why, inputs=None):
+            e = count(body, inputs)
+            self.assertEqual((e["sure"], e["weight"]), (False, "heavy"), body[:100])
+            self.assertIn(why, e["why"], body[:100])
+            with self.assertRaises(S.ShaderError) as c:
+                E.Effects.check_upload(self.engine(), fx(inputs, body).encode())
+            self.assertIn(why, str(c.exception))
+        for body, why in (
+            (loop.replace("for (int i = 0; i < 9; ++i)", "int i = 0; while (i++ < 9)"), "`while` loop"),
+            (loop.replace("for (int i = 0; i < 9; ++i)", "while (true)"), "`while` loop"),
+            (loop.replace("for (int i = 0; i < 9; ++i) {", "int i = 0; do {").replace("9.0)); }", "9.0)); } while (i++ < 9);"), "loop"),
+            (loop.replace("int i = 0; i < 9; ++i", ";;"), "does not say how often it runs"),
+            (loop.replace("i < 9", "i != 9"), "does not say how often it runs"),
+            (loop.replace("i < 9", "i < n"), "does not say how often it runs"),                          # a name that is no constant
+            (loop.replace("i < 9", "i < 9 * 4000"), "does not say how often it runs"),                    # arithmetic in the limit
+            (loop.replace("i < 9", "i < 2, i < 100000"), "does not say how often it runs"),               # the last number used to win
+            (loop.replace("i < 9", "i < 100000 || i < 2"), "does not say how often it runs"),
+            (loop.replace("++i", "i += 0"), "does not say how often it runs"),
+            (loop.replace("++i", "i--"), "does not say how often it runs"),                               # counts away from its limit
+            (loop.replace("++i", "i *= 1"), "does not say how often it runs"),
+            (loop.replace("++i", ""), "does not say how often it runs"),
+            (loop.replace("int i = 0", "int i = k"), "does not say how often it runs"),
+            (loop.replace("{ c +=", "{ i -= 1; c +=", 1), "counter (i) is changed inside the loop"),      # a loop that never ends
+            (loop.replace("{ c +=", "{ i = 0; c +=", 1), "counter (i) is changed inside the loop"),
+            (loop.replace("{ c +=", "{ --i; c +=", 1), "counter (i) is changed inside the loop"),
+            ("\nvoid back(inout int n) { n -= 1; }" + loop.replace("{ c +=", "{ back(i); c +=", 1), "handed to back"),
+            ("\n#define N 9\n#undef N\n#define N k" + loop.replace("i < 9", "i < N"), "does not say how often it runs"),
+            ("\n#define LOOP for (int i = 0; i < 100000; ++i)" + loop.replace("for (int i = 0; i < 9; ++i)", "LOOP"), "a #define holds a loop"),
+            ("\n#define W while" + BODY, "a #define holds a loop"),
+            ("\n#define TAP(p) IMG_NORM_PIXEL(inputImage, p)" + BODY, "a #define reads the picture"),
+            ("\n#define BACK(n) n -= 1" + loop.replace("{ c +=", "{ BACK(i); c +=", 1), "a #define holds an assignment"),
+            ("\nfloat a(float x);\nfloat b(float x) { return a(x); }\nfloat a(float x) { return b(x); }" + BODY.replace("* k", "* a(k)"), "call each other in a circle"),
+            (loop.replace("{ c +=", "{ for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) for (int d = 0; d < 2; d++) for (int e = 0; e < 2; e++) c +=", 1), "more than 4 deep"),
+            ("\n" + "".join("float f%d(float x) { return x; }\n" % n for n in range(70)) + BODY, "more than 64 functions"),
+            (BODY.replace("}", "}}"), "brackets do not match"),
+        ):
+            refused(body, why)
+        refused(loop.replace("i < 9", "i < int(speed)"), "does not say how often it runs", taps)       # no such input
+        refused("\n#define taps 100000" + loop.replace("i < 9", "i < int(taps)"), "does not say how often it runs", taps)     # a second meaning for an input
+        # what is counted, and how: loops in a row add up, loops in loops multiply, a function counts wherever its
+        # name appears (through a #define too), an input counts at its largest, the dearest of two meanings counts
+        for body, inputs, want in (
+            (loop, None, (9, 9)),
+            (loop.replace("    gl_FragColor", "    for (int j = 0; j < 9; ++j) { c += " + read + "; }\n    gl_FragColor"), None, (18, 18)),
+            (loop.replace("    gl_FragColor", "    for (int j = 0; j < 200; ++j) { c.r += 0.001; }\n    gl_FragColor"), None, (9, 209)),
+            (loop.replace("{ c +=", "{ for (int j = 8; j >= 0; j -= 2) c +=", 1), None, (45, 45)),
+            (loop.replace("i < 9", "i < int(taps)"), taps, (20, 20)),
+            (loop.replace("i < 9", "i <= taps").replace("int i = 0", "float i = 0.0").replace("++i", "i += 0.5").replace("float(i)", "i"), taps, (41, 41)),
+            ("\nconst int N = 12;" + loop.replace("i < 9", "i < N"), None, (12, 12)),
+            ("\n#define N 12\n#undef N\n#define N 40" + loop.replace("i < 9", "i < N"), None, (40, 40)),
+            ("\nvec4 tap(vec2 p) { return " + read + "; }\n#define T(p) tap(p)" + loop.replace("IMG_NORM_PIXEL(inputImage, vec2(float(i) / 9.0))", "T(vec2(0.5))"), None, (9, 9)),
+            ("\nvec4 tap(vec2 p) { vec4 s = vec4(0.0); for (int j = 0; j < 5; j++) s += " + read + "; return s; }" + loop.replace("IMG_NORM_PIXEL(inputImage, vec2(float(i) / 9.0))", "tap(vec2(0.5)) + tap(vec2(0.1))"), None, (90, 90)),
+            ("\nvoid main() {\n    vec4 c = vec4(0.0);\n    for (int i = 0; i < 4; i++) if (k > 1.0) c += " + read + "; else c += " + read + " + " + read + ";\n    gl_FragColor = c;\n}\n", None, (12, 4)),
+            ("\nvoid main() {\n    vec4 c = vec4(0.0);\n    for (int i = 0; float(i) < 0.0; i++) c += " + read + ";\n    gl_FragColor = c + " + read + ";\n}\n", None, None),
+        ):
+            e = count(body, inputs)
+            if want is None:
+                self.assertFalse(e["sure"], body[:80])
+            else:
+                self.assertEqual((e["reads"], e["rounds"], e["sure"]), want + (True,), body[:120])
+        # over the limits: counted, and refused for being too much
+        for body, why in ((loop.replace("i < 9", "i < 65"), "about 65 times"), (loop.replace("i < 9", "i < 100000"), "about 100000 times"),
+                          (loop.replace("    gl_FragColor", "    for (int j = 0; j < 300; ++j) { c.r += 0.001; }\n    gl_FragColor"), "about 309 rounds")):
+            with self.assertRaises(S.ShaderError) as c:
+                E.Effects.check_upload(self.engine(), fx(None, body).encode())
+            self.assertIn(why, str(c.exception))
+
+    def engine(self):
+        class Stub:
+            read = staticmethod(lambda data: S.parse(data, S.FILTER))
+        return Stub()
+
+    def test_counting_a_hostile_text_is_quick_and_never_an_error_of_the_box(self):
+        """The count runs on the panel's own thread and a Python regular expression holds the whole interpreter. Each
+        of these took seconds or raised RecursionError (a 500 where a 422 belongs)."""
+        loop = "for (int i = 0; i < 2; i++) { "
+        calls = "".join("float f%d(float x) { return %s; }\n" % (n, " + ".join("f%d(x)" % m for m in range(58) if m != n)) for n in range(58))
+        for name, body in (("1,500 loops inside each other", "\nvoid main() {\n" + "for(;;){" * 1500 + "}" * 1500 + "\n gl_FragColor = vec4(1.0);\n}\n"),
+                           ("900 counted loops inside each other", "\nvoid main() {\n" + loop * 900 + "}" * 900 + "\n gl_FragColor = vec4(1.0);\n}\n"),
+                           ("3,000 brackets", "\nvoid main() {\n gl_FragColor = vec4(" + "(" * 3000 + "1.0" + ")" * 3000 + ");\n}\n"),
+                           ("a #define and 30,000 spaces", "\n#define a" + " " * 30000 + "\n" + BODY),
+                           ("a declaration and 30,000 spaces", BODY.replace("void main() {", "void main() {\n    float a" + " " * 30000 + "= k;")),
+                           ("58 functions that all call each other", "\n" + calls + BODY),
+                           ("60 functions in a chain, each called twice", "\nfloat g0(float x) { return x; }\n" + "".join(
+                               "float g%d(float x) { return g%d(x) + g%d(x); }\n" % (n, n - 1, n - 1) for n in range(1, 60)) + BODY.replace("* k", "* g59(k)")),
+                           ("2,000 small functions", "\n" + "".join("void e%d(){}\n" % n for n in range(2000)) + BODY),
+                           ("3,000 ifs in a row", "\nvoid main() {\n" + "if(k>1.)" * 3000 + ";\n gl_FragColor = vec4(1.0);\n}\n"),
+                           ("else upon else", "\nvoid main() {\n for (int i = 0; i < 2; i++) " + "if(k>1.);else " * 2000 + ";\n gl_FragColor = vec4(1.0);\n}\n")):
+            text = fx(None, body)
+            self.assertLessEqual(len(text), S.MAX_SOURCE, name)
+            began = time.monotonic()
+            try:
+                parsed = S.parse(text, S.FILTER)
+            except S.ShaderError:
+                parsed = None                           # refused before the count: as good
+            if parsed is not None:
+                e = E.estimate(parsed)
+                self.assertIs(E.estimate(parsed), e)    # made once for a file's content
+                self.assertIn(e["sure"], (True, False))
+                try:
+                    E.Effects.check_upload(self.engine(), text.encode())
+                except S.ShaderError:
+                    pass
+            self.assertLess(time.monotonic() - began, 1.0, name)
 
     def test_the_work_of_a_filter_is_counted_from_its_text(self):
         def count(body, inputs=None):
@@ -328,6 +473,23 @@ class LibraryTest(Base):
         # none of it is a generator, and no generator is an effect
         self.assertEqual([s["id"] for s in self.gen.library() if s["id"].startswith("fx-")], [])
         self.assertEqual(self.gen.state()["shaders"][0]["id"][:5], "nxlx-")
+
+    def test_an_upload_that_cannot_be_counted_is_a_422_with_its_reason_never_a_500(self):
+        for body, why in (("\nvoid main() {\n" + "for(;;){" * 1500 + "}" * 1500 + "\n gl_FragColor = vec4(1.0);\n}\n", "does not say how often it runs"),
+                          (BODY.replace("void main() {", "void main() {\n    while (true) {}"), "`while` loop"),
+                          (BODY.replace("* k", "* k * float(frame)"), "the name frame belongs to the player"),
+                          (BODY.replace("* k", "* k * LUMA_gather(vec2(0.5), 0).r"), "LUMA_gather belongs to the player")):
+            with self.assertRaises(ApiError) as c:
+                self.fx.upload("hostile.fs", fx(None, body))
+            self.assertEqual((c.exception.status, why in c.exception.message), (422, True), c.exception.message)
+        self.assertNotIn("hostile.fs", [s["id"] for s in self.state()["effects"]])
+        # a file that is already on the box and cannot be counted (written there by hand, or by an older version)
+        # is listed as heavy with the reason; the list is never an error
+        os.makedirs(self.fx.dir, exist_ok=True)
+        with open(os.path.join(self.fx.dir, "old.fs"), "w") as f:
+            f.write(fx(None, BODY.replace("void main() {", "void main() {\n    while (false) {}")))
+        row = next(s for s in self.state()["effects"] if s["id"] == "old.fs")
+        self.assertEqual((row["weight"], row["estimate"]["sure"], "`while` loop" in row["estimate"]["why"]), ("heavy", False, True))
 
     def test_the_projects_own_filters_are_its_own_construction(self):
         for name in OWN:

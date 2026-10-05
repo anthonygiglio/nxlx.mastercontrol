@@ -46,7 +46,6 @@ EFFECTS_DIR = os.path.join(os.path.dirname(__file__), "effects.d")
 WATCH = 1.0                     # seconds between two looks at the picture under the effect
 MAX_READS = 64                  # an upload may read the picture at most this often for one pixel (a count from its text)
 MAX_ROUNDS = 256                # and its loops may run at most this many rounds for one pixel
-UNKNOWN_ROUNDS = 32             # what a loop counts for when its length cannot be read from the text
 DEFAULT_FPS = 30.0
 SWITCH_GAP = 0.35               # seconds between two switches of the effect asked for through the worker (the flash limit)
 # A stream or a live input has no frame rate of its own: the player estimates one from the frames as they come, and
@@ -184,7 +183,8 @@ def _block(parsed, values, c, pic, desc, plane, t):
               "#define RENDERSIZE %s" % size,
               "#define TIME pvj_time",
               "#define TIMEDELTA %s" % S._f(1.0 / pic["fps"]),
-              "#define FRAMEINDEX frame",
+              # the frame number with Speed in it, as TIME has: a filter that counts frames is under the flash limit too
+              "#define FRAMEINDEX int(pvj_time * %s + 0.5)" % S._f(pic["fps"]),
               "#define PASSINDEX 0",
               "#define DATE vec4(%s, %s, %s, %s)" % (S._f(t.tm_year), S._f(t.tm_mon), S._f(t.tm_mday), S._f(t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec)),
               "#define isf_FragNormCoord pvj_norm",
@@ -247,105 +247,282 @@ def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effec
 
 
 # ---- how much work a filter is, counted from its text ------------------------------------------------------------------------
-_LOOP = re.compile(r"\b(for|while)\s*\(")
-_READ = re.compile(r"\bIMG_(?:THIS_|NORM_|THIS_NORM_)?PIXEL\b")
-_FUNC = re.compile(r"\b[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s*\(([^()]*)\)\s*\{")
+# A rule, not a guess. The count is made only from text whose every loop says how often it runs; a text that does not
+# is refused at upload. What that gives: a bound on what an honestly written filter does for one pixel. What it does
+# not give: a proof that a shader is cheap (one read of a 4K picture and one of a small one are both "1"; arithmetic
+# without loops is not counted at all), and no reading of text can replace measuring on the board.
+MAX_FUNCTIONS = 64              # functions and #defines the count follows; more is refused
+MAX_NESTING = 4                 # loops inside loops
+MAX_STEPS = 400000              # tokens the count may look at in all (a 32 KB file has a few thousand)
+BIG = 10 ** 9
+_TOKEN = re.compile(r"[A-Za-z_]\w*|\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|\+\+|--|[-+*/]=|[<>=!]=|&&|\|\||\S")
+_NUMBER = re.compile(r"(?:\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)\Z")
+_READS = frozenset(("IMG_PIXEL", "IMG_NORM_PIXEL", "IMG_THIS_PIXEL", "IMG_THIS_NORM_PIXEL"))
+_WRITES = frozenset(("=", "+=", "-=", "*=", "/=", "++", "--"))
+_OPEN = {"(": ")", "{": "}", "[": "]"}
 
 
-def _close(text, at, opening="{", closing="}"):
-    """The index just after the bracket that closes the one opened at `at`."""
-    depth = 0
-    for j in range(at, len(text)):
-        if text[j] == opening:
-            depth += 1
-        elif text[j] == closing:
-            depth -= 1
-            if depth == 0:
-                return j + 1
-    return len(text)
+def _number(tokens):
+    """The number a few tokens are, or None: 12, 12.5, -3, (8)."""
+    while len(tokens) >= 3 and tokens[0] == "(" and tokens[-1] == ")":
+        tokens = tokens[1:-1]
+    sign = 1.0
+    if len(tokens) == 2 and tokens[0] in "+-":
+        sign, tokens = (-1.0 if tokens[0] == "-" else 1.0), tokens[1:]
+    if len(tokens) == 1 and _NUMBER.match(tokens[0]):
+        return sign * float(tokens[0])
+    return None
 
 
-def _rounds(head, numbers):
-    """How many rounds a `for` loop with this head runs, or None if the text does not say: from where it starts (a
-    number) to what it is compared with (a number, a named constant, or an input, counted at its MAX), by its step."""
-    parts = head.split(";")
-    if len(parts) != 3:
-        return None
+def measure(parsed):
+    """(reads, rounds): how often a filter reads the picture for one pixel and how many rounds its loops run for
+    one pixel, at most. Every branch counts, a function counts wherever its name appears, loops inside loops
+    multiply and loops after each other add up. Raises ShaderError when the text does not let that be counted:
 
-    def number(text):
-        best = None
-        for m in re.finditer(r"(-\s*)?([A-Za-z_]\w*|\d+(?:\.\d*)?)", text):
-            word = m.group(2)
-            if word[0].isdigit():
-                n = float(word)
-            elif word in numbers:
-                n = float(numbers[word])
+    * a loop that is not `for (int i = <number>; i < <limit>; i++)`, where the limit is a number, a constant given
+      as a number (`const int N = 8;`, `#define N 8`) or a number input (counted at its MAX); `<=`, `>`, `>=`, `++i`,
+      `i--`, `i += <number>` and `i -= <number>` are the other forms; so no `while`, no `do`, no `for(;;)`;
+    * a loop whose counter is written to in its body, or handed to a function that can write to it;
+    * a `#define` that holds a loop, a read of the picture or an assignment (a loop or a read could hide there, and
+      an assignment could move a counter);
+    * functions that call each other in a circle, more than MAX_FUNCTIONS functions, loops more than MAX_NESTING deep.
+    """
+    lines, defines, steps = [], {}, [0]
+    for line in parsed["body"].split("\n"):
+        if not line.lstrip().startswith("#"):
+            lines.append(line)
+            continue
+        words = _TOKEN.findall(line.lstrip()[1:])
+        if not words or words[0] != "define" or len(words) < 2:
+            continue
+        name, rest = words[1], words[2:]
+        if rest and rest[0] == "(" and re.match(r"\s*#\s*define\s+\w+\(", line):       # a macro with arguments: skip them
+            close = rest.index(")") if ")" in rest else len(rest) - 1
+            rest = rest[close + 1:]
+        if any(w in ("for", "while", "do") for w in rest):
+            raise ShaderError("a #define holds a loop (%s): write the loop where it runs, so its length can be counted" % name)
+        if any(w in _READS or w == S.IMAGE for w in rest):
+            raise ShaderError("a #define reads the picture (%s): write the read where it happens, so it can be counted" % name)
+        if any(w in _WRITES for w in rest):
+            raise ShaderError("a #define holds an assignment (%s): it could move a loop's counter where the count cannot see it" % name)
+        defines.setdefault(name, []).append(rest)
+    tok = _TOKEN.findall("\n".join(lines))
+    if len(tok) > MAX_STEPS:
+        raise ShaderError("too long to count")
+    for word in ("while", "do"):
+        if word in tok:
+            raise ShaderError("it has a `%s` loop: only `for` loops with a counted length are taken (for (int i = 0; i < 8; i++))" % word)
+    # matching brackets, found once, without recursion
+    match, stack = {}, []
+    for i, t in enumerate(tok):
+        if t in _OPEN:
+            stack.append(i)
+        elif t in (")", "}", "]"):
+            if not stack or _OPEN[tok[stack[-1]]] != t:
+                raise ShaderError("its brackets do not match")
+            match[stack.pop()] = i
+    if stack:
+        raise ShaderError("its brackets do not match")
+    opened = {b: a for a, b in match.items()}
+    # numbers with a name: inputs at their largest and smallest, constants given as a number
+    highest = {i["name"]: float(i["max"]) for i in parsed["inputs"] if i["type"] in ("float", "long") and "max" in i}
+    lowest = {i["name"]: float(i["min"]) for i in parsed["inputs"] if i["type"] in ("float", "long") and "min" in i}
+    for i in parsed["inputs"]:
+        if i["type"] == "long" and i.get("values"):
+            highest[i["name"]], lowest[i["name"]] = float(max(i["values"])), float(min(i["values"]))
+    unsure = set()
+    for name, bodies in defines.items():
+        values = [_number(b) for b in bodies]
+        if None in values or name in highest:        # not a plain number, or a second meaning for an input's name
+            unsure.add(name)
+        else:
+            highest[name], lowest[name] = max(values), min(values)
+    for i in range(len(tok) - 5):
+        if tok[i] == "const" and tok[i + 1] in ("int", "float") and tok[i + 3] == "=":
+            end = i + 4
+            while end < len(tok) and tok[end] != ";":
+                end += 1
+            value, name = _number(tok[i + 4:end]), tok[i + 2]
+            if value is None or name in unsure or name in defines or any(p["name"] == name for p in parsed["inputs"]):
+                unsure.add(name)
             else:
+                highest[name], lowest[name] = max(value, highest.get(name, value)), min(value, lowest.get(name, value))
+    for name in unsure:
+        highest.pop(name, None)
+        lowest.pop(name, None)
+    # the functions: a name, round brackets and curly brackets, outside every other bracket
+    functions, writers, i = {}, set(), 0
+    while i < len(tok):
+        t = tok[i]
+        if t == "{":
+            head = i - 1
+            if head >= 1 and tok[head] == ")":
+                opening = opened.get(head)
+                if opening is not None and opening >= 1 and re.match(r"[A-Za-z_]\w*\Z", tok[opening - 1]):
+                    name = tok[opening - 1]
+                    functions.setdefault(name, []).append((i + 1, match[i]))
+                    if any(w in ("out", "inout") for w in tok[opening + 1:head]):
+                        writers.add(name)
+            i = match[i] + 1
+        elif t == "(":
+            i = match[i] + 1
+        else:
+            i += 1
+    if len(functions) + len(defines) > MAX_FUNCTIONS:
+        raise ShaderError("it has more than %d functions and #defines: too intricate to count" % MAX_FUNCTIONS)
+    if "main" not in functions:
+        raise ShaderError("the code must have exactly one void main()")
+
+    def tick(n=1):
+        steps[0] += n
+        if steps[0] > MAX_STEPS:
+            raise ShaderError("too intricate to count")
+
+    def bound(tokens, low):
+        """The number a loop's limit is, at its largest (or smallest, for a loop that counts down), or None."""
+        while len(tokens) >= 4 and tokens[0] in ("int", "float") and tokens[1] == "(" and tokens[-1] == ")":
+            tokens = tokens[2:-1]
+        value = _number(tokens)
+        if value is None and len(tokens) == 1:
+            value = (lowest if low else highest).get(tokens[0])
+        return value
+
+    def length(head, body):
+        """How many rounds the loop with this head runs, and its counter. Raises when the text does not say."""
+        plain = "write it as for (int i = 0; i < 8; i++), with a number, a constant or a number input as the limit"
+        parts, part = [], []
+        for t in head:
+            if t == ";":
+                parts.append(part)
+                part = []
+            else:
+                part.append(t)
+        parts.append(part)
+        if len(parts) != 3 or len(parts[0]) < 4 or parts[0][0] not in ("int", "float") or parts[0][2] != "=":
+            raise ShaderError("a loop does not say how often it runs (for (%s)): %s" % (S._text(" ".join(head), 60), plain))
+        var, start = parts[0][1], _number(parts[0][3:])
+        cond, step = parts[1], parts[2]
+        if start is None or len(cond) < 3 or cond[0] != var or cond[1] not in ("<", "<=", ">", ">="):
+            raise ShaderError("a loop does not say how often it runs (for (%s)): %s" % (S._text(" ".join(head), 60), plain))
+        up = cond[1] in ("<", "<=")
+        limit = bound(cond[2:], not up)
+        if step in ([var, "++"], ["++", var]):
+            by = 1.0
+        elif step in ([var, "--"], ["--", var]):
+            by = -1.0
+        elif len(step) == 3 and step[0] == var and step[1] in ("+=", "-=") and _number(step[2:]) is not None:
+            by = _number(step[2:]) * (1.0 if step[1] == "+=" else -1.0)
+        else:
+            by = 0.0
+        if limit is None or by == 0.0 or (by > 0) != up:
+            raise ShaderError("a loop does not say how often it runs (for (%s)): %s" % (S._text(" ".join(head), 60), plain))
+        a, b = body
+        for j in range(a, b):
+            tick()
+            if tok[j] == var:
+                if tok[j + 1] in _WRITES or tok[j - 1] in ("++", "--"):
+                    raise ShaderError("a loop's counter (%s) is changed inside the loop, so its length cannot be counted" % var)
+            elif tok[j] in writers and tok[j + 1] == "(" and var in tok[j + 2:match[j + 1]]:
+                raise ShaderError("a loop's counter (%s) is handed to %s, which can change it, so the loop's length cannot be counted" % (var, tok[j]))
+        span = (limit - start) if up else (start - limit)
+        if span < 0:
+            return 0
+        return min(BIG, int(math.ceil(span / abs(by) - 1e-9)) + (1 if "=" in cond[1] else 0))
+
+    def statement(i, end):
+        """The index just after the statement that starts at token i."""
+        while i < end:
+            tick()
+            t = tok[i]
+            if t == "{":
+                i = match[i] + 1
+                break
+            if t in ("for", "if") and i + 1 < end and tok[i + 1] == "(":
+                i = match[i + 1] + 1
                 continue
-            best = -n if m.group(1) else n
-        return best
-    limit = re.search(r"([<>]=?)(.*)", parts[1], re.S)
-    lo = number(parts[0].split("=", 1)[1]) if "=" in parts[0] else None
-    hi = number(limit.group(2)) if limit else None
-    if lo is None or hi is None:
-        return None
-    step = re.search(r"[+\-]=\s*(\d+(?:\.\d*)?)", parts[2])
-    by = float(step.group(1)) if step and float(step.group(1)) > 0 else 1.0
-    return max(1, int(math.ceil(abs(hi - lo) / by)) + (1 if "=" in limit.group(1) else 0))
+            if t == "else":
+                i += 1
+                continue
+            while i < end and tok[i] != ";":
+                i = match[i] + 1 if tok[i] in _OPEN else i + 1
+            i += 1
+            break
+        while i < end and tok[i] == "else":         # an if with its else is one statement
+            i = statement(i + 1, end)
+        return min(i, end)
+
+    costs, walking = {}, []
+
+    def called(name):
+        if name in costs:
+            return costs[name]
+        if name in walking:
+            raise ShaderError("its functions call each other in a circle (%s)" % name)
+        if len(walking) >= MAX_FUNCTIONS:
+            raise ShaderError("its functions call each other too many levels deep")
+        walking.append(name)
+        reads = rounds = 0
+        for a, b in functions.get(name, ()):         # several of one name: the dearest counts
+            r, n = cost(a, b, 0)
+            reads, rounds = max(reads, r), max(rounds, n)
+        for words in defines.get(name, ()):
+            r = n = 0
+            for w in words:
+                if (w in functions or w in defines) and w != name:
+                    cr, cn = called(w)
+                    r, n = r + cr, n + cn
+            reads, rounds = max(reads, r), max(rounds, n)
+        walking.pop()
+        costs[name] = (reads, rounds)
+        return costs[name]
+
+    def cost(a, b, depth):
+        """(reads, rounds) of the tokens a..b: loops in a row add up, a loop multiplies what is in it."""
+        reads = rounds = 0
+        i = a
+        while i < b:
+            tick()
+            t = tok[i]
+            if t == "for":
+                if depth >= MAX_NESTING:
+                    raise ShaderError("its loops are more than %d deep" % MAX_NESTING)
+                if i + 1 >= b or tok[i + 1] != "(":
+                    raise ShaderError("a loop does not say how often it runs")
+                close = match[i + 1]
+                stop = statement(close + 1, b)
+                n = length(tok[i + 2:close], (close + 1, stop))
+                hr, hn = cost(i + 2, close, depth + 1)              # the head is run every round too
+                br, bn = cost(close + 1, stop, depth + 1)
+                reads += min(BIG, (n + 1) * hr + n * br)
+                rounds += min(BIG, (n + 1) * hn + n * max(1, bn))
+                i = stop
+                continue
+            if t in _READS:
+                reads += 1
+            elif t in functions or t in defines:
+                r, n = called(t)
+                reads, rounds = reads + r, rounds + n
+            i += 1
+        return min(BIG, reads), min(BIG, rounds)
+
+    reads, rounds = called("main")
+    return reads, max(1, rounds)
 
 
 def estimate(parsed):
-    """{"reads", "rounds", "weight", "sure"}: how often a filter reads the picture for one pixel and how many rounds
-    its loops run, counted from its text (every branch counts, so it is an upper limit), and the class that makes:
-    light (at most 2 reads, no loop to speak of), medium (at most 12 reads and 16 rounds), heavy. `sure` is false
-    when a loop's length could not be read. An estimate from the text, not a measurement: see SHADERS.md."""
-    if "_estimate" in parsed:
-        return parsed["_estimate"]
-    code = parsed["body"]
-    numbers = {i["name"]: i["max"] for i in parsed["inputs"] if i["type"] in ("float", "long") and "max" in i}
-    for m in re.finditer(r"(?:#define\s+|const\s+(?:int|float)\s+)([A-Za-z_]\w*)\s*=?\s*(\d+(?:\.\d*)?)\b", code):
-        numbers.setdefault(m.group(1), float(m.group(2)))
-    for m in re.finditer(r"\b(?:int|float)\s+([A-Za-z_]\w*)\s*=\s*(?:(?:int|float)\s*\(\s*)?([A-Za-z_]\w*)\s*\)?\s*;", code):
-        if m.group(2) in numbers:                   # a local name for an input: "int samples = quality;"
-            numbers.setdefault(m.group(1), numbers[m.group(2)])
-    functions, sure = {}, [True]
-    for m in _FUNC.finditer(code):
-        if m.group(1) not in ("if", "for", "while", "switch", "return"):
-            functions[m.group(1)] = (m.end() - 1, _close(code, m.end() - 1))
-
-    def cost(lo, hi, depth):
-        """(reads, rounds) of code[lo:hi], with what the functions it calls read."""
-        reads, rounds, i = 0, 1, lo
-        while i < hi:
-            loop = _LOOP.search(code, i, hi)
-            part = code[i:loop.start() if loop else hi]
-            reads += len(_READ.findall(part))
-            if depth < 4:
-                for name, (a, b) in functions.items():
-                    calls = len(re.findall(r"\b%s\s*\(" % re.escape(name), part))
-                    if calls and not (a <= lo < b):          # not a function calling itself
-                        r, n = cost(a, b, depth + 1)
-                        reads, rounds = reads + calls * r, max(rounds, n)
-            if not loop:
-                break
-            head_end = _close(code, loop.end() - 1, "(", ")")
-            brace, semi = code.find("{", head_end, hi), code.find(";", head_end, hi)
-            if brace >= 0 and not code[head_end:brace].strip():
-                body_end = _close(code, brace)
-            else:                                           # a loop of one statement, without braces
-                brace, body_end = head_end, (semi + 1 if semi >= 0 else hi)
-            n = _rounds(code[loop.end():head_end - 1], numbers) if loop.group(1) == "for" else None
-            if n is None:
-                n, sure[0] = UNKNOWN_ROUNDS, False
-            r, inner = cost(brace, min(body_end, hi), depth)
-            reads, rounds = reads + n * r, max(rounds, n * inner)
-            i = min(body_end, hi)
-        return reads, rounds
-
-    main = functions.get("main", (0, len(code)))
-    reads, rounds = cost(main[0], main[1], 0)
-    weight = "light" if reads <= 2 and rounds <= 4 else ("medium" if reads <= 12 and rounds <= 16 else "heavy")
-    parsed["_estimate"] = {"reads": reads, "rounds": rounds, "weight": weight, "sure": sure[0]}
+    """{"reads", "rounds", "weight", "sure", "why"}: the count of `measure` and the class it makes: light (at most 2
+    reads, no loop to speak of), medium (at most 12 reads and 16 rounds), heavy. When the text cannot be counted,
+    `sure` is false, `why` says what stands in the way and the weight is heavy; such a file is refused at upload.
+    Kept with the parsed file, so it is made once for a file's content. A count from the text, not a measurement."""
+    if "_estimate" not in parsed:
+        try:
+            reads, rounds = measure(parsed)
+            weight = "light" if reads <= 2 and rounds <= 4 else ("medium" if reads <= 12 and rounds <= 16 else "heavy")
+            parsed["_estimate"] = {"reads": reads, "rounds": rounds, "weight": weight, "sure": True, "why": None}
+        except ShaderError as e:
+            parsed["_estimate"] = {"reads": 0, "rounds": 0, "weight": "heavy", "sure": False, "why": str(e)}
+        except Exception as e:                      # whatever a hostile text does to the count, the panel goes on
+            parsed["_estimate"] = {"reads": 0, "rounds": 0, "weight": "heavy", "sure": False, "why": "its work could not be counted (%s)" % type(e).__name__}
     return parsed["_estimate"]
 
 
@@ -414,6 +591,8 @@ class Effects(S.Engine):
         parsed = self.read(data)
         translate(parsed)
         e = estimate(parsed)
+        if not e["sure"]:
+            raise ShaderError("%s. The box takes a filter only when its work for one pixel can be counted from its text" % e["why"])
         if e["reads"] > MAX_READS:
             raise ShaderError("it would read the picture about %d times for every pixel (at most %d): too heavy for this box" % (e["reads"], MAX_READS))
         if e["rounds"] > MAX_ROUNDS:
@@ -453,7 +632,7 @@ class Effects(S.Engine):
             except (ShaderError, ApiError):
                 continue
             e = estimate(parsed)
-            s.update(weight=e["weight"], estimate={"reads": e["reads"], "rounds": e["rounds"], "sure": e["sure"]},
+            s.update(weight=e["weight"], estimate={"reads": e["reads"], "rounds": e["rounds"], "sure": e["sure"], "why": e["why"]},
                      moves=bool(parsed.get("clock")), flashes=bool(parsed.get("flashes")), speed_max=self.speed_max(parsed),
                      refused=self._refusals.get(digest))
             now = self.current_values(parsed, on) if (on and on["id"] == sid) else self.start(parsed, cfg, sid)[0]

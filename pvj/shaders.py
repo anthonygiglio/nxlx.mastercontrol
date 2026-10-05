@@ -100,7 +100,14 @@ _IMG_CALLS = ((re.compile(r"\bIMG_THIS_(?:NORM_)?PIXEL(\s*)\((\s*)%s(\s*)\)" % I
 _HOST_NAMES = re.compile(r"\b_%s_\w*" % IMAGE)
 # What mpv defines for a texture a hook binds. An effect's text binds the picture's own planes besides the hooked
 # picture (effects.py), so a filter could otherwise read those through the player's names.
-_PLANES = re.compile(r"\b(?:LUMA|CHROMA|RGB|XYZ|ALPHA|NATIVE|MAIN)_(?:raw|pos|size|rot|off|pt|map|mul|tex|texOff)\b")
+# Every texture mpv has a name for at some stage, with every companion it defines for a bound one: a filter that says
+# LUMA_gather(...) or PREV_tex(...), or has an input called RGB_size, is refused here with its reason instead of by
+# the GPU later. (Only these prefixes: a name such as cell_size or ring_pos is an honest one and stays allowed.)
+_PLANES = re.compile(r"\b(?:HOOKED|LUMA|CHROMA|RGB|XYZ|ALPHA|NATIVE|MAINPRESUB|MAIN|LINEAR|SIGMOID|PREKERNEL|POSTKERNEL|SCALED|PREV|OUTPUT)"
+                     r"_(?:raw|pos|size|rot|off|pt|map|mul|tex|texOff|gather|lod)\w*")
+# mpv's own uniforms that change with every frame. They are not ISF, and a filter that read them would move (or
+# flicker) outside TIME, where the flash limit could not see it.
+_PLAYER_CLOCK = re.compile(r"\b(?:frame|random)\b")
 _CLOCK = re.compile(r"\b(?:TIME|TIMEDELTA|FRAMEINDEX|DATE)\b")
 _FLASH = re.compile(r"strob|flash|flicker|blink", re.I)
 # Names the player and this translator own, in any letter case: the hook, mpv's textures and their companions.
@@ -401,6 +408,12 @@ def parse(source, kind=GENERATOR):
                               % _HOST_NAMES.search(body).group(0))
         if _PLANES.search(body):
             raise ShaderError("the name %s belongs to the player; rename it" % _PLANES.search(body).group(0))
+        taken = next((i["name"] for i in clean if _PLANES.fullmatch(i["name"]) or _PLAYER_CLOCK.fullmatch(i["name"])), None)
+        if taken:
+            raise ShaderError("an input is called %s, a name that belongs to the player; rename it" % taken)
+        if _PLAYER_CLOCK.search(body):
+            raise ShaderError("the name %s belongs to the player (it changes with every frame, and is not part of ISF); rename it, and use TIME "
+                              "or FRAMEINDEX for something that moves" % _PLAYER_CLOCK.search(body).group(0))
         rest = _read_calls(body, False)
         if _IMG.search(rest):
             raise ShaderError("it reads a picture other than the one that is playing: %s is allowed on %s only" % (_IMG.search(rest).group(0), IMAGE))
