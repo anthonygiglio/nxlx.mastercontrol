@@ -26,12 +26,14 @@ Limits:
   (the systemd unit has `DeviceAllow=char-alsa rw` since D53; under an older unit the lights say so and stay off).
 """
 
+import fcntl
 import glob
 import json
 import os
 import re
 import select
 import stat
+import struct
 import threading
 import time
 import uuid
@@ -368,9 +370,24 @@ def light_meaning(action):
     return _MEANING.get(a)
 
 
-def _fixed(v, what):
-    """Fixed three-byte messages of a profile: note-off, note-on or control change only. No system messages, so no
-    SysEx can be written whatever a file says."""
+def sure_match(profile, info):
+    """Is this controller certainly the profile's: its USB id is one the profile lists, or the card list was read
+    and gave a product name the profile lists. A match by the card id alone ("Mini", "Mix": the last word of many
+    product names) is good enough to read a controller with, and never good enough to WRITE to one: a synthesiser
+    whose card id happens to be Mini must not be sent eighty note-ons because /proc/asound could not be read."""
+    if isinstance(info, str):
+        info = {"name": info, "usbid": None, "readable": True}
+    if not isinstance(info, dict) or profile is None:
+        return False
+    if info.get("usbid") and info["usbid"] in profile["match"]["usb_ids"]:
+        return True
+    return bool(info.get("name")) and info["name"] in profile["match"]["card_names"]
+
+
+def _fixed(v, what, channel):
+    """Fixed three-byte messages of a profile: note-off, note-on or control change only, on the section's own
+    channel, and never a channel mode message (controllers 120 to 127: all sound off, reset all controllers, local
+    control, all notes off, omni, mono, poly). No system messages, so no SysEx can be written whatever a file says."""
     if not isinstance(v, list) or len(v) > MAX_FIXED:
         raise MidiError("lights.%s must list at most %d messages" % (what, MAX_FIXED))
     out = []
@@ -380,6 +397,10 @@ def _fixed(v, what):
         status = _whole(m[0], "lights.%s status" % what, 0x80, 0xBF)
         if status & 0xF0 not in (0x80, 0x90, 0xB0):
             raise MidiError("lights.%s: only note-off, note-on and control change may be written" % what)
+        if status & 0x0F != channel - 1:
+            raise MidiError("lights.%s: a message must be on the section's channel (%d)" % (what, channel))
+        if status & 0xF0 == 0xB0 and isinstance(m[1], int) and 120 <= m[1] <= 127:
+            raise MidiError("lights.%s: controllers 120 to 127 are channel mode messages and may not be written" % what)
         out.append(bytes((status, _whole(m[1], "lights.%s data" % what, 0, 127), _whole(m[2], "lights.%s data" % what, 0, 127))))
     return out
 
@@ -408,7 +429,7 @@ def validate_lights(v, controls):
     if not isinstance(v["sources"], list) or not 1 <= len(v["sources"]) <= 8:
         raise MidiError("lights.sources must list one to eight documents")
     out["sources"] = [_text(s, "a lights source", 400) for s in v["sources"]]
-    out["setup"], out["clear"] = _fixed(v.get("setup", []), "setup"), _fixed(v.get("clear", []), "clear")
+    out["setup"], out["clear"] = _fixed(v.get("setup", []), "setup", out["channel"]), _fixed(v.get("clear", []), "clear", out["channel"])
     if not isinstance(v["styles"], dict) or not v["styles"]:
         raise MidiError("lights.styles must be an object")
     styles = {}
@@ -900,6 +921,12 @@ LIGHT_RETRY = 10.0          # a writer that could not open its device for anothe
 LIGHT_SWEEP_STEP = 0.03     # Test lights: one light after another
 LIGHT_SWEEP_HOLD = 1.0      # and all of them stay on this long
 ALSA_MAJOR = 116            # every /dev/snd node is a character device with this major number
+# include/uapi/sound/asound.h: #define SNDRV_RAWMIDI_IOCTL_DROP _IOW('W', 0x30, int), the argument a pointer to the
+# stream (SNDRV_RAWMIDI_STREAM_OUTPUT is 0). _IOW is (1 << 30) | (size 4 << 16) | ('W' 0x57 << 8) | 0x30 on ARM and
+# x86 (the Pi and the test machines). It throws away the bytes a rawmidi output has not sent yet. A fixed number, sent
+# only to a handle this module opened; nothing from outside reaches it.
+SNDRV_RAWMIDI_IOCTL_DROP = 0x40045730
+SNDRV_RAWMIDI_STREAM_OUTPUT = 0
 
 
 class LightWriter:
@@ -930,6 +957,10 @@ class LightWriter:
         self.since = clock()            # when it was made, then when it ended
         self.reader = None              # the MidiInput it belongs to: a controller plugged in again gets a new writer
         self.asked = 0                  # the hub's count of settings changes when it was made
+        self.setup = True               # send the profile's set-up messages first (once per plug-in: the hub says)
+        self.setup_sent = False         # they went out whole
+        self._stuck = False             # the last write was cut short or refused
+        self.dropped = False            # the waiting bytes were dropped before the close
 
     @staticmethod
     def _open_device(path):
@@ -937,11 +968,32 @@ class LightWriter:
         if not isinstance(path, str) or not DEVICE_PATH.fullmatch(path):
             raise OSError("not a MIDI device path")
         fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
-        st = os.fstat(fd)
-        if not stat.S_ISCHR(st.st_mode) or os.major(st.st_rdev) != ALSA_MAJOR:
-            os.close(fd)
+        try:
+            st = os.fstat(fd)
+            good = stat.S_ISCHR(st.st_mode) and os.major(st.st_rdev) == ALSA_MAJOR
+        except OSError:
+            good = False
+        if not good:
+            os.close(fd)                                # nothing was written to it, and the handle does not stay open
             raise OSError("not an ALSA character device")
         return fd
+
+    def _close(self, fd):
+        """Close the handle. The kernel waits for a rawmidi output to drain when it is closed, up to about ten
+        seconds, holding the device's open lock, so a controller that takes no bytes would hold up the reader's
+        close and a re-open for that long. So when bytes may still be waiting (the last write was cut short or
+        refused), they are dropped first. Without that, or if the drop fails, the close is bounded by the kernel's
+        ten seconds and happens on this writer's own thread; stop() does not wait for it beyond its 2.5 seconds."""
+        if self._stuck:
+            try:
+                fcntl.ioctl(fd, SNDRV_RAWMIDI_IOCTL_DROP, struct.pack("i", SNDRV_RAWMIDI_STREAM_OUTPUT))
+                self.dropped = True
+            except Exception:                           # a pipe in a test, another kernel: the close is as slow as it is
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
     def show(self, table):
         """The value every light should have now ({key: value}). Never waits."""
@@ -988,9 +1040,11 @@ class LightWriter:
     def _write(self, fd, data):
         """Write whole messages or nothing more: returns how many bytes went. A full buffer is not waited for."""
         try:
-            return os.write(fd, data)
+            n = os.write(fd, data)
         except BlockingIOError:
-            return 0
+            n = 0
+        self._stuck = n < len(data)                     # bytes may be waiting in the device's buffer (see _close)
+        return n
 
     def _run(self):
         try:
@@ -1011,7 +1065,9 @@ class LightWriter:
             self.state, self.error = "failed", repr(e)
             return
         self.state = "on"
-        have, tail, tokens, last = {}, b"".join(self.lights["setup"]), float(LIGHT_BURST), self._clock()
+        have, tail, tokens, last = {}, (b"".join(self.lights["setup"]) if self.setup else b""), float(LIGHT_BURST), self._clock()
+        first = bool(tail)                              # the set-up messages are the first thing in `tail`
+        self.setup_sent = not self.setup or not first
         try:
             while not self._stop.is_set():
                 now = self._clock()
@@ -1026,6 +1082,8 @@ class LightWriter:
                     if tail:
                         self._stop.wait(0.05)
                         continue
+                    if first:
+                        first, self.setup_sent = False, True
                 room = int(tokens)
                 batch = todo[:room]
                 if batch:
@@ -1061,10 +1119,7 @@ class LightWriter:
             self.state, self.error = "failed", repr(e)
             self.log("midi: lights of %s: internal error: %r" % (self.source, e))
         finally:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            self._close(fd)
 
     def _off(self, fd, tail=b""):
         """Every light off, within a second: the profile's own clear message if it has one, else each light's off."""
@@ -1110,6 +1165,8 @@ class MidiHub:
         self._light_thread = None
         self._light_wake = threading.Event()
         self._player_seen = None  # (time, what the player last said), for the lights
+        self._sure = {}           # device path -> (source, is it certainly the profile's controller, when that was looked at)
+        self._light_stop = None   # the stop signal of the lights thread that is the current one (each has its own)
         self._light_asked = 0     # goes up with every apply(): a writer that had no permission is tried once more then
         self._open_fn, self._lister, self._namer, self._clock = open_fn, lister, namer, clock
         self.profiles = load_profiles(log=log) if profiles is None else profiles
@@ -1263,25 +1320,45 @@ class MidiHub:
         lit = [c for c in profile["controls"] if c["id"] in profile["lights"]["controls"]]
         return [light_message(profile["lights"], c, 0)[:2] for c in sorted(lit, key=lambda c: (c["row"], c["col"]))]
 
-    def _lights_tick(self, fresh=False):
+    def _sure_of(self, path, source, profile, now):
+        """May this controller be written to: only if it is certainly the profile's (sure_match). The layout itself
+        may rest on the card id alone when the card list cannot be read (D49); a writer never does. An unsure answer
+        is not kept as good: it is looked at again, at most every LIGHT_RETRY seconds, so a card list that could not
+        be read in the moment of plugging in costs a few seconds of dark lights and nothing else."""
+        seen = self._sure.get(path)
+        if seen and seen[0] == source and (seen[1] or now - seen[2] < LIGHT_RETRY):
+            return seen[1]
+        try:
+            info = self._describer(path)
+        except Exception:
+            info = None
+        sure = sure_match(profile, info)
+        self._sure[path] = (source, sure, now)
+        return sure
+
+    def _lights_tick(self, fresh=False, stop=None):
         """Start a writer for each recognised controller whose lights are on, end the others, and hand every writer
         its table. The hub's lock is held only to look at the lists; the player is asked and the tables are made
-        without it, and nothing here waits for a device."""
-        if self._stop.is_set() or not self._lock.acquire(timeout=0.2):
+        without it, and nothing here waits for a device. `stop` is the calling loop's own stop signal: a loop that
+        was replaced while it waited for the player hands out nothing more."""
+        stop = stop or self._stop
+        if stop.is_set() or not self._lock.acquire(timeout=0.2):
             return
         try:
-            if self._stop.is_set():
+            if stop.is_set():
                 return
             now, want = self._clock(), {}
             for path, inp in self.inputs.items():
                 src, profile = self._matched.get(path, (None, None))
                 if profile is not None and profile["lights"] and src == inp.source and self.standard_on(src):
                     on, level = self.light_choice(src, profile)
-                    if on:
+                    if on and self._sure_of(path, src, profile, now):
                         want[path] = (src, profile, level)
             self._ending = [w for w in self._ending if w.alive]
             for path in list(self.lights):
                 w = self.lights[path]
+                if w.setup_sent and w.reader is not None:
+                    w.reader.light_setup = True         # this plug-in has had its set-up messages: a retry sends none
                 if path not in want or w.reader is not self.inputs[path] or w.lights is not want[path][1]["lights"]:
                     w.halt()
                     self._ending.append(self.lights.pop(path))
@@ -1295,6 +1372,7 @@ class MidiHub:
                 if path not in self.lights and not any(w.path == path for w in self._ending):
                     w = LightWriter(path, src, profile["lights"], self._light_keys(profile), open_fn=self._light_open_fn, clock=self._clock, log=self.log)
                     w.reader, w.asked = self.inputs[path], self._light_asked
+                    w.setup = not getattr(w.reader, "light_setup", False)      # once per plug-in, not once per try
                     self.lights[path] = w
                     w.start()
             live = [(path, self.lights[path]) + want[path] for path in self.lights if self.lights[path].alive]
@@ -1304,22 +1382,27 @@ class MidiHub:
         if not live:
             return
         snap = self._snapshot(now, fresh)
+        if stop.is_set():                               # the player took its time and this loop is no longer the one
+            return
         phase = int(now / (2 * LIGHT_TICK)) % 2
         for path, w, src, profile, level in live:
             table, states = self._light_table(src, profile, level, snap, bank, phase, c)
             w.show(table)
             self._lit[path] = states
 
-    def _lights_loop(self):
-        while not self._stop.is_set():
+    def _lights_loop(self, stop):
+        """The lights thread. `stop` is this loop's own signal, not the hub's: when MIDI is switched off while this
+        loop waits for a slow player and on again before it comes back, the hub has a new loop and this one must end
+        when it returns instead of carrying on beside it."""
+        while not stop.is_set():
             fresh = self._light_wake.wait(LIGHT_TICK)
-            self._light_wake.clear()
-            if self._stop.is_set():
+            if stop.is_set():
                 return
+            self._light_wake.clear()
             if fresh:
-                self._stop.wait(0.05)                   # a press was acted on: give the player a moment, then look at once
+                stop.wait(0.05)                         # a press was acted on: give the player a moment, then look at once
             try:
-                self._lights_tick(fresh)
+                self._lights_tick(fresh, stop)
             except Exception as e:
                 self._note("lights: %r" % (e,))
 
@@ -1367,6 +1450,8 @@ class MidiHub:
             state, line = "off", "Lights off."
         elif not self.standard_on(source):
             state, line = "off", "Lights are off while the standard layout is off."
+        elif path in self._sure and not self._sure[path][1]:
+            state, line = "unsure", "Lights are off: the box could not make sure which controller this is, so it sends it nothing."
         elif w is None or w.state == "opening":
             state, line = "opening", "Lights are starting."
         elif w.state == "installer":
@@ -1538,6 +1623,7 @@ class MidiHub:
                 if len(self._seen) > 256:
                     self._seen = {i.source for i in self.inputs.values()}
                 self._matched.pop(path, None)           # looked up afresh: another controller may sit on this path now
+                self._sure.pop(path, None)
                 found = self.profile_for(source, path)
                 if found is not None:
                     self.log("midi: %s is a %s: its standard layout is %s" % (source, found["name"], "on" if self.standard_on(source) else "switched off"))
@@ -1578,7 +1664,8 @@ class MidiHub:
                 self._scanner = threading.Thread(target=loop, daemon=True, name="midi-scan")
                 self._scanner.start()
             if self._light_thread is None or not self._light_thread.is_alive():
-                self._light_thread = threading.Thread(target=self._lights_loop, daemon=True, name="midi-lights-state")
+                self._light_stop = threading.Event()
+                self._light_thread = threading.Thread(target=self._lights_loop, args=(self._light_stop,), daemon=True, name="midi-lights-state")
                 self._light_thread.start()
         self._light_asked += 1
         self._light_wake.set()                          # a switch or a brightness that changed shows at once
@@ -1590,6 +1677,8 @@ class MidiHub:
             self._stop.set()
             scanner, self._scanner = self._scanner, None
             lighter, self._light_thread = self._light_thread, None
+            if self._light_stop is not None:
+                self._light_stop.set()                  # its own signal: it ends even if a new loop is started meanwhile
             inputs = list(self.inputs.values())
             self.inputs.clear()
             for inp in inputs:
@@ -1606,6 +1695,7 @@ class MidiHub:
         with self._lock:                                # only now, with every reader ended, do the layouts go
             if self._stop.is_set():
                 self._matched.clear()
+                self._sure.clear()
                 self.activity.clear()
                 self._retired.clear()
 
@@ -1756,6 +1846,8 @@ def validate_light_choice(body, new, known=None):
     name = body.get("controller")
     if not isinstance(name, str) or not SOURCE.fullmatch(name):
         raise MidiError("bad controller name")
+    if any(k not in ("controller", "lights", "brightness") for k in body):
+        raise MidiError("send controller with lights, brightness or both, and nothing else")
     if "lights" in body and not isinstance(body["lights"], bool):
         raise MidiError("lights must be true or false")
     if "brightness" in body and (not isinstance(body["brightness"], str) or body["brightness"] not in LIGHT_LEVELS):

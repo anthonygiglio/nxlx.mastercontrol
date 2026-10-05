@@ -169,6 +169,16 @@ class LightsFilesTest(unittest.TestCase):
         broken(lambda v: v.update(setup=[[0xE0, 0, 0]]), "status")
         broken(lambda v: v.update(setup=[[0xA0, 0, 0]]), "only note-off, note-on and control change")
         broken(lambda v: v.update(setup=[[176, 0]]), "three numbers")
+        # L3 of the review: only the section's own channel, and never a channel mode message
+        broken(lambda v: v.update(setup=[[0xB1, 0, 0]]), "section's channel")
+        broken(lambda v: v.update(clear=[[0x9F, 0, 0]]), "section's channel")
+        broken(lambda v: v.update(clear=[[0x80, 0, 0]], channel=2), "section's channel")
+        for mode in range(120, 128):
+            broken(lambda v: v.update(setup=[[0xB0, mode, 0]]), "channel mode")
+            broken(lambda v: v.update(clear=[[0xB0, mode, 127]]), "channel mode")
+        ok = copy.deepcopy(good)
+        ok["lights"].update(setup=[[0xB0, 119, 0], [0x90, 120, 0], [0x80, 127, 0]])      # controller 119 and notes 120 to 127 are ordinary
+        midi.validate_profile(ok, PAD)
         broken(lambda v: v.update(clear=[[176, 0, 128]]), "0 to 127")
         broken(lambda v: v.update(clear=[[176, 0, 0]] * 9), "at most 8")
         broken(lambda v: v.update(setup="b00000"), "at most 8")
@@ -659,6 +669,201 @@ class LightsHubTest(LightsHubBase):
             d["midi"]["lights"] = junk
             self.assertEqual(self.hub.light_choice("Mini", BY_ID[PAD]), (True, "low"), junk)
             self.assertEqual(self.hub.light_choice("nanoKONTROL2", BY_ID[NANO]), (False, "low"), junk)
+
+
+class ReviewFindingsTest(LightsHubBase):
+    """What the independent security review of pull request #82 found, each with its test."""
+
+    UNREADABLE = {"name": None, "usbid": None, "readable": False}
+
+    def describe(self, answers):
+        def describer(path):
+            a = answers.get(path, self.PRODUCTS[path])
+            if isinstance(a, Exception):
+                raise a
+            return a() if callable(a) else a
+        self.hub._describer = describer
+
+    def test_m1_a_controller_known_by_its_card_id_alone_is_read_but_never_written_to(self):
+        # /proc/asound could not be read for the card, or reading it raised: the card id ("Mini") still gives the
+        # layout, as before, and that is not enough to send the device a reset and eighty note-ons
+        for answer in (self.UNREADABLE, OSError("no /proc/asound"), None, {"name": "Mini", "usbid": "ffff:0001", "readable": True}):
+            self.opens.clear()
+            self.describe({C_PAD: answer, C_LAUNCHKEY: self.UNREADABLE})
+            self.present = [C_PAD, C_LAUNCHKEY]
+            self.enable()
+            self.wait(lambda: len(self.pipes) == 2)
+            readable = isinstance(answer, dict) and answer["readable"]
+            if not readable:
+                self.wait(lambda: self.controller("Mini")["profile"] is not None)
+                self.assertEqual(self.controller("Mini")["profile"]["id"], PAD)             # the layout is there (the weaker match, as before)
+                self.assertEqual(self.controller("Mini_1")["profile"]["id"], PAD)           # and a Launchkey Mini with no readable name gets it too
+            time.sleep(1.2)                                                     # four looks at the lights
+            self.assertEqual(self.opens, [], answer)                            # nothing was opened for writing
+            self.assertEqual(self.out, {})
+            if not readable:
+                lights = self.lights_of("Mini")
+                self.assertEqual((lights["on"], lights["state"]), (True, "unsure"))
+                self.assertIn("could not make sure which controller this is", lights["line"])
+                self.assertEqual(self.post("/api/midi/lights", {"controller": "Mini", "test": True})[0], 409)
+                before = len(self.player.calls)
+                self.send(C_PAD, [0x90, 104, 127, 0x90, 104, 0])                # its controls work as before (Stop, pressed and let go)
+                self.wait(lambda: len(self.player.calls) > before)
+            self.settings.data["control"]["midi"]["enabled"] = False
+            self.hub.apply()
+            self.pipes.clear()
+
+    def test_m1_a_usb_id_or_a_readable_product_name_is_what_lets_a_writer_start(self):
+        self.describe({C_PAD: {"name": None, "usbid": "1235:0036", "readable": True}})
+        self.plug(C_PAD)
+        self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
+        self.assertTrue(midi.sure_match(BY_ID[PAD], {"name": "Launchpad Mini", "usbid": None, "readable": True}))
+        self.assertTrue(midi.sure_match(BY_ID[PAD], "Launchpad Mini"))
+        for weak in (None, self.UNREADABLE, {"name": "Launchkey Mini", "usbid": None, "readable": True}, {"name": None, "usbid": "1235:0037", "readable": True},
+                     "Mini", {"name": "", "usbid": "", "readable": True}, 7):
+            self.assertFalse(midi.sure_match(BY_ID[PAD], weak), weak)
+        self.assertFalse(midi.sure_match(None, "Launchpad Mini"))
+
+    def test_m1_a_weak_answer_is_not_kept_as_good_and_a_later_good_one_starts_the_lights(self):
+        answers = [self.UNREADABLE]
+        self.describe({C_PAD: lambda: answers[0]})
+        with mock.patch.object(midi, "LIGHT_RETRY", 0.4):
+            self.plug(C_PAD)
+            self.wait(lambda: self.lights_of("Mini")["state"] == "unsure")
+            time.sleep(1.0)
+            self.assertEqual(self.opens, [])                                    # asked again meanwhile, still unsure, still nothing
+            answers[0] = "Launchpad Mini"                                       # the card list can be read now
+            self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
+            self.assertEqual(self.lights_of("Mini")["state"], "on")
+
+    def test_l5_a_profile_without_a_lights_section_is_never_opened_for_writing(self):
+        plain = []
+        for p in midi.load_profiles(log=lambda *_: None):
+            plain.append(dict(p, lights=None))
+        self.hub.profiles = plain
+        self.present = [C_NANO, C_MIX, C_PAD, C_KEYS]
+        self.enable()
+        self.wait(lambda: len(self.pipes) == 4)
+        self.wait(lambda: self.controller("Mini")["profile"] is not None)
+        self.assertEqual(self.post("/api/midi", {"controller": "Mini", "lights": True})[0], 200)
+        time.sleep(1.0)
+        self.assertEqual((self.opens, self.hub.lights, self.lights_of("Mini")), ([], {}, None))
+        self.assertEqual(self.post("/api/midi/lights", {"controller": "Mini", "test": True})[0], 409)
+
+    def test_l1_off_and_on_while_the_player_is_slow_leaves_one_lights_thread(self):
+        self.plug(C_PAD)
+        self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
+        inside, let_go = threading.Event(), threading.Event()
+        self.addCleanup(let_go.set)
+
+        def slow():
+            inside.set()
+            let_go.wait(30)                                                     # mpv hangs: a status call that takes its time
+            return {"running": False, "path": None}
+        self.player.status = slow
+        self.hub._player_seen = None
+        self.hub._light_wake.set()
+        self.assertTrue(inside.wait(5))
+
+        def loops():
+            return [t for t in threading.enumerate() if t.name == "midi-lights-state" and t.is_alive()]
+        old = loops()
+        self.assertEqual(len(old), 1)
+        self.settings.data["control"]["midi"]["enabled"] = False
+        self.hub.apply()                                                        # the join gives up after three seconds: the loop is still inside
+        self.assertTrue(old[0].is_alive())
+        self.enable()                                                           # and on again: a new loop
+        self.wait(lambda: len(loops()) == 2)
+        let_go.set()                                                            # the player answers at last
+        self.wait(lambda: len(loops()) == 1)
+        self.assertFalse(old[0].is_alive())                                     # the old loop ended; it did not carry on beside the new one
+        self.wait(lambda: C_PAD in self.hub.lights and self.lights_of("Mini")["state"] == "on")
+
+    def test_l4_the_set_up_message_goes_once_per_plug_in_not_once_per_try(self):
+        with mock.patch.object(midi, "LIGHT_RETRY", 0.4):
+            self.plug(C_PAD)
+            self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
+            first = self.out[C_PAD]
+            self.assertEqual(first.read()[0], (0xB0, 0, 0))
+            first.unplug()                                                      # its output breaks; the controller stays plugged in
+            self.post("/api/blackout", {"on": True})                            # the next write fails, and the writer is tried again
+            self.wait(lambda: self.out[C_PAD] is not first and len(self.out[C_PAD].lit()) == 80, timeout=8)
+            again = self.out[C_PAD].read()
+            self.assertNotIn((0xB0, 0, 0), again)                               # the whole state, and no second reset
+            self.assertEqual((len(again), self.opens), (80, [C_PAD, C_PAD]))
+            self.assertEqual(self.out[C_PAD].lit()[(0x90, 120)], 15)
+        # plugged in again, it is a new plug-in: the reset goes first again
+        reader = self.pipes.pop(C_PAD)
+        self.present = []
+        os.close(reader[1])
+        self.wait(lambda: not self.hub.inputs and C_PAD not in self.hub.lights)
+        self.out.pop(C_PAD)
+        self.present = [C_PAD]
+        self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
+        self.assertEqual(self.out[C_PAD].read()[0], (0xB0, 0, 0))
+
+    def test_l6_the_switch_and_the_brightness_take_nothing_else(self):
+        self.plug(C_PAD)
+        for bad in ({"controller": "Mini", "lights": True, "bytes": [240, 1, 247]}, {"controller": "Mini", "brightness": "low", "enabled": False},
+                    {"controller": "Mini", "lights": False, "builtin": False}, {"controller": "Mini", "lights": True, "test": True},
+                    {"controller": "Mini", "brightness": "high", "value": 63}):
+            before = copy.deepcopy(self.settings.data["control"]["midi"])
+            self.assertEqual(self.post("/api/midi", bad)[0], 400, bad)
+            self.assertEqual(self.settings.data["control"]["midi"], before)     # and nothing of it was applied
+        self.assertEqual(self.post("/api/midi", {"controller": "Mini", "lights": True, "brightness": "medium"})[0], 200)
+
+
+class CloseTest(WriterBase):
+    """L2: the kernel drains a rawmidi output when it is closed, for up to ten seconds; bytes that a controller is
+    not taking are dropped first so the close is quick. A pipe has no such ioctl, so the call is watched."""
+
+    def test_the_number_is_the_kernels(self):
+        # _IOW('W', 0x30, int): write direction 1 in the top two bits, the size of an int, the type, the number
+        self.assertEqual(midi.SNDRV_RAWMIDI_IOCTL_DROP, (1 << 30) | (4 << 16) | (ord("W") << 8) | 0x30)
+        self.assertEqual(midi.SNDRV_RAWMIDI_STREAM_OUTPUT, 0)
+
+    def test_waiting_bytes_are_dropped_before_the_close_and_only_then(self):
+        calls = []
+
+        def ioctl(fd, request, arg):
+            calls.append((request, bytes(arg)))
+            try:
+                os.fstat(fd)
+                calls.append("open")                                            # it came before the close
+            except OSError:
+                calls.append("closed")
+            return 0
+        with mock.patch.object(midi.fcntl, "ioctl", ioctl):
+            w = self.writer()                                                   # a controller that takes its bytes
+            w.show({k: 1 for k in self.KEYS[:10]})
+            self.wait(lambda: len(self.pipe.read()) == 10)
+            w.stop()
+            self.assertEqual((calls, w.dropped, w.state), ([], False, "stopped"))
+            with mock.patch.object(midi, "LIGHT_RATE", 200000.0), mock.patch.object(midi, "LIGHT_BURST", 4000):
+                w = self.writer()                                               # one that takes nothing: the pipe fills
+                for n in range(1, 1500):
+                    w.show({k: n % 100 for k in self.KEYS})
+                    if w._stuck:
+                        break
+                    time.sleep(0.001)
+                self.assertTrue(w._stuck)
+                t0 = time.monotonic()
+                w.stop()
+                self.assertLess(time.monotonic() - t0, 2.6)
+            import struct
+            self.assertEqual(calls, [(0x40045730, struct.pack("i", 0)), "open"])
+            self.assertTrue(w.dropped)
+
+    def test_a_drop_that_fails_is_tolerated(self):
+        def ioctl(fd, request, arg):
+            raise OSError(25, "Inappropriate ioctl for device")
+        with mock.patch.object(midi.fcntl, "ioctl", ioctl):
+            w = self.writer()
+            w._stuck = True
+            w.stop(False)
+            self.assertEqual((w.state, w.dropped), ("stopped", False))
+            with self.assertRaises(OSError):
+                os.fstat(self.pipe.w)                                           # and the handle was closed all the same
 
 
 class LightsNeverWaitTest(Live):
