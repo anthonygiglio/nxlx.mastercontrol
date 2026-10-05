@@ -45,6 +45,78 @@ function startServer() {
   const { p: server, info } = await startServer();
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
   let failed = false;
+  // For a failure that comes and goes: every page the test opens is kept, with the box's last answers to it, and
+  // when a step fails report() prints what each open page showed at that moment (the screen, the message line, the
+  // field in use, the cards the failed step named) and those answers. Nothing here changes what the test does.
+  const opened = [];
+  const noteAnswer = (who) => (res) => {
+    const req = res.request(), url = res.url(), at = url.indexOf('/api/');
+    if (at < 0) return;
+    const entry = { t: Date.now(), line: req.method() + ' ' + url.slice(at) + ' ' + res.status() };
+    const quiet = req.method() === 'GET' && res.status() < 400 && /\/api\/status$/.test(url);     // asked every second
+    if (quiet) { who.polls = (who.polls || 0) + 1; return; }
+    if (req.method() !== 'GET') entry.line += ' sent ' + String(req.postData() || '').slice(0, 300);
+    who.answers.push(entry);
+    if (who.answers.length > 30) who.answers.shift();
+    if (res.status() >= 400) res.text().then((t) => { entry.line += ' answered ' + t.slice(0, 300); }, () => {});
+  };
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async (options) => {
+    const c = await newContext(options);
+    const who = { n: opened.length + 1, answers: [], page: null };
+    opened.push(who);
+    c.on('page', (pg) => { who.page = who.page || pg; });
+    c.on('response', noteAnswer(who));
+    return c;
+  };
+  const within = (promise, ms) => Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(null), ms))]);
+  async function report(error) {
+    const ids = Array.from(new Set((String(error && error.message).match(/#[A-Za-z][\w-]*/g) || []).map((x) => x.slice(1)))).slice(0, 8);
+    const now = Date.now();
+    for (const who of opened) {
+      const pg = who.page;
+      if (!pg || pg.isClosed()) continue;
+      let seen = null;
+      try {
+        seen = await within(pg.evaluate((names) => {
+          const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + ' [...]' : t; };
+          const text = (el) => (el ? cut(el.innerText || el.textContent, 1500) : null);
+          const one = (q) => document.querySelector(q);
+          const screen = one('.shell > .screen') || one('#app > *');
+          const active = document.activeElement;
+          const tab = one('nav.tabs [aria-current="page"]');
+          return {
+            screen: screen ? (screen.id || screen.className) + (screen.dataset && screen.dataset.page ? ' (' + screen.dataset.page + ')' : '') : 'none',
+            tab: tab ? tab.textContent : null,
+            title: text(one('h1')),
+            msg: one('#msg') ? one('#msg').className + ': ' + cut(one('#msg').textContent, 300) : null,
+            asking: text(one('#confirmrow')),
+            offline: Array.from(document.querySelectorAll('.offline, #offline')).some((el) => !el.hidden),
+            focus: active && active !== document.body ? (active.id ? '#' + active.id : active.tagName.toLowerCase()) + ('value' in active ? ' = ' + JSON.stringify(cut(active.value, 80)) : '') : 'nothing',
+            named: names.map((id) => {
+              const el = document.getElementById(id);
+              if (!el) return '#' + id + ': not in the page';
+              const box = el.getBoundingClientRect(), card = el.closest('.card');
+              return '#' + id + ': ' + (box.width && box.height ? 'shown' : 'hidden or empty') + (el.disabled ? ', disabled' : '') +
+                ('value' in el && el.tagName !== 'BUTTON' ? ', value ' + JSON.stringify(cut(el.value, 80)) : '') + ', text ' + JSON.stringify(cut(el.innerText || el.textContent, 300)) +
+                (card && card !== el ? ' | its card' + (card.id ? ' #' + card.id : '') + ': ' + JSON.stringify(cut(card.innerText, 900)) : '');
+            }),
+            all: text(screen),
+          };
+        }, ids), 5000);
+      } catch (e) { seen = null; }
+      console.error('--- page ' + who.n + (who.n === 1 ? ' (the full-access phone)' : '') + ' at ' + pg.url().replace(/#.*/, '#...') + ' ---');
+      if (!seen) console.error('  the page did not answer');
+      else {
+        console.error('  screen: ' + seen.screen + ' | tab: ' + seen.tab + ' | title: ' + seen.title + ' | focus: ' + seen.focus + (seen.offline ? ' | OFFLINE banner shown' : ''));
+        console.error('  message line: ' + seen.msg + (seen.asking ? ' | a question is open: ' + seen.asking : ''));
+        seen.named.forEach((line) => console.error('  ' + line));
+        console.error('  the whole screen: ' + seen.all);
+      }
+      console.error('  the last answers of the box (seconds before the failure; ' + (who.polls || 0) + ' status polls left out):');
+      who.answers.slice(-25).forEach((a) => console.error('    -' + ((now - a.t) / 1000).toFixed(2) + ' ' + a.line));
+    }
+  }
   try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
@@ -2758,6 +2830,7 @@ function startServer() {
   } catch (e) {
     failed = true;
     console.error('FAILED:', e.message, (e.stack || '').split('\n').filter(function (l) { return /panel.test.js/.test(l); }).slice(0, 2).join(' | '));
+    try { await report(e); } catch (x) { console.error('(no report of the pages: ' + x.message + ')'); }
   } finally {
     await browser.close();
     server.kill();

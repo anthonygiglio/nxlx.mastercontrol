@@ -16,6 +16,9 @@ jobs:
     # cancelled job keeps no log; so the job has an end, and the unit tests have an earlier one that says where.
     timeout-minutes: 45
     strategy:
+      # Each Python gives its own answer. Without this a failure on one cancelled the other mid-step, and a
+      # cancelled job keeps no log: half the evidence of a failure that comes and goes was thrown away.
+      fail-fast: false
       matrix:
         python: ['3.9', '3.12']
     steps:
