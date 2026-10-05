@@ -2424,6 +2424,20 @@ function startServer() {
             const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
             if (ratio < 4.5) out.push('contrast ' + ratio.toFixed(2) + ' (' + cs.color + ' on rgb(' + bg.join(', ') + ')): ' + name(el));
           }
+          // a button's words are whole: a word in capitals that does not fit is cut by the browser, which a width check does not see
+          document.querySelectorAll('.shell button.btn').forEach((el) => {
+            if (!shown(el) || el.children.length) return;
+            const longest = Math.max.apply(null, el.textContent.trim().split(/\s+/).map((w) => w.length));
+            const probe = document.createElement('span');
+            probe.textContent = el.textContent.trim().split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
+            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+            el.appendChild(probe);
+            const need = probe.getBoundingClientRect().width;
+            el.removeChild(probe);
+            const cs = getComputedStyle(el);
+            const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+            if (longest > 1 && need > room + 1) out.push('a word is cut (' + Math.round(need) + ' px in ' + Math.round(room) + '): ' + name(el));
+          });
           // the title: whole, inside the window
           const h1 = document.querySelector('.screen h1');
           if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }

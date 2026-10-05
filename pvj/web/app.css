@@ -498,7 +498,7 @@ html[data-style="signal"] .support-code { border: 3px dashed var(--ink); border-
 /* -- buttons: a plain one is a 3 px outline, the primary one and the chosen one are a block of the area's colour -- */
 html[data-style="signal"] .btn {
   border: 3px solid var(--fg); border-radius: 0; background: transparent; color: var(--fg); min-height: 44px; padding: 4px 14px;
-  font: 900 16px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; min-width: 0;
+  font: 900 16px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: break-word; min-width: 0;
 }
 html[data-style="signal"] .btn.small { min-height: 44px; padding: 4px 10px; font-size: 14px; }
 html[data-style="signal"] .btn.big { min-height: 56px; font-size: 18px; }
@@ -520,7 +520,9 @@ html[data-style="signal"] .bigchoice span { font-weight: 400; font-size: 14px; t
 html[data-style="signal"] .vibesbig { border-width: 3px; border-color: var(--ink); font-size: 20px; }
 html[data-style="signal"] .vibesbig.on { border-color: var(--ac); }
 html[data-style="signal"] .vibessub { font-weight: 600; text-transform: none; letter-spacing: 0; }
-html[data-style="signal"] .transport3 .btn { padding: 4px 6px; }
+html[data-style="signal"] .transport3 .btn { padding: 4px 4px; font-size: 14px; letter-spacing: 0; overflow-wrap: break-word; }
+/* Fade out, Freeze, Stop and Blackout: two by two on a phone, so no word is cut in capitals */
+html[data-style="signal"] .row:has(> #fade) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 html[data-style="signal"] #shaderslink, html[data-style="signal"] #vibesskip, html[data-style="signal"] #liveprev { padding: 4px 6px; }
 /* staff press these: 56 px at least */
 html[data-style="signal"] #roomscreen .btn, html[data-style="signal"] .room-amb .row .btn { min-height: 56px; }
@@ -636,7 +638,7 @@ html[data-style="signal"] .ctlgrid .ctl { border: 3px solid var(--fg); border-ra
 html[data-style="signal"] .ctlgrid .ctl-fader { min-height: 104px; }
 html[data-style="signal"] .ctlgrid .ctl-knob { border-radius: 28px; }
 html[data-style="signal"] .ctlgrid .ctl .ctlname { font: 500 13px var(--mono); color: var(--mu); text-transform: uppercase; }
-html[data-style="signal"] .ctlgrid .ctl .ctlwhat { font-weight: 900; text-transform: uppercase; }
+html[data-style="signal"] .ctlgrid .ctl .ctlwhat { font-weight: 700; line-height: 1.15; }      /* sentence case: a cell is 58 px wide, and capitals cut every word */
 html[data-style="signal"] .ctlgrid .ctl .ctlval { font: 500 13px var(--mono); color: var(--mu); }
 html[data-style="signal"] .ctlgrid .ctl.spare { border-color: var(--mu); }
 html[data-style="signal"] .ctlgrid .ctl.spare .ctlwhat { font-weight: 600; color: var(--mu); }
@@ -658,4 +660,5 @@ html[data-style="signal"] .ctlgrid .ctl.lit .ctlname, html[data-style="signal"] 
   html[data-style="signal"] .card .card { border: 0; padding: 0; }
   html[data-style="signal"] .shaderstage .shadername { font-size: 48px; }
   html[data-style="signal"] .liveside h2 { font-size: 30px; }
+  html[data-style="signal"] .row:has(> #fade) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

@@ -484,14 +484,14 @@ function startServer() {
         await soft('signal: shaders page on a laptop', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
         await fontsIn();
         await page.waitForTimeout(800);
-        await page.screenshot({ path: f, fullPage: true });
+        await whole(f);          // the whole page, with the tab bar at its foot and not across the middle
       });
       await shot('signal-midi-laptop', async (f) => {
         await sys('MIDI controller');
         await soft('signal: the controller drawn', page.waitForSelector('.ctlgrid', { timeout: 15000 }));
         await fontsIn();
         await page.waitForTimeout(800);
-        await page.screenshot({ path: f, fullPage: true });
+        await whole(f);          // the whole page, with the tab bar at its foot and not across the middle
       });
       await page.setViewportSize({ width: 390, height: 844 });
       await api('POST', '/api/theme', { name: 'signal-light', accent: null });
