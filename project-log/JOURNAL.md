@@ -6,9 +6,135 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
 ## 2026-10-05 (effects on the Pi 4: the first run on hardware, and every filter measured)
 
-**In progress; this entry is filled in as the run goes.** A measuring run on the owner's test Pi 4 over SSH while the owner slept, as `pvj-dev`, through the box's own API with a temporary paired device.
+Pull request #84. A measuring run of the effects feature (#81, D55) on the owner's test Pi 4 over SSH, 11:19 to 13:15 UTC, while the owner slept, and its numbers written into the code and the notes. Judged from snapshots and the player's counters; **nobody watched the monitor.**
 
-First result: **an effect draws on V3D.** `isf-rgb-invert` over `testpattern.mkv` (H.264, 1280 x 720, decoded in software, `yuv420p`) is the negative of the clip in the panel's snapshot (0.8 percent RMS away from the negated plain snapshot, the grey box still grey, nothing flipped or moved); exactly one of the text's two hooks runs (one pass of 3.9 ms), no frame dropped in 10 seconds, nothing in the player's log.
+**The answer first: effects work on the Pi 4.** All 37 bundled filters were taken by V3D, drew the right picture over the owner's clips, and exactly one of the text's two hooks ran each time. Over a 720p clip every one holds 30 frames a second. Over a 1080p clip every one drops frames at full size and none does with Half resolution.
+
+**The box.** Raspberry Pi 4 Model B Rev 1.5, mpv 0.40.0 on DRM with `--vo=gpu --profile=fast --hwdec=auto-safe`, a 2560 x 1440 screen at 74.99 Hz, `pvj/` as deployed from master `1fa2e25` that morning (not compared file by file; kernel and Mesa not read again). 35.0 degrees and not throttled at the start, 36.5 and not throttled at the end, at most 54.5 during the 1080p windows. Three MIDI controllers attached and left alone. Nothing playing, the mapping off with the owner's two surfaces saved, volume 100, opacity 100, no effect presets.
+
+**Method.** A temporary full-access device was paired with the PIN. A helper script (Python, standard library, in a root-only folder under `/tmp`) made every request through the panel's API and asked the player through its socket; the long part ran detached and wrote its results line by line, and a watchdog would have stopped playback, restored the mapping, revoked the device and removed the folder had the Mac gone silent for 20 minutes. The sound was turned to 0 for the run. Per filter, clip and size: `POST /api/effects`, 4 seconds, then a window of 15 seconds with no snapshot in it (45 more where the first showed 0.05 to 2.5 dropped frames a second: 14 cases), then one snapshot through the panel, then Off. In a window: the rises of `frame-drop-count` and `decoder-frame-drop-count` read every second, the average of each pass from `vo-passes`, GPU busy from the kernel's `gpu_stats`, the temperature, and `GET /api/effects` every 3 seconds for the engine's own `load`, `drops_per_second` and `pass_ms`. The snapshots were copied to the Mac and looked at on contact sheets, 146 of them for the table and about 160 for the other steps.
+
+**The clips.** The steps wanted test clips made with ffmpeg and copied into the media folder. That was refused (the folder is the owner's), so the run used what was there and did not rename, change or add a file:
+
+| Clip | What it is | By itself on this screen |
+| --- | --- | --- |
+| `testpattern.mkv` | H.264, 1280 x 720, 30 a second (the container names no rate), software decoding, `yuv420p`, BT.709 limited | nothing dropped, all passes 12.1 ms, GPU 48 percent |
+| `CRT.mp4` (and four more like it) | H.264, 1920 x 1080, 30 a second, software decoding, `yuv420p`, BT.709 limited | nothing dropped, all passes 13.1 ms, GPU 48 percent |
+| `20250623232212.mov` | H.264, 1920 x 1080, 41.4 a second | nothing dropped, GPU 67 percent |
+| the built-in colour bars | 1920 x 1080 at 25, `yuv420p`, BT.601 limited | nothing dropped, 15.9 ms |
+| `IMG_1586.mov` | HEVC, 1920 x 1080, 30 a second, hardware decoding: `drm_prime`, `rpi4_10`, Dolby Vision | **17 dropped a second, one pass of 70 ms** |
+| `ScreenRecording_07-12-2026 ...mp4` | HEVC, 1206 x 2622 at 58 a second, turned by 270 degrees, `drm_prime`, `rpi4_8`, BT.709 full range | **23 dropped a second** |
+| `Kay's Mandala .001.mov` | H.264, 1206 x 2622 at 60 a second, software decoding | **28 dropped a second** (the upload of a frame alone takes 9 ms) |
+
+So `hwdec-current` is `no` for H.264 and `drm` for HEVC, and three of the owner's ten clips cannot be played smoothly on this box with or without an effect. There was no clip of 960 x 540, of 720 x 576 or of 25 pictures a second.
+
+**1. Does it work at all.** `isf-rgb-invert` over each of the seven kinds of picture above, the clip frozen so that the frames match: the plain picture, the invert at amount 1, 0.5 and 0, an invert of red only, Flip H, Flip V, the invert at half size, and fx-vignette.
+
+- The invert is the negative of the plain snapshot to within 0.5 to 1.7 percent (RMS, two JPEG snapshots) for the four pictures decoded in software and the bars. Amount 0 is the plain picture to within 0.3 to 1.7 percent. Amount 0.5 is a flat grey: 127.9 to 128.7 in every channel over `CRT.mp4`, 127.95 with a spread of 0.3 over the camera clip. Over the test pattern's fully saturated bars each bar keeps a faint tint (spread up to 7 of 255): those colours lie outside what the conversion keeps (it clamps to 0 to 1), so the way back is not exact there.
+- An invert of red alone turns black to red, white to cyan and leaves mid grey grey: the filter works on RGB, so it is the `LUMA` hook with its conversion that ran over a video. The grey bars of the colour bars stay grey at every amount.
+- Flip H and Flip V are the plain picture mirrored and turned over, nothing shifted or stretched, for 16:9 and for the 1206 x 2622 clips in their pillar box, and for the clip the decoder hands over turned by 270 degrees.
+- **Hardware decoding is no obstacle.** Over both `drm_prime` clips one hook ran and the picture was the filtered one. For Dolby Vision the player says `colormatrix: dolbyvision`, which the engine does not know and takes for BT.709; the invert of the person in that clip looked like a negative, and amount 0.5 was a flat grey (151: the picture is tone-mapped afterwards).
+- Nothing in the player's or the panel's log but the known "Cannot load libcuda.so.1" at each clip start.
+- Cost of that one filter: 3.9 ms over 720p (all passes 18.1 ms against 11.8, GPU 67 percent, nothing dropped), 9.5 ms over 1080p (30.5 against 13.1, GPU 96 percent).
+
+**2. Blackout, opacity, a fade, with an invert on.** Blackout: the brightest pixel of the snapshot is 0, frozen and playing. Opacity 50: darker, what was white is mid grey. A fade out of 2 seconds reached black, after 2.6 seconds (see the list below); a fade in brought the picture back.
+
+**3. Every bundled filter.** Pass times in ms, dropped frames a second; "load" is the worst the engine said in the window. Class: light holds 30 frames a second over the 1080p clip at full size (fewer than 0.5 dropped a second), medium over the 720p clip only, heavy drops over the 720p clip.
+
+| Filter | Taken by the GPU | Looks right | 1080p: pass ms | dropped /s | GPU busy % | 1080p half: pass ms | dropped /s | GPU busy % | 720p: pass ms | dropped /s | GPU busy % | 720p half: pass ms | dropped /s | GPU busy % | Engine's load, worst (1080 / half / 720 / half) | Class | The count said |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fx-edge-glow | yes | yes: cyan outlines over the dimmed picture | 21.1 | 7.93 | 97 | 5.3 | 0 | 78 | 9.2 | 0 | 82 | 2.4 | 0 | 57 | heavy / ok / ok / ok | medium | medium: 5 reads |
+| fx-grade | yes | yes: warmer, more colour and contrast | 11.1 | 2.53 | 98 | 2.8 | 0 | 70 | 4.7 | 0 | 68 | 1.2 | 0 | 52 | heavy / ok / ok / ok | medium | light: 1 read |
+| fx-kaleido | yes | yes: six mirrored wedges | 17.6 | 6.73 | 98 | 4.5 | 0 | 75 | 7.7 | 0 | 79 | 2 | 0 | 53 | heavy / ok / ok / ok | medium | light: 1 read |
+| fx-mirror-quad | yes | yes: four mirrored quarters | 9.7 | 1.27 | 97 | 2.4 | 0 | 68 | 4 | 0 | 66 | 1.1 | 0 | 52 | tight / ok / ok / ok | medium | light: 1 read |
+| fx-pixel-grid | yes | yes: square lights with dark gaps | 11.5 | 2.53 | 97 | 2.9 | 0 | 70 | 4.9 | 0 | 70 | 1.3 | 0 | 52 | heavy / ok / ok / ok | medium | light: 1 read |
+| fx-rgb-split | yes | yes: red and blue pulled apart | 15.4 | 4.93 | 98 | 3.9 | 0 | 73 | 6.6 | 0 | 75 | 1.8 | 0 | 56 | heavy / ok / ok / ok | medium | medium: 3 reads |
+| fx-ring | yes | yes: a bright ring bending the picture | 15.5 | 5.13 | 98 | 4 | 0 | 73 | 6.7 | 0 | 75 | 1.8 | 0 | 54 | heavy / ok / ok / ok | medium | light: 1 read |
+| fx-ripple | yes | yes: waves pushing the picture | 14.6 | 4.93 | 98 | 3.6 | 0 | 72 | 6.3 | 0 | 73 | 1.6 | 0 | 52 | heavy / ok / ok / ok | medium | light: 1 read |
+| fx-slit-bands | yes | yes: bands slid against each other | 13.5 | 4.26 | 97 | 3.4 | 0 | 72 | 5.8 | 0 | 72 | 1.5 | 0 | 53 | heavy / ok / ok / ok | medium | light: 1 read |
+| fx-twirl | yes | yes: wound around the middle | 16 | 5.4 | 98 | 4 | 0 | 73 | 6.9 | 0 | 75 | 1.8 | 0 | 53 | heavy / ok / ok / ok | medium | light: 1 read |
+| fx-vignette | yes | yes: dark soft edges | 10.9 | 2.22 | 97 | 2.7 | 0 | 69 | 4.6 | 0 | 68 | 1.2 | 0 | 52 | heavy / ok / ok / ok | medium | light: 1 read |
+| fx-wash | yes | yes: washed orange | 9.1 | 0.83 | 97 | 2.3 | 0 | 69 | 3.7 | 0 | 65 | 1 | 0 | 51 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-chromatic-aberration | yes | yes: colour fringes towards the edges | 12.2 | 3.13 | 97 | 3.5 | 0 | 71 | 5.2 | 0 | 73 | 1.5 | 0 | 52 | heavy / ok / ok / ok | medium | medium: 3 reads |
+| isf-color-monochrome | yes | yes: one sepia tone | 11.1 | 2.53 | 97 | 2.8 | 0 | 70 | 4.8 | 0 | 70 | 1.2 | 0 | 51 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-corner-color-tint | yes | yes: a tint from each corner | 20.7 | 8.33 | 98 | 5.2 | 0 | 77 | 9 | 0 | 81 | 2.3 | 0 | 54 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-double-vision | yes | yes: the picture twice, shifted | 16.4 | 5.93 | 97 | 4.4 | 0 | 74 | 7.1 | 0 | 76 | 1.9 | 0 | 54 | heavy / ok / ok / ok | medium | medium: 3 reads |
+| isf-duotone | yes | yes: two colours only | 8.2 | 0.18 | 97 | 2.1 | 0 | 68 | 3.3 | 0 | 64 | 1 | 0 | 52 | ok / ok / ok / ok | light | light: 1 read |
+| isf-edge-blowout | yes | yes: edges stretched to the borders | 30.4 | 11.33 | 98 | 7.7 | 0 | 84 | 13.5 | 0.35 | 95 | 3.4 | 0 | 58 | heavy / ok / tight / ok | medium | medium: 10 reads |
+| isf-false-color | yes | yes: two colours by brightness | 10 | 1.6 | 97 | 2.5 | 0 | 69 | 4.2 | 0 | 66 | 1.1 | 0 | 52 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-flip-h | yes | yes: left and right exchanged | 8.9 | 0.72 | 97 | 2.2 | 0 | 68 | 3.6 | 0 | 67 | 1 | 0 | 51 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-flip-v | yes | yes: upside down | 8.9 | 0.7 | 97 | 2.2 | 0 | 68 | 3.6 | 0 | 64 | 1 | 0 | 52 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-gamma-correction | yes | yes: lighter middle tones | 10.3 | 1.73 | 97 | 2.5 | 0 | 69 | 4.2 | 0 | 67 | 1.1 | 0 | 52 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-hyperspace | yes | yes: both halves bent to a line | 14.3 | 4.6 | 97 | 4.2 | 0 | 74 | 6.1 | 0 | 74 | 1.8 | 0 | 53 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-interlace-mirror | yes | yes: every other line mirrored | 9.9 | 1.57 | 97 | 3.2 | 0 | 71 | 4.1 | 0 | 67 | 1.4 | 0 | 53 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-kaleidoscope-tile | yes | yes: kaleidoscope tiles | 17.5 | 6.06 | 98 | 4.5 | 0 | 74 | 7.6 | 0 | 78 | 2 | 0 | 54 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-kaleidoscope | yes | yes: a kaleidoscope | 17.1 | 6 | 97 | 4.3 | 0 | 74 | 7.4 | 0 | 77 | 1.9 | 0 | 54 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-lgg | yes | yes: nearly no colour, lifted | 11.5 | 2.8 | 97 | 2.9 | 0 | 70 | 4.9 | 0 | 68 | 1.3 | 0 | 52 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-mirror | yes | yes: one half mirrored | 9 | 0.78 | 97 | 2.2 | 0 | 68 | 3.6 | 0 | 65 | 1 | 0 | 51 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-posterize | yes | yes: few steps of colour | 12 | 2.86 | 97 | 2.9 | 0 | 70 | 5.1 | 0 | 70 | 1.3 | 0 | 52 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-quad-tile | yes | yes: mirrored tiles | 17 | 6.32 | 97 | 6.8 | 0 | 81 | 7.2 | 0 | 77 | 2.8 | 0 | 57 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-rgb-eq | yes | yes: red and blue up, green down | 9.5 | 1.15 | 97 | 2.4 | 0 | 69 | 3.9 | 0 | 66 | 1 | 0 | 51 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-rgb-halftone | yes | yes: red, green and blue dots | 18.5 | 7.26 | 98 | 4.6 | 0 | 76 | 8.1 | 0 | 78 | 2.1 | 0 | 55 | heavy / ok / ok / ok | medium | medium: 3 reads, 3 loop rounds |
+| isf-rgb-invert | yes | yes: the negative | 9.5 | 1.15 | 97 | 2.4 | 0 | 68 | 3.9 | 0 | 66 | 1 | 0 | 52 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-sine-warp-tile | yes | yes: tiles bent by sines | 16.5 | 5.86 | 97 | 4.2 | 0 | 74 | 7.2 | 0 | 77 | 1.9 | 0 | 53 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-triple-rotate | yes | yes: three rings, each turned | 18.5 | 6.72 | 98 | 4.6 | 0 | 75 | 8.1 | 0 | 78 | 2 | 0 | 54 | heavy / ok / ok / ok | medium | light: 1 read |
+| isf-white-point-adjust | yes | yes: an orange white point | 9.1 | 0.85 | 97 | 2.3 | 0 | 69 | 3.7 | 0 | 66 | 1 | 0 | 53 | tight / ok / ok / ok | medium | light: 1 read |
+| isf-zoom | yes | yes: zoomed in twice | 11.8 | 3.13 | 97 | 2.9 | 0 | 70 | 5 | 0 | 69 | 1.3 | 0 | 51 | heavy / ok / ok / ok | medium | light: 1 read |
+
+- **36 medium, 1 light (isf-duotone, 0.18 a second over 60 seconds, so near the line), no heavy.** With Half resolution all 37 held the 1080p clip with nothing dropped.
+- All passes but the filter's: 21.3 ms at 1080 lines (20.9 to 21.8), 18.0 with Half resolution, 14.2 at 720 lines, 12.2 with Half resolution: the same for every filter. The clips alone: 13.1 and 12.1 ms (seven windows each, nothing dropped). So an effect costs 8 ms at 1080 lines and 2 ms at 720 before its own pass, for merging the planes and converting the colours in passes of their own.
+- The filter's pass: 2.35 times as long at 1080 lines as at 720 (2.25 times the pixels), and a quarter with Half resolution (0.25).
+- The count from the text did not predict it: its 31 "light" filters took 8.2 to 20.7 ms at 1080 lines, its 6 "medium" ones 12.2 to 30.4.
+- Half resolution changes more than sharpness for filters that count in pixels: isf-rgb-halftone's dots, fx-edge-glow's lines and isf-quad-tile's tiles are twice the size.
+- A put took 0.73 to 0.94 seconds the first time the panel saw a filter (it waits for the GPU's look), 0.24 to 0.39 after that at 1080 lines and 0.10 to 0.20 at 720.
+- `GET /api/effects` during the windows: 592 calls, 57 ms in the middle, nine in ten under 90, the slowest 169. With it asked every 3 seconds no 720p window dropped a frame.
+
+**4. Live control.**
+
+- Amount from 0 to 1 in ten steps: each request answered in 6 to 20 ms, the new text in the player after 0.02 to 0.18 seconds and drawn 0.05 to 0.22 seconds after the request. The picture's mean brightness over `CRT.mp4` rose by the same 8 of 255 at every step (86 to 169). Nothing dropped over 720p; 12 frames in 6.8 seconds over 1080p, where the invert drops about 8 in that time anyway.
+- Every input type on two filters (a number, a choice, a point, a colour on fx-vignette; a point, a choice, a switch, a number on fx-mirror-quad; a colour, a number, a switch on fx-edge-glow; a choice, a switch, a number on fx-rgb-split): answered in 5 to 9 ms, drawn after 0.06 seconds (0.26 for the first), `GET /api/effects` said the new value each time, the snapshots changed as they should, nothing dropped.
+- Refused with a sentence: a word for a number (400), an unknown input (400), another effect's id (409). Amount 7 became 1, Speed 4 became 1 (the flash limit).
+- Previous and Next: the neighbours in the list's order, drawn 0.05 to 0.10 seconds after the request; `GET /api/status` named each.
+- Ten Next in one second: the player's list changed four times, 0.385, 0.35 and 0.37 seconds apart, and the last one asked for was on at the end.
+- Ten presses of the one button in one second: on, off, on, off (twice on), nothing on at the end.
+- A preset: saved with two values and an amount, the values changed, the preset applied (drawn after 0.06 seconds, values and amount as saved), deleted; the settings file had no `fx_presets` before and none after.
+- Off: answered in 78 ms, the player's list empty.
+- Thirty changes at ten a second: 13 texts, answers 3.5 to 8.7 ms in the middle (20.6 the slowest), nothing dropped over 720p for a value and for the amount. Over 1080p the two bursts read 0 and 12 dropped in 4 seconds against about 11 for the same effect left alone; my reading there was a single difference across a loop of the clip and is not to be trusted. Of 12 snapshots taken inside bursts none was dark.
+
+**5. Its life.**
+
+- fx-vignette stayed on through seven changes of clip (1080p, 720p, HEVC full range, 1080p, the colour bars, Dolby Vision, the 1206 x 2622 clip, 1080p), one hook pass each time. The engine's word about the picture followed 1.06 to 1.59 seconds after the play request where the range, the matrix or (for a filter that reads the clock) the rate changed: limited to full, BT.709 to BT.601. For fx-vignette, which never reads the clock, a new rate alone made no new text, as designed; `on.picture.fps` then shows the old rate.
+- Stop: nothing on, `last` "Stop was pressed", the player's list empty, `fbo-format` back to `auto`.
+- A generator (nxlx-silk) played over a clip with fx-wash on: the effect was gone, `last` "a generator shader took the screen", putting one on or stepping answered 409 with the sentence; after Stop and a new clip nothing came back. The same when Vibes took the screen.
+- With nothing playing: Put on answers 409; Next and the one button answer "ok" and `error` then says "Nothing with a picture is playing" (as written in D55).
+- **Over a frozen clip.** Putting an effect on answered after 4.3 to 5.5 seconds with `"checked": null` for a filter and values the panel had not checked before, and at once when it had. The player's own list of passes says why: the paused picture is redrawn from the cache ("redraw cached frame"), the filter's pass does not run until the next frame (a frame step showed it), and the panel waits its whole 4 seconds for a pass that cannot come. The snapshots of the frozen picture all show the effect, because a snapshot renders the frame anew. So what a frozen screen shows after an effect goes on, changes or comes off was not seen, and the snapshot is not evidence for it.
+- No clip on the box triggers "This picture's format cannot take an effect". A stream was not available. A restart of the player was not run.
+
+**6. With the mapping** (the steps' test quad added in front of the owner's two surfaces, the mapping switched on, everything put back and compared afterwards). The surfaces show the negative of the clip with an invert on. The cost is the mapping's: by itself it dropped 6.3 frames a second over the 720p clip and 9.7 over the 1080p clip (its pass takes 17 ms, all passes 38.6 and 44.4 ms, GPU 98 percent). With the invert: 10.7 and 13.9; with the invert at half size: 7.3 and 10.7.
+
+**7. TIME.** fx-kaleido with three mirrors at half a turn a minute (3 degrees a second), the turn read by rotating one snapshot onto the next. Over the 720p clip (30 a second, nothing dropped): 61.0 degrees in 20.69, 20.66 and 20.64 seconds, where the clock says 62.0: 0.98 times the clock, and my reading is good to about half a degree and a third of a second. At speed 0.5: 30.5 degrees in 20.64 seconds (31.0). At speed 0: no turn in 5.6 seconds. Over the colour bars at 1080 lines, where the filter dropped 6 to 7 of 25 frames a second: 44 and 46 degrees in 20.7 seconds, and 22 at speed 0.5: TIME counts the frames that were drawn. **A change of Speed is not continuous:** the pattern jumped at each of the three changes (by 24 to 56 degrees), as the notes said it would. Speed above 1 was answered with 1.
+
+**8. The buffers.** fx-wash over the 1080p clip: 0.87 dropped a second and 30.4 ms for all passes in the 8-bit buffers the engine sets; 8.5 a second and 43.6 ms after `fbo-format auto` was set by hand; 1.0 and 30.8 ms in 8-bit buffers again. The 8-bit switch stays. The rows for fx-edge-glow and isf-edge-blowout, the ten puts over a frozen clip and the timing of `GET /api/effects` by itself were cut off (next paragraph).
+
+**A person used the panel during the run.** At 13:07:01 UTC the paired device "MacbookAir" (192.168.0.159) opened the panel, looked at Devices, pressed Next on the effects strip, moved a control (15 values in two seconds), pressed Stop at 13:07:56 and was gone two seconds later. My script went on measuring a stopped player for three minutes before I saw it; those rows are thrown away. I then ended the run: no more playback. What was still to do and was left: two filters of the buffer step, the frozen-clip repeat, a retake of two snapshots I had deleted by mistake (isf-zoom over 1080p; its numbers are in the table and its 720p pictures are right), and typing the corrected steps' playing parts as written.
+
+**Found.**
+
+1. **Fixed here:** `GET /api/status` did not name the effect over the built-in colour bars (`pvj/api.py`, `_public_player_status`: the test pattern returned before the effect was added). The Live screen's "now playing" reads that. One test.
+2. **An effect over a frozen clip is not drawn until the next frame, the snapshot says otherwise, and the request waits 4 seconds** (`pvj/shaders.py` line 1066, `_watch`; `pvj/player.py` line 527, `put_effect`, and `swap_effect`, `clear_effect`). Not fixed: the cure is to make the player draw the frame again (a seek of zero, perhaps), which touches streams and sync and cannot be judged without eyes on a screen. It also means CI's "frozen clip" pictures prove less than they seem to.
+3. **A fade takes about a third longer than asked** (`pvj/api.py` line 113, `Fader.ramp`: it sleeps `seconds / steps` after each step on top of what the step took; 2 seconds became 2.6). Older than effects.
+4. **The mapping alone drops 6 to 10 frames a second on this screen with three surfaces.** Not about effects; the earlier mapping measurement was one surface.
+5. **A clip shorter than the guard's 6 seconds can never be called heavy** (`pvj/shaderlive.py` line 486: the player's drop count starts again at every loop and the guard's window with it). Read from the code after the measuring script fell into the same hole; not seen on the box, whose clips are 20 seconds.
+6. Dolby Vision is drawn with BT.709 numbers (`pvj/effects.py` line 233). `on.picture.fps` keeps the old clip's rate for a filter that does not read the clock. `error` in `GET /api/effects` stays until that same effect goes on.
+7. Three of the owner's clips drop 17 to 28 frames a second by themselves.
+
+**In this pull request.** `PI4` in `pvj/effects.py` (class, pass and dropped frames at 1080 and 720 lines, full and half) with `weigh` and `measured`; the library's `weight` is the measured class for a bundled filter and the count for an upload, the count stays in `estimate`; the Effects card says what the board held; the status fix; the steps in `pvj/SHADERS.md` as they ran, with what had to change; the manual; D56; lessons; HANDOFF. **No default was changed**: Half resolution is still off when an effect goes on.
+
+**Recommended, for the owner to decide.** Half resolution on by default on a Pi 4 when the clip is larger than 720 lines (or always on this board). Nothing needs a "heavy" mark by the rule; the five that cost most at 1080 lines are isf-edge-blowout, isf-corner-color-tint, fx-edge-glow, isf-rgb-halftone and isf-triple-rotate. Convert or leave out the HEVC and 2622 line clips. Look at a frozen clip with an effect on the real screen.
+
+**The box afterwards.** Playback stopped (by the person, then confirmed), no effect, `fbo-format` auto, no shader in the player, volume back at 100, opacity 100, Blackout off. The mapping off, its two surfaces and the editor's selection as before. The settings file compared equal to its state before in every section (devices, PIN, shaders, presets, mapper, MIDI), the temporary device excepted, and that is revoked: the five devices are the owner's five. The media folder's listing is unchanged. My folder under `/tmp` and the watchdog are gone; no service was restarted. **Not as found, and gone at the next restart of the panel:** `last` and `error` in `GET /api/effects` carry the run's last messages, and Vibes' note of its last run says "stopped" with one round. One controller's count of light messages sent rose from 80 to 4,281: the lights followed the panel's state throughout, and no mapping or light setting was touched.
+
+**Not measured.** Anything by eye. A 960 x 540, 720 x 576, 24, 25 (from a file), 50 or 60 a second clip that plays cleanly; a stream or a live input; a 60 Hz or 1080p screen; the 8-bit buffers for more than one filter; uploads and a GPU refusal on V3D; the panel's pages in a browser on the box; MIDI; a restart of the player; hours of running; more than one run of the table (the classes near the line, isf-duotone above all, may flip).
 
 ## 2026-10-05 (effects: ISF filters over what plays)
 
