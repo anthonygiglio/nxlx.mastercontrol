@@ -23,7 +23,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import paths
+from . import icon, paths
 from . import autostart as autostart_mod, dmx as dmx_mod, hardware, midi as midi_mod, pinscreen as pinscreen_mod, sysd as sysd_mod, netd as netd_mod, osc as osc_mod, scheduler as scheduler_mod, themes as themes_mod
 from .api import Api, ApiError
 from .auth import Auth
@@ -217,6 +217,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._api("GET", path, {})
             if path == "/theme.css":
                 return self._send(200, api.theme_css().encode(), TYPES[".css"])
+            if path in icon.PATHS:          # a bookmark or a home-screen tile asks for these; they were 404 on the box
+                return self._send(200, icon.png(), icon.TYPE)
             name = static.get(path)
             if name is None:
                 return self._json(404, {"error": "not found"})

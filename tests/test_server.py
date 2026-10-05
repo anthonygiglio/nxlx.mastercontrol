@@ -392,6 +392,47 @@ class ServerTest(ServerBase):
         st, _, r = self.call("GET", "/api/hello")
         self.assertEqual(r.getheader("Cache-Control"), "no-store")
 
+    def test_a_bookmark_or_a_home_screen_tile_gets_an_icon(self):
+        """The real box answered 404 for /favicon.ico and the two apple-touch-icon names (seen in its journal)."""
+        import struct
+        import zlib
+        from pvj import icon
+        seen = set()
+        for path in ("/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/favicon.ico?v=2"):
+            for method in ("GET", "HEAD"):
+                c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+                c.request(method, path)                               # no token: a browser asks before anyone is paired
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual((r.status, r.getheader("Content-Type"), r.getheader("X-Content-Type-Options")), (200, "image/png", "nosniff"), path)
+                self.assertEqual(int(r.getheader("Content-Length")), len(icon.png()))
+                if method == "GET":
+                    seen.add(body)
+        (png,) = seen                                                 # one picture at every address
+        self.assertLess(len(png), 4096)                               # a few KB at most
+        self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(struct.unpack(">II", png[16:24]), (180, 180))
+        self.assertEqual(png[24:26], b"\x08\x02")                     # 8 bits, RGB: no transparency (iOS paints that black)
+        at, pixels = 8, b""
+        while at < len(png):                                          # every chunk's checksum is right, and the picture unpacks
+            n, kind = struct.unpack(">I", png[at:at + 4])[0], png[at + 4:at + 8]
+            data = png[at + 8:at + 8 + n]
+            self.assertEqual(struct.unpack(">I", png[at + 8 + n:at + 12 + n])[0], zlib.crc32(kind + data) & 0xFFFFFFFF)
+            if kind == b"IDAT":
+                pixels += data
+            at += 12 + n
+        raw = zlib.decompress(pixels)
+        self.assertEqual(len(raw), 180 * (1 + 3 * 180))
+        colours = {raw[y * 541 + 1 + 3 * x:y * 541 + 4 + 3 * x] for y in range(0, 180, 6) for x in range(0, 180, 6)}
+        self.assertEqual(colours, {bytes(icon.BACK), bytes(icon.MARK)})  # a mark on a ground, not an empty tile
+        import pvj
+        with open(os.path.join(os.path.dirname(pvj.__file__), "web", "index.html")) as f:      # the real page names them
+            text = f.read()
+        self.assertIn('href="/favicon.ico"', text)
+        self.assertIn('rel="apple-touch-icon" href="/apple-touch-icon.png"', text)
+        self.assertEqual(self.call("GET", "/apple-touch-icon-120x120.png")[0], 404)      # only the three names
+
     def test_settings_file_holds_no_clear_tokens_or_pin(self):
         token, _ = self.pair()
         with open(self.settings.path) as f:
