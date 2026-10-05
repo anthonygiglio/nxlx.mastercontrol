@@ -174,6 +174,7 @@ function startServer() {
         document.querySelectorAll('.card').forEach((card) => {
           const box = card.getBoundingClientRect();
           card.querySelectorAll('button, input, select, span, img').forEach((el) => {
+            if (el.closest('.ctlscroll')) return;               // a controller's drawing scrolls sideways inside its card, on purpose
             const r = el.getBoundingClientRect();
             if (r.width && (r.right > box.right + 1 || r.left < box.left - 1)) out.push((el.textContent || el.id || el.tagName).trim().slice(0, 30));
           });
@@ -2215,7 +2216,8 @@ function startServer() {
     // A laptop: every System page this pass changed, as the box is at the end of this test, fits its cards and the
     // window (the Shaders page, Projection mapping and Room have their own steps)
     await page.setViewportSize({ width: 1366, height: 800 });
-    await sysIndex();
+    await page.click('nav >> text=System');                    // from wherever the last step left the panel (a page opened from Live goes back to Live)
+    await page.waitForSelector('#sysindex');
     const laptopRows = (await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent))).filter((n) => !['Shaders and Vibes', 'Projection mapping', 'Room'].includes(n));
     for (const name of laptopRows) {
       await sys(name);
