@@ -233,7 +233,7 @@
   // ---- Mix: the card ------------------------------------------------------------------------------------------------
   function mixCard(c) {
     var h = c.h;
-    var box = h('div', { class: 'card fxcard', id: 'fxcard' }, h('div', { class: 'k', text: 'Effects (beta): a filter over what plays' }));
+    var box = h('div', { class: 'card fxcard', id: 'fxcard' }, h('div', { class: 'k sent', text: 'Effects (beta): a filter over what plays' }));
     card.head = card.ctl = card.pre = card.list = card.add = '';
     card.ctls = []; card.half = null; teachers = [];
     if (!c.moduleOn('shaders') || !kit()) {
