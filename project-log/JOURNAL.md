@@ -10,11 +10,19 @@ Pull request #90. **Not merged** (the brief said so). A test change only; the pr
 
 - **What failed.** `test_an_input_change_refused_as_the_projector_is_removed_or_switched_off_gets_no_retry` (added in #86) failed once in CI on a docs-only pull request (run 37383189733, test (3.12)), on its own set-up line: "the worker was still there, as the finding says".
 - **Cause.** The test takes the projector out of the settings (or switches the module off) with no `apply()` and then asserts the worker still exists. The worker wakes every 50 ms in that test, sees its entry gone and leaves by itself (`_loop` breaks, `_after` takes it out of `_workers`). The assertion was true only until that wake-up.
-- **Reproduced on demand.** With the worker woken right after the entry goes, and a wait until it has left, the old test failed with the CI message 6 times out of 6.
+- **Reproduced on demand.** With the worker woken right after the entry goes, and a wait until it has left, the old test failed with the CI message 20 times out of 20 (counted by exit code and by the message).
 - **Fix.** The worker is held in `_after` (it has seen the entry gone and is on its way out) until the refusal has been handled, and the test waits, with a deadline, until it is there. So "ERR3 arrives, the entry is gone, the worker is present and not stopped" is the state every time, for both variants. The test also asserts the command went out once and that the projector, back again, has nothing pending.
 - **The other order.** Two new tests: the worker left by itself before the refusal is handled, and `apply()` stopped it before then. `Monitor.set_input` raises the refusal in both; no gap in the product code.
-- **Does the test still prove it?** With `cur is None` taken out of `set_input`, the held test fails every time ("ProjectorError not raised"); the two new ones pass, as they should (`w is None` covers them).
+- **Does the test still prove it?** With `cur is None` taken out of `set_input`, the held test failed 20 times out of 20 ("ProjectorError not raised"); the two new ones passed 10 times out of 10, as they should (`w is None` covers them).
 - **Runs.** The three tests (both orders, both variants) 300 times in a loop on the dev Mac: 300 passed, none failed. CI is the judge for the rest.
+- **Master moved.** #89 (the hand-off) merged while this was open; master was merged in, both journal entries kept, this one on top as the later one.
+
+## 2026-10-05, end of day: everything merged, the hand-off for a new machine
+
+- Master and the test Pi 4 are at the merge of #88. Merged today: #83, #84, #85, #86, #87, #88. Only #65 (a reference) stays open.
+- HANDOFF.md has a new first section, "Read this first", because the development machine is moving from the Mac to an HP laptop (Windows with WSL). It lists what waits for the owner, the state of the Figma UI kit and what is still open.
+- Figma's connector refused all calls on the Starter plan after about 27 calls in the month, writes included, although Figma's page says writes are exempt. The owner chose a local bridge (`figma-console-mcp` and its Desktop Bridge plugin) to go on.
+- The Mac's 24 hour keep-awake ran out once during the day and was started again.
 
 ## 2026-10-05 (themes the owner can build and share: design tokens, add and save on the Look page, a converter for Figma)
 

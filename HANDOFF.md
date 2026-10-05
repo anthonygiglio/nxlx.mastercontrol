@@ -20,6 +20,35 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - Naming: the `pvj` package, `pvj-*` services and commands and install paths keep their names.
 - Style: no em dashes in written text (commas, semicolons, new sentences). Default document font Inter.
 
+## Read this first (state at the end of 2026-10-05)
+
+This section is the newest and wins over the older "Start here" below where they differ. The table of open pull requests further down is out of date: #83, #84, #85, #86, #87 and #88 are all merged.
+
+**State.** Master and the test Pi 4 are both at the merge of #88 (`fe6b7fd`), deployed over SSH through the `pvj-dev` account and confirmed by file hash, all five services active. The only open pull request is #65 (the UX proposal, a reference, not to merge).
+
+**Merged on 2026-10-05.** The Signal look (#83, D54) and Signal on every screen (#85, D57); effects measured on the Pi 4 (#84, D56); effect detail, which picks the working size on a small board (#87, D58); the test failures that came and went (#86, D59); themes the owner can add and save (#88, D60). Each had an independent read-only review where it touched the network, uploads or root helpers, and every finding has a test.
+
+**The development machine is moving.** The owner is moving this work from a Mac (disk nearly full) to an HP laptop running Windows with WSL (Ubuntu), on the same home network as the Pi. On a new machine: clone the repository inside the Linux home folder, `gh auth login`, make a new SSH key and add its public half to `/home/pvj-dev/.ssh/authorized_keys` on the Pi, and reach the Pi by address (192.168.0.169 at the time of writing; `nxlx-mastercontrol.local` often does not resolve inside WSL). Deploy as before: `git archive origin/master`, unpack in `/tmp` on the Pi, `sudo -n ./install/install.sh --offline`, then compare a file's hash. The `pvj-dev` account is for the test box only and is removed before the box goes to the venue (`sudo deluser --remove-home pvj-dev && sudo rm /etc/sudoers.d/pvj-dev`).
+
+**Before the final shipment** the owner wants to run a deep review himself (`/code-review ultra`); remind him. It is his to start.
+
+**Waiting for the owner.**
+
+- Which layout: the three options (A "On the wall", B "Front doors", C "Workspace") are a clickable page at https://claude.ai/artifact/7WzDiCQaXwnS2RJX3KBq57. He wants to redo "the tab and how screens are divided. and the laptop view. each tab does look like its doing too much." Nothing in the panel's layout has been rebuilt yet.
+- Two Signal choices in D57 to confirm: ambience on Room in Room yellow, and Set up in orange.
+- Whether edge glow and corner colour tint (GPU at 94 to 96 percent at 720 lines on the Pi 4) should step down to 540 lines in Automatic.
+- His eyes on a real screen: nobody has watched the monitor, a phone or Safari for Signal, effects at Automatic, the added themes (outlined tabs and the sample `tools/theme-samples/soft-room.json` have never been seen), or the mapping card fix.
+
+**The Figma UI kit.** A second file, "nxlx.mastercontrol Signal UI kit" (https://www.figma.com/design/AqZ4LsKRMvxuwC5ciksWdY): 48 variables in one collection, 19 text styles and 43 components were built through Figma's connector before it refused further calls ("You've reached the Figma MCP tool call limit on the Starter plan"; reads and writes both; no reset time given). The plan also allows only 3 pages and 1 variable mode, so a second theme is a duplicate of the file. The owner then chose a local bridge, the open source `figma-console-mcp` with its Desktop Bridge plugin running in Figma Desktop, which has no call limit and needs no token; through it the file was finished on 2026-10-05: page 1 has a "Start here" block, the tokens shown as swatches and the 43 parts; page 2 has thirteen screens at 390 and 1366 built from component instances with auto layout (Room, Live, Shaders and Vibes, System index, Projectors, Mix, Media, Schedule, People and codes, MIDI controller, Network, a page that is off, Pairing); page 3 is a playground with empty frames and a starter shell for each layout option at both sizes. The screens are a likeness, not a copy: some words inside parts are the part's defaults (field values, the confirm's buttons, a group's result line), and the laptop layouts are three columns of the phone's sections. In Claude Code's auto mode the bridge needed an Allow rule added by the owner (`Bash(python3 mcp.py *)`), and it ran only from the main session, not from a subagent. Variable names and how they map to theme files are in [pvj/THEMES.md](pvj/THEMES.md); `tools/figma-theme.py` converts them.
+
+**Known and open.**
+
+- "no reply from mpv" to a screenshot in the GPU tests has now been seen twice in CI (once on OpenGL ES in `test_a_capped_effect_draws_the_right_picture...`), never reproduced. Worth chasing, not only rerunning.
+- GitHub sometimes never gives a job a runner ("The job was not acquired by Runner of type hosted"); rerun the failed jobs.
+- An effect put on a paused clip is not drawn until the next frame; fades run about 30 percent long; the projection mapping alone is heavy on a Pi 4.
+- Never run on hardware: a real projector, the Wi-Fi feature, any controller control pressed by a person, a Pi 3, a Pi 5, x86.
+- The panel makes a new pairing PIN at every start, so each deploy changes it (`sudo -n pvj-pin` shows it); paired devices are unaffected.
+
 ## Start here (state at the end of 2026-10-04)
 
 **State.** At the end of 2026-10-04 master and the test Pi 4 were both at the merge of #78; master has since taken #79 (the shader measurements, which change no behaviour of the engine beyond the classes it reports). The Pi was deployed over SSH and checked by file hash; all five services are active (`pvj-player`, `pvj-web`, `pvj-netd`, `pvj-sysd`, `pvj-supportd`). It is still on the wired network (192.168.0.169); Wi-Fi is not joined.
