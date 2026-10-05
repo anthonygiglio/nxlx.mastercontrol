@@ -41,7 +41,7 @@
             "TYPE": "float",
             "MIN": -1.0,
             "MAX": 1.0,
-            "DEFAULT": 0.6
+            "DEFAULT": 0.8
         },
         {
             "NAME": "glow",
@@ -49,7 +49,7 @@
             "TYPE": "float",
             "MIN": 0.0,
             "MAX": 1.0,
-            "DEFAULT": 0.15
+            "DEFAULT": 0.25
         },
         {
             "NAME": "centre",

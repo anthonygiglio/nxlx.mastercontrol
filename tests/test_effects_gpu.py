@@ -726,7 +726,7 @@ class FxCase(GpuCase):
             b, wb = now()
             rate = ((b - a) % 64.0) / (wb - wa)
             print("time, ES %s: a clip of %s: TIME runs at %.2f times the clock" % (self.ES, name, rate))
-            # 0.99 to 1.00 in every run so far; the reading itself is good to about 3 in 100 over two seconds
+            # 0.99 to 1.03 in the runs so far; the reading itself is good to about 3 in 100 over two seconds
             self.assertTrue(0.9 <= rate <= 1.1, "TIME runs at %.2f times the clock over a clip of %s" % (rate, name))
             self.fx.change({"controls": {"speed": 0.0}})
             self.pump()
