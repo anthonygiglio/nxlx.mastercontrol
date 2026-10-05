@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""tools/figma-theme.py: design tokens exported from Figma become a theme file the box accepts (D59)."""
+"""tools/figma-theme.py: design tokens exported from Figma become a theme file the box accepts (D60)."""
 import importlib.util
 import io
 import json

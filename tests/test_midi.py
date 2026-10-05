@@ -246,6 +246,45 @@ class HubTest(ServerBase):
         self.send("/dev/snd/midiC1D0", [0x90, 74, 100])
         self.wait(lambda: self.api.mix["blackout"])
 
+    def test_a_button_held_while_midi_goes_off_is_not_still_held_when_midi_is_back(self):
+        # The release arrives while MIDI is off and is dropped (as it must be). The hub used to keep the button as
+        # pressed, so its first press after MIDI came back did nothing.
+        now = [500.0]
+        self.hub.mapper._clock = lambda: now[0]
+        self.hub.on_message("nano", ("on", 0, 74, 100))                      # blackout, pressed and held
+        self.assertTrue(self.api.mix["blackout"])
+        self.settings.data["control"]["midi"]["enabled"] = False
+        self.hub.apply()
+        self.hub.on_message("nano", ("off", 0, 74, 0))                       # let go while nobody listens
+        self.enable()
+        now[0] += 5
+        self.hub.on_message("nano", ("on", 0, 74, 100))
+        self.assertFalse(self.api.mix["blackout"], "the first press after MIDI came back was taken for a button still held")
+
+    def test_a_button_held_while_midi_goes_off_works_again_through_its_reader(self):
+        # the same through a real reader thread: only the press is ever written to the pipe
+        now = [500.0]
+        self.hub.mapper._clock = lambda: now[0]
+        path = "/dev/snd/midiC1D0"
+        self.present = [path]
+        self.enable()
+        self.wait(lambda: path in self.pipes)
+        self.send(path, [0x90, 74, 100])
+        self.wait(lambda: self.api.mix["blackout"])
+        self.settings.data["control"]["midi"]["enabled"] = False
+        self.hub.apply()
+        old = self.pipes.pop(path)
+        self.enable()
+        self.wait(lambda: path in self.pipes)
+        now[0] += 5
+        self.send(path, [0x90, 74, 100])
+        self.wait(lambda: not self.api.mix["blackout"])
+        for fd in old:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
     def test_learn_captures_the_next_control_and_executes_nothing_meanwhile(self):
         self.present = ["/dev/snd/midiC1D0"]
         self.enable()

@@ -959,7 +959,7 @@ html[data-style="signal"] .transport3 { grid-template-columns: repeat(3, minmax(
 html[data-style="signal"] .transport3 .btn { font-size: 14px; padding: 4px 0; }
 html[data-style="signal"] .livecols .switch, html[data-style="signal"] .livecols .switch::before, html[data-style="signal"] .livecols .switch::after { height: var(--tk-chl, 56px); }
 
-/* ---- Design tokens (D59). A theme of this style may set a bounded set of tokens (pvj/themes.py: DESIGN), which the
+/* ---- Design tokens (D60). A theme of this style may set a bounded set of tokens (pvj/themes.py: DESIGN), which the
    box writes into /theme.css as --tk-* variables: numbers it formatted and strings from its own tables, never text
    from the theme file. The rules above read them as var(--tk-..., <this style's own value>), so the built-in Signal,
    which sets none, is drawn exactly as before. --tk-r and --tk-rp: corner radius of controls and of panels;

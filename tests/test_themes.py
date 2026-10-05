@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Themes the owner makes (D59): the design tokens and their limits, the contrast a theme is held to, reading an
+"""Themes the owner makes (D60): the design tokens and their limits, the contrast a theme is held to, reading an
 untrusted file, and where added themes are kept (pvj/themes.py)."""
 import json
 import os

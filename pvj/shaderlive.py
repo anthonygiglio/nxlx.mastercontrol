@@ -1471,9 +1471,12 @@ class LiveEngine(S.Engine):
             for key, ok in (("guard", lambda v: isinstance(v, bool)), ("faster", lambda v: isinstance(v, bool)), ("clock", lambda v: v in S.CLOCKS)):
                 if key in body and not ok(body[key]):
                     raise ApiError(400, "guard and faster must be true or false, and clock carrier or frame")
-            super().api_set(body, device, client)
+            # Read, change and write with the settings lock held, once. This used to be two writes (the first
+            # version's keys, written without the lock, then this engine's): a change that arrived between the read
+            # and the write of an earlier one's second step was overwritten by it, and the later choice was lost.
             with self._cfg:
                 cfg = self.config()
+                self._config_keys(cfg, body)
                 for key in ("guard", "clock", "faster"):
                     if key in body:
                         cfg[key] = body[key]

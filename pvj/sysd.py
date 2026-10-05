@@ -27,7 +27,7 @@ import threading
 import time
 
 from . import paths
-from .netd import NetServer, peer_uid  # noqa: F401  (the same small, reviewed socket server)
+from .netd import exchange, NetServer, peer_uid  # noqa: F401  (the same small, reviewed socket server)
 
 MIN_EPOCH = 1735689600      # 2025-01-01: anything earlier is a wrong clock, not a date to set
 MAX_EPOCH = 2082758400      # 2036-01-01: a phone set to a far future year would otherwise stick (timesyncd saves the
@@ -194,24 +194,12 @@ class SysdClient:
         self.path, self.timeout = path, timeout
 
     def request(self, message):
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(self.timeout)
         try:
-            s.connect(self.path)
-            s.sendall(json.dumps(message).encode() + b"\n")
-            data = b""
-            while not data.endswith(b"\n") and len(data) < 65536:
-                chunk = s.recv(65536)
-                if not chunk:
-                    break
-                data += chunk
-            reply = json.loads(data)
+            reply = json.loads(exchange(self.path, message, self.timeout))
         except socket.timeout:
             raise OSError("the system helper (pvj-sysd) did not answer in time; the change may still be going on")
         except (OSError, ValueError):
             raise OSError("the system helper (pvj-sysd) is not running")
-        finally:
-            s.close()
         if not isinstance(reply, dict):
             raise OSError("the system helper (pvj-sysd) gave a bad answer")
         return reply

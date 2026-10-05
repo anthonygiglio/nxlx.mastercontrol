@@ -5,7 +5,7 @@ The owner chooses the look under **System > Look**. It applies when tapped, is k
 - A **theme** is a small JSON file of colours and design tokens. Anyone can make one, add it through the panel, and carry it to another box.
 - A **style** is a block of the panel's own stylesheet (`pvj/web/app.css`): how a switch, a chip, a row or a title block is built. There is a small fixed set of them, and only this project's code adds one. A theme names the style it is made for.
 
-A theme file never carries CSS. It holds names from fixed lists, colours as `#rrggbb` and whole numbers within fixed ranges, and nothing else from it reaches the page (D54, D59).
+A theme file never carries CSS. It holds names from fixed lists, colours as `#rrggbb` and whole numbers within fixed ranges, and nothing else from it reaches the page (D54, D60).
 
 ## Make your own theme
 
@@ -237,4 +237,4 @@ Figma draws three screens. Every other screen, page and state was looked at in t
 
 ### Fonts
 
-`pvj/web/fonts/archivo-latin.06fa7831.woff2` (27 KB, weights 400 to 900 in one file) and `jetbrains-mono-500-latin.6c95bc2f.woff2` (8 KB), with each family's `OFL.txt`. The eight digits in each name are the start of the file's SHA-256: a browser may keep a font for a day, so a font that is rebuilt must get a new name (a test compares the name with the checksum). Both are SIL Open Font License 1.1 and are subsets; `THIRD_PARTY_LICENSES.md` says where they came from and how they were made. The box serves them itself (`/fonts/...`, `font-src 'self'`), they are declared with `font-display: swap`, and behind them is the system font, so the panel can be used before a font has loaded. The default look never asks for them, except on the Look page, whose pictures of the looks are drawn in each look's own type (D59).
+`pvj/web/fonts/archivo-latin.06fa7831.woff2` (27 KB, weights 400 to 900 in one file) and `jetbrains-mono-500-latin.6c95bc2f.woff2` (8 KB), with each family's `OFL.txt`. The eight digits in each name are the start of the file's SHA-256: a browser may keep a font for a day, so a font that is rebuilt must get a new name (a test compares the name with the checksum). Both are SIL Open Font License 1.1 and are subsets; `THIRD_PARTY_LICENSES.md` says where they came from and how they were made. The box serves them itself (`/fonts/...`, `font-src 'self'`), they are declared with `font-display: swap`, and behind them is the system font, so the panel can be used before a font has loaded. The default look never asks for them, except on the Look page, whose pictures of the looks are drawn in each look's own type (D60).

@@ -17,7 +17,7 @@ primary action are filled or outlined. The style's block reads them through CSS 
 style's own values, so a theme that sets none of them looks as the style always did.
 
 A theme whose text would not be readable is refused: every pairing of text and ground the look draws is computed
-(pairings) and must reach READABLE. See pvj/THEMES.md and D59.
+(pairings) and must reach READABLE. See pvj/THEMES.md and D60.
 """
 
 import json

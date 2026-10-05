@@ -709,10 +709,12 @@ class MidiMapper:
             return standard
         return found
 
-    def forget(self, source):
-        """A controller went: its pickup and guard state go with it, so it starts clean when it comes back."""
+    def forget(self, source=None):
+        """A controller went: its pickup and guard state go with it, so it starts clean when it comes back. With no
+        source, every controller's (MIDI was switched off: what is let go meanwhile is never heard, so a button
+        that was down then would otherwise count as held for ever, and its next press would do nothing)."""
         for store in (self._pick, self._armed, self._pressed, self.pending):
-            for key in [k for k in store if source in k[:2]]:
+            for key in [k for k in store if source is None or source in k[:2]]:
                 del store[key]
 
     def waiting(self, source, kind, number):
@@ -1595,10 +1597,12 @@ class MidiHub:
             return
         if msg is None:
             with self._lock:
-                calls = self.mapper.flush_calls()
+                calls = [] if self._stop.is_set() else self.mapper.flush_calls()
             self._run_calls(calls)
             return
         with self._lock:
+            if self._stop.is_set():                 # switched off while this message waited for the lock
+                return
             kind, channel, d1, d2 = msg
             now = self._clock()
             if len(self.activity) > 1024:                                   # a faulty device cannot grow this without end
@@ -1652,6 +1656,8 @@ class MidiHub:
             for path in sorted(paths - set(self.inputs)):
                 source = self._namer(path)
                 inp = MidiInput(path, source, self.on_message, log=self.log, open_fn=self._open_fn)
+                if not any(i.source == source for i in self.inputs.values()):
+                    self.mapper.forget(source)          # nothing of it was heard until now: no button of it is held
                 self.inputs[path] = inp
                 self._retired.discard(source)
                 self._seen.add(source)
@@ -1719,6 +1725,9 @@ class MidiHub:
             for inp in inputs:
                 inp.halt()
             self.learn_until, self.captured = 0.0, None
+            # From here on a release is dropped (on_message), so no button may stay "pressed": one held at this
+            # moment would never fire again. The same for a fader's pickup and a guarded button's first press.
+            self.mapper.forget()
         self._light_wake.set()
         if scanner:
             scanner.join(timeout=3)

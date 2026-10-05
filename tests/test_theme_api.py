@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Themes the owner adds (D59), over the API: who may add, save and remove one, what is refused and how it is said,
+"""Themes the owner adds (D60), over the API: who may add, save and remove one, what is refused and how it is said,
 the remote-support tunnel, what reaches the page, and added themes in a settings file and a factory reset."""
 import json
 import os
