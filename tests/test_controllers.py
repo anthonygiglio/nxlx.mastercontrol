@@ -438,9 +438,14 @@ class HubBase(ServerBase):
             self.pipes[path] = (r, w)
             return r
         self.hub = MidiHub(self.api, self.settings, log=self.said.append, open_fn=open_fn, lister=lambda: list(self.present),
-                           namer=lambda p: self.NAMES[p], scan_interval=0.05, describer=lambda p: self.PRODUCTS[p])
+                           namer=lambda p: self.NAMES[p], scan_interval=0.05, describer=lambda p: self.PRODUCTS[p],
+                           light_open_fn=self.no_lights)      # never a real device from a test (tests/test_lights.py has the lights)
         self.api.midi = self.hub
         self.addCleanup(self.hub.stop)
+
+    @staticmethod
+    def no_lights(path):
+        raise OSError("no lights in this test")
 
     def enable(self):
         self.settings.data["control"]["midi"]["enabled"] = True

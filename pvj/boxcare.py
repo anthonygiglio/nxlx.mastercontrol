@@ -281,6 +281,8 @@ def check_control(v, care):
         raise ValueError("two MIDI mappings are for the same control")        # the panel replaces; a file may not hold both
     if "controllers" in midi_in:                # the standard layout of a controller switched off; absent means all on
         midi["controllers"] = midi_mod.validate_controllers(midi_in["controllers"])
+    if "lights" in midi_in:                     # a controller's lights switched on or off, and their brightness
+        midi["lights"] = midi_mod.validate_lights_choice(midi_in["lights"])
     return {"dmx": dmx, "midi": midi}
 
 

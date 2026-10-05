@@ -427,6 +427,83 @@ class WebUnitCaptureTest(unittest.TestCase):
         self.assertEqual(web["DevicePolicy"], ["closed"])
 
 
+class WebUnitLightsTest(unittest.TestCase):
+    """D53: the panel may write to ALSA devices, for a known controller's lights. That one word changed; this pins
+    the whole device policy and the rest of the sandbox, so nothing else widens with it or after it."""
+
+    def test_the_device_policy_is_exactly_this(self):
+        web = load_units()["pvj-web.service"]
+        self.assertEqual(web["DevicePolicy"], ["closed"])
+        self.assertEqual(web["DeviceAllow"], ["/dev/null rw", "/dev/zero rw", "/dev/full rw", "/dev/random r", "/dev/urandom r",
+                                              "char-alsa rw", "char-video4linux rw"])
+        self.assertNotIn("PrivateDevices", web)             # it would hide /dev/snd; the policy above stands in for it
+
+    def test_nothing_else_in_the_sandbox_widened(self):
+        web = load_units()["pvj-web.service"]
+        self.assertEqual((web["User"], web["Group"], words(web, "SupplementaryGroups")), (["pvj-web"], ["pvj"], ["audio", "video"]))
+        self.assertEqual(web["CapabilityBoundingSet"], ["CAP_NET_BIND_SERVICE"])
+        self.assertEqual(web["AmbientCapabilities"], ["CAP_NET_BIND_SERVICE"])
+        self.assertEqual(sorted(words(web, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
+        self.assertEqual(words(web, "ReadWritePaths"), ["/var/lib/pvj", "/run/pvj/web"])
+        for key, value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"), ("ProtectHome", "yes"), ("PrivateTmp", "yes"),
+                           ("ProtectKernelTunables", "yes"), ("ProtectKernelModules", "yes"), ("ProtectControlGroups", "yes"),
+                           ("RestrictNamespaces", "yes"), ("LockPersonality", "yes"), ("SystemCallArchitectures", "native"), ("UMask", "0007")):
+            self.assertEqual(web[key], [value], key)
+
+    def test_no_other_unit_was_given_alsa_devices_for_writing(self):
+        for name, keys in load_units().items():
+            if name not in ("pvj-web.service", "pvj-player.service"):       # the player plays sound; it has no device policy of this kind
+                self.assertFalse([v for v in keys.get("DeviceAllow", []) if "alsa" in v], name)
+
+    def test_the_check_after_the_open_refuses_what_is_not_an_alsa_device_and_leaks_no_handle(self):
+        # L5 of the review. The path's shape is checked first, so to reach the check that comes after the open the
+        # shape is loosened here: a regular file, a FIFO with a reader, /dev/null (a character device, of another
+        # major number) and a link are each refused, and none leaves a handle open
+        import tempfile
+        from unittest import mock
+        from pvj import midi
+        tmp = tempfile.mkdtemp()
+        plain, fifo, link = os.path.join(tmp, "file"), os.path.join(tmp, "fifo"), os.path.join(tmp, "link")
+        open(plain, "w").close()
+        os.mkfifo(fifo)
+        reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)                 # so the open for writing succeeds and the check decides
+        os.symlink("/dev/null", link)
+
+        def handles():
+            return len(os.listdir("/dev/fd"))
+        try:
+            with mock.patch.object(midi, "DEVICE_PATH", re.compile(r".+")):
+                before = handles()
+                for path in (plain, fifo, "/dev/null", link, os.path.join(tmp, "missing")):
+                    with self.assertRaises(OSError, msg=path):
+                        midi.LightWriter._open_device(path)
+                    self.assertEqual(handles(), before, path)
+                with open(plain, "rb") as f:
+                    self.assertEqual(f.read(), b"")                         # and nothing was written to anything
+        finally:
+            os.close(reader)
+        self.assertNotEqual(os.major(os.stat("/dev/null").st_rdev), midi.ALSA_MAJOR)
+
+    def test_the_program_opens_only_a_midi_node_by_the_shape_of_its_path(self):
+        # what the unit cannot say, the code does: the one place that opens a device for writing checks the path's
+        # shape, refuses links, and wants a character device with ALSA's major number
+        from pvj import midi
+        self.assertEqual(midi.ALSA_MAJOR, 116)
+        for path in ("/dev/snd/pcmC0D0p", "/dev/snd/controlC0", "/dev/snd/seq", "/dev/snd/timer", "/dev/snd/midiC0D0/../pcmC0D0p",
+                     "/dev/snd/midiC0D0\n", "/dev/null", "midiC0D0", 7, None):
+            with self.assertRaises(OSError, msg=path):
+                midi.LightWriter._open_device(path)
+        with open(midi.__file__) as f:
+            source = f.read()
+        self.assertEqual(source.count("os.O_WRONLY"), 1)     # one place opens for writing
+        self.assertEqual(source.count("LightWriter("), 1)    # and one place makes a writer: MidiHub._lights_tick, for a controller whose
+        tick = source[source.index("    def _lights_tick"):source.index("    def _lights_loop")]      # profile has lights and is certainly that controller
+        self.assertIn('profile["lights"]', tick)
+        self.assertIn("self._sure_of(path, src, profile, now)", tick)
+        self.assertLess(tick.index("self._sure_of("), tick.index("LightWriter("))        # (tests/test_lights.py runs both conditions)
+        self.assertNotIn("O_RDWR", source)
+
+
 class WebUnitTest(unittest.TestCase):
     def test_the_panel_may_read_the_boxs_addresses(self):
         # `ip -j addr` needs a netlink socket; the sandbox refused it and the Network card showed no addresses on a Pi 4

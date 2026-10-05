@@ -579,6 +579,45 @@ function startServer() {
     await page.click('#confirmyes');
     await page.waitForSelector(nano + ' .ctl[data-id="stop"]:not(.mine):has-text("Stop")');
     assert.strictEqual((await get('/api/midi')).map.length, 0);
+    // Lights: off for a nanoKONTROL2 until someone switches them on (its LED mode has to be set in Korg's editor first);
+    // the real switch applies on tap, the drawn layout marks the controls that have a light, and Test lights runs the
+    // sweep. What the box writes to the (fake) controller is read back: fixed three-byte messages, nothing else.
+    const midiOut = path.join(info.midi_dir, 'out');
+    const wrote = async (re) => {
+      for (let i = 0; i < 150; i++) {
+        const text = fs.existsSync(midiOut) ? fs.readFileSync(midiOut, 'utf8') : '';
+        if (re.test(text)) return text;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error('the controller was never sent ' + re);
+    };
+    await page.waitForSelector(nano + ' .ctllightline:has-text("Lights off.")');
+    await page.waitForSelector(nano + ' .ctllightnote:has-text("Set LED mode to External in Korg\'s editor first")');
+    assert.strictEqual(await page.getAttribute(nano + ' .ctllights', 'role'), 'switch', 'Lights is a real switch');
+    assert.strictEqual(await page.getAttribute(nano + ' .ctllights', 'aria-checked'), 'false', 'off until switched on');
+    assert.strictEqual(await page.locator(nano + ' .ctltest').count(), 0, 'no Test lights while the lights are off');
+    assert.strictEqual(await page.locator(nano + ' .ctl.haslight').count(), 30, 'the drawn layout marks the thirty controls that have a light');
+    assert.strictEqual(await page.locator(nano + ' .ctl[data-id="fader1"].haslight, ' + nano + ' .ctl[data-id="track_prev"].haslight').count(), 0);
+    assert(!fs.existsSync(midiOut), 'nothing is written to a controller whose lights are off');
+    await page.click(nano + ' .ctllights');
+    await page.waitForSelector(nano + ' .ctllights[aria-checked="true"]');
+    await page.waitForSelector(nano + ' .ctllightline:has-text("Lights on.")');
+    assert.strictEqual((await get('/api/midi')).controllers[0].lights.on, true, 'the switch applied on tap');
+    await wrote(/^b0 20 (00|7f)$/m);                                             // S 1 was told what to show (CC 32)
+    assert.strictEqual(await page.locator(nano + ' .ctlbright').count(), 0, 'lights of one colour: no brightness choice');
+    await page.click(nano + ' .ctltest');
+    await page.waitForSelector(nano + ' .ctllightline:has-text("Testing")');
+    await wrote(/^b0 47 7f$/m);                                                  // the sweep reached R 8 (CC 71), which is dark otherwise
+    await page.waitForSelector(nano + ' .ctltest:not([disabled])', { timeout: 15000 });
+    await page.waitForSelector(nano + ' .ctllightline:not(:has-text("Testing"))');
+    const sentToNano = (await wrote(/^b0 47 00$/m)).trim().split('\n');            // and back to what the box says
+    assert(sentToNano.length >= 60 && sentToNano.every((l) => /^b0 [0-9a-f]{2} (00|7f)$/.test(l)), 'only the profile\'s own messages reach the controller');
+    assert.strictEqual(await post('/api/midi/lights', { controller: 'nanoKONTROL2', test: true, bytes: [240, 1, 247] }), 400, 'a request cannot carry bytes');
+    assert.strictEqual(await post('/api/midi/lights', { controller: 'keys', test: true }), 409, 'no lights for a controller without a layout');
+    assert.strictEqual(await page.locator('.ctlcard[data-ctl="keys"] .ctllights').count(), 0);
+    await page.click(nano + ' .ctllights');
+    await page.waitForSelector(nano + ' .ctllightline:has-text("Lights off.")');
+    assert.strictEqual(await page.locator(nano + ' .ctltest').count(), 0);
     // the switch per controller: a real switch, and the layout is off without unplugging
     assert.strictEqual(await page.getAttribute(nano + ' .ctlstd', 'role'), 'switch');
     await page.click(nano + ' .ctlstd');

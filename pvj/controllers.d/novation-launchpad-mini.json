@@ -87,5 +87,41 @@
     {"id": "pad87", "name": "Pad 8.7", "row": 8, "col": 6, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 118}, "action": {"action": "shader_control_7"}},
     {"id": "pad88", "name": "Pad 8.8", "row": 8, "col": 7, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 119}, "action": {"action": "shader_control_8"}},
     {"id": "side_h", "name": "H", "row": 8, "col": 8, "kind": "button", "send": {"type": "note", "channel": 0, "number": 120}, "action": {"action": "blackout"}, "guard": true}
-  ]
+  ],
+  "lights": {
+    "default": true,
+    "unverified": false,
+    "note": "Amber: there is something here. Green: it is on now. Red: this darkens the screen; bright red: the screen is dark. The messages are from Novation's reference for the Launchpad S; that the Mini takes the same ones is not confirmed by Novation and has not been seen on a real one yet: press Test lights and say what you see.",
+    "sources": ["Novation, Launchpad S Programmer's Reference Manual 1.02 (https://fael-downloads-prod.focusrite.com/customer/dev/s3fs-public/novation/downloads/10753/launchpad-s-prm.pdf), read in full by the reviewer of pull request #82: a note-on on channel 1 per pad, red in bits 0 to 1 and green in bits 4 to 5 of the velocity, off is 0Ch (so 16 x green + red + 12)", "The same manual: control changes 68h to 6Fh for the top row, with the same value; B0h 00h 00h turns all LEDs off and restores the power-on settings", "Not confirmed from a primary source: that the original Launchpad Mini (USB id 1235:0036) uses the Launchpad S protocol. It is widely reported and the recording of the owner's unit fits its key numbers"],
+    "channel": 1,
+    "brightness": true,
+    "off": 12,
+    "setup": [[176, 0, 0]],
+    "clear": [[176, 0, 0]],
+    "styles": {
+      "clip": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "preset": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "control": {"low": {"off": 12, "on": 29, "active": 29, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 29, "busy": 29}, "high": {"off": 12, "on": 46, "active": 46, "busy": 46}},
+      "vibes": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "set": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "step": {"low": {"off": 12, "on": 29, "active": 29, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 29, "busy": 29}, "high": {"off": 12, "on": 46, "active": 46, "busy": 46}},
+      "play": {"low": {"off": 12, "on": 29, "active": 28, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 29}, "high": {"off": 12, "on": 46, "active": 60, "busy": 46}},
+      "stop": {"low": {"off": 12, "on": 13, "active": 12, "busy": 12}, "medium": {"off": 12, "on": 13, "active": 12, "busy": 12}, "high": {"off": 12, "on": 14, "active": 12, "busy": 12}},
+      "blackout": {"low": {"off": 12, "on": 13, "active": 15, "busy": 15}, "medium": {"off": 12, "on": 13, "active": 15, "busy": 15}, "high": {"off": 12, "on": 14, "active": 15, "busy": 15}},
+      "fadeout": {"low": {"off": 12, "on": 13, "active": 15, "busy": 15}, "medium": {"off": 12, "on": 13, "active": 15, "busy": 15}, "high": {"off": 12, "on": 14, "active": 15, "busy": 15}},
+      "fadein": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "room": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "bank": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}}
+    },
+    "controls": [
+      "top1", "top2", "top3", "top4", "top5", "top6", "top7", "top8", "pad11", "pad12",
+      "pad13", "pad14", "pad15", "pad16", "pad17", "pad18", "side_a", "pad21", "pad22", "pad23",
+      "pad24", "pad25", "pad26", "pad27", "pad28", "side_b", "pad31", "pad32", "pad33", "pad34",
+      "pad35", "pad36", "pad37", "pad38", "side_c", "pad41", "pad42", "pad43", "pad44", "pad45",
+      "pad46", "pad47", "pad48", "side_d", "pad51", "pad52", "pad53", "pad54", "pad55", "pad56",
+      "pad57", "pad58", "side_e", "pad61", "pad62", "pad63", "pad64", "pad65", "pad66", "pad67",
+      "pad68", "side_f", "pad71", "pad72", "pad73", "pad74", "pad75", "pad76", "pad77", "pad78",
+      "side_g", "pad81", "pad82", "pad83", "pad84", "pad85", "pad86", "pad87", "pad88", "side_h"
+    ]
+  }
 }

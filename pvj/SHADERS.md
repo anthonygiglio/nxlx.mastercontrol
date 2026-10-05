@@ -315,7 +315,7 @@ What the crude cost count said about the 36: no loop at all in 30; a short fixed
 
 ### What would unlock the rest
 
-Ranked by how many more files of this library each engine feature would let through, in the order they build on each other. **Step 1 is built (2026-10-05, D53): see [Effects](#effects)**; its row is left as it was written before, with what turned out differently in brackets. None of the others is built. What is said about mpv below comes from how this module and the mapper already use it and from reading; **each point marked "to verify" needs a short CI spike before any design**, as the first version of this module did (see LESSONS).
+Ranked by how many more files of this library each engine feature would let through, in the order they build on each other. **Step 1 is built (2026-10-05, D55): see [Effects](#effects)**; its row is left as it was written before, with what turned out differently in brackets. None of the others is built. What is said about mpv below comes from how this module and the mapper already use it and from reading; **each point marked "to verify" needs a short CI spike before any design**, as the first version of this module did (see LESSONS).
 
 | Step | Feature | More files (running total of 327) | How, in an mpv user shader on `--vo=gpu` | How hard | Cost on a Pi 4 |
 | --- | --- | --- | --- | --- | --- |
