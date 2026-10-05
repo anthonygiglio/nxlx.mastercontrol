@@ -730,3 +730,212 @@ html[data-style="signal"] .ctlgrid .ctl.lit .ctlname, html[data-style="signal"] 
   html[data-style="signal"] .shell:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
   html[data-style="signal"] .row:has(> #fade) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+
+/* ---- Signal everywhere (D57): every screen, page and state, looked at one by one in the pictures of
+   tests/ui/signal-pages.js. What the rules above left to chance is settled here, by the rules of pvj/THEMES.md:
+   capitals for titles, primary actions and short labels only (never a sentence, a clip's name or a file's name);
+   numbers in the number face; a state in its own colour with its word; what destroys something in the danger red;
+   and in the light an area's colour only as a filled block. ---- */
+
+/* -- words: a name somebody typed, a file's name and a sentence keep their case -- */
+html[data-style="signal"] #np, html[data-style="signal"] .pad, html[data-style="signal"] .sched-entry .lname, html[data-style="signal"] .fxname, html[data-style="signal"] .join-code > span:first-child { text-transform: none; letter-spacing: 0; }
+html[data-style="signal"] .pad { font-size: 16px; }
+html[data-style="signal"] .pad .t { overflow-wrap: anywhere; }
+/* a card's first line that is a sentence (it has a class of its own for this): heavy, not capitals */
+html[data-style="signal"] .card > .k.sent:first-child { font: 900 16px/1.3 var(--sans); letter-spacing: 0; text-transform: none; }
+/* sizes, counts and what an upload said: the number face */
+html[data-style="signal"] .list .item .k, html[data-style="signal"] #freeline, html[data-style="signal"] .card > #freeline:first-child, html[data-style="signal"] .usb-drive .item .k, html[data-style="signal"] #importline { font: 500 13px/1.4 var(--mono); letter-spacing: 0; text-transform: none; color: var(--mu); }
+html[data-style="signal"] input[type=number], html[data-style="signal"] input[type=time], html[data-style="signal"] .text-input.mono { font-family: var(--mono); font-weight: 500; }
+html[data-style="signal"] .big-code { font-size: 30px; line-height: 1.2; letter-spacing: .08em; color: var(--fg); }
+/* a field's label is a short label; a line that heads a part of a card is a small heading */
+html[data-style="signal"] label.field, html[data-style="signal"] label.k, html[data-style="signal"] .room-group .field, html[data-style="signal"] .detailbox > label { font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--fg); }
+html[data-style="signal"] div.field { font: 900 16px/1.3 var(--sans); }
+html[data-style="signal"] .rot > span { font-size: 16px; font-weight: 600; }
+
+/* -- air: a section is told from the next by the space between them, a field from the next by a little less -- */
+html[data-style="signal"] .screen { gap: 22px; }
+html[data-style="signal"] .livecols { gap: 22px; }
+html[data-style="signal"] .list { gap: 10px; }
+html[data-style="signal"] .addform, html[data-style="signal"] .list .item.proj-edit { gap: 12px; }
+html[data-style="signal"] .fieldwrap, html[data-style="signal"] .chooser { gap: 6px; }
+html[data-style="signal"] .list .item.proj-edit .hint { margin-bottom: 0; }
+/* a field and its button share a line; the button never drops under the field */
+html[data-style="signal"] .row > .text-input, html[data-style="signal"] .row > select.text-input { flex: 1 1 8rem; width: auto; min-width: 0; }
+html[data-style="signal"] .proj-namerow .row, html[data-style="signal"] .renamerow, html[data-style="signal"] .saverow { flex-wrap: nowrap; }
+/* a set of choices or of secondary actions is a grid of equal cells, not a ragged line */
+html[data-style="signal"] .moreacts, html[data-style="signal"] #netmodes, html[data-style="signal"] #lookthemes, html[data-style="signal"] #roomgmembers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+html[data-style="signal"] .moreacts > .btn, html[data-style="signal"] #netmodes > .btn, html[data-style="signal"] #lookthemes > .btn, html[data-style="signal"] #roomgmembers > .btn { min-width: 0; width: 100%; }
+html[data-style="signal"] .list .item.fxrow.on { box-shadow: inset 8px 0 0 var(--ink); padding-left: 16px; }
+html[data-style="signal"] .fxbuttons > .btn, html[data-style="signal"] .fxbuttons > .btn.big { white-space: nowrap; font-size: 14px; letter-spacing: 0; padding: 4px 4px; }
+
+/* -- a page under System on a phone: the title a little smaller than on a laptop, so "Projectors" and its switch
+   share a line; a title is never cut inside a word (the switch goes under it first) -- */
+html[data-style="signal"] .syshead h1 { font-size: 28px; min-width: min-content; }
+html[data-style="signal"] .switchwrap { margin-left: auto; }
+
+/* -- before pairing: the same title block, and labels as labels -- */
+html[data-style="signal"] .screen > h1:first-child { margin: -16px -16px 0; padding: 20px 16px 16px; background: var(--ac); color: var(--on); font-size: 36px; }
+html[data-style="signal"] .screen:has(> h1:first-child) > .k, html[data-style="signal"] .screen:has(> h1:first-child) > label.k { font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--fg); margin-top: 6px; }
+html[data-style="signal"] .screen:has(> h1:first-child) > .k:last-child { font: 400 14px/1.35 var(--sans); letter-spacing: 0; text-transform: none; color: var(--mu); }
+html[data-style="signal"] .screen > p { margin: 0; }
+html[data-style="signal"] .pin-row input { width: 64px; height: 72px; }
+
+/* -- danger: what cannot be undone, or stops the room, is the danger red, apart from the area's colour -- */
+html[data-style="signal"] #resetbtn, html[data-style="signal"] #poweroffbtn, html[data-style="signal"] #roomalloff { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+html[data-style="signal"] .btn[aria-label^="Remove"], html[data-style="signal"] .btn[aria-label^="Delete"], html[data-style="signal"] .btn.del, html[data-style="signal"] #mapdelete, html[data-style="signal"] #setdelete, html[data-style="signal"] .endcode, html[data-style="signal"] #rebootbtn, html[data-style="signal"] .proj-retry { border-color: var(--st-problem, var(--fg)); }
+html[data-style="signal"] .danger-h { justify-self: start; align-self: flex-start; padding: 4px 8px; background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); font-size: 14px; font-weight: 900; margin: 8px 0 0; }
+html[data-style="signal"] #resetcard { border: 3px solid var(--st-problem, var(--fg)); padding: 14px; }
+html[data-style="signal"] .confirm { border-width: 3px 3px 3px 10px; font-size: 16px; }
+html[data-style="signal"] .hint.warn { font-size: 14px; }
+
+/* -- Projectors: each row says its power in a chip beside the name, and the one power button is unmistakable:
+   Turn on is the block of the area's colour, Turn off an outline (it asks first), warming up and cooling down a
+   block of the Set up colour that cannot be pressed, and Try again an outline in the danger red -- */
+html[data-style="signal"] .proj-entry .lname { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+html[data-style="signal"] .proj-entry .lname::after { flex: none; padding: 4px 8px; font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; background: var(--st-off, var(--cd)); color: var(--st-off-on, var(--fg)); }
+html[data-style="signal"] .proj-entry[data-power="checking"] .lname::after { content: "Checking"; }
+html[data-style="signal"] .proj-entry[data-power="off"] .lname::after { content: "Off"; }
+html[data-style="signal"] .proj-entry[data-power="on"] .lname::after { content: "On"; background: var(--st-active, var(--fg)); color: var(--st-active-on, var(--bg)); }
+html[data-style="signal"] .proj-entry[data-power="warming up"] .lname::after { content: "Warming up"; background: var(--st-setup, var(--cd)); color: var(--st-setup-on, var(--fg)); }
+html[data-style="signal"] .proj-entry[data-power="cooling down"] .lname::after { content: "Cooling down"; background: var(--st-setup, var(--cd)); color: var(--st-setup-on, var(--fg)); }
+html[data-style="signal"] .proj-entry[data-power="no answer"] .lname::after { content: "No answer"; background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+html[data-style="signal"] .proj-power { min-height: 56px; font-size: 18px; }
+html[data-style="signal"] .proj-entry .morebtn { min-height: 56px; }
+html[data-style="signal"] .proj-entry[data-power="warming up"] .proj-power:disabled, html[data-style="signal"] .proj-entry[data-power="cooling down"] .proj-power:disabled { opacity: 1; background: var(--st-setup, var(--cd)); border-color: var(--st-setup, var(--fg)); color: var(--st-setup-on, var(--fg)); }
+html[data-style="signal"] .proj-status { font-size: 16px; color: var(--fg); }
+html[data-style="signal"] #projall .btn { min-height: 56px; }
+
+/* -- Room: read at arm's length in the dark. Ambience is a block of its own under a label in the screen's colour;
+   scenes are big blocks; each group is a ruled panel with its name large, its state as a chip, On and Off as the two
+   halves of one big switch (the half in force filled, as on every switch), sources as large buttons with the chosen
+   one filled, the mutes quieter, and what the last press did in a ruled line. All off is the danger red. -- */
+html[data-style="signal"] #roomscreen .room-amb, html[data-style="signal"] #roomscreen .room-group { border: 3px solid var(--fg); padding: 14px; gap: 12px; }
+html[data-style="signal"] #roomscreen .room-amb > h2, html[data-style="signal"] #roomscreen #roomscenes > h2 { align-self: flex-start; padding: 4px 8px; background: var(--ac); color: var(--on); }
+html[data-style="signal"] #roomscreen .vibesbig { min-height: 72px; font-size: 20px; }
+html[data-style="signal"] #roomscreen .room-scenes { gap: 10px; }
+html[data-style="signal"] #roomscreen .room-scene { min-height: 72px; font-size: 20px; }
+html[data-style="signal"] #roomscreen .room-group h2 { font-size: 30px; line-height: 1.1; }
+html[data-style="signal"] #roomscreen .room-state { font-size: 16px; padding: 6px 10px; }
+html[data-style="signal"] .room-state.state-warming-up, html[data-style="signal"] .room-state.state-cooling-down, html[data-style="signal"] .room-state.state-mixed { background: var(--st-setup, var(--cd)); color: var(--st-setup-on, var(--fg)); }
+html[data-style="signal"] .room-state.state-no-answer { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+html[data-style="signal"] #roomscreen .room-text { font-size: 16px; font-weight: 600; }
+html[data-style="signal"] #roomscreen .room-group .btn[data-action="on"], html[data-style="signal"] #roomscreen .room-group .btn[data-action="off"] { min-height: 64px; font-size: 22px; }
+html[data-style="signal"] #roomscreen .room-group .row:has(> .btn[data-action="off"]) { gap: 0; flex-wrap: nowrap; }
+html[data-style="signal"] #roomscreen .room-group .btn[data-action="on"] + .btn[data-action="off"] { margin-left: -3px; }
+html[data-style="signal"] #roomscreen .room-group:has(.room-state.state-on) .btn[data-action="on"] { background: var(--ac); border-color: var(--fg); color: var(--on); }
+html[data-style="signal"] #roomscreen .room-group:has(.room-state.state-off) .btn[data-action="off"] { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+html[data-style="signal"] #roomscreen .room-group:not([data-id="all"]):has(.room-state.state-warming-up) .btn[data-action="on"], html[data-style="signal"] #roomscreen .room-group:not([data-id="all"]):has(.room-state.state-cooling-down) .btn[data-action="off"] { border-style: dashed; }
+html[data-style="signal"] #roomscreen .room-sources { gap: 8px; }
+html[data-style="signal"] #roomscreen .room-source { min-height: 64px; font-size: 18px; }
+html[data-style="signal"] #roomscreen .room-group .btn[data-action$="mute_picture"], html[data-style="signal"] #roomscreen .room-group .btn[data-action$="mute_sound"] { font-size: 14px; border-color: var(--mu); }
+html[data-style="signal"] #roomscreen .room-group .btn.on[data-action^="unmute"] { border-color: var(--ac); }
+html[data-style="signal"] #roomscreen .room-result { font-size: 16px; padding: 8px 10px; background: var(--cd); border-left: 8px solid var(--fg); }
+html[data-style="signal"] #roomscreen .room-result.err { border-left-color: var(--st-problem, var(--fg)); }
+html[data-style="signal"] #roomscreen .room-group[data-id="all"] { margin-top: 12px; border-style: double; border-width: 9px; }
+html[data-style="signal"] #roomscreen .room-group[data-id="all"] .row { gap: 10px; flex-wrap: wrap; }
+
+html[data-style="signal"] #roomscreen .room-group[data-id="all"]:has(.room-state.state-on) .btn[data-action="on"] { background: transparent; color: var(--fg); }
+html[data-style="signal"] #roomscreen #roomalloff { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+html[data-style="signal"] #roomsetup .room-row { gap: 8px; }
+html[data-style="signal"] #roomsetup .item .addr { font-size: 13px; }
+
+/* -- a laptop and a wall tablet: columns -- */
+@media (min-width: 900px) {
+  html[data-style="signal"] .syshead h1 { font-size: 30px; }
+  html[data-style="signal"] .screen > h1:first-child { margin: 0; padding: 4px 14px; align-self: flex-start; font-size: 30px; line-height: 1.35; }
+  html[data-style="signal"] .shell:has(.pin-row) .screen, html[data-style="signal"] .shell:has(#supportcode) .screen { max-width: 560px; width: 100%; margin: 0 auto; }
+  html[data-style="signal"] .moreacts, html[data-style="signal"] #lookthemes, html[data-style="signal"] #roomgmembers { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  html[data-style="signal"] #netmodes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  html[data-style="signal"] details.card.fold { border: 0; padding: 0; }
+  html[data-style="signal"] #resetcard { padding: 16px; }
+  /* Room: ambience beside the scenes, the groups in columns under them, the set-up in two */
+  html[data-style="signal"] #roomscreen { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-content: start; align-items: start; }
+  html[data-style="signal"] #roomscreen > * { grid-column: 1 / -1; }
+  html[data-style="signal"] #roomscreen:has(> .room-amb) > .room-amb { grid-column: 1; }
+  html[data-style="signal"] #roomscreen:has(> .room-amb) > #roomscenes { grid-column: 2; }
+  html[data-style="signal"] #roomscreen .room-scenes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  html[data-style="signal"] #roomscreen:not(:has(> .room-amb)) .room-scenes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  html[data-style="signal"] #roomscreen .room-group { padding: 16px; }
+}
+@media (min-width: 1200px) {
+  html[data-style="signal"] #roomscreen .room-groups:has(> .room-group:nth-child(3)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 900px) {
+  html[data-style="signal"] #roomscreen .vibesbig { flex: 1 1 100%; }
+}
+@media (min-width: 900px) {
+  /* a list beside its form: rows are taller here, so the page scrolls, not a short window inside the card */
+  html[data-style="signal"] .split > .splitlist, html[data-style="signal"] #devicelist, html[data-style="signal"] #midimaplist { max-height: none; min-height: 0; overflow: visible; padding-right: 0; }
+}
+
+/* -- Live: what staff press is 56 px high at least, like Room -- */
+html[data-style="signal"] .livecols .btn, html[data-style="signal"] .livecols .btn.small, html[data-style="signal"] .livecols select, html[data-style="signal"] .banks .btn { min-height: 56px; }
+html[data-style="signal"] .livecols .row.transport .btn { font-size: 14px; }
+
+/* -- the MIDI controller page: a switch says Off and On itself; a controller's name keeps its letters; the long
+   note about a layout is a quiet paragraph, not a wall of bold -- */
+html[data-style="signal"] .switchlabel:has(+ .switch) { display: none; }
+html[data-style="signal"] #midimaplist .lname { text-transform: none; }
+html[data-style="signal"] .hint.ctlnote, html[data-style="signal"] .hint.ctllightnote { font-weight: 400; color: var(--mu); }
+html[data-style="signal"] .row.nudge .btn, html[data-style="signal"] .btn[aria-label^="Bring "], html[data-style="signal"] .btn[aria-label^="Send "] { min-width: 44px; }
+html[data-style="signal"] #netscan { display: flex; flex-direction: column; gap: 8px; }
+html[data-style="signal"] #netscan .btn { width: 100%; text-align: left; }
+
+/* ---- After the owner saw it (2026-10-05): "Signal looks good", "feel free to use the lighter font style on smaller
+   button, and you can use more modern UI components". So Archivo Black in capitals stays for screen titles, a
+   panel's own big name and the largest actions (56 px and up); everything smaller is SemiBold or Bold in sentence
+   case, so a page breathes. Small sets of choices are segmented controls in one frame, a slider's value is a
+   block of its own, the result of an action is a toast above the tab bar, and on a phone every section starts
+   under a rule, so a long screen reads as parts. ---- */
+html[data-style="signal"] .btn, html[data-style="signal"] .btn.small { font: 600 16px/1.2 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .btn.small, html[data-style="signal"] .daychips .btn, html[data-style="signal"] .fxbuttons > .btn, html[data-style="signal"] .fxbuttons > .btn.big, html[data-style="signal"] .transport3 .btn, html[data-style="signal"] .livecols .row.transport .btn { font-size: 15px; }
+html[data-style="signal"] .btn.big, html[data-style="signal"] .proj-power, html[data-style="signal"] .room-source, html[data-style="signal"] .room-scene, html[data-style="signal"] #sysswitchon, html[data-style="signal"] #pairbtn, html[data-style="signal"] #joinbtn { font: 900 18px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+html[data-style="signal"] .fxbuttons > .btn.big { font-weight: 600; letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .tabs .btn, html[data-style="signal"] .tabs.many .btn { font: 600 15px/1.2 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .tabs .btn.on { font-weight: 900; }
+html[data-style="signal"] .chip, html[data-style="signal"] .badge, html[data-style="signal"] .top .pill, html[data-style="signal"] .proj-entry .lname::after, html[data-style="signal"] .danger-h, html[data-style="signal"] .offline, html[data-style="signal"] .support-banner { font: 600 13px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .switch::before, html[data-style="signal"] .switch::after { font: 600 14px/1 var(--sans); text-transform: none; }
+html[data-style="signal"] .card > .k:first-child, html[data-style="signal"] .card > .k.sent:first-child, html[data-style="signal"] .card .navhead, html[data-style="signal"] .ctltitle, html[data-style="signal"] .card h2, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .switchlabel, html[data-style="signal"] .freezelabel { font: 700 17px/1.3 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .room-group h2, html[data-style="signal"] .shaderstage .shadername { font-weight: 900; text-transform: uppercase; }
+html[data-style="signal"] label.field, html[data-style="signal"] label.k, html[data-style="signal"] .room-group .field, html[data-style="signal"] .detailbox > label, html[data-style="signal"] .screen:has(> h1:first-child) > .k, html[data-style="signal"] .screen:has(> h1:first-child) > label.k { font: 600 14px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .screen:has(> h1:first-child) > .k:last-child { font-weight: 400; }
+html[data-style="signal"] div.field { font: 700 16px/1.3 var(--sans); }
+html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .liveside h2, html[data-style="signal"] .shader-entry > span:first-child > b, html[data-style="signal"] #np { font: 700 18px/1.25 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .slider label, html[data-style="signal"] .ctlhead, html[data-style="signal"] .ctllabel { font: 600 16px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] table.chan th { font: 600 13px var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .pad { font-weight: 700; }
+html[data-style="signal"] .bigchoice b { font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+
+/* -- a slider's value: a block of its own beside the name -- */
+html[data-style="signal"] .slider label .k, html[data-style="signal"] .ctlhead .slidervalue { padding: 2px 8px; background: var(--fg); color: var(--bg); font: 500 16px/1.35 var(--mono); }
+
+/* -- a small set of choices: one frame, the chosen cell filled -- */
+html[data-style="signal"] .seg, html[data-style="signal"] .banks, html[data-style="signal"] #netmodes, html[data-style="signal"] #lookthemes, html[data-style="signal"] .daychips { padding: 3px; gap: 3px; border: 3px solid var(--fg); background: var(--cd); }
+html[data-style="signal"] .seg .segbtn, html[data-style="signal"] .seg .segbtn:first-child, html[data-style="signal"] .seg .segbtn:last-child, html[data-style="signal"] .banks .btn, html[data-style="signal"] .banks .btn + .btn, html[data-style="signal"] #netmodes > .btn, html[data-style="signal"] #lookthemes > .btn, html[data-style="signal"] .daychips .btn { border: 0; margin-left: 0; background: transparent; }
+html[data-style="signal"] .seg .segbtn.on, html[data-style="signal"] .banks .btn.on, html[data-style="signal"] #netmodes > .btn.on, html[data-style="signal"] #lookthemes > .btn.on, html[data-style="signal"] .daychips .btn.on { background: var(--ac); color: var(--on); }
+html[data-style="signal"] .fxlib .seg { gap: 3px; }
+
+/* -- what an action did: a toast above the tab bar, where the thumb is; it goes by itself (an error stays longer) -- */
+html[data-style="signal"] #msg { position: fixed; left: 16px; right: 16px; bottom: calc(72px + env(safe-area-inset-bottom)); z-index: 15; min-height: 0; padding: 12px 14px; background: var(--fg); color: var(--bg); font: 600 15px/1.35 var(--sans); animation: signal-toast 8s forwards; }
+html[data-style="signal"] #msg:empty { display: none; }
+html[data-style="signal"] #msg.err { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); animation-duration: 20s; }
+html[data-style="signal"] .screen:has(> h1:first-child) #msg { bottom: 16px; }
+@keyframes signal-toast { 0%, 94% { opacity: 1; visibility: visible; } 100% { opacity: 0; visibility: hidden; } }
+
+/* -- a phone: every section starts under a rule (a laptop has its panels) -- */
+@media (max-width: 899px) {
+  html[data-style="signal"] .card { border-top: 3px solid var(--fg); padding-top: 14px; }
+  html[data-style="signal"] .card .card, html[data-style="signal"] .navgroup, html[data-style="signal"] .card.slider, html[data-style="signal"] details.card.fold, html[data-style="signal"] #sysoff { border-top: 0; padding-top: 0; }
+  html[data-style="signal"] .card.slider:first-of-type { border-top: 3px solid var(--fg); padding-top: 14px; }
+}
+@media (min-width: 900px) {
+  html[data-style="signal"] #msg { left: auto; right: 28px; bottom: 84px; max-width: 420px; }
+  html[data-style="signal"] .screen:has(> h1:first-child) #msg { right: 28px; bottom: 28px; }
+}
+html[data-style="signal"] #roomscreen .room-group .btn[data-action$="mute_picture"], html[data-style="signal"] #roomscreen .room-group .btn[data-action$="mute_sound"] { font: 600 15px/1.2 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .seg .segbtn { flex: 1 1 auto; min-width: min-content; }
+html[data-style="signal"] .fxlib .seg .segbtn { min-width: 0; }
+html[data-style="signal"] .row > .btn.small[aria-label^="Bring "], html[data-style="signal"] .row > .btn.small[aria-label^="Send "] { min-width: 44px; }
+html[data-style="signal"] .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+html[data-style="signal"] .transport3 .btn { font-size: 14px; padding: 4px 0; }
+html[data-style="signal"] .livecols .switch, html[data-style="signal"] .livecols .switch::before, html[data-style="signal"] .livecols .switch::after { height: 56px; }

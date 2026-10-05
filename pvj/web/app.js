@@ -531,7 +531,7 @@
         h('div', { class: 'k', text: 'Duration' }),
         choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); })),
       h('div', { class: 'card' },
-        h('div', { class: 'k', text: 'Mirror (for rear projection or a mirror rig; costs the box some work)' }),
+        h('div', { class: 'k sent', text: 'Mirror (for rear projection or a mirror rig; costs the box some work)' }),
         h('div', { class: 'row' },
           h('button', { class: 'btn grow' + (m.flip_h ? ' on' : ''), id: 'fliph', text: 'Flip left-right', 'aria-pressed': m.flip_h ? 'true' : 'false', disabled: !can('live'),
             onclick: function () { act('POST', '/api/control', { action: 'flip_h', value: !m.flip_h }, function () { poll(); setTimeout(render, 200); }); } }),
@@ -556,7 +556,7 @@
   // A picture over the video: a PNG from the media folder (logo, watermark, mask), fitted to the screen.
   function overlayCard() {
     var body = h('div', { class: 'list', id: 'overlaybody' }, h('div', { class: 'k', text: 'Loading...' }));
-    var card = h('div', { class: 'card', id: 'overlaycard' }, h('div', { class: 'k', text: 'Overlay picture (logo or mask over the video)' }), body);
+    var card = h('div', { class: 'card', id: 'overlaycard' }, h('div', { class: 'k sent', text: 'Overlay picture (logo or mask over the video)' }), body);
     function draw(d) {
       body.textContent = '';
       if (!d.choices.length) { body.appendChild(h('div', { class: 'k', id: 'overlaynone', text: 'Upload a PNG (transparent where the video should show) on the Media screen to use it here.' })); return; }
@@ -832,7 +832,7 @@
   function liveInputCard() {
     if (!can('live')) return null;
     var body = h('div', { class: 'list', id: 'inputbody' });
-    var card = h('div', { class: 'card', id: 'inputcard', hidden: true }, h('div', { class: 'k', text: 'Live input (USB capture or camera)' }), body);
+    var card = h('div', { class: 'card', id: 'inputcard', hidden: true }, h('div', { class: 'k sent', text: 'Live input (USB capture or camera)' }), body);
     api('GET', '/api/inputs').then(function (r) {
       if (!document.getElementById('inputcard') || !r.ok || !r.data.devices.length) return;
       card.hidden = false;
@@ -954,7 +954,7 @@
             row.parentNode.insertBefore(box, row.nextSibling);
             to.focus();
           } }) : null,
-          full ? h('button', { class: 'btn small', text: 'Delete', onclick: function (e) {
+          full ? h('button', { class: 'btn small del', text: 'Delete', onclick: function (e) {
             confirmRow('Delete ' + d.name + '? The file is removed from the box.', 'Delete', 'Keep it', function () {
               act('POST', '/api/media/delete', { name: d.name }, refreshMedia);
             }, e.currentTarget);
@@ -1015,7 +1015,7 @@
       h('div', { class: 'card' }, h('div', { class: 'list' }, items.length ? items : h('div', { class: 'k', text: 'No clips yet. Upload some, or play them straight from a USB drive.' }))),
       (info.usb || []).map(function (drive) {
         return h('div', { class: 'card usb-drive', 'data-drive': drive.drive },
-          h('div', { class: 'k', text: 'USB drive: ' + drive.drive + ' (read only, plays straight from the drive)' }),
+          h('div', { class: 'k sent', text: 'USB drive: ' + drive.drive + ' (read only, plays straight from the drive)' }),
           info.autostart_usb ? h('div', { class: 'k', text: 'Autostart is set to play USB sticks: plugging one in starts it, even during a show.' }) : null,
           h('div', { class: 'list' }, drive.files.length ? drive.files.map(function (f) {
             var have = S.media.indexOf(f.name) >= 0;
@@ -2964,12 +2964,14 @@
             }, e.currentTarget);
           } }) : null];
         var who = detailsText(p);
-        list.appendChild(listRow({ cls: 'proj-entry', data: p.id, name: p.name, key: 'proj-' + p.id, redraw: redraw,
+        var entry = listRow({ cls: 'proj-entry', data: p.id, name: p.name, key: 'proj-' + p.id, redraw: redraw,
           sub: (who ? who + ' · ' : '') + where(p) + (p.has_password ? ' · password set' : ''), subCls: 'proj-details',
           state: h('div', { class: 'state proj-status' }, statusText(p), warn ? h('span', { class: 'proj-warn', text: ' · ' + warn }) : null),
           problem: silent ? 'Not answering at ' + where(p) + '. Is it plugged in at the wall, and is PJLink switched on in its network menu?' + (st.error ? ' (The box says: ' + st.error + '.)' : '') : '',
           note: [st.pending_input ? 'Switching to ' + inputText(p, st.pending_input) + ' when the projector is ready (up to 90 seconds).' : (st.notice ? st.notice.text : ''), states[p.id]].filter(Boolean).join(' '),
-          primary: live ? powerButton(p) : null, more: more, below: below.length ? h('div', { class: 'list sp proj-below' }, below) : null }));
+          primary: live ? powerButton(p) : null, more: more, below: below.length ? h('div', { class: 'list sp proj-below' }, below) : null });
+        entry.setAttribute('data-power', st.ok === undefined ? 'checking' : st.ok ? String(st.power) : 'no answer');      // for a style that draws the state as a chip
+        list.appendChild(entry);
       });
       var side = !full ? null : addBlock('proj', 'a projector', !n, function (cancel) {
         var name = h('input', { class: 'text-input', id: 'projname', placeholder: 'Main wall', maxlength: 40, value: projForm.name });

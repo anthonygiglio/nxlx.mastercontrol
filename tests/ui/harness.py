@@ -4,7 +4,8 @@
 
 Prints one JSON line {"port": ..., "pin": ..., "projector_ports": [...]} once it is listening. The projector ports
 are two fake PJLink projectors on loopback (the one from tests/test_projector.py, written from the standard):
-the first is switched on, has the password "secret1" and a filter warning; the second is in standby. Loopback is
+the first is switched on, has the password "secret1" and a filter warning; the second is in standby; a third (on)
+and a fourth (in standby) stay in cooling down and warming up once switched. Loopback is
 allowed as a projector address in this harness only, so the browser test never contacts a device on the network.
 """
 import json
@@ -58,6 +59,10 @@ from tests.test_projector import FakeProjector  # noqa: E402
 projector.PRIVATE = projector.PRIVATE + [ipaddress.ip_network("127.0.0.0/8")]
 _fakes = [FakeProjector("secret1"), FakeProjector(slow=True, lamps=(310, 295))]
 _fakes[0].power, _fakes[0].errors = "1", "000010"
+# Two more, for the pictures and checks of every power state (tests/ui/signal-pages.js): both slow, so the third,
+# switched off, stays "cooling down" and the fourth, switched on, stays "warming up". Nothing uses them otherwise.
+_fakes += [FakeProjector(slow=True, lamps=(2210,)), FakeProjector(slow=True, lamps=(48,)), FakeProjector(lamps=(7,))]
+_fakes[2].power = "1"      # (the fifth is one nobody switches: in standby, so "off" is on the page whatever earlier steps did)
 
 # Two fake MIDI controllers, pipes in place of device files: a Korg nanoKONTROL2 (a controller with a shipped profile)
 # and "keys" (one without). They are "plugged in" while the file <midi_dir>/plug exists, and every line of hex bytes
@@ -69,6 +74,11 @@ from pvj import midi as midi_mod  # noqa: E402
 _midi_dir = os.path.join(tmp, "midi")
 os.makedirs(_midi_dir)
 _midi_names = {"/dev/snd/midiC7D0": "nanoKONTROL2", "/dev/snd/midiC8D0": "keys"}
+# A third, plugged in only while <midi_dir>/plug-launchpad exists: a Novation Launchpad Mini, whose profile has lights
+# with a brightness. For the pictures and checks of a style (tests/ui/signal-pages.js); the steps of the browser test
+# that count controllers never make that file.
+_midi_pad = "/dev/snd/midiC9D0"
+_midi_names[_midi_pad] = "Mini"
 _midi_pipes = {}
 
 
@@ -118,8 +128,9 @@ def _midi_light_open(path):
 
 
 api.midi.stop()
-api.midi = midi_mod.MidiHub(api, api.settings, open_fn=_midi_open, namer=lambda p: _midi_names[p], describer=lambda p: _midi_names[p],
-                            lister=lambda: sorted(_midi_names) if os.path.exists(os.path.join(_midi_dir, "plug")) else [], scan_interval=0.3,
+api.midi = midi_mod.MidiHub(api, api.settings, open_fn=_midi_open, namer=lambda p: _midi_names[p], describer=lambda p: "Launchpad Mini" if p == _midi_pad else _midi_names[p],
+                            lister=lambda: [p for p in sorted(_midi_names) if os.path.exists(os.path.join(_midi_dir, "plug-launchpad" if p == _midi_pad else "plug"))],
+                            scan_interval=0.3,
                             light_open_fn=_midi_light_open)
 api.midi.apply()
 threading.Thread(target=_midi_feed, daemon=True).start()

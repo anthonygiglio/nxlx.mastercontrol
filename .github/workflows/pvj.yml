@@ -116,6 +116,7 @@ jobs:
         run: NODE_PATH=/tmp/pw/node_modules node tests/ui/panel.test.js
       - name: Take the cropped screenshots (docs/images/ui)
         continue-on-error: true   # documentation only: never blocks a merge
+        if: ${{ !cancelled() }}   # also when the browser test failed: the pictures often show why
         run: SHOTS="$RUNNER_TEMP/ui-shots" MOCKUPS="$RUNNER_TEMP/ui-mockups" NODE_PATH=/tmp/pw/node_modules node tests/ui/screenshots.js
       - uses: actions/upload-artifact@v4
         if: always()

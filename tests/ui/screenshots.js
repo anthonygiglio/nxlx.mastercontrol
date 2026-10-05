@@ -30,7 +30,10 @@ function startServer() {
   const saved = [];
   const skipped = [];
   // One bad shot must not lose the others.
+  // ONLY=signal-room takes only the pictures whose names start with that (a regular expression: ONLY='signal-(live|mix)')
+  const only = process.env.ONLY || '';
   async function shot(name, fn) {
+    if (only && !new RegExp('^(?:' + only + ')').test(name)) return;
     try { await fn(path.join(out, name + '.png')); saved.push(name); } catch (e) { failures.push(name + ': ' + e.message.split('\n')[0]); }
   }
   try {
@@ -76,6 +79,9 @@ function startServer() {
     await page.click('#pairbtn');
     await page.waitForSelector('.pads');
 
+    // (ONLY=signal... goes straight to the Signal pictures, which set the box up themselves)
+    theDefaultLook: {
+    if (only.indexOf('signal') === 0) break theDefaultLook;
     // A believable show: labelled pads across a bank, one playing.
     // Extra clips (not playable, only for the lists) so every pad has its own file.
     // Pictures too: numbered ones for Quick play and the slideshow, a PNG for the overlay.
@@ -444,105 +450,54 @@ function startServer() {
     await page.waitForTimeout(1200);
     await shot('live-desktop', (f) => page.screenshot({ path: f }));
 
-    // The look "Signal" (D54), so the owner can see it without a box: the eight pictures named signal-*. The fonts are
-    // the box's own; each picture waits for them. The default look is put back at the end.
-    const fontsIn = () => soft('the Signal fonts', page.evaluate(() => Promise.all([document.fonts.load('900 44px Archivo'), document.fonts.load('400 16px Archivo'), document.fonts.load('500 16px "JetBrains Mono"')])
-      .then((r) => { if (r.some((x) => !x.length)) throw new Error('a typeface did not load'); return document.fonts.ready.then(() => true); })));
+    }
+    // The look "Signal" (D54, D57), so the owner can see it without a box: every screen, page and state in the list of
+    // tests/ui/signal-pages.js, on a phone and on a laptop (signal-<name>-phone|laptop), and the ones marked there in
+    // Signal light too (signal-<name>-phone-light). The fonts are the box's own; each picture waits for them. The
+    // default look is put back at the end.
+    const signal = require('./signal-pages');
+    const t = { page, browser, base, info, width: 390, scale: 2, notes: [], contexts: [] };
+    const fontsIn = (pg) => (pg.evaluate(() => Promise.all([document.fonts.load('900 44px Archivo'), document.fonts.load('400 16px Archivo'), document.fonts.load('500 16px "JetBrains Mono"')])
+      .then((r) => { if (r.some((x) => !x.length)) throw new Error('a typeface did not load'); return document.fonts.ready.then(() => true); })).catch((e) => t.notes.push('the fonts: ' + e.message.split('\n')[0])));
+    // The whole screen with the tab bar at its foot (fixed, it would lie across the middle of a tall page)
+    const wholeOf = async (pg, f) => {
+      // (the same for the message line, which Signal shows as a toast fixed above the tab bar)
+      await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.setProperty('position', 'static', 'important'); b.style.setProperty('animation', 'none', 'important'); } }); });
+      try { await pg.locator('.shell').first().screenshot({ path: f }); } finally {
+        await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.removeProperty('position'); b.style.removeProperty('animation'); } }); }).catch(() => {});
+      }
+    };
+    const signalRound = async (suffix, pick) => {
+      for (const p of signal.pages().filter(pick)) {
+        await shot('signal-' + p.name + suffix, async (f) => {
+          try {
+            const pg = (await p.open(t)) || page;
+            await fontsIn(pg);
+            if (!p.quick) await pg.waitForTimeout(700);
+            await wholeOf(pg, f);
+          } finally { if (p.done) await p.done(t).catch((e) => t.notes.push(p.name + ', putting back: ' + e.message.split('\n')[0])); }
+        });
+      }
+    };
     try {
       await api('POST', '/api/theme', { name: 'signal', accent: null });
-      for (const id of ['room', 'shaders', 'control-midi']) await api('POST', '/api/modules/' + id, { enabled: true });
-      await api('POST', '/api/midi', { enabled: true });
-      try { require('fs').writeFileSync(path.join(info.midi_dir, 'plug'), ''); } catch (e) { failures.push('signal: the fake controller could not be plugged in'); }
-      await api('POST', '/api/vibes', { on: true });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();
       await page.waitForSelector('html[data-style="signal"] nav.tabs');
-      // The Room screen as staff use it: two named groups from the harness's projectors, their inputs labelled, and
-      // a button pressed, so the picture has named group cards, source buttons and a result line.
-      const roomAsStaffSeeIt = async () => {
-        try {
-          await sys('Projectors');
-          await api('POST', '/api/projector', { id: 'all', action: 'identify' });          // (an edit of a projector's address drops what it said it is; read it again)
-          await page.waitForFunction(() => fetch('/api/projectors').then((r) => r.json()).then((d) => d.projectors.length > 0 && d.projectors.slice(0, 2).every((p) => p.inputs.length > 0)), null, { timeout: 25000, polling: 1000 }).catch(() => {});   // each projector has said which inputs it has
-          const ps = ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.json()))).projectors || []).slice(0, 2);
-          const have = (await page.evaluate(() => fetch('/api/room').then((r) => r.json()))).groups || [];
-          for (let i = 0; i < ps.length; i++) {
-            const codes = (ps[i].inputs || []).map((x) => x.code).slice(0, 2);
-            for (let k = 0; k < codes.length; k++) await api('POST', '/api/projectors', { label: { id: ps[i].id, input: codes[k], label: ['Laptop', 'Console'][k] } });
-            const wall = ['Main wall', 'Painting wall'][i];
-            const old = have.filter((g) => g.name === wall)[0];
-            await api('POST', '/api/room', { group: old ? { id: old.id, name: wall, projectors: [ps[i].id] } : { name: wall, projectors: [ps[i].id] } });
-          }
-          await page.reload();
-          await page.waitForSelector('nav.tabs');
-          await page.click('nav >> text=Room');
-          await page.waitForSelector('.room-group:has-text("Main wall")', { timeout: 8000 });
-          await page.locator('.room-group:has-text("Main wall") .btn').first().click({ timeout: 5000 });
-          await page.waitForSelector('.room-group:has-text("Main wall") .room-result', { timeout: 15000 });
-        } catch (e) { failures.push('signal: the Room screen could not be set up with groups: ' + e.message.split('\n')[0]); }
-      };
-      await shot('signal-room-phone', async (f) => {
-        await roomAsStaffSeeIt();
-        await soft('signal: ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
-        await fontsIn();
-        await page.waitForTimeout(600);
-        await whole(f);
-      });
-      await shot('signal-system-index-phone', async (f) => {
-        await sysIndex();
-        await soft('signal: index states', page.waitForSelector('.navrow .chip-ready, .navrow .chip-active'));
-        await fontsIn();
-        await page.waitForTimeout(1500);
-        await whole(f);
-      });
-      await shot('signal-live-phone', async (f) => {
-        await page.click('nav >> text=Live');
-        await page.waitForSelector('.pads');
-        await fontsIn();
-        await page.waitForTimeout(1200);
-        await whole(f);
-      });
-      await shot('signal-mix-phone', async (f) => {
-        await page.click('nav >> text=Mix');
-        await page.waitForSelector('#mo');
-        await fontsIn();
-        await page.waitForTimeout(1200);
-        await whole(f);
-      });
-      await shot('signal-media-phone', async (f) => {
-        await page.click('nav >> text=Media');
-        await page.waitForSelector('#uploads', { state: 'attached' });
-        await fontsIn();
-        await page.waitForTimeout(1200);
-        await whole(f);
-      });
+      await signal.setUp(t);
+      await signalRound('-phone', () => true);
+      t.width = 1366;
       await page.setViewportSize({ width: 1366, height: 768 });
-      await shot('signal-shaders-laptop', async (f) => {
-        await sys('Shaders and Vibes');
-        await soft('signal: shaders page on a laptop', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
-        await fontsIn();
-        await page.waitForTimeout(800);
-        await whole(f);          // the whole page, with the tab bar at its foot and not across the middle
-      });
-      await shot('signal-midi-laptop', async (f) => {
-        await sys('MIDI controller');
-        await soft('signal: the controller drawn', page.waitForSelector('.ctlgrid', { timeout: 15000 }));
-        await fontsIn();
-        await page.waitForTimeout(800);
-        await whole(f);          // the whole page, with the tab bar at its foot and not across the middle
-      });
+      await signalRound('-laptop', () => true);
+      t.width = 390;
       await page.setViewportSize({ width: 390, height: 844 });
       await api('POST', '/api/theme', { name: 'signal-light', accent: null });
       await page.reload();
       await page.waitForSelector('html[data-style="signal"] nav.tabs');
-      await shot('signal-room-phone-light', async (f) => {
-        await roomAsStaffSeeIt();
-        await soft('signal light: ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
-        await fontsIn();
-        await page.waitForTimeout(600);
-        await whole(f);
-      });
+      await signalRound('-phone-light', (p) => p.light);
     } finally {
+      await signal.closeOthers(t);
+      t.notes.forEach((n) => failures.push('signal: ' + n));
       await api('POST', '/api/theme', { name: 'dark-stage', accent: null });
       await api('POST', '/api/vibes', { on: false });
       await api('POST', '/api/modules/room', { enabled: false });
@@ -556,5 +511,5 @@ function startServer() {
   console.log('saved: ' + saved.join(', '));
   if (skipped.length) console.log('skipped: ' + skipped.join(', '));
   if (failures.length) console.error('FAILED shots:\n' + failures.join('\n'));
-  process.exit(saved.length >= 10 && failures.length === 0 ? 0 : 1);
+  process.exit((only || saved.length >= 10) && failures.length === 0 ? 0 : 1);
 })();
