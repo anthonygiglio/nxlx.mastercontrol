@@ -10,7 +10,7 @@ Play a clip or a legacy start script, stop, black out or show the screen, or swi
 
 ## Clock rules
 
-- Times use the box's own clock and time zone. A Pi has no battery clock: until the network sets the time, its clock is wrong. Check the "Box clock" line in the panel before a show.
+- Times use the box's own clock and time zone. A Pi has no battery clock: until the network sets the time, its clock is wrong. Check the "Box time now" line at the top of the Schedule page before a show; when the clock was not set from the network, the page says so in red.
 - Each entry fires at most once per minute.
 - The scheduler only fires for minutes it actually watched. If the clock jumps (the network sets the time, someone changes it) or the service stalls for more than two minutes, the skipped minutes are not replayed. A wrong clock therefore cannot fire old events. Nothing fires for the minute the service starts.
 - A failed entry (for example, a clip that was deleted) is recorded in the panel under "Last run" and does not stop other entries.
@@ -22,3 +22,15 @@ Play a clip or a legacy start script, stop, black out or show the screen, or swi
 ## Not verified on real hardware
 
 Tested with a fake clock and a fake player in a container-style setup only. Not run on a Pi, and not tested across a real time-zone or daylight-saving change (entries follow the local wall clock; a change may skip or repeat a minute-of-day once).
+
+## The Schedule page (2026-10-04)
+
+- At the top: "Box time now: Sat 3 Oct, 17:30 (zone)" and "Next: today 18:00, Start Vibes".
+- Entries are shown in time order (the box keeps them in the order they were saved). Days read "Every day", "Mon to Fri", "Sat, Sun" or a list.
+- **+ Add an entry**: Time; Days as seven buttons with three shortcuts above them (Every day, Weekdays, Weekend); What happens, in plain words (Play a clip, Start Vibes, Apply a Room scene, Projectors on, Projectors off, Screen to black, Screen back on, Stop playing, and Old start script under Advanced); a note.
+- **Start Vibes** can name a set (`"set": "<id>"` in the entry, which the API already took); the choice is shown when there is more than one set. Without one, the set in use at that time plays.
+- **Edit** (under More) fills the same form; saving sends the whole list with that entry replaced and its `id` kept, so its "last run" stays with it. **Remove** (under More) asks first.
+- A choice whose feature is off is marked in the list ("Start Vibes (Vibes is off)"); choosing it shows "Vibes is switched off, so this will do nothing." and a button that switches it on in place. A saved entry in that state has a red line in the list.
+- An entry runs only if the box is on at that minute. A missed entry is not caught up (see the clock rules above).
+
+The clock's own state comes from `GET /api/system` (`clock.clock_from_network`); `GET /api/schedule` does not carry it.

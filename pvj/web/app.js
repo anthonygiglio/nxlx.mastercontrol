@@ -1769,7 +1769,7 @@
     function drawTable(d) {
       table.textContent = '';
       table.appendChild(h('h2', { text: 'Channels' }));
-      var seen = d.channels || [], n = Math.min(DMX_CHANNELS.length, Math.max(8, seen.length), 513 - d.start);
+      var seen = d.channels || [], n = Math.min(DMX_CHANNELS.length, 513 - d.start);
       table.appendChild(h('div', { class: 'hint', id: 'dmxtablehint', text: seen.length ? 'What the desk is sending now.' : 'Levels show here once the desk sends something. Set these channels on the desk.' }));
       var rows = [];
       for (var i = 0; i < n; i++) {
@@ -2072,8 +2072,10 @@
       }, 'For a controller the box does not know: notes 36 to 71 play pads, CC 20 to 25 are levels. Your own mappings win over it and over a known controller\'s layout.'));
       body.appendChild(h('div', { class: 'field', text: 'Your mappings' }));
       if (!d.map.length) body.appendChild(h('div', { class: 'hint', id: 'midinomap', text: 'None yet. A mapping makes one knob, fader or button do one thing. Choose what it should do below, tap Learn a control, then move or press it.' }));
+      var maplist = h('div', { class: 'list sp', id: 'midimaplist' });
+      if (d.map.length) body.appendChild(maplist);
       d.map.forEach(function (e) {
-        body.appendChild(listRow({ cls: 'midi-entry', name: describe(e),
+        maplist.appendChild(listRow({ cls: 'midi-entry', name: describe(e),
           primary: h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + describe(e), onclick: function (ev) {
             confirmRow('Remove this mapping? The control goes back to what it did before.', 'Remove', 'Keep it', function () {
               act('POST', '/api/midi/map', { remove: e.id }, function (data) { draw(data); say('Mapping removed.'); });

@@ -217,17 +217,46 @@ function startServer() {
     await shot('system-page', async (f) => { await sys('Streams'); await soft('streams page', page.waitForSelector('.stream-entry')); await page.waitForTimeout(600); await whole(f); });
     await shot('system-page-off', async (f) => { await sys('Shaders and Vibes'); await page.waitForSelector('#sysswitchon'); await whole(f); });
     await pageShot('health', 'Health', 'Health', () => page.waitForSelector('#healthpower'));
-    await pageShot('box', 'About and power', 'Box', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent)));
+    await pageShot('box', 'About and power', 'This box', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent)));
     await pageShot('sound-output', 'Sound', 'Sound output', () => page.waitForSelector('#audioline, #audiomsg'));
     await pageShot('projectors', 'Projectors', 'Projectors', () => page.waitForSelector('.proj-status:has-text("lamp")'));   // the harness's fake projectors have answered
-    await pageShot('autostart', 'At power-up', 'Autostart', () => page.waitForSelector('#autoline'));
+    await pageShot('autostart', 'At power-up', 'At power-up', () => page.waitForSelector('#autoline'));
     await pageShot('schedule', 'Schedule', 'Schedule', () => page.waitForSelector('#schedclock'));
     await pageShot('streams', 'Streams', 'Streams', () => page.waitForSelector('.stream-entry'));
-    await pageShot('dmx', 'DMX lighting desk', 'DMX', () => page.waitForSelector('#dmxline'));
-    await pageShot('midi', 'MIDI controller', 'MIDI', () => page.waitForSelector('#midiline'));
+    await pageShot('dmx', 'DMX lighting desk', 'Lighting desk', () => page.waitForSelector('#dmxline'));
+    await pageShot('midi', 'MIDI controller', 'Mappings', () => page.waitForSelector('#midiline'));
     await pageShot('network', 'Network', 'Network', () => page.waitForSelector('#netiface'));
-    await pageShot('control-osc', 'OSC', 'Control \\(OSC\\)', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('oscline').textContent)));
+    await pageShot('control-osc', 'OSC', 'OSC', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('oscline').textContent)));
     await pageShot('appearance', 'Look', 'Appearance');
+    // The System pages as a whole, as staff see them on a phone: the shared patterns (one row per thing with one
+    // main button and More, the Add form, Save changes) show better on the whole page than on a card.
+    async function wholePage(name, row, ready, before) {
+      await shot(name, async (f) => {
+        await sys(row);
+        if (ready) await soft(name, ready());
+        if (before) await soft(name + ' (set-up)', before());
+        await page.waitForTimeout(600);
+        await whole(f);
+      });
+    }
+    await wholePage('page-projectors', 'Projectors', () => page.waitForSelector('.proj-status:has-text("lamp")'), () => page.click('.proj-entry .morebtn'));
+    await wholePage('page-schedule', 'Schedule', () => page.waitForSelector('.sched-entry'), () => page.click('#schedopen'));
+    await wholePage('page-dmx', 'DMX lighting desk', () => page.waitForSelector('#dmxchannels'));
+    await wholePage('page-network', 'Network', () => page.waitForSelector('#netiface'));
+    await wholePage('page-about', 'About and power', () => page.waitForSelector('#boxcard .kvv'));
+    await wholePage('page-support', 'Remote support', () => page.waitForSelector('#supportline'));
+    await wholePage('page-streams', 'Streams', () => page.waitForSelector('.stream-entry'));
+    await wholePage('page-autostart', 'At power-up', () => page.waitForSelector('#autosave'));
+    // The pages with a lot on them, on a laptop: the list on the left, the form beside it
+    await page.setViewportSize({ width: 1366, height: 768 });
+    try {
+      await wholePage('page-projectors-laptop', 'Projectors', () => page.waitForSelector('.proj-status:has-text("lamp")'));
+      await wholePage('page-schedule-laptop', 'Schedule', () => page.waitForSelector('.sched-entry'));
+      await wholePage('page-network-laptop', 'Network', () => page.waitForSelector('#netiface'));
+      await wholePage('page-people-laptop', 'People and codes', () => page.waitForSelector('#devicelist'));
+    } finally {
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
     await pageShot('access', 'People and codes', 'Let someone in', () => page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));
     // Shaders and Vibes: the page with Vibes playing (opened from Live, as staff do), and Live with the big button.
     await api('POST', '/api/modules/shaders', { enabled: true });

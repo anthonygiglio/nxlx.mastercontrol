@@ -411,3 +411,6 @@ table.chan .lvl { width: 36%; }
 .sched-entry.editing { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
 .split.even { }
 @media (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@media (min-width: 900px) {
+  #devicelist, #midimaplist { max-height: calc(100dvh - 420px); min-height: 180px; overflow-y: auto; padding-right: 8px; }
+}

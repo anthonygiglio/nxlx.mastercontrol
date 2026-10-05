@@ -166,6 +166,22 @@ function startServer() {
       const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert(wide <= 1, what + ': ' + wide + ' px wider than the phone');
     }
+    // The same two checks for any page of any device (the owner's, a presenter's, a guest's), at any width.
+    const fitsOn = async (pg, what) => {
+      const bad = await pg.evaluate(() => {
+        const out = [];
+        if (document.documentElement.scrollWidth > window.innerWidth + 1) out.push('the page is wider than the window');
+        document.querySelectorAll('.card').forEach((card) => {
+          const box = card.getBoundingClientRect();
+          card.querySelectorAll('button, input, select, span, img').forEach((el) => {
+            const r = el.getBoundingClientRect();
+            if (r.width && (r.right > box.right + 1 || r.left < box.left - 1)) out.push((el.textContent || el.id || el.tagName).trim().slice(0, 30));
+          });
+        });
+        return out;
+      });
+      assert.deepStrictEqual(bad, [], what + ': ' + bad.join('; '));
+    };
     // System is an index of rows and one page per row. sysIndex() goes to the index, sys(name) opens a row's page,
     // onPage() checks the open page fits, chip() waits for what a row's chip says.
     const rowOf = (name) => `.navrow:has(.navname:text-is("${name}"))`;
@@ -1333,6 +1349,27 @@ function startServer() {
     await guest.click('.navrow:has-text("About and power")');
     await guest.waitForSelector('#boxcard');
     assert.strictEqual(await guest.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a guest page');
+    // A guest's two pages, on a phone and on a laptop: they fit, there is no power action, and the one button asks first
+    for (const width of [390, 1366]) {
+      await guest.setViewportSize({ width, height: 844 });
+      await guest.waitForSelector('#boxcard .kvv');
+      await fitsOn(guest, "a guest's About and power page at " + width);
+      await guest.click('#sysback');
+      await guest.click('.navrow:has-text("Health")');
+      await guest.waitForSelector('#healthpower');
+      await fitsOn(guest, "a guest's Health page at " + width);
+      assert.strictEqual(await guest.locator('#healthshowaddr, #sysswitch').count(), 0, 'nothing to press on a guest\'s Health page');
+      await guest.click('#sysback');
+      await guest.click('.navrow:has-text("About and power")');
+    }
+    await guest.setViewportSize({ width: 390, height: 844 });
+    await guest.waitForSelector('#boxcard .kvv');
+    assert.strictEqual(await guest.locator('#powercard, #sysswitch, #setclock, #rebootbtn, #poweroffbtn, #restartplayer').count(), 0, 'a guest gets no power action');
+    assert(!/Vitals/.test(await guest.textContent('#sysbody')), 'no second card repeating the board and the player');
+    await guest.click('#forgetdevice');
+    await guest.waitForSelector('#confirmrow:has-text("Leave this panel on this phone? You will need a code or the PIN to get back in.")');
+    await guest.click('#confirmno');
+    await guest.waitForSelector('#forgetdevice');
 
     // Scan-to-join: the owner makes a guest code; a phone opens the QR code's link and joins with one tap as view only
     await sys('People and codes');
@@ -2106,6 +2143,26 @@ function startServer() {
     assert.strictEqual(await presenter.locator('#projadd, #projopen').count(), 0, 'and no form to add a projector');
     await presenter.click('#sysback');
     await presenter.waitForSelector('#sysindex');
+    // A presenter's view of every page this pass changed, on a phone and on a laptop: it fits, and nothing on it sets
+    // the box up (no switch, no Add form, no Save, no Edit or Remove, no power action)
+    for (const width of [390, 1366]) {
+      await presenter.setViewportSize({ width, height: 844 });
+      for (const [name, marker] of [['Health', '#healthpower'], ['Projectors', '#projline'], ['People and codes', '#accesshint'], ['Sound', '#audioline'],
+        ['Streams', '#streamempty, .stream-entry'], ['Boxes in step', '#syncline'], ['About and power', '#boxcard .kvv']]) {
+        await presenter.click(`.navrow:has(.navname:text-is("${name}"))`);
+        await presenter.waitForSelector(marker);
+        await fitsOn(presenter, `a presenter's ${name} page at ${width}`);
+        assert.strictEqual(await presenter.locator('#sysswitch, .addform, .addopen, .savebar, #powercard, #audiodev, #syncroles, #devicescard, #syspage button:text-is("Remove"), #syspage button:text-is("Edit")').count(), 0,
+          `nothing to set the box up with on a presenter's ${name} page`);
+        await presenter.click('#sysback');
+        await presenter.waitForSelector('#sysindex');
+      }
+    }
+    await presenter.click(`.navrow:has(.navname:text-is("Sound"))`);
+    await presenter.waitForSelector('#tone-both');
+    assert.strictEqual(await presenter.locator('#tonerow button:disabled').count(), 0, 'a presenter can play the test sound');
+    await presenter.click('#sysback');
+    await presenter.waitForSelector('#sysindex');
     await liveCtx.close();
 
     // A laptop: the Shaders page is a workspace. The library is a column that scrolls by itself, what is playing and
@@ -2152,6 +2209,22 @@ function startServer() {
     await fitsCard('#shaderpage .card', 'Shaders page on a laptop');
     assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
 
+    // A laptop: every System page this pass changed, as the box is at the end of this test, fits its cards and the
+    // window (the Shaders page, Projection mapping and Room have their own steps)
+    await page.setViewportSize({ width: 1366, height: 800 });
+    await sysIndex();
+    const laptopRows = (await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent))).filter((n) => !['Shaders and Vibes', 'Projection mapping', 'Room'].includes(n));
+    for (const name of laptopRows) {
+      await sys(name);
+      await page.waitForTimeout(700);          // the page's own cards arrive after it opens
+      await fitsOn(page, name + ' page at 1366');
+    }
+    // People and codes and the MIDI page are two columns on a laptop; a list that grows scrolls by itself
+    await sys('People and codes');
+    await page.waitForSelector('#devicelist');
+    assert(await page.evaluate(() => { const a = document.getElementById('accesscard').getBoundingClientRect(), b = document.getElementById('devicescard').getBoundingClientRect(); return b.left > a.right - 2; }),
+      'People and codes: the two cards are side by side on a laptop');
+    assert.strictEqual(await page.evaluate(() => getComputedStyle(document.getElementById('devicelist')).overflowY), 'auto', 'the device list scrolls by itself on a laptop');
     // Desktop width
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.click('nav >> text=Live');

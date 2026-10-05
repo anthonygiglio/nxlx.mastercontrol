@@ -26,7 +26,7 @@ The first eight channels are where they always were. The fixed map had no free p
 
 ## Safety and behaviour
 
-- Only private networks may send (loopback, 10/8, 172.16/12, 192.168/16, link-local and their IPv6 equivalents); add your show network under "Extra networks". Ranges wider than a /8 are refused. UDP sources can be forged, so this keeps the internet out, not a hostile device on your own network.
+- Only private networks may send (loopback, 10/8, 172.16/12, 192.168/16, link-local and their IPv6 equivalents); add your show network under Advanced, "Also accept from these networks". Ranges wider than a /8 are refused. UDP sources can be forged, so this keeps the internet out, not a hostile device on your own network.
 - **The first frame after turning it on only sets a baseline.** Nothing fires from it, so a console sitting at zero cannot black out the screen, and one sitting at 120 on the ninth channel cannot start Vibes. The same happens after changing the settings, and for the ninth channel when it first appears.
 - If the signal stops, the box holds its last state. If no valid frame arrives for 3 seconds, the next frame (from the same console or another) is a new baseline, so a restarted console cannot fire anything by coming back at zero.
 - Each level channel is applied at most 20 times a second; the next frame carries the change on, and a change that could not be applied is tried again.
@@ -38,3 +38,7 @@ The first eight channels are where they always were. The fixed map had no free p
 ## Not verified
 
 Tested with hand-built packets and a loopback UDP socket, never with a real console or on a real network. The Vibes channel was tested the same way, with a fake player and a fake clock. The sACN multicast join has not been tried on a real network. Merged or multiple sources (sACN priorities, merging two consoles) are not handled: the newest frame wins. sACN sequence numbers are not checked, so a duplicated or reordered packet is treated as a new frame.
+
+## The page (2026-10-04)
+
+The state line says what the box listens for and what has come in ("Listening for Art-Net on universe 0. 1,204 frames received." or "... Nothing received yet."). Protocol, Universe and Start channel each have a label; **Save changes** can be pressed once one of them differs from what is saved. A second card is the channel table: the channel number (from the start channel), what it does (the names of the table above) and the level the desk is sending now, read from `channels` in `GET /api/dmx` every two seconds.

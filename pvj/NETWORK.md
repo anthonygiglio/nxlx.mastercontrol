@@ -43,7 +43,7 @@ Changing the network of the box you are controlling over that network can lock y
 - Confirm gives the old profile a temporary name, gives the new one its name, and only then deletes the old one. If Confirm fails part way, the old profile gets its name back and the change can still be undone; if only the last delete fails, the new network is kept and the old profile is deleted at the next change.
 - If the page stops responding after Apply (the address changed), open the box at its new address and press Confirm there. For a fixed or served address the panel tells you the address.
 
-Only one change can be waiting at a time. "Preview commands" shows exactly what would run, without changing anything.
+Only one change can be waiting at a time. Under Advanced, "Show the commands" shows exactly what would run, without changing anything, and "Go back by itself after" sets how long you have to confirm. The button that makes the change is "Try this setting"; the choice of port is shown only when the box has more than one.
 
 ## How it works, and what it will not do
 
