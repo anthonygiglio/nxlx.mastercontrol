@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-05 (a projector test whose set-up depended on timing)
+
+Pull request #90. **Not merged** (the brief said so). A test change only; the product code is as it was. Nothing ran on hardware and the test Pi was not touched.
+
+- **What failed.** `test_an_input_change_refused_as_the_projector_is_removed_or_switched_off_gets_no_retry` (added in #86) failed once in CI on a docs-only pull request (run 37383189733, test (3.12)), on its own set-up line: "the worker was still there, as the finding says".
+- **Cause.** The test takes the projector out of the settings (or switches the module off) with no `apply()` and then asserts the worker still exists. The worker wakes every 50 ms in that test, sees its entry gone and leaves by itself (`_loop` breaks, `_after` takes it out of `_workers`). The assertion was true only until that wake-up.
+- **Reproduced on demand.** With the worker woken right after the entry goes, and a wait until it has left, the old test failed with the CI message 6 times out of 6.
+- **Fix.** The worker is held in `_after` (it has seen the entry gone and is on its way out) until the refusal has been handled, and the test waits, with a deadline, until it is there. So "ERR3 arrives, the entry is gone, the worker is present and not stopped" is the state every time, for both variants. The test also asserts the command went out once and that the projector, back again, has nothing pending.
+- **The other order.** Two new tests: the worker left by itself before the refusal is handled, and `apply()` stopped it before then. `Monitor.set_input` raises the refusal in both; no gap in the product code.
+- **Does the test still prove it?** With `cur is None` taken out of `set_input`, the held test fails every time ("ProjectorError not raised"); the two new ones pass, as they should (`w is None` covers them).
+- **Runs.** The three tests (both orders, both variants) 300 times in a loop on the dev Mac: 300 passed, none failed. CI is the judge for the rest.
+
 ## 2026-10-05 (themes the owner can build and share: design tokens, add and save on the Look page, a converter for Figma)
 
 Pull request #88. **Not merged, and it must not be before an independent security review: it adds a route that takes a file (`POST /api/theme/add`) and puts added themes into the settings file.** Nothing here ran on the Pi or on a phone; the browser step ran in CI's Chromium only. The test Pi was not touched. Two other pull requests were open, #86 (flaky tests) and #87 (effects pick their working size). When the first report was written master had not moved, so there was nothing to merge; #87 landed afterwards and master was merged in then (conflicts only in the three log files, both sides kept; D58 is #87's). Then #86 merged and took D59, master was merged in again the same way, and this decision became D60.
