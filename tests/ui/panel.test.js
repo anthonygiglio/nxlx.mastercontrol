@@ -1337,9 +1337,42 @@ function startServer() {
     await page.waitForFunction((b) => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces[0].vertices[0][0] < b[0] - 100), before);
     await page.selectOption('#mapstep', '50');
     const x0 = await page.evaluate(() => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces[0].vertices[0][0]));
+    // The card is drawn again by the answer to every change. drawnAgain() marks the line at its top and waits until
+    // that line is a new one (as the Sync step does): the step goes on from what the panel shows, not from what
+    // the box already knows. (The box knows a change a few milliseconds before its answer is back.)
+    const markMap = () => page.evaluate(() => { document.getElementById('mapstatus').dataset.seen = '1'; });
+    const drawnAgain = () => page.waitForFunction(() => { const l = document.getElementById('mapstatus'); return l && !l.dataset.seen; }, null, { timeout: 8000 });
+    await markMap();
     await page.click('#mapright');
     await page.waitForFunction((x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - (x + 50)) < 0.01), x0);
-    await page.fill('#mapsetname', 'Main stage');
+    await drawnAgain();
+    // A name is typed while the card is drawn again. This is the failure that came and went here ("Main stage" not
+    // seen in 30 s): the answer to the nudge arrived between the moment the name field was chosen and the typing,
+    // the card was rebuilt, the letters went nowhere and Save sent an empty name, which the box refused. Here the
+    // answer is held back for a moment, as on a slow link, so it happens every time: the field must keep the
+    // cursor, the letters typed so far and the place in them, and take the rest.
+    let holdBack = true;
+    const slowAnswer = async (route) => {
+      if (holdBack && route.request().method() === 'POST') await new Promise((r) => setTimeout(r, 700));
+      await route.continue();
+    };
+    await page.route('**/api/mapper', slowAnswer);
+    await markMap();
+    await page.click('#mapleft');                 // back to where it was; its answer comes 700 ms later
+    await page.focus('#mapsetname');
+    await page.keyboard.type('Min');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');       // the cursor is after the M
+    await drawnAgain();
+    const typing = await page.evaluate(() => { const a = document.activeElement, f = document.getElementById('mapsetname'); return { cursorIn: a ? a.id : '', text: f ? f.value : null, at: f ? f.selectionStart : null }; });
+    assert.deepStrictEqual(typing, { cursorIn: 'mapsetname', text: 'Min', at: 1 }, 'a redraw of the mapping card took #mapsetname away from the person typing in it: ' + JSON.stringify(typing));
+    await page.keyboard.type('a');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' stage');
+    holdBack = false;
+    await page.unroute('**/api/mapper', slowAnswer);
+    assert.strictEqual(await page.inputValue('#mapsetname'), 'Main stage', 'what was typed across the redraw is all there');
+    await page.waitForFunction((x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - x) < 0.01), x0);     // the nudge back was taken
     await page.click('#mapsave');
     await fitsCard('#mapcard', 'Mapping card');
     await page.waitForSelector('#mapsets >> option:has-text("Main stage")', { state: 'attached' });
