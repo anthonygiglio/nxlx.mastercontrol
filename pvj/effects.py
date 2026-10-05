@@ -154,9 +154,10 @@ def measured(sid):
 # can filter in a thirtieth of a second. So the filter may work on a smaller copy: the hook's output is given a size
 # whose shorter side is at most a number of lines (the "cap"), the filter draws that many pixels, reading the clip
 # itself with the GPU's own smoothing, and the player scales the result to the screen as it would a clip of that size.
-# A clip whose shorter side is at or below the cap is not scaled at all. The shorter side, not the height: at the
-# stage an effect hooks, a clip the decoder hands over turned (a phone's upright video) still lies on its side, and
-# the shorter side is the same number whichever way it lies; it is also what "720p" and "1080p" name.
+# A clip whose shorter side is at or below the cap is not scaled at all. The shorter side, not the height: it is the
+# same number whichever way a clip lies or is turned (the player turns a picture before the stage an effect hooks,
+# so the hook meets a phone's upright video standing; seen in CI), and it is what "720p" and "1080p" name. Nothing
+# here asks which way the picture lies: the arithmetic is the same for both.
 # The setting is one for the box: "auto" (the table below decides), a number of lines, or "full" (never scaled).
 DETAILS = L.FX_DETAILS            # ("auto", 540, 720, "full"); kept with the settings they are saved in
 HALF_LINES = 540                # what the superseded control "half": true means: this effect works at 540 lines at most
@@ -262,8 +263,8 @@ def cap_lines(detail, board, sid=None, bundled=True, half=False):
 def work_size(w, h, lines):
     """(width, height) of the picture a filter draws for a clip of w x h under a cap of `lines` (None: no cap): the
     clip's own size when its shorter side is at or below the cap, else the shorter side is the cap and the longer
-    one keeps the shape, rounded as the player rounds (a half goes up). The clip's size is the one it is stored
-    in; a rotation changes nothing here."""
+    one keeps the shape, rounded as the player rounds (a half goes up). Turning the clip by a quarter turns the
+    answer with it and changes nothing else."""
     w, h = int(w), int(h)
     short = min(w, h)
     if lines is None or short <= lines or short <= 0:
@@ -272,14 +273,22 @@ def work_size(w, h, lines):
     return (long_side, lines) if w >= h else (lines, long_side)
 
 
-def size_lines(lines, tall=False):
+def size_lines(lines):
     """The two size lines of a hook for a cap: the player's own arithmetic (written the way it reads it, each value
-    before the sign that uses it), relative to the picture it meets, so a clip of another size is right from its
-    first frame. `tall` says which side is the shorter one: for a standing picture the width is capped."""
-    a, b = ("HOOKED.w", "HOOKED.h") if tall else ("HOOKED.h", "HOOKED.w")       # a: the shorter side
-    short = "%s %s %d > %s %d - * -" % (a, a, lines, a, lines)                    # a - (a > cap) * (a - cap)
-    other = "%s %s %d > %s * %s %d - * %s / -" % (b, a, lines, b, a, lines, a)   # b - (a > cap) * b * (a - cap) / a
-    return ["//!WIDTH %s" % (short if tall else other), "//!HEIGHT %s" % (other if tall else short)]
+    before the sign that uses it; a comparison is 1 or 0), relative to the picture it meets, so a clip of another
+    size or shape is right from its first frame. For a picture that lies (wider than high) the height is the
+    shorter side, for one that stands or is square the width:
+        width  = w - lies * (h > cap) * w * (h - cap) / h - stands * (w > cap) * (w - cap)
+        height = h - lies * (h > cap) * (h - cap)         - stands * (w > cap) * h * (w - cap) / w
+    Thirty words each; the player reads at most thirty-two."""
+    def one(mine, other):
+        lies = "HOOKED.w HOOKED.h >" if mine == "HOOKED.w" else "HOOKED.w HOOKED.h > !"
+        stands = "HOOKED.w HOOKED.h > !" if mine == "HOOKED.w" else "HOOKED.w HOOKED.h >"
+        # this side is the longer one: it keeps the shape; this side is the shorter one: it is the cap
+        longer = "%s %s %d > * %s * %s %d - * %s / -" % (lies, other, lines, mine, other, lines, other)
+        shorter = "%s %s %d > * %s %d - * -" % (stands, mine, lines, mine, lines)
+        return "%s %s %s" % (mine, longer, shorter)
+    return ["//!WIDTH %s" % one("HOOKED.w", "HOOKED.h"), "//!HEIGHT %s" % one("HOOKED.h", "HOOKED.w")]
 
 
 # ---- colours ---------------------------------------------------------------------------------------------------------
@@ -373,15 +382,15 @@ def clean_picture(matrix=None, levels=None, fps=None):
 
 
 # ---- the text for the player ---------------------------------------------------------------------------------------------
-def _block(parsed, values, c, pic, desc, plane, t, cap=None, tall=False):
+def _block(parsed, values, c, pic, desc, plane, t, cap=None):
     """One hook of the effect's text, for a picture that has the plane `plane`: "LUMA" (the picture is YUV and is
-    converted with its matrix and range) or "RGB" (nothing to convert). `cap` and `tall`: see size_lines."""
+    converted with its matrix and range) or "RGB" (nothing to convert). `cap`: see size_lines."""
     lines = ["//!HOOK NATIVE", "//!BIND HOOKED",
              # mpv leaves a hook out when a texture it binds is not there (seen in CI on mpv 0.37): a video has a LUMA
              # plane and no RGB plane, an RGB picture the other way round, so exactly one of the two hooks runs
              "//!BIND %s" % plane]
     if cap is not None:
-        lines += size_lines(cap, tall)
+        lines += size_lines(cap)
     if not c["amount"]:
         # Amount 0 is the picture as it is: the player is told to leave this hook out (a condition that is never
         # true), so nothing is drawn, nothing is scaled and nothing is paid. The effect stays "on" for the panel.
@@ -423,10 +432,9 @@ def _block(parsed, values, c, pic, desc, plane, t, cap=None, tall=False):
               "    vec4 pvj_src = HOOKED_tex(HOOKED_pos);"]
     if cap is not None:
         # the size this hook draws at: the same arithmetic as its WIDTH and HEIGHT lines, rounded as the player rounds
-        side = "x" if tall else "y"
         lines += ["    pvj_work = HOOKED_size;",
-                  "    if (HOOKED_size.%s > %s) pvj_work = floor(HOOKED_size - HOOKED_size * (HOOKED_size.%s - %s) / HOOKED_size.%s + 0.5);"
-                  % (side, S._f(cap), side, S._f(cap), side)]
+                  "    PVJ_HP float pvj_short = min(HOOKED_size.x, HOOKED_size.y);",
+                  "    if (pvj_short > %s) pvj_work = floor(HOOKED_size - HOOKED_size * (pvj_short - %s) / pvj_short + 0.5);" % (S._f(cap), S._f(cap))]
     if parsed.get("clock"):
         # mpv's frame number as hi * 512 + lo, in whole numbers small enough for 16 bits (see shaders.translate)
         lines += ["    int pvj_hi = frame / 512;",
@@ -447,12 +455,11 @@ def _block(parsed, values, c, pic, desc, plane, t, cap=None, tall=False):
     return lines
 
 
-def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effect", today=None, lines=None, tall=False):
+def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effect", today=None, lines=None):
     """The mpv user shader for a parsed ISF filter: `values` replace the inputs' defaults, `controls` are amount (the
     mix with the picture as it is), speed (of TIME) and half (superseded: work at HALF_LINES at most), `picture` says
-    what is under it (see clean_picture), `lines` is the cap on the working size (None: the clip's own size; any
-    whole number from 1 up, of which the settings offer DETAILS) and `tall` whether the picture stands (see
-    size_lines). The text holds the filter twice, as two hooks of which the player runs one: the first for a picture
+    what is under it (see clean_picture) and `lines` is the cap on the working size (None: the clip's own size; any
+    whole number from 1 up, of which the settings offer DETAILS; see size_lines). The text holds the filter twice, as two hooks of which the player runs one: the first for a picture
     in YUV, the second for one in RGB (a PNG, some streams), so a change between the two kinds in the middle of a
     playlist is right from its first frame without a new text."""
     if parsed.get("kind") != S.FILTER:
@@ -468,7 +475,7 @@ def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effec
     cap = min(lines or HALF_LINES, HALF_LINES) if c["half"] else lines
     out = ["// nxlx.mastercontrol effect (generated; do not edit)"]
     for plane in ("LUMA", "RGB"):
-        out += _block(parsed, values, c, pic, desc, plane, t, cap, bool(tall))
+        out += _block(parsed, values, c, pic, desc, plane, t, cap)
     return "\n".join(out)
 
 
@@ -847,7 +854,7 @@ class Effects(S.Engine):
         self._switched = -1e9                       # when an effect last went on or came off (the gap between switches)
         self.unfit = False                          # the picture that plays cannot take an effect (see UNFIT_FORMATS)
         self.estimated = False                      # its frame rate is the player's estimate (a stream, a live input)
-        self.size = None                            # (width, height) the playing picture is stored in, when the player says
+        self.size = None                            # (width, height) of the playing picture as it is stored, when the player says
         self._waiting = False                       # `error` says an effect could not go on for want of a picture
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
@@ -896,20 +903,20 @@ class Effects(S.Engine):
         if on is not None:                          # it applies to the effect that is on, at once
             self.changer.submit(on, controls={"amount": on["controls"]["amount"]})
 
-    def work(self, sid, controls, size=None, cfg=None):
-        """How the effect `sid` works now: {"lines": the cap or None, "tall": whether the picture stands}."""
+    def work(self, sid, controls, cfg=None):
+        """How the effect `sid` works now: {"lines": the cap or None}."""
         try:
             bundled = self._path(sid)[1] == "bundled"
         except ApiError:
             bundled = False
-        lines = cap_lines(self.detail(cfg), self.board(), sid, bundled, bool(controls.get("half")))
-        return {"lines": lines, "tall": bool(size and size[1] > size[0])}
+        return {"lines": cap_lines(self.detail(cfg), self.board(), sid, bundled, bool(controls.get("half")))}
 
     def working(self, rec, cfg=None):
         """What the panel says of the working size of the effect that is on: {"lines": the cap or None, "auto":
-        whether Automatic chose it, "clip": {"width", "height", "lines"} or None when the player did not say,
-        "width", "height": what the filter draws, "scaled": whether that is smaller than the clip, "lower": the next
-        Effect detail down that would make it smaller still, or None}."""
+        whether Automatic chose it, "clip": {"width", "height", "lines"} or None when the player did not say (the
+        clip as it is stored; "lines" is its shorter side), "width", "height": what the filter draws (for a clip shown
+        turned by a quarter, the two the other way round), "scaled": whether that is smaller than the clip, "lower":
+        the next Effect detail down that would make it smaller still, or None}."""
         work, size = rec.get("work") or {"lines": None}, rec.get("clip")
         out = {"lines": work["lines"], "auto": self.detail(cfg) == "auto" and not rec["controls"].get("half"),
                "clip": None, "width": None, "height": None, "scaled": False, "lower": None}
@@ -1107,7 +1114,7 @@ class Effects(S.Engine):
         if not isinstance(params, dict):
             return None
         decoded = params
-        w, h = params.get("w"), params.get("h")       # as it is stored: what the hook meets, before any turning
+        w, h = params.get("w"), params.get("h")       # as it is stored; the arithmetic of the cap is the same turned
         if all(isinstance(n, int) and not isinstance(n, bool) and 0 < n <= 16384 for n in (w, h)):
             self.size = (w, h)
         try:                        # what the output was given, after the player's own video filters, if it says
@@ -1222,15 +1229,13 @@ class Effects(S.Engine):
     # -- putting one on, changing it, taking it off --
     def compose(self, parsed, state, desc):
         work = state.get("work") or {}
-        return translate(parsed, dict(state["values"], **state.get("held", {})), state["controls"], state["picture"], desc,
-                         lines=work.get("lines"), tall=work.get("tall", False))
+        return translate(parsed, dict(state["values"], **state.get("held", {})), state["controls"], state["picture"], desc, lines=work.get("lines"))
 
     def _key(self, parsed, digest, state):
         """What the GPU's word about a text is remembered under: the file, the shape of its values, the working size
         and whether it is drawn at all (at amount 0 the player leaves the hook out, and has then looked at nothing)."""
         work = state.get("work") or {}
-        return (digest, S.shape_of(parsed, dict(state["values"], **state.get("held", {}))), work.get("lines"), bool(work.get("tall")),
-                state["controls"]["amount"] > 0)
+        return (digest, S.shape_of(parsed, dict(state["values"], **state.get("held", {}))), work.get("lines"), state["controls"]["amount"] > 0)
 
     def _now(self):
         return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1270,7 +1275,7 @@ class Effects(S.Engine):
                          "held": {n: True for n, v in start.items() if n in events and v},
                          "controls": self.limit(parsed, L.clean_fx_controls(controls, stored)),
                          "picture": self.picture() or clean_picture()}
-                state.update(clip=self.size, work=self.work(sid, state["controls"], self.size, cfg))
+                state.update(clip=self.size, work=self.work(sid, state["controls"], cfg))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
                 key = self._key(parsed, digest, state)
@@ -1399,7 +1404,7 @@ class Effects(S.Engine):
                          "controls": self.limit(parsed, dict(p["controls"], **job["controls"])),
                          "picture": seen or p["picture"]}
                 state["clip"] = (self.size or p.get("clip")) if seen else p.get("clip")
-                state["work"] = self.work(p["id"], state["controls"], state["clip"])
+                state["work"] = self.work(p["id"], state["controls"])
                 if look:
                     self.changer.keep()
                     self.guard.sample(p)

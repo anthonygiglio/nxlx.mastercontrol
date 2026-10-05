@@ -311,6 +311,22 @@ class FxCase(GpuCase):
     def loaded(self):
         return [os.path.basename(p) for p in self.real.ipc.request("get_property", "glsl-shaders")]
 
+    def size_probe(self, lines, sides, ends):
+        """(points that disagree, points looked at): a hand-written hook with the size lines of a cap and the code's
+        own arithmetic for RENDERSIZE, over the picture that plays."""
+        made = E.translate(S.parse(SAME, S.FILTER), lines=lines)
+        code = [l.replace("PVJ_HP ", "") for l in made.split("\n") if "pvj_work = " in l or "pvj_short = " in l][:3]
+        self.raw("//!HOOK NATIVE\n//!BIND HOOKED\n%s\n//!DESC nxlx size probe\n\nvec4 hook() {\n    vec2 pvj_work;\n%s\n"
+                 "    vec2 at = HOOKED_pos * pvj_work;\n    float dx = abs(at.x - gl_FragCoord.x);\n"
+                 "    float dy = min(abs(at.y - gl_FragCoord.y), abs(pvj_work.y - at.y - gl_FragCoord.y));\n"
+                 "    return (max(dx, dy) < 0.01) ? vec4(0.85, 0.5, 0.5, 1.0) : vec4(0.15, 0.5, 0.5, 1.0);\n}\n"
+                 % ("\n".join(E.size_lines(lines)), "\n".join(code)))
+        self.settle()
+        rows = self.still()
+        inside = [rows[y][x] for y in range(ends[0] + 2, H - ends[1] - 2, 3) for x in range(sides[0] + 2, W - sides[1] - 2, 3)]
+        self.real.ipc.request("set_property", "glsl-shaders", [])
+        return sum(1 for px in inside if not min(px) > 150), inside
+
     def text_on(self):
         with open(self.fx.on["path"]) as f:
             return f.read()
@@ -481,8 +497,8 @@ class FxCase(GpuCase):
             on = self.fx.state()["on"]["working"]
             if (on["lines"], (on["clip"]["width"], on["clip"]["height"]), (on["width"], on["height"]), on["scaled"]) != (lines, size, want, scaled):
                 failed.append("%s: the panel is told %s" % (what, on))
-            if (" WIDTH " in self.text_on().replace("//!", " ")) is not True or ("x >" in self.text_on()) != (size[1] > size[0]):
-                failed.append("%s: the text is not the one for this shape" % what)
+            if self.text_on().count("\n".join(E.size_lines(lines)) + "\n") != 2:
+                failed.append("%s: the text does not hold the size lines" % what)
             self.put("swap.fs")
             judge("top and bottom", differ(self.still(), upside_down(plain, *ends)))
             self.put("same.fs")
@@ -517,28 +533,16 @@ class FxCase(GpuCase):
             # same size lines and the same arithmetic paints light where the two agree to a hundredth of a pixel and
             # dark where they do not (the clip is a video: what a hook returns here is brightness, then two colour
             # differences, and one half is no colour).
-            tall = size[1] > size[0]
-            made = E.translate(S.parse(SAME, S.FILTER), lines=lines, tall=tall)
-            code = [l for l in made.split("\n") if "pvj_work = " in l][:2]
-            self.raw("//!HOOK NATIVE\n//!BIND HOOKED\n%s\n//!DESC nxlx size probe\n\nvec4 hook() {\n    vec2 pvj_work;\n%s\n"
-                     "    vec2 at = HOOKED_pos * pvj_work;\n    float dx = abs(at.x - gl_FragCoord.x);\n"
-                     "    float dy = min(abs(at.y - gl_FragCoord.y), abs(pvj_work.y - at.y - gl_FragCoord.y));\n"
-                     "    return (max(dx, dy) < 0.01) ? vec4(0.85, 0.5, 0.5, 1.0) : vec4(0.15, 0.5, 0.5, 1.0);\n}\n"
-                     % ("\n".join(E.size_lines(lines, tall)), "\n".join(code)))
-            self.settle()
-            rows = self.still()
-            inside = [rows[y][x] for y in range(ends[0] + 2, H - ends[1] - 2, 3) for x in range(sides[0] + 2, W - sides[1] - 2, 3)]
-            red = sum(1 for px in inside if not min(px) > 150)
-            self.real.ipc.request("set_property", "glsl-shaders", [])
+            red, inside = self.size_probe(lines, sides, ends)
             print("capped, ES %s: %-36s %-22s %d of %d points disagree" % (self.ES, what, "the code's size", red, len(inside)))
             if red:
                 failed.append("%s: the code's RENDERSIZE is not the size the player draws at (%d of %d points)" % (what, red, len(inside)))
         self.assertEqual(failed, [])
 
     def test_a_capped_effect_is_right_over_a_turned_picture(self):
-        """A clip shown turned (the panel's Rotate, or a phone's video that says so itself) is still as it is stored
-        where the effect hooks: the cap goes by its shorter side, and the picture comes out turned like the clip
-        without an effect, not stretched and not shifted."""
+        """A clip shown turned (the panel's Rotate, or a phone's video that says so itself) reaches the effect's hook
+        already turned: a clip that lies is met standing. The cap goes by the shorter side whichever way it is, with
+        one text, and the picture comes out turned like the clip without an effect, not stretched and not shifted."""
         self.fx.upload("same.fs", SAME)
         self.fx.upload("invert.fs", INVERT)
         failed = []
@@ -566,8 +570,12 @@ class FxCase(GpuCase):
                     failed.append("%s turned by %d: unchanged %.2f, inverted %.2f, amount 0 max %d mean %.2f" % (name, turn, same[1], inverted[1], zero[0], zero[1]))
                 if (on["width"], on["height"]) != E.work_size(size[0], size[1], 60):
                     failed.append("%s turned by %d: the panel is told %s" % (name, turn, on))
-                # What the arithmetic rests on: where the effect hooks, a turned picture is still as it is stored
-                # (light: wider than high). Were it handed over turned, the text would cap the wrong side.
+                bars = self.real.ipc.request("get_property", "osd-dimensions")
+                red, inside = self.size_probe(60, (int(bars["ml"]), int(bars["mr"])), (int(bars["mt"]), int(bars["mb"])))
+                if red or not inside:
+                    failed.append("%s turned by %d: the code's RENDERSIZE is not the size the player draws at (%d of %d points)" % (name, turn, red, len(inside)))
+                # Where the effect hooks, the picture is already turned (light: wider than high). The text does not
+                # depend on it; SHADERS.md says so ("Coordinates"), and this is what it says it from.
                 self.raw("//!HOOK NATIVE\n//!BIND HOOKED\n//!DESC nxlx turn probe\n\nvec4 hook() {\n"
                          "    return (HOOKED_size.x > HOOKED_size.y) ? vec4(0.85, 0.5, 0.5, 1.0) : vec4(0.15, 0.5, 0.5, 1.0);\n}\n")
                 self.settle()
@@ -575,8 +583,8 @@ class FxCase(GpuCase):
                 self.real.ipc.request("set_property", "glsl-shaders", [])
                 lying = min(middle) > 150
                 print("turned, ES %s: %-5s by %3d: at the hook the picture is %s (stored %dx%d)" % (self.ES, name, turn, "wider than high" if lying else "higher than wide", size[0], size[1]))
-                if lying != (size[0] > size[1]):
-                    failed.append("%s turned by %d: at the hook the picture is not as it is stored" % (name, turn))
+                if lying != ((size[0] > size[1]) != (turn % 180 == 90)):
+                    failed.append("%s turned by %d: at the hook the picture is not as it is shown" % (name, turn))
             self.real.rotate(0)
         self.assertEqual(failed, [])
 

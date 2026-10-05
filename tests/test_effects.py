@@ -410,9 +410,10 @@ def player_size(line, w, h):
 
 
 def shader_size(text, w, h):
-    """What the generated code takes for RENDERSIZE in a picture of w x h, from its own two lines (32-bit numbers)."""
-    m = re.search(r"if \(HOOKED_size\.([xy]) > ([0-9.]+)\) pvj_work = floor\(HOOKED_size - HOOKED_size \* \(HOOKED_size\.\1 - \2\) / HOOKED_size\.\1 \+ 0\.5\);", text)
-    side, cap = (w if m.group(1) == "x" else h), float(m.group(2))
+    """What the generated code takes for RENDERSIZE in a picture of w x h, from its own lines (32-bit numbers)."""
+    assert "    PVJ_HP float pvj_short = min(HOOKED_size.x, HOOKED_size.y);\n" in text
+    m = re.search(r"if \(pvj_short > ([0-9.]+)\) pvj_work = floor\(HOOKED_size - HOOKED_size \* \(pvj_short - \1\) / pvj_short \+ 0\.5\);", text)
+    side, cap = min(w, h), float(m.group(1))
     if not side > cap:
         return w, h
     return tuple(int(math.floor(f32(f32(n - f32(f32(n * f32(side - cap)) / side)) + 0.5))) for n in (w, h))
@@ -449,50 +450,47 @@ class WorkingSizeTest(unittest.TestCase):
                 self.assertEqual(E.work_size(h, w, lines), (oh, ow), what)             # turned by a quarter: the same picture, turned
 
     def test_a_turned_clip_is_capped_like_the_same_clip_stored_upright(self):
-        # At the stage an effect hooks, a clip the decoder hands over turned (rotate 90 or 270: a phone's upright
-        # video) is still as it is stored. Stored lying and turned, or stored standing: the same number of pixels.
+        # The player turns a clip that is to be shown turned (rotate 90 or 270: a phone's upright video, or the
+        # panel's Rotate) before the stage an effect hooks, so the hook meets it standing. Stored lying and turned,
+        # or stored standing: the same number of pixels, and one text for both, which does not ask which it is.
+        width, height = E.size_lines(720)
         for lines in (540, 720):
             lying, standing = E.work_size(1920, 1080, lines), E.work_size(1080, 1920, lines)
             self.assertEqual(lying[0] * lying[1], standing[0] * standing[1])
             self.assertEqual(sorted(lying), sorted(standing))
-            for turn in (0, 90, 180, 270):                                             # the rotation is not asked for at all
-                self.assertEqual(E.work_size(2622, 1206, lines), (round(2622 * lines / 1206), lines), turn)
+        for w, h in ((1920, 1080), (2622, 1206), (1280, 720), (720, 576), (1000, 1000)):
+            for turn in (0, 90, 180, 270):
+                met = (h, w) if turn % 180 else (w, h)                                  # what the hook meets
+                got = (player_size(width, *met), player_size(height, *met))
+                self.assertEqual(got, E.work_size(*met, 720), (w, h, turn))
+                self.assertEqual(sorted(got), sorted(E.work_size(w, h, 720)), (w, h, turn))        # the same picture, turned
 
     def test_the_player_the_code_and_the_panel_come_to_the_same_size_for_every_clip(self):
         p = S.parse(GOOD, S.FILTER)
         rng = random.Random(11)
         sizes = SIZES + [(rng.randint(2, 4096), rng.randint(2, 4096)) for _ in range(300)]
         for lines in (1, 90, 100, 360, 540, 720, 1080):
-            for tall in (False, True):
-                width, height = E.size_lines(lines, tall)
-                self.assertTrue(width.startswith("//!WIDTH ") and height.startswith("//!HEIGHT "))
-                text = E.translate(p, lines=lines, tall=tall)
-                self.assertEqual((text.count(width + "\n" + height + "\n"), text.count("PVJ_HP vec2 pvj_work;")), (2, 2))
-                for w, h in sizes:
-                    if (h > w) != tall:
-                        continue
-                    want = E.work_size(w, h, lines)
-                    self.assertEqual((player_size(width, w, h), player_size(height, w, h)), want, (w, h, lines))
-                    if max(w, h) <= 4096:               # beyond that 32 bits do not hold the products exactly; a pixel either way there
-                        self.assertEqual(shader_size(text, w, h), want, (w, h, lines))
-        # A clip that stands, met for a second by a text made for one that lies (the look is once a second): still a
-        # picture no larger than the clip and no smaller than the cap allows, only softer one way until the new text.
-        for w, h in ((1080, 1920), (1206, 2622), (720, 1280), (400, 2000)):
-            width, height = E.size_lines(720, False)
-            ow, oh = player_size(width, w, h), player_size(height, w, h)
-            self.assertTrue(1 <= ow <= w and 1 <= oh <= min(h, 720), (w, h, ow, oh))
+            width, height = E.size_lines(lines)
+            self.assertTrue(width.startswith("//!WIDTH ") and height.startswith("//!HEIGHT "))
+            self.assertEqual((len(width.split()) - 1, len(height.split()) - 1), (30, 30))       # mpv reads at most 32 words of a size
+            text = E.translate(p, lines=lines)
+            self.assertEqual((text.count(width + "\n" + height + "\n"), text.count("PVJ_HP vec2 pvj_work;")), (2, 2))
+            for w, h in sizes:                          # lying, standing and square alike: one text for every shape
+                want = E.work_size(w, h, lines)
+                self.assertEqual((player_size(width, w, h), player_size(height, w, h)), want, (w, h, lines))
+                if max(w, h) <= 4096:               # beyond that 32 bits do not hold the products exactly; a pixel either way there
+                    self.assertEqual(shader_size(text, w, h), want, (w, h, lines))
 
     def test_what_the_text_holds_for_a_cap_for_amount_0_and_for_the_old_half(self):
         p = S.parse(GOOD, S.FILTER)
         plain = E.translate(p, desc="nxlx effect 1 1")
-        self.assertEqual(E.translate(p, lines=None, tall=True, desc="nxlx effect 1 1"), plain)      # no cap: nothing of it in the text
+        self.assertEqual(E.translate(p, lines=None, desc="nxlx effect 1 1"), plain)                 # no cap: nothing of it in the text
         capped = E.translate(p, lines=720, desc="nxlx effect 1 1")
-        self.assertEqual(capped.count("//!WIDTH HOOKED.w HOOKED.h 720 > HOOKED.w * HOOKED.h 720 - * HOOKED.h / -\n//!HEIGHT HOOKED.h HOOKED.h 720 > HOOKED.h 720 - * -\n"), 2)
-        self.assertEqual(capped.count("    if (HOOKED_size.y > 720.0) pvj_work = floor("), 2)
+        self.assertEqual(capped.count(
+            "//!WIDTH HOOKED.w HOOKED.w HOOKED.h > HOOKED.h 720 > * HOOKED.w * HOOKED.h 720 - * HOOKED.h / - HOOKED.w HOOKED.h > ! HOOKED.w 720 > * HOOKED.w 720 - * -\n"
+            "//!HEIGHT HOOKED.h HOOKED.w HOOKED.h > ! HOOKED.w 720 > * HOOKED.h * HOOKED.w 720 - * HOOKED.w / - HOOKED.w HOOKED.h > HOOKED.h 720 > * HOOKED.h 720 - * -\n"), 2)
+        self.assertEqual(capped.count("    if (pvj_short > 720.0) pvj_work = floor("), 2)
         self.assertIn("vec4 pvj_src = HOOKED_tex(HOOKED_pos);", capped)                # the mix is with the clip itself, read where this pixel lies
-        standing = E.translate(p, lines=720, tall=True)
-        self.assertEqual(standing.count("//!WIDTH HOOKED.w HOOKED.w 720 > HOOKED.w 720 - * -\n//!HEIGHT HOOKED.h HOOKED.w 720 > HOOKED.h * HOOKED.w 720 - * HOOKED.w / -\n"), 2)
-        self.assertEqual(standing.count("    if (HOOKED_size.x > 720.0) pvj_work = floor("), 2)
         # the old control: true is 540 lines at most, whatever the cap; false follows the cap
         self.assertEqual(E.translate(p, controls={"half": True}, lines=720), E.translate(p, controls={"half": True}, lines=540))
         self.assertEqual(E.translate(p, controls={"half": True}), E.translate(p, controls={"half": True}, lines=540))
@@ -1576,7 +1574,7 @@ class DetailTest(Base):
         on = self.state()["on"]["working"]
         self.assertEqual((on["lines"], on["width"], on["height"], on["scaled"], on["lower"]), (540, 960, 540, True, None))    # nothing lower to offer
 
-    def test_the_text_follows_the_clip_a_new_size_is_told_without_a_new_text_and_a_standing_clip_gets_its_own(self):
+    def test_one_text_fits_every_clip_and_a_new_size_is_told_without_a_new_text(self):
         self.pi4()
         self.fx.set_detail(720)
         self.fx.put("fx-wash.fs")
@@ -1588,8 +1586,7 @@ class DetailTest(Base):
         self.assertEqual((on["clip"], on["width"], on["height"], on["scaled"]), ({"width": 1280, "height": 720, "lines": 720}, 1280, 720, False))
         self.mpv.video = dict(self.mpv.video, w=1080, h=1920)                           # a clip that stands: its width is the shorter side
         self.fx.adjust("anchor")
-        self.assertNotEqual(self.mpv.loaded, text)
-        self.assertEqual(self.text().count("\n".join(E.size_lines(720, True)) + "\n"), 2)
+        self.assertEqual((self.mpv.loaded, self.fx._serial), (text, made))             # still the same text: it does not ask which way a clip lies
         on = self.state()["on"]["working"]
         self.assertEqual((on["clip"]["lines"], on["width"], on["height"], on["scaled"]), (1080, 720, 1280, True))
         self.mpv.video = {k: v for k, v in self.mpv.video.items() if k not in ("w", "h")}    # a player that does not say the size
