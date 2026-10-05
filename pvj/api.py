@@ -160,6 +160,8 @@ class Api:
         from . import shaderlive as shaders_mod, vibes as vibes_mod
         self.shaders = shaders_mod.LiveEngine(self)                 # ISF shader sources (see shaders.py, shaderlive.py)
         self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
+        from . import effects as effects_mod
+        self.effects = effects_mod.Effects(self)                    # ISF filters over what plays (see effects.py)
         from . import health as health_mod
         self.health = health_mod.Health(self, getattr(player, "rundir", paths.WEB_DIR))     # checks start in server.build
         from . import sync as sync_mod
@@ -387,6 +389,9 @@ class Api:
             showing = self.shaders.on_screen()
             status["path"], status["shader"], status["vibes"] = None, (showing["id"][:-3] if showing else ""), self.vibes.running
             return status
+        effect = self.effects.current()                   # an effect over the picture: its name, for the Live screen
+        if effect is not None:
+            status["effect"] = effect["id"][:-3]
         if self.capture is not None and path == self.capture.fifo:
             cur = self.capture.status(devices=False)["current"] or {}
             status["path"], status["capture"] = None, cur or True
@@ -935,6 +940,7 @@ class Api:
             self._player_call(p.clear)
             self._stop_capture()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
+            self.effects.sweep()            # a Stop takes the effect off (the player did); its text goes too
         elif action == "seek_to":
             self._player_call(p.seek_to, number(body, "value", 0, 24 * 3600))
         elif action == "shuffle":
@@ -1258,6 +1264,7 @@ class Api:
         if module_id == "shaders" and not self.registry.enabled("shaders"):     # off: the rotation ends, the shader goes
             self.vibes.stop()
             self.shaders.off()
+            self.effects.off("the module was switched off")
         if module_id == "wall":            # starts or stops following or leading, and the wall crop
             self.sync.apply()
         if module_id == "projector":       # starts or stops the background status checks
@@ -2270,6 +2277,13 @@ class Api:
             ("POST", "/api/shaders/preset"): ("live", self.shaders.api_preset),
             ("POST", "/api/shaders/presets"): ("full", self.shaders.api_presets),
             ("POST", "/api/vibes"): ("live", self.vibes.api_vibes),
+            ("GET", "/api/effects"): ("view", self.effects.api_get),
+            ("POST", "/api/effects"): ("live", self.effects.api_put),
+            ("POST", "/api/effects/values"): ("live", self.effects.api_values),
+            ("POST", "/api/effects/step"): ("live", self.effects.api_step),
+            ("POST", "/api/effects/preset"): ("live", self.effects.api_preset),
+            ("POST", "/api/effects/presets"): ("full", self.effects.api_presets),
+            ("POST", "/api/effects/library"): ("full", self.effects.api_library),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),

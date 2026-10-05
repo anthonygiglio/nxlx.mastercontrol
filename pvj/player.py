@@ -131,6 +131,7 @@ class Player:
     # Defaults for a Player made without __init__ (some tests do); __init__ gives every player its own lock.
     _lock = threading.RLock()
     _mapping_shaders, _mapping_mode, _source, _source_pid, _carrier, source_epoch = [], False, None, None, None, 0
+    _effect, _effect_pid, effect_serial, effect_ended = None, None, 0, ""
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
         self.mpv_bin = mpv_bin
@@ -154,6 +155,12 @@ class Player:
         self._source_pid = None     # the mpv it was given to; a restarted mpv has lost it
         self._carrier = None        # the blank picture the source is drawn over, while it plays
         self.source_epoch = 0       # goes up each time what is playing changes hands; a shader rotation checks it
+        # A third layer between the two: an effect, a filter shader over whatever plays (pvj/effects.py). It stays
+        # on when the clip changes and comes off on Stop, when a shader source takes the screen and with a restart.
+        self._effect = None         # the filter shader file
+        self._effect_pid = None     # the mpv it was given to
+        self.effect_serial = 0      # goes up each time an effect goes on or comes off; the effect's worker checks it
+        self.effect_ended = ""      # why the last one came off: "off", "stop", "generator", "restart", "refused"
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
@@ -391,6 +398,7 @@ class Player:
                 self.ipc.request("stop")
             finally:
                 self._end_source()      # also when the player is down: the screen has changed hands either way
+                self._end_effect("stop")
             self.ipc.request("set_property", "loop-file", "no")
             self.ipc.request("set_property", "loop-playlist", "no")
 
@@ -451,10 +459,36 @@ class Player:
             self._source = self._carrier = None
             self.source_epoch += 1
 
+    def _check_effect(self):
+        """Forget an effect that was given to an mpv that has since been restarted: the new one never had it."""
+        if self._effect is None:
+            return
+        try:
+            same = self.ipc.request("get_property", "pid") == self._effect_pid
+        except PlayerError:
+            same = False
+        if not same:
+            self._drop_effect("restart")
+
+    def _drop_effect(self, why):
+        self._effect, self.effect_ended = None, why
+        self.effect_serial += 1
+
+    def _end_effect(self, why):
+        """The effect comes off (a player that is down has lost it anyway)."""
+        if self._effect is not None:
+            self._drop_effect(why)
+            try:
+                self._push_shaders()
+                self._apply_fbo()
+            except PlayerError:
+                pass
+
     def _apply_fbo(self):
-        """8-bit GPU buffers while a mapping or a shader source adds a pass, mpv's own choice otherwise."""
+        """8-bit GPU buffers while a mapping, a shader source or an effect adds a pass, mpv's own choice otherwise."""
         self._check_source()
-        self.ipc.request("set_property", "fbo-format", "rgba8" if (self._mapping_mode or self._source) else "auto")
+        self._check_effect()
+        self.ipc.request("set_property", "fbo-format", "rgba8" if (self._mapping_mode or self._source or self._effect) else "auto")
 
     def set_shaders(self, paths):
         """Use these GLSL user shader files (the projection mapping), or none. The files must be readable by the
@@ -464,8 +498,72 @@ class Player:
             self._push_shaders()
 
     def _push_shaders(self):
+        """The player's one shader list, in the order the picture passes them: the source (a generator, in place of
+        the picture), the effect (a filter of the picture), the projection mapping (the last stage)."""
         self._check_source()
-        self.ipc.request("set_property", "glsl-shaders", ([self._source] if self._source else []) + self._mapping_shaders)
+        self._check_effect()
+        self.ipc.request("set_property", "glsl-shaders", ([self._source] if self._source else []) + ([self._effect] if self._effect else [])
+                         + self._mapping_shaders)
+
+    # --- the effect layer (pvj/effects.py) ------------------------------------
+    @property
+    def effect_shader(self):
+        return self._effect
+
+    def effect_on(self):
+        """The effect's shader file if this mpv still has it, else None (a restarted mpv has lost it)."""
+        with self._lock:
+            self._check_effect()
+            return self._effect
+
+    def put_effect(self, shader, serial=None, epoch=None):
+        """Put the filter shader file `shader` on over whatever plays, in place of the effect that is on. Returns
+        the new effect serial, or None, with nothing changed, when a shader source has the screen (a generator has
+        no picture to filter), or when `serial` or `epoch` are given and an effect went on or off, or something was
+        played or stopped, since they were handed out."""
+        with self._lock:
+            self._check_source()
+            self._check_effect()
+            if self._source is not None or self._carrier is not None:
+                return None
+            if (serial is not None and serial != self.effect_serial) or (epoch is not None and epoch != self.source_epoch):
+                return None
+            previous, pid = self._effect, self.ipc.request("get_property", "pid")
+            self._effect, self._effect_pid = shader, pid
+            try:
+                self._push_shaders()
+                self._apply_fbo()
+            except PlayerError:
+                self._effect = previous
+                try:
+                    self._push_shaders()
+                    self._apply_fbo()
+                except PlayerError:
+                    pass
+                raise
+            self.effect_serial += 1
+            self.effect_ended = ""
+            return self.effect_serial
+
+    def swap_effect(self, shader, serial):
+        """Exchange the effect's file for another text of the same effect, only while `serial` is still current.
+        True if it was done."""
+        with self._lock:
+            self._check_effect()
+            if serial != self.effect_serial or self._effect is None:
+                return False
+            self._effect = shader
+            self._push_shaders()
+            return True
+
+    def clear_effect(self, serial=None, why="off"):
+        """Take the effect off; with `serial`, only that one. True if one was on and is now off."""
+        with self._lock:
+            self._check_effect()
+            if self._effect is None or (serial is not None and serial != self.effect_serial):
+                return False
+            self._end_effect(why)
+            return True
 
     def _end_source(self):
         """Something else takes the screen: the shader source comes off (a player that is down has lost it anyway)."""
@@ -528,6 +626,8 @@ class Player:
                 self._spawn(None, False)
             self._undo_pipe_globals()
             previous = self._source
+            if self._effect is not None:            # a generator has no picture to filter: the effect comes off with
+                self._drop_effect("generator")      # the same push that puts the source on
             try:
                 self._source, self._source_pid = shader, self.ipc.request("get_property", "pid")
                 self._push_shaders()

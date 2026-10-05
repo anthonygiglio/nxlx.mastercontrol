@@ -188,9 +188,33 @@ def _value_ok(v):
     return isinstance(v, list) and 2 <= len(v) <= 4 and all(not isinstance(c, bool) and isinstance(c, (int, float)) and c == c and abs(c) <= 1e6 for c in v)
 
 
-def check_preset(p):
+def clean_fx_controls(controls, base=None):
+    """The controls every effect has (effects.py), from untrusted input: {"amount": 0 to 1, the mix between the
+    picture as it is and the filtered one; "speed": 0 to 4, for a filter that moves by itself; "half": true to work
+    on a picture of half the width and height}. Keys left out keep the value in `base` (or the neutral one); an
+    unknown key or a value of the wrong kind is refused, a number outside its range is kept inside it."""
+    out = dict({"amount": 1.0, "speed": 1.0, "half": False} if base is None else base)
+    if controls is None:
+        return out
+    if not isinstance(controls, dict):
+        raise ShaderError("controls must be an object of amount, speed and half")
+    for name, v in controls.items():
+        if name == "amount":
+            out[name] = min(1.0, max(0.0, S._num(v, "amount")))
+        elif name == "speed":
+            out[name] = min(S.SPEED_MAX, max(S.SPEED_MIN, S._num(v, "speed")))
+        elif name == "half":
+            if not isinstance(v, bool):
+                raise ShaderError("half must be true or false")
+            out[name] = v
+        else:
+            raise ShaderError("no control called %s (there are amount, speed and half)" % S._text(str(name), 32))
+    return out
+
+
+def check_preset(p, controls=S.clean_controls):
     """One stored preset, checked by its form (the values are checked against the shader when they are used): raises
-    ValueError."""
+    ValueError. `controls` checks the common controls: a generator's, or an effect's."""
     if not isinstance(p, dict) or not name_ok(p.get("name")):
         raise ValueError("a preset needs a name of 1 to 40 characters")
     values = p.get("values", {})
@@ -198,13 +222,13 @@ def check_preset(p):
             or not all(isinstance(n, str) and S.INPUT_NAME.fullmatch(n) and _value_ok(v) for n, v in values.items())):
         raise ValueError("the values of preset %s are not input names and values" % p["name"])
     try:
-        controls = S.clean_controls(p.get("controls"))
+        controls = controls(p.get("controls"))
     except ShaderError as e:
         raise ValueError(str(e))
     return {"name": p["name"], "values": dict(values), "controls": controls}
 
 
-def check_presets(v):
+def check_presets(v, controls=S.clean_controls):
     """{shader file: [preset]} from a settings file; raises ValueError."""
     if not isinstance(v, dict) or len(v) > MAX_PRESET_SHADERS:
         raise ValueError("presets must be an object of shader file and its presets, at most %d shaders" % MAX_PRESET_SHADERS)
@@ -212,7 +236,7 @@ def check_presets(v):
     for sid, rows in v.items():
         if not isinstance(sid, str) or not S.FILE.fullmatch(sid) or not isinstance(rows, list) or len(rows) > MAX_PRESETS:
             raise ValueError("presets are kept per shader file, at most %d each" % MAX_PRESETS)
-        clean = [check_preset(p) for p in rows]
+        clean = [check_preset(p, controls) for p in rows]
         if len({name_key(p["name"]) for p in clean}) != len(clean):
             raise ValueError("two presets of %s have the same name" % sid)
         if clean:
@@ -281,7 +305,7 @@ def check_heavy(v):
 
 
 # ---- reading settings a person may have damaged: bad rows are dropped one by one ------------------------------------------
-def read_presets(v):
+def read_presets(v, controls=S.clean_controls):
     """{shader: [preset]} with every row that does not pass left out; None if it is not that kind of thing at all."""
     if not isinstance(v, dict):
         return None
@@ -292,7 +316,7 @@ def read_presets(v):
         clean, names = [], set()
         for p in rows[:MAX_PRESETS]:
             try:
-                p = check_preset(p)
+                p = check_preset(p, controls)
             except (ValueError, TypeError):
                 continue
             if name_key(p["name"]) not in names:
@@ -331,11 +355,21 @@ def read_heavy(v):
     return out
 
 
-READ = (("presets", read_presets), ("sets", read_sets), ("heavy", read_heavy))
+def check_fx_presets(v):
+    """The presets of the effects (filters over the playing picture, effects.py): the same form, an effect's controls."""
+    return check_presets(v, clean_fx_controls)
+
+
+def read_fx_presets(v):
+    return read_presets(v, clean_fx_controls)
+
+
+FX_PRESETS = "fx_presets"       # the effects' presets, kept beside the generators' in the same settings section
+READ = (("presets", read_presets), ("sets", read_sets), ("heavy", read_heavy), (FX_PRESETS, read_fx_presets))
 
 
 # The keys this version adds to the "shaders" settings, each with its check (also used by settings import, boxcare.py).
-EXTRA = (("presets", check_presets), ("sets", check_sets), ("heavy", check_heavy))
+EXTRA = (("presets", check_presets), ("sets", check_sets), ("heavy", check_heavy), (FX_PRESETS, check_fx_presets))
 
 
 def check_extra(v):
@@ -471,8 +505,9 @@ class Changer:
     the worker compiles at most once every APPLY_GAP seconds, so however fast values arrive the GPU compiles a few
     times a second and the last value always lands, at the latest APPLY_GAP after it came (plus the compile)."""
 
-    def __init__(self, engine, clock=time.monotonic, thread=True):
+    def __init__(self, engine, clock=time.monotonic, thread=True, refresh=REANCHOR):
         self.engine, self._clock, self._use_thread = engine, clock, thread
+        self.refresh = refresh                      # seconds after keep() until the engine is asked to look again
         self._cond = threading.Condition()          # guards the fields below; never held across a call to the player
         self._adjust = None                         # {"epoch", "id", "values", "controls", "held"}: the newest wish
         self._show = None                           # {"id", "values", "controls", "preset"}: a whole shader to put on
@@ -519,7 +554,7 @@ class Changer:
         """A shader has just come on or been changed: come back in two days to give it a new anchor, if nobody has
         touched it by then."""
         with self._cond:
-            self._refresh = self._clock() + REANCHOR
+            self._refresh = self._clock() + self.refresh
             self._wake()
 
     def _wake(self):

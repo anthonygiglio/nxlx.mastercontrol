@@ -34,10 +34,21 @@ jobs:
         run: MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140 PVJ_GPU_TEST=1 PVJ_GPU_ONLY=desktop xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
 
   effects-gpu:
-    # Effects (ISF filters over the playing picture) on a real mpv that draws: a job of its own, so its answer does
+    # Effects (ISF filters over the playing picture) on a real mpv that draws: jobs of their own, so their answer does
     # not wait for the long test job. Three ways of drawing: OpenGL ES, desktop OpenGL, and desktop OpenGL 3.1 with
     # GLSL 1.40, the context mpv makes on a Raspberry Pi 4. A software GPU: nothing here says how fast a board is.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - way: OpenGL ES
+            env: PVJ_GPU_ONLY=gles
+          - way: desktop OpenGL
+            env: PVJ_GPU_ONLY=desktop
+          - way: desktop OpenGL 3.1 with GLSL 1.40 (a Raspberry Pi 4)
+            env: PVJ_GPU_ONLY=desktop MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140
+    name: effects-gpu (${{ matrix.way }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,12 +56,8 @@ jobs:
           python-version: '3.12'
       - name: Install mpv, a virtual display and Mesa
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
-      - name: Spike, OpenGL ES
-        run: xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.spike_effects_stage yes
-      - name: Spike, desktop OpenGL
-        run: xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.spike_effects_stage no
-      - name: Spike, desktop OpenGL 3.1 with GLSL 1.40
-        run: MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.spike_effects_stage no
+      - name: Effects on the real mpv (a skip here is a failure)
+        run: env ${{ matrix.env }} PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_effects_gpu
 
   shellcheck:
     runs-on: ubuntu-latest
