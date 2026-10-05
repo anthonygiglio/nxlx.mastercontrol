@@ -58,7 +58,7 @@ class ProfileFilesTest(unittest.TestCase):
         self.assertEqual([len(BY_ID[i]["controls"]) for i in (NANO, MIX, PAD)], [51, 60, 80])
         for p in (NANO, MIX):                                          # the same eight faders on both, so the hand finds them
             self.assertEqual([(control(p, "fader%d" % n)["action"] or {}).get("action") for n in range(1, 9)],
-                             ["opacity", "volume", "speed", "shader_speed", "shader_hue", "shader_brightness", None, None])
+                             ["opacity", "volume", "speed", "shader_speed", "shader_hue", "shader_brightness", "effect_amount", None])
         for p, first in ((NANO, "knob1"), (MIX, "knob_a1")):
             self.assertEqual(control(p, first)["action"], {"action": "shader_control_1"})
         self.assertEqual((control(NANO, "fader1")["send"], control(NANO, "knob8")["send"], control(NANO, "play")["send"]["number"]),
@@ -244,7 +244,7 @@ class MapperTest(unittest.TestCase):
         self.cc(m, "nanoKONTROL2", 16, 127)                    # knob 1
         self.cc(m, "nanoKONTROL2", 20, 64)                     # knob 5: CC 20 is "opacity" in the built-in map
         self.cc(m, "nanoKONTROL2", 22, 10)                     # knob 7: CC 22 is "position" there
-        self.cc(m, "nanoKONTROL2", 6, 127)                     # fader 7 is spare: nothing, not even the built-in map
+        self.cc(m, "nanoKONTROL2", 7, 127)                     # fader 8 is spare: nothing, not even the built-in map
         self.cc(m, "nanoKONTROL2", 99, 127)                    # not a control of this controller
         self.assertEqual(self.rec.calls, [("/api/shaders/values", {"control": 1, "level": 127}), ("/api/shaders/values", {"control": 5, "level": 64}),
                                           ("/api/shaders/values", {"control": 7, "level": 10})])
@@ -341,7 +341,7 @@ class MapperTest(unittest.TestCase):
 
     def test_which_levels_pick_up_and_which_may_jump(self):
         by_action = {e["action"]: e["pickup"] for p in PROFILES for e in midi.profile_entries(p, "x")}
-        self.assertEqual({a for a, on in by_action.items() if on}, {"opacity", "volume", "speed", "shader_speed", "shader_brightness"})
+        self.assertEqual({a for a, on in by_action.items() if on}, {"opacity", "volume", "speed", "shader_speed", "shader_brightness", "effect_amount"})
         self.have.update(shader_hue=0.0)
         m = self.mapper(NANO, "nanoKONTROL2")
         self.cc(m, "nanoKONTROL2", 4, 0)                        # the hue fader jumps: a colour turn hides nothing
@@ -544,7 +544,7 @@ class HubTest(HubBase):
         st, body, _ = self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "r5", "action": {"action": "pad", "bank": 1, "index": 2}}})
         self.assertEqual(st, 200, body)
         rec = next(x for x in body["controllers"][0]["controls"] if x["id"] == "r5")
-        self.assertEqual((rec["action"], rec["origin"], rec["standard"]), ({"action": "pad", "bank": 1, "index": 2}, "yours", None))
+        self.assertEqual((rec["action"], rec["origin"], rec["standard"]), ({"action": "pad", "bank": 1, "index": 2}, "yours", {"action": "effect_toggle"}))
         self.assertEqual([(e["source"], e["kind"], e["number"]) for e in body["map"]], [("nanoKONTROL2", "cc", 68)])
         self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "stop", "action": {"action": "none"}}})
         self.post("/api/midi/map", {"set": {"controller": "nanoKONTROL2", "control": "fader7", "action": {"action": "size"}}})
@@ -861,7 +861,7 @@ class NoBlockingTest(Live):
             t0 = time.monotonic()
             self.hub.status()
             took.append((time.monotonic() - t0, "status", ""))
-        with self.engine._lock:                                               # as if the GPU were looking at a shader
+        with self.engine._lock, self.api.effects._lock:                       # as if the GPU were looking at a shader, and at a filter
             t = threading.Thread(target=run)
             t.start()
             t.join(30)
@@ -869,14 +869,17 @@ class NoBlockingTest(Live):
         self.assertEqual(errors, [])
         self.assertLess(max(took)[0], 2.0, max(took))
         # and the calls were real ones: everything this fake box can do answered 200. What is left: a pad with no clip
-        # on it, Room scenes with the Room module off
+        # on it, Room scenes with the Room module off, effects with no picture they could be put on (this fake player
+        # plays none; tests/test_effects.py holds the same lock with an effect on)
         # (and, once a Stop button of a layout has been pressed, shader values and presets with no shader on)
         refused = sorted({(path, status) for (path, status) in answers if status != 200})
-        self.assertEqual(refused, [("/api/play", 400), ("/api/room/scene", 409), ("/api/shaders/preset", 409), ("/api/shaders/values", 409)], answers)
+        self.assertEqual(refused, [("/api/effects", 409), ("/api/effects/step", 409), ("/api/effects/values", 409), ("/api/play", 400),
+                                   ("/api/room/scene", 409), ("/api/shaders/preset", 409), ("/api/shaders/values", 409)], answers)
         for path in ("/api/shaders/values", "/api/shaders/step", "/api/vibes", "/api/blackout", "/api/fadein", "/api/fadeout", "/api/control"):
             self.assertIn((path, 200), answers, path)
         self.assertTrue({"/api/shaders/values", "/api/shaders/step", "/api/shaders/preset", "/api/vibes", "/api/play", "/api/blackout",
-                         "/api/room/scene", "/api/control", "/api/fadein", "/api/fadeout"} <= paths, paths)
+                         "/api/room/scene", "/api/control", "/api/fadein", "/api/fadeout", "/api/effects", "/api/effects/step",
+                         "/api/effects/values"} <= paths, paths)
 
     def test_pickup_reads_the_shader_s_speed_without_the_lock(self):
         self.hub._matched["/dev/snd/midiC1D0"] = ("nanoKONTROL2", BY_ID[NANO])

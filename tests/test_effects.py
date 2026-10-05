@@ -922,6 +922,85 @@ class RolesTest(Base):
         self.assertEqual(self.call("GET", "/api/effects", token=full)[1]["effects"], [])
 
 
+class MidiTest(Base):
+    """The effect actions of a MIDI controller: what each sends, through the same call as the panel, as a presenter."""
+    def mapper(self, *entries, **have):
+        self.calls, self.t = [], [100.0]
+        m = M.MidiMapper(lambda path, body: self.calls.append((path, body)) or True, [M.validate_entry(dict(e, source="*")) for e in entries],
+                         {"blackout": False}, clock=lambda: self.t[0])
+        m.target = lambda action: have.get(action)
+        return m
+
+    def send(self, m, kind, number, value):
+        self.t[0] += 1.0
+        m.message("any", (kind, 0, number, value))
+
+    def test_the_actions_are_in_the_list_and_send_what_the_panel_sends(self):
+        self.assertEqual(M.ACTIONS["effect_amount"], ("level", 0.0, 1.0))
+        self.assertEqual([M.ACTIONS[a][0] for a in ("effect_toggle", "effect_prev", "effect_next")], ["trigger"] * 3)
+        self.assertEqual([M.ACTIONS["effect_control_%d" % n] for n in (1, 8)], [("control", 1, None), ("control", 8, None)])
+        self.assertNotIn("effect_control_9", M.ACTIONS)
+        self.assertIn("effect_amount", M.PICKUP)
+        m = self.mapper({"kind": "cc", "number": 1, "action": "effect_amount"}, {"kind": "cc", "number": 2, "action": "effect_control_3"},
+                        {"kind": "note", "number": 3, "action": "effect_control_2"}, {"kind": "note", "number": 4, "action": "effect_toggle"},
+                        {"kind": "note", "number": 5, "action": "effect_prev"}, {"kind": "note", "number": 6, "action": "effect_next"})
+        self.send(m, "cc", 1, 127)
+        self.send(m, "cc", 1, 64)
+        self.send(m, "cc", 2, 100)
+        for note in (3, 4, 5, 6):
+            self.send(m, "on", note, 127)
+            self.send(m, "off", note, 0)
+        self.assertEqual(self.calls, [("/api/effects/values", {"controls": {"amount": 1.0}}), ("/api/effects/values", {"controls": {"amount": 0.504}}),
+                                      ("/api/effects/values", {"control": 3, "level": 100}), ("/api/effects/values", {"control": 2, "press": True}),
+                                      ("/api/effects", {"toggle": True}), ("/api/effects/step", {"dir": -1}), ("/api/effects/step", {"dir": 1})])
+        with self.assertRaises(M.MidiError):                                           # a fader's action is not for a program change
+            M.validate_entry({"kind": "program", "number": 1, "action": "effect_amount"})
+
+    def test_a_controller_plays_an_effect_as_a_presenter_and_only_with_the_module_on(self):
+        hub = M.MidiHub(self.api, self.settings, log=lambda *_: None, lister=lambda: [])
+        self.addCleanup(hub.stop)
+        hub.calls = M.RateLimiter(time.monotonic, rate=1e9, burst=1e9)
+        self.fx.upload("all.fs", ALL)
+        self.assertTrue(hub._do("/api/effects", {"toggle": True}))                    # on: the first of the library, through the worker
+        self.pump()
+        self.assertEqual(self.state()["on"]["id"], "fx-edge-glow.fs")
+        self.fx.put("all.fs")
+        self.assertTrue(hub._do("/api/effects/values", {"controls": {"amount": 0.25}}))
+        self.assertTrue(hub._do("/api/effects/values", {"control": 1, "level": 127}))
+        self.pump()
+        self.assertEqual((self.state()["on"]["controls"]["amount"], self.state()["on"]["values"]["k"]), (0.25, 2.0))
+        self.assertEqual(hub._target("effect_amount"), 0.25)                           # what a fader has to reach before it takes over
+        self.assertTrue(hub._do("/api/effects/step", {"dir": 1}))
+        self.assertTrue(hub._do("/api/effects", {"toggle": True}))                    # off
+        self.assertEqual((self.mpv.loaded, hub._target("effect_amount")), ([], None))
+        # a controller is a presenter: it saves no preset and adds no file
+        self.assertEqual(self.api.handle("POST", "/api/effects/presets", {"action": "save", "name": "x"}, M.MIDI_DEVICE, "midi")[0], 403)
+        self.assertEqual(self.api.handle("POST", "/api/effects/library", {"action": "upload", "name": "x.fs", "source": GOOD}, M.MIDI_DEVICE, "midi")[0], 403)
+        self.api.registry.set_enabled("shaders", False)
+        before = len(self.mpv.commands)
+        self.assertFalse(hub._do("/api/effects", {"toggle": True}))
+        self.assertFalse(hub._do("/api/effects/values", {"controls": {"amount": 1.0}}))
+        self.assertEqual(len(self.mpv.commands), before)                               # the player was not asked anything
+
+    def test_the_three_shipped_layouts_have_effect_controls_on_what_was_spare(self):
+        """Only controls that had no action got one (the profiles' own tests pin every other control): the amount on
+        a spare fader, the effect's inputs on a spare row of knobs or pads, on/off and the steps on spare buttons."""
+        want = {"korg-nanokontrol2": {"fader7": "effect_amount", "r5": "effect_toggle"},
+                "akai-midimix": dict({"knob_c%d" % n: "effect_control_%d" % n for n in range(1, 9)}, fader7="effect_amount"),
+                "novation-launchpad-mini": dict({"pad17": "effect_toggle", "pad27": "effect_prev", "pad28": "effect_next"},
+                                                **{"pad%d%d" % (3 + (n - 1) // 2, 7 + (n - 1) % 2): "effect_control_%d" % n for n in range(1, 9)})}
+        profiles = M.load_profiles(log=lambda *_: None)
+        self.assertEqual(sorted(p["id"] for p in profiles), sorted(want))
+        for p in profiles:
+            got = {c["id"]: c["action"]["action"] for c in p["controls"] if c["action"] and c["action"]["action"].startswith("effect_")}
+            self.assertEqual(got, want[p["id"]], p["id"])
+            for c in p["controls"]:                                                    # a fader or knob follows, a button or pad presses
+                if c["id"] in got:
+                    kind = M.ACTIONS[got[c["id"]]][0]
+                    self.assertTrue(kind != "trigger" if c["kind"] in ("fader", "knob") else kind != "level", (p["id"], c["id"]))
+            self.assertTrue(any(c["action"] is None for c in p["controls"]), p["id"])  # and something is still spare
+
+
 class PackTest(unittest.TestCase):
     def test_the_pack_is_upstream_byte_for_byte(self):
         with open(os.path.join(PACK_DIR, "SHA256SUMS")) as f:

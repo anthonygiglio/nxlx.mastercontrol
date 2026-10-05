@@ -80,11 +80,18 @@ ACTIONS.update({
 SCENE_SLOTS = 8
 for _n in range(1, SCENE_SLOTS + 1):
     ACTIONS["scene_%d" % _n] = ("trigger", _n, None)
+# Effects: a filter over whatever plays (effects.py). The amount is the mix between the picture as it is and the
+# filtered one; a "control" follows the n-th input of the effect that is on, as a shader control does; one button
+# puts the last effect back on or takes it off; two more step through the filters.
+ACTIONS.update({"effect_amount": ("level", 0.0, 1.0), "effect_toggle": ("trigger", None, None),
+                "effect_prev": ("trigger", None, None), "effect_next": ("trigger", None, None)})
+for _n in range(1, SHADER_SLOTS + 1):
+    ACTIONS["effect_control_%d" % _n] = ("control", _n, None)
 BANKS = 3
 # Soft takeover ("pickup"): on a recognised controller these levels do nothing until the fader or knob reaches the
 # value the box has, so a fader left at the bottom does not black the screen out when it is first touched. The
 # others (a shader's own inputs, its hue, the size and position) may jump: see MIDI.md.
-PICKUP = ("opacity", "volume", "speed", "shader_speed", "shader_brightness")
+PICKUP = ("opacity", "volume", "speed", "shader_speed", "shader_brightness", "effect_amount")
 PICKUP_TOLERANCE = 4        # of 127: this close to the box's value counts as reached
 PICKUP_END = 8              # of 127: this close to the top or the bottom is the top or the bottom
 PICKUP_IDLE = 1.0           # a control that rested this long is checked against the box's value again
@@ -547,6 +554,12 @@ class MidiMapper:
             return [("/api/shaders/preset", {"index": ACTIONS[a][1]})]
         if a.startswith("shader_control_"):
             return [("/api/shaders/values", {"control": ACTIONS[a][1], "press": True})]
+        if a in ("effect_next", "effect_prev"):
+            return [("/api/effects/step", {"dir": 1 if a == "effect_next" else -1})]
+        if a == "effect_toggle":
+            return [("/api/effects", {"toggle": True})]
+        if a.startswith("effect_control_"):
+            return [("/api/effects/values", {"control": ACTIONS[a][1], "press": True})]
         return []
 
     @staticmethod
@@ -558,7 +571,11 @@ class MidiMapper:
             return [("/api/vibes", {"dwell": VIBES_DWELLS[min(len(VIBES_DWELLS) - 1, value * len(VIBES_DWELLS) // 128)]})]
         if a.startswith("shader_control_"):
             return [("/api/shaders/values", {"control": ACTIONS[a][1], "level": value})]
+        if a.startswith("effect_control_"):
+            return [("/api/effects/values", {"control": ACTIONS[a][1], "level": value})]
         _, lo, hi = ACTIONS[a]
+        if a == "effect_amount":
+            return [("/api/effects/values", {"controls": {"amount": round(value / 127.0, 3)}})]
         if a in ("shader_speed", "shader_hue", "shader_brightness"):
             return [("/api/shaders/values", {"controls": {a[7:]: round(lo + (hi - lo) * value / 127.0, 2)}})]
         return [("/api/control", {"action": a, "value": round(lo + (hi - lo) * value / 127.0, 2)})]
@@ -743,7 +760,7 @@ class MidiHub:
         if not self.calls.allow("all"):
             self._note("too many commands a second; some were dropped")
             return False
-        if path == "/api/vibes" or path.startswith("/api/shaders/"):   # only with the Shaders and Vibes module on; said once
+        if path == "/api/vibes" or path.startswith(("/api/shaders/", "/api/effects")):   # only with the Shaders and Vibes module on; said once
             if not self.api.registry.enabled("shaders"):
                 if not self._vibes_off_said:
                     self._vibes_off_said = True
@@ -804,6 +821,9 @@ class MidiHub:
             if action in ("shader_speed", "shader_brightness"):
                 playing = getattr(getattr(self.api, "shaders", None), "playing", None)
                 return float(playing["controls"][action[7:]]) if playing else None
+            if action == "effect_amount":               # the record in memory; whether the player still has it is not asked here
+                on = getattr(getattr(self.api, "effects", None), "on", None)
+                return float(on["controls"]["amount"]) if on else None
         except (KeyError, TypeError, ValueError):
             return None
         if action in ("volume", "speed"):       # what the API last set, from anywhere (Api.control keeps it in memory)
