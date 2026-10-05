@@ -21,7 +21,7 @@ import re
 TOKENS = ("bg", "cd", "fg", "ln", "mu", "ac", "on")
 STYLES = ("default", "signal")          # the looks app.css has a block for; "default" is the look with no block
 AREAS = ("room", "shaders", "clips", "mix", "system")
-STATES = ("off", "setup", "problem", "error")   # fills for three chips, and the colour of an error line of text
+STATES = ("off", "setup", "active", "problem", "error")   # fills for four chips, and the colour of an error line of text
 READABLE = 4.5                          # text against its ground, WCAG AA
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 _ID = re.compile(r"^[a-z][a-z0-9-]{1,40}$")

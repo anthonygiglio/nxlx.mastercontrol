@@ -444,7 +444,7 @@ function startServer() {
     await page.waitForTimeout(1200);
     await shot('live-desktop', (f) => page.screenshot({ path: f }));
 
-    // The look "Signal" (D54), so the owner can see it without a box: the six pictures named signal-*. The fonts are
+    // The look "Signal" (D54), so the owner can see it without a box: the eight pictures named signal-*. The fonts are
     // the box's own; each picture waits for them. The default look is put back at the end.
     const fontsIn = () => soft('the Signal fonts', page.evaluate(() => Promise.all([document.fonts.load('900 44px Archivo'), document.fonts.load('400 16px Archivo'), document.fonts.load('500 16px "JetBrains Mono"')])
       .then((r) => { if (r.some((x) => !x.length)) throw new Error('a typeface did not load'); return document.fonts.ready.then(() => true); })));
@@ -457,27 +457,27 @@ function startServer() {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();
       await page.waitForSelector('html[data-style="signal"] nav.tabs');
-      // The Room screen as staff use it: two groups made from the harness's projectors, and a button pressed, so the
-      // group cards, their buttons and a result line are on the screen that is checked.
+      // The Room screen as staff use it: two named groups from the harness's projectors, their inputs labelled, and
+      // a button pressed, so the picture has named group cards, source buttons and a result line.
       const roomAsStaffSeeIt = async () => {
-        await page.waitForSelector('#roomscreen');
         try {
-          if (!(await page.locator('.room-group').count())) {
-            const members = await page.$$eval('#roomgmembers button', (bs) => bs.map((b) => b.textContent));
-            for (let i = 0; i < Math.min(2, members.length); i++) {
-              const wall = ['Main wall', 'Painting wall'][i];
-              await page.fill('#roomgname', wall, { timeout: 5000 });
-              await page.click(`#roomgmembers >> button:has-text("${members[i]}")`, { timeout: 5000 });
-              await page.click('#roomgsave', { timeout: 5000 });
-              await page.waitForSelector(`.room-group:has-text("${wall}")`, { timeout: 8000 });
-            }
+          const ps = ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.json()))).projectors || []).slice(0, 2);
+          const have = ((await page.evaluate(() => fetch('/api/room').then((r) => r.json()))).groups || []).map((g) => g.name);
+          for (let i = 0; i < ps.length; i++) {
+            const codes = (ps[i].inputs || []).map((x) => x.code).slice(0, 2);
+            for (let k = 0; k < codes.length; k++) await api('POST', '/api/projectors', { label: { id: ps[i].id, input: codes[k], label: ['Laptop', 'Console'][k] } });
+            const wall = ['Main wall', 'Painting wall'][i];
+            if (!have.includes(wall)) await api('POST', '/api/room', { group: { name: wall, projectors: [ps[i].id] } });
           }
-          await page.locator('.room-group .btn').first().click({ timeout: 5000 });
-          await page.waitForSelector('.room-result', { timeout: 15000 });
-        } catch (e) { /* the screen is taken as it is; the test says below if no group is on it */ }
+          await page.reload();
+          await page.waitForSelector('nav.tabs');
+          await page.click('nav >> text=Room');
+          await page.waitForSelector('.room-group:has-text("Main wall")', { timeout: 8000 });
+          await page.locator('.room-group:has-text("Main wall") .btn').first().click({ timeout: 5000 });
+          await page.waitForSelector('.room-group:has-text("Main wall") .room-result', { timeout: 15000 });
+        } catch (e) { failures.push('signal: the Room screen could not be set up with groups: ' + e.message.split('\n')[0]); }
       };
       await shot('signal-room-phone', async (f) => {
-        await page.click('nav >> text=Room');
         await roomAsStaffSeeIt();
         await soft('signal: ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
         await fontsIn();
@@ -494,6 +494,20 @@ function startServer() {
       await shot('signal-live-phone', async (f) => {
         await page.click('nav >> text=Live');
         await page.waitForSelector('.pads');
+        await fontsIn();
+        await page.waitForTimeout(1200);
+        await whole(f);
+      });
+      await shot('signal-mix-phone', async (f) => {
+        await page.click('nav >> text=Mix');
+        await page.waitForSelector('#mo');
+        await fontsIn();
+        await page.waitForTimeout(1200);
+        await whole(f);
+      });
+      await shot('signal-media-phone', async (f) => {
+        await page.click('nav >> text=Media');
+        await page.waitForSelector('#uploads', { state: 'attached' });
         await fontsIn();
         await page.waitForTimeout(1200);
         await whole(f);
@@ -518,7 +532,6 @@ function startServer() {
       await page.reload();
       await page.waitForSelector('html[data-style="signal"] nav.tabs');
       await shot('signal-room-phone-light', async (f) => {
-        await page.click('nav >> text=Room');
         await roomAsStaffSeeIt();
         await soft('signal light: ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
         await fontsIn();

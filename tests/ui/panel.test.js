@@ -1741,6 +1741,10 @@ function startServer() {
     await wasSent(VALUES, V({ bang: true }), 'an event');
     // the three every shader has, above its own: Speed with Freeze, Colour turn, Brightness trim, each with Reset
     assert.deepStrictEqual(await page.$$eval('#shadercommon .ctl', (cs) => cs.map((x) => x.dataset.common)), ['speed', 'hue', 'brightness']);
+    // (a shader's control and a drawn controller's cell share the class ctl; the cell's box, centred small type and
+    // pointer once leaked onto every shader control)
+    assert.deepStrictEqual(await page.$eval('#shadercommon .ctl', (c) => { const cs = getComputedStyle(c); return [cs.borderLeftWidth, cs.borderRadius, cs.textAlign, cs.cursor, cs.overflow]; }),
+      ['0px', '0px', 'start', 'auto', 'visible'], 'a shader control is not drawn as a controller cell');
     assert(await page.evaluate(() => document.getElementById('shadercommon').compareDocumentPosition(document.getElementById('shadersliders')) & Node.DOCUMENT_POSITION_FOLLOWING), 'the common controls are above the shader\'s own');
     {
       const d = await get('/api/shaders'), limits = d.controls.speed, mine = d.shaders.find((x) => x.id === AID);
@@ -2389,6 +2393,7 @@ function startServer() {
       const signalChecks = async (what, area, opts) => {
         opts = opts || {};
         await page.waitForTimeout(700);              // a page's own cards arrive after it opens
+        await page.waitForTimeout(300);              // the fill of a slider the box has just moved is set within a quarter of a second
         await fitsOn(page, 'Signal, ' + what).catch((e) => signalBad.push(e.message.split('\n')[0]));
         const found = await page.evaluate(([wantArea, minButton]) => {
           const out = [];
@@ -2438,6 +2443,36 @@ function startServer() {
             const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
             if (longest > 1 && need > room + 1) out.push('a word is cut (' + Math.round(need) + ' px in ' + Math.round(room) + '): ' + name(el));
           });
+          // the same for what a cell of a drawn controller says it does
+          document.querySelectorAll('.shell .ctlgrid .ctl .ctlwhat').forEach((el) => {
+            if (!shown(el)) return;
+            const word = el.textContent.trim().split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
+            const probe = document.createElement('span');
+            probe.textContent = word;
+            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+            el.appendChild(probe);
+            const need = probe.getBoundingClientRect().width;
+            el.removeChild(probe);
+            if (word.length > 1 && need > el.clientWidth + 1) out.push('a word is cut in a controller cell (' + Math.round(need) + ' px in ' + Math.round(el.clientWidth) + '): ' + el.textContent);
+          });
+          // a state chip is never the area's colour (Active has a colour of its own), whatever area is open
+          const areaColour = getComputedStyle(root).getPropertyValue('--ac').trim();
+          const probeC = document.createElement('span');
+          probeC.style.cssText = 'position:absolute;visibility:hidden;background:' + areaColour;
+          document.body.appendChild(probeC);
+          const areaRgb = getComputedStyle(probeC).backgroundColor;
+          document.body.removeChild(probeC);
+          document.querySelectorAll('.shell .chip, .shell .badge').forEach((el) => {
+            if (shown(el) && getComputedStyle(el).backgroundColor === areaRgb) out.push('a state chip has the area colour: ' + name(el));
+          });
+          // a slider's fill is where its value is
+          document.querySelectorAll('.shell input[type=range]').forEach((el) => {
+            if (!shown(el)) return;
+            const min = el.min === '' ? 0 : parseFloat(el.min), max = el.max === '' ? 100 : parseFloat(el.max);
+            const want = max > min ? Math.round(1000 * (parseFloat(el.value) - min) / (max - min)) / 10 : 0;
+            const got = parseFloat(getComputedStyle(el).getPropertyValue('--fill'));
+            if (!(Math.abs(got - want) <= 0.2)) out.push('slider fill ' + got + '% for a value at ' + want + '%: ' + name(el));
+          });
           // the title: whole, inside the window
           const h1 = document.querySelector('.screen h1');
           if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
@@ -2453,31 +2488,34 @@ function startServer() {
         });
         if (!paint.title.includes(AREA[area]) || paint.tab !== AREA[area]) signalBad.push('Signal, ' + what + ': the title block and the open tab are not the area colour ' + AREA[area] + ': ' + JSON.stringify(paint));
       };
-      // The Room screen as staff use it: two groups made from the harness's projectors, and a button pressed, so the
-      // group cards, their buttons and a result line are on the screen that is checked.
+      // The Room screen as staff use it: two named groups made from the harness's two projectors, their inputs
+      // labelled, and a button pressed, so named group cards, source buttons and a result line are on the screen that
+      // is checked (the built-in "Everything" card alone is not what staff see).
       const roomAsStaffSeeIt = async () => {
+        const ps = ((await get('/api/projectors')).projectors || []).slice(0, 2);
+        const have = ((await get('/api/room')).groups || []).map((g) => g.name);
+        for (let i = 0; i < ps.length; i++) {
+          const codes = (ps[i].inputs || []).map((x) => x.code).slice(0, 2);
+          for (let k = 0; k < codes.length; k++) await post('/api/projectors', { label: { id: ps[i].id, input: codes[k], label: ['Laptop', 'Console'][k] } });
+          const wall = ['Main wall', 'Painting wall'][i];
+          if (!have.includes(wall)) await post('/api/room', { group: { name: wall, projectors: [ps[i].id] } });
+        }
+        await page.goto(base + '/');
+        await page.waitForSelector('nav.tabs');
+        await page.click('nav >> text=Room');
         await page.waitForSelector('#roomscreen');
         try {
-          if (!(await page.locator('.room-group').count())) {
-            const members = await page.$$eval('#roomgmembers button', (bs) => bs.map((b) => b.textContent));
-            for (let i = 0; i < Math.min(2, members.length); i++) {
-              const wall = ['Main wall', 'Painting wall'][i];
-              await page.fill('#roomgname', wall, { timeout: 5000 });
-              await page.click(`#roomgmembers >> button:has-text("${members[i]}")`, { timeout: 5000 });
-              await page.click('#roomgsave', { timeout: 5000 });
-              await page.waitForSelector(`.room-group:has-text("${wall}")`, { timeout: 8000 });
-            }
-          }
-          await page.locator('.room-group .btn').first().click({ timeout: 5000 });
-          await page.waitForSelector('.room-result', { timeout: 15000 });
-        } catch (e) { /* the screen is taken as it is; the test says below if no group is on it */ }
+          await page.waitForSelector('.room-group:has-text("Main wall")', { timeout: 8000 });
+          await page.locator('.room-group:has-text("Main wall") .btn').first().click({ timeout: 5000 });
+          await page.waitForSelector('.room-group:has-text("Main wall") .room-result', { timeout: 15000 });
+        } catch (e) { /* the screen is taken as it is; the test says below what was missing on it */ }
       };
       // the main screens on a phone
-      await page.click('nav >> text=Room');
-      await page.waitForSelector('#roomscreen');
       await roomAsStaffSeeIt();
-      const onRoom = await page.evaluate(() => [document.querySelectorAll('.room-group').length, document.querySelectorAll('.room-result').length]);
-      if (!onRoom[0] || !onRoom[1]) signalBad.push('Signal, Room: no group card or no result line was on the screen that was checked: ' + JSON.stringify(onRoom));
+      const onRoom = await page.evaluate(() => ({ named: Array.prototype.filter.call(document.querySelectorAll('.room-group'), (g) => /wall/.test(g.textContent)).length,
+        sources: document.querySelectorAll('.room-source').length, results: document.querySelectorAll('.room-result').length,
+        labelled: Array.prototype.some.call(document.querySelectorAll('.room-source'), (b) => /Laptop|Console/.test(b.textContent)) }));
+      if (onRoom.named < 2 || !onRoom.sources || !onRoom.results || !onRoom.labelled) signalBad.push('Signal, Room: the screen that was checked did not have two named groups, labelled source buttons and a result line: ' + JSON.stringify(onRoom));
       await signalChecks('Room', 'room', { room: true });
       await page.keyboard.press('Tab');
       const ring = await page.evaluate(() => { const cs = getComputedStyle(document.activeElement); return [document.activeElement.tagName, cs.outlineStyle, cs.outlineWidth, cs.outlineColor]; });
@@ -2485,6 +2523,14 @@ function startServer() {
       await page.click('nav >> text=Live');
       await page.waitForSelector('.pads');
       await signalChecks('Live', 'clips');
+      const liveTitle = await page.evaluate(() => { const h1 = document.querySelector('.screen > .top h1'), b = getComputedStyle(h1, '::before');
+        return [b.content, b.fontSize, b.textTransform, h1.textContent, getComputedStyle(h1).fontSize]; });
+      assert.deepStrictEqual(liveTitle, ['"Live"', '44px', 'uppercase', 'nxlx.mastercontrol', '15px'], 'in Signal the Live screen is titled LIVE, with the panel\'s name small under it');
+      const moved = await page.evaluate(() => { const r = document.querySelector('.shell input[type=range]:not(:disabled)'); if (!r) return null;
+        const min = r.min === '' ? 0 : parseFloat(r.min), max = r.max === '' ? 100 : parseFloat(r.max);
+        r.value = String(min + (max - min) * 0.75); const v = parseFloat(r.value); r.dispatchEvent(new Event('input', { bubbles: true }));
+        return [Math.round(1000 * (v - min) / (max - min)) / 10, parseFloat(getComputedStyle(r).getPropertyValue('--fill'))]; });
+      assert(moved && Math.abs(moved[0] - moved[1]) <= 0.2, 'a slider that is moved is filled up to where it is, at once: ' + JSON.stringify(moved));
       await page.click('nav >> text=Mix');
       await page.waitForSelector('#fliph');
       await signalChecks('Mix', 'mix');
@@ -2494,6 +2540,10 @@ function startServer() {
       await sysIndex();
       await page.waitForSelector('.navrow .chip-ready, .navrow .chip-active, .navrow .chip-off');
       await signalChecks('System index', 'system');
+      const subTitle = await page.evaluate(() => getComputedStyle(document.querySelector('#sysindex .top h1'), '::after').content);
+      assert.strictEqual(subTitle, '"nxlx.mastercontrol"', 'the other screens carry the panel\'s name as the small line under the title');
+      const active = await page.evaluate(() => { const c = document.querySelector('.navrow .chip-active'); return c ? [getComputedStyle(c).backgroundColor, getComputedStyle(c).color, c.textContent] : null; });
+      if (active) assert.deepStrictEqual(active, ['rgb(0, 224, 255)', 'rgb(11, 11, 13)', 'Active'], 'Active is its own fixed colour, with the word');
       const longNames = await page.$$eval('.navname', (ns) => ns.filter((x) => x.scrollWidth > x.clientWidth + 1).map((x) => x.textContent));
       assert.deepStrictEqual(longNames, [], 'a row name is cut off in capitals');
       // pages under System: the longest titles, the instrument, the controller, and the rest of the pages by name

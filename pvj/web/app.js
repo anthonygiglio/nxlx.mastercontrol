@@ -1991,6 +1991,7 @@
         }
         var grid = h('div', { class: 'ctlgrid', role: 'group', 'aria-label': 'The controls of ' + c.profile.name });
         grid.style.gridTemplateColumns = 'repeat(' + c.profile.cols + ', minmax(58px, 1fr))';
+        grid.style.setProperty('--cols', String(c.profile.cols));       // for a style that gives the cells another width (D54)
         var open = null;
         c.controls.forEach(function (x) {
           var chosen = !!midiSel && midiSel.ctl === c.name && midiSel.id === x.id;
@@ -3442,6 +3443,19 @@
     var style = th && STYLES.indexOf(th.style) >= 0 ? th.style : null;
     if (style) root.setAttribute('data-style', style); else root.removeAttribute('data-style');
   }
+  // A style that draws a slider itself needs to know how full it is: --fill on each slider, from its value. Set
+  // through the script (the policy allows that, not a style attribute), on every input and four times a second,
+  // because most sliders here are also moved by the box (a poll, a controller). The default look does nothing.
+  function fillRanges() {
+    if (!document.documentElement.hasAttribute('data-style')) return;
+    var rs = document.querySelectorAll('input[type=range]');
+    for (var i = 0; i < rs.length; i++) {
+      var r = rs[i], min = r.min === '' ? 0 : parseFloat(r.min), max = r.max === '' ? 100 : parseFloat(r.max), v = parseFloat(r.value);
+      var part = max > min && isFinite(v) ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
+      var fill = (Math.round(part * 1000) / 10) + '%';
+      if (r.getAttribute('data-fill') !== fill) { r.setAttribute('data-fill', fill); r.style.setProperty('--fill', fill); }
+    }
+  }
   function markArea() {
     var area = !S.device ? null : S.tab === 'room' ? 'room' : S.tab === 'mix' ? 'mix' : S.tab === 'system' ? (S.sys === 'vibes' ? 'shaders' : 'system') : 'clips';
     if (area) document.documentElement.setAttribute('data-area', area); else document.documentElement.removeAttribute('data-area');
@@ -3454,6 +3468,7 @@
         document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now());
         markLook();
         render();
+        fillRanges();
       });
     };
     var now = chosenTheme();
@@ -3724,6 +3739,8 @@
       return api('GET', '/api/hello').then(function (h2) { S.remote = !!(h2.ok && h2.data.remote); render(); });
     });
     setInterval(poll, 1000);
+    document.addEventListener('input', function (e) { if (e.target && e.target.type === 'range') fillRanges(); }, true);
+    setInterval(fillRanges, 250);
   }
   boot();
 })();

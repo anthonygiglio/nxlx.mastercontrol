@@ -21,6 +21,7 @@
   "states": {
     "off": "#d6d6dc",
     "setup": "#ffb020",
+    "active": "#00e0ff",
     "problem": "#ff3b30",
     "error": "#b00020"
   }

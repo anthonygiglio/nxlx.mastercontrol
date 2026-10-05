@@ -210,7 +210,7 @@ class ThemeTest(unittest.TestCase):
                 self.assertGreaterEqual(themes.contrast(var["--ar-%s-on" % name], var["--ar-" + name]), 4.5, (tid, name))
                 for ground in (tk["bg"], tk["cd"]):
                     self.assertGreaterEqual(themes.contrast(var["--ar-%s-ink" % name], ground), 4.5, (tid, name, ground))
-            for name in ("off", "setup", "problem"):
+            for name in ("off", "setup", "active", "problem"):
                 self.assertGreaterEqual(themes.contrast(var["--st-%s-on" % name], var["--st-" + name]), 4.5, (tid, name))
             # the switch: the chosen half is the text colour with the page colour on it, the other half is muted text
             self.assertGreaterEqual(themes.contrast(tk["bg"], tk["fg"]), 4.5, tid)
@@ -221,10 +221,25 @@ class ThemeTest(unittest.TestCase):
         # the dark one keeps large light areas out: the page and the cards are near black
         self.assertLess(themes.luminance(t["signal"]["tokens"]["bg"]), 0.01)
         self.assertLess(themes.luminance(t["signal"]["tokens"]["cd"]), 0.02)
-        # a state colour is never an area colour, except Active, which is the area's colour by design (D54)
+        # a state is never confused with an area (D54): no state fill is an area's colour or close to one, and the
+        # four state fills differ from each other. "Close" is measured as distance in RGB. The nearest pair is Figma's
+        # own: Set up amber and Room yellow, 44 apart (written down in THEMES.md as a thing for the owner to look at),
+        # so the general limit sits just under that; Active, which was chosen here, must be at least 100 from
+        # every area and every other state.
+        def far(a, b):
+            return sum((int(a[i:i + 2], 16) - int(b[i:i + 2], 16)) ** 2 for i in (1, 3, 5)) ** 0.5
         for tid in ("signal", "signal-light"):
-            fills = {t[tid]["states"][k] for k in ("off", "setup", "problem")}
-            self.assertEqual(fills & set(t[tid]["areas"].values()), set(), tid)
+            states = {k: t[tid]["states"][k] for k in ("off", "setup", "active", "problem")}
+            self.assertEqual(len(set(states.values())), 4, tid)
+            for sname, sc in states.items():
+                self.assertNotEqual(sc.lower(), t[tid]["tokens"]["fg"].lower(), (tid, sname))      # Ready is the text colour
+                for aname, ac in t[tid]["areas"].items():
+                    self.assertGreater(far(sc, ac), 100 if sname == "active" else 40, (tid, sname, aname))
+            for a in states:
+                for b in states:
+                    if a < b:
+                        self.assertGreater(far(states[a], states[b]), 100, (tid, a, b))
+            self.assertEqual(t[tid]["states"]["active"], "#00e0ff")
 
     def test_addon_theme_with_a_style_or_bad_extras(self):
         addons = tempfile.mkdtemp()
