@@ -634,6 +634,7 @@ html[data-style="signal"] input[type=range]::-moz-range-track {
 html[data-style="signal"] input[type=range]::-moz-range-thumb { width: 6px; height: 22px; border: 0; border-radius: 0; background: var(--fg); }
 html[data-style="signal"] input[type=range]:disabled { opacity: .5; cursor: not-allowed; }
 html[data-style="signal"] .slider label, html[data-style="signal"] .ctlhead, html[data-style="signal"] .ctllabel { font: 900 16px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+html[data-style="signal"] .slider label .k { font: 500 16px/1.35 var(--mono); letter-spacing: 0; text-transform: none; color: var(--fg); }
 html[data-style="signal"] .ctlhead .slidervalue, html[data-style="signal"] .slider label span + span { letter-spacing: 0; }
 html[data-style="signal"] div.ctl { border-top: 0; padding: 8px 0; gap: 6px; }
 html[data-style="signal"] div.ctl.compact { padding: 4px 0; }
@@ -697,5 +698,6 @@ html[data-style="signal"] .ctlgrid .ctl.lit .ctlname, html[data-style="signal"] 
   html[data-style="signal"] .card .card { border: 0; padding: 0; }
   html[data-style="signal"] .shaderstage .shadername { font-size: 48px; }
   html[data-style="signal"] .liveside h2 { font-size: 30px; }
+  html[data-style="signal"] .shell:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
   html[data-style="signal"] .row:has(> #fade) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
