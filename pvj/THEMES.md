@@ -37,7 +37,7 @@ Three optional keys:
 | --- | --- | --- |
 | `style` | `default` or `signal` | which block of `app.css` draws the panel. Left out: `default`. A well-formed name this version does not know is not an error: the theme keeps its colours and gets the default look (so a theme written for a later version still loads). |
 | `areas` | any of `room`, `shaders`, `clips`, `mix`, `system`, each `#rrggbb` | one colour per part of the panel, for a style that uses them. A theme with `areas` has no single accent, so Look hides the accent swatches for it and a stored accent is ignored. |
-| `states` | any of `off`, `setup`, `problem`, `error`, each `#rrggbb` | the fills of the Off, Set up and Problem chips, and the colour of an error line of text (`error` must read on `bg` and on `cd`). |
+| `states` | any of `off`, `setup`, `active`, `problem`, `error`, each `#rrggbb` | the fills of the Off, Set up, Active and Problem chips, and the colour of an error line of text (`error` must read on `bg` and on `cd`). |
 
 From these the box works out the rest and serves it as `/theme.css` (custom properties on `:root`, nothing else): for each area the fill `--ar-<name>`, the text that reads on it `--ar-<name>-on` (the theme's `bg` or `fg`, whichever contrasts more) and `--ar-<name>-ink` (the area colour where it reads at 4.5 to 1 as text or a thin line on both `bg` and `cd`, else `fg`); for each state `--st-<name>` and `--st-<name>-on`.
 
@@ -70,7 +70,7 @@ Two themes use the style `signal`: **Signal** (dark room) and **Signal light** (
 | Off | `#3a3a42` | `#d6d6dc` |
 | Set up | `#ffb020` | `#ffb020` |
 | Ready | `#f5f5f0` (the text colour) | `#0b0b0d` (the text colour) |
-| Active | `#ffd60a` on the board; the area's colour on the screens | the same |
+| Active | `#ffd60a` on the board; the area's colour on the screens. **Built as `#00e0ff`**, see below | the same |
 | Problem, Danger | `#ff3b30` | `#ff3b30` |
 
 "In Signal the accent changes with the area: Room `#ffd60a`, Shaders `#ff4fa3`, Clips `#3ddc97`, System `#7aa2ff`. Text on every one of them is black." (Black here is `#0b0b0d`.)
@@ -100,13 +100,15 @@ Two themes use the style `signal`: **Signal** (dark room) and **Signal light** (
 ### What was decided here, not in Figma
 
 - **Mix is violet, `#b78cff`.** Figma names four areas and Mix is not one of them. Violet is the strong colour furthest from the four and from the state colours (amber, red). It is one line in each theme file.
-- **Active is the area's colour, on every screen.** Figma's board says `#ffd60a` and its Shaders screen draws Active in pink; the screens were followed. So Active on the Room screen is yellow, as on the board. Off, Set up and Problem never take an area colour, a test holds the theme files to that, and every chip carries its word.
+- **Active is cyan, `#00e0ff`, everywhere. For the owner to confirm.** Figma's board gives Active the fixed yellow `#ffd60a`, which is also Room's colour, and its Shaders screen draws Active in pink, the colour of that area. Either way a state would look like an area. The rule is that a state is never confused with an area, so Active needed a colour that is none of the five area colours, not amber and not red. White is Ready and grey is Off; of the hues left, cyan is the furthest from all of them (black on it is 12.27 to 1; in RGB it is 121 from the clips green, 137 from the System blue and over 200 from the rest). It is one line in each theme file (`states.active`). A test holds the theme files to this: Active at least 100 from every area and every other state, and the browser test fails if any state chip on a screen has the open area's colour.
+- **Set up amber and Room yellow are close, and both are Figma's.** `#ffb020` and `#ffd60a` are 44 apart in RGB, the nearest state to any area. On the Room screen a Set up chip sits on a page whose title block is yellow. The word is on the chip, and the values were kept as drawn; if they read alike on a real phone in the dark, Set up should move toward orange.
 - **Errors are never the accent.** The default look writes an error line in the accent. In Signal that would make a Room error yellow, the colour of Active, so an error line is `#ff3b30` in the dark and `#b00020` in the light (red at 4.5 to 1 on the off-white page; Figma's `#ff3b30` is 3.1 to 1 there).
 - **Lines and focus rings in the light.** An area colour on the off-white page is between 1.2 and 2.7 to 1, too faint for a ring or a thin line. So `--ink` is the area colour in the dark and the text colour in the light, and rings, the stripe beside a chosen row and dashed outlines use it. In the light the area colour is only ever a filled block with black words on it.
 - **The Off chip's words** are the text colour (`#f5f5f0`, 10.3 to 1 on `#3a3a42`); Figma has `#e0e0e6`.
-- **A page under System** (which Figma does not draw on a phone) has its title at 30 px in a block of the area's colour beside the page's switch, and wraps: "Shaders and Vibes", "People and codes" and "Projection mapping" are two lines at 390 px. The Live screen's title, the one long word "nxlx.mastercontrol", is 26 px on a phone.
-- **The slider's touch target** is 44 px high; the bar drawn in it is Figma's 28 px.
-- **Live, Mix, Media, the MIDI controller page, fields, sheets, the pads and the questions asked in place** are not in Figma; they are built from the parts above. On the controller page a knob keeps its round outline: the shape is what tells a knob from a button.
+- **A page under System** (which Figma does not draw on a phone) has its title at 30 px in a block of the area's colour beside the page's switch, and wraps: "Shaders and Vibes", "People and codes" and "Projection mapping" are two lines at 390 px.
+- **Every main screen is titled with its area's name, with the panel's name small under it** (Figma's title block has such a line). The Live screen's heading is "nxlx.mastercontrol" in the default look; in Signal the style writes LIVE before it at title size and the heading's own words become the small line. Room, Mix, Media and System get the same small line after their title. The words "Live" and "nxlx.mastercontrol" are in the stylesheet for this, so if the Live screen's heading or the product's name changes, the Signal block must follow.
+- **The slider's touch target** is 44 px high; the bar drawn in it is Figma's 28 px. Its fill is the track's background, cut at `--fill`, which the panel sets on every slider from its value (`fillRanges` in `app.js`, on each input and four times a second, because the box moves sliders too). That is a track, a gradient and a thumb, with the `-webkit-` and `-moz-` names for the same parts, so nothing in it is special to one browser; it has been run in Chromium only (CI). The default look keeps the browser's own slider.
+- **Live, Mix, Media, the MIDI controller page, fields, sheets, the pads and the questions asked in place** are not in Figma; they are built from the parts above. On the controller page a knob keeps its round outline: the shape is what tells a knob from a button; a cell is 88 px wide at least (58 in the default look) and in sentence case, so no word of what it does is cut, and a wide controller scrolls sideways inside its card.
 - **A card on a phone has no box** (Figma's phone screens have none: a label, then what belongs to it); on a laptop it is a panel with the 3 px outline.
 - **Names typed by people stay as typed** where the letters matter: fields, addresses, Wi-Fi names in the list of networks, codes. A row's name is in capitals, as Figma draws "MAIN PROJECTOR" and "AURORA".
 
@@ -125,6 +127,7 @@ Two themes use the style `signal`: **Signal** (dark room) and **Signal light** (
 | Black on System blue | 7.90 | 7.90 |
 | Words on the Off chip | 10.30 | 13.59 |
 | Black on Set up amber | 10.75 | 10.75 |
+| Black on Active cyan | 12.27 | 12.27 |
 | Black on Problem red | 5.54 | 5.54 |
 | Ready chip (page colour on text colour) | 17.98 | 17.26 |
 | An error line on the page / on a surface | 5.54 / 4.89 | 6.43 / 7.33 |
@@ -132,4 +135,4 @@ Two themes use the style `signal`: **Signal** (dark room) and **Signal light** (
 
 ### Fonts
 
-`pvj/web/fonts/archivo-latin.06fa7831.woff2` (27 KB, weights 400 to 900 in one file) and `jetbrains-mono-500-latin.6c95bc2f.woff2` (8 KB), with each family's `OFL.txt`. Both are SIL Open Font License 1.1 and are subsets; `THIRD_PARTY_LICENSES.md` says where they came from and how they were made. The box serves them itself (`/fonts/...`, `font-src 'self'`), they are declared with `font-display: swap`, and behind them is the system font, so the panel can be used before a font has loaded. The default look never asks for them.
+`pvj/web/fonts/archivo-latin.06fa7831.woff2` (27 KB, weights 400 to 900 in one file) and `jetbrains-mono-500-latin.6c95bc2f.woff2` (8 KB), with each family's `OFL.txt`. The eight digits in each name are the start of the file's SHA-256: a browser may keep a font for a day, so a font that is rebuilt must get a new name (a test compares the name with the checksum). Both are SIL Open Font License 1.1 and are subsets; `THIRD_PARTY_LICENSES.md` says where they came from and how they were made. The box serves them itself (`/fonts/...`, `font-src 'self'`), they are declared with `font-display: swap`, and behind them is the system font, so the panel can be used before a font has loaded. The default look never asks for them.

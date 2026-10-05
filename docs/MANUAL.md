@@ -146,7 +146,7 @@ Tap a row to open its page. **‹ System** at the top of a page, or the phone's 
 
 - **Dark stage** is the look the box comes with. **Light**, **Night red** (keeps a dark room dark) and **High contrast** are the same panel in other colours. With these four you can also tap an **Accent** colour, or *Default* to go back to the look's own.
 - **Signal** and **Signal light** are a different style, to try: very large capitals, square blocks and thick rules, and one strong colour for each part of the panel, so you can tell where you are from across the room. Room is yellow, Shaders and Vibes pink, Live and Media green, Mix violet, System blue. Signal is for a dark room, Signal light for a bright one. There is no accent to choose with these, because the colour says which part you are in.
-- A state is always written out as well as coloured: Off, Set up, Ready, Active, Problem. In Signal, Active is the colour of the part you are in; Set up is amber and Problem is red everywhere.
+- A state is always written out as well as coloured: Off, Set up, Ready, Active, Problem. In Signal a state never has the colour of a part of the panel: Off is grey, Set up amber, Ready white (black in Signal light), Active light blue, Problem red, on every screen.
 
 To go back, open System > Look and tap **Dark stage**. Signal brings its own two typefaces, which are on the box; nothing is fetched from the internet. A device that has not received them yet shows its own font for a moment. Technical notes, and how to add a theme of your own: [pvj/THEMES.md](../pvj/THEMES.md).
 

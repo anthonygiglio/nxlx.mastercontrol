@@ -118,16 +118,16 @@ A second style for the whole panel, chosen under System > Look (**Signal** for a
 
 | Part of the panel | Colour | What takes it |
 | --- | --- | --- |
-| Room | yellow `#ffd60a` | the title block, the open tab, primary and chosen buttons, the On half of a switch, the Active chip, a slider's fill, the focus ring |
+| Room | yellow `#ffd60a` | the title block, the open tab, primary and chosen buttons, the On half of a switch, a slider's fill, the focus ring |
 | Shaders and Vibes (the page) | pink `#ff4fa3` | the same |
 | Live and Media | green `#3ddc97` | the same |
 | Mix | violet `#b78cff` | the same |
 | System and its other pages | blue `#7aa2ff` | the same |
 
-States keep their own colours wherever they appear, and always carry the word: Off grey, Set up amber `#ffb020`, Ready the text colour, Problem red `#ff3b30`. Active is the one state drawn in the area's colour. An error line is red, never the area's colour. In Signal light the area colour is only ever a filled block with black words on it; rings and thin lines are black, because yellow on an off-white page cannot be seen.
+States keep their own colours wherever they appear, and always carry the word: Off grey, Set up amber `#ffb020`, Ready the text colour, Active cyan `#00e0ff`, Problem red `#ff3b30`. No state is ever drawn in an area's colour. An error line is red. In Signal light the area colour is only ever a filled block with black words on it; rings and thin lines are black, because yellow on an off-white page cannot be seen.
 
 What changes shape: a card on a phone loses its box (a label, then what belongs to it) and is a ruled panel on a laptop; the switch is two halves that say OFF and ON; a state chip is a solid block; a slider is a ruled bar filled up to its value; the tab bar is five words under a rule, the open one a block of colour. Everything that can be tapped is at least 44 px, 56 px on the Room screen, and no text is under 13 px; the browser test checks these, and the contrast of every text against what is behind it, with Signal on.
 
-The pictures are taken by `tests/ui/screenshots.js` (the six named `signal-`) and are in the `ui-screenshots` artifact of each CI run: the Room screen, the System index and Live on a phone, Shaders and Vibes and the MIDI controller page on a laptop, and the Room screen in Signal light. The values, the decisions that Figma does not hold and how a style is added are in [pvj/THEMES.md](../pvj/THEMES.md).
+The pictures are taken by `tests/ui/screenshots.js` (the eight named `signal-`) and are in the `ui-screenshots` artifact of each CI run: the Room screen, the System index, Live, Mix and Media on a phone, Shaders and Vibes and the MIDI controller page on a laptop, and the Room screen in Signal light. Each main screen is titled with its area's name in capitals (LIVE, not the panel's name, which is the small line under it). The values, the decisions that Figma does not hold and how a style is added are in [pvj/THEMES.md](../pvj/THEMES.md).
 
 The Appearance picture further up is older than this: the card now has two more buttons, Signal and Signal light.
