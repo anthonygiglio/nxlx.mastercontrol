@@ -163,12 +163,17 @@ def differ(a, b):
     return max(d), sum(d) / float(len(d)), sum(1 for x in d if x > 12) / float(len(d))
 
 
-def mirrored(rows):
-    return [list(reversed(row)) for row in rows]
+def mirrored(rows, left=0, right=0):
+    """Left and right exchanged within the picture: `left` and `right` are the bars beside it. They are not always
+    alike (a 90 x 160 clip on a 320 x 180 screen is drawn 101 wide with 109 and 110 beside it), and a filter mirrors
+    the picture, not the screen."""
+    end = len(rows[0]) - right
+    return [list(row[:left]) + list(reversed(row[left:end])) + list(row[end:]) for row in rows]
 
 
-def upside_down(rows):
-    return list(reversed(rows))
+def upside_down(rows, top=0, bottom=0):
+    end = len(rows) - bottom
+    return list(rows[:top]) + list(reversed(rows[top:end])) + list(rows[end:])
 
 
 class FxCase(GpuCase):
@@ -400,19 +405,21 @@ class FxCase(GpuCase):
                 self.play(url)
                 self.real.ipc.request("set_property", "keepaspect", not stretch)       # what the mapper does while a mapping is on
                 plain = self.still()
+                bars = self.real.ipc.request("get_property", "osd-dimensions")          # where the player put the picture
+                sides, ends = (int(bars["ml"]), int(bars["mr"])), (int(bars["mt"]), int(bars["mb"]))
                 what = "%s%s" % (name, ", stretched" if stretch else "")
                 for way in (0, 1, 2, 3, 4):
                     self.put("reads.fs", values={"way": way})
-                    d = differ(self.still(), mirrored(plain) if way == 4 else plain)
+                    d = differ(self.still(), mirrored(plain, *sides) if way == 4 else plain)
                     if d[0] > 6 or d[1] > ALIKE_MEAN:
                         failed.append("%s, way %d: max %d mean %.2f" % (what, way, d[0], d[1]))
                 self.put("swap.fs")
-                d = differ(self.still(), upside_down(plain))
+                d = differ(self.still(), upside_down(plain, *ends))
                 if d[0] > 6 or d[1] > ALIKE_MEAN:
                     failed.append("%s, top and bottom exchanged: max %d mean %.2f" % (what, d[0], d[1]))
                 self.put("reads.fs", values={"way": 4}, controls={"half": True})
-                d = differ(self.still(), mirrored(plain))
-                print("coordinates, ES %s: %-18s mirrored at half size: max %d mean %.2f" % (self.ES, what, d[0], d[1]))
+                d = differ(self.still(), mirrored(plain, *sides))
+                print("coordinates, ES %s: %-18s bars %s %s, mirrored at half size: max %d mean %.2f" % (self.ES, what, sides, ends, d[0], d[1]))
                 if d[1] > 6.0:
                     failed.append("%s, mirrored at half size: mean %.2f" % (what, d[1]))
                 self.fx.off()

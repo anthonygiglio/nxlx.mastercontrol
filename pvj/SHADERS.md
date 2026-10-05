@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Shaders and Vibes (beta)
 
-Moving pictures drawn by the box's GPU instead of played from a file, and **Vibes**: one tap that plays them endlessly for ambience.
+Moving pictures drawn by the box's GPU instead of played from a file, and **Vibes**: one tap that plays them endlessly for ambience. And **effects**: filters put on over a clip, a stream or a live input that is playing, which have [a part of their own](#effects) further down.
 
 Switch it on under System > Shaders and Vibes (beta, off by default). Switching it off while a shader is on the screen asks first, because it stops at once. It is offered on a Raspberry Pi 4, a Pi 5 and x86; not on a Pi 3.
 
@@ -257,11 +257,13 @@ How these seven were chosen: see "The survey of ISF-Files" below.
 
 Mix > Shaders and Vibes > **Upload an ISF shader** (full access), one `.fs` file at a time, at most 32 KB and 24 inputs; an upload is in the library and can be played at once, and joins Vibes only when its switch puts it into the active set. Generators from ISF-Files, from https://editor.isf.video or from VDMX go in this way as long as they draw from nothing in one pass (see the table below for what is refused, and why). A file that is refused says why and is not stored. Take care of the licence yourself: many ISF files on the web are ports of shaders published under terms that forbid commercial use.
 
-To see beforehand what a whole folder of ISF files would do: `python3 tools/isf-survey.py /path/to/folder` (a developer's tool, in the repository, not on the box).
+A **filter** (a file with a picture input called `inputImage`) goes in on Mix, in the Effects card: **+ Add an effect file (.fs)**, under the same limits, and is refused with its reason if it needs more than the playing picture ([Effects](#effects)).
+
+To see beforehand what a whole folder of ISF files would do, as generators and as effects: `python3 tools/isf-survey.py /path/to/folder` (a developer's tool, in the repository, not on the box).
 
 ## ISF: what is supported
 
-An ISF file is a GLSL fragment shader with a JSON comment at the top (see isf.video). Only **generators** are supported: shaders that draw from nothing.
+An ISF file is a GLSL fragment shader with a JSON comment at the top (see isf.video). This part is about **generators**: shaders that draw from nothing and take the screen. A **filter**, which changes the picture that is playing, is an effect: see [Effects](#effects) for what a filter may hold.
 
 | ISF | Here |
 | --- | --- |
@@ -280,7 +282,7 @@ An ISF file is a GLSL fragment shader with a JSON comment at the top (see isf.vi
 Refused, with a message that names the reason:
 
 - more than one pass, a pass with a `TARGET`, its own size or `PERSISTENT` (`PASSES`), and `PERSISTENT_BUFFERS`: there is no picture kept between frames;
-- `image` and `cube` inputs and every `IMG_...` call (`IMG_PIXEL`, `IMG_NORM_PIXEL`, `IMG_THIS_PIXEL`, `IMG_SIZE`): filters that need a picture are not supported. With no picture inputs there is nothing sensible for the `IMG_` calls to read, so none of them is mapped;
+- `image` and `cube` inputs and every `IMG_...` call (`IMG_PIXEL`, `IMG_NORM_PIXEL`, `IMG_THIS_PIXEL`, `IMG_SIZE`), as a generator: a generator has no picture to read. A file with one picture input called `inputImage` is a filter and is added under Effects (the refusal says so);
 - `audio` and `audioFFT` inputs;
 - `IMPORTED` pictures;
 - vertex shaders (`.vs` files) are not read at all.
@@ -313,11 +315,11 @@ What the crude cost count said about the 36: no loop at all in 30; a short fixed
 
 ### What would unlock the rest
 
-Ranked by how many more files of this library each engine feature would let through, in the order they build on each other. None of this is built. What is said about mpv below comes from how this module and the mapper already use it and from reading; **each point marked "to verify" needs a short CI spike before any design**, as the first version of this module did (see LESSONS).
+Ranked by how many more files of this library each engine feature would let through, in the order they build on each other. **Step 1 is built (2026-10-05, D53): see [Effects](#effects)**; its row is left as it was written before, with what turned out differently in brackets. None of the others is built. What is said about mpv below comes from how this module and the mapper already use it and from reading; **each point marked "to verify" needs a short CI spike before any design**, as the first version of this module did (see LESSONS).
 
 | Step | Feature | More files (running total of 327) | How, in an mpv user shader on `--vo=gpu` | How hard | Cost on a Pi 4 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | **Filters on the picture that is playing** | +121 (157) | The hook already binds the picture as `HOOKED`: `IMG_THIS_PIXEL(inputImage)` is `HOOKED_tex(HOOKED_pos)`, `IMG_NORM_PIXEL` the same at another place, `IMG_PIXEL` divides by `HOOKED_size`, `IMG_SIZE` is `HOOKED_size`. The filter hooks the clip (or a generator's result, via a second pass), not the black carrier. | Medium. The translator part is small. The hard part is the stage: a clip is YUV at NATIVE, and mpv applies the brightness that opacity, fades and Blackout use before MAIN, so a filter at MAIN works on the dimmed picture and a filter that adds light (invert, glow) would undo a Blackout. Likely answer: the filter at MAIN and the fade as a last pass of our own; to verify. The player object also needs a third layer (effect) beside source and mapping. | One more pass at the clip's size, not at 720 lines: a 1080p clip has 2.25 times the pixels. A colour change (one read) is cheap; a blur with dozens of reads per pixel is heavy. Read `pass_ms`. |
+| 1 | **Filters on the picture that is playing** | +121 (157) | The hook already binds the picture as `HOOKED`: `IMG_THIS_PIXEL(inputImage)` is `HOOKED_tex(HOOKED_pos)`, `IMG_NORM_PIXEL` the same at another place, `IMG_PIXEL` divides by `HOOKED_size`, `IMG_SIZE` is `HOOKED_size`. The filter hooks the clip (or a generator's result, via a second pass), not the black carrier. | Medium. The translator part is small. The hard part is the stage: a clip is YUV at NATIVE, and mpv applies the brightness that opacity, fades and Blackout use before MAIN, so a filter at MAIN works on the dimmed picture and a filter that adds light (invert, glow) would undo a Blackout. Likely answer: the filter at MAIN and the fade as a last pass of our own; to verify. The player object also needs a third layer (effect) beside source and mapping. [Built otherwise: the filter hooks NATIVE and converts YUV to RGB and back itself, so mpv's own brightness still comes after it; 114 files translate, not 121, the difference being files that name a second picture or a host program's name.] | One more pass at the clip's size, not at 720 lines: a 1080p clip has 2.25 times the pixels. A colour change (one read) is cheap; a blur with dozens of reads per pixel is heavy. Read `pass_ms`. |
 | 2 | **Transitions** between two pictures | +68 (225) | mpv plays one picture at a time, so `startImage` and `endImage` cannot both be live. Reachable: a still of the outgoing picture as `startImage` (a screenshot written into the shader file as a `//!TEXTURE` block, the way the mapper writes its warp table) and the incoming clip as `endImage`, with `progress` driven by time. To verify: the size and build time of such a texture (the mapper's table took 1.3 s on the Pi). | Hard: step 1 first, then the still, the timing, and removal when the transition ends. | One pass for the length of the transition; most read each picture once or twice. |
 | 3 | **Several passes** in one frame | +10 (235) | One hook block per ISF pass in the same file, each `//!SAVE name` and the next `//!BIND name`; ISF's `WIDTH` and `HEIGHT` expressions become mpv's `//!WIDTH` and `//!HEIGHT`; `PASSINDEX` is a constant per block. | Medium, after step 1 (all 10 are filters): the code is written out once per pass and the size expressions must be translated safely. | The sum of the passes; many use small passes (a blur at a quarter of the size), which is cheaper than it sounds. |
 | 4 | **A picture kept between frames** (persistent buffers) | +40 (275), and 9 more with steps 5, 6 and 8 | **Not possible with mpv user shaders as far as is known**: a saved texture lives for one frame. To verify in the mpv manual and by a spike. If confirmed, feedback, trails, Life and the optical-flow files need a renderer of our own beside mpv (the same border at which projectM sits, D36). | Very hard: a new component, not a translator feature. | Not known. |
@@ -326,7 +328,225 @@ Ranked by how many more files of this library each engine feature would let thro
 | 7 | **Imported pictures** | +1 (and 3 with step 1) | A `//!TEXTURE` block holding the picture, converted by mpv as other pictures are (D24). | Medium, for 4 files; low priority. | A texture in memory; no cost per frame to speak of. |
 | 8 | Limits and checks | +2 (more than 24 inputs), 8 with a check | Raise the input limit; the checks stay (a header key twice is refused on purpose). | Easy; decide when filters exist. | None. |
 
-So: filters are the one step that matters most (121 files at once, and 89 more depend on it), transitions come second, and persistent buffers are the wall that user shaders cannot climb.
+So: filters were the one step that mattered most (and are built), transitions come second, and persistent buffers are the wall that user shaders cannot climb.
+
+## Effects
+
+An **effect** is an ISF filter shader put on over whatever is playing: a clip, a stream, a live input, the test pattern, a picture. It is a third kind beside a clip and a generator shader. A generator draws from nothing and takes the screen; an effect needs a picture to change, never takes the screen, and the clip goes on playing under it. It belongs to this module (System > Shaders and Vibes) and has its own engine, `pvj/effects.py`, on top of the generators' machinery.
+
+**Read this first: what is tested and what is not.** Every bundled filter is drawn by a real mpv in CI over a real picture, in three ways of drawing (OpenGL ES, desktop OpenGL, and desktop OpenGL 3.1 with GLSL 1.40, the context mpv makes on a Raspberry Pi 4), with its defaults, with other values in every input, and at amount 0. That is Mesa's software GPU: it says the text compiles and the picture is right, and nothing about speed or about the Pi's own driver. **No effect has run on a Raspberry Pi or been seen on a display.** How heavy each one is on a Pi 4 is an estimate from its text until someone measures it (the steps are under [Cost](#what-an-effect-costs)).
+
+### Using it
+
+- **Live**: a strip under the Vibes button with the effect's name, **Previous**, **On** or **Off**, **Next**, and **Amount** while one is on (live access; everyone sees the name). **Effects** opens the card on Mix. "Now playing" says `clip.mp4 · effect: Vignette`.
+- **Mix**: the **Effects** card. The list of filters (a box to find one by name; All, Light, Medium, Heavy by the work counted from its text), **Put on** per row, then for the effect that is on: how the box is coping (three lights and a sentence, as for a shader), **Previous**, **Off**, **Next**, the controls with **Amount** first, **Speed** for a filter that moves by itself, **Half resolution**, the filter's own inputs drawn by type through the Shaders page's `inputControl`, **Reset all**, and its **presets** (a tap applies; full access saves and deletes). Full access also has **+ Add an effect file (.fs)** and **Remove** on an upload (it asks in place), and a small **MIDI** button beside Amount, beside each of the first eight inputs a knob can drive, and under Previous, On / Off and Next. From 900 px the card is two columns: what is on and its controls, and the list, which scrolls by itself.
+- **When no effect can go on**, both places say why in a sentence and offer nothing to press: "A generator shader has the screen. An effect changes a picture that is playing, and a generator is drawn from nothing, so there is no picture to change. Play a clip, a stream or a live input first.", or "Nothing with a picture is playing. ...".
+- A presenter (live access) puts on, changes, steps and takes off. Full access saves presets and adds or removes files. A guest sees what is on and the list.
+
+### How long an effect stays
+
+- **One effect at a time.** Putting one on replaces the one that was on. A chain of several is a later step; the player's shader list and the text of an effect are built so that one more hook per effect could follow, but nothing of a chain is built or tested.
+- **It stays on when the clip changes**: the next pad, the next clip of a playlist, a stream after a clip. A performer plays clips through one look.
+- **It comes off**: with **Off**; with **Stop** (the screen is cleared, and the next clip starts clean); when a generator shader or Vibes takes the screen (in the same step: the player never has both); when the module is switched off; when the player restarts (the new player never had it; the panel notices and says "the player was restarted"); when the panel itself restarts (it no longer knows the effect's values, so it takes the effect off the player at start). `last` in `GET /api/effects` says why the last one came off.
+- **It never comes back by itself**, and nothing puts one on but a person, a controller or a request: no autostart, no schedule entry, no rotation. (An effect for a permanent installation, such as the vignette on the painting wall, has to be put on again after a restart for now.)
+- **What waits belongs to its moment.** Previous, Next, On from a controller and a preset of another filter answer at once and are done by the worker within 0.2 seconds, and only if no effect went on or off and nothing was played or stopped in between (the player compares its effect serial and its epoch under its lock). A change of a value is dropped if its effect has gone.
+- **It needs a picture.** With nothing playing, with sound only, and while a generator has the screen, `POST /api/effects` answers 409 with the reason.
+
+### The controls
+
+- **Amount** (0 to 1): the mix between the picture as it is and the filtered picture, done in the wrapper, so every filter can be faded in. At 0 the result is the pixel that was read. On the screen that is the unfiltered picture to within the rounding of one more pass through the GPU: exactly the same in CI where the player draws in 8-bit buffers (a Pi 4, see below), and up to 3 of 255 away (1 on average) for ordinary video in mpv's own buffers. A filter that has an input of its own called amount keeps it; the page shows it as "Amount (the filter's own)".
+- **Speed** (0 to 4, 1 is the filter's own pace): only for a filter that reads the clock. See the flash limit below.
+- **Half resolution**: the filter works on a picture of half the width and half the height (the hook's own size, `//!WIDTH HOOKED.w 2 /`), a quarter of the pixels, and mpv scales the result to the screen as it would the clip. The picture is softer, also at amount 0. In CI a mirrored picture at half size is the mirrored picture to within about 2 of 255 on average (it is softer), for every size and shape of clip tried.
+- **Every input of the filter**, of every type, changes while it is on, through the generators' worker: a request checks the value and notes it down, the worker writes at most five new texts a second, and the newest value always lands. A switch or a choice the GPU refused is remembered and answered 422 at once, as for a generator.
+- **Presets** per filter (up to 16, the generators' rules for names): the values, the amount, the speed and half resolution. The one called **default** is what a plain Put on uses. They are kept in the Shaders and Vibes settings as `fx_presets`, beside the generators' `presets`, with no schema change; a settings export and import carries them.
+- **Previous and Next** step through the filters in the list's order (the project's own, the pack, the uploads), passing over a file that is broken or that this box's GPU refused.
+- **From a MIDI controller** ([MIDI.md](MIDI.md)): effect amount (with pickup), effect control 1 to 8, effect on / off, previous and next effect. Each goes through the panel's own call as a presenter and never waits for the GPU.
+
+### The flash limit, and what the box cannot see
+
+A filter is **time-driven** if its code reads the clock (`TIME`, `TIMEDELTA`, `FRAMEINDEX`, `DATE`): it moves by itself. `GET /api/effects` says so as `moves`; `flashes` is true when its header's categories or description say strobe, flash, flicker or blink. For either, **the speed is kept at 1 or below** (slower and 0 are always allowed), however it is asked for, unless the owner's existing opt-in is on: "Allow faster than the flash limit" on the Shaders page (`{"action": "config", "faster": true}`), the same switch as for the Performance generators. `speed_max` is 1 or 4 for such a filter and null for one that does not move. Switching the opt-in off limits the effect that is on within a second.
+
+The project's own three that move (the kaleidoscope's slow turn, the bands' drift, the RGB split's breath) cap their rate in their own code as the Performance generators do: the split breathes at most 3 times a second and never closes completely.
+
+**This is a limit on the filter's own clock and nothing more. The box cannot analyse flashing in a filter's output.** An invert, a posterise or a hard duotone over a clip that flickers flashes as the clip does, and harder. A button on a controller that toggles a switch of a filter, or Amount ridden up and down, is a strobe played by hand. A clip played faster with the Mix screen's Speed makes TIME run faster too (it is counted from the clip's frames). None of this is detected or limited. In a room open to the public, choose effects and clips with people in mind who are sensitive to flashing light.
+
+### ISF filters: what is supported
+
+A filter is an ISF file with exactly one input of TYPE `image`, called `inputImage` as ISF's own convention has it.
+
+| ISF | Here |
+| --- | --- |
+| `inputImage` | the picture that is playing, at the stage described below; not listed as a control |
+| `IMG_THIS_PIXEL(inputImage)`, `IMG_THIS_NORM_PIXEL(inputImage)` | the pixel at this place |
+| `IMG_NORM_PIXEL(inputImage, p)` | the pixel at `p`, 0 to 1 with the origin at the bottom left |
+| `IMG_PIXEL(inputImage, p)` | the pixel at `p` in pixels of the picture, origin at the bottom left |
+| `IMG_SIZE(inputImage)` | the picture's size, which is `RENDERSIZE`: a filter is drawn at the size of its picture (half of it with Half resolution) |
+| a place outside the picture | the pixel at its edge |
+| the alpha of a pixel read | 1 |
+| `gl_FragColor` | the result; its alpha is laid over black, as for a generator (a filter that makes parts transparent makes them black) |
+| inputs of type `float`, `bool`, `long`, `color`, `point2D`, `event`, `TIME` and the other names | as for a generator ([above](#isf-what-is-supported)) |
+| `TIME` | seconds counted from the player's own frame number and the clip's frame rate: see below |
+
+Refused, with the plain reason:
+
+- any other picture input ("input maskImage is a second picture: an effect reads only the picture that is playing"), so transitions (`startImage`, `endImage`) too; a `cube`; `IMPORTED` pictures; `PASSES` and persistent buffers; `audio` and `audioFFT` inputs; a vertex shader (`.vs`) is not read;
+- an `IMG_` call on anything that is not `inputImage`; `inputImage` used in any other way (`texture2D(inputImage, ...)`, passed to a function, given another name with `#define`); the names a host program writes for it in ISF version 1 (`_inputImage_imgRect` and the like); the player's names for the picture's planes (`LUMA_tex`, `RGB_size`, ...);
+- everything the generator path refuses: `//!` anywhere, preprocessor lines other than `#define`, `#undef` and the `#if` family, own uniforms, a backslash, `##`, code that is not plain ASCII once its comments are cut out, a header key twice, `NaN`. Comments are cut out before the checks and never passed on;
+- a file that is a generator ("not a filter: it has no picture input called inputImage (a shader that draws from nothing is added under Shaders)"), and the other way round on the Shaders page;
+- **an upload that is too heavy by the count from its text**: more than 64 reads of the picture, or more than 256 loop rounds, for one pixel.
+
+`python3 tools/isf-survey.py` now says of each file whether it translates as an effect. Of the 327 files of ISF-Files at commit `395072d4`, 36 translate as generators (as before) and **114 as effects**, 3 of them over the upload limit for reads (Diagonal Blur, Hatch Blur, Poly Glitch). The seven that need only the playing picture and are still refused name a second picture or a host program's name.
+
+### Where an effect sits in the player
+
+Settled by experiment on a real mpv 0.37 in CI (`tests/test_effects_gpu.py`), as the generators' stage was.
+
+- **The stage is NATIVE, and the effect converts the colours itself.** A filter must work on RGB, and it must sit before the brightness that opacity, the fades and Blackout use. mpv applies that brightness while it converts the clip's own colours to RGB. The stages after it (MAINPRESUB, MAIN) are RGB and too late: **an invert hooked at MAINPRESUB or at MAIN turned a blacked-out picture white** (brightest 255 in all three ways of drawing; the test asserts it, so the reason for the choice cannot go stale unnoticed). NATIVE is before the brightness, and for a video it is YUV. So every pixel a filter reads is converted to RGB by the effect's text (the matrix and range the player's output was given, `video-out-params`: BT.601, BT.709, BT.2020, SMPTE 240M, limited or full), the filter works, and the result is converted back with the exact inverse, so that mpv's own conversion, brightness included, still comes after it. With an invert on: Blackout is black (brightest at most 3 of 255), and opacity 50 takes half away as it does from a clip.
+- **A text for YUV and one for RGB, in one file.** A PNG, and some streams, are RGB at NATIVE, where there is nothing to convert. The effect's file holds the filter twice, as two hooks: the first binds the picture's `LUMA` plane, the second its `RGB` plane. mpv leaves a hook out when a texture it binds is not there, so exactly one runs. A playlist that goes from a video to an RGB picture is right from its first frame without a new text (CI: an invert left on from a BT.709 clip over an RGB picture was off by 0.2 of 255 on average before the worker had looked).
+- **The picture under the effect is watched.** The text holds the matrix, the range and the frame rate. While an effect is on, the worker looks once a second at what the player's output says about the picture (the output, not the decoder: in CI the two disagreed for clips that follow each other with the same size and format, the decoder naming the new clip's range and matrix while the picture was still drawn with the last one's, and the text made from the output's word was the right one every time), and writes a new text of the same effect when it has changed (another matrix or range, another frame rate). Until it has, a filter works with the colours of the clip before: for a moment after a change between BT.601 and BT.709 material its colour arithmetic is slightly off, and between limited and full range a little more. A filter that changes nothing gives back the picture exactly whatever the text assumes, since the way back is the inverse of the way in.
+- **Coordinates.** NATIVE is the picture at the clip's own size, before any scaling and after `video-rotate`: the filter sees the whole picture and nothing else. Letterboxing, the Mix screen's size and position, and the stretch while a projection mapping is on (`keepaspect` off) all come after it. Checked in CI for a wide, a tall, a square, a small and a large clip, each letterboxed and stretched: the five ways of reading the picture give the same pixel, a mirror is the screenshot mirrored, top and bottom exchanged is the screenshot upside down.
+- **Together with the mapping.** The player's shader list is now three layers in the order the picture passes them: the source (a generator), the effect, the mapping (the OUTPUT stage, the last). A mapped surface shows the filtered picture; the mapper replacing its file leaves the effect, and the other way round. A source and an effect are never on together.
+- **The player's buffers.** On the boards that run mpv with its cheap scaling (`--profile=fast`: a Pi 4, `pvj/hardware.py`) the player draws in 8-bit buffers while an effect is on (`fbo-format rgba8`), as it does for a generator and the mapping: on the Pi 4 an extra pass in 16-bit buffers dropped frames with the mapping. The setting is made once when an effect goes on and once when it comes off, not at a change of a value. In CI, run with that scaling, it changed nothing over a playing or a frozen clip, and no screenshot taken while an effect went on, changed and came off was dark. **On other boards the buffers are left as they are.** With mpv's default scalers, which a Pi 5 and x86 run with, an earlier CI run saw a black screenshot right after an effect had gone on with that setting (the renderer is set up again and had nothing to draw from until the next frame); a filter has only the picture to draw from and goes on in the middle of a clip, so there an effect is drawn in mpv's own buffers. Neither choice is measured on hardware.
+- **TIME** is `frames / the clip's frame rate x speed`, from mpv's own frame number (the pictures it has uploaded). In CI mpv's frame number went on by exactly 25, 30, 50 and 60 a second for clips of those rates, and TIME ran at 1.00 times the clock over a clip of 25 and of 60 pictures a second. A clip has no carrier that counts its own frames, and nothing outside the shader can read mpv's number, so **a change of the speed makes TIME jump** (the generators' speed control does not). TIME stands still while the clip is frozen and for a still picture, and it starts anywhere. If the player drops frames, TIME falls behind the clock.
+- **A filter the GPU refuses** is found as a generator is (the player's own error log, then a drawn pass): the effect before it stays on, or none is; the picture is never left black (CI). The message names the line of the ISF file. While the GPU looks at a new filter (up to 4 seconds, usually well under one) mpv draws black for a shader that does not compile, so a broken upload flashes black once when first put on; the refusal is remembered until the file changes, and Previous and Next pass it by.
+
+### The bundled filters
+
+**The project's own nine** (Apache-2.0, `pvj/effects.d/fx-*.fs`), written for performing and for the room. Own construction: no code from ISF-Files, Shadertoy or anywhere else, and none of the colour conversions and one-line hashes that are passed around (a test looks for them). Where one moves by itself, TIME is folded into a place in a cycle first and its rate is capped in the code.
+
+| Filter | What it does | Inputs | Moves by itself | Work (a count from the text) |
+| --- | --- | --- | --- | --- |
+| fx-edge-glow | the outlines of the picture in light of one colour, over the picture dimmed | Colour of the lines (colour), Line width (pixels), Strength, How much of the picture stays, Lines in the picture's own colours (switch) | no | medium: 5 reads |
+| fx-grade | colour controls: hue turn, more or less colour, exposure, contrast, warmth | Turn the colours (degrees), Colour, Exposure (stops), Contrast, Warmth | no | light: 1 read |
+| fx-kaleido | a kaleidoscope: one wedge mirrored around a point, turning slowly if you let it | Mirrors (choice), Turn, Turns a minute, Zoom, Centre (point) | yes | light: 1 read |
+| fx-mirror-quad | four mirrored copies of one quarter meeting at a point | Where the mirrors meet (point), Quarter that is kept (choice), Mirror left to right (switch), Mirror top to bottom (switch), Zoom | no | light: 1 read |
+| fx-pixel-grid | a wall of square lights with dark gaps, like an LED screen from close by | Lights across, Gap between the lights, Round lights (switch), Brightness of the lights | no | light: 1 read |
+| fx-rgb-split | red and blue pulled apart, steady or breathing at a rate (at most 3 a second) | Spread, Angle (degrees), Breaths a second, Depth of the breath, Breath (choice), Move green too (switch) | yes | medium: 3 reads |
+| fx-slit-bands | bands that slide against each other, drifting slowly | Bands, Shift, Drift (picture widths a minute), Upright bands (switch), Every other band the other way (switch), Dark seam | yes | light: 1 read |
+| fx-vignette | a soft darkening towards the edges, for the painting wall | Size of the clear middle, Softness of the edge, Strength, Shape (choice), Centre (point), Colour of the edge (colour) | no | light: 1 read |
+| fx-wash | the picture washed in one colour of your choice | Colour (colour), Strength, How (choice), Keep the whites white (switch) | no | light: 1 read |
+
+**The pack: 32 filters from Vidvox's ISF-Files** (https://github.com/Vidvox/ISF-Files, commit `395072d4`, MIT), in `pvj/effects.d/isf-files`. **They are not this project's work**: each is the upstream file byte for byte under a name without spaces, keeps its own `CREDIT` (shown on its row), and carries `"pack": "isf-files"`. The licence, the file list and what was left out and why are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
+
+| Filter | Upstream name | Kind | What it does | Inputs | Work (a count from the text) |
+| --- | --- | --- | --- | --- | --- |
+| isf-bump-distortion | Bump Distortion | stylise | a bulge (or a pinch) around a point | 3 | light: 1 read |
+| isf-chromatic-aberration | Chromatic Aberration | stylise | red and blue pulled apart towards the edges, like a lens (an RGB shift) | 5 | medium: 3 reads |
+| isf-circle-splash-distortion | Circle Splash Distortion | stylise | the picture inside a circle, its rim smeared outwards | 3 | light: 2 reads |
+| isf-color-monochrome | Color Monochrome | colour | one colour over the picture's light and dark (a tint) | 2 | light: 1 read |
+| isf-corner-color-tint | Corner Color Tint | colour | a different tint from each corner | 5 | light: 1 read |
+| isf-double-vision | Double Vision | stylise | the picture twice, shifted against itself | 4 | medium: 3 reads |
+| isf-duotone | Duotone | colour | two colours only, split at a threshold, hard or soft | 4 | light: 1 read |
+| isf-edge-blowout | Edge Blowout | stylise | the edges of a box stretched out to the borders | 8 | medium: 10 reads |
+| isf-false-color | False Color | colour | dark to bright mapped onto two colours | 2 | light: 1 read |
+| isf-flip-h | Flip H | geometry | left and right exchanged | 0 | light: 1 read |
+| isf-flip-v | Flip V | geometry | upside down | 0 | light: 1 read |
+| isf-gamma-correction | Gamma Correction | colour | gamma: lifts or deepens the middle tones | 1 | light: 1 read |
+| isf-hyperspace | Hyperspace | stylise | the two halves stretched towards a line, scrolling if you move it | 5 | light: 1 read |
+| isf-interlace-mirror | Interlace Mirror | stylise | every other line mirrored | 2 | light: 1 read |
+| isf-kaleidoscope-tile | Kaleidoscope Tile | geometry | tiles of a kaleidoscope | 7 | light: 1 read |
+| isf-kaleidoscope | Kaleidoscope | geometry | a kaleidoscope around a point | 5 | light: 1 read |
+| isf-lgg | LGG | colour | lift, gamma, gain and saturation (colour controls) | 4 | light: 1 read |
+| isf-mirror | Mirror | geometry | one half mirrored onto the other, across or down | 2 | light: 1 read |
+| isf-pixellate | Pixellate | stylise | big square or oblong pixels | 2 | medium: 6 reads |
+| isf-posterize | Posterize | colour | a few steps of colour instead of smooth ones (posterise) | 2 | light: 1 read |
+| isf-quad-tile | Quad Tile | geometry | mirrored tiles, turned and shifted | 6 | light: 1 read |
+| isf-rgb-eq | RGB EQ | colour | red, green and blue each up or down (exposure by channel) | 4 | light: 1 read |
+| isf-rgb-halftone | RGB Halftone | stylise | halftone dots in red, green and blue | 2 | medium: 3 reads, 3 loop rounds |
+| isf-rgb-invert | RGB Invert | colour | invert, per channel | 4 | light: 1 read |
+| isf-ripples | Ripples | stylise | rings rippling out from a point | 6 | light: 1 read |
+| isf-shockwave | Shockwave | stylise | one ring that bends the picture as it travels out | 5 | light: 2 reads |
+| isf-sine-warp-tile | Sine Warp Tile | geometry | tiles bent by sines | 4 | light: 1 read |
+| isf-sphere-map | Sphere Map | stylise | the picture wrapped on a ball | 3 | light: 1 read |
+| isf-triple-rotate | Triple Rotate | geometry | three rings of the picture, each turned by its own angle (rotate) | 7 | light: 1 read |
+| isf-twirl | Twirl | stylise | a twirl around a point | 3 | light: 1 read |
+| isf-white-point-adjust | White Point Adjust | colour | the picture multiplied by a colour (a tint by the white point) | 1 | light: 1 read |
+| isf-zoom | Zoom | geometry | zoom in or out around a point | 2 | light: 1 read |
+
+Nine of these change nothing with their own defaults (a level at 1, a zoom of 1, a shift of 0): isf-rgb-eq, isf-gamma-correction, isf-lgg, isf-white-point-adjust, isf-zoom, isf-triple-rotate, isf-twirl, isf-double-vision and isf-shockwave. Put on, they show the picture until a control is moved. CI checks that their defaults give the picture back, and judges them on values written into the test on purpose.
+
+**What was asked for, and where it is.** Colour: hue shift, saturation, exposure and contrast are fx-grade (upstream's Color Controls, Vibrance, Solarize and Multi Hue Shift hold an uncredited colour conversion that is passed around, and Exposure Adjust credits an outside source); invert is isf-rgb-invert; posterise isf-posterize; duotone isf-duotone; tint isf-color-monochrome, isf-white-point-adjust and fx-wash; colour controls of the lift, gamma and gain kind isf-lgg. Geometry: mirror (isf-mirror, fx-mirror-quad), kaleidoscope (isf-kaleidoscope, isf-kaleidoscope-tile, fx-kaleido), flip (isf-flip-h, isf-flip-v), rotate (isf-triple-rotate), zoom (isf-zoom), pixellate (isf-pixellate, fx-pixel-grid), tile (isf-quad-tile, isf-sine-warp-tile). Stylise: edges are fx-edge-glow (upstream's Edges, Glow, Bloom and Sharpen each need a vertex shader of their own); RGB shift isf-chromatic-aberration and fx-rgb-split; vignette fx-vignette (upstream's is v002's); halftone isf-rgb-halftone. **Not in this version:** scanlines, a dither (upstream's names an outside author), anything bloom-like or blurred (several passes, or dozens of reads a pixel), a strobe (upstream's keeps a picture between frames), trails and feedback (the same).
+
+**What CI drew.** Every one of the 41, in each of the three ways of drawing, over a still picture that is a real video to the player (4:2:0, BT.709): with its defaults, with other values in every input (numbers by the rotation's own rule, every switch the other way, the next choice, another point, another colour), and with those values at amount 0. Each text was taken by the GPU and drew; each picture differed from the unfiltered one (the nine above with their written values); each amount 0 was the picture again. 123 draws a way, all right, in the run this was written from; a file that passed only sometimes would have been dropped, and none had to be.
+
+### What an effect costs
+
+A generator is drawn at 540 lines on a Pi 4 whatever the screen. **An effect runs once for every pixel of the clip**: a 1080p clip has four times the pixels of a 540 line drawing, a 720p clip 1.8 times. And it reads the picture, which a generator does not.
+
+- **The weight in the list is a count from the text, not a measurement** (`weight`, with `estimate: {"reads", "rounds", "sure"}`): how often the filter reads the picture for one pixel and how many rounds its loops run, every branch counted, a loop bounded by an input counted at the input's MAX. **light**: at most 2 reads and no loop to speak of; **medium**: at most 12 reads and 16 rounds; **heavy**: more, or a loop whose length the text does not say. Nothing bundled is heavy by this count. The generators taught that a count is not a cost (seven of thirty were a class heavier on the Pi than their count said): treat these words as a first guess.
+- **In CI**, on Mesa's software GPU, with a clip of the generators' drawing size (320 x 180), so pixel for pixel: the filters' own pass took 0.6 to 1.3 times that of nxlx-silk (the middle one 0.7). The heaviest were isf-edge-blowout (1.2 to 1.3), isf-ripples, isf-bump-distortion, isf-posterize and fx-edge-glow (about 1); the generators nxlx-ember and nxlx-aurora took 0.9 and 1.1 there. **These are ratios on a CPU pretending to be a GPU, and they flatten everything: nxlx-aurora is 1.1 times nxlx-silk here and 3 times on the Pi 4. They say that no bundled filter is far out of line with a light generator for the same number of pixels, and nothing more.** The number of pixels is the clip's.
+- **Half resolution** is the one lever built in: a quarter of the pixels for the filter's pass, and the passes after it (the conversion, the scaling) work on the smaller picture too. In CI the filter's pass took 0.9 times as long at half size (0.8 to 1.2): at 320 x 180 on a software GPU the fixed part of a pass is nearly all of it, so that number says nothing about what it saves on a board.
+- **The guard** counts the frames the player drops while an effect is on, with the generators' rule (2 a second or more averaged over 6 seconds, the first 3 seconds after a change not counted), and reports `load`: `ok`, `tight` or `heavy`; the card says "Too heavy with this clip: try Half resolution, or another effect". It marks nothing and takes nothing off: the same filter may be fine over a smaller clip, and the generators' heavy marks and rotations are not touched. Frames a clip drops for another reason (a slow decoder) are counted too; the guard cannot tell them apart.
+
+**To be measured on the Pi 4** (the coordinator's steps, following the two shader measurements in the journal):
+
+Nothing below has been done. It follows the method of the two shader measurements (journal, 2026-10-04 and 2026-10-05): a helper on the box, windows with no snapshot in them, mpv's own counters, one snapshot per case looked at afterwards.
+
+1. **Clips.** Three H.264 clips of 30 seconds or more with moving detail, made on the Mac and uploaded: 960 x 540, 1280 x 720 and 1920 x 1080, each at 30 pictures a second (`ffmpeg -f lavfi -i testsrc2=size=1920x1080:rate=30 -t 30 -c:v libx264 -pix_fmt yuv420p clip-1080p30.mp4`, and the same for the other two sizes), and one real show clip at 1080p if there is one. Loop each. Note `hwdec-current` and `video-out-params` once per clip while it plays.
+2. **Does an effect draw at all on the Pi?** Play the 720p clip, `POST /api/effects {"id": "isf-rgb-invert.fs"}`. Read the answer (200, or 422 with what V3D said), `on.checked` (true) and `on.pass_ms` in `GET /api/effects`, take one snapshot: it must be the negative of the clip. Then Blackout: the snapshot must be black. Then `{"off": true}`: the clip as it was. If this step fails, stop and report: the stage or the two-hook text does not hold on this driver or with this decoder.
+3. **Every bundled filter, three sizes.** Per clip (540p, 720p, 1080p) and filter, with the file's defaults (for the nine filters that change nothing by default, with the values in `NEUTRAL` in `tests/test_effects_gpu.py`): `POST /api/effects {"id"}`, note the time until it answers, 4 seconds of settling, then a 20 second window: the change of `frame-drop-count` and of `decoder-frame-drop-count`, the average of the effect's own pass (`on.pass_ms`, and `vo-passes` for the other passes), GPU busy from `/sys/devices/platform/v3dbus/*/gpu_stats`, the temperature, and `GET /api/effects` every 3 seconds for `on.load` and `on.drops_per_second`. Where 0.05 to 2.5 frames a second were dropped, 60 seconds more. One snapshot after the window, looked at. `{"off": true}`, 2 seconds, the next one. Before the first filter of each clip, the same window with no effect on: that is the clip's own baseline (a 1080p clip may drop frames by itself on this screen).
+4. **Half resolution.** For every filter that dropped frames at 720p or 1080p in step 3: the same window with `"controls": {"half": true}`.
+5. **The buffers.** An effect over a clip is drawn in mpv's own buffers (see the player's start-up log for "Using FBO format"). For three filters (a light one, `fx-edge-glow`, `isf-edge-blowout`) at 1080p: the window of step 3 once as it is, and once after `set_property fbo-format rgba8` sent to the player's socket (`/run/pvj/player/player.sock`, from the helper that runs as root) (then play the clip again, so new frames follow). If 8-bit buffers save frames, the fix is a start option for the Pi 4 in `pvj/hardware.py`.
+6. **Changing values.** With `fx-grade` on over the 720p clip: 30 changes of one number at 10 a second (`POST /api/effects/values`), then of Amount, then a switch of another filter: the time each request takes, how many texts were written, the frames dropped meanwhile, and three snapshots during the burst (none may be dark).
+7. **Its life.** Effect on, play another pad: the effect stays (`player.effect` in `/api/status`, one snapshot). Freeze, put an effect on, snapshot: the filtered still picture, not black. Stop: it is off and `last` says so. A generator shader: it comes off. With a projection mapping on: the mapped surface shows the filtered picture, and the frames dropped with both.
+8. **TIME.** `fx-kaleido` over the 30 a second clip and over a 25 a second one: two snapshots 10 seconds apart, the turn between them is a sixth of a turn at 1 turn a minute.
+
+What to write down from it: per filter and clip size, the pass time and the dropped frames a second, and from those a class the way D51 does it for the generators (holds at 1080p, holds at 720p, holds only at half resolution, does not hold), as a table in `pvj/effects.py` beside the estimate; and whether 540 lines of generator and a 540p clip with a filter cost alike, which is what the estimate assumes.
+
+### Effects API
+
+`GET /api/effects` (view):
+
+```
+{"enabled": true,
+ "effects": [{"id": "fx-vignette.fs", "name": "fx-vignette", "source": "bundled" | "uploaded", "pack": "nxlx" | "isf-files" | "uploads",
+              "description", "credit", "categories": ["Filter", "Color"],
+              "weight": "light" | "medium" | "heavy",            a count from the text, never a measurement
+              "estimate": {"reads": 1, "rounds": 1, "sure": true},
+              "moves": false,                                    it reads the clock
+              "flashes": false,                                  its header says strobe or flash
+              "speed_max": null | 1 | 4,
+              "presets": ["default", "Soft"],
+              "refused": "line 6: ..." | null,                   what this box's GPU said about this file
+              "inputs": [{"name", "type", "label", "default", "value", "min"?, "max"?, "values"?, "labels"?}],
+              "error": null}],
+ "on": {"id", "name", "values": {input: value}, "controls": {"amount": 1.0, "speed": 1.0, "half": false},
+        "preset": name | null, "pending": bool, "checked": true | null, "pass_ms"?,
+        "picture": {"matrix": "bt.709", "levels": "limited", "fps": 25.0},      what the text was made for
+        "load": "ok" | "tight" | "heavy" | null, "drops_per_second"} | null,
+ "available": true, "unavailable": null | "A generator shader has the screen. ...",
+ "last": null | "Stop was pressed" | "a generator shader took the screen" | "the player was restarted" | ...,
+ "error": {"id", "message", "at"} | null,
+ "controls": {"amount": {"min": 0, "max": 1, "default": 1}, "speed": {"min": 0, "max": 4, "default": 1}, "half": {"default": false}},
+ "faster": false,
+ "limits": {"bytes", "inputs", "uploads", "presets", "name", "controls", "reads": 64, "rounds": 256, "at_once": 1}}
+```
+
+Live access (presenters):
+
+- `POST /api/effects`: `{"id": "fx-vignette.fs", "values"?: {...}, "controls"?: {"amount"?, "speed"?, "half"?}, "preset"?: "Soft"}` puts that filter on over what plays, in place of the one that is on, and answers with the whole state once the GPU has taken it. Without values or a preset it uses the preset called default, else the file's defaults. 409 with the reason when there is no picture to put it on; 422 if the file cannot be translated or the GPU refuses it ("The effect before it is back on." or "No effect is on."). `{"off": true}` takes the effect off. `{"toggle": true}` is a controller's one button: off if one is on, else the one that was on last (the first of the list if none was); it answers `{"ok", "on", "id"?}` at once.
+- `POST /api/effects/values`: `{"values"?: {input: value}, "controls"?: {"amount"?, "speed"?, "half"?}, "id"?: the effect it is meant for}`, or from a controller `{"control": 1 to 8, "level": 0 to 127}` or `{"control": n, "press": true}`. Answers at once with `{"ok", "id", "values", "controls"}` as they will be. 400 for a value of the wrong kind or an unknown name, 409 if no effect is on or `id` is not the one that is on, 422 if this box's GPU refused exactly these switch and choice values before.
+- `POST /api/effects/step`: `{"dir": 1 | -1}`. Answers `{"ok": true, "id": "<the filter that will come on>"}` at once.
+- `POST /api/effects/preset`: `{"name": "Soft"}` or `{"index": 1 to 16}` for the effect that is on; with `"id"` of another filter, that one is put on with the preset.
+
+Full access:
+
+- `POST /api/effects/presets`: `{"action": "save", "name", "id"?}`, `{"action": "rename", "id", "name", "to"}`, `{"action": "delete", "id", "name"}`.
+- `POST /api/effects/library`: `{"action": "upload", "name": "x.fs", "source": "<the file's text>", "replace"?: bool}` and `{"action": "delete", "id"}` (an upload only; it comes off if it is on, and its presets go). Uploads are kept in `<state>/effects`, apart from the generators' `<state>/shaders`, under the generators' limits (32 KB, 24 inputs, 64 files) and the two limits of the count above.
+
+`GET /api/status` carries `player.effect` (the name) while an effect is on.
+
+### Effects: not verified
+
+- **Nothing here has run on hardware.** Not the V3D driver's taking of any filter, not the speed, not the look on a display. CI's third way of drawing is Mesa's software GPU told to be a 3.1 driver, not the Pi's.
+- **mpv 0.37 only** (CI's). The two-hook text relies on mpv leaving out a hook whose bound texture is missing; that is how mpv has behaved for years, and it is asserted in CI, but mpv 0.35 (Raspberry Pi OS Bookworm) and 0.40 (the test Pi) have not run it. If a later mpv ran both hooks or neither, the GPU tests would fail on it.
+- **Hardware decoding.** CI decodes in software. Whether the picture at NATIVE is the same thing with the Pi's decoder in use was not tried; the first thing to look at on the Pi is whether an effect draws at all over an H.264 clip.
+- **Live inputs and streams** go through the same stage and were not tried; a YUYV picture was (in the first spike), a real capture device was not.
+- **The moment after a change of clip.** For up to a second a filter may work with the colour matrix, the range or the frame rate of the clip before.
+- **Sync and the video wall.** An effect is this box's own: a sync server does not send it to its clients, and it was not tried with the wall crop.
+- **The estimate of weight** is not a measurement, and the caps for an upload (64 reads, 256 rounds) are chosen, not tuned.
+- **The panel** (the strip on Live and the card on Mix) has run in the browser test against a player that draws nothing; nobody has used it on a phone or at a gig.
+- **MIDI**: the effect actions only against fakes; no controller was pressed.
 
 ## How it sits in the player
 

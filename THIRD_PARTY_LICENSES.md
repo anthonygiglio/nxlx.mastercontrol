@@ -187,5 +187,5 @@ How these were chosen (2026-10-05): of the 327 `.fs` files upstream, 114 transla
 
 As before, the sources outside GitHub were not opened: "terms not read" means not established, not that anything is wrong with them. And as before, this rule catches borrowing that a file admits to and snippets a reader recognises; it is a reading, not a proof.
 
-@@DROPPED@@
+**Dropped after drawing: none.** All 32 candidates drew right in all three ways of drawing, every time they were run (123 draws a way with the project's own nine, in three rounds of CI running). Had one passed only sometimes it would have been taken out, not retried.
 

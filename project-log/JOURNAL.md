@@ -4,6 +4,28 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-05 (effects: ISF filters over what plays)
+
+Pull request #81. **Not merged: it takes uploads and adds device-facing paths, and gets an independent review first.** Nothing here ran on the Pi; the dev Mac has no mpv, so every picture was drawn in CI on Mesa's software GPU.
+
+**What it is.** An effect is an ISF filter shader put on over whatever plays (a clip, a stream, a live input), a third kind beside a clip and a generator: it never takes the screen. One at a time. Controlled live like a generator: every input, an Amount mix that every filter gets (done in the wrapper), Speed for a filter that moves by itself, Half resolution, presets, Previous and Next, a MIDI controller. It stays on across clip changes and comes off with Off, Stop, a generator or Vibes, the module going off, and a restart of the player or of the panel. The decision is D53; the whole of it is in `pvj/SHADERS.md` under "Effects".
+
+**How it was found.** A spike in a CI job of its own printed what a real mpv does at NATIVE, MAINPRESUB and MAIN with YUV and RGB pictures. It settled the stage (NATIVE, with the effect converting YUV to RGB and back itself: an invert hooked later turned a blacked-out picture white), that the mapper's stage sees the filtered picture, that a hook can draw at half its size, that mpv leaves out a hook whose bound plane is missing (so one text serves a video and an RGB picture), and that the hook is after `video-rotate`. Then the engine, the player's third layer, the panel and the tests were built on that.
+
+**What CI drew.** @@CI@@
+
+**Four things about the rig and about mpv, found with two throwaway diagnosis jobs** (LESSONS has each): the first test picture cost the player more than it could keep up with; a video played after one of another size is drawn black on this mpv with its default scalers until a shader changes (the generators' old "flat colour"); the decoder's word about a clip's colours is not what the renderer is using; and "#line" is off by one on GLSL 1.40. I also believed for one round that setting the buffer format was what drew black, and took the 8-bit buffers away from effects; a printed experiment under the Pi 4's scaling showed the setting harmless there, so they are back for the boards with cheap scaling and left alone elsewhere (D53).
+
+**The filters.** Nine of our own (mirror quad, kaleidoscope, RGB split with a rate, colour wash, slit bands, edge glow, pixel grid, a soft vignette for the painting wall, and a colour grade for the hue, saturation and exposure that the pack could not supply cleanly), and 32 from Vidvox's ISF-Files at the generators' commit, byte for byte with their checksums pinned. Of the 327 upstream files 114 translate as effects; the pack was chosen from those that credit nobody outside and hold no snippet a reader recognised (THIRD_PARTY_LICENSES.md lists what was left out and why), and every one of the 32 candidates drew right every time, so none had to be dropped.
+
+**Cost.** A filter runs once for every pixel of the clip. Its weight in the list is a count from its text (reads of the picture and loop rounds for one pixel) and says so; an upload over 64 reads or 256 rounds is refused. In CI, pixel for pixel, the filters' pass took 0.6 to 1.3 times that of nxlx-silk, which says little: the same software GPU has nxlx-aurora at 1.1 times nxlx-silk and the Pi 4 has it at 3. The guard reports "too heavy with this clip" and marks nothing. The steps for the Pi are in `pvj/SHADERS.md` ("To be measured on the Pi 4") and in the pull request.
+
+**Panel.** A strip on Live (name, Previous, On or Off, Next, Amount) and an Effects card on Mix (the list by name and work, Put on, the controls with Amount first through the Shaders page's own `inputControl`, Half resolution, presets, MIDI teach buttons). Both say plainly why no effect can go on while a generator has the screen or nothing plays. New MIDI actions: effect amount, effect control 1 to 8, on/off, previous, next; on the three shipped layouts they sit only on controls that were spare (the nanoKONTROL2's fader 7 and R 5, the MIDI Mix's bottom row of knobs and fader 7, twelve pads of the Launchpad's last two columns less one).
+
+**Left out.** A chain of effects; transitions, passes and persistent buffers; a preset rename in the panel (the API has it); an effect that comes back after a restart; a measured weight; pictures of the new card in `docs/UI.md` (the browser test saves one as a CI artifact). The generators' "#line" on the Pi's path and their buffer-format setting at every change of a value were seen and not touched.
+
+**Not verified.** Everything on hardware: whether V3D takes the two-hook text, with which decoder, how fast, how it looks. mpv 0.35 and 0.40. A real controller. The list in `pvj/SHADERS.md` ("Effects: not verified") is the full one.
+
 ## 2026-10-04 (evening: what landed, the redesign workspace, a full disk)
 
 Pull request #80. **Not merged by the agent that wrote it. The Room screen's ambience button ran only in CI's browser test (no Playwright on this Mac); nothing in this entry was done on the Pi by this session.** What it says about the Pi is the coordinating session's report, written down here so it is not lost.

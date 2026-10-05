@@ -31,6 +31,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 | PR | State |
 | --- | --- |
 | #65 | The UX proposal (a click-through prototype and a written spec for Live, Media, Mix and the Shaders page). A reference, not to merge as is. |
+| #81 | Effects: ISF filters over what plays (D53). Green in CI, **not merged: it wants an independent review** (uploads, new device-facing paths), and nothing of it has run on the Pi. See "Effects" below. |
 
 **The owner's direction, in their words.** From 2026-10-03 and 04, still standing: "the way users interact with each module doesn't seem intuitive or easy to use"; "don't be shy about really making the control panels engaging and userfriendly, the panel design and layout and pages should be organized in a logical fashion"; "someone doing more intense work will have a laptop, usually"; "a more robust shader playback and control system. i want to have more shaders available to perform with or have as auto-playing vibes"; "don't forget about ISF shaders (https://github.com/Vidvox/ISF-Files)"; every screen should get "the same audit and design treatment". New on 2026-10-04:
 
@@ -63,6 +64,14 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - Its shader settings are saved in the engine's form with both sets written out, so a later change of the default sets will not reach it by itself.
 - The raw data of the second run is in `/tmp/nxlx-measure.FCbYZw` on the Mac (about 35 MB), which macOS will empty in time: move it if it is wanted. The first run's is in `~/nxlx-shader-measure-2026-10-04`.
 
+**Effects (2026-10-05, #81, D53).** An effect is an ISF filter put on over whatever plays, one at a time, with an Amount mix, live values, presets, Previous and Next and MIDI actions; a strip on Live and a card on Mix. 41 filters come with it: nine of our own and 32 from ISF-Files. Every one is drawn by a real mpv in CI in three ways of drawing; **none has run on a Pi**. Before it is merged: an independent read-only review. After it is on the box, in this order: the first three steps of "To be measured on the Pi 4" in `pvj/SHADERS.md` (does an effect draw at all on V3D with the Pi's decoder; every filter at three clip sizes; half resolution), then the rest. Still open from it:
+
+- **Not measured:** every filter's weight is a count from its text. The steps are written; the table they fill belongs in `pvj/effects.py` beside the estimate.
+- **8-bit buffers under an effect are a Pi 4 choice made from the mapping's measurement**, and left alone on other boards after a black screenshot in CI (D53). Step 5 of the Pi list measures it.
+- **Two things seen in the generators and not touched:** the line a refused generator names is one too high on the Pi's path (GLSL 1.40 counts `#line` differently), and `fbo-format` is set again at every change of a generator's value, which sets mpv's renderer up anew each time. An effect's text and layer do neither; the same two small changes would suit `pvj/shaders.py` and `Player.swap_source`.
+- **On mpv 0.37 with its default scalers a video after one of another size was black in CI until a shader changed** (LESSONS). It is not about effects. A Pi 4 runs with cheap scaling, where it did not happen; an x86 box or a Pi 5 would run with the default scalers: look for it there.
+- **Left out on purpose:** a chain of effects, transitions, passes, persistent buffers, an effect that comes back after a restart (the vignette for the painting wall has to be put on again), a preset rename in the panel, pictures of the card in `docs/UI.md`.
+
 **What needs the owner.**
 
 - A projector on the network: nothing of PJLink, the Room scenes or the Projectors page has met a real one.
@@ -77,7 +86,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 2. In that style: the room and the projector screens (Room, Projectors).
 3. Then performing (the Shaders page, controllers). Live, Media and Mix are not redesigned yet; the proposal (#65) is the reference for them.
 4. Controller lights (profiles have no feedback yet, D49).
-5. ISF filters over the playing clip (today only generators are played).
+5. Effects on the Pi: review and merge #81, then measure (above). A chain of effects, and transitions, are the next steps of the survey in `pvj/SHADERS.md`.
 6. PJLink Phase 2 (class 2 volume, freeze, input names, signal resolution, "Find projectors", status notices), after the first real projector has answered what Phase 1 could not: what it says in standby, how long it is unavailable after power-on, whether 90 seconds is enough for a scene's source and mutes, whether "Cooling down" is reported.
 
 Further out, unchanged: live coding with a last-good fallback and projectM as an optional module; painting-wall masks on the second projector (likely the Pi 3B as a second synced box, which waits for a spare SD card; never touch its current card); network notes for the private NXLX network; a video matrix driver once the owner picks a model; display mode; mapper workflow; wall improvements; a schedule with dates; follow-on actions.
@@ -117,6 +126,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | Projectors (PJLink class 1: power, input with labels, picture and sound mute, live status, lamp hours, warnings, edit in place; no real projector tested) | `pvj/PROJECTORS.md` | off (beta) |
 | Room: groups of projectors, scenes tapped once (power, source, mutes, what the box plays), a Room screen for staff with a button for ambience (D52), scenes from the schedule, OSC and MIDI (D40; no real projector tested) | `pvj/ROOM.md` | off (beta) |
 | Projection mapper (quads, triangles, grids) | `pvj/MAPPER.md` | off (beta) |
+| Effects (in #81, not merged): ISF filters over what plays, one at a time, with Amount, live values, presets and MIDI; 9 of the project's own and 32 from ISF-Files (D53; drawn in CI only, nothing measured) | `pvj/SHADERS.md` ("Effects") | with Shaders and Vibes |
 | Shaders and Vibes: ISF generator shaders (40 of the project's own in an Ambient and a Performance family, and a pack of 7 from Vidvox's ISF-Files, D44), Vibes, an endless rotation from one tap, with sets; the engine (D46: live values of every input type, speed, presets, a guard for heavy shaders) and the Shaders page as an instrument (D47); the API, autostart, the schedule, OSC, MIDI and DMX | `pvj/SHADERS.md` | off (beta) |
 | Multi-box sync and video wall | `pvj/SYNC.md` | off (beta) |
 | Streams and live input (SRT, RTSP, RTMP, USB capture) | `pvj/STREAMS.md` | off (beta) |
@@ -135,12 +145,13 @@ One test Raspberry Pi 4 (Model B Rev 1.5, Debian 13 trixie, wired Ethernet, a 25
 **Not verified on hardware (do not claim it works):**
 - Sync and the wall on two real boxes (waiting for the Pi 3B's spare card); a real support server (VPS); swapping USB sticks while running; copy from USB on the box.
 - MIDI Learn with the real controllers, and any control of a controller profile pressed or turned; the PIN on screen on a fresh box; streams with a real source; HEVC, 4K, 1080p60; 24 fps judder; the second HDMI port; a real projector.
+- Effects (#81): nothing at all. Not the driver's taking of a filter, not the speed, not the picture on a display, not a controller.
 - Shaders and Vibes: nobody has watched it on a display (both Pi 4 runs were judged from snapshots and the player's counters, so a single black frame or a stutter that drops no frame would not have been seen); the engine's controls never dragged by hand on a box; its MIDI, OSC and DMX controls only against fakes; the Shaders page and the ambience button on the Room screen only in the browser test; 360 and 1080 lines, a 60 Hz screen and a projector not measured; no other board measured.
 - Since the runtime folders (D45): a reboot, a boot with no network, an update from the old version through the panel, a rollback.
 - The read-only root (`pvj-rootfs`), the Network module and its Wi-Fi control (test with a keyboard and monitor on the box, never over SSH or Wi-Fi on the only link), TouchOSC.
 - Pi 3, Pi 5 and x86.
 
-Not built: crossfade (needs a second player), display mode, company (802.1X) Wi-Fi and setting the Wi-Fi country, updates from the network, NDI, AES67/Dante, presenter, importing old mapper files, controller lights (feedback), ISF filters over the playing clip, PJLink Phase 2, custom DMX layouts.
+Not built: crossfade (needs a second player), display mode, company (802.1X) Wi-Fi and setting the Wi-Fi country, updates from the network, NDI, AES67/Dante, presenter, importing old mapper files, controller lights (feedback), a chain of effects and ISF transitions (one effect at a time is in #81), PJLink Phase 2, custom DMX layouts.
 
 Known limits: the panel cannot restart a wedged mpv (unprivileged by design). Merged branches on GitHub are not deleted (ask the owner). GitHub ruleset "Protect master" requires 9 checks and pull requests; do not change it without asking.
 
