@@ -33,16 +33,22 @@ from tests.test_shaders_gpu import GPU, GpuCase, H, W, png_rows
 # quarters are alike, so a mirror, a flip and a turn each change it. No colour is near the ends of its range: a
 # video keeps colour at half the picture's detail, and a picture of full colours comes back from that with values
 # beyond black and white, which the player cuts off and a test would have to guess.
-PIC = "format=gbrp,geq=r=127+80*sin(14*X/W):g=50+floor(6*Y/H)*26:b=127+80*cos(19*(X+Y)/W)"
+PIC = "geq=r=127+80*sin(14*X/W):g=50+floor(6*Y/H)*26:b=127+80*cos(19*(X+Y)/W)"
 
 
 def clip(size="320x180", fmt="yuv420p", rate=25, tags=""):
-    return "av://lavfi:nullsrc=size=%s:rate=%d,%s,format=%s%s" % (size, rate, PIC, fmt, tags)
+    """The picture as an endless clip that costs the player next to nothing: it is worked out once (one frame goes
+    through geq) and that frame is given again and again by the loop filter. The first version worked the picture out
+    for every frame; on the CI machine the player then fell behind, dropped its frames, and a screenshot showed
+    black for seconds at a time."""
+    return "av://lavfi:color=c=black:size=%s:rate=%d,format=gbrp,trim=end_frame=1,%s,format=%s,loop=loop=-1:size=1,setpts=N/(%d*TB)%s" % (
+        size, rate, PIC, fmt, rate, tags)
 
 
 CLIP = clip(tags=",setparams=colorspace=bt709:range=tv")
-KINDS = [("bt.709", CLIP), ("bt.601", clip(tags=",setparams=colorspace=smpte170m:range=tv")), ("full range", clip(tags=",setparams=range=pc")),
-         ("10 bit", clip(fmt="yuv420p10le")), ("nv12", clip(fmt="nv12")), ("rgb", clip(fmt="rgb24")), ("planar rgb", clip(fmt="gbrp"))]
+KINDS = [("bt.709", CLIP), ("bt.601", clip(tags=",setparams=colorspace=smpte170m:range=tv")), ("full range", clip(fmt="yuvj420p")),
+         ("tagged full", clip(tags=",setparams=range=pc")), ("10 bit", clip(fmt="yuv420p10le")), ("nv12", clip(fmt="nv12")), ("rgb", clip(fmt="rgb24")),
+         ("planar rgb", clip(fmt="gbrp"))]
 SHAPES = [("wide", CLIP), ("tall", clip("90x160")), ("square", clip("200x200")), ("small", clip("160x90")), ("large", clip("640x360"))]
 
 SAME = "/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}]}*/\nvoid main() { gl_FragColor = IMG_THIS_PIXEL(inputImage); }\n"
@@ -177,6 +183,38 @@ class FxCase(GpuCase):
         self.real.ipc.request("set_property", "screenshot-high-bit-depth", False)
         self.real.ipc.request("set_property", "screenshot-png-filter", 0)
         self.real.ipc.request("set_property", "screenshot-png-compression", 1)
+        # A clip of another shape than the one before: in this window on a virtual display the player went on drawing
+        # it where the old one lay (a tall clip sat in the top left corner) until something made it lay the picture
+        # out again. Changing "keepaspect" and back does; then wait until the bars on both sides are alike.
+        self.real.ipc.request("set_property", "keepaspect", False)
+        self.real.ipc.request("set_property", "keepaspect", True)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            m = self.real.ipc.request("get_property", "osd-dimensions")
+            if isinstance(m, dict) and abs(m.get("ml", 0) - m.get("mr", 9)) <= 1 and abs(m.get("mt", 0) - m.get("mb", 9)) <= 1 and (m.get("w"), m.get("h")) == (W, H):
+                break
+            time.sleep(0.05)
+        self.settle()
+
+    def settle(self, seconds=0.2):
+        """Let the player draw a few pictures. Every change of a shader sets its renderer up again, and a screenshot
+        taken before the first picture after that came out black on this rig (seen in the player's own log: the
+        screenshot between "Using FBO format" and the next frame)."""
+        try:
+            start = self.real.ipc.request("get_property", "time-pos")
+        except PlayerError:
+            start = None
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            try:
+                now = self.real.ipc.request("get_property", "time-pos")
+            except PlayerError:
+                continue
+            if not isinstance(start, (int, float)):
+                start = now
+            elif isinstance(now, (int, float)) and now - start >= seconds:
+                return
 
     def shot(self):
         path = os.path.join(self.tmp, "shot.png")
@@ -192,8 +230,9 @@ class FxCase(GpuCase):
         `flat` is expected (a Blackout) it must be a picture. (A single screenshot taken right after a change was at
         times a flat or an old picture on this rig.)"""
         deadline, last = time.monotonic() + wait, None
+        self.settle()
         while True:
-            time.sleep(0.12)
+            time.sleep(0.15)
             rows = self.shot()
             if last is not None and differ(rows, last)[0] <= 2 and (flat or len(set(grid(rows, 9))) > 12):
                 return rows
@@ -205,12 +244,14 @@ class FxCase(GpuCase):
         r = self.fx.put(sid, **kw)
         self.assertTrue(r and r["ok"], r)
         self.assertIs(self.fx.on["checked"], True, "the player never drew a frame with %s" % sid)
+        self.settle()
         return r
 
     def pump(self, wait=3.0):
         end = time.monotonic() + wait
         while time.monotonic() < end:
             if self.fx.changer.pump():
+                self.settle()
                 return
             time.sleep(0.02)
         self.fail("no change was due")
@@ -267,16 +308,27 @@ class FxCase(GpuCase):
         for name, url in KINDS:
             self.play(url)
             params = self.real.ipc.request("get_property", "video-params")
+            out = self.real.ipc.request("get_property", "video-out-params")
             plain = self.still()
+            negative = [[tuple(255 - c for c in p) for p in row] for row in plain]
             self.put("same.fs")
             same = differ(self.still(), plain)
             self.put("invert.fs")
-            inv = differ(self.still(), [[tuple(255 - c for c in p) for p in row] for row in plain])
+            inv = differ(self.still(), negative)
             picture = dict(self.fx.on["picture"])
+            other = []
+            if picture["matrix"] != "rgb":           # the same invert with a text made for the other range: is the player's word right?
+                real = self.fx.picture
+                for levels in ("limited", "full"):
+                    self.fx.picture = lambda levels=levels: dict(picture, levels=levels)
+                    self.fx.adjust("anchor")
+                    other.append("%s %.2f" % (levels, differ(self.still(), negative)[1]))
+                self.fx.picture = real
             self.fx.off()
-            print("kinds, ES %s: %-10s %s/%s %s as %s: unchanged max %d mean %.2f; inverted max %d mean %.2f" % (
-                self.ES, name, params.get("pixelformat"), params.get("colormatrix"), params.get("colorlevels"), picture, same[0], same[1], inv[0], inv[1]))
-            if same[0] > 4 or same[1] > 1.5:           # the 8-bit buffers an effect is drawn in round by up to 3 of 255
+            print("kinds, ES %s: %-11s %s/%s %s (the output: %s %s) as %s: unchanged max %d mean %.2f; inverted max %d mean %.2f; with a text for %s" % (
+                self.ES, name, params.get("pixelformat"), params.get("colormatrix"), params.get("colorlevels"), (out or {}).get("colormatrix"),
+                (out or {}).get("colorlevels"), picture, same[0], same[1], inv[0], inv[1], ", ".join(other) or "nothing else"))
+            if same[0] > 3 or same[1] > 1.0:
                 failed.append("%s: a filter that changes nothing changed the picture (max %d, mean %.2f)" % (name, same[0], same[1]))
             if inv[1] > 3.0:
                 failed.append("%s: the invert is off by %.2f on average" % (name, inv[1]))
@@ -288,7 +340,7 @@ class FxCase(GpuCase):
         self.fx.upload("invert.fs", INVERT)
         kinds = dict(KINDS)
         self.put("invert.fs")
-        for name in ("rgb", "bt.601", "full range", "planar rgb", "bt.709"):
+        for name in ("rgb", "bt.601", "planar rgb", "bt.709"):
             self.fx.off()
             self.play(kinds[name])
             plain = self.still()
@@ -412,7 +464,7 @@ class FxCase(GpuCase):
                     failed.append("%s (%s): the player never drew a frame with it" % (sid, what))
                 if self.fx.error is not None and self.fx.error["id"] == sid:
                     failed.append("%s (%s): %s" % (sid, what, self.fx.error))
-                same = d[0] <= 5 and d[1] <= 1.2
+                same = d[0] <= 3 and d[1] <= 1.0
                 if what == "amount 0" or (what == "defaults" and sid in NEUTRAL):
                     if not same:
                         failed.append("%s (%s): not the picture as it was (max %d, mean %.2f)" % (sid, what, d[0], d[1]))
@@ -453,7 +505,7 @@ class FxCase(GpuCase):
     def test_it_stays_over_the_next_clip_and_comes_off_with_stop_a_generator_and_a_restart(self):
         self.fx.upload("invert.fs", INVERT)
         self.put("invert.fs")
-        self.assertEqual(self.real.ipc.request("get_property", "fbo-format"), "rgba8")
+        self.assertEqual(self.real.ipc.request("get_property", "fbo-format"), "auto")       # an effect leaves the buffers alone
         self.assertEqual(self.api.status({}, None, "t")["player"]["effect"], "invert")
         self.play(dict(SHAPES)["tall"])                                               # another clip: the effect stays
         self.assertEqual(len(self.loaded()), 1)
@@ -549,7 +601,7 @@ class FxCase(GpuCase):
         self.fx.change({"controls": {"amount": 0.0}})
         self.pump()
         d = differ(self.still(), plain)
-        self.assertTrue(d[0] <= 5 and d[1] <= 1.2, d)
+        self.assertTrue(d[0] <= 3 and d[1] <= 1.0, d)
         self.fx.change({"controls": {"amount": 1.0}})
         self.pump()
         self.fx.change({"values": {"bang": True}})
@@ -560,9 +612,32 @@ class FxCase(GpuCase):
         self.assertIsNone(self.fx.error)
 
     def test_the_picture_is_never_dark_while_an_effect_goes_on_changes_and_comes_off(self):
-        """Putting an effect on switches the player to 8-bit buffers, and taking it off switches back: no screenshot
-        in the middle of it may be dark."""
+        """No screenshot in the middle of it may be dark, with the clip playing and with it frozen. (The first version
+        switched the player to 8-bit buffers for an effect, as for a generator; a screenshot right after that switch
+        was black, since mpv then draws from empty textures until the next new frame. An effect no longer touches
+        the buffers.)"""
         self.fx.upload("same.fs", SAME)
+        self.fx.upload("invert.fs", INVERT)
+        plain = self.still()
+        negative = [[tuple(255 - c for c in p) for p in row] for row in plain]
+        # frozen: nothing new arrives, so what is drawn now is what stays
+        self.real.ipc.request("set_property", "pause", True)
+        time.sleep(0.3)
+        self.fx.put("invert.fs")
+        time.sleep(0.4)
+        d = differ(self.shot(), negative)
+        self.assertLess(d[1], 3.0, "an effect put on over a frozen clip: not the inverted picture (max %d, mean %.2f)" % (d[0], d[1]))
+        self.fx.change({"controls": {"amount": 0.0}})
+        while not self.fx.changer.pump():
+            time.sleep(0.02)
+        time.sleep(0.4)
+        d = differ(self.shot(), plain)
+        self.assertLess(d[1], 1.0, "amount 0 over a frozen clip: not the picture (max %d, mean %.2f)" % (d[0], d[1]))
+        self.fx.off()
+        time.sleep(0.4)
+        d = differ(self.shot(), plain)
+        self.assertLess(d[1], 1.0, "an effect taken off a frozen clip: not the picture (max %d, mean %.2f)" % (d[0], d[1]))
+        self.real.ipc.request("set_property", "pause", False)
         shots = 0
         for n in range(6):
             self.fx.put("same.fs", controls={"amount": 0.5 + 0.08 * n})
@@ -586,6 +661,7 @@ class FxCase(GpuCase):
         for name, url, fps in (("25 a second", CLIP, 25.0), ("60 a second", clip(rate=60), 60.0)):
             self.play(url)
             self.put("clock.fs")
+            self.settle(0.4)
             self.assertEqual(self.fx.on["picture"]["fps"], fps)
             row = next(s for s in self.fx.library() if s["id"] == "clock.fs")
             self.assertEqual((row["moves"], row["speed_max"]), (True, 1.0))            # it reads the clock: the flash limit applies
@@ -598,7 +674,7 @@ class FxCase(GpuCase):
             self.assertTrue(0.6 <= rate <= 1.4, "TIME runs at %.2f times the clock over a clip of %s" % (rate, name))
             self.fx.change({"controls": {"speed": 0.0}})
             self.pump()
-            time.sleep(0.4)
+            self.settle(0.4)
             c, _ = now()
             time.sleep(1.0)
             d, _ = now()

@@ -480,15 +480,18 @@ class Player:
             self._drop_effect(why)
             try:
                 self._push_shaders()
-                self._apply_fbo()
             except PlayerError:
                 pass
 
     def _apply_fbo(self):
-        """8-bit GPU buffers while a mapping, a shader source or an effect adds a pass, mpv's own choice otherwise."""
+        """8-bit GPU buffers while a mapping or a shader source adds a pass, mpv's own choice otherwise. An effect
+        leaves the buffers as they are, on purpose. Setting fbo-format makes mpv build its renderer anew with empty
+        textures for the picture, and until the next new frame arrives it draws black (seen in CI on mpv 0.37: a
+        screenshot right after the setting was black, and with the clip frozen it would stay so). A source brings
+        its own carrier, so new frames follow at once and it draws without the picture anyway; a filter has only the
+        picture, and it goes on and comes off in the middle of a clip."""
         self._check_source()
-        self._check_effect()
-        self.ipc.request("set_property", "fbo-format", "rgba8" if (self._mapping_mode or self._source or self._effect) else "auto")
+        self.ipc.request("set_property", "fbo-format", "rgba8" if (self._mapping_mode or self._source) else "auto")
 
     def set_shaders(self, paths):
         """Use these GLSL user shader files (the projection mapping), or none. The files must be readable by the
@@ -532,12 +535,10 @@ class Player:
             self._effect, self._effect_pid = shader, pid
             try:
                 self._push_shaders()
-                self._apply_fbo()
             except PlayerError:
                 self._effect = previous
                 try:
                     self._push_shaders()
-                    self._apply_fbo()
                 except PlayerError:
                     pass
                 raise

@@ -383,7 +383,7 @@ class LifeTest(Base):
         self.assertEqual(self.mpv.props["path"], "/media/a.mp4")                       # the clip plays on
         self.assertEqual(self.player.source_epoch, epoch)                              # and the screen has not changed hands
         self.assertEqual(self.mpv.loaded, self.texts())
-        self.assertEqual(self.mpv.props["fbo-format"], "rgba8")
+        self.assertEqual(self.mpv.props["fbo-format"], "auto")                         # the buffers are left alone (see Player._apply_fbo)
         on = self.state()["on"]
         self.assertEqual((on["id"], on["name"], on["values"]["strength"], on["controls"]), ("fx-wash.fs", "fx-wash", 0.5, {"amount": 1.0, "speed": 1.0, "half": False}))
         self.assertEqual((on["checked"], on["pass_ms"], on["picture"]), (True, 1.5, {"matrix": "bt.709", "levels": "limited", "fps": 25.0}))
@@ -395,6 +395,7 @@ class LifeTest(Base):
         self.assertEqual(self.state()["limits"]["at_once"], 1)
         self.assertEqual(self.fx.off(), {"ok": True})
         self.assertEqual((self.mpv.loaded, self.mpv.props["fbo-format"], self.texts(), self.state()["on"], self.state()["last"]), ([], "auto", [], None, None))
+        self.assertEqual([c for c in self.mpv.commands if c[:2] == ("set_property", "fbo-format")], [], "an effect never sets the buffers' format")
         self.assertNotIn("effect", self.api.status({}, None, "t")["player"])
 
     def test_it_needs_a_picture_to_be_put_on(self):
@@ -838,7 +839,10 @@ class PlayerLayerTest(unittest.TestCase):
         self.assertFalse(self.p.swap_effect("/e3.glsl", s + 1))
         self.assertEqual(self.mpv.props["glsl-shaders"], ["/e2.glsl", "/m.glsl"])
         self.p.set_shaders([])                                                         # the mapper replaces its own layer only
-        self.assertEqual((self.mpv.props["glsl-shaders"], self.mpv.props["fbo-format"]), (["/e2.glsl"], "rgba8"))
+        self.assertEqual((self.mpv.props["glsl-shaders"], self.mpv.props["fbo-format"]), (["/e2.glsl"], "auto"))
+        self.p.set_mapping_mode(True)                                                  # the mapping's 8-bit buffers are the mapping's affair
+        self.assertEqual(self.mpv.props["fbo-format"], "rgba8")
+        self.p.set_mapping_mode(False)
         self.assertIsNone(self.p.put_effect("/e4.glsl", serial=s + 5))                 # an old serial
         self.assertIsNone(self.p.put_effect("/e4.glsl", epoch=self.p.source_epoch - 1))    # something was played since
         self.assertEqual(self.p.put_effect("/e4.glsl", serial=s, epoch=self.p.source_epoch), s + 1)
