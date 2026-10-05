@@ -570,10 +570,19 @@ html[data-style="signal"] table.chan th, html[data-style="signal"] table.chan td
 html[data-style="signal"] table.chan th { border-top: 0; font: 900 13px var(--sans); text-transform: uppercase; letter-spacing: .04em; color: var(--fg); }
 
 /* -- fields -- */
-html[data-style="signal"] .text-input, html[data-style="signal"] select, html[data-style="signal"] .pin-row input, html[data-style="signal"] .swatchpick { border: 3px solid var(--fg); border-radius: 0; background: var(--cd); color: var(--fg); min-height: 44px; }
-html[data-style="signal"] .text-input { font: 400 16px var(--sans); text-transform: none; }
+html[data-style="signal"] .text-input, html[data-style="signal"] select, html[data-style="signal"] .pin-row input, html[data-style="signal"] .swatchpick,
+html[data-style="signal"] input[type=text], html[data-style="signal"] input[type=number], html[data-style="signal"] input[type=search], html[data-style="signal"] input[type=password], html[data-style="signal"] input[type=time] {
+  border: 3px solid var(--fg); border-radius: 0; background: var(--cd); color: var(--fg); min-height: 44px;
+}
+html[data-style="signal"] .text-input, html[data-style="signal"] input[type=text], html[data-style="signal"] input[type=number], html[data-style="signal"] input[type=search], html[data-style="signal"] input[type=password], html[data-style="signal"] input[type=time] {
+  font: 400 16px var(--sans); text-transform: none; padding: 0 10px; min-width: 44px;
+}
+html[data-style="signal"] .pin-row input { padding: 0; }
 html[data-style="signal"] select { font: 600 16px var(--sans); padding: 0 8px; }
 html[data-style="signal"] .pin-row input { font-size: 28px; }
+html[data-style="signal"] input[type=checkbox] { -webkit-appearance: none; appearance: none; flex: none; width: 44px; height: 44px; margin: 0; border: 3px solid var(--fg); border-radius: 0; background: transparent; cursor: pointer; }
+html[data-style="signal"] input[type=checkbox]:checked { background: var(--ac); box-shadow: inset 0 0 0 6px var(--bg); }
+html[data-style="signal"] .slot { opacity: 1; border-width: 2px; border-radius: 0; }
 html[data-style="signal"] .swatch { border-radius: 0; border: 3px solid var(--fg); }
 html[data-style="signal"] .swatch.cur { outline: 3px solid var(--ink); outline-offset: 3px; }
 html[data-style="signal"] .progress { height: 16px; border: 3px solid var(--fg); border-radius: 0; background: transparent; }
@@ -598,7 +607,9 @@ html[data-style="signal"] input[type=range]::-moz-range-thumb { width: 6px; heig
 html[data-style="signal"] input[type=range]:disabled { opacity: .5; cursor: not-allowed; }
 html[data-style="signal"] .slider label, html[data-style="signal"] .ctlhead, html[data-style="signal"] .ctllabel { font: 900 16px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
 html[data-style="signal"] .ctlhead .slidervalue, html[data-style="signal"] .slider label span + span { letter-spacing: 0; }
-html[data-style="signal"] .ctls > .ctl { border-top: 0; padding: 8px 0; gap: 6px; }
+/* a shader's control is a div with the class the controller's cells also have (they are buttons): no box here */
+html[data-style="signal"] div.ctl { border: 0; border-radius: 0; background: none; padding: 8px 0; gap: 6px; min-height: 0; font-size: 16px; text-align: left; cursor: auto; overflow: visible; }
+html[data-style="signal"] div.ctl.compact { padding: 4px 0; }
 html[data-style="signal"] .track { padding-bottom: 18px; }
 html[data-style="signal"] .trackmark { border-top: 6px solid var(--fg); color: var(--mu); }
 

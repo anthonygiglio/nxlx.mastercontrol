@@ -55,6 +55,8 @@ function startServer() {
     const expected = /status of (400|401|403|409|502|503)/;
     page.on('console', (m) => { if (['error', 'warning'].includes(m.type()) && !expected.test(m.text())) problems.push(m.text()); });
     page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
+    const fontRequests = [];             // the default look must never ask for a font file; Signal asks the box itself
+    page.on('request', (r) => { if (/\.woff2?(\?|$)/.test(r.url())) fontRequests.push(r.url()); });
     const base = 'http://127.0.0.1:' + info.port;
     await page.goto(base + '/');
 
@@ -2343,6 +2345,165 @@ function startServer() {
     await page.click('nav >> text=Live');
     await page.waitForSelector('.pads');
     if (shots) await page.screenshot({ path: path.join(shots, '5-desktop.png') });
+
+    // ---- The look "Signal" (D54): chosen under System > Look, it restyles the whole panel; the default look, which
+    // every step above ran in, never loads its fonts. The layout checks run again with it on: nothing sticks out at
+    // 390 px, everything that can be tapped is 44 px at least (56 px on the Room screen), no text is under 13 px, every
+    // text reads at 4.5 to 1 on what is behind it, and the title, the open tab and the focus ring take the area's
+    // colour. This step comes last and puts the default look back.
+    {
+      assert.deepStrictEqual(fontRequests, [], 'the default look fetched a font file: ' + fontRequests.join(', '));
+      assert.strictEqual(await page.evaluate(() => document.documentElement.hasAttribute('data-style')), false, 'the default look has no style on the root element');
+      const AREA = { room: 'rgb(255, 214, 10)', shaders: 'rgb(255, 79, 163)', clips: 'rgb(61, 220, 151)', mix: 'rgb(183, 140, 255)', system: 'rgb(122, 162, 255)' };
+      await page.setViewportSize({ width: 390, height: 844 });
+      for (const id of ['room', 'shaders', 'control-midi', 'projector']) assert.strictEqual(await post('/api/modules/' + id, { enabled: true }), 200, 'module ' + id);
+      await post('/api/midi', { enabled: true });
+      try { fs.writeFileSync(path.join(info.midi_dir, 'plug'), ''); } catch (e) { /* the page is checked without a controller drawn */ }
+      await page.goto(base + '/');
+      await page.waitForSelector('nav.tabs');
+      await sys('Look');
+      await page.waitForSelector('#lookthemes');
+      assert((await page.locator('.swatch').count()) > 0, 'the default look offers accents');
+      await page.click('#lookthemes button[data-theme="signal"]');
+      await page.waitForSelector('html[data-style="signal"]');           // applies on tap, with no reload
+      await page.waitForSelector('#lookareas');
+      assert.strictEqual(await page.locator('.swatch').count(), 0, 'Signal has a colour per area, so no accent is offered');
+      assert.strictEqual(await page.getAttribute('#lookthemes button[data-theme="signal"]', 'aria-pressed'), 'true');
+      assert.deepStrictEqual((await get('/api/theme')).theme.name, 'signal', 'the box remembers the look');
+      // the fonts come from the box itself, with the right type
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForFunction(() => document.fonts.check('900 44px Archivo') && document.fonts.check('500 16px "JetBrains Mono"'), null, { timeout: 8000 });
+      const fontNames = fontRequests.map((u) => u.replace(base, '')).sort();
+      assert(fontNames.includes('/fonts/archivo-latin.woff2'), 'Archivo is fetched from the box: ' + fontNames.join(', '));
+      assert(fontRequests.every((u) => u.indexOf(base + '/fonts/') === 0), 'a font was asked for somewhere else: ' + fontRequests.join(', '));
+      for (const f of ['/fonts/archivo-latin.woff2', '/fonts/jetbrains-mono-500-latin.woff2']) {
+        const got = await page.evaluate((u) => fetch(u).then(async (r) => [r.status, r.headers.get('content-type'), (await r.arrayBuffer()).byteLength]), f);
+        assert(got[0] === 200 && got[1] === 'font/woff2' && got[2] > 4000, f + ' is served by the box as a font: ' + JSON.stringify(got));
+      }
+      assert(/^"?Archivo/.test(await page.evaluate(() => getComputedStyle(document.querySelector('#syspage h1')).fontFamily)), 'titles are set in Archivo');
+
+      // What one screen must hold in Signal.
+      const signalChecks = async (what, area, opts) => {
+        opts = opts || {};
+        await page.waitForTimeout(700);              // a page's own cards arrive after it opens
+        await fitsOn(page, 'Signal, ' + what);
+        const found = await page.evaluate(([wantArea, minButton]) => {
+          const out = [];
+          const root = document.documentElement;
+          if (root.getAttribute('data-style') !== 'signal') out.push('the style is gone');
+          if (root.getAttribute('data-area') !== wantArea) out.push('area is ' + root.getAttribute('data-area') + ', not ' + wantArea);
+          const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+          const name = (el) => (el.id ? '#' + el.id + ' ' : '') + (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 28);
+          // touch targets
+          document.querySelectorAll('.shell button, .shell select, .shell summary, .shell input, .shell .xypad').forEach((el) => {
+            if (!shown(el)) return;
+            const r = el.getBoundingClientRect();
+            if (r.height < 43.5 || r.width < 43.5) out.push('small (' + Math.round(r.width) + 'x' + Math.round(r.height) + '): ' + name(el));
+            if (minButton && el.tagName === 'BUTTON' && el.closest('#roomscreen') && r.height < minButton - 0.5) out.push('under ' + minButton + ' px on Room: ' + name(el));
+          });
+          // text: size, and contrast against what is behind it
+          const lum = (c) => { const v = c.map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+          const rgb = (s) => { const m = /rgba?\(([^)]+)\)/.exec(s); if (!m) return null; const p = m[1].split(/[ ,/]+/).map(Number); return { c: p.slice(0, 3), a: p.length > 3 ? p[3] : 1 }; };
+          const behind = (el) => { for (let e = el; e; e = e.parentElement) { const b = rgb(getComputedStyle(e).backgroundColor); if (b && b.a > 0.99) return b.c; } return null; };
+          const walker = document.createTreeWalker(document.querySelector('.shell'), NodeFilter.SHOW_TEXT);
+          const seen = new Set();
+          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+            const el = n.parentElement;
+            if (!n.nodeValue.trim() || seen.has(el) || el.tagName === 'OPTION' || !shown(el)) continue;
+            seen.add(el);
+            const cs = getComputedStyle(el);
+            if (parseFloat(cs.fontSize) < 13) out.push('text of ' + cs.fontSize + ': ' + name(el));
+            let faded = false;
+            for (let e = el; e; e = e.parentElement) if (e.disabled || parseFloat(getComputedStyle(e).opacity) < 1) faded = true;
+            const fg = rgb(cs.color), bg = behind(el);
+            if (faded || !fg || !bg || fg.a < 0.99) continue;
+            const a = lum(fg.c), b = lum(bg);
+            const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+            if (ratio < 4.5) out.push('contrast ' + ratio.toFixed(2) + ' (' + cs.color + ' on rgb(' + bg.join(', ') + ')): ' + name(el));
+          }
+          // the title: whole, inside the window
+          const h1 = document.querySelector('.screen h1');
+          if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
+          return out;
+        }, [area, opts.room ? 56 : 0]);
+        assert.deepStrictEqual(found, [], 'Signal, ' + what + ': ' + found.join('; '));
+        // the area's colour drives the title block and the open tab
+        const paint = await page.evaluate(() => {
+          const h1 = document.querySelector('.screen h1'), top = h1 && h1.closest('.top');
+          const tab = document.querySelector('nav.tabs .btn.on');
+          const bg = (el) => (el ? getComputedStyle(el).backgroundColor : '');
+          return { title: [bg(h1), bg(top)], tab: bg(tab), tabText: tab ? getComputedStyle(tab).color : '' };
+        });
+        assert(paint.title.includes(AREA[area]), 'Signal, ' + what + ': the title block is the area colour ' + AREA[area] + ': ' + JSON.stringify(paint));
+        if (!opts.fromLive) assert.strictEqual(paint.tab, AREA[area], 'Signal, ' + what + ': the open tab is the area colour: ' + JSON.stringify(paint));
+      };
+      // the main screens on a phone
+      await page.click('nav >> text=Room');
+      await page.waitForSelector('#roomscreen');
+      await signalChecks('Room', 'room', { room: true });
+      await page.keyboard.press('Tab');
+      const ring = await page.evaluate(() => { const cs = getComputedStyle(document.activeElement); return [document.activeElement.tagName, cs.outlineStyle, cs.outlineWidth, cs.outlineColor]; });
+      assert(ring[1] === 'solid' && ring[2] === '3px' && ring[3] === AREA.room, 'the focus ring on Room is the area colour, 3 px: ' + JSON.stringify(ring));
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('.pads');
+      await signalChecks('Live', 'clips');
+      await page.click('nav >> text=Mix');
+      await page.waitForSelector('#fliph');
+      await signalChecks('Mix', 'mix');
+      await page.click('nav >> text=Media');
+      await page.waitForSelector('#uploads');
+      await signalChecks('Media', 'clips');
+      await sysIndex();
+      await page.waitForSelector('.navrow .chip-ready, .navrow .chip-active, .navrow .chip-off');
+      await signalChecks('System index', 'system');
+      const longNames = await page.$$eval('.navname', (ns) => ns.filter((x) => x.scrollWidth > x.clientWidth + 1).map((x) => x.textContent));
+      assert.deepStrictEqual(longNames, [], 'a row name is cut off in capitals');
+      // pages under System: the longest titles, the instrument, the controller, and the rest of the pages by name
+      for (const name of ['Projectors', 'People and codes', 'Projection mapping', 'MIDI controller', 'Network', 'Schedule', 'Backup and reset']) {
+        await sys(name);
+        await signalChecks(name + ' page', 'system');
+      }
+      await sys('Shaders and Vibes');
+      await page.waitForSelector('#shaderpage');
+      await signalChecks('Shaders and Vibes page', 'shaders');
+      // a reload: the server writes the style into the page, so it is there before any script runs
+      const html = await page.evaluate(() => fetch('/').then((r) => r.text()));
+      assert(/<html lang="en" data-style="signal">/.test(html), 'the page as served carries the style');
+      // a laptop
+      await page.setViewportSize({ width: 1366, height: 800 });
+      await signalChecks('Shaders and Vibes page at 1366', 'shaders');
+      for (const name of ['MIDI controller', 'People and codes', 'Projectors']) {
+        await sys(name);
+        await signalChecks(name + ' page at 1366', 'system');
+      }
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('.pads');
+      await signalChecks('Live at 1366', 'clips');
+      // the light room
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.strictEqual(await post('/api/theme', { name: 'signal-light', accent: null }), 200);
+      await page.goto(base + '/');
+      await page.waitForSelector('nav.tabs');
+      assert.strictEqual(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(242, 240, 234)', 'Signal light has the off-white page');
+      await page.click('nav >> text=Room');
+      await page.waitForSelector('#roomscreen');
+      await signalChecks('Room in the light', 'room', { room: true });
+      await page.keyboard.press('Tab');
+      const ringLight = await page.evaluate(() => getComputedStyle(document.activeElement).outlineColor);
+      assert.strictEqual(ringLight, 'rgb(11, 11, 13)', 'in the light the focus ring is the text colour (yellow on off-white would be lost)');
+      await sysIndex();
+      await signalChecks('System index in the light', 'system');
+      await sys('Shaders and Vibes');
+      await page.waitForSelector('#shaderpage');
+      await signalChecks('Shaders and Vibes page in the light', 'shaders');
+      // back to the default look, as the box was
+      await sys('Look');
+      await page.click('#lookthemes button[data-theme="dark-stage"]');
+      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-style'));
+      assert((await page.locator('.swatch').count()) > 0, 'the default look offers accents again');
+      assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
+      await page.setViewportSize({ width: 1280, height: 800 });
+    }
 
     const csp = problems.filter((t) => /Content Security Policy|Refused to/i.test(t));
     assert.deepStrictEqual(csp, [], 'CSP violations: ' + csp.join('; '));

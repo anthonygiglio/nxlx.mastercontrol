@@ -443,6 +443,71 @@ function startServer() {
     await page.waitForSelector('.pad.on', { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(1200);
     await shot('live-desktop', (f) => page.screenshot({ path: f }));
+
+    // The look "Signal" (D54), so the owner can see it without a box: the six pictures named signal-*. The fonts are
+    // the box's own; each picture waits for them. The default look is put back at the end.
+    const fontsIn = () => soft('the Signal fonts', page.evaluate(() => document.fonts.ready).then(() => page.waitForFunction(() => document.fonts.check('900 44px Archivo') && document.fonts.check('500 16px "JetBrains Mono"'), null, { timeout: 8000 })));
+    try {
+      await api('POST', '/api/theme', { name: 'signal', accent: null });
+      for (const id of ['room', 'shaders', 'control-midi']) await api('POST', '/api/modules/' + id, { enabled: true });
+      await api('POST', '/api/midi', { enabled: true });
+      try { require('fs').writeFileSync(path.join(info.midi_dir, 'plug'), ''); } catch (e) { failures.push('signal: the fake controller could not be plugged in'); }
+      await api('POST', '/api/vibes', { on: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.reload();
+      await page.waitForSelector('html[data-style="signal"] nav.tabs');
+      await shot('signal-room-phone', async (f) => {
+        await page.click('nav >> text=Room');
+        await soft('signal: ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
+        await fontsIn();
+        await page.waitForTimeout(600);
+        await whole(f);
+      });
+      await shot('signal-system-index-phone', async (f) => {
+        await sysIndex();
+        await soft('signal: index states', page.waitForSelector('.navrow .chip-ready, .navrow .chip-active'));
+        await fontsIn();
+        await page.waitForTimeout(1500);
+        await whole(f);
+      });
+      await shot('signal-live-phone', async (f) => {
+        await page.click('nav >> text=Live');
+        await page.waitForSelector('.pads');
+        await fontsIn();
+        await page.waitForTimeout(1200);
+        await whole(f);
+      });
+      await page.setViewportSize({ width: 1366, height: 768 });
+      await shot('signal-shaders-laptop', async (f) => {
+        await sys('Shaders and Vibes');
+        await soft('signal: shaders page on a laptop', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
+        await fontsIn();
+        await page.waitForTimeout(800);
+        await page.screenshot({ path: f, fullPage: true });
+      });
+      await shot('signal-midi-laptop', async (f) => {
+        await sys('MIDI controller');
+        await soft('signal: the controller drawn', page.waitForSelector('.ctlgrid', { timeout: 15000 }));
+        await fontsIn();
+        await page.waitForTimeout(800);
+        await page.screenshot({ path: f, fullPage: true });
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await api('POST', '/api/theme', { name: 'signal-light', accent: null });
+      await page.reload();
+      await page.waitForSelector('html[data-style="signal"] nav.tabs');
+      await shot('signal-room-phone-light', async (f) => {
+        await page.click('nav >> text=Room');
+        await soft('signal light: ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
+        await fontsIn();
+        await page.waitForTimeout(600);
+        await whole(f);
+      });
+    } finally {
+      await api('POST', '/api/theme', { name: 'dark-stage', accent: null });
+      await api('POST', '/api/vibes', { on: false });
+      await api('POST', '/api/modules/room', { enabled: false });
+    }
   } catch (e) {
     failures.push('run: ' + e.message.split('\n')[0]);
   } finally {
