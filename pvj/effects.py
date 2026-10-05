@@ -136,13 +136,14 @@ def weigh(small, large):
 
 def measured(sid):
     """What was measured for a bundled filter on a Pi 4, or None: the filter's own pass in milliseconds and the frames
-    dropped a second by the clip's lines, at full size and with Half resolution ("1080", "1080_half", "720",
-    "720_half"), the largest of the two clips it held 30 frames a second over, at full size and at half, and the
+    dropped a second by the clip's lines, at full size and at half size, which for the 1080 line clip is a cap of
+    540 lines ("1080", "1080_half", "720", "720_half"), and for the 1080 line clip under a cap of 720 lines
+    ("1080_at_720"), the largest of the two clips it held 30 frames a second over, at full size and at half, and the
     lines Automatic lets it work at on that board ("works_at": where it held the 1080 line clip)."""
     if sid not in PI4:
         return None
     _, large, small = PI4[sid]
-    by = {"1080": large[0], "1080_half": large[1], "720": small[0], "720_half": small[1]}
+    by = {"1080": large[0], "1080_half": large[1], "720": small[0], "720_half": small[1], "1080_at_720": PI4_720[sid]}
     holds = lambda a, b: 1080 if a[1] < HOLDS else (720 if b[1] < HOLDS else None)
     return {"board": "pi4", "pass_ms": {k: v[0] for k, v in by.items()}, "drops_per_second": {k: v[1] for k, v in by.items()},
             "holds": holds(large[0], small[0]), "holds_half": holds(large[1], small[1]), "works_at": auto_lines("pi4", sid)}
@@ -165,11 +166,64 @@ HALF_LINES = 540                # what the superseded control "half": true means
 # The rule, for a board that was measured: the largest of the choices at which a filter holds 30 frames a second over
 # a 1080 line clip of 30 pictures a second; the next one down for the filters that do not hold there; the careful
 # value for an upload.
-#   pi4: filled in from the run on the owner's Pi 4 (project-log/JOURNAL.md, "effect detail on the Pi 4").
+#   pi4: MEASURED (PI4 above and PI4_720 below; project-log/JOURNAL.md, "effect detail on the Pi 4"). At full size every
+#        filter drops frames over a 1080 line clip; at 720 lines every one holds but isf-edge-blowout (1.6 dropped a
+#        second), which holds at 540 lines; at 540 lines all hold with nothing dropped. So 720, with that one filter
+#        at 540. An upload works at 540: nobody measured it, and the count from its text did not predict a cost.
 #   pi3: NOT MEASURED, and effects are not offered on a Pi 3 today (pvj/modules.d/shaders.json). The careful value,
 #        should they ever be: its GPU is the weaker one.
+# Every bundled filter over the 1080 line clip of PI4's run with a cap of 720 lines (so drawn at 1280 x 720), on the same
+# board and screen, 2026-10-05, 15 seconds each (60 where the first look was near the line): (the filter's own pass in
+# milliseconds, frames dropped a second). The same clip at 540 lines is PI4's "Half resolution" column: the same
+# 960 x 540 pixels, measured again for thirteen of the filters with the same result.
+PI4_720 = {
+    "fx-edge-glow.fs": (9.9, 0.0),
+    "fx-grade.fs": (4.7, 0.0),
+    "fx-kaleido.fs": (8.4, 0.0),
+    "fx-mirror-quad.fs": (4.1, 0.0),
+    "fx-pixel-grid.fs": (5.6, 0.0),
+    "fx-rgb-split.fs": (6.7, 0.0),
+    "fx-ring.fs": (7.2, 0.0),
+    "fx-ripple.fs": (6.8, 0.0),
+    "fx-slit-bands.fs": (5.9, 0.0),
+    "fx-twirl.fs": (7.6, 0.0),
+    "fx-vignette.fs": (4.7, 0.0),
+    "fx-wash.fs": (3.8, 0.0),
+    "isf-chromatic-aberration.fs": (5.4, 0.0),
+    "isf-color-monochrome.fs": (4.7, 0.0),
+    "isf-corner-color-tint.fs": (9.2, 0.0),
+    "isf-double-vision.fs": (7.2, 0.0),
+    "isf-duotone.fs": (3.4, 0.0),
+    "isf-edge-blowout.fs": (13.7, 1.56),
+    "isf-false-color.fs": (4.3, 0.0),
+    "isf-flip-h.fs": (3.7, 0.0),
+    "isf-flip-v.fs": (3.7, 0.0),
+    "isf-gamma-correction.fs": (4.3, 0.0),
+    "isf-hyperspace.fs": (6.3, 0.0),
+    "isf-interlace-mirror.fs": (4.7, 0.0),
+    "isf-kaleidoscope-tile.fs": (8.4, 0.0),
+    "isf-kaleidoscope.fs": (8.1, 0.0),
+    "isf-lgg.fs": (4.9, 0.0),
+    "isf-mirror.fs": (3.7, 0.0),
+    "isf-posterize.fs": (5.1, 0.0),
+    "isf-quad-tile.fs": (8.5, 0.0),
+    "isf-rgb-eq.fs": (4.0, 0.0),
+    "isf-rgb-halftone.fs": (8.7, 0.0),
+    "isf-rgb-invert.fs": (4.0, 0.0),
+    "isf-sine-warp-tile.fs": (7.6, 0.0),
+    "isf-triple-rotate.fs": (8.7, 0.0),
+    "isf-white-point-adjust.fs": (3.8, 0.0),
+    "isf-zoom.fs": (5.1, 0.0),
+}
+
+
+def _pi4_lines(sid):
+    """The largest of the two caps at which a Pi 4 held the 1080 line clip under this bundled filter."""
+    return 720 if PI4_720[sid][1] < HOLDS else 540
+
+
 AUTO = {
-    "pi4": {"lines": 720, "lower": {}, "other": 540, "measured": False},
+    "pi4": {"lines": 720, "lower": {sid: _pi4_lines(sid) for sid in sorted(PI4_720) if _pi4_lines(sid) < 720}, "other": 540, "measured": True},
     "pi3": {"lines": 540, "lower": {}, "other": 540, "measured": False},
 }
 AUTO["pi-other"] = AUTO["arm-other"] = AUTO["pi3"]      # a small board the box cannot name: the careful value, not measured

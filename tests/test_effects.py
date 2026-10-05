@@ -525,6 +525,17 @@ class WorkingSizeTest(unittest.TestCase):
             self.assertEqual(E.auto_lines(board, "fx-wash.fs", bundled=False), row["other"])
             self.assertEqual(E.auto_lines(board), row["other"])
         self.assertFalse(E.AUTO["pi3"]["measured"])                                    # the careful value, should effects ever run there
+        # The Pi 4's row is made from what the board measured, by the rule: the largest cap at which the filter held a
+        # 1080 line clip (fewer than half a dropped frame a second), the heavier ones one step down.
+        self.assertTrue(E.AUTO["pi4"]["measured"])
+        self.assertEqual(sorted(E.PI4_720), sorted(E.PI4))
+        for sid, (ms, dropped) in E.PI4_720.items():
+            full, half = E.PI4[sid][1]
+            self.assertTrue(half[0] < ms < full[0] and half[1] <= dropped <= full[1], sid)     # between the 540 line and the full size numbers
+            want = 720 if dropped < E.HOLDS else 540
+            self.assertEqual(E.auto_lines("pi4", sid), want, sid)
+            self.assertLess((E.PI4_720[sid][1] if want == 720 else half[1]), E.HOLDS, sid)    # and at what Automatic gives it, it held
+        self.assertEqual(E.AUTO["pi4"], {"lines": 720, "lower": {"isf-edge-blowout.fs": 540}, "other": 540, "measured": True})
         self.assertLessEqual(E.AUTO["pi3"]["lines"], E.AUTO["pi4"]["lines"])
         self.assertEqual(E.AUTO["pi3"]["lines"], 540)
         for detail, want in (("full", None), (540, 540), (720, 720)):
@@ -665,8 +676,10 @@ class LibraryTest(Base):
             row = rows[sid]
             self.assertEqual(row["weight"], weight, sid)
             self.assertEqual(row["measured"], {"board": "pi4",
-                                               "pass_ms": {"1080": large[0][0], "1080_half": large[1][0], "720": small[0][0], "720_half": small[1][0]},
-                                               "drops_per_second": {"1080": large[0][1], "1080_half": large[1][1], "720": small[0][1], "720_half": small[1][1]},
+                                               "pass_ms": {"1080": large[0][0], "1080_half": large[1][0], "720": small[0][0], "720_half": small[1][0],
+                                                           "1080_at_720": E.PI4_720[sid][0]},
+                                               "drops_per_second": {"1080": large[0][1], "1080_half": large[1][1], "720": small[0][1], "720_half": small[1][1],
+                                                                    "1080_at_720": E.PI4_720[sid][1]},
                                                "holds": 1080 if weight == "light" else (720 if weight == "medium" else None),
                                                "holds_half": 1080 if large[1][1] < E.HOLDS else (720 if small[1][1] < E.HOLDS else None),
                                                "works_at": E.auto_lines("pi4", sid)}, sid)
