@@ -1091,10 +1091,17 @@ class GuardTest(Live):
             st = self.engine.state()
         self.assertEqual((st["playing"]["load"], st["playing"]["drops_per_second"]), ("heavy", 4.0))
         self.assertEqual((st["playing"]["id"], self.row("nxlx-nebula.fs")["heavy"]), ("nxlx-nebula.fs", None))     # nothing is taken off or noted
+        # The load is the average over the guard's window (changed on purpose with the guard: it was the last look
+        # alone, so one quiet second read "ok" in the middle of a heavy shader). It comes down as the window empties.
         self.second(1)
-        self.assertEqual(self.engine.state()["playing"]["load"], "tight")
-        self.second(0)
-        self.assertEqual(self.engine.state()["playing"]["load"], "ok")
+        self.assertEqual(self.engine.state()["playing"]["load"], "heavy")
+        seen = []
+        for _ in range(7):
+            self.second(0)
+            st = self.engine.state()["playing"]
+            seen.append(st["load"])
+        self.assertEqual(seen, ["heavy", "heavy", "tight", "tight", "ok", "ok", "ok"])      # 17, 13, 9, 5, 1, 0, 0 frames in the last six seconds
+        self.assertEqual(st["drops_per_second"], 0.0)
 
     def test_vibes_moves_on_from_a_shader_that_keeps_dropping_frames_and_leaves_it_out(self):
         self.vibes.start()
@@ -1110,10 +1117,13 @@ class GuardTest(Live):
         self.assertLess(n, 9)                                         # after about six seconds over the limit, not after the dwell time
         self.assertNotEqual(self.vibes.current, bad)
         row = self.row(bad)
-        self.assertEqual((row["vibes"], row["heavy"]["drops"], row["heavy"]["height"]), (True, 3.0, 720))
+        # 2.5: the average over the six seconds it was judged on, of which the first was still quiet (it was 3.0
+        # while the guard looked at the last second only; changed on purpose)
+        self.assertEqual((row["vibes"], row["heavy"]["drops"], row["heavy"]["height"]), (True, 2.5, 720))
+        self.assertIs(type(self.settings.data["shaders"]["heavy"][bad]["height"]), int)
         self.assertNotIn(bad, self.engine.vibes_ids())
         self.assertTrue(any("left out" in n and bad in n for n in self.notes))
-        self.assertEqual(self.settings.data["shaders"]["heavy"][bad]["drops"], 3.0)       # kept across a restart
+        self.assertEqual(self.settings.data["shaders"]["heavy"][bad]["drops"], 2.5)       # kept across a restart
         self.vibes.stop()
         self.vibes.start()
         seen = set()
@@ -1193,11 +1203,14 @@ class GuardTest(Live):
         for _ in range(4):
             self.second(0)
             self.vibes.tick()
-        for pattern in ((5, 5, 5, 0), (9, 0, 0, 0)) * 4:              # never six seconds in a row
+        # One hitch, however many frames it costs, and a few frames now and then: under two a second over any six
+        # seconds once a single look counts for at most eight. (This was "(5, 5, 5, 0) is never six seconds in a
+        # row"; that pattern is 3.75 a second and is now marked, on purpose: see the bursty test.)
+        for pattern in ((30, 0, 0, 0, 0, 0, 0, 0), (9, 0, 0, 0, 0, 0, 1, 0)) * 3:
             for d in pattern:
                 self.second(d)
                 self.assertFalse(self.vibes.tick())
-        for _ in range(5):
+        for _ in range(3):
             self.second(3)
             self.vibes.tick()
         self.engine.change({"values": {"speed": 1.0}})               # a change is a new text: the count starts over
@@ -1206,6 +1219,69 @@ class GuardTest(Live):
             self.second(3)
             self.assertFalse(self.vibes.tick())
         self.assertEqual((self.vibes.current, self.engine.config().get("heavy")), (first, None))
+
+    def test_a_shader_that_drops_its_frames_in_bursts_is_marked(self):
+        """nxlx-lantern at 720 lines on the Pi 4: up to 8 frames a second, 3.8 on average, with a quiet second in
+        every six. The guard counted seconds in a row over the limit, started again at each quiet one, and never
+        marked it."""
+        self.vibes.start()
+        self.vibes.tick()
+        bad = self.vibes.current
+        for _ in range(3):
+            self.second(0)
+            self.vibes.tick()
+        burst = (8, 0, 7, 0, 8, 0)                                    # 23 in six seconds: 3.8 a second, never two bad seconds in a row
+        for n in range(4 * len(burst)):
+            self.second(burst[n % len(burst)])
+            if self.vibes.tick():
+                break
+        self.assertLess(n, 9)
+        self.assertNotEqual(self.vibes.current, bad)
+        mark = self.engine.config()["heavy"][bad]
+        self.assertGreaterEqual(mark["drops"], 2.0)
+        self.assertEqual((mark["height"], type(mark["height"])), (720, int))
+        self.vibes.stop()
+
+    def test_how_often_the_guard_is_asked_does_not_change_its_answer(self):
+        burst = (8, 0, 7, 0, 8, 0)
+        for every in (1, 2, 3):                                       # a look every second, every two, every three
+            self.engine.play("nxlx-tide.fs")
+            self.now[0] += 4
+            self.engine.state()
+            states = []
+            for n in range(24):
+                self.second(burst[n % len(burst)])
+                if n % every == every - 1:
+                    states.append(self.engine.state()["playing"]["load"])
+            self.assertEqual(states[-1], "heavy", every)
+            self.engine.off()
+            self.engine.state()
+
+    def test_a_light_shader_is_never_marked(self):
+        self.vibes.start()
+        self.vibes.tick()
+        first = self.vibes.current
+        for n in range(150):                                          # a frame every three seconds: 0.3 a second
+            self.second(1 if n % 3 == 0 else 0)
+            self.assertFalse(self.vibes.tick())
+            load = self.engine.state()["playing"]["load"]
+            self.assertNotEqual(load, "heavy")
+            if n > 12:                                                # once there is a whole window to average over
+                self.assertEqual(load, "ok")
+        self.assertEqual((self.vibes.current, self.engine.config().get("heavy")), (first, None))
+        self.vibes.stop()
+
+    def test_a_heavy_mark_keeps_its_lines_as_a_whole_number(self):
+        """The mark of the first run on the Pi read 720.0: the check that every settings write goes through made a
+        float of it."""
+        self.engine.note_heavy("nxlx-tide.fs", {"drops_per_second": 3.3})
+        self.engine.api_set({"action": "config", "guard": True}, None, "t")        # any later write of the settings
+        mark = self.settings.data["shaders"]["heavy"]["nxlx-tide.fs"]
+        self.assertEqual((mark["height"], type(mark["height"]), mark["drops"]), (720, int, 3.3))
+        self.assertEqual(json.dumps(mark["height"]), "720")
+        self.assertEqual(L.check_heavy({"a.fs": {"height": 720.0, "drops": 2.26}})["a.fs"], {"at": "", "drops": 2.3, "height": 720})
+        self.assertIs(type(L.check_heavy({"a.fs": {"height": 540.0}})["a.fs"]["height"]), int)
+        self.assertIs(type(self.row("nxlx-tide.fs")["heavy"]["height"]), int)
 
     def test_the_guard_can_be_switched_off(self):
         self.engine.api_set({"action": "config", "guard": False}, None, "t")

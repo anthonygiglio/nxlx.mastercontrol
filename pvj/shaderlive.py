@@ -270,7 +270,8 @@ def check_heavy(v):
         row = {"at": S._text(note.get("at"), 20)}
         for key in ("drops", "height"):
             n = note.get(key)
-            row[key] = round(float(n), 1) if isinstance(n, (int, float)) and not isinstance(n, bool) and n == n and 0 <= n <= 1e5 else 0
+            n = float(n) if isinstance(n, (int, float)) and not isinstance(n, bool) and n == n and 0 <= n <= 1e5 else 0.0
+            row[key] = int(round(n)) if key == "height" else round(n, 1)      # lines are whole numbers (720, never 720.0)
         if note.get("board") is not None:               # the board it was seen on; a mark without one is this box's own
             if not isinstance(note["board"], str) or not re.fullmatch(r"[a-z0-9-]{1,20}", note["board"]):
                 raise ValueError("the board of a heavy mark is not a board name")
@@ -384,10 +385,14 @@ def v3d_stats(pattern=V3D_STATS):
 
 
 class Guard:
-    """Watches the frames the player drops while a shader is on. More than LIMIT a second for WINDOW seconds in a row
-    is "heavy": too much for this box at this drawing size. The first SETTLE seconds after a shader comes on or is
+    """Watches the frames the player drops while a shader is on. LIMIT a second or more on average over the last
+    WINDOW seconds is "heavy": too much for this box at this drawing size. It is the average over the whole window
+    that counts, not every look: a shader that drops its frames in bursts (nxlx-lantern at 720 lines on the Pi 4, up
+    to 8 a second, 3.8 on average) had a quiet look in every six seconds and was never marked, and how often the
+    guard was asked decided the answer. One look counts for at most PEAK a second towards "heavy", so a single
+    hitch, however many frames it costs, is not a heavy shader. The first SETTLE seconds after a shader comes on or is
     changed are not counted (compiling it costs a few frames). Reading it changes nothing; Vibes acts on it."""
-    LIMIT, TIGHT, WINDOW, SETTLE, EVERY = 2.0, 0.5, 6.0, 3.0, 0.9
+    LIMIT, TIGHT, WINDOW, SETTLE, EVERY, PEAK = 2.0, 0.5, 6.0, 3.0, 0.9, 8.0
 
     def __init__(self, engine, clock=time.monotonic, stats=v3d_stats):
         self.engine, self._clock, self._stats = engine, clock, stats
@@ -395,7 +400,7 @@ class Guard:
         self._desc = None           # the shader text the numbers below belong to
         self._since = 0.0
         self._last = None           # (time, drop count)
-        self._over = None           # since when the rate has been above LIMIT without a break
+        self._seen = []             # the looks of the last WINDOW seconds: (time, frames dropped so far, the same with each look capped)
         self._gpu_last = None
         self.verdict = {"state": None, "drops_per_second": None, "gpu": None}
 
@@ -428,29 +433,34 @@ class Guard:
         now = self._clock()
         with self._lock:
             if playing is None:
-                self._desc, self._last, self._over, self._gpu_last = None, None, None, None
+                self._desc, self._last, self._seen, self._gpu_last = None, None, [], None
                 self.verdict = {"state": None, "drops_per_second": None, "gpu": None}
                 return self.verdict
             if playing["desc"] != self._desc:                       # a new text: compiling it costs frames; start over
-                self._desc, self._since, self._last, self._over = playing["desc"], now, None, None
+                self._desc, self._since, self._last, self._seen = playing["desc"], now, None, []
                 self.verdict = dict(self.verdict, state=None, drops_per_second=None)
             if self._last is not None and now - self._last[0] < self.EVERY:
                 return self.verdict
             drops = self._drops()
             gpu = self._gpu(now)
             if drops is None or now - self._since < self.SETTLE:
-                self._last = None if drops is None else (now, drops)
+                self._last, self._seen = (None if drops is None else (now, drops)), []
                 self.verdict = {"state": None, "drops_per_second": None, "gpu": gpu}
                 return self.verdict
             last, self._last = self._last, (now, drops)
             if last is None or now <= last[0] or drops < last[1]:
+                self._seen = []                                         # the player's count started again: so does the window
                 return self.verdict
-            rate = (drops - last[1]) / (now - last[0])
-            if rate >= self.LIMIT:
-                self._over = last[0] if self._over is None else self._over
-            else:
-                self._over = None
-            heavy = self._over is not None and now - self._over >= self.WINDOW
+            step, span = drops - last[1], now - last[0]
+            if not self._seen:
+                self._seen = [(last[0], 0.0, 0.0)]
+            self._seen.append((now, self._seen[-1][1] + step, self._seen[-1][2] + min(step, self.PEAK * span)))
+            while len(self._seen) > 2 and self._seen[1][0] <= now - self.WINDOW:     # keep one look at or before the window's start
+                self._seen.pop(0)
+            first, newest = self._seen[0], self._seen[-1]
+            whole = now - first[0]
+            rate = (newest[1] - first[1]) / whole                       # what is shown: the average over the window so far
+            heavy = whole >= self.WINDOW and (newest[2] - first[2]) / whole >= self.LIMIT
             self.verdict = {"state": "heavy" if heavy else ("tight" if rate >= self.TIGHT else "ok"), "drops_per_second": round(rate, 1), "gpu": gpu}
             return self.verdict
 
@@ -937,7 +947,7 @@ class LiveEngine(S.Engine):
         drops = (verdict or {}).get("drops_per_second") or 0
         with self._cfg:
             cfg = self.config()
-            mark = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": drops, "height": cfg["height"]}
+            mark = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": drops, "height": int(cfg["height"])}
             if self.board():
                 mark["board"] = self.board()
             cfg.setdefault("heavy", {})[sid] = mark
