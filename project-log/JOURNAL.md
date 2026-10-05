@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-05 (effects on the Pi 4: the first run on hardware, and every filter measured)
+
+**In progress; this entry is filled in as the run goes.** A measuring run on the owner's test Pi 4 over SSH while the owner slept, as `pvj-dev`, through the box's own API with a temporary paired device.
+
+First result: **an effect draws on V3D.** `isf-rgb-invert` over `testpattern.mkv` (H.264, 1280 x 720, decoded in software, `yuv420p`) is the negative of the clip in the panel's snapshot (0.8 percent RMS away from the negated plain snapshot, the grey box still grey, nothing flipped or moved); exactly one of the text's two hooks runs (one pass of 3.9 ms), no frame dropped in 10 seconds, nothing in the player's log.
+
 ## 2026-10-05 (effects: ISF filters over what plays)
 
 Pull request #81. **Not merged: it takes uploads and adds device-facing paths, and gets an independent review first.** Nothing here ran on the Pi; the dev Mac has no mpv, so every picture was drawn in CI on Mesa's software GPU.
