@@ -520,7 +520,7 @@ def load_themes(addons_dir=None):
 def _design_css(design):
     """The custom properties for the design tokens a theme sets. Each value is a whole number formatted here, or a
     string from a table in this file."""
-    out, full = [], dict(DESIGN_DEFAULTS, **design)
+    out = []
     px = (("radius_control", "--tk-r"), ("radius_panel", "--tk-rp"), ("border_width", "--tk-rule"),
           ("control_height", "--tk-ch"), ("control_height_large", "--tk-chl"))
     for key, prop in px:
@@ -541,12 +541,18 @@ def _design_css(design):
                              ("font_number", "--tk-f-number", NUMBER_FONTS)):
         if key in design:
             out.append("%s:%s" % (prop, table[design[key]]))
-    for key, prefix in (("tabs", "--tk-tab"), ("primary", "--tk-pri")):
-        if key in design:
-            if full[key] == "outlined":      # an outline is drawn in --ink: the area colour where it reads as a line, else the text colour
-                out += [prefix + "-bg:transparent", prefix + "-on:var(--fg)", prefix + "-line:var(--ink)", prefix + "-mark:6px"]
-            else:
-                out += [prefix + "-bg:var(--ac)", prefix + "-on:var(--on)", prefix + "-line:var(--ac)", prefix + "-mark:0px"]
+    # The open tab and a primary action: a block of the area's colour, or an outline. An outline is drawn in --ink (the
+    # area colour where it reads as a line on the page, else the text colour) with a bar of it along one edge.
+    if "tabs" in design:
+        if design["tabs"] == "outlined":
+            out += ["--tk-tab-bg:transparent", "--tk-tab-on:var(--fg)", "--tk-tab-shadow:inset 0 6px 0 var(--ink)"]
+        else:
+            out += ["--tk-tab-bg:var(--ac)", "--tk-tab-on:var(--on)", "--tk-tab-shadow:none"]
+    if "primary" in design:
+        if design["primary"] == "outlined":
+            out += ["--tk-pri-bg:transparent", "--tk-pri-on:var(--fg)", "--tk-pri-line:var(--ink)", "--tk-pri-shadow:inset 0 -6px 0 var(--ink)"]
+        else:
+            out += ["--tk-pri-bg:var(--ac)", "--tk-pri-on:var(--on)", "--tk-pri-line:var(--ac)", "--tk-pri-shadow:none"]
     return out
 
 

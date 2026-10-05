@@ -103,21 +103,22 @@ class DesignTokens(unittest.TestCase):
         css = themes.css(mine(design=every))
         for want in ("--tk-r:10px", "--tk-rp:16px", "--tk-rule:2px", "--tk-plain:transparent", "--tk-density:1.3", "--tk-ch:48px",
                      "--tk-chl:60px", "--tk-case:none", "--tk-track:0", "--tk-tw:800", "--tk-xw:500",
-                     "--tk-tab-bg:transparent", "--tk-tab-on:var(--fg)", "--tk-tab-line:var(--ink)", "--tk-tab-mark:6px",
-                     "--tk-pri-bg:transparent", "--tk-pri-mark:6px"):
+                     "--tk-tab-bg:transparent", "--tk-tab-on:var(--fg)", "--tk-tab-shadow:inset 0 6px 0 var(--ink)",
+                     "--tk-pri-bg:transparent", "--tk-pri-line:var(--ink)", "--tk-pri-shadow:inset 0 -6px 0 var(--ink)"):
             self.assertIn(want + ";", css[:-1] + ";", want)
         for want in ('--tk-f-text:"Archivo",system-ui,', ";--tk-f-title:system-ui,", ";--tk-f-number:ui-monospace,"):
             self.assertIn(want, css)
         self.assertIn("--tk-plain:var(--cd)", themes.css(mine(design={"border_width": 0})))
         filled = themes.css(mine(design={"tabs": "filled", "primary": "filled", "title_case": "capitals"}))
-        for want in ("--tk-tab-bg:var(--ac)", "--tk-tab-on:var(--on)", "--tk-tab-mark:0px", "--tk-pri-bg:var(--ac)", "--tk-case:uppercase", "--tk-track:.04em"):
+        for want in ("--tk-tab-bg:var(--ac)", "--tk-tab-on:var(--on)", "--tk-tab-shadow:none", "--tk-pri-bg:var(--ac)", "--tk-pri-shadow:none", "--tk-case:uppercase", "--tk-track:.04em"):
             self.assertIn(want, filled)
         # only what the theme sets: one token gives its own properties and no other
         one = themes.css(mine(design={"radius_control": 6}))
         self.assertEqual(re.findall(r"--tk-[a-z-]+", one), ["--tk-r"])
         self.assertNotIn("--tk-", themes.css(mine(design={})))
+        self.assertEqual(re.findall(r"--tk-[a-z-]+", themes.css(mine(design={"border_width": 1}))), ["--tk-rule", "--tk-plain"])
         # every value in the design part: a number with px, a plain number, a keyword, a var() of the panel's own, or a font stack from the table
-        value = r'(?:\d+px|\d+(?:\.\d+)?|\.04em|none|uppercase|transparent|var\(--[a-z]+\)|(?:"[A-Za-z ]+",)?(?:[a-z-]+|"[A-Za-z ]+")(?:,(?:[A-Za-z-]+|"[A-Za-z ]+"))*)'
+        value = r'(?:inset 0 -?6px 0 var\(--ink\)|\d+px|\d+(?:\.\d+)?|\.04em|none|uppercase|transparent|var\(--[a-z]+\)|(?:"[A-Za-z ]+",)?(?:[a-z-]+|"[A-Za-z ]+")(?:,(?:[A-Za-z-]+|"[A-Za-z ]+"))*)'
         for part in css[len(":root{"):-1].split(";"):
             if part.startswith("--tk-"):
                 self.assertRegex(part, r"^--tk-[a-z-]+:%s$" % value)
@@ -139,6 +140,47 @@ class DesignTokens(unittest.TestCase):
             self.assertEqual(themes.validate(mine(name=good)), [], good)
         for bad in ("", "a", "A1", "1a", "my theme", "my_theme", "a" * 42, "mine\n", "../x", "mine.json", 5, None):
             self.assertIn("bad id", themes.validate(mine(id=bad)), repr(bad))
+
+
+class Stylesheet(unittest.TestCase):
+    """The Signal block of app.css reads the tokens; with none set it must draw what it always drew."""
+
+    def setUp(self):
+        with open(os.path.join(os.path.dirname(themes.__file__), "web", "app.css")) as f:
+            css = f.read()
+        self.before, block = css.split("/* ==== STYLE: signal")
+        self.block = re.sub(r"/\*.*?\*/", "", "/*" + block, flags=re.S)
+
+    def test_every_token_the_stylesheet_reads_has_the_styles_own_value_behind_it(self):
+        self.assertNotIn("--tk-", self.before)                       # the default look knows nothing of them
+        uses = re.findall(r"var\(--tk-[a-z-]+[^a-z-]", self.block)
+        self.assertGreater(len(uses), 80)
+        self.assertEqual([u for u in uses if not u.endswith(",")], [])          # never var(--tk-x) with nothing behind it
+        self.assertNotRegex(self.block, r"[;{]\s*--tk-[a-z-]+\s*:")          # the stylesheet never sets one: only /theme.css does
+        defaults = {}
+        for name, value in re.findall(r"var\((--tk-[a-z-]+), ((?:[^()]|\([^()]*\))*?)\)", self.block):
+            defaults.setdefault(name, set()).add(value)
+        fonts = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+        self.assertEqual(defaults, {
+            "--tk-r": {"0"}, "--tk-rp": {"0"}, "--tk-rule": {"3px"}, "--tk-plain": {"transparent"}, "--tk-density": {"1"},
+            "--tk-ch": {"44px"}, "--tk-chl": {"56px"}, "--tk-case": {"uppercase"}, "--tk-track": {".04em"}, "--tk-tw": {"900"},
+            "--tk-xw": {"400"}, "--tk-f-text": {'"Archivo", ' + fonts}, "--tk-f-title": {'"Archivo", ' + fonts},
+            "--tk-f-number": {'"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace'},
+            "--tk-tab-bg": {"var(--ac)"}, "--tk-tab-on": {"var(--on)"}, "--tk-tab-shadow": {"none"},
+            "--tk-pri-bg": {"var(--ac)"}, "--tk-pri-on": {"var(--on)"}, "--tk-pri-line": {"var(--ac)"}, "--tk-pri-shadow": {"none"}})
+        # ...and those are the values the box writes for a theme that names every default: so such a theme is Signal
+        every = themes.css(mine(design=dict(themes.DESIGN_DEFAULTS)))
+        wrote = dict(p.split(":", 1) for p in every[len(":root{"):-1].split(";") if p.startswith("--tk-"))
+        self.assertEqual(set(wrote), set(defaults))                  # what the box can write is what the stylesheet reads
+        for name, value in wrote.items():
+            self.assertEqual(value.replace("0px", "0").replace(" ", ""), next(iter(defaults[name])).replace(" ", ""), name)
+
+    def test_a_staff_control_and_a_touch_target_keep_their_floor(self):
+        """The heights come from the theme now; the validator, not the stylesheet, holds 44 and 56."""
+        self.assertEqual(themes.DESIGN["control_height"][1], 44)
+        self.assertEqual(themes.DESIGN["control_height_large"][1], 56)
+        for sel in ("#roomscreen .btn", ".livecols .btn", ".tabs .btn"):
+            self.assertRegex(self.block, re.escape(sel) + r"[^{}]*\{[^}]*min-height: var\(--tk-chl, 56px\)", sel)
 
 
 class Contrast(unittest.TestCase):

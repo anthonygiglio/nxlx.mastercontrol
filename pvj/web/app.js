@@ -186,7 +186,7 @@
   function supportConnect() {
     var code = h('input', { class: 'text-input mono', id: 'supportcode', autocomplete: 'one-time-code', maxlength: 9, 'aria-label': 'Support code', placeholder: 'ABCD-2345' });
     code.addEventListener('input', function () { code.value = code.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 9); });
-    var go = h('button', { class: 'btn on big', id: 'supportlogin', text: 'Sign in' });
+    var go = h('button', { class: 'btn on pri big', id: 'supportlogin', text: 'Sign in' });
     go.addEventListener('click', function () {
       if (code.value.replace(/-/g, '').length !== 8) return say('Type the 8 character code the studio reads to you.', true);
       go.disabled = true;
@@ -244,7 +244,7 @@
         var ext = h('select', { class: 'text-input', id: 'supportextend' }, d.durations.map(function (m) { return h('option', { value: String(m), text: m + ' minutes from now', selected: m === 60 }); }));
         body.appendChild(h('div', { class: 'fieldwrap' }, h('label', { class: 'field', for: 'supportextend', text: 'Change how long it stays open' }),
           h('div', { class: 'row' }, ext, h('button', { class: 'btn', id: 'supportextendbtn', text: 'Set time', onclick: function () { post('/api/support/extend', { minutes: +ext.value }); } }))));
-        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'supportstop', text: 'Stop the session now', onclick: function () { post('/api/support/stop', {}); } })));
+        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'supportstop', text: 'Stop the session now', onclick: function () { post('/api/support/stop', {}); } })));
         return;
       }
       if (c.allowed && d.configured) {
@@ -254,7 +254,7 @@
         body.appendChild(h('div', { class: 'hint', text: 'Start a session when support asks for one. It closes by itself when the time is up, and you can stop it at any moment.' }));
         body.appendChild(labelled('How long', dur));
         body.appendChild(labelled('What support may do', role));
-        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'supportstart', text: 'Start support session', onclick: function (e) {
+        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'supportstart', text: 'Start support session', onclick: function (e) {
           e.target.disabled = true; e.target.textContent = 'Connecting...';
           post('/api/support/start', { confirm: 'start', minutes: +dur.value, role: role.value }).then(function (r) { if (!r.ok) draw(d); });
         } })));
@@ -836,7 +836,7 @@
       var dev = h('select', { class: 'text-input', id: 'inputdev', 'aria-label': 'Input' }, d.devices.map(function (x) { return h('option', { value: x.id, text: x.name + ' (' + x.id + ')' }); }));
       var mode = h('select', { class: 'text-input', id: 'inputmode', 'aria-label': 'Picture size' }, d.modes.map(function (m) { return h('option', { value: m, text: m }); }));
       body.appendChild(dev); body.appendChild(mode);
-      body.appendChild(h('button', { class: 'btn on small', id: 'inputshow', text: d.running ? 'Show again' : 'Show live input', onclick: function () {
+      body.appendChild(h('button', { class: 'btn on pri small', id: 'inputshow', text: d.running ? 'Show again' : 'Show live input', onclick: function () {
         say('Opening the input...');
         act('POST', '/api/play', { capture: { device: dev.value, mode: mode.value } }, function () { say('Showing the live input'); poll(); });
       } }));
@@ -940,7 +940,7 @@
             var to = h('input', { class: 'text-input', 'aria-label': 'New name for ' + d.name, value: d.name, autocomplete: 'off' });
             function back() { if (box.parentNode) box.parentNode.removeChild(box); row.hidden = false; }
             var box = h('div', { class: 'confirm renamebox' }, h('span', { text: 'New name' }), to, h('div', { class: 'row' },
-              h('button', { class: 'btn on grow', text: 'Rename', onclick: function () {
+              h('button', { class: 'btn on pri grow', text: 'Rename', onclick: function () {
                 var name = to.value.trim();
                 if (!name || name === d.name) return back();
                 act('POST', '/api/media/rename', { name: d.name, new: name }, refreshMedia);
@@ -993,7 +993,7 @@
       slideshow = h('div', { class: 'card', id: 'slideshow' },
         h('div', { class: 'k', text: 'Slideshow' }), src, secs, end,
         h('label', { class: 'row', for: 'slideshuffle' }, mix, h('span', { text: 'Random order' })),
-        h('button', { class: 'btn on small', id: 'slidestart', text: 'Start slideshow', onclick: function () {
+        h('button', { class: 'btn on pri small', id: 'slidestart', text: 'Start slideshow', onclick: function () {
           act('POST', '/api/play', { slideshow: { source: src.value, seconds: parseFloat(secs.value), ending: end.value, shuffle: mix.checked } }, function (d) {
             say('Slideshow: ' + d.images + ' pictures'); poll();
           });
@@ -1007,7 +1007,7 @@
       slideshow,
       full ? h('div', { class: 'card' },
         h('div', { class: 'k', id: 'freeline', text: (info.free !== undefined ? megabytes(info.free) + ' free' : '') + (info.max_upload ? ' \u00b7 largest file ' + megabytes(info.max_upload) : '') }),
-        picker, h('button', { class: 'btn on', id: 'uploadbtn', text: 'Upload clips', onclick: function () { picker.click(); } }), uploads) : null,
+        picker, h('button', { class: 'btn on pri', id: 'uploadbtn', text: 'Upload clips', onclick: function () { picker.click(); } }), uploads) : null,
       h('div', { class: 'card' }, h('div', { class: 'list' }, items.length ? items : h('div', { class: 'k', text: 'No clips yet. Upload some, or play them straight from a USB drive.' }))),
       (info.usb || []).map(function (drive) {
         return h('div', { class: 'card usb-drive', 'data-drive': drive.drive },
@@ -1554,7 +1554,7 @@
   function saveBar(id, text, onSave, others) {
     var note = h('span', { class: 'hint notsaved', id: id + 'dirty', text: 'Not saved yet', hidden: true });
     var result = h('div', { class: 'msg inmsg', id: id + 'result', role: 'status' });
-    var btn = h('button', { class: 'btn on', id: id, text: text || 'Save changes', disabled: true, onclick: function () { onSave(bar); } });
+    var btn = h('button', { class: 'btn on pri', id: id, text: text || 'Save changes', disabled: true, onclick: function () { onSave(bar); } });
     var bar = { btn: btn, result: result, note: note, isDirty: false,
       el: h('div', { class: 'savebar' }, h('div', { class: 'row wrap' }, btn, others || null, note), result),
       dirty: function (v) { bar.isDirty = !!v; btn.disabled = !v; note.hidden = !v; if (v) bar.say(''); },
@@ -1625,7 +1625,7 @@
     var body = on === null ? h('div', { class: 'card' }, h('div', { class: 'hint', id: 'syschecking', text: 'Checking...' })) :
       on || opts.bodyWhenOff ? h('div', { class: 'grid2', id: 'sysbody' }, opts.body ? opts.body() : null) :
       h('div', { class: 'card', id: 'sysoff' }, h('div', { text: 'Off. Your settings are kept while it is off.' }),
-        full ? h('div', { class: 'row' }, h('button', { class: 'btn on big grow', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } })) : null);
+        full ? h('div', { class: 'row' }, h('button', { class: 'btn on pri big grow', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } })) : null);
     setTimeout(pageState, 0);
     return h('div', { class: 'screen syspage', id: 'syspage', 'data-page': id },
       h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: S.sysFrom === 'live' ? '‹ Live' : '‹ System', onclick: sysBack })),
@@ -1958,7 +1958,7 @@
         if (!now) return false;
         return a.action === now.action && a.bank === now.bank && a.index === now.index && (!guardable(a.action) || a.guard === !!x.guard);
       }
-      var save = h('button', { class: 'btn on small', id: 'ctlsave', text: 'Save', onclick: function () {
+      var save = h('button', { class: 'btn on pri small', id: 'ctlsave', text: 'Save', onclick: function () {
         var a = chosen();
         act('POST', '/api/midi/map', { set: { controller: c.name, control: x.id, action: a } }, function (data) { say(x.name + ' now does: ' + midiWhat(a)); changed(data); });
       } });
@@ -2154,7 +2154,7 @@
         } })));
         poll();
       } else {
-        form.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'midilearn', text: 'Learn a control', onclick: function () {
+        form.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'midilearn', text: 'Learn a control', onclick: function () {
           remember();
           act('POST', '/api/midi/learn', { start: true }, function (data) { draw(data); });
         } })));
@@ -2329,7 +2329,7 @@
       d.streams.forEach(function (st) {
         body.appendChild(listRow({ cls: 'stream-entry', data: st.id, name: st.name, sub: st.url, key: 'stream-' + st.id, redraw: function () { draw(d); },
           state: playing === st.name ? 'Playing now' : '',
-          primary: can('live') ? h('button', { class: 'btn on', text: 'Play', 'aria-label': 'Play ' + st.name,
+          primary: can('live') ? h('button', { class: 'btn on pri', text: 'Play', 'aria-label': 'Play ' + st.name,
             onclick: function () { act('POST', '/api/play', { stream: st.id }, function () { say('Playing ' + st.name); poll(); }); } }) : null,
           more: full ? [h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + st.name, onclick: function (e) {
             confirmRow('Remove ' + st.name + '? Its address is forgotten.', 'Remove', 'Keep it', function () {
@@ -2347,7 +2347,7 @@
         return h('div', { class: 'addform', id: 'streamform' }, h('div', { class: 'field', text: 'Add a stream' }),
           labelled('Name', name), labelled('Address', url, 'Starts with srt://, rtsp:// or rtmp://. A login in the address is kept on the box and hidden here.'),
           h('div', { class: 'row' },
-            h('button', { class: 'btn on grow', id: 'streamadd', text: 'Add', onclick: function () {
+            h('button', { class: 'btn on pri grow', id: 'streamadd', text: 'Add', onclick: function () {
               api('POST', '/api/streams', { action: 'add', name: streamForm.name, url: streamForm.url }).then(function (r) {
                 if (!r.ok) return sayAt(err, r.data.error || 'Could not add the stream. Check the address.', true);
                 streamForm.name = ''; streamForm.url = ''; addOpen.stream = false; draw(r.data); say('Stream added.');
@@ -2394,7 +2394,7 @@
     }
     function row(name, state, problem, id, go) {
       return listRow({ cls: 'update-entry', name: name, state: state, problem: problem,
-        primary: h('button', { class: 'btn on', id: id, text: 'Install', onclick: function (e) { go(e.currentTarget); } }) });
+        primary: h('button', { class: 'btn on pri', id: id, text: 'Install', onclick: function (e) { go(e.currentTarget); } }) });
     }
     function draw(d) {
       clearTimeout(updateTimer);
@@ -2668,7 +2668,7 @@
           h('div', { class: 'row wrap' }, labelled('Columns of the wall', cols), labelled('Rows of the wall', rows)),
           h('div', { class: 'row wrap' }, labelled('This screen\'s column', col), labelled('This screen\'s row', row)),
           labelled('Frame between screens (percent)', bezel, 'How much of a screen\'s width its frame takes. That much picture is hidden, so lines stay straight across screens.'),
-          h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'wallsave', text: 'Save wall', onclick: function () {
+          h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'wallsave', text: 'Save wall', onclick: function () {
             post({ wall: { cols: +cols.value, rows: +rows.value, col: +col.value, row: +row.value, bezel: +bezel.value } },
               { wallcols: cols.value, wallrows: rows.value, wallcol: col.value, wallrow: row.value, wallbezel: bezel.value });
           } }))));
@@ -2777,7 +2777,7 @@
       }
       var clear = !p.has_password ? null : h('button', { class: 'switch', id: ids + 'clear', role: 'switch', 'aria-checked': e.clear ? 'true' : 'false', 'aria-label': 'Remove the password',
         onclick: function () { read(); e.clear = !e.clear; if (e.clear) e.password = ''; e.error = ''; draw(JSON.parse(shown), true); } });
-      var save = h('button', { class: 'btn on grow', id: ids + 'save', text: 'Save changes', onclick: function () {
+      var save = h('button', { class: 'btn on pri grow', id: ids + 'save', text: 'Save changes', onclick: function () {
         read();
         var out = change();
         if (out.port !== undefined && !(out.port >= 1 && out.port <= 65535)) { e.error = 'The port is a number from 1 to 65535 (4352 unless it was changed on the projector).'; err.textContent = e.error; return; }
@@ -2852,7 +2852,7 @@
       var n = projNaming, fields = {};
       function changed() { return p.inputs.filter(function (i) { return (n.texts[i.code] === undefined ? i.label : n.texts[i.code]).trim() !== i.label; }); }
       var err = h('div', { class: 'msg inmsg', id: 'projnameserr', role: 'alert' });
-      var save = h('button', { class: 'btn on grow', id: 'projnamessave', text: 'Save names', onclick: function () {
+      var save = h('button', { class: 'btn on pri grow', id: 'projnamessave', text: 'Save names', onclick: function () {
         keep();
         var todo = changed();
         save.disabled = true;
@@ -2966,7 +2966,7 @@
           labelled('Port', port, '4352 unless it was changed on the projector.'),
           labelled('PJLink password', pw, 'Only if the projector asks for one. It is kept on the box and never shown again.'),
           h('div', { class: 'row' },
-            h('button', { class: 'btn on grow', id: 'projadd', text: 'Add', onclick: function () {
+            h('button', { class: 'btn on pri grow', id: 'projadd', text: 'Add', onclick: function () {
               keep();
               api('POST', '/api/projectors', { add: { name: projForm.name || projForm.host, host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password } }).then(function (r) {
                 if (!r.ok) return sayAt(err, r.data.error || 'Could not add the projector. Check the address.', true);
@@ -3071,7 +3071,7 @@
         labelled('What happens', action), off, wrap.file, wrap.set, wrap.scene, wrap.preset,
         labelled('Note (optional)', label, 'A word for yourself, shown in the list.'),
         h('div', { class: 'row' },
-          h('button', { class: 'btn on grow', id: 'schedadd', text: editing ? 'Save changes' : 'Add', onclick: function () {
+          h('button', { class: 'btn on pri grow', id: 'schedadd', text: editing ? 'Save changes' : 'Add', onclick: function () {
             if (!f.days.length) return sayAt(err, 'Choose at least one day.', true);
             if (!/^\d\d:\d\d/.test(f.time)) return sayAt(err, 'Choose a time.', true);
             var entry = { time: f.time.slice(0, 5), days: f.days.slice(), action: f.action, label: f.label };
@@ -3359,7 +3359,7 @@
       body.appendChild(modes); body.appendChild(help); body.appendChild(fields);
       drawModes(); drawFields(); drawSecs();
       var wifiOffAsked = false;
-      var applyBtn = h('button', { class: 'btn on grow', id: 'netapply', text: 'Try this setting', onclick: function () {
+      var applyBtn = h('button', { class: 'btn on pri grow', id: 'netapply', text: 'Try this setting', onclick: function () {
           var c = config(kind());
           if (c.mode === 'off' && !wifiOffAsked) {
             return confirmRow('Switch Wi-Fi off? A phone that reaches the box over Wi-Fi loses it. The change goes back by itself unless it is confirmed from a wired connection.',
@@ -3405,7 +3405,7 @@
         h('div', { class: 'state', id: 'netleft', text: 'Reverts in ' + p.seconds_left + ' s' }),
         h('div', { class: 'hint', text: S.netNote || '' }),
         h('div', { class: 'row' },
-          h('button', { class: 'btn on grow', id: 'netconfirm', text: 'Confirm: keep this network', onclick: function () {
+          h('button', { class: 'btn on pri grow', id: 'netconfirm', text: 'Confirm: keep this network', onclick: function () {
             api('POST', '/api/network/confirm', {}).then(function (r) { S.netNote = r.ok ? '' : (r.data.error || ''); refresh(); });
           } }),
           h('button', { class: 'btn grow', id: 'netrevert', text: 'Go back now', onclick: function () {
@@ -3570,7 +3570,7 @@
         'A guest code lets someone open this panel on their own phone as ' + roleName('view') + ': they see what plays and change nothing. It stops working by itself.' }));
       live.appendChild(chooser('joinminutes', 'A new code works for', JOIN_MINUTES, accessForm.minutes, function (v) { accessForm.minutes = v; }));
       live.appendChild(h('div', { class: 'row wrap' },
-        h('button', { class: 'btn on small', id: 'newguest', text: 'Guest code', onclick: function (e) { make('view', e.target); } }),
+        h('button', { class: 'btn on pri small', id: 'newguest', text: 'Guest code', onclick: function (e) { make('view', e.target); } }),
         all ? h('button', { class: 'btn small', id: 'newpresenter', text: 'Presenter code', onclick: function (e) { make('live', e.target); } }) : null,
         all ? h('button', { class: 'btn small', id: 'printsheet', text: 'Print access sheet', onclick: function () { printSheet(d); } }) : null));
       if (!codes.length) live.appendChild(h('div', { class: 'hint', id: 'nocodes', text: all ? 'No code is active.' : 'No guest code is active.' }));
@@ -3597,7 +3597,7 @@
         var canShow = all || !scr.other;
         if (canShow) live.appendChild(chooser('showsecs', 'Show it for', SHOW_SECONDS, accessForm.seconds, function (v) { accessForm.seconds = v; }));
         live.appendChild(h('div', { class: 'row wrap' },
-          canShow ? h('button', { class: 'btn on small', id: 'showaccess', text: scr.showing ? 'Show again' : 'Show on the room screen', onclick: function (e) {
+          canShow ? h('button', { class: 'btn on pri small', id: 'showaccess', text: scr.showing ? 'Show again' : 'Show on the room screen', onclick: function (e) {
             var items = all ? ['pin', 'view', 'live'].filter(function (i) { return accessForm[i]; }) : ['view'];
             if (!items.length) return say('Choose what to show.', true);
             function show() { send('/api/access/screen', { show: true, items: items, seconds: accessForm.seconds }, 'On the room screen.'); }
