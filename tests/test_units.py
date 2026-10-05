@@ -427,6 +427,49 @@ class WebUnitCaptureTest(unittest.TestCase):
         self.assertEqual(web["DevicePolicy"], ["closed"])
 
 
+class WebUnitLightsTest(unittest.TestCase):
+    """D53: the panel may write to ALSA devices, for a known controller's lights. That one word changed; this pins
+    the whole device policy and the rest of the sandbox, so nothing else widens with it or after it."""
+
+    def test_the_device_policy_is_exactly_this(self):
+        web = load_units()["pvj-web.service"]
+        self.assertEqual(web["DevicePolicy"], ["closed"])
+        self.assertEqual(web["DeviceAllow"], ["/dev/null rw", "/dev/zero rw", "/dev/full rw", "/dev/random r", "/dev/urandom r",
+                                              "char-alsa rw", "char-video4linux rw"])
+        self.assertNotIn("PrivateDevices", web)             # it would hide /dev/snd; the policy above stands in for it
+
+    def test_nothing_else_in_the_sandbox_widened(self):
+        web = load_units()["pvj-web.service"]
+        self.assertEqual((web["User"], web["Group"], words(web, "SupplementaryGroups")), (["pvj-web"], ["pvj"], ["audio", "video"]))
+        self.assertEqual(web["CapabilityBoundingSet"], ["CAP_NET_BIND_SERVICE"])
+        self.assertEqual(web["AmbientCapabilities"], ["CAP_NET_BIND_SERVICE"])
+        self.assertEqual(sorted(words(web, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
+        self.assertEqual(words(web, "ReadWritePaths"), ["/var/lib/pvj", "/run/pvj/web"])
+        for key, value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"), ("ProtectHome", "yes"), ("PrivateTmp", "yes"),
+                           ("ProtectKernelTunables", "yes"), ("ProtectKernelModules", "yes"), ("ProtectControlGroups", "yes"),
+                           ("RestrictNamespaces", "yes"), ("LockPersonality", "yes"), ("SystemCallArchitectures", "native"), ("UMask", "0007")):
+            self.assertEqual(web[key], [value], key)
+
+    def test_no_other_unit_was_given_alsa_devices_for_writing(self):
+        for name, keys in load_units().items():
+            if name not in ("pvj-web.service", "pvj-player.service"):       # the player plays sound; it has no device policy of this kind
+                self.assertFalse([v for v in keys.get("DeviceAllow", []) if "alsa" in v], name)
+
+    def test_the_program_opens_only_a_midi_node_and_only_for_a_profile_with_lights(self):
+        # what the unit cannot say, the code does: the one place that opens a device for writing checks the path's
+        # shape, refuses links, and wants a character device with ALSA's major number
+        from pvj import midi
+        self.assertEqual(midi.ALSA_MAJOR, 116)
+        for path in ("/dev/snd/pcmC0D0p", "/dev/snd/controlC0", "/dev/snd/seq", "/dev/snd/timer", "/dev/snd/midiC0D0/../pcmC0D0p",
+                     "/dev/snd/midiC0D0\n", "/dev/null", "midiC0D0", 7, None):
+            with self.assertRaises(OSError, msg=path):
+                midi.LightWriter._open_device(path)
+        with open(midi.__file__) as f:
+            source = f.read()
+        self.assertEqual(source.count("O_WRONLY"), 1)        # one place opens for writing
+        self.assertNotIn("O_RDWR", source)
+
+
 class WebUnitTest(unittest.TestCase):
     def test_the_panel_may_read_the_boxs_addresses(self):
         # `ip -j addr` needs a netlink socket; the sandbox refused it and the Network card showed no addresses on a Pi 4

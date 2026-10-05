@@ -906,9 +906,11 @@ class LightWriter:
     """Writes one controller's lights, on its own thread and its own write-only handle (never the reader's).
 
     There is no queue to grow: `show()` replaces a table of the value each light should have, the thread sends what
-    differs from what it last sent, a few at a time under the rate limit, and when anything is in doubt (a full
-    buffer, a fresh device) it forgets what it sent and sends the whole table again. `show()` and `test()` only swap
-    a table under a lock held for moments; nothing here is ever called while waiting for the device."""
+    differs from what the device took, a few at a time under the rate limit. A device that takes nothing (a full
+    buffer) is not waited for and nothing piles up: the table simply keeps being replaced, and what differs then is
+    sent when the device takes messages again. A fresh device (plugged in again) starts from nothing known, so it
+    gets the whole table. `show()` and `test()` only swap a table under a lock held for moments; nothing here is
+    ever called while waiting for the device."""
 
     def __init__(self, path, source, lights, keys, open_fn=None, clock=time.monotonic, log=print):
         self.path, self.source, self.lights, self.log, self._clock = path, source, lights, log, clock
@@ -927,6 +929,7 @@ class LightWriter:
         self.sent = 0                   # messages written, for the page and the tests
         self.since = clock()            # when it was made, then when it ended
         self.reader = None              # the MidiInput it belongs to: a controller plugged in again gets a new writer
+        self.asked = 0                  # the hub's count of settings changes when it was made
 
     @staticmethod
     def _open_device(path):
@@ -979,7 +982,7 @@ class LightWriter:
 
     def _pending(self, have):
         """With the lock held: the messages that would make the device match the table, in the drawn order."""
-        want = dict(self._want, **self._over) if self._over else self._want
+        want = {**self._want, **self._over} if self._over else self._want
         return [(k, want[k]) for k in self.keys if k in want and have.get(k) != want[k]]
 
     def _write(self, fd, data):
@@ -1033,12 +1036,12 @@ class LightWriter:
                         have[k] = v
                     tokens -= whole
                     self.sent += whole
-                    if n < len(data):                   # the device is not taking it: finish the cut message, then start
-                        if n % 3:                       # from nothing known, so the whole table goes again
-                            tail = data[n:whole * 3 + 3]
+                    if n < len(data):                   # the device is not taking it: nothing is queued for later. The one
+                        if n % 3:                       # message that was cut is finished first; the rest stays a difference
+                            k, v = batch[whole]         # between the tables and is worked out again from what is wanted then
+                            tail, have[k] = data[n:whole * 3 + 3], v
                             tokens -= 1
                             self.sent += 1
-                        have = {}
                         self._stop.wait(0.05)
                         continue
                 if len(todo) > len(batch):
@@ -1107,6 +1110,7 @@ class MidiHub:
         self._light_thread = None
         self._light_wake = threading.Event()
         self._player_seen = None  # (time, what the player last said), for the lights
+        self._light_asked = 0     # goes up with every apply(): a writer that had no permission is tried once more then
         self._open_fn, self._lister, self._namer, self._clock = open_fn, lister, namer, clock
         self.profiles = load_profiles(log=log) if profiles is None else profiles
         self._describer = describer
@@ -1283,11 +1287,14 @@ class MidiHub:
                     self._ending.append(self.lights.pop(path))
                     self._lit.pop(path, None)
                 elif not w.alive and w.state in ("busy", "failed", "gone") and now - w.since >= LIGHT_RETRY:
-                    del self.lights[path]               # tried again below; "installer" is not, until it is replugged or switched
+                    del self.lights[path]               # tried again below
+                elif not w.alive and w.state == "installer" and w.asked != self._light_asked:
+                    del self.lights[path]               # no permission: not tried again by itself, only when it is plugged in
+                                                        # again or a MIDI setting is changed (once per change, so never a loop)
             for path, (src, profile, level) in want.items():
                 if path not in self.lights and not any(w.path == path for w in self._ending):
                     w = LightWriter(path, src, profile["lights"], self._light_keys(profile), open_fn=self._light_open_fn, clock=self._clock, log=self.log)
-                    w.reader = self.inputs[path]
+                    w.reader, w.asked = self.inputs[path], self._light_asked
                     self.lights[path] = w
                     w.start()
             live = [(path, self.lights[path]) + want[path] for path in self.lights if self.lights[path].alive]
@@ -1574,6 +1581,7 @@ class MidiHub:
             if self._light_thread is None or not self._light_thread.is_alive():
                 self._light_thread = threading.Thread(target=self._lights_loop, daemon=True, name="midi-lights-state")
                 self._light_thread.start()
+        self._light_asked += 1
         self._light_wake.set()                          # a switch or a brightness that changed shows at once
 
     def _stop_all(self):
@@ -1676,6 +1684,8 @@ def validate(body, current, known=None):
             if not isinstance(body[key], bool):
                 raise MidiError("%s must be true or false" % key)
             new[key] = body[key]
+    if "controller" not in body and (isinstance(body.get("lights"), bool) or "brightness" in body):
+        raise MidiError("name the controller")           # (a stored "lights" object, as in an import, is not this)
     if "controller" in body and "standard" not in body and ("lights" in body or "brightness" in body):
         return validate_light_choice(body, new, known)   # one controller's lights, on or off, and their brightness
     if "controller" in body or "standard" in body:      # the standard layout of one controller, on or off
