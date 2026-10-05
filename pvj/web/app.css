@@ -353,9 +353,11 @@ div.ctl.compact { padding: 4px 0; }
 .fxstage > div:empty { display: none; }
 /* The four choices by work sit in cells wide enough for the longest word in the widest face (MEDIUM in the Signal
    look is 79 px, 113 with its padding and border): four across where there is room, two by two in a narrow column.
-   A grid cannot push a cell out of the card, which a row that keeps its words' widths did. */
-.fxlib .seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 6px 0; }
-.fxlib .seg .segbtn { min-width: 0; }
+   The cells stand apart: a joined row pulls each cell 3 px to the left over its neighbour's border, and the first
+   cell of a second line has no neighbour there, so it stood out of the card (the Signal look's check found it). */
+.fxlib .seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 6px; }
+.fxlib .seg .segbtn { min-width: 0; border-radius: 6px; }
+#fxweight .segbtn { margin-left: 0; }
 .list .item.fxrow { align-items: flex-start; padding: 10px 0; }
 .list .item.fxrow.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
 .fxrow .chip { margin-left: 8px; }
