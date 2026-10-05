@@ -22,6 +22,8 @@ Pull request #82. **Not merged: it widens the panel's sandbox and writes to devi
 
 **Left out.** A light per shader input; lights addressed differently from their control; the Launchpad's flashing; the MIDI Mix's Solo row. The narrower sandbox (a udev group for MIDI nodes, or a helper) is described in D53 and not built.
 
+**One CI job hung, cause not found.** Of the first four runs of the unit tests on the same commit, one (Python 3.12) sat in the unit test step for 35 minutes until it was cancelled; the same job passed when run again, and the other three passed. A cancelled job's log could not be fetched, so which test it was is not known. master has no such hang in its last thirty runs, so this branch is the suspect: every hub now has one more thread. What was done: the writer's switch-off deadline uses the real clock (it used the hub's, which a test may freeze), and `tests/test_lights.py` now ends the run with every thread's stack if that module ever takes seven minutes. If it happens again outside that module, add the same watch around the whole run.
+
 **Not sure about.** Whether a pulsing light is calm enough in a dark room (it is one line in a profile to change). Whether the nanoKONTROL2's Track and Marker buttons really have no light. Whether the Launchpad's reset on plug-in has a visible side effect. Whether the Pi's systemd lets the open for writing through with `rw` (it should; nobody ran it).
 
 ## 2026-10-04 (evening: what landed, the redesign workspace, a full disk)

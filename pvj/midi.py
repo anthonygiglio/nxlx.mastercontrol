@@ -1069,8 +1069,8 @@ class LightWriter:
     def _off(self, fd, tail=b""):
         """Every light off, within a second: the profile's own clear message if it has one, else each light's off."""
         data = tail + (b"".join(self.lights["clear"]) or b"".join(k + bytes((self.lights["off"],)) for k in self.keys))
-        end = self._clock() + 1.0
-        while data and self._clock() < end:
+        end = time.monotonic() + 1.0                    # the real clock: a deadline must pass even where the hub's clock is a test's
+        while data and time.monotonic() < end:
             n = self._write(fd, data[:LIGHT_BURST * 3])
             data = data[n:]
             self.sent += n // 3

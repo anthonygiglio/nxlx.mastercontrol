@@ -7,6 +7,7 @@ Nothing here has touched a real controller: a pipe stands in for each device, an
 and compared. Whether a real Launchpad Mini, nanoKONTROL2 or MIDI Mix lights up as its maker's document says is not
 tested by this file and cannot be."""
 import copy
+import faulthandler
 import os
 import threading
 import time
@@ -21,6 +22,16 @@ from tests.test_shader_engine import ALL, Live
 QUIET = {"pads": [], "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
          "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
          "scenes": [], "applying": None}
+
+
+def setUpModule():
+    # This module is all threads and pipes. If anything in it ever waits for good, say where (every thread's stack)
+    # and end the run, instead of a job that sits silent until someone cancels it. It takes under a minute.
+    faulthandler.dump_traceback_later(420, exit=True)
+
+
+def tearDownModule():
+    faulthandler.cancel_dump_traceback_later()
 
 
 def snap(**over):
@@ -670,7 +681,7 @@ class LightsNeverWaitTest(Live):
             hub._lights_tick()
             got.append(hub.status())
         with self.engine._lock:
-            t = threading.Thread(target=run)
+            t = threading.Thread(target=run, daemon=True)
             t0 = time.monotonic()
             t.start()
             t.join(10)
