@@ -1565,6 +1565,53 @@ class ApiTest(ServerBase):
             self.assertEqual(st, 200, body)
             self.assertEqual(self.settings.data["projectors"], before)
 
+    def test_an_input_change_refused_as_the_edit_lands_says_so_even_while_the_old_check_is_still_ending(self):
+        """The test below failed now and then with 'ERR3' in place of 'stopped'. When the edit lands while the old
+        worker's thread is in the middle of a status check, the projector has no worker for a moment (the old thread
+        takes it over when it is done), and set_input looked for the worker before it looked at the address: the
+        person was told "unavailable" about an address they had just replaced. Here the old check is held open, so
+        it is so every time."""
+        self.fast()
+        other = FakeProjector("pw1", inputs=("11", "33"), name="The other one")
+        self.addCleanup(other.close)
+        pid = self.add()[1]["projectors"][0]["id"]
+        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+        held, real = dict(self.stored()), self.api._pjlink
+        inside, let_go, mine = threading.Event(), threading.Event(), threading.current_thread()
+        self.addCleanup(let_go.set)
+
+        def link(entry):
+            lk = real(entry)
+            if entry["port"] == self.fake.port and threading.current_thread() is not mine:
+                state = lk.state
+
+                def slow_state():                                       # the background check, held in the middle
+                    inside.set()
+                    let_go.wait(5)
+                    return state()
+                lk.state = slow_state
+            elif entry["port"] == self.fake.port:
+                send = lk.set_input
+
+                def set_input(code):
+                    try:
+                        return send(code)                               # the old projector: ERR3
+                    finally:
+                        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port}})[0], 200)
+                        self.assertTrue(self.api.projectors.status(pid)["waiting"])     # no worker: the old thread still has it
+                lk.set_input = set_input
+            return lk
+        with mock.patch.object(self.api, "_pjlink", link):
+            self.assertTrue(inside.wait(5))
+            with self.assertRaises(projector.ProjectorError) as e:
+                self.api.projectors.set_input(held, "31")
+            self.assertEqual(e.exception.code, "stopped")
+            self.assertIn("address was changed", str(e.exception))
+            let_go.set()
+            self.assertTrue(wait_for(lambda: (self.projector()["details"] or {}).get("name") == "The other one"))
+        self.assertIsNone(self.projector()["status"]["pending_input"])
+        self.assertEqual([r for r in other.received if "INPT" in r and "?" not in r], [])       # the new one got no input command
+
     def test_an_input_change_asked_before_an_edit_goes_nowhere_after_it(self):
         """Review finding 2. The input was chosen from the old projector's list. Queued behind the edit it is not
         sent to the old address and not to the new one; refused by the old one as the edit lands, it is not
