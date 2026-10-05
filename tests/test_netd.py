@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -691,6 +692,7 @@ class SocketTest(unittest.TestCase):
         self.nm = FakeNm()
         self.svc = NetService(runner=self.nm, sysfs=make_sysfs())
         self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
         self.path = os.path.join(self.dir, "netd.sock")
         self.allowed = True
         self.server = NetServer(self.path, self.svc, lambda uid: self.allowed)
@@ -712,6 +714,68 @@ class SocketTest(unittest.TestCase):
         self.allowed = False
         self.assertEqual(self.client.request({"cmd": "status"}), {"ok": False, "error": "not allowed"})
         self.assertEqual(self.nm.calls, [])
+
+    def test_a_refusal_that_comes_before_the_request_was_sent_is_still_read(self):
+        # The helper refuses and closes without reading. When it is quicker than the caller, the caller's write
+        # fails with a broken pipe while the refusal is already waiting to be read: the caller said "is not running"
+        # (seen now and then in CI as a BrokenPipeError in the test above). Here the order is forced: every client
+        # writes only once the helper has closed. The peer check is stood in for, so this also runs without
+        # SO_PEERCRED.
+        from unittest import mock
+        from pvj import netd
+        from pvj.supportd import SupportdClient
+        from pvj.sysd import SysdClient
+        closed = threading.Event()
+
+        class Server(NetServer):
+            def shutdown_request(self, request):
+                super().shutdown_request(request)
+                closed.set()
+
+        class LateSender(socket.socket):
+            def __init__(self, *a, fileno=None, **k):
+                super().__init__(*a, fileno=fileno, **k)
+                self.mine = fileno is None              # the helper's accepted sockets are made from a file number
+
+            def sendall(self, *a):
+                assert not self.mine or closed.wait(5), "the helper never closed"
+                return super().sendall(*a)
+        path = os.path.join(self.dir, "refuse.sock")
+        with mock.patch.object(netd, "peer_uid", lambda sock: 12345):
+            server = Server(path, self.svc, lambda uid: False)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            for client in (NetdClient, SysdClient, SupportdClient):
+                closed.clear()
+                with mock.patch.object(socket, "socket", LateSender):
+                    reply = client(path, timeout=5).request({"cmd": "status"})
+                self.assertEqual(reply, {"ok": False, "error": "not allowed"}, client.__name__)
+        self.assertEqual(self.nm.calls, [])
+
+    def test_a_helper_that_is_gone_is_still_not_running(self):
+        # a failed write with nothing to read stays what it was: the helper is not there
+        gone = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        path = os.path.join(self.dir, "gone.sock")
+        gone.bind(path)
+        gone.listen(1)
+        done = threading.Event()
+
+        def hang_up():
+            conn, _ = gone.accept()
+            conn.close()
+            done.set()
+        threading.Thread(target=hang_up, daemon=True).start()
+        from unittest import mock
+
+        class LateSender(socket.socket):
+            def sendall(self, *a):
+                assert done.wait(5)
+                return super().sendall(*a)
+        with mock.patch.object(socket, "socket", LateSender):
+            with self.assertRaises(NetError):
+                NetdClient(path, timeout=5).request({"cmd": "status"})
+        gone.close()
 
     def test_garbage_and_oversized_requests(self):
         for raw in (b"not json\n", b"[1,2]\n", b"[" * 3000 + b"\n", b"x" * 5000 + b"\n"):

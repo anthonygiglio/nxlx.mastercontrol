@@ -463,6 +463,44 @@ class _Handler(socketserver.StreamRequestHandler):
             pass
 
 
+def exchange(path, message, timeout):
+    """One request line to a helper's socket and its one reply line, as bytes. Raises OSError (socket.timeout when
+    the helper is slow).
+
+    A helper refuses a caller it does not know by answering and closing WITHOUT reading. When it is quicker than
+    the caller, the caller's write fails with a broken pipe while the refusal is already waiting to be read. So a
+    failed write is not the end: what the helper sent is read first, and the write's error counts only if there
+    was nothing."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(path)
+        unsent = None
+        try:
+            s.sendall(json.dumps(message).encode() + b"\n")
+        except socket.timeout:
+            raise
+        except OSError as e:                # a broken pipe or a reset: the helper has closed already
+            unsent = e
+        data = b""
+        try:
+            while not data.endswith(b"\n") and len(data) < 65536:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+        except socket.timeout:
+            raise
+        except OSError:                     # closed under us: what was read before counts, if it is a whole answer
+            if not data.endswith(b"\n"):
+                raise
+        if unsent is not None and not data:
+            raise unsent
+        return data
+    finally:
+        s.close()
+
+
 class NetdClient:
     """Used by the panel: one request, one reply."""
 
@@ -470,22 +508,10 @@ class NetdClient:
         self.path, self.timeout = path, timeout
 
     def request(self, message):
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(self.timeout)
         try:
-            s.connect(self.path)
-            s.sendall(json.dumps(message).encode() + b"\n")
-            data = b""
-            while not data.endswith(b"\n") and len(data) < 65536:
-                chunk = s.recv(65536)
-                if not chunk:
-                    break
-                data += chunk
-            return json.loads(data)
+            return json.loads(exchange(self.path, message, self.timeout))
         except (OSError, ValueError):
             raise NetError("the network helper (pvj-netd) is not running")
-        finally:
-            s.close()
 
 
 def safe_state_dir():

@@ -29,7 +29,7 @@ import threading
 import time
 
 from . import paths
-from .netd import NetServer  # the same small, reviewed socket server
+from .netd import exchange, NetServer  # the same small, reviewed socket server
 
 IFACE = "wg-pvj"
 TABLE = "pvj_support"
@@ -329,24 +329,12 @@ class SupportdClient:
         self.path, self.timeout = path, timeout
 
     def request(self, message):
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(self.timeout)
         try:
-            s.connect(self.path)
-            s.sendall(json.dumps(message).encode() + b"\n")
-            data = b""
-            while not data.endswith(b"\n") and len(data) < 65536:
-                chunk = s.recv(65536)
-                if not chunk:
-                    break
-                data += chunk
-            reply = json.loads(data)
+            reply = json.loads(exchange(self.path, message, self.timeout))
         except socket.timeout:
             raise OSError("the remote support helper (pvj-supportd) did not answer in time")
         except (OSError, ValueError):
             raise OSError("the remote support helper (pvj-supportd) is not running")
-        finally:
-            s.close()
         if not isinstance(reply, dict):
             raise OSError("the remote support helper (pvj-supportd) gave a bad answer")
         return reply
