@@ -20,7 +20,7 @@
   },
   "states": {
     "off": "#3a3a42",
-    "setup": "#ffb020",
+    "setup": "#ff9500",
     "active": "#00e0ff",
     "problem": "#ff3b30",
     "error": "#ff3b30"
