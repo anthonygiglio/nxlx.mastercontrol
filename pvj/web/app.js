@@ -709,7 +709,10 @@
       if (!r.ok) { say(r.data.error || 'Could not move that corner', true); mapApi('GET').then(function (x) { if (x.ok && !x.stale) draw(x.data); }); }
       else if (final && !r.stale) { say(''); draw(r.data); }
     }
-    function draw(data) {
+    // Every answer rebuilds the card, and one can arrive while a name is being typed or the canvas is being moved
+    // with the arrow keys: the control in use keeps the cursor, and a field what was typed into it.
+    function draw(data) { keepCursor(body, function () { build(data); }); }
+    function build(data) {
       d = data;
       body.textContent = '';
       var st = d.status, s = selected();
@@ -813,6 +816,7 @@
       body.appendChild(h('div', { class: 'row' }, setName, h('button', { class: 'btn small', id: 'mapsave', text: 'Save',
         onclick: function () { send({ action: 'save', name: mapUi.name.trim() }).then(function (r) { if (r.ok) mapUi.name = ''; }); } })));
       body.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture above (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
+      if (body.isConnected) paint();     // at once, so the canvas has its height and nothing below it jumps for a frame under a finger
       requestAnimationFrame(paint);
       watch();
     }
@@ -1519,6 +1523,26 @@
   }
   // A card that redraws by itself waits while a question is open in it, so the question is not wiped.
   function asking(el) { return !!(el && el.querySelector('#confirmrow')); }
+  // A card that is rebuilt whole must not take the cursor from the person using it. rebuild() runs in between; the
+  // control that had the cursor is found again by its id and gets the cursor back, and a field also what was typed
+  // into it and the place in it. (An answer from the box can arrive while a name is being typed: without this the
+  // keyboard closed, and the letters typed after it went nowhere.)
+  function keepCursor(container, rebuild) {
+    var a = document.activeElement, keep = null;
+    if (a && a.id && container.contains(a)) {
+      var field = /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'range';
+      keep = { id: a.id, field: field, value: field ? a.value : null, from: null, to: null };
+      try { if (field) { keep.from = a.selectionStart; keep.to = a.selectionEnd; } } catch (e) { /* a field with no place in it */ }
+    }
+    rebuild();
+    var el = keep && document.getElementById(keep.id);
+    if (!el || !container.contains(el) || el.disabled) return;
+    if (keep.field && el.tagName === 'SELECT') {
+      if (Array.prototype.some.call(el.options, function (o) { return o.value === keep.value; })) el.value = keep.value;
+    } else if (keep.field) el.value = keep.value;
+    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    try { if (keep.field && typeof keep.from === 'number') el.setSelectionRange(keep.from, keep.to); } catch (e) { /* not a text field */ }
+  }
 
   // -- the patterns every System page shares --
   // A visible label above a field and an optional hint below it. Hiding the wrapper hides all three.
