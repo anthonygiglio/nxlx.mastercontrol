@@ -330,6 +330,29 @@ details.fold { display: block; }
 }
 .msg.inmsg:empty { min-height: 0; }
 .shadername { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+/* Effects: the strip on Live and the card on Mix (effects.js). On a laptop the card is two columns: what is on and its
+   controls beside the list of effects, which scrolls by itself so the controls stay in view. */
+.fxname { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
+.fxtitle { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 8rem; }
+.fxbuttons { flex-wrap: wrap; }
+.fxbuttons > .btn { flex: 1 1 0; min-width: 0; padding: 0 8px; }
+.fxstrip .fxbuttons > .btn { min-height: 56px; }
+.fxteachrow { margin-top: -2px; }
+.fxteachcell { display: flex; justify-content: center; flex: 1 1 0; min-width: 0; }
+.fxgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.fxstage, .fxlib { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fxstage > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fxstage > div:empty { display: none; }
+.fxlib .seg .segbtn { flex: 1 1 0; }
+.list .item.fxrow { align-items: flex-start; padding: 10px 0; }
+.list .item.fxrow.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
+.fxrow .chip { margin-left: 8px; }
+.fxrow .fxdesc, .fxrow .msg { display: block; }
+.fxrow .btn { min-width: 5.5rem; }
+@media (min-width: 900px) {
+  .fxgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  .fxlib .list { max-height: 70vh; overflow-y: auto; padding-right: 6px; }
+}
 .list .item.shader-entry { flex-direction: column; align-items: stretch; flex-wrap: nowrap; padding: 12px 0; }
 .list .item.shader-entry.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
 .list .item.shader-entry > span:first-child { flex: none; }

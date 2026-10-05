@@ -2277,6 +2277,112 @@ function startServer() {
     await page.waitForSelector('.pads');
     assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
 
+    // Effects: a filter over what plays. Live has a compact strip (the effect's name, Previous, On or Off, Next, and
+    // Amount while one is on); Mix has the card with the list, the controls of the one that is on and its presets.
+    // The harness player draws nothing (--vo=null), so this checks the panel and the API, not the picture; that is
+    // tests/test_effects_gpu.py.
+    {
+      const fxName = (id, want) => page.waitForFunction(([i, w]) => (document.getElementById(i) || {}).textContent === w, [id, want], { timeout: 20000 });
+      assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('#livefxwhy', { timeout: 20000 });
+      assert(/Nothing with a picture is playing/.test(await page.textContent('#livefxwhy')), 'with nothing playing the strip says why no effect can go on');
+      assert((await page.isDisabled('#livefxon')) && (await page.isDisabled('#livefxnext')) && (await page.isDisabled('#livefxprev')), 'and its buttons are not to be pressed');
+      assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
+      await page.waitForSelector('#livefxon:not([disabled])', { timeout: 20000 });
+      assert.strictEqual(await page.textContent('#livefxname'), 'None');
+      assert.strictEqual(await page.locator('#live-fx-amount').count(), 0, 'no Amount while no effect is on');
+      const low = await page.$$eval('#livefx button', (els) => els.filter((e) => e.getBoundingClientRect().height < 44).map((e) => e.id));
+      assert.deepStrictEqual(low, [], 'every button of the strip is at least 44 px high');
+      await fitsPhone('Live with the effects strip');
+      // the way to the card on Mix
+      await page.click('#livefxmore');
+      await page.waitForSelector('#fxlist [data-effect="fx-vignette.fs"]', { timeout: 20000 });
+      assert.strictEqual(await page.textContent('nav button[aria-current="page"]'), 'Mix', 'the Effects link on Live opens Mix');
+      const fxs = (await get('/api/effects')).effects;
+      assert(fxs.length >= 29 && fxs.filter((s) => s.pack === 'nxlx').length === 9 && fxs.every((s) => !s.error), 'the project\'s nine filters and the pack are listed');
+      assert.strictEqual(await page.locator('#fxlist [data-effect]').count(), fxs.length, 'every filter has a row');
+      assert.strictEqual(await page.textContent('#fxname'), 'No effect is on');
+      assert.strictEqual(await page.textContent('#fxchip'), 'Off');
+      assert(/Light work/.test(await page.textContent('#fxlist [data-effect="fx-vignette.fs"]')), 'a filter says how much work it is');
+      assert(/from the isf-files pack, by VIDVOX/.test(await page.textContent('#fxlist [data-effect="isf-mirror.fs"]')), 'somebody else\'s filter says whose it is');
+      assert(/moves by itself/.test(await page.textContent('#fxlist [data-effect="fx-kaleido.fs"]')), 'a filter that moves by itself says so');
+      // the list by name and by weight
+      await page.fill('#fxfilter', 'vign');
+      await page.waitForFunction(() => document.querySelectorAll('#fxlist [data-effect]').length === 1);
+      await page.fill('#fxfilter', 'no such effect');
+      await page.waitForSelector('#fxnone');
+      await page.fill('#fxfilter', '');
+      await page.click('#fxweight [data-weight="medium"]');
+      const medium = await page.locator('#fxlist [data-effect]').count();
+      assert(medium >= 1 && medium < fxs.length, 'the work filter narrows the list: ' + medium);
+      await page.click('#fxweight [data-weight="all"]');
+      await page.waitForFunction((n) => document.querySelectorAll('#fxlist [data-effect]').length === n, fxs.length);
+      // Put on: the clip plays on, the card shows the effect with Amount first, then its own controls by type
+      const put = page.waitForResponse((r) => r.url().endsWith('/api/effects') && r.request().method() === 'POST');
+      await page.click('#fxlist [data-put="fx-vignette.fs"]');
+      assert.strictEqual((await put).status(), 200, 'Put on is taken');
+      await fxName('fxname', 'Vignette');
+      assert.strictEqual(await page.textContent('#fxchip'), 'On');
+      assert((await get('/api/status')).player.path, 'the clip is still what plays');
+      assert.deepStrictEqual(await page.$$eval('#fxctls > .ctl', (els) => els.slice(0, 2).map((e) => e.getAttribute('data-common'))), ['amount', 'half'],
+        'Amount is the first control, then Half resolution (a filter that does not move has no Speed)');
+      assert.deepStrictEqual(await page.$$eval('#fxctls > .ctl[data-input]', (els) => els.map((e) => e.getAttribute('data-type'))),
+        ['float', 'float', 'float', 'long', 'point2D', 'color'], 'its own inputs are drawn by type');
+      assert.strictEqual(await page.locator('#fxlist [data-effect="fx-vignette.fs"] [data-off]').count(), 1, 'its row offers Off');
+      const sent = page.waitForResponse((r) => r.url().endsWith('/api/effects/values'));
+      await page.$eval('#fx-amount', (el) => { el.value = 0.4; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
+      assert.strictEqual((await sent).status(), 200, 'a move of Amount is sent');
+      await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.on && d.on.controls.amount === 0.4), null, { timeout: 15000 });
+      // the MIDI buttons are beside what they drive (the owner's)
+      for (const a of ['effect_amount', 'effect_prev', 'effect_toggle', 'effect_next', 'effect_control_1', 'effect_control_4']) {
+        assert.strictEqual(await page.locator('#fxcard [data-midi="' + a + '"]').count(), 1, 'a MIDI button for ' + a);
+      }
+      assert.strictEqual(await page.locator('#fxctls [data-input="centre"] [data-midi], #fxctls [data-input="edge"] [data-midi]').count(), 0, 'a point and a colour have no knob');
+      const small = await page.$$eval('#fxcard button, #fxcard select, #fxcard input[type=range], #fxcard input[type=search], #fxcard input[type=text]',
+        (els) => els.filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height < 44; }).map((e) => (e.getAttribute('aria-label') || e.textContent || e.id).slice(0, 30)));
+      assert.deepStrictEqual(small, [], 'every control of the Effects card is at least 44 px high');
+      await fitsPhone('Mix with an effect on');
+      if (shots) await page.screenshot({ path: path.join(shots, '10-mix-effects.png'), fullPage: true });
+      // a preset of this filter
+      await page.fill('#fxpresetname', 'Soft');
+      await page.click('#fxpresetsave');
+      await page.waitForSelector('#fxpresets [data-preset="Soft"]', { timeout: 15000 });
+      // Live: the strip has the name, Amount and Off, and Now playing says an effect is on
+      await page.click('nav >> text=Live');
+      await fxName('livefxname', 'Vignette');
+      await page.waitForSelector('#live-fx-amount');
+      await page.waitForFunction(() => /effect: Vignette/.test((document.getElementById('np') || {}).textContent), null, { timeout: 15000 });
+      assert.strictEqual(await page.locator('#livefxoff').count(), 1, 'Off is on the strip while an effect is on');
+      await fitsPhone('Live with an effect on');
+      const stepped = page.waitForResponse((r) => r.url().endsWith('/api/effects/step') && r.request().postData() === '{"dir":1}');
+      await page.click('#livefxnext');
+      assert.strictEqual((await stepped).status(), 200, 'Next on Live goes to the next effect');
+      await fxName('livefxname', 'Wash');
+      // a generator shader takes the screen: the effect comes off, and both places say plainly why none can go on
+      assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
+      await page.waitForSelector('#livefxwhy', { timeout: 20000 });
+      assert(/A generator shader has the screen/.test(await page.textContent('#livefxwhy')), 'the strip says why effects are not available');
+      assert(await page.isDisabled('#livefxon'), 'and offers nothing to press');
+      await page.click('#livefxmore');
+      await page.waitForSelector('#fxwhy', { timeout: 20000 });
+      assert(/A generator shader has the screen/.test(await page.textContent('#fxwhy')), 'the card says why effects are not available');
+      assert(/a generator shader took the screen/.test(await page.textContent('#fxlast')), 'and why the last one came off');
+      assert(await page.isDisabled('#fxlist [data-put="fx-vignette.fs"]'), 'Put on waits for a picture');
+      // a clip again: an effect goes on and comes off with Off
+      assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
+      await page.waitForSelector('#fxlist [data-put="fx-wash.fs"]:not([disabled])', { timeout: 20000 });
+      await page.click('#fxlist [data-put="fx-wash.fs"]');
+      await page.waitForSelector('#fxoff', { timeout: 15000 });
+      await page.click('#fxoff');
+      await fxName('fxname', 'No effect is on');
+      assert.strictEqual((await get('/api/effects')).on, null);
+      assert.strictEqual(await post('/api/effects/presets', { action: 'delete', id: 'fx-vignette.fs', name: 'Soft' }), 200);
+      assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('.pads');
+    }
+
     // A laptop: the Shaders page is a workspace. The library is a column that scrolls by itself, what is playing and
     // its controls are beside it and in view, the settings and controllers are a third column; nothing sticks out at
     // any width, on this page or on Live.
