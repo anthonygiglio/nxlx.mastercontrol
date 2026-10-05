@@ -2032,7 +2032,20 @@ function startServer() {
       assert(above, 'this board offers a height above its usual one');
       if (saved <= render.default) assert.strictEqual(await page.locator('#detailhigh').count(), 0, 'nothing is said while the detail is the usual one or lower');
       assert.strictEqual(await post('/api/shaders', { action: 'config', height: above }), 200);
-      await page.waitForSelector('#shadernow #detailhigh', { timeout: 15000 });
+      try {
+        await page.waitForSelector('#shadernow #detailhigh', { timeout: 15000 });
+      } catch (e) {
+        // Timed out here once (2026-10-05) with the box holding the new height and the page asking every 3 seconds.
+        // The page does not draw a card again while a field in it has the cursor or a question waits in it: say
+        // which of those it was, or that it was neither.
+        const why = await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => {
+          const a = document.activeElement, slot = document.querySelector('.slot-now'), q = document.getElementById('confirmrow'), pick = document.getElementById('shaderheight');
+          return { boxHeight: d.config.height, usual: d.render.default, chooserShows: pick ? pick.value : null, pageThere: !!document.getElementById('shaderpage'),
+            cursorIn: a && a !== document.body ? a.tagName.toLowerCase() + '#' + a.id : 'nothing', cursorInTheNowCard: !!(a && slot && slot.contains(a)),
+            question: q ? q.textContent.slice(0, 80) : null, questionInTheNowCard: !!(q && slot && slot.contains(q)), line: (document.getElementById('shaderline') || {}).textContent };
+        }));
+        throw new Error(e.message.split('\n')[0] + ' | the line about a high picture detail did not come (#shadernow #detailhigh): ' + JSON.stringify(why));
+      }
       assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is ' + above + ' lines. This box is happier at ' + render.default + '.');
       assert.strictEqual(await page.textContent('#detailuse'), 'Use ' + render.default);
       await onPage('Shaders and Vibes');

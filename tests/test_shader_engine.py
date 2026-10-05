@@ -9,6 +9,7 @@ import os
 import random
 import threading
 import time
+from unittest import mock
 
 from pvj import boxcare, midi, osc, scheduler, shaderlive as L, shaders as S, vibes as V
 from pvj.api import ApiError
@@ -1505,6 +1506,34 @@ class ControllerTest(Live):
 
 class RolesAndSettingsTest(Live):
     """Step 8: who may do what, and that every new key goes round through a settings file."""
+
+    def test_two_settings_changes_at_once_do_not_lose_the_later_one(self):
+        """A change of the settings was read, changed and written in two steps, and only the second step held the
+        settings lock: a later change that was written between the read and the write of an earlier one's second
+        step was overwritten by it, and then read back and kept. (The browser test's picture detail step: two
+        changes 26 ms apart, and the page never showed the second.) Here the earlier change is held just before
+        its second write until the later one has had every chance to write."""
+        engine, heights = self.engine, S.heights_for(self.engine.board())
+        earlier, later = heights[0], heights[-1]
+        self.assertNotEqual(earlier, later)
+        real, first, writes = engine._save, threading.current_thread(), []
+        other = threading.Thread(target=lambda: engine.api_set({"action": "config", "height": later}, None, None), daemon=True)
+
+        def save(cfg):
+            if threading.current_thread() is first:
+                writes.append(cfg.get("height"))
+                if len(writes) == 2:                # the earlier change has read the settings for its second write
+                    other.start()
+                    end = time.monotonic() + 1.0
+                    while time.monotonic() < end and (self.settings.data.get("shaders") or {}).get("height") != later:
+                        time.sleep(0.01)
+            return real(cfg)
+        with mock.patch.object(engine, "_save", save):
+            engine.api_set({"action": "config", "height": earlier}, None, None)
+            other.join(5)
+        self.assertFalse(other.is_alive())
+        self.assertGreaterEqual(len(writes), 2)             # the forced moment was reached
+        self.assertEqual(engine.config()["height"], later, "the earlier change overwrote the later one")
 
     def test_who_may_do_what(self):
         full, _ = self.pair()
