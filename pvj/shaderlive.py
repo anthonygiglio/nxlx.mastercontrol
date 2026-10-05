@@ -190,8 +190,10 @@ def _value_ok(v):
 
 def clean_fx_controls(controls, base=None):
     """The controls every effect has (effects.py), from untrusted input: {"amount": 0 to 1, the mix between the
-    picture as it is and the filtered one; "speed": 0 to 4, for a filter that moves by itself; "half": true to work
-    on a picture of half the width and height}. Keys left out keep the value in `base` (or the neutral one); an
+    picture as it is and the filtered one; "speed": 0 to 4, for a filter that moves by itself; "half": superseded by
+    the box's Effect detail and kept so that old presets and callers go on working: true makes this one effect work
+    at 540 lines at most, false (what every preset holds) follows the box's setting}. Keys left out keep the value
+    in `base` (or the neutral one); an
     unknown key or a value of the wrong kind is refused, a number outside its range is kept inside it."""
     out = dict({"amount": 1.0, "speed": 1.0, "half": False} if base is None else base)
     if controls is None:
@@ -365,6 +367,12 @@ def read_fx_presets(v):
 
 
 FX_PRESETS = "fx_presets"       # the effects' presets, kept beside the generators' in the same settings section
+FX_DETAIL = "fx_detail"         # the effects' working size for the box (effects.py, DETAILS); absent: the board's own default
+FX_DETAILS = ("auto", 540, 720, "full")
+
+
+def detail_ok(v):
+    return isinstance(v, (str, int)) and not isinstance(v, bool) and v in FX_DETAILS
 READ = (("presets", read_presets), ("sets", read_sets), ("heavy", read_heavy), (FX_PRESETS, read_fx_presets))
 
 
@@ -388,6 +396,10 @@ def check_extra(v):
             if not isinstance(v[key], bool):
                 raise ValueError("%s must be true or false" % key)
             out[key] = v[key]
+    if FX_DETAIL in v:
+        if not detail_ok(v[FX_DETAIL]):
+            raise ValueError("%s must be one of %s" % (FX_DETAIL, ", ".join(str(d) for d in FX_DETAILS)))
+        out[FX_DETAIL] = v[FX_DETAIL]
     if "clock" in v:
         if v["clock"] not in S.CLOCKS:
             raise ValueError("clock must be carrier or frame")
@@ -425,7 +437,8 @@ class Guard:
     to 8 a second, 3.8 on average) had a quiet look in every six seconds and was never marked, and how often the
     guard was asked decided the answer. One look counts for at most PEAK a second towards "heavy", so a single
     hitch, however many frames it costs, is not a heavy shader. The first SETTLE seconds after a shader comes on or is
-    changed are not counted (compiling it costs a few frames). Reading it changes nothing; Vibes acts on it."""
+    changed are not counted (compiling it costs a few frames). The player's count starts again whenever a clip loops:
+    the rises are added up across that. Reading it changes nothing; Vibes acts on it."""
     LIMIT, TIGHT, WINDOW, SETTLE, EVERY, PEAK = 2.0, 0.5, 6.0, 3.0, 0.9, 8.0
 
     def __init__(self, engine, clock=time.monotonic, stats=v3d_stats):
@@ -482,10 +495,14 @@ class Guard:
                 self.verdict = {"state": None, "drops_per_second": None, "gpu": gpu}
                 return self.verdict
             last, self._last = self._last, (now, drops)
-            if last is None or now <= last[0] or drops < last[1]:
-                self._seen = []                                         # the player's count started again: so does the window
+            if last is None or now <= last[0]:
+                self._seen = []
                 return self.verdict
-            step, span = drops - last[1], now - last[0]
+            # The player's count starts again at 0 each time a clip loops, and at every new clip. What it says after
+            # that is what was dropped since, so the rises are added up across it and the window goes on: a clip
+            # shorter than the window would otherwise never be seen as heavy (found while measuring on the Pi 4,
+            # where the same mistake made a window say minus 1.9 frames a second).
+            step, span = (drops - last[1] if drops >= last[1] else drops), now - last[0]
             if not self._seen:
                 self._seen = [(last[0], 0.0, 0.0)]
             self._seen.append((now, self._seen[-1][1] + step, self._seen[-1][2] + min(step, self.PEAK * span)))
@@ -679,6 +696,8 @@ class LiveEngine(S.Engine):
         for key in ("guard", "faster"):
             if isinstance(saved.get(key), bool):
                 cfg[key] = saved[key]
+        if detail_ok(saved.get(FX_DETAIL)):
+            cfg[FX_DETAIL] = saved[FX_DETAIL]
         if saved.get("clock") in S.CLOCKS:
             cfg["clock"] = saved["clock"]
         if saved.get("v") == 2:

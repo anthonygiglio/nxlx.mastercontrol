@@ -279,12 +279,25 @@ class FxCase(GpuCase):
                 return rows
             last = rows
 
-    def put(self, sid, **kw):
+    def put(self, sid, drawn=True, **kw):
         r = self.fx.put(sid, **kw)
         self.assertTrue(r and r["ok"], r)
-        self.assertIs(self.fx.on["checked"], True, "the player never drew a frame with %s" % sid)
+        if drawn:
+            self.assertIs(self.fx.on["checked"], True, "the player never drew a frame with %s" % sid)
         self.settle()
+        if not drawn:               # amount 0: the text tells the player to leave the hook out, and it does
+            self.assertEqual(self.fx._fresh(self.fx.on["desc"]), [], "the player drew a pass of %s at amount 0" % sid)
         return r
+
+    def cap(self, lines):
+        """Effect detail for a test: any number of lines, or None for the clip's own size. The box's own choices
+        (540 and 720 lines) are far above these small clips, so the engine's choice is replaced and everything
+        after it is the real thing: the text, the player's arithmetic, what is drawn."""
+        if not hasattr(self, "_cap"):
+            real = E.cap_lines
+            self.addCleanup(setattr, E, "cap_lines", real)
+            E.cap_lines = lambda *a, **k: self._cap
+        self._cap = lines
 
     def pump(self, wait=3.0):
         end = time.monotonic() + wait
@@ -297,6 +310,10 @@ class FxCase(GpuCase):
 
     def loaded(self):
         return [os.path.basename(p) for p in self.real.ipc.request("get_property", "glsl-shaders")]
+
+    def text_on(self):
+        with open(self.fx.on["path"]) as f:
+            return f.read()
 
     def raw(self, text):
         """A hand-written hook, given to the player directly (for the stages an effect does not use)."""
@@ -419,13 +436,135 @@ class FxCase(GpuCase):
                 d = differ(self.still(), upside_down(plain, *ends))
                 if d[0] > 6 or d[1] > ALIKE_MEAN:
                     failed.append("%s, top and bottom exchanged: max %d mean %.2f" % (what, d[0], d[1]))
+                # the superseded "half": 540 lines at most, which no clip here reaches, so nothing is scaled
                 self.put("reads.fs", values={"way": 4}, controls={"half": True})
                 d = differ(self.still(), mirrored(plain, *sides))
-                print("coordinates, ES %s: %-18s bars %s %s, mirrored at half size: max %d mean %.2f" % (self.ES, what, sides, ends, d[0], d[1]))
-                if d[1] > 6.0:
-                    failed.append("%s, mirrored at half size: mean %.2f" % (what, d[1]))
+                print("coordinates, ES %s: %-18s bars %s %s, mirrored with the old half: max %d mean %.2f" % (self.ES, what, sides, ends, d[0], d[1]))
+                if d[0] > 6 or d[1] > ALIKE_MEAN:
+                    failed.append("%s, mirrored with the old half: max %d mean %.2f" % (what, d[0], d[1]))
                 self.fx.off()
                 self.real.ipc.request("set_property", "keepaspect", True)
+        self.assertEqual(failed, [])
+
+    # -- the working size (Effect detail) --
+    def test_a_capped_effect_draws_the_right_picture_for_every_shape_and_amount_0_is_the_clip_itself(self):
+        """Under a cap the filter draws a smaller picture and the player scales it up: the same picture, softer.
+        For each shape of clip, a cap that bites and (for one) a cap the clip is already under: every way of reading
+        the picture, a mirror, top and bottom exchanged, a mix (an invert at amount one half is a flat grey), Blackout,
+        and amount 0, which must be the clip as it is. The size the code takes for RENDERSIZE is compared with the
+        size the player really draws at, pixel for pixel. Every case is tried before anything fails."""
+        for name, text in (("reads.fs", READS), ("swap.fs", SWAP_HALVES), ("invert.fs", INVERT), ("same.fs", SAME)):
+            self.fx.upload(name, text)
+        cases = [("wide", CLIP, (320, 180), 100), ("tall", clip("90x160"), (90, 160), 60), ("square", clip("200x200"), (200, 200), 77),
+                 ("small", clip("160x90"), (160, 90), 90), ("large", clip("640x360"), (640, 360), 135), ("large, low", clip("640x360"), (640, 360), 50)]
+        failed = []
+        for name, url, size, lines in cases:
+            self.cap(None)
+            self.play(url)
+            plain = self.still()
+            bars = self.real.ipc.request("get_property", "osd-dimensions")
+            sides, ends = (int(bars["ml"]), int(bars["mr"])), (int(bars["mt"]), int(bars["mb"]))
+            want = E.work_size(size[0], size[1], lines)
+            scaled = want != size
+            what = "%s %dx%d at %d lines (%dx%d)" % (name, size[0], size[1], lines, want[0], want[1])
+            self.cap(lines)
+
+            def judge(label, d, soft=6.0):
+                # a picture that was not scaled must be the picture, as without a cap; a scaled one is softer
+                print("capped, ES %s: %-36s %-22s max %3d mean %5.2f" % (self.ES, what, label, d[0], d[1]))
+                if (d[1] > soft) if scaled else (d[0] > 6 or d[1] > ALIKE_MEAN):
+                    failed.append("%s, %s: max %d mean %.2f" % (what, label, d[0], d[1]))
+
+            for way in (0, 1, 2, 3, 4):
+                self.put("reads.fs", values={"way": way})
+                judge("read %d" % way, differ(self.still(), mirrored(plain, *sides) if way == 4 else plain))
+            on = self.fx.state()["on"]["working"]
+            if (on["lines"], (on["clip"]["width"], on["clip"]["height"]), (on["width"], on["height"]), on["scaled"]) != (lines, size, want, scaled):
+                failed.append("%s: the panel is told %s" % (what, on))
+            if (" WIDTH " in self.text_on().replace("//!", " ")) is not True or ("x >" in self.text_on()) != (size[1] > size[0]):
+                failed.append("%s: the text is not the one for this shape" % what)
+            self.put("swap.fs")
+            judge("top and bottom", differ(self.still(), upside_down(plain, *ends)))
+            self.put("same.fs")
+            judge("unchanged", differ(self.still(), plain))
+            # the mix is done where the filter draws, with the clip read at the same place: an invert at one half is
+            # a flat grey whatever the size
+            self.put("invert.fs", controls={"amount": 0.5})
+            rows = self.still()
+            inside = [rows[y][x] for y in range(ends[0] + 3, H - ends[1] - 3, 5) for x in range(sides[0] + 3, W - sides[1] - 3, 5)]
+            off = max(abs(c - 128) for px in inside for c in px)
+            print("capped, ES %s: %-36s %-22s furthest from grey %d" % (self.ES, what, "half inverted", off))
+            if off > 6:
+                failed.append("%s, an invert at amount 0.5: %d away from grey" % (what, off))
+            self.put("invert.fs")
+            self.api.blackout({"on": True}, None, "t")
+            lit = max(max(px) for px in grid(self.still(flat=True)))
+            self.api.blackout({"on": False}, None, "t")
+            if lit > 3:
+                failed.append("%s: Blackout does not darken a capped effect (brightest %d)" % (what, lit))
+            # amount 0: the clip itself, not a scaled copy of it
+            self.put("invert.fs", drawn=False, controls={"amount": 0.0})
+            d = differ(self.still(), plain)
+            print("capped, ES %s: %-36s %-22s max %3d mean %5.2f" % (self.ES, what, "amount 0", d[0], d[1]))
+            if not alike(d):
+                failed.append("%s, amount 0: not the clip as it is (max %d, mean %.2f)" % (what, d[0], d[1]))
+            self.fx.change({"controls": {"amount": 1.0}})                                # and from 0 the filter comes back, looked at by the GPU
+            self.pump()
+            if self.fx.on["checked"] is not True or not self.fx._fresh(self.fx.on["desc"]):
+                failed.append("%s: the filter did not come back from amount 0" % what)
+            self.fx.off()
+            # The size the generated code believes it draws at against the size the player draws at: a hook with the
+            # same size lines and the same arithmetic paints green where the two agree to a hundredth of a pixel.
+            tall = size[1] > size[0]
+            made = E.translate(S.parse(SAME, S.FILTER), lines=lines, tall=tall)
+            code = [l for l in made.split("\n") if "pvj_work = " in l][:2]
+            self.raw("//!HOOK NATIVE\n//!BIND HOOKED\n%s\n//!DESC nxlx size probe\n\nvec4 hook() {\n    vec2 pvj_work;\n%s\n"
+                     "    vec2 at = HOOKED_pos * pvj_work;\n    float dx = abs(at.x - gl_FragCoord.x);\n"
+                     "    float dy = min(abs(at.y - gl_FragCoord.y), abs(pvj_work.y - at.y - gl_FragCoord.y));\n"
+                     "    return (max(dx, dy) < 0.01) ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);\n}\n"
+                     % ("\n".join(E.size_lines(lines, tall)), "\n".join(code)))
+            self.settle()
+            rows = self.still()
+            inside = [rows[y][x] for y in range(ends[0] + 2, H - ends[1] - 2, 3) for x in range(sides[0] + 2, W - sides[1] - 2, 3)]
+            red = sum(1 for px in inside if not (px[1] > 2 * px[0] and px[1] > 2 * px[2]))
+            self.real.ipc.request("set_property", "glsl-shaders", [])
+            print("capped, ES %s: %-36s %-22s %d of %d points disagree" % (self.ES, what, "the code's size", red, len(inside)))
+            if red:
+                failed.append("%s: the code's RENDERSIZE is not the size the player draws at (%d of %d points)" % (what, red, len(inside)))
+        self.assertEqual(failed, [])
+
+    def test_a_capped_effect_is_right_over_a_turned_picture(self):
+        """A clip shown turned (the panel's Rotate, or a phone's video that says so itself) is still as it is stored
+        where the effect hooks: the cap goes by its shorter side, and the picture comes out turned like the clip
+        without an effect, not stretched and not shifted."""
+        self.fx.upload("same.fs", SAME)
+        self.fx.upload("invert.fs", INVERT)
+        failed = []
+        for name, url, size in (("wide", CLIP, (320, 180)), ("tall", clip("90x160"), (90, 160))):
+            self.play(url)
+            for turn in (90, 180, 270):
+                self.cap(None)
+                self.real.rotate(turn)
+                self.settle()
+                plain = self.still()
+                self.put("invert.fs")
+                negative = self.still()
+                self.cap(60)
+                self.put("same.fs")
+                same = differ(self.still(), plain)
+                self.put("invert.fs")
+                inverted = differ(self.still(), negative)
+                on = self.fx.state()["on"]["working"]
+                self.put("invert.fs", drawn=False, controls={"amount": 0.0})
+                zero = differ(self.still(), plain)
+                self.fx.off()
+                print("turned, ES %s: %-5s by %3d at 60 lines: unchanged mean %.2f, inverted against the uncapped invert mean %.2f, amount 0 max %d mean %.2f" % (
+                    self.ES, name, turn, same[1], inverted[1], zero[0], zero[1]))
+                if same[1] > 6.0 or inverted[1] > 6.0 or not alike(zero):
+                    failed.append("%s turned by %d: unchanged %.2f, inverted %.2f, amount 0 max %d mean %.2f" % (name, turn, same[1], inverted[1], zero[0], zero[1]))
+                if (on["width"], on["height"]) != E.work_size(size[0], size[1], 60):
+                    failed.append("%s turned by %d: the panel is told %s" % (name, turn, on))
+            self.real.rotate(0)
         self.assertEqual(failed, [])
 
     def test_a_mapped_surface_shows_the_filtered_picture(self):
@@ -445,7 +584,13 @@ class FxCase(GpuCase):
         self.assertEqual(rows[4][4], (0, 0, 0))                                        # outside the surface
         want = tuple(255 - c for c in plain[H // 2][W // 2])
         self.near(rows[H // 2][W // 2], want, 14)                                      # the middle of the inverted picture, in the middle of the quad
-        self.put("invert.fs", controls={"amount": 0.0})                               # a new text of the effect: the mapping stays behind it
+        self.cap(100)                                                                  # the same under a cap: the surface shows the filtered picture
+        self.put("invert.fs")
+        self.assertTrue(self.fx.state()["on"]["working"]["scaled"])
+        self.assertTrue(self.loaded()[1].startswith("mapper-"))
+        self.near(self.still()[H // 2][W // 2], want, 14)
+        self.cap(None)
+        self.put("invert.fs", drawn=False, controls={"amount": 0.0})                  # a new text of the effect: the mapping stays behind it
         self.assertTrue(self.loaded()[1].startswith("mapper-"))
         self.near(self.still()[H // 2][W // 2], plain[H // 2][W // 2], 14)
         self.fx.off()
@@ -501,7 +646,10 @@ class FxCase(GpuCase):
                 colours = len(set(grid(shot, 5)))
                 print("filter, ES %s: %-34s %-9s drawn=%s against the picture max %3d mean %6.2f changed %3d%% colours %d" % (
                     self.ES, sid, what, self.fx.on["checked"], d[0], d[1], round(d[2] * 100), colours))
-                if self.fx.on["checked"] is not True:
+                if what == "amount 0":           # the player leaves the hook out: nothing is drawn, nothing is paid
+                    if self.fx._fresh(self.fx.on["desc"]):
+                        failed.append("%s (%s): the player drew a pass at amount 0" % (sid, what))
+                elif self.fx.on["checked"] is not True:
                     failed.append("%s (%s): the player never drew a frame with it" % (sid, what))
                 if self.fx.error is not None and self.fx.error["id"] == sid:
                     failed.append("%s (%s): %s" % (sid, what, self.fx.error))
@@ -525,13 +673,14 @@ class FxCase(GpuCase):
             times[sid] = self.engine.state()["playing"].get("pass_ms")
         self.play(CLIP)
         for s in [s for s in self.fx.library() if s["source"] == "bundled"]:
-            for half in (False, True):
+            for lines in (None, 90):                    # the clip's own 180 lines, and a cap of half that
+                self.cap(lines)
                 try:
-                    self.fx.put(s["id"], controls={"half": half})
+                    self.fx.put(s["id"])
                 except ApiError:
                     continue
                 time.sleep(0.6)
-                times[s["id"] + (" (half)" if half else "")] = (self.fx.state()["on"] or {}).get("pass_ms")
+                times[s["id"] + (" (half)" if lines else "")] = (self.fx.state()["on"] or {}).get("pass_ms")
             self.fx.off()
         base = times.get("nxlx-silk.fs")
         self.assertTrue(base, "the player timed no pass for a generator")

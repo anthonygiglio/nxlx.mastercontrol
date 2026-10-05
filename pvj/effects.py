@@ -147,6 +147,86 @@ def measured(sid):
             "holds": holds(large[0], small[0]), "holds_half": holds(large[1], small[1])}
 
 
+# ---- the working size ("Effect detail") ---------------------------------------------------------------------------------
+# An effect runs once for every pixel of the clip, and on a small board a 1080 line clip has more pixels than the GPU
+# can filter in a thirtieth of a second. So the filter may work on a smaller copy: the hook's output is given a size
+# whose shorter side is at most a number of lines (the "cap"), the filter draws that many pixels, reading the clip
+# itself with the GPU's own smoothing, and the player scales the result to the screen as it would a clip of that size.
+# A clip whose shorter side is at or below the cap is not scaled at all. The shorter side, not the height: at the
+# stage an effect hooks, a clip the decoder hands over turned (a phone's upright video) still lies on its side, and
+# the shorter side is the same number whichever way it lies; it is also what "720p" and "1080p" name.
+# The setting is one for the box: "auto" (the table below decides), a number of lines, or "full" (never scaled).
+DETAILS = L.FX_DETAILS            # ("auto", 540, 720, "full"); kept with the settings they are saved in
+HALF_LINES = 540                # what the superseded control "half": true means: this effect works at 540 lines at most
+# What "auto" works at, by board: "lines" for a bundled filter, "lower" for the bundled filters that were measured as
+# too much at that ("holds" is fewer than HOLDS dropped frames a second, as everywhere), "other" for a filter nobody
+# measured on that board (an upload). A board that is not here is not scaled by "auto": nothing was measured on it.
+# The rule, for a board that was measured: the largest of the choices at which a filter holds 30 frames a second over
+# a 1080 line clip of 30 pictures a second; the next one down for the filters that do not hold there; the careful
+# value for an upload.
+#   pi4: filled in from the run on the owner's Pi 4 (project-log/JOURNAL.md, "effect detail on the Pi 4").
+#   pi3: NOT MEASURED, and effects are not offered on a Pi 3 today (pvj/modules.d/shaders.json). The careful value,
+#        should they ever be: its GPU is the weaker one.
+AUTO = {
+    "pi4": {"lines": 720, "lower": {}, "other": 540, "measured": False},
+    "pi3": {"lines": 540, "lower": {}, "other": 540, "measured": False},
+}
+AUTO["pi-other"] = AUTO["arm-other"] = AUTO["pi3"]      # a small board the box cannot name: the careful value, not measured
+
+
+def default_detail(board):
+    """What Effect detail is on a box where nobody chose: "auto" on the small boards (a Pi 4, a Pi 3, and a small
+    board the box cannot name), "full" on a Pi 5 and on x86, where no effect has been measured."""
+    return "auto" if board in AUTO else "full"
+
+
+def clean_detail(v):
+    """An Effect detail from untrusted input; raises ValueError."""
+    if not L.detail_ok(v):
+        raise ValueError("detail must be one of %s" % ", ".join(str(d) for d in DETAILS))
+    return v
+
+
+def auto_lines(board, sid=None, bundled=True):
+    """The cap "auto" gives a filter on this board, or None where nothing is scaled."""
+    row = AUTO.get(board)
+    if row is None:
+        return None
+    if not bundled or sid is None:
+        return row["other"]
+    return row["lower"].get(sid, row["lines"])
+
+
+def cap_lines(detail, board, sid=None, bundled=True, half=False):
+    """The lines an effect works at, at most, or None for the clip's own size: from the box's Effect detail, and
+    never more than HALF_LINES for an effect whose own (superseded) "half" is true."""
+    lines = auto_lines(board, sid, bundled) if detail == "auto" else (None if detail == "full" else detail)
+    return min(lines or HALF_LINES, HALF_LINES) if half else lines
+
+
+def work_size(w, h, lines):
+    """(width, height) of the picture a filter draws for a clip of w x h under a cap of `lines` (None: no cap): the
+    clip's own size when its shorter side is at or below the cap, else the shorter side is the cap and the longer
+    one keeps the shape, rounded as the player rounds (a half goes up). The clip's size is the one it is stored
+    in; a rotation changes nothing here."""
+    w, h = int(w), int(h)
+    short = min(w, h)
+    if lines is None or short <= lines or short <= 0:
+        return w, h
+    long_side = max(1, (2 * max(w, h) * lines + short) // (2 * short))
+    return (long_side, lines) if w >= h else (lines, long_side)
+
+
+def size_lines(lines, tall=False):
+    """The two size lines of a hook for a cap: the player's own arithmetic (written the way it reads it, each value
+    before the sign that uses it), relative to the picture it meets, so a clip of another size is right from its
+    first frame. `tall` says which side is the shorter one: for a standing picture the width is capped."""
+    a, b = ("HOOKED.w", "HOOKED.h") if tall else ("HOOKED.h", "HOOKED.w")       # a: the shorter side
+    short = "%s %s %d > %s %d - * -" % (a, a, lines, a, lines)                    # a - (a > cap) * (a - cap)
+    other = "%s %s %d > %s * %s %d - * %s / -" % (b, a, lines, b, a, lines, a)   # b - (a > cap) * b * (a - cap) / a
+    return ["//!WIDTH %s" % (short if tall else other), "//!HEIGHT %s" % (other if tall else short)]
+
+
 # ---- colours ---------------------------------------------------------------------------------------------------------
 def _inverse(m):
     """The inverse of a 3 x 3 matrix given as three rows."""
@@ -238,24 +318,27 @@ def clean_picture(matrix=None, levels=None, fps=None):
 
 
 # ---- the text for the player ---------------------------------------------------------------------------------------------
-def _block(parsed, values, c, pic, desc, plane, t):
+def _block(parsed, values, c, pic, desc, plane, t, cap=None, tall=False):
     """One hook of the effect's text, for a picture that has the plane `plane`: "LUMA" (the picture is YUV and is
-    converted with its matrix and range) or "RGB" (nothing to convert)."""
+    converted with its matrix and range) or "RGB" (nothing to convert). `cap` and `tall`: see size_lines."""
     lines = ["//!HOOK NATIVE", "//!BIND HOOKED",
              # mpv leaves a hook out when a texture it binds is not there (seen in CI on mpv 0.37): a video has a LUMA
              # plane and no RGB plane, an RGB picture the other way round, so exactly one of the two hooks runs
              "//!BIND %s" % plane]
-    if c["half"]:
-        lines += ["//!WIDTH HOOKED.w 2 /", "//!HEIGHT HOOKED.h 2 /"]
-    size = "(HOOKED_size * 0.5)" if c["half"] else "HOOKED_size"
+    if cap is not None:
+        lines += size_lines(cap, tall)
+    if not c["amount"]:
+        # Amount 0 is the picture as it is: the player is told to leave this hook out (a condition that is never
+        # true), so nothing is drawn, nothing is scaled and nothing is paid. The effect stays "on" for the panel.
+        lines.append("//!WHEN 0")
     lines += ["//!DESC %s" % desc, "",
               "// %s" % desc,              # the name again, inside the code: see shaders.translate
               "#if defined(GL_ES) && (__VERSION__ >= 300 || defined(GL_FRAGMENT_PRECISION_HIGH))",
               "precision highp float;", "precision highp int;", "#define PVJ_HP highp",
               "#else", "#define PVJ_HP", "#endif",
-              # In ISF a filter is drawn at the size of its picture, so both sizes are the same thing here, also at
-              # half size: the picture is then read as one of half the width and height.
-              "#define RENDERSIZE %s" % size,
+              # In ISF a filter is drawn at the size of its picture, so both sizes are the same thing here, also under
+              # a cap: the picture is then read as one of the smaller size (pvj_work, set in hook()).
+              "#define RENDERSIZE %s" % ("HOOKED_size" if cap is None else "pvj_work"),
               "#define TIME pvj_time",
               "#define TIMEDELTA %s" % S._f(1.0 / pic["fps"]),
               # the frame number with Speed in it, as TIME has: a filter that counts frames is under the flash limit too
@@ -265,6 +348,8 @@ def _block(parsed, values, c, pic, desc, plane, t):
               "#define isf_FragNormCoord pvj_norm",
               "#define vv_FragNormCoord pvj_norm",
               "PVJ_HP float pvj_time;", "vec2 pvj_norm;", "vec4 pvj_coord;", "vec4 pvj_color;"]
+    if cap is not None:
+        lines.append("PVJ_HP vec2 pvj_work;")
     lines += native_glsl("rgb" if plane == "RGB" else ("bt.709" if pic["matrix"] == "rgb" else pic["matrix"]), pic["levels"])
     # The picture, read at a place counted from the top left as the player counts (0 to 1); outside it, its edge.
     lines += ["vec4 pvj_at(vec2 p) { return vec4(pvj_rgb(HOOKED_tex(clamp(p, vec2(0.0), vec2(1.0))).rgb), 1.0); }",
@@ -281,6 +366,12 @@ def _block(parsed, values, c, pic, desc, plane, t):
               "#line PVJ_LINE", parsed["code"], "",
               "vec4 hook() {",
               "    vec4 pvj_src = HOOKED_tex(HOOKED_pos);"]
+    if cap is not None:
+        # the size this hook draws at: the same arithmetic as its WIDTH and HEIGHT lines, rounded as the player rounds
+        side = "x" if tall else "y"
+        lines += ["    pvj_work = HOOKED_size;",
+                  "    if (HOOKED_size.%s > %s) pvj_work = floor(HOOKED_size - HOOKED_size * (HOOKED_size.%s - %s) / HOOKED_size.%s + 0.5);"
+                  % (side, S._f(cap), side, S._f(cap), side)]
     if parsed.get("clock"):
         # mpv's frame number as hi * 512 + lo, in whole numbers small enough for 16 bits (see shaders.translate)
         lines += ["    int pvj_hi = frame / 512;",
@@ -301,12 +392,14 @@ def _block(parsed, values, c, pic, desc, plane, t):
     return lines
 
 
-def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effect", today=None):
+def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effect", today=None, lines=None, tall=False):
     """The mpv user shader for a parsed ISF filter: `values` replace the inputs' defaults, `controls` are amount (the
-    mix with the picture as it is), speed (of TIME) and half (work at half the width and height), `picture` says what
-    is under it (see clean_picture). The text holds the filter twice, as two hooks of which the player runs one:
-    the first for a picture in YUV, the second for one in RGB (a PNG, some streams), so a change between the two
-    kinds in the middle of a playlist is right from its first frame without a new text."""
+    mix with the picture as it is), speed (of TIME) and half (superseded: work at HALF_LINES at most), `picture` says
+    what is under it (see clean_picture), `lines` is the cap on the working size (None: the clip's own size; any
+    whole number from 1 up, of which the settings offer DETAILS) and `tall` whether the picture stands (see
+    size_lines). The text holds the filter twice, as two hooks of which the player runs one: the first for a picture
+    in YUV, the second for one in RGB (a PNG, some streams), so a change between the two kinds in the middle of a
+    playlist is right from its first frame without a new text."""
     if parsed.get("kind") != S.FILTER:
         raise ShaderError("this is a generator, not a filter of the playing picture: it is played under Shaders")
     if not re.fullmatch(r"[a-z0-9 ]{1,40}", desc):
@@ -315,10 +408,13 @@ def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effec
     c = L.clean_fx_controls(controls)
     pic = clean_picture(**(picture or {}))
     t = time.localtime() if today is None else today
-    lines = ["// nxlx.mastercontrol effect (generated; do not edit)"]
+    if lines is not None and (isinstance(lines, bool) or not isinstance(lines, int) or not 1 <= lines <= 8192):
+        raise ShaderError("bad working size")
+    cap = min(lines or HALF_LINES, HALF_LINES) if c["half"] else lines
+    out = ["// nxlx.mastercontrol effect (generated; do not edit)"]
     for plane in ("LUMA", "RGB"):
-        lines += _block(parsed, values, c, pic, desc, plane, t)
-    return "\n".join(lines)
+        out += _block(parsed, values, c, pic, desc, plane, t, cap, bool(tall))
+    return "\n".join(out)
 
 
 # ---- how much work a filter is, counted from its text ------------------------------------------------------------------------
@@ -696,6 +792,8 @@ class Effects(S.Engine):
         self._switched = -1e9                       # when an effect last went on or came off (the gap between switches)
         self.unfit = False                          # the picture that plays cannot take an effect (see UNFIT_FORMATS)
         self.estimated = False                      # its frame rate is the player's estimate (a stream, a live input)
+        self.size = None                            # (width, height) the playing picture is stored in, when the player says
+        self._waiting = False                       # `error` says an effect could not go on for want of a picture
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
     def config(self):
@@ -713,6 +811,59 @@ class Effects(S.Engine):
 
     def faster(self):
         return bool(self._live().config().get("faster", False))
+
+    def board(self):
+        return (getattr(self.api, "board", None) or {}).get("kind")
+
+    def detail(self, cfg=None):
+        """The box's Effect detail: what was chosen, or what this board has when nobody chose (default_detail)."""
+        chosen = (cfg or self._live().config()).get(L.FX_DETAIL)
+        return chosen if chosen in DETAILS and not isinstance(chosen, bool) else default_detail(self.board())
+
+    def set_detail(self, value):
+        """Choose the Effect detail (full access). The board's own default is kept by keeping nothing, so a box
+        where nobody chose follows a later, better default."""
+        try:
+            value = clean_detail(value)
+        except ValueError as e:
+            raise ApiError(400, str(e))
+        live = self._live()
+        keep = None if value == default_detail(self.board()) else value
+        with live._cfg:
+            cfg = live.config()
+            if cfg.get(L.FX_DETAIL) != keep:        # nothing is written when nothing changes
+                if keep is None:
+                    cfg.pop(L.FX_DETAIL, None)
+                else:
+                    cfg[L.FX_DETAIL] = keep
+                live._save(cfg)
+        on = self._seen()
+        if on is not None:                          # it applies to the effect that is on, at once
+            self.changer.submit(on, controls={"amount": on["controls"]["amount"]})
+
+    def work(self, sid, controls, size=None, cfg=None):
+        """How the effect `sid` works now: {"lines": the cap or None, "tall": whether the picture stands}."""
+        try:
+            bundled = self._path(sid)[1] == "bundled"
+        except ApiError:
+            bundled = False
+        lines = cap_lines(self.detail(cfg), self.board(), sid, bundled, bool(controls.get("half")))
+        return {"lines": lines, "tall": bool(size and size[1] > size[0])}
+
+    def working(self, rec, cfg=None):
+        """What the panel says of the working size of the effect that is on: {"lines": the cap or None, "auto":
+        whether Automatic chose it, "clip": {"width", "height", "lines"} or None when the player did not say,
+        "width", "height": what the filter draws, "scaled": whether that is smaller than the clip, "lower": the next
+        Effect detail down that would make it smaller still, or None}."""
+        work, size = rec.get("work") or {"lines": None}, rec.get("clip")
+        out = {"lines": work["lines"], "auto": self.detail(cfg) == "auto" and not rec["controls"].get("half"),
+               "clip": None, "width": None, "height": None, "scaled": False, "lower": None}
+        if size:
+            w, h = work_size(size[0], size[1], work["lines"])
+            at = min(w, h)
+            out.update(clip={"width": size[0], "height": size[1], "lines": min(size)}, width=w, height=h, scaled=(w, h) != tuple(size),
+                       lower=max([d for d in DETAILS if isinstance(d, int) and d < at], default=None))
+        return out
 
     def eight_bit(self):
         """Whether the player switches to 8-bit GPU buffers while an effect is on: on the boards that run mpv with
@@ -892,6 +1043,7 @@ class Effects(S.Engine):
         """What the player says of the picture that plays, as an effect's text needs it, or None when nothing with a
         picture is playing or the picture is one the hooks cannot take (`self.unfit` says which)."""
         self.unfit = self.estimated = False
+        self.size = None
         try:
             ipc = self.api.player.ipc
             params = ipc.request("get_property", "video-params")
@@ -900,6 +1052,9 @@ class Effects(S.Engine):
         if not isinstance(params, dict):
             return None
         decoded = params
+        w, h = params.get("w"), params.get("h")       # as it is stored: what the hook meets, before any turning
+        if all(isinstance(n, int) and not isinstance(n, bool) and 0 < n <= 16384 for n in (w, h)):
+            self.size = (w, h)
         try:                        # what the output was given, after the player's own video filters, if it says
             out = ipc.request("get_property", "video-out-params")
             params = out if isinstance(out, dict) and out.get("colormatrix") else params
@@ -1011,10 +1166,16 @@ class Effects(S.Engine):
 
     # -- putting one on, changing it, taking it off --
     def compose(self, parsed, state, desc):
-        return translate(parsed, dict(state["values"], **state.get("held", {})), state["controls"], state["picture"], desc)
+        work = state.get("work") or {}
+        return translate(parsed, dict(state["values"], **state.get("held", {})), state["controls"], state["picture"], desc,
+                         lines=work.get("lines"), tall=work.get("tall", False))
 
     def _key(self, parsed, digest, state):
-        return (digest, S.shape_of(parsed, dict(state["values"], **state.get("held", {}))), bool(state["controls"]["half"]))
+        """What the GPU's word about a text is remembered under: the file, the shape of its values, the working size
+        and whether it is drawn at all (at amount 0 the player leaves the hook out, and has then looked at nothing)."""
+        work = state.get("work") or {}
+        return (digest, S.shape_of(parsed, dict(state["values"], **state.get("held", {}))), work.get("lines"), bool(work.get("tall")),
+                state["controls"]["amount"] > 0)
 
     def _now(self):
         return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1054,6 +1215,7 @@ class Effects(S.Engine):
                          "held": {n: True for n, v in start.items() if n in events and v},
                          "controls": self.limit(parsed, L.clean_fx_controls(controls, stored)),
                          "picture": self.picture() or clean_picture()}
+                state.update(clip=self.size, work=self.work(sid, state["controls"], self.size, cfg))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
                 key = self._key(parsed, digest, state)
@@ -1066,7 +1228,7 @@ class Effects(S.Engine):
             except OSError as e:
                 raise ApiError(500, "could not write the effect: %s" % (e.strerror or e))
             tap = None
-            if key not in self._checked and self._gpu_output():
+            if key not in self._checked and key[-1] and self._gpu_output():       # at amount 0 no pass is drawn: nothing to wait for
                 try:
                     tap = self._tap(player.socket_path)
                 except OSError:
@@ -1117,9 +1279,9 @@ class Effects(S.Engine):
                     self._checked.clear()
                 self._checked.add(key)
             self._refusals.pop(digest, None)
-            if self.error and self.error["id"] == sid:
-                self.error = None
+            self.error = None                           # an effect is on: whatever went wrong before it is over
             self.on = {"id": sid, "values": state["values"], "held": state["held"], "controls": state["controls"], "picture": state["picture"],
+                       "clip": state["clip"], "work": state["work"],
                        "path": out, "desc": desc, "epoch": new, "digest": digest, "preset": name,
                        "checked": True if (verdict == "ok" or key in self._checked) else None}
             self.recent, self.last = sid, None
@@ -1145,6 +1307,7 @@ class Effects(S.Engine):
                          gen=job.get("gen"))
             except ApiError as e:
                 self.error = {"id": job["id"], "message": e.message, "at": self._now()}
+                self._waiting = e.status == 409         # there was nothing to put it on: over once there is
         finally:
             if job.get("gen") == self._gen:
                 self._intent = None                     # carried out, or it could not be: the player's word counts again
@@ -1180,11 +1343,22 @@ class Effects(S.Engine):
                 state = {"values": dict(p["values"], **job["values"]), "held": dict(job["held"]),
                          "controls": self.limit(parsed, dict(p["controls"], **job["controls"])),
                          "picture": seen or p["picture"]}
+                state["clip"] = (self.size or p.get("clip")) if seen else p.get("clip")
+                state["work"] = self.work(p["id"], state["controls"], state["clip"])
                 if look:
                     self.changer.keep()
                     self.guard.sample(p)
                     # a frame rate that only wobbles, or that no line of this filter uses, is no reason for a new text
-                    if steady_picture(state["picture"], p["picture"], parsed.get("clock"), self.estimated) == p["picture"] and state["controls"] == p["controls"]:
+                    steady = steady_picture(state["picture"], p["picture"], parsed.get("clock"), self.estimated)
+                    if steady == p["picture"] and state["controls"] == p["controls"] and state["work"] == p.get("work"):
+                        # What the panel says of the picture follows it all the same: the clip's size, and the rate
+                        # of a clip under a filter that never reads the clock (the text on screen keeps the old
+                        # rate, in lines that filter does not use). An estimated rate that only wobbles stays.
+                        known = state["picture"]
+                        if self.estimated and abs(known["fps"] - p["picture"]["fps"]) <= FPS_SAME * p["picture"]["fps"]:
+                            known = p["picture"]
+                        if (known, state["clip"]) != (p["picture"], p.get("clip")) and self.on is p:
+                            self.on = dict(p, picture=known, clip=state["clip"])
                         return bool(p.get("held"))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
@@ -1201,7 +1375,7 @@ class Effects(S.Engine):
             except OSError as e:
                 raise ApiError(500, "could not write the effect: %s" % (e.strerror or e))
             tap = None
-            if key not in self._checked and self._gpu_output():
+            if key not in self._checked and key[-1] and self._gpu_output():
                 try:
                     tap = self._tap(player.socket_path)
                 except OSError:
@@ -1234,7 +1408,10 @@ class Effects(S.Engine):
             if verdict == "ok":
                 self._checked.add(key)
             preset = p.get("preset") if not job["values"] and not job["controls"] else job.get("preset")
+            if self.error and self.error["id"] == p["id"]:
+                self.error = None                       # the new text was taken: what was refused before it is not on
             self.on = dict(p, values=state["values"], held=state["held"], controls=state["controls"], picture=state["picture"], path=out, desc=desc,
+                           clip=state["clip"], work=state["work"],
                            digest=digest, preset=preset, checked=True if (verdict == "ok" or key in self._checked) else p["checked"])
             self._cleanup({out})
             return bool(state["held"])
@@ -1248,6 +1425,7 @@ class Effects(S.Engine):
             self._gen += 1
             self._intent = False
             self.changer.clear()
+        self.error = None                               # nothing is on and nothing is wanted: no complaint applies
         rec = self.on
         try:
             was = self.api.player.clear_effect(None, "off")
@@ -1437,6 +1615,10 @@ class Effects(S.Engine):
         on = self.current() if enabled else None
         rows = self.library() if enabled else []
         ok, why = self.available() if enabled else (False, "The Shaders and Vibes module is off.")
+        if self.error and self._waiting and ok:     # "nothing is playing" is no longer so
+            self.error = None
+        if not self.error:
+            self._waiting = False
         showing = None
         if on:
             wish = self.changer.pending() or {}
@@ -1444,7 +1626,7 @@ class Effects(S.Engine):
             row = next((s for s in rows if s["id"] == on["id"]), None)
             showing = {"id": on["id"], "name": on["id"][:-3], "controls": dict(on["controls"]), "preset": on.get("preset"),
                        "values": {i["name"]: i["value"] for i in row["inputs"] if i["type"] != "event"} if row else dict(on["values"]),
-                       "pending": bool(mine), "checked": on["checked"], "picture": dict(on["picture"])}
+                       "pending": bool(mine), "checked": on["checked"], "picture": dict(on["picture"]), "working": self.working(on)}
             for x in self._fresh(on["desc"]):
                 if isinstance(x.get("avg"), (int, float)) and not isinstance(x["avg"], bool) and x["avg"] > 0:
                     showing["pass_ms"] = round(x["avg"] / 1e6, 2)
@@ -1454,10 +1636,28 @@ class Effects(S.Engine):
             self.guard.sample(None)
         return {"enabled": enabled, "effects": rows, "on": showing, "available": ok, "unavailable": why, "error": self.error, "last": self.last,
                 "controls": {"amount": {"min": 0.0, "max": 1.0, "default": 1.0}, "speed": {"min": S.SPEED_MIN, "max": S.SPEED_MAX, "default": 1.0},
-                             "half": {"default": False}},
+                             "half": {"default": False, "superseded": "detail"}},
+                "detail": self.detail_state(),
                 "faster": self.faster() if enabled else False,
                 "limits": {"bytes": S.MAX_SOURCE, "inputs": S.MAX_INPUTS, "uploads": S.MAX_UPLOADS, "presets": L.MAX_PRESETS, "name": 40,
                            "controls": L.MAX_CONTROLS, "reads": MAX_READS, "rounds": MAX_ROUNDS, "at_once": 1}}
+
+    def detail_state(self):
+        """{"value": the box's Effect detail, "default": this board's, "choices", "board", "auto": what Automatic
+        works at on this board ({"lines", "other", "lower": {file: lines}, "measured"}) or None where it scales
+        nothing}."""
+        board = self.board()
+        row = AUTO.get(board)
+        return {"value": self.detail(), "default": default_detail(board), "choices": list(DETAILS), "board": board,
+                "auto": {"lines": row["lines"], "other": row["other"], "lower": dict(row["lower"]), "measured": row["measured"]} if row else None}
+
+    def api_config(self, body, device, client):
+        """Full access: {"detail": "auto" | 540 | 720 | "full"}, the box's Effect detail."""
+        self._need()
+        if set(body) - {"detail"} or "detail" not in body:
+            raise ApiError(400, "send detail: one of %s" % ", ".join(str(d) for d in DETAILS))
+        self.set_detail(body["detail"])
+        return self.state()
 
     def api_get(self, body, device, client):
         return self.state()
