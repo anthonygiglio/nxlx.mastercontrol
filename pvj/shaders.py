@@ -887,8 +887,12 @@ class Engine:
         its last text behind, and it stayed until the first play) and after Stop (the text of the shader that was on
         stayed until the next one). What the player has loaded is kept: the player outlives the panel, and it reads a
         text again when its video output starts anew. If the player runs and cannot say what it has loaded, nothing
-        is removed."""
-        with self._lock:
+        is removed. It never waits: the engine's lock is held while the GPU looks at a shader, and a Stop from a
+        controller or the schedule must not wait for that; whoever holds the lock removes the leftovers itself when
+        it is done (`_cleanup`)."""
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
             player = self.api.player
             if not getattr(player, "rundir", None):
                 return                              # a player with no folder of its own has no texts either
@@ -911,6 +915,8 @@ class Engine:
                     return
                 keep.update(p for p in loaded if isinstance(p, str))
             self._cleanup(keep)
+        finally:
+            self._lock.release()
 
     # -- the player --
     is_carrier = staticmethod(is_carrier)

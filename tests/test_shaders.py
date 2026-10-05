@@ -6,6 +6,8 @@ import json
 import os
 import random
 import re
+import threading
+import time
 import unittest
 
 from pvj import autostart, osc, scheduler, shaders as S, vibes as V
@@ -616,6 +618,25 @@ class EngineTest(Base):
         self.assertEqual(self.generated(), [mine])
         self.api.control({"action": "stop"}, None, "t")
         self.assertEqual((self.player.source_shader, self.generated()), (None, []))
+        # Stop never waits for the engine (its lock is held while the GPU looks at a shader): the tidy steps aside
+        leave("shader-1-7.glsl")
+        held, done = threading.Event(), threading.Event()
+
+        def hold():
+            with self.engine._lock:
+                held.set()
+                done.wait(5)
+        t = threading.Thread(target=hold, daemon=True)
+        t.start()
+        self.assertTrue(held.wait(5))
+        began = time.monotonic()
+        self.api.control({"action": "stop"}, None, "t")
+        self.assertLess(time.monotonic() - began, 1.0)
+        self.assertEqual(self.generated(), ["shader-1-7.glsl"])          # left for the next look
+        done.set()
+        t.join(5)
+        self.engine.tidy()
+        self.assertEqual(self.generated(), [])
 
     def test_nothing_is_offered_until_the_module_is_on_and_the_pi_3_never_gets_it(self):
         self.api.registry.set_enabled("shaders", False)

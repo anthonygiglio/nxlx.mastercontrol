@@ -2222,7 +2222,13 @@ function startServer() {
       await page.waitForSelector('nav >> text=Room');
       await page.click('nav >> text=Room');
       await page.waitForSelector('#roomscreen #roomambdetail:visible', { timeout: 15000 });
-      assert.strictEqual(await page.textContent('#roomambdetail .hint'), 'Picture detail is ' + above + ' lines. This box is happier at ' + usual + '.');
+      assert.strictEqual(await page.textContent('#roomambdetailwords'), 'Picture detail ' + above + ' is high for this box.');
+      assert.strictEqual(await page.textContent('#roomambuse'), 'Use ' + usual);
+      {
+        const one = await page.evaluate(() => { const w = document.getElementById('roomambdetailwords'), b = document.getElementById('roomambuse').getBoundingClientRect(), r = w.getBoundingClientRect();
+          return { lines: r.height / parseFloat(getComputedStyle(w).lineHeight), beside: b.left >= r.right - 1 && b.top < r.bottom && b.bottom > r.top }; });
+        assert(one.lines < 1.5 && one.beside, 'the picture detail line on Room is one line with its button beside it: ' + JSON.stringify(one));
+      }
       await fitsOn(page, "the owner's Room screen with the picture detail line");
       const staff = await open(tokens[0], 'ambience presenter');
       await staff.waitForSelector('#roomambset:visible');
@@ -2267,6 +2273,8 @@ function startServer() {
       await staff.context().close();
       await guest2.context().close();
     }
+    await page.click('nav >> text=Live');                // off the Room screen before its module goes, so it asks nothing more
+    await page.waitForSelector('.pads');
     assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
 
     // A laptop: the Shaders page is a workspace. The library is a column that scrolls by itself, what is playing and

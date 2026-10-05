@@ -89,7 +89,7 @@
       });
       var line = live ? null : h('div', { class: 'room-text', id: 'roomambstate', role: 'status' });
       // For the owner only, and only when it applies: the saved picture detail is above this board's usual one.
-      var detail = full ? h('div', { class: 'row wrap', id: 'roomambdetail', hidden: true }) : null;
+      var detail = full ? h('div', { class: 'row', id: 'roomambdetail', hidden: true }) : null;
       var card = h('div', { class: 'card room-amb', id: 'roomambience' }, h('h2', { text: 'Ambience' }),
         live ? h('div', { class: 'vibesrow' }, big, next, pick) : line, detail);
       function state() {
@@ -104,7 +104,8 @@
           detail.hidden = !high;
           detail.textContent = '';
           if (high) {
-            detail.appendChild(h('span', { class: 'hint grow', text: high.words }));
+            // one line on a phone: the short form of what the Shaders page says in full
+            detail.appendChild(h('span', { class: 'hint grow', id: 'roomambdetailwords', text: 'Picture detail ' + data.config.height + ' is high for this box.' }));
             detail.appendChild(h('button', { class: 'btn', id: 'roomambuse', text: high.button, onclick: function () {
               c.api('POST', '/api/shaders', high.body).then(function (r) {
                 if (!r.ok) return c.say(r.data.error || 'Could not save', true);

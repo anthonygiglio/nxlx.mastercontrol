@@ -32,7 +32,7 @@ Left out: a Previous button (Live has one); the time until the next shader; the 
 6. **An icon at `/favicon.ico` and the two `apple-touch-icon` names** (`pvj/icon.py`): one PNG of about 550 bytes drawn with the standard library, so no picture file and no REUSE entry. A stand-in until the project has a mark.
 7. **Generated shader texts nobody uses are removed when the panel starts and on Stop** (`Engine.tidy`). What the player still has loaded is kept, and if a running player cannot say what it has loaded nothing is removed: the player outlives the panel and reads a text again when its video output starts anew.
 
-Items 1 and 4 are one commit, since they are the same lines.
+Items 1 and 4 were committed together (both are in `pvj/shaderlive.py` and its test file); the others are a commit each.
 
 **The notes.** `HANDOFF.md` "Start here" is rewritten for this state, and what was stale under it is corrected (the shader count, controller profiles under "Not built", "no speed measured on any board", the staged password check). Three lessons added.
 
