@@ -938,3 +938,4 @@ html[data-style="signal"] .fxlib .seg .segbtn { min-width: 0; }
 html[data-style="signal"] .row > .btn.small[aria-label^="Bring "], html[data-style="signal"] .row > .btn.small[aria-label^="Send "] { min-width: 44px; }
 html[data-style="signal"] .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 html[data-style="signal"] .transport3 .btn { font-size: 14px; padding: 4px 0; }
+html[data-style="signal"] .livecols .switch, html[data-style="signal"] .livecols .switch::before, html[data-style="signal"] .livecols .switch::after { height: 56px; }

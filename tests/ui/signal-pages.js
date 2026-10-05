@@ -50,7 +50,7 @@ const MODULES = ['wall', 'projector', 'mapper', 'inputs-srt', 'scheduler', 'cont
 // name, which of the harness's fake projectors (-1: an address nothing listens on), password, the action that brings
 // it to the state the picture wants, and that state
 const PROJECTORS = [['Main projector', 0, 'secret1', null, 'on'], ['Side projector', 1, '', null, 'off'], ['Bar projector', 2, '', 'off', 'cooling down'],
-  ['Stairs projector', 3, '', 'on', 'warming up'], ['Garden projector', -1, '', null, 'no answer']];
+  ['Stairs projector', 3, '', 'on', 'warming up'], ['Hall projector', 4, '', null, 'off'], ['Garden projector', -1, '', null, 'no answer']];
 const WALLS = ['Main wall', 'Painting wall'];
 const CLIPS = ['loop-a.mkv', 'leyline_opening_night_final_v2.mkv', '01_welcome.jpg', '02_sponsors.jpg', 'logo.png'];
 
@@ -342,10 +342,11 @@ function pages() {
     await has(t, t.page, '#netscanbtn');
     await t.page.click('#netscanbtn');
     await has(t, t.page, '#netscan .btn');
-  });
+  }, { done: async (t) => { await soft(t, 'back to the cable', t.page.selectOption('#netiface', 'eth0', { timeout: 3000 })); } });
   add('network-pending', 'system', async (t) => {       // a change applied: confirm it or it goes back
     await sys(t.page, 'Network');
     await has(t, t.page, '#netiface');
+    await t.page.selectOption('#netiface', 'eth0');
     await t.page.click('#netmodes >> text=Direct cable');
     await t.page.click('#netapply');
     await has(t, t.page, '#netpending', 15000);

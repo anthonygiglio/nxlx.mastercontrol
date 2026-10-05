@@ -61,8 +61,8 @@ _fakes = [FakeProjector("secret1"), FakeProjector(slow=True, lamps=(310, 295))]
 _fakes[0].power, _fakes[0].errors = "1", "000010"
 # Two more, for the pictures and checks of every power state (tests/ui/signal-pages.js): both slow, so the third,
 # switched off, stays "cooling down" and the fourth, switched on, stays "warming up". Nothing uses them otherwise.
-_fakes += [FakeProjector(slow=True, lamps=(2210,)), FakeProjector(slow=True, lamps=(48,))]
-_fakes[2].power = "1"
+_fakes += [FakeProjector(slow=True, lamps=(2210,)), FakeProjector(slow=True, lamps=(48,)), FakeProjector(lamps=(7,))]
+_fakes[2].power = "1"      # (the fifth is one nobody switches: in standby, so "off" is on the page whatever earlier steps did)
 
 # Two fake MIDI controllers, pipes in place of device files: a Korg nanoKONTROL2 (a controller with a shipped profile)
 # and "keys" (one without). They are "plugged in" while the file <midi_dir>/plug exists, and every line of hex bytes
