@@ -2531,6 +2531,10 @@ function startServer() {
       // labelled, and a button pressed, so named group cards, source buttons and a result line are on the screen that
       // is checked (the built-in "Everything" card alone is not what staff see).
       const roomAsStaffSeeIt = async () => {
+        if (!((await get('/api/projectors')).projectors || []).length) {      // the steps above removed theirs: the harness's two again
+          await post('/api/projectors', { add: { name: 'Main projector', host: '127.0.0.1', port: info.projector_ports[0], password: 'secret1' } });
+          await post('/api/projectors', { add: { name: 'Side projector', host: '127.0.0.1', port: info.projector_ports[1], password: '' } });
+        }
         await sys('Projectors');
         await post('/api/projector', { id: 'all', action: 'identify' });          // (an edit of a projector's address drops what it said it is; read it again)
         await page.waitForFunction(() => fetch('/api/projectors').then((r) => r.json()).then((d) => d.projectors.length > 0 && d.projectors.slice(0, 2).every((p) => p.inputs.length > 0)), null, { timeout: 25000, polling: 1000 }).catch(() => {});   // each projector has said which inputs it has
