@@ -455,6 +455,9 @@ function startServer() {
     await page.waitForSelector('#dmxchannels tr[data-ch="101"]');
     assert.strictEqual(await page.textContent('#dmxchannels tbody tr >> nth=0 >> td >> nth=0'), '101', 'the table follows the start channel');
     assert.strictEqual(await page.textContent('#dmxsaveresult'), 'Saved');
+    await page.fill('#dmxstart', '1');                                // back to channel 1, where the rest of this test expects it
+    await page.click('#dmxsave');
+    await page.waitForSelector('#dmxchannels tr[data-ch="1"]');
     await onPage('DMX lighting desk');
     await sysIndex();
     await chip('DMX lighting desk', 'Ready');

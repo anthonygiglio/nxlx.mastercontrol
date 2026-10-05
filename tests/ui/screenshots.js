@@ -315,9 +315,67 @@ function startServer() {
     await sysIndex();
 
     // Whole screens, top to bottom, as a starting point for mock-ups (docs/mockups/current). Every optional module
-    // is switched on first, so every card is in the picture.
-    for (const m of ['wall', 'projector', 'mapper', 'inputs-srt', 'scheduler', 'control-dmx', 'control-midi', 'network']) {
+    // is switched on first, so every card is in the picture; the harness's fake nanoKONTROL2 is plugged in, so the
+    // MIDI page has a drawn controller.
+    for (const m of ['wall', 'projector', 'mapper', 'inputs-srt', 'scheduler', 'control-dmx', 'control-midi', 'network', 'shaders', 'room']) {
       await api('POST', '/api/modules/' + m, { enabled: true });
+    }
+    await api('POST', '/api/midi', { enabled: true });
+    try { require('fs').writeFileSync(path.join(info.midi_dir, 'plug'), ''); } catch (e) { failures.push('mock-up: the fake controller could not be plugged in'); }
+    // One editable export (SVG, layered PSD, PNG) of the page that is open: <MOCKUPS>/<device>/<name>.*
+    async function mock(device, name) {
+      if (!process.env.MOCKUPS) return;
+      await page.evaluate(() => { window.scrollTo(0, 0); const t = document.querySelector('.tabs'); if (t) t.style.setProperty('position', 'static', 'important'); });
+      try {
+        const r = await require('./mockups').exportScreen(page, process.env.MOCKUPS, device, name);
+        console.log('mock-up ' + device + ' ' + name + ': ' + r.sections + ' sections, ' + r.controls + ' controls');
+      } catch (e) {
+        failures.push('mock-up ' + device + ' ' + name + ': ' + e.message.split('\n')[0]);
+      }
+      await page.evaluate(() => { const t = document.querySelector('.tabs'); if (t) t.style.removeProperty('position'); });
+    }
+    // Every System page (the row's name, the file's name, what shows that the page has its data), the Room screen,
+    // a page whose module is off, and Live with a shader playing. File names are fixed: layouts refer to them.
+    const SYS_PAGES = [['Health', 'system-health', '#healthpower'], ['Projectors', 'system-projectors', '.proj-status'], ['Room', 'system-room', '#roomscenes'],
+      ['Schedule', 'system-schedule', '.sched-entry'], ['Shaders and Vibes', 'system-shaders-and-vibes', '#shadercard'], ['People and codes', 'system-people-and-codes', '#devicelist'],
+      ['Sound', 'system-sound', '#audioline'], ['At power-up', 'system-at-power-up', '#autosave'], ['Streams', 'system-streams', '.stream-entry'],
+      ['Projection mapping', 'system-projection-mapping', '#sysbody .card'], ['Boxes in step', 'system-boxes-in-step', '#syncline'],
+      ['MIDI controller', 'system-midi-controller', '.ctlgrid'], ['DMX lighting desk', 'system-dmx', '#dmxchannels'], ['OSC', 'system-osc', '#oscport'],
+      ['Network', 'system-network', '#netiface'], ['Updates', 'system-updates', '#updateversion'], ['Remote support', 'system-remote-support', '#supportline'],
+      ['Backup and reset', 'system-backup-and-reset', '#resetcard'], ['Look', 'system-look', '#sysbody .card'], ['About and power', 'system-about-and-power', '#boxcard .kvv']];
+    async function pages(device) {
+      if (!process.env.MOCKUPS) return;
+      for (const [row, file, ready] of SYS_PAGES) {
+        try {
+          await sys(row);
+          await page.waitForSelector(ready, { timeout: 8000 }).catch(() => failures.push('mock-up ' + device + ' ' + file + ': waited in vain for ' + ready));
+          await page.waitForTimeout(700);
+        } catch (e) { failures.push('mock-up ' + device + ' ' + file + ': ' + e.message.split('\n')[0]); continue; }
+        await mock(device, file);
+      }
+      try {                                                   // a module that is off: its page says what it does, and one button
+        await api('POST', '/api/modules/inputs-srt', { enabled: false });
+        await page.click('nav >> text=Live');
+        await sys('Streams');
+        await page.waitForSelector('#sysswitchon', { timeout: 8000 });
+        await mock(device, 'system-page-off');
+      } catch (e) { failures.push('mock-up ' + device + ' system-page-off: ' + e.message.split('\n')[0]); }
+      await api('POST', '/api/modules/inputs-srt', { enabled: true });
+      try {                                                   // the Room screen, as staff see it
+        await page.click('nav >> text=Room');
+        await page.waitForSelector('#roomscenes', { timeout: 8000 });
+        await page.waitForTimeout(900);
+        await mock(device, 'room');
+      } catch (e) { failures.push('mock-up ' + device + ' room: ' + e.message.split('\n')[0]); }
+      try {                                                   // Live while a shader plays: the Vibes row and the shader's strip
+        await api('POST', '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
+        await page.click('nav >> text=Live');
+        await page.waitForSelector('#liveshader', { timeout: 15000 }).catch(() => failures.push('mock-up ' + device + ' live-shader: no shader strip'));
+        await page.waitForTimeout(900);
+        await mock(device, 'live-shader');
+      } catch (e) { failures.push('mock-up ' + device + ' live-shader: ' + e.message.split('\n')[0]); }
+      await api('POST', '/api/control', { action: 'stop' });
+      await api('POST', '/api/play', { pad: [0, 0] });
     }
     async function screens(prefix) {
       for (const tab of ['Live', 'Mix', 'Media', 'System']) {
@@ -339,10 +397,12 @@ function startServer() {
       }
     }
     await screens('screen-phone');
+    await pages('phone');
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.reload();
     await page.waitForSelector('.pads');
     await screens('screen-laptop');
+    await pages('laptop');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     await page.waitForSelector('.pads');
