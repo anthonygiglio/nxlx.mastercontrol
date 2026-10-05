@@ -353,11 +353,13 @@ def profile_entries(profile, source):
 LIGHT_STATES = ("off", "on", "active", "busy")
 LIGHT_LEVELS = ("low", "medium", "high")
 # what a light can be about; which one a control shows follows from what the control does (light_meaning)
-LIGHT_MEANINGS = ("clip", "preset", "control", "vibes", "set", "step", "play", "stop", "blackout", "fadeout", "fadein", "room", "bank", "spare")
+LIGHT_MEANINGS = ("clip", "preset", "control", "vibes", "set", "step", "play", "stop", "blackout", "fadeout", "fadein", "room", "bank", "effect",
+                  "spare")
 MAX_FIXED = 8               # set-up or clear messages in a profile
 _MEANING = {"vibes": "vibes", "vibes_ambient": "set", "vibes_show": "set", "vibes_next": "step", "shader_prev": "step",
             "shader_next": "step", "clip_prev": "step", "clip_next": "step", "pause": "play", "stop": "stop",
-            "blackout": "blackout", "fadeout": "fadeout", "fadein": "fadein", "bank_prev": "bank", "bank_next": "bank"}
+            "blackout": "blackout", "fadeout": "fadeout", "fadein": "fadein", "bank_prev": "bank", "bank_next": "bank",
+            "effect_toggle": "effect", "effect_prev": "step", "effect_next": "step"}
 
 
 def light_meaning(action):
@@ -370,7 +372,7 @@ def light_meaning(action):
         return "clip"
     if a.startswith("shader_preset_"):
         return "preset"
-    if a.startswith("shader_control_"):
+    if a.startswith("shader_control_") or a.startswith("effect_control_"):
         return "control"
     if a == "scene" or a.startswith("scene_"):
         return "room"
@@ -498,6 +500,15 @@ def light_state(action, snap, bank=0):
         return "active" if snap["preset"] is not None and snap["presets"][n - 1] == snap["preset"] else "on"
     if a.startswith("shader_control_"):
         return "on" if snap["shader"] else "off"
+    # Effects (a filter over what plays): the one button is lit while an effect could go on (something with a picture
+    # plays and no generator has the screen) and is "on now" while one is on; the two that step are lit then too; a
+    # control of the effect is lit while an effect is on (not checked per input, as for a shader's).
+    if a == "effect_toggle":
+        return "active" if snap.get("effect") else ("on" if snap.get("effect_ready") and snap["running"] else "off")
+    if a in ("effect_prev", "effect_next"):
+        return "on" if snap.get("effect") or (snap.get("effect_ready") and snap["running"]) else "off"
+    if a.startswith("effect_control_"):
+        return "on" if snap.get("effect") else "off"
     if a == "scene" or a.startswith("scene_"):
         if a == "scene":
             sid = action.get("scene") if action.get("scene") in snap["scenes"] else None
@@ -1271,7 +1282,7 @@ class MidiHub:
         api = self.api
         snap = {"pads": [], "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
                 "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
-                "scenes": [], "applying": None}
+                "scenes": [], "applying": None, "effect": None, "effect_ready": False}
         try:
             snap["pads"] = [[str(p.get("file") or "") for p in b["pads"]] for b in api.settings.data["pads"]["banks"]]
         except Exception:
@@ -1305,6 +1316,10 @@ class MidiHub:
                 if on:
                     snap["shader"], snap["preset"] = on["id"], on.get("preset")
                     snap["presets"] = [p["name"] for p in cfg.get("presets", {}).get(on["id"], [])]
+                fx = getattr(api, "effects", None)          # from what the engine remembers: the player is not asked
+                if fx is not None:
+                    seen = fx._seen()
+                    snap["effect"], snap["effect_ready"] = (seen["id"] if seen else None), fx._blocked() is None
         except Exception:
             pass
         try:

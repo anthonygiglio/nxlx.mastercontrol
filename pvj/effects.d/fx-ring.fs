@@ -88,8 +88,9 @@ void main() {
     float way = fract(travel + fract(TIME * min(rate, 20.0) / 60.0));
     float w = max(width, 0.02);
     // across the ring: -1 at its inner rim, 0 on its middle line, 1 at its outer rim; a window that is 1 in the middle
-    float x = clamp((r - way * 1.3) / w, -1.0, 1.0);
-    float window = (1.0 - x * x) * (1.0 - x * x) * (1.0 - way);
+    // (the ring starts a little way out and ends before the corners, at half its strength: it is never out of sight)
+    float x = clamp((r - mix(0.15, 0.85, way)) / w, -1.0, 1.0);
+    float window = (1.0 - x * x) * (1.0 - x * x) * (1.0 - 0.5 * way);
     // a lens: what is inside the ring is read from nearer its middle line (or from further away, with a bend below 0)
     vec2 p = isf_FragNormCoord - (d / r) * x * window * bend * w / shape;
     vec4 c = IMG_NORM_PIXEL(inputImage, fold(p));

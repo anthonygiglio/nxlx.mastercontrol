@@ -103,6 +103,7 @@
       "preset": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
       "control": {"low": {"off": 12, "on": 29, "active": 29, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 29, "busy": 29}, "high": {"off": 12, "on": 46, "active": 46, "busy": 46}},
       "vibes": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
+      "effect": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
       "set": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
       "step": {"low": {"off": 12, "on": 29, "active": 29, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 29, "busy": 29}, "high": {"off": 12, "on": 46, "active": 46, "busy": 46}},
       "play": {"low": {"off": 12, "on": 29, "active": 28, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 29}, "high": {"off": 12, "on": 46, "active": 60, "busy": 46}},

@@ -72,6 +72,7 @@
       "preset": {"off": 0, "on": 127, "active": 127, "busy": 127, "pulse": {"active": 0}},
       "room": {"off": 0, "on": 127, "active": 127, "busy": 127, "pulse": {"busy": 0}},
       "vibes": {"off": 0, "on": 0, "active": 127, "busy": 127},
+      "effect": {"off": 0, "on": 0, "active": 127, "busy": 127},
       "set": {"off": 0, "on": 0, "active": 127, "busy": 127},
       "step": {"off": 0, "on": 127, "active": 127, "busy": 127},
       "play": {"off": 0, "on": 0, "active": 127, "busy": 127, "pulse": {"busy": 0}},

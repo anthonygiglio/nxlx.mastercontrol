@@ -25,7 +25,7 @@
             "TYPE": "float",
             "MIN": 0.0,
             "MAX": 0.05,
-            "DEFAULT": 0.012
+            "DEFAULT": 0.02
         },
         {
             "NAME": "reach",

@@ -110,12 +110,12 @@ class LightsFilesTest(unittest.TestCase):
         may make a profile fail its check (it would lose its whole layout): the section only lists which controls
         have a light, and a light with nothing to show is dark."""
         p = raw(PAD)
-        spare = next(c for c in p["controls"] if c["id"] == "pad17")
+        spare = next(c for c in p["controls"] if c["id"] == "pad18")         # the one pad the effects left spare
         self.assertIsNone(spare["action"])
         spare["action"] = {"action": "blackout"}
         clean = midi.validate_profile(p, PAD)
-        self.assertIn("pad17", clean["lights"]["controls"])
-        action = next(c for c in clean["controls"] if c["id"] == "pad17")["action"]
+        self.assertIn("pad18", clean["lights"]["controls"])
+        action = next(c for c in clean["controls"] if c["id"] == "pad18")["action"]
         self.assertEqual([value(PAD, action, snap()), value(PAD, action, snap(blackout=True))], [13, 15])       # and its light follows it
         with mock.patch.dict(midi.ACTIONS, {"strobe": ("trigger", None, None), "smear": ("level", 0, 1)}):
             p = raw(PAD)
@@ -126,6 +126,29 @@ class LightsFilesTest(unittest.TestCase):
             self.assertIsNone(midi.light_meaning({"action": "strobe"}))
             self.assertEqual(value(PAD, {"action": "strobe"}, snap(running=True, blackout=True, vibes=True)), 12)     # dark, not an error
             self.assertEqual(value(NANO, {"action": "strobe"}, snap()), 0)
+
+    def test_the_lights_of_the_effect_controls(self):
+        """A control with an effect action is lit while an effect could go on, and "on now" while one is on (the one
+        button); the two that step are lit then too; a control of the effect is lit while an effect is on."""
+        toggle, nxt, prev, knob = ({"action": a} for a in ("effect_toggle", "effect_next", "effect_prev", "effect_control_3"))
+        self.assertEqual([midi.light_meaning(a) for a in (toggle, nxt, prev, knob)], ["effect", "step", "step", "control"])
+        self.assertEqual(midi.light_meaning({"action": "effect_amount"}), None)             # a level: nothing to show
+        states = lambda s: [midi.light_state(a, s) for a in (toggle, nxt, prev, knob)]
+        self.assertEqual(states(snap()), ["off", "off", "off", "off"])                      # nothing plays
+        self.assertEqual(states(snap(running=True)), ["off", "off", "off", "off"])          # the module is off, or a generator has the screen
+        self.assertEqual(states(snap(running=True, effect_ready=True)), ["on", "on", "on", "off"])
+        self.assertEqual(states(snap(effect_ready=True)), ["off", "off", "off", "off"])     # ready, and nothing with a picture
+        self.assertEqual(states(snap(running=True, effect_ready=True, effect="fx-wash.fs")), ["active", "on", "on", "on"])
+        # the three shipped layouts: where an effect action sits on a control with a light, the light has a style
+        self.assertEqual(next(c for c in BY_ID[PAD]["controls"] if c["id"] == "pad17")["action"], {"action": "effect_toggle"})
+        self.assertEqual(next(c for c in BY_ID[NANO]["controls"] if c["id"] == "r5")["action"], {"action": "effect_toggle"})
+        on = snap(running=True, effect_ready=True, effect="fx-wash.fs")
+        self.assertEqual([value(PAD, toggle, snap()), value(PAD, toggle, snap(running=True, effect_ready=True)), value(PAD, toggle, on)], [12, 29, 28])
+        self.assertEqual([value(NANO, toggle, snap()), value(NANO, toggle, snap(running=True, effect_ready=True)), value(NANO, toggle, on)], [0, 0, 127])
+        self.assertEqual([value(PAD, nxt, snap()), value(PAD, nxt, on), value(PAD, knob, snap()), value(PAD, knob, on)], [12, 29, 12, 29])
+        # an older picture of the box without the two entries (another branch's snapshot) is dark, not an error
+        old = {k: v for k, v in snap(running=True).items() if not k.startswith("effect")}
+        self.assertEqual(states(old), ["off", "off", "off", "off"])
 
     def test_the_bytes_of_a_light_are_the_makers(self):
         pad, nano, mix = BY_ID[PAD], BY_ID[NANO], BY_ID[MIX]
