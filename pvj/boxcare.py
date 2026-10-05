@@ -27,6 +27,11 @@ is brought up to date), then every section through the same checks the panel's o
 the settings as of schema KNOWN_SCHEMA; a section a later version adds is not exported and not imported (the box keeps
 its own) until its check is added to SECTIONS.
 
+Themes the owner added (System > Look) travel with the settings: an export of a box that has any carries them
+whole under "themes", beside the settings, and an import checks each one with the same code that checks a theme added
+through the panel (pvj/themes.py) and keeps it, so the look a settings file names is there to be used. A file from a
+box with no added themes has no such part, and is the file earlier versions wrote. A factory reset removes them.
+
 Import and factory reset are refused through the remote-support tunnel: an import can switch on OSC, DMX or MIDI
 (new ways to control the box) and a reset removes every paired device.
 """
@@ -55,7 +60,7 @@ MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved map
 MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
 NEVER = ("auth", "devices", "support", "support_log")      # never exported, never imported
-ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings")
+ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
 LOG_LINES, LOG_LINE_MAX = 300, 400
@@ -230,11 +235,15 @@ def check_modules(v, care):
 
 def check_theme(v, care):
     name, accent = _obj(v).get("name"), v.get("accent")
-    if name not in care.api.themes:
+    theme = care.incoming_themes.get(name) if isinstance(name, str) else None        # a theme the file itself brings
+    if theme is None and (not isinstance(name, str) or name not in care.api.themes):
         care.note("the theme %s is not on this box; the theme was left as it is" % _printable(name))
         return copy.deepcopy(care.api.settings.data["theme"])
+    faint = themes_mod.accent_problems(theme or care.api.themes[name], accent)        # as the Look page's own check
+    if faint and faint != ["accent must be #rrggbb"]:
+        raise ValueError("this accent cannot be used with the theme %s: %s" % (_printable(name), "; ".join(faint)))
     try:
-        themes_mod.css(care.api.themes[name], accent)
+        themes_mod.css(theme or care.api.themes[name], accent)
     except themes_mod.ThemeError as e:
         raise ValueError(str(e))
     return {"name": name, "accent": accent}
@@ -505,6 +514,7 @@ class BoxCare:
         self.api = api
         self._run, self._now, self._hostname = runner, now, hostname
         self._notes = []
+        self.incoming_themes = {}            # the added themes of the file being checked, by id (set by check_file)
 
     def note(self, text):
         self._notes.append(text)
@@ -573,9 +583,12 @@ class BoxCare:
         out["streams"] = [{"id": s["id"], "name": s["name"], "url": s["url"] if passwords else strip_login(s["url"])}
                           for s in out.get("streams", [])]
         from . import __version__
-        return {"name": self._name("settings"),
-                "file": {"format": FORMAT, "format_version": FORMAT_VERSION, "exported": int(self._now()), "version": __version__,
-                         "box": self._hostname(), "passwords_included": passwords, "settings": out}}
+        file = {"format": FORMAT, "format_version": FORMAT_VERSION, "exported": int(self._now()), "version": __version__,
+                "box": self._hostname(), "passwords_included": passwords, "settings": out}
+        added = self.api.theme_store.added(self.api.themes)
+        if added:                                # only then: a file without them is one every earlier version reads
+            file["themes"] = added
+        return {"name": self._name("settings"), "file": file}
 
     # ---- import ------------------------------------------------------------------------------------------------
     def _import_route(self, body, device, client):
@@ -619,6 +632,7 @@ class BoxCare:
         if unknown:
             raise bad("the file has sections this version does not know: %s" % ", ".join(_printable(k) for k in unknown))
         self._notes = []
+        self.incoming_themes = self._check_themes(envelope)
         clean = {}
         for name, check in SECTIONS:
             if name not in present or name not in data:      # what a migration added is a default, not the file's word
@@ -638,6 +652,39 @@ class BoxCare:
             if not (b < len(banks) and banks[b]["pads"][i].get("file")):
                 raise bad("autostart: the pad it starts has no clip")
         return clean, list(self._notes), passwords
+
+    def _check_themes(self, envelope):
+        """{id: theme} for the added themes a file brings, each read by the function that reads a theme added through
+        the panel (themes.checked: 16 KB each, whole numbers only, fixed keys, colours and names by whole match,
+        numbers within their ranges, contrast). Each is written out again as text for that, so there is one reader
+        and one rule set. One that fails refuses the whole file. Raises ApiError."""
+        if "themes" not in envelope:
+            return {}
+        found, out = envelope["themes"], {}
+        if not isinstance(found, list) or len(found) > themes_mod.MAX_ADDED:
+            raise bad("themes: a list of at most %d themes is expected" % themes_mod.MAX_ADDED)
+        mine = self.api.themes
+        for n, theme in enumerate(found):
+            label = "themes: theme %d" % (n + 1)
+            if isinstance(theme, dict) and isinstance(theme.get("name"), str) and themes_mod._NAME.fullmatch(theme["name"]):
+                label = "themes: %s" % _printable(theme["name"])
+            try:
+                theme = themes_mod.checked(json.dumps(theme))
+            except (themes_mod.ThemeError, ValueError, TypeError) as e:
+                raise bad("%s: %s" % (label, e))
+            tid = theme["id"]
+            if tid in out:
+                raise bad("%s: the id %s is in the file twice" % (label, tid))
+            if tid in mine and mine[tid].get("source") != "addon":
+                raise bad("%s: the id %s belongs to a look that comes with the box" % (label, tid))
+            if themes_mod.name_taken(theme, mine):
+                raise bad("%s: %s" % (label, themes_mod.NAME_TAKEN % theme["name"]))
+            out[tid] = themes_mod.clean(theme)
+        after = {k for k, t in list(mine.items()) if t.get("source") == "addon"} | set(out)
+        if len(after) > themes_mod.MAX_ADDED:
+            raise bad("themes: the file's themes and this box's own would be %d together, and %d is the most; remove some under Look first"
+                      % (len(after), themes_mod.MAX_ADDED), 409)
+        return out
 
     def _keep_secrets(self, clean, current):
         """A file made without passwords: keep the one this box already has for the same projector, and the box's
@@ -738,6 +785,7 @@ class BoxCare:
 
     def _import(self, raw, device):
         clean, notes, passwords = self.check_file(raw)
+        incoming = dict(self.incoming_themes)
         with self.settings.lock:
             current = self.settings.data
             kept = 0 if passwords else self._keep_secrets(clean, current)
@@ -763,10 +811,17 @@ class BoxCare:
                 self._replace(previous)
                 self._unlink(os.path.join(os.path.dirname(self.settings.path) or ".", backup))
                 raise ApiError(500, "the settings could not be saved, so nothing was changed: %s" % (e.strerror or e))
-        problems = self._apply()
+        problems, themes = [], []
+        for tid in sorted(incoming):             # after the settings are safe: a look that could not be kept is drawn
+            try:                                 # as the box's own until it can (api._stored_theme), never an error
+                self.api.theme_store.add(incoming[tid], self.api.themes)
+                themes.append(tid)
+            except themes_mod.ThemeError as e:
+                problems.append("Look: the theme %s could not be kept: %s" % (_printable(incoming[tid]["name"]), e))
+        problems += self._apply()
         print("pvj-web: settings imported by %s" % device["name"], flush=True)
         return {"imported": sorted(clean), "notes": notes, "problems": problems, "backup": backup,
-                "passwords_kept": kept, "passwords_in_file": passwords}
+                "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes}
 
     # ---- diagnostics -------------------------------------------------------------------------------------------
     def _secrets(self, data):
@@ -971,6 +1026,7 @@ class BoxCare:
                 pass
             if media == "delete":
                 deleted = self._delete_media(problems)
+            problems += api.theme_store.clear(api.themes)      # the owner's added themes go with the settings
             problems += self._apply()
         finally:
             api._upload_lock.release()

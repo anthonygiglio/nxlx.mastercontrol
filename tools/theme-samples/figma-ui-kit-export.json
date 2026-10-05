@@ -1,0 +1,56 @@
+{
+  "Signal theme": {
+    "Signal dark": {
+      "colour": {
+        "page": { "$type": "color", "$value": "#0B0B0D", "$description": "bg" },
+        "surface": { "$type": "color", "$value": "#1A1A1F", "$description": "cd" },
+        "text": { "$type": "color", "$value": "#F5F5F0", "$description": "fg" },
+        "muted": { "$type": "color", "$value": "#B8B8C0", "$description": "mu" },
+        "line": { "$type": "color", "$value": "{colour.text}", "$description": "ln" },
+        "accent": { "$type": "color", "$value": "#FFD60A", "$description": "ac" },
+        "on colour": { "$type": "color", "$value": "{colour.page}", "$description": "on" },
+        "danger": { "$type": "color", "$value": "#FF3B30" }
+      },
+      "area": {
+        "room": { "$type": "color", "$value": "#FFD60A" },
+        "shaders": { "$type": "color", "$value": "#FF4FA3" },
+        "live": { "$type": "color", "$value": "#3DDC97" },
+        "mix": { "$type": "color", "$value": "#B78CFF" },
+        "system": { "$type": "color", "$value": "#7AA2FF" }
+      },
+      "state": {
+        "off": { "$type": "color", "$value": "#3A3A42" },
+        "setup": { "$type": "color", "$value": "#FF9500" },
+        "ready": { "$type": "color", "$value": "{colour.text}" },
+        "active": { "$type": "color", "$value": "#00E0FF" },
+        "problem": { "$type": "color", "$value": "#FF3B30" },
+        "error text": { "$type": "color", "$value": "#FF3B30" }
+      },
+      "shape": {
+        "corner": { "$type": "number", "$value": 0 },
+        "rule": { "$type": "number", "$value": 3 }
+      },
+      "space": {
+        "4": { "$type": "number", "$value": 4 },
+        "8": { "$type": "number", "$value": 8 },
+        "16": { "$type": "number", "$value": 16 },
+        "24": { "$type": "number", "$value": 24 }
+      },
+      "size": {
+        "control": { "$type": "number", "$value": 44 },
+        "control big": { "$type": "number", "$value": 56 },
+        "control room": { "$type": "number", "$value": 64 },
+        "scene": { "$type": "number", "$value": 72 },
+        "slider bar": { "$type": "number", "$value": 28 }
+      },
+      "type": {
+        "title": { "$type": "number", "$value": 44 },
+        "body": { "$type": "number", "$value": 16 }
+      },
+      "font": {
+        "words": { "$type": "string", "$value": "Archivo" },
+        "numbers": { "$type": "string", "$value": "JetBrains Mono" }
+      }
+    }
+  }
+}

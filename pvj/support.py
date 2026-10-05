@@ -51,6 +51,8 @@ REMOTE_DENY = {
     ("POST", "/api/pin/rotate"), ("POST", "/api/pin/unlock"), ("POST", "/api/system/poweroff"), ("GET", "/api/qr.svg"),
     # an import can switch on OSC, DMX or MIDI (new ways in); a reset removes every device (see boxcare.py)
     ("POST", "/api/system/settings/import"), ("POST", "/api/system/factory-reset"),
+    # a theme is a file kept on the box: added and removed by someone at the studio (applying a look is not refused)
+    ("POST", "/api/theme/add"), ("POST", "/api/theme/remove"),
 }
 REMOTE_DENY_PREFIX = ("/api/access",)
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}

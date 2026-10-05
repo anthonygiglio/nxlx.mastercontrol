@@ -795,7 +795,7 @@
     function inlineName(row, value, label, onSave) {       // a name typed in place of a row, with Save and Cancel
       var input = h('input', { class: 'text-input', type: 'text', maxlength: String((data.limits && data.limits.name) || 40), value: value, 'aria-label': label, autocomplete: 'off' });
       var form = h('div', { class: 'row wrap renamerow' }, input,
-        h('button', { class: 'btn on', text: 'Save', onclick: function () { var t = input.value.trim(); if (t) onSave(t); } }),
+        h('button', { class: 'btn on pri', text: 'Save', onclick: function () { var t = input.value.trim(); if (t) onSave(t); } }),
         h('button', { class: 'btn', text: 'Cancel', onclick: function () { form.parentNode.removeChild(form); row.hidden = false; } }));
       input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { var t = input.value.trim(); if (t) onSave(t); } });
       row.hidden = true;
@@ -926,7 +926,7 @@
           });
         } }) : null;
       row.appendChild(h('div', { class: 'row wrap shaderacts' },
-        h('button', { class: 'btn on', text: 'Play', 'aria-label': 'Play ' + name, disabled: !!s.error,
+        h('button', { class: 'btn on pri', text: 'Play', 'aria-label': 'Play ' + name, disabled: !!s.error,
           onclick: function () { send('/api/shaders/play', { id: s.id }, null, 'shaderlibmsg'); } }),
         full ? h('label', { class: 'rot' }, h('span', { text: label }), sw) : null,
         full && s.source === 'uploaded' ? h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + name, onclick: function (ev) {
@@ -1005,7 +1005,7 @@
       card.appendChild(h('div', { class: 'msg inmsg', id: 'setmsg', role: 'status' }));
       if (many) {
         var acts = h('div', { class: 'row wrap', id: 'setacts' },
-          h('button', { class: 'btn on', id: 'setstart', text: 'Start Vibes on this set', disabled: !members(d, e), onclick: function () {
+          h('button', { class: 'btn on pri', id: 'setstart', text: 'Start Vibes on this set', disabled: !members(d, e), onclick: function () {
             ui.startSet = e.id;
             send('/api/vibes', { on: true, set: e.id }, function () { drawn.now = ''; soon(1200); }, 'setmsg');
           } }),

@@ -2,44 +2,126 @@
 
 The owner chooses the look under **System > Look**. It applies when tapped, is kept in the box's settings (`theme`: a name and an optional accent), and travels in a settings export. Two things make a look:
 
-- A **theme** is a small JSON file of colours. Anyone can add one.
-- A **style** is a block of the panel's own stylesheet (`pvj/web/app.css`): type, shapes, sizes, how a switch or a chip is drawn. There is a small fixed set of them, and only this project's code adds one. A theme names the style it is made for.
+- A **theme** is a small JSON file of colours and design tokens. Anyone can make one, add it through the panel, and carry it to another box.
+- A **style** is a block of the panel's own stylesheet (`pvj/web/app.css`): how a switch, a chip, a row or a title block is built. There is a small fixed set of them, and only this project's code adds one. A theme names the style it is made for.
 
-A theme file never carries CSS. It holds names from fixed lists and colours as `#rrggbb`, and nothing else from it reaches the page (D54).
+A theme file never carries CSS. It holds names from fixed lists, colours as `#rrggbb` and whole numbers within fixed ranges, and nothing else from it reaches the page (D54, D60).
 
-## A theme
+## Make your own theme
 
-Built-in themes are in `pvj/themes.d`; your own go in `<state>/addons/themes` (on a box `/var/lib/pvj/addons/themes`), which updates never touch. A broken add-on theme is skipped; an add-on cannot replace a built-in one.
+**The short way.** Open System > Look, tap **Save this look as a file** while the look you want to start from is on (Signal is a good start: the file then lists every token), change the file, and tap **Add a theme**. It appears among the looks with a small "yours"; tap it to use it. Add the same file again after a change and it replaces the one before. **Remove** takes it off the box (if it is the look in use, the panel goes back to Dark stage first). At most 16 added themes; a file is at most 16 KB.
+
+**To another box.** Either add the same file there, or export the settings (System > Backup and reset): a settings file from a box with added themes carries them, and importing it brings them and the look in use. A factory reset removes added themes.
+
+**From Figma.** Three ways to get the values out of the Figma file "nxlx.mastercontrol Signal UI kit" (its variable collection "Signal theme"):
+
+1. *Ask Claude.* A Claude session with the Figma connector can read the variables of the file and write the theme file; say which file and what the theme should be called.
+2. *A variables-export plugin.* Export the collection as JSON (the W3C design-tokens shape, any plugin's nested JSON with `$value` or `value`, or a list of named values) and run `tools/figma-theme.py export.json --id my-look --name "My look" -o my-look.json` on a computer that has this repository. It prints what it took, the contrast of every pairing and any name it did not know, and writes the file only if the box would accept it.
+3. *By hand.* Copy `tools/theme-samples/starter-flat.json`, type the dozen values from Figma into it, and run the same command on it.
+
+Then add the file under System > Look. The Figma plan in use allows one mode per collection, so an export holds one theme at a time; if a file ever holds several modes, `--mode "Signal dark"` chooses one.
+
+### The file
 
 ```json
 {
-  "id": "my-theme",
-  "name": "My theme",
-  "tokens": { "bg": "#121214", "cd": "#1c1c20", "fg": "#f2f1ec", "ln": "#4a4a54", "mu": "#a9a8a3", "ac": "#f59e0b", "on": "#1a1300" }
+  "id": "soft-room",
+  "name": "Soft room",
+  "style": "signal",
+  "tokens": { "bg": "#101418", "cd": "#1b2229", "fg": "#eef2f5", "ln": "#5b6772", "mu": "#a9b4be", "ac": "#ffd166", "on": "#101418" },
+  "areas": { "room": "#ffd166", "shaders": "#f58ad2", "clips": "#7fd6a4", "mix": "#c4a7ff", "system": "#8fb8ff" },
+  "states": { "off": "#37424d", "setup": "#ff8a1f", "active": "#22d3ee", "problem": "#ff3d55", "error": "#ff6b78" },
+  "design": { "radius_control": 12, "radius_panel": 18, "border_width": 2, "density": "roomy", "control_height": 48, "control_height_large": 60,
+              "title_case": "sentence", "title_weight": 800, "tabs": "outlined" }
 }
 ```
 
-| Token | What it colours |
-| --- | --- |
-| `bg` | the page |
-| `cd` | a card, a field, a sheet (the surface) |
-| `fg` | text |
-| `ln` | lines and borders |
-| `mu` | muted text: hints, state lines |
-| `ac` | the accent: what is chosen or active |
-| `on` | text on the accent |
+(That is `tools/theme-samples/soft-room.json` without the design tokens it leaves at Signal's own value: a rounded, roomy, sentence-case variant of Signal with its own colours, kept in the repository to show the range. A test holds it valid.)
 
-All seven are required, and no other token is allowed. Keep `fg` on `bg` and `on` on `ac` at 4.5 to 1 or better (the tests hold the built-in themes to that). The accent swatches under Look replace `ac` for the chosen theme, and `on` is then black or white, whichever reads better.
+`id` is small letters, digits and hyphens (2 to 41 characters, a letter first) and may not be the id of a look that comes with the box. `name` is what the Look page shows: letters, digits, spaces, dots and hyphens, at most 40. No other key is allowed at the top than the seven shown.
 
-Three optional keys:
+**`tokens`**, all seven required:
 
-| Key | Values | What it does |
+| Token | Name in Figma | What it colours |
 | --- | --- | --- |
-| `style` | `default` or `signal` | which block of `app.css` draws the panel. Left out: `default`. A well-formed name this version does not know is not an error: the theme keeps its colours and gets the default look (so a theme written for a later version still loads). |
-| `areas` | any of `room`, `shaders`, `clips`, `mix`, `system`, each `#rrggbb` | one colour per part of the panel, for a style that uses them. A theme with `areas` has no single accent, so Look hides the accent swatches for it and a stored accent is ignored. |
-| `states` | any of `off`, `setup`, `active`, `problem`, `error`, each `#rrggbb` | the fills of the Off, Set up, Active and Problem chips, and the colour of an error line of text (`error` must read on `bg` and on `cd`). |
+| `bg` | `colour/page` | the page |
+| `cd` | `colour/surface` | a card, a field, a sheet (the surface) |
+| `fg` | `colour/text` | text |
+| `ln` | `colour/line` | lines and borders (the default look; Signal draws its rules in the text colour) |
+| `mu` | `colour/muted` | muted text: hints, state lines |
+| `ac` | `colour/accent` | the accent: what is chosen or active. In a theme with `areas` it shows only before a screen is open (the pairing screen) |
+| `on` | `colour/on colour` | text on the accent |
 
-From these the box works out the rest and serves it as `/theme.css` (custom properties on `:root`, nothing else): for each area the fill `--ar-<name>`, the text that reads on it `--ar-<name>-on` (the theme's `bg` or `fg`, whichever contrasts more) and `--ar-<name>-ink` (the area colour where it reads at 4.5 to 1 as text or a thin line on both `bg` and `cd`, else `fg`); for each state `--st-<name>` and `--st-<name>-on`.
+**`style`**: `default` or `signal`. Left out: `default`. A well-formed name this version does not know is not an error: the theme keeps its colours and gets the default look (so a theme written for a later version still loads).
+
+**`areas`**, any of `room`, `shaders`, `clips`, `mix`, `system` (`area/room`, `area/shaders`, `area/live`, `area/mix`, `area/system` in Figma; Figma's "live" is `clips` here): one colour per part of the panel, for a style that uses them. A theme with `areas` has no single accent, so Look hides the accent swatches for it and a stored accent is ignored.
+
+**`states`**, any of `off`, `setup`, `active`, `problem`, `error` (`state/off`, `state/setup`, `state/active`, `state/problem`, `state/error text`): the fills of the Off, Set up, Active and Problem chips, and the colour of an error line of text. Ready has no colour of its own: it is always the text colour (`state/ready` in Figma follows `colour/text`).
+
+**`design`**, any of these; each one left out keeps the style's own value. They act in the style `signal` only (the default look is not built on them, and a theme without that style is told so when it is added):
+
+| Token | Values | Signal's own | Name in Figma | What it does |
+| --- | --- | --- | --- | --- |
+| `radius_control` | 0 to 24 | 0 | `shape/corner` (one value for both) | corners of buttons, fields, chips, pads, the halves of a switch, a slider's bar |
+| `radius_panel` | 0 to 24 | 0 | `shape/corner` | corners of panels, sheets, questions asked in place, pictures |
+| `border_width` | 0 to 4 | 3 | `shape/rule` | every outline and rule. At 0 a plain button stands on the surface colour instead of an outline |
+| `density` | `compact`, `regular`, `roomy` | `regular` | none (an option of the converter) | one scale (0.75, 1, 1.3) for the gaps between parts and the padding of rows and panels |
+| `control_height` | 44 to 72 | 44 | `size/control` | height of an ordinary control. Never under 44 px: a finger needs that |
+| `control_height_large` | 56 to 72 | 56 | `size/control big` | height of what staff press on Room and Live, the tabs and the largest actions. Never under 56 (D57), never under `control_height`. Room's On, Off and sources are 8 px more, scenes 16 px more |
+| `title_case` | `capitals`, `sentence` | `capitals` | none (capitals are on Figma's text styles; an option of the converter) | screen titles, a group's name, the shader on stage and the 56 px actions |
+| `title_weight` | 400, 500, 600, 700, 800, 900 | 900 | none (option) | the weight of those same titles. These are the weights the shipped Archivo carries |
+| `text_weight` | 400, 500, 600 | 400 | none (option) | the weight of running text and of what is typed in a field |
+| `font_title`, `font_text` | `archivo`, `system` | `archivo` | `font/words` (one value for both) | the typeface of titles, and of everything else that is words |
+| `font_number` | `jetbrains-mono`, `archivo`, `system` | `jetbrains-mono` | `font/numbers` | the typeface of numbers, times, addresses and codes |
+| `tabs` | `filled`, `outlined` | `filled` | none (option) | the open tab: a block of the area's colour, or the page colour with a bar in the line colour |
+| `primary` | `filled`, `outlined` | `filled` | none (option) | Save, Add, Play and the like: a block of the area's colour, or an outline with a bar. Outlined needs a border width of 1 or more |
+
+The fonts are a fixed list: what is shipped on the box (Archivo and JetBrains Mono, see Fonts below) and `system`, the device's own. No family was added for this: a new one means fetching it, cutting a Latin subset and declaring its licence, which is a job of its own; the list is where it would be added (`TEXT_FONTS` and `NUMBER_FONTS` in `pvj/themes.py`, the `@font-face` rules and `LOOK_FONTS` in `app.js`).
+
+### What the box checks, and refuses
+
+Every theme goes through `pvj/themes.py` (`checked`), whichever way it arrives: added on the Look page, inside a settings file, or put into the add-on folder by hand. One rule set, one place.
+
+- The file is at most 16 KB of UTF-8, one JSON object, **no key twice**, whole numbers only.
+- Only the known keys; ids, names and colours by a whole match; numbers within their ranges; words from their lists.
+- **Contrast.** The box computes every pairing of text and ground the look draws and refuses a theme where one is under 4.5 to 1, naming it: "Text on the Room colour is 2.1 to 1; it needs 4.5". The pairings: text and muted text on the page and on a surface; text on the accent; for each area and each state colour, the page colour or the text colour on it, whichever reads better (that is what the panel uses); an error line on the page and on a surface; and, for a theme of the default style without areas, the accent as text on the page and on a surface (the default look writes in the accent).
+- **An accent is held to the same rule.** An accent chosen under Look replaces a theme's own, so `POST /api/theme` and a settings import refuse one whose pairings fall under 4.5 to 1 ("This accent cannot be used with Light: The accent as text on the page is 1.1 to 1; it needs 4.5"), and the Look page offers only the swatches that pass for the look in use. An accent already in the settings that fails (saved before this rule) is not used: the theme's own is, and the Look page says so.
+- A name that is the name of a look that comes with the box (in any case of letters) is refused: two looks called Signal could not be told apart.
+- **A warning, not a refusal**, when a state colour is within 60 (in RGB) of an area colour: the theme is added and the Look page says which two are close. A state must not read as a part of the panel (D54).
+
+The converter prints the same report before anything reaches a box.
+
+### What a theme cannot change, and why
+
+Layout and structure are built in code: which screens exist, what is on them and in what order, where the tab bar is, what a switch or a row is made of, which words are used, how a page behaves on a phone and on a laptop. A new layout is designed (in Figma) and then built by hand in `app.js` and `app.css`, where it is tested on every screen. A theme also cannot bring a font, an image, an icon or any CSS: a file that could would let whoever makes it, or a settings file from elsewhere, put content into the panel that every paired device loads. Sizes have floors (44 px, and 56 px for what staff press) because a theme must not be able to make the room controls hard to hit. Colours are held to 4.5 to 1 for the same reason.
+
+### Names the converter knows
+
+`tools/figma-theme.py` matches names without regard to letter case, `colour` or `color`, spaces, hyphens or underscores, and `/` or `.`; collections and modes above the name are ignored. So `Colour / On colour`, `color/on-color` and `var(--on)` are one name.
+
+| Goes to | Names in the Figma file | Also accepted |
+| --- | --- | --- |
+| `tokens.bg`, `cd`, `fg`, `mu`, `ln`, `ac`, `on` | `colour/page`, `colour/surface`, `colour/text`, `colour/muted`, `colour/line`, `colour/accent`, `colour/on colour` | `color/...`, `color/on-accent`, and the code names `bg`, `--bg`, `var(--bg)` and so on |
+| `areas.room`, `shaders`, `clips`, `mix`, `system` | `area/room`, `area/shaders`, `area/live`, `area/mix`, `area/system` | `area/clips`, `ar-room`, `var(--ar-room)` and so on |
+| `states.off`, `setup`, `active`, `problem`, `error` | `state/off`, `state/setup`, `state/active`, `state/problem`, `state/error text` | `state/error`, `st-off`, `var(--st-setup)` and so on; `colour/danger` fills in for `state/problem` when that is not given |
+| `design.radius_control`, `radius_panel` | `shape/corner` (both) | `radius/control`, `radius/panel` (each wins over `shape/corner`) |
+| `design.border_width` | `shape/rule` | `border/width` |
+| `design.control_height`, `control_height_large` | `size/control`, `size/control big` | `size/control-large` |
+| `design.font_title`, `font_text` | `font/words` (both) | `font/title`, `font/text` |
+| `design.font_number` | `font/numbers` | `font/number` |
+| `design.title_case`, `title_weight`, `text_weight`, `density`, `tabs`, `primary` | not in the file | `type/title-case`, `type/title-weight`, `type/text-weight`, `space/density`, `style/tabs`, `style/primary`; or the options `--title-case`, `--title-weight`, `--text-weight`, `--density`, `--tabs`, `--primary` |
+
+`state/ready` is noted and not used (Ready is the text colour). Passed over without a word, because the panel has no token for them: `space/4` to `space/24`, `size/control room`, `size/scene`, `size/slider bar` and the type sizes under `type/`. Any other name is listed at the end and changes nothing. A colour may be `#rrggbb`, `#rgb`, `#rrggbbff`, `rgb(r, g, b)` or Figma's `{r, g, b, a}` with parts from 0 to 1 (a colour with transparency is refused); a number may be `8`, `8.0` or `"8px"`; an alias such as `{colour.text}` is followed. What the export does not give comes from `--base` (Signal unless said otherwise): with no line colour, lines take the text colour; with no accent, the accent takes the Room colour; with no colour for text on the accent, the box's own choice; with no error colour, the Problem colour if it reads on the page.
+
+## Where themes live
+
+Built-in themes are in `pvj/themes.d`. The owner's are in `<state>/addons/themes` (on a box `/var/lib/pvj/addons/themes`), which updates never touch; the panel writes a theme there as `<id>.json`, whole, beside its place and then renamed into it, and never reads or writes through a symbolic link. A file put there by hand is read the same way at the next start and held to the same checks; one that fails is skipped, and no more than 16 are taken. A file that is not used is never silent: one line in the log (`pvj-web: theme file <name> was not used: <why>`) and a line on the Look page ("One theme file on this box could not be used: <file>: <why>"). Two files with one id are one theme: the file the panel wrote (`<id>.json`) is used, else the first by name; the others are reported, and all of them go when the theme is removed or replaced. An added theme cannot replace a built-in one. If the theme in use is damaged or gone, the panel is drawn in the look the box came with (Dark stage) until it is back; the page is served before anyone has paired, so this is never an error.
+
+Over the API (full access; adding and removing are refused through the remote-support tunnel, because they write a file on the box): `POST /api/theme/add` with `{"file": "<the text of the theme file>"}`, `POST /api/theme/remove` with `{"id": ...}`, `POST /api/theme/export` with `{}` or `{"id": ...}`. Neither is done while a settings import or a factory reset runs. `GET /api/theme` gives every paired device the names and styles of the looks; each look's tokens (for its picture), the files that were not used and a dropped accent go to full access only. A look that comes with the box is saved under an id of its own (`my-signal`, "My Signal"), because its own id is never accepted back.
+
+From these the box works out the rest and serves it as `/theme.css` (custom properties on `:root`, nothing else): the seven tokens; for each area the fill `--ar-<name>`, the text that reads on it `--ar-<name>-on` (the theme's `bg` or `fg`, whichever contrasts more) and `--ar-<name>-ink` (the area colour where it reads at 4.5 to 1 as text or a thin line on both `bg` and `cd`, else `fg`); for each state `--st-<name>` and `--st-<name>-on`; and for each design token the theme sets, `--tk-*` variables whose values are numbers the box formatted or strings from its own tables (a font stack, `uppercase`, `var(--ink)`). The Signal block of `app.css` reads each as `var(--tk-..., <Signal's own value>)`, so a theme that sets none is drawn exactly as Signal always was; a test holds the two lists (what the box can write, what the stylesheet reads) equal, and the fallbacks equal to the defaults in `themes.py`.
+
+The Look page draws each look as a small picture from its own tokens (page, surface, the area colours, a title in its font and case, a button and a chip). Those pictures use the shipped fonts, so the Look page is the one place where the default look asks the box for them.
 
 ## A style
 
@@ -50,7 +132,7 @@ From these the box works out the rest and serves it as `/theme.css` (custom prop
 
 The panel also puts `data-area` on the root element: `room` on the Room screen, `clips` on Live and Media, `mix` on Mix, `system` on System and its pages, `shaders` on the Shaders and Vibes page. A style may use it; the default one does not.
 
-**To add a style:** add its name to `STYLES` in `themes.py` and to `STYLES` in `app.js`; add its block at the end of `app.css`, every selector scoped; add a theme in `themes.d` that names it; extend the test `test_the_signal_block_of_the_stylesheet_only_ever_applies_under_its_style` to the new marker; run the browser test's style pass on it (`tests/ui/panel.test.js`, the Signal step) and add its screenshots (`tests/ui/screenshots.js`); both go through the list of screens, pages and states in `tests/ui/signal-pages.js`, which is also where a new page is added so that it is pictured and checked in every style. Fonts go in `pvj/web/fonts` as WOFF2 with their licence text beside them, declared in `REUSE.toml` and `THIRD_PARTY_LICENSES.md`; the server serves only `.woff2` files from that folder. The default look must stay as it is: nothing outside the block may change for a style.
+**To add a style:** add its name to `STYLES` in `themes.py` and to `STYLES` in `app.js`; add its block at the end of `app.css`, every selector scoped; add a theme in `themes.d` that names it; extend the test `test_the_signal_block_of_the_stylesheet_only_ever_applies_under_its_style` to the new marker; run the browser test's style pass on it (`tests/ui/panel.test.js`, the Signal step) and add its screenshots (`tests/ui/screenshots.js`); both go through the list of screens, pages and states in `tests/ui/signal-pages.js`, which is also where a new page is added so that it is pictured and checked in every style. Fonts go in `pvj/web/fonts` as WOFF2 with their licence text beside them, declared in `REUSE.toml` and `THIRD_PARTY_LICENSES.md`; the server serves only `.woff2` files from that folder. Where the block writes a value a theme may set (a rule's width, a corner, a control's height, a gap, the case, weight or face of a title), write it as `var(--tk-..., <the value>)`, as the Signal block does. The default look must stay as it is: nothing outside the block may change for a style.
 
 ## Signal
 
@@ -155,4 +237,4 @@ Figma draws three screens. Every other screen, page and state was looked at in t
 
 ### Fonts
 
-`pvj/web/fonts/archivo-latin.06fa7831.woff2` (27 KB, weights 400 to 900 in one file) and `jetbrains-mono-500-latin.6c95bc2f.woff2` (8 KB), with each family's `OFL.txt`. The eight digits in each name are the start of the file's SHA-256: a browser may keep a font for a day, so a font that is rebuilt must get a new name (a test compares the name with the checksum). Both are SIL Open Font License 1.1 and are subsets; `THIRD_PARTY_LICENSES.md` says where they came from and how they were made. The box serves them itself (`/fonts/...`, `font-src 'self'`), they are declared with `font-display: swap`, and behind them is the system font, so the panel can be used before a font has loaded. The default look never asks for them.
+`pvj/web/fonts/archivo-latin.06fa7831.woff2` (27 KB, weights 400 to 900 in one file) and `jetbrains-mono-500-latin.6c95bc2f.woff2` (8 KB), with each family's `OFL.txt`. The eight digits in each name are the start of the file's SHA-256: a browser may keep a font for a day, so a font that is rebuilt must get a new name (a test compares the name with the checksum). Both are SIL Open Font License 1.1 and are subsets; `THIRD_PARTY_LICENSES.md` says where they came from and how they were made. The box serves them itself (`/fonts/...`, `font-src 'self'`), they are declared with `font-display: swap`, and behind them is the system font, so the panel can be used before a font has loaded. The default look never asks for them, except on the Look page, whose pictures of the looks are drawn in each look's own type (D60).

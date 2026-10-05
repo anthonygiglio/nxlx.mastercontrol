@@ -91,7 +91,7 @@
       if (r[1].ok) S.banks = r[1].data.banks;
       if (r[2].ok) { S.media = r[2].data.files; S.mediaInfo = r[2].data; }
       if (r[3].ok) S.modules = r[3].data.modules;
-      if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; markLook(); }
+      if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; S.themeSkipped = r[4].data.skipped || []; S.accentDropped = r[4].data.accent_dropped || ''; markLook(); }
       if (r[5] && r[5].ok) S.devices = r[5].data.devices;
     });
   }
@@ -186,7 +186,7 @@
   function supportConnect() {
     var code = h('input', { class: 'text-input mono', id: 'supportcode', autocomplete: 'one-time-code', maxlength: 9, 'aria-label': 'Support code', placeholder: 'ABCD-2345' });
     code.addEventListener('input', function () { code.value = code.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 9); });
-    var go = h('button', { class: 'btn on big', id: 'supportlogin', text: 'Sign in' });
+    var go = h('button', { class: 'btn on pri big', id: 'supportlogin', text: 'Sign in' });
     go.addEventListener('click', function () {
       if (code.value.replace(/-/g, '').length !== 8) return say('Type the 8 character code the studio reads to you.', true);
       go.disabled = true;
@@ -244,7 +244,7 @@
         var ext = h('select', { class: 'text-input', id: 'supportextend' }, d.durations.map(function (m) { return h('option', { value: String(m), text: m + ' minutes from now', selected: m === 60 }); }));
         body.appendChild(h('div', { class: 'fieldwrap' }, h('label', { class: 'field', for: 'supportextend', text: 'Change how long it stays open' }),
           h('div', { class: 'row' }, ext, h('button', { class: 'btn', id: 'supportextendbtn', text: 'Set time', onclick: function () { post('/api/support/extend', { minutes: +ext.value }); } }))));
-        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'supportstop', text: 'Stop the session now', onclick: function () { post('/api/support/stop', {}); } })));
+        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'supportstop', text: 'Stop the session now', onclick: function () { post('/api/support/stop', {}); } })));
         return;
       }
       if (c.allowed && d.configured) {
@@ -254,7 +254,7 @@
         body.appendChild(h('div', { class: 'hint', text: 'Start a session when support asks for one. It closes by itself when the time is up, and you can stop it at any moment.' }));
         body.appendChild(labelled('How long', dur));
         body.appendChild(labelled('What support may do', role));
-        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'supportstart', text: 'Start support session', onclick: function (e) {
+        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'supportstart', text: 'Start support session', onclick: function (e) {
           e.target.disabled = true; e.target.textContent = 'Connecting...';
           post('/api/support/start', { confirm: 'start', minutes: +dur.value, role: role.value }).then(function (r) { if (!r.ok) draw(d); });
         } })));
@@ -845,7 +845,7 @@
       var dev = h('select', { class: 'text-input', id: 'inputdev', 'aria-label': 'Input' }, d.devices.map(function (x) { return h('option', { value: x.id, text: x.name + ' (' + x.id + ')' }); }));
       var mode = h('select', { class: 'text-input', id: 'inputmode', 'aria-label': 'Picture size' }, d.modes.map(function (m) { return h('option', { value: m, text: m }); }));
       body.appendChild(dev); body.appendChild(mode);
-      body.appendChild(h('button', { class: 'btn on small', id: 'inputshow', text: d.running ? 'Show again' : 'Show live input', onclick: function () {
+      body.appendChild(h('button', { class: 'btn on pri small', id: 'inputshow', text: d.running ? 'Show again' : 'Show live input', onclick: function () {
         say('Opening the input...');
         act('POST', '/api/play', { capture: { device: dev.value, mode: mode.value } }, function () { say('Showing the live input'); poll(); });
       } }));
@@ -949,7 +949,7 @@
             var to = h('input', { class: 'text-input', 'aria-label': 'New name for ' + d.name, value: d.name, autocomplete: 'off' });
             function back() { if (box.parentNode) box.parentNode.removeChild(box); row.hidden = false; }
             var box = h('div', { class: 'confirm renamebox' }, h('span', { text: 'New name' }), to, h('div', { class: 'row' },
-              h('button', { class: 'btn on grow', text: 'Rename', onclick: function () {
+              h('button', { class: 'btn on pri grow', text: 'Rename', onclick: function () {
                 var name = to.value.trim();
                 if (!name || name === d.name) return back();
                 act('POST', '/api/media/rename', { name: d.name, new: name }, refreshMedia);
@@ -1002,7 +1002,7 @@
       slideshow = h('div', { class: 'card', id: 'slideshow' },
         h('div', { class: 'k', text: 'Slideshow' }), src, secs, end,
         h('label', { class: 'row', for: 'slideshuffle' }, mix, h('span', { text: 'Random order' })),
-        h('button', { class: 'btn on small', id: 'slidestart', text: 'Start slideshow', onclick: function () {
+        h('button', { class: 'btn on pri small', id: 'slidestart', text: 'Start slideshow', onclick: function () {
           act('POST', '/api/play', { slideshow: { source: src.value, seconds: parseFloat(secs.value), ending: end.value, shuffle: mix.checked } }, function (d) {
             say('Slideshow: ' + d.images + ' pictures'); poll();
           });
@@ -1016,7 +1016,7 @@
       slideshow,
       full ? h('div', { class: 'card' },
         h('div', { class: 'k', id: 'freeline', text: (info.free !== undefined ? megabytes(info.free) + ' free' : '') + (info.max_upload ? ' \u00b7 largest file ' + megabytes(info.max_upload) : '') }),
-        picker, h('button', { class: 'btn on', id: 'uploadbtn', text: 'Upload clips', onclick: function () { picker.click(); } }), uploads) : null,
+        picker, h('button', { class: 'btn on pri', id: 'uploadbtn', text: 'Upload clips', onclick: function () { picker.click(); } }), uploads) : null,
       h('div', { class: 'card' }, h('div', { class: 'list' }, items.length ? items : h('div', { class: 'k', text: 'No clips yet. Upload some, or play them straight from a USB drive.' }))),
       (info.usb || []).map(function (drive) {
         return h('div', { class: 'card usb-drive', 'data-drive': drive.drive },
@@ -1594,7 +1594,7 @@
   function saveBar(id, text, onSave, others) {
     var note = h('span', { class: 'hint notsaved', id: id + 'dirty', text: 'Not saved yet', hidden: true });
     var result = h('div', { class: 'msg inmsg', id: id + 'result', role: 'status' });
-    var btn = h('button', { class: 'btn on', id: id, text: text || 'Save changes', disabled: true, onclick: function () { onSave(bar); } });
+    var btn = h('button', { class: 'btn on pri', id: id, text: text || 'Save changes', disabled: true, onclick: function () { onSave(bar); } });
     var bar = { btn: btn, result: result, note: note, isDirty: false,
       el: h('div', { class: 'savebar' }, h('div', { class: 'row wrap' }, btn, others || null, note), result),
       dirty: function (v) { bar.isDirty = !!v; btn.disabled = !v; note.hidden = !v; if (v) bar.say(''); },
@@ -1665,7 +1665,7 @@
     var body = on === null ? h('div', { class: 'card' }, h('div', { class: 'hint', id: 'syschecking', text: 'Checking...' })) :
       on || opts.bodyWhenOff ? h('div', { class: 'grid2', id: 'sysbody' }, opts.body ? opts.body() : null) :
       h('div', { class: 'card', id: 'sysoff' }, h('div', { text: 'Off. Your settings are kept while it is off.' }),
-        full ? h('div', { class: 'row' }, h('button', { class: 'btn on big grow', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } })) : null);
+        full ? h('div', { class: 'row' }, h('button', { class: 'btn on pri big grow', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } })) : null);
     setTimeout(pageState, 0);
     return h('div', { class: 'screen syspage', id: 'syspage', 'data-page': id },
       h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: S.sysFrom === 'live' ? '‹ Live' : '‹ System', onclick: sysBack })),
@@ -1998,7 +1998,7 @@
         if (!now) return false;
         return a.action === now.action && a.bank === now.bank && a.index === now.index && (!guardable(a.action) || a.guard === !!x.guard);
       }
-      var save = h('button', { class: 'btn on small', id: 'ctlsave', text: 'Save', onclick: function () {
+      var save = h('button', { class: 'btn on pri small', id: 'ctlsave', text: 'Save', onclick: function () {
         var a = chosen();
         act('POST', '/api/midi/map', { set: { controller: c.name, control: x.id, action: a } }, function (data) { say(x.name + ' now does: ' + midiWhat(a)); changed(data); });
       } });
@@ -2194,7 +2194,7 @@
         } })));
         poll();
       } else {
-        form.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'midilearn', text: 'Learn a control', onclick: function () {
+        form.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'midilearn', text: 'Learn a control', onclick: function () {
           remember();
           act('POST', '/api/midi/learn', { start: true }, function (data) { draw(data); });
         } })));
@@ -2369,7 +2369,7 @@
       d.streams.forEach(function (st) {
         body.appendChild(listRow({ cls: 'stream-entry', data: st.id, name: st.name, sub: st.url, key: 'stream-' + st.id, redraw: function () { draw(d); },
           state: playing === st.name ? 'Playing now' : '',
-          primary: can('live') ? h('button', { class: 'btn on', text: 'Play', 'aria-label': 'Play ' + st.name,
+          primary: can('live') ? h('button', { class: 'btn on pri', text: 'Play', 'aria-label': 'Play ' + st.name,
             onclick: function () { act('POST', '/api/play', { stream: st.id }, function () { say('Playing ' + st.name); poll(); }); } }) : null,
           more: full ? [h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + st.name, onclick: function (e) {
             confirmRow('Remove ' + st.name + '? Its address is forgotten.', 'Remove', 'Keep it', function () {
@@ -2387,7 +2387,7 @@
         return h('div', { class: 'addform', id: 'streamform' }, h('div', { class: 'field', text: 'Add a stream' }),
           labelled('Name', name), labelled('Address', url, 'Starts with srt://, rtsp:// or rtmp://. A login in the address is kept on the box and hidden here.'),
           h('div', { class: 'row' },
-            h('button', { class: 'btn on grow', id: 'streamadd', text: 'Add', onclick: function () {
+            h('button', { class: 'btn on pri grow', id: 'streamadd', text: 'Add', onclick: function () {
               api('POST', '/api/streams', { action: 'add', name: streamForm.name, url: streamForm.url }).then(function (r) {
                 if (!r.ok) return sayAt(err, r.data.error || 'Could not add the stream. Check the address.', true);
                 streamForm.name = ''; streamForm.url = ''; addOpen.stream = false; draw(r.data); say('Stream added.');
@@ -2434,7 +2434,7 @@
     }
     function row(name, state, problem, id, go) {
       return listRow({ cls: 'update-entry', name: name, state: state, problem: problem,
-        primary: h('button', { class: 'btn on', id: id, text: 'Install', onclick: function (e) { go(e.currentTarget); } }) });
+        primary: h('button', { class: 'btn on pri', id: id, text: 'Install', onclick: function (e) { go(e.currentTarget); } }) });
     }
     function draw(d) {
       clearTimeout(updateTimer);
@@ -2708,7 +2708,7 @@
           h('div', { class: 'row wrap' }, labelled('Columns of the wall', cols), labelled('Rows of the wall', rows)),
           h('div', { class: 'row wrap' }, labelled('This screen\'s column', col), labelled('This screen\'s row', row)),
           labelled('Frame between screens (percent)', bezel, 'How much of a screen\'s width its frame takes. That much picture is hidden, so lines stay straight across screens.'),
-          h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'wallsave', text: 'Save wall', onclick: function () {
+          h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'wallsave', text: 'Save wall', onclick: function () {
             post({ wall: { cols: +cols.value, rows: +rows.value, col: +col.value, row: +row.value, bezel: +bezel.value } },
               { wallcols: cols.value, wallrows: rows.value, wallcol: col.value, wallrow: row.value, wallbezel: bezel.value });
           } }))));
@@ -2817,7 +2817,7 @@
       }
       var clear = !p.has_password ? null : h('button', { class: 'switch', id: ids + 'clear', role: 'switch', 'aria-checked': e.clear ? 'true' : 'false', 'aria-label': 'Remove the password',
         onclick: function () { read(); e.clear = !e.clear; if (e.clear) e.password = ''; e.error = ''; draw(JSON.parse(shown), true); } });
-      var save = h('button', { class: 'btn on grow', id: ids + 'save', text: 'Save changes', onclick: function () {
+      var save = h('button', { class: 'btn on pri grow', id: ids + 'save', text: 'Save changes', onclick: function () {
         read();
         var out = change();
         if (out.port !== undefined && !(out.port >= 1 && out.port <= 65535)) { e.error = 'The port is a number from 1 to 65535 (4352 unless it was changed on the projector).'; err.textContent = e.error; return; }
@@ -2892,7 +2892,7 @@
       var n = projNaming, fields = {};
       function changed() { return p.inputs.filter(function (i) { return (n.texts[i.code] === undefined ? i.label : n.texts[i.code]).trim() !== i.label; }); }
       var err = h('div', { class: 'msg inmsg', id: 'projnameserr', role: 'alert' });
-      var save = h('button', { class: 'btn on grow', id: 'projnamessave', text: 'Save names', onclick: function () {
+      var save = h('button', { class: 'btn on pri grow', id: 'projnamessave', text: 'Save names', onclick: function () {
         keep();
         var todo = changed();
         save.disabled = true;
@@ -3006,7 +3006,7 @@
           labelled('Port', port, '4352 unless it was changed on the projector.'),
           labelled('PJLink password', pw, 'Only if the projector asks for one. It is kept on the box and never shown again.'),
           h('div', { class: 'row' },
-            h('button', { class: 'btn on grow', id: 'projadd', text: 'Add', onclick: function () {
+            h('button', { class: 'btn on pri grow', id: 'projadd', text: 'Add', onclick: function () {
               keep();
               api('POST', '/api/projectors', { add: { name: projForm.name || projForm.host, host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password } }).then(function (r) {
                 if (!r.ok) return sayAt(err, r.data.error || 'Could not add the projector. Check the address.', true);
@@ -3111,7 +3111,7 @@
         labelled('What happens', action), off, wrap.file, wrap.set, wrap.scene, wrap.preset,
         labelled('Note (optional)', label, 'A word for yourself, shown in the list.'),
         h('div', { class: 'row' },
-          h('button', { class: 'btn on grow', id: 'schedadd', text: editing ? 'Save changes' : 'Add', onclick: function () {
+          h('button', { class: 'btn on pri grow', id: 'schedadd', text: editing ? 'Save changes' : 'Add', onclick: function () {
             if (!f.days.length) return sayAt(err, 'Choose at least one day.', true);
             if (!/^\d\d:\d\d/.test(f.time)) return sayAt(err, 'Choose a time.', true);
             var entry = { time: f.time.slice(0, 5), days: f.days.slice(), action: f.action, label: f.label };
@@ -3399,7 +3399,7 @@
       body.appendChild(modes); body.appendChild(help); body.appendChild(fields);
       drawModes(); drawFields(); drawSecs();
       var wifiOffAsked = false;
-      var applyBtn = h('button', { class: 'btn on grow', id: 'netapply', text: 'Try this setting', onclick: function () {
+      var applyBtn = h('button', { class: 'btn on pri grow', id: 'netapply', text: 'Try this setting', onclick: function () {
           var c = config(kind());
           if (c.mode === 'off' && !wifiOffAsked) {
             return confirmRow('Switch Wi-Fi off? A phone that reaches the box over Wi-Fi loses it. The change goes back by itself unless it is confirmed from a wired connection.',
@@ -3445,7 +3445,7 @@
         h('div', { class: 'state', id: 'netleft', text: 'Reverts in ' + p.seconds_left + ' s' }),
         h('div', { class: 'hint', text: S.netNote || '' }),
         h('div', { class: 'row' },
-          h('button', { class: 'btn on grow', id: 'netconfirm', text: 'Confirm: keep this network', onclick: function () {
+          h('button', { class: 'btn on pri grow', id: 'netconfirm', text: 'Confirm: keep this network', onclick: function () {
             api('POST', '/api/network/confirm', {}).then(function (r) { S.netNote = r.ok ? '' : (r.data.error || ''); refresh(); });
           } }),
           h('button', { class: 'btn grow', id: 'netrevert', text: 'Go back now', onclick: function () {
@@ -3539,32 +3539,149 @@
     var area = !S.device ? null : S.tab === 'room' ? 'room' : S.tab === 'mix' ? 'mix' : S.tab === 'system' ? (S.sys === 'vibes' ? 'shaders' : 'system') : 'clips';
     if (area) document.documentElement.setAttribute('data-area', area); else document.documentElement.removeAttribute('data-area');
   }
+  // A small picture of a look, drawn from its own tokens (the page, a surface, the colour of each part of the panel, a
+  // title in its font and case, a button and a state chip), so a look can be judged before it is tapped. Every value
+  // is set through the script (the policy allows that, not a style attribute), a colour only if it is #rrggbb, a font
+  // only from this list: nothing of a theme file is ever written into the page as text of a style.
+  var LOOK_FONTS = { archivo: '"Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', system: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+    'jetbrains-mono': '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace' };
+  var LOOK_AREAS = ['room', 'shaders', 'clips', 'mix', 'system'];
+  function lookColour(c, fallback) { return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c : fallback; }
+  function lookNumber(v, low, high, fallback) { return typeof v === 'number' && isFinite(v) ? Math.max(low, Math.min(high, v)) : fallback; }
+  function lookLum(c) {
+    var v = [1, 3, 5].map(function (i) { var x = parseInt(c.slice(i, i + 2), 16) / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  }
+  function lookOn(c, a, b) {       // of a and b, the one that reads better on c (as the box works out the text on an area)
+    var l = lookLum(c), ra = (Math.max(l, lookLum(a)) + 0.05) / (Math.min(l, lookLum(a)) + 0.05), rb = (Math.max(l, lookLum(b)) + 0.05) / (Math.min(l, lookLum(b)) + 0.05);
+    return ra >= rb ? a : b;
+  }
+  // An accent may be chosen only where it can be read: the box refuses one that, written on the page or on a surface
+  // of the look in use, is under 4.5 to 1 (themes.accent_problems), so only the swatches that pass are offered.
+  function lookRatio(a, b) { var x = lookLum(a), y = lookLum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+  function accentsFor(th) {
+    var tk = th && th.look && th.look.tokens;
+    if (!tk || !lookColour(tk.bg, null) || !lookColour(tk.cd, null)) return [];
+    return ACCENTS.filter(function (c) {
+      var on = lookRatio(c, '#000000') >= lookRatio(c, '#ffffff') ? '#000000' : '#ffffff';
+      if (lookRatio(c, on) < 4.5) return false;
+      return th.style !== 'default' || (lookRatio(c, tk.bg) >= 4.5 && lookRatio(c, tk.cd) >= 4.5);
+    });
+  }
+  function lookTile(th, chosen, onPick) {
+    var look = th.look || {}, tk = look.tokens || {}, areas = look.areas || {}, states = look.states || {}, d = look.design || null;
+    var bg = lookColour(tk.bg, '#121214'), cd = lookColour(tk.cd, '#1c1c20'), fg = lookColour(tk.fg, '#f2f1ec'), ln = lookColour(tk.ln, fg);
+    var ac = lookColour(areas.room, lookColour(tk.ac, fg)), on = areas.room ? lookOn(ac, bg, fg) : lookColour(tk.on, bg);
+    var chipBg = lookColour(states.active, cd), chipFg = states.active ? lookOn(chipBg, bg, fg) : fg;
+    var radius = d ? lookNumber(d.radius_control, 0, 24, 0) : 6, panel = d ? lookNumber(d.radius_panel, 0, 24, 0) : 6, rule = d ? lookNumber(d.border_width, 0, 4, 3) : 1.5;
+    var art = h('span', { class: 'lt-art' });
+    art.style.background = bg; art.style.color = fg; art.style.borderRadius = Math.min(panel, 14) + 'px';
+    var strip = h('span', { class: 'lt-areas' });
+    (th.areas ? LOOK_AREAS.map(function (a) { return lookColour(areas[a], null); }).filter(Boolean) : [ac]).forEach(function (c) {
+      var block = h('i'); block.style.background = c; strip.appendChild(block);
+    });
+    var title = h('span', { class: 'lt-title', text: 'Room' });
+    if (d) {
+      title.style.fontFamily = Object.prototype.hasOwnProperty.call(LOOK_FONTS, d.font_title) ? LOOK_FONTS[d.font_title] : LOOK_FONTS.system;
+      title.style.fontWeight = String(lookNumber(d.title_weight, 400, 900, 900));
+      if (d.title_case === 'capitals') { title.style.textTransform = 'uppercase'; title.style.letterSpacing = '.04em'; }
+    }
+    var surface = h('span', { class: 'lt-surface' });
+    surface.style.background = cd; surface.style.borderRadius = Math.min(panel, 10) + 'px';
+    var btn = h('span', { class: 'lt-btn', text: 'Play' });
+    var outlined = d && d.primary === 'outlined';
+    btn.style.background = outlined ? 'transparent' : ac; btn.style.color = outlined ? fg : on;
+    btn.style.border = Math.max(rule, outlined ? 1 : 0) + 'px solid ' + (outlined ? fg : ac); btn.style.borderRadius = Math.min(radius, 12) + 'px';
+    var chip = h('span', { class: 'lt-chip', text: 'Active' });
+    chip.style.background = chipBg; chip.style.color = chipFg; chip.style.borderRadius = (d ? Math.min(radius, 12) : 10) + 'px';
+    if (!states.active) chip.style.border = '1px solid ' + ln;
+    if (d) [btn, chip].forEach(function (el) { el.style.fontFamily = Object.prototype.hasOwnProperty.call(LOOK_FONTS, d.font_text) ? LOOK_FONTS[d.font_text] : LOOK_FONTS.system; });
+    surface.appendChild(btn); surface.appendChild(chip);
+    art.appendChild(strip); art.appendChild(title); art.appendChild(surface);
+    return h('button', { class: 'looktile' + (chosen ? ' on' : ''), 'data-theme': th.id, 'data-mine': th.source === 'addon' ? '1' : false, 'aria-pressed': chosen ? 'true' : 'false', onclick: onPick },
+      art, h('span', { class: 'lt-name' }, h('span', { class: 'lt-label', text: th.name }),
+        th.source === 'addon' ? h('span', { class: 'lt-mine', text: 'yours' }) : null, chosen ? h('span', { class: 'lt-inuse', text: 'in use' }) : null));
+  }
+  var lookNote = { text: '', err: false };      // what adding, saving or removing a theme said; survives the redraw
+  var THEME_BYTES = 16 * 1024;                  // themes.MAX_FILE: the box refuses more, and so nothing larger is read here
   function appearanceCard() {
     var t = S.theme || {};
+    var fresh = function () {
+      document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now());
+      markLook();
+      render();
+      fillRanges();
+    };
+    var note = function (text, isErr) { lookNote = { text: text || '', err: !!isErr }; sayAt(document.getElementById('themeresult'), lookNote.text, lookNote.err); };
     var apply = function (name, accent) {
       act('POST', '/api/theme', { name: name, accent: accent }, function (d) {
-        S.theme = d.theme;
-        document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now());
-        markLook();
-        render();
-        fillRanges();
+        S.theme = d.theme; S.accentDropped = '';
+        lookNote = { text: '', err: false };
+        fresh();
       });
     };
     var now = chosenTheme();
-    return h('div', { class: 'card' }, h('h2', { text: 'Appearance' }),
+    var pick = h('input', { type: 'file', id: 'themepick', accept: '.json,application/json', hidden: true });
+    pick.addEventListener('change', function () {
+      var f = pick.files && pick.files[0];
+      pick.value = '';
+      if (!f) return;
+      if (f.size > THEME_BYTES) return note(f.name + ' is too large for a theme (at most 16 KB). Choose a theme file: a small .json file saved from this page or made with tools/figma-theme.py.', true);
+      var reader = new FileReader();
+      reader.onerror = function () { note('Could not read ' + f.name + '.', true); };
+      reader.onload = function () {
+        api('POST', '/api/theme/add', { file: String(reader.result) }).then(function (r) {
+          if (!r.ok) return note((r.data.error || 'The theme was not added (HTTP ' + r.status + ')') + '. Nothing was changed.', true);
+          S.themes = r.data.available; S.themeSkipped = r.data.skipped || [];
+          lookNote = { text: (r.data.replaced ? 'Replaced your theme ' : 'Added ') + r.data.name + '.' + (S.theme && S.theme.name === r.data.added ? '' : ' Tap it to use it.')
+            + (r.data.warnings || []).map(function (w) { return ' Note: ' + w + '.'; }).join(''), err: false };
+          fresh();
+          say(lookNote.text);
+        });
+      };
+      reader.readAsText(f);
+    });
+    var yours = S.themes.filter(function (th) { return th.source === 'addon'; });
+    return h('div', { class: 'card', id: 'lookcard' }, h('h2', { text: 'Appearance' }),
       h('div', { class: 'row wrap', id: 'lookthemes' }, S.themes.map(function (th) {
-        return h('button', { class: 'btn small' + (th.id === t.name ? ' on' : ''), text: th.name, 'data-theme': th.id, 'aria-pressed': th.id === t.name ? 'true' : 'false',
-          onclick: function () { apply(th.id, t.accent); } });
+        // the accent goes with the look only where that look can carry it (the box would refuse it otherwise)
+        return lookTile(th, th.id === t.name, function () { apply(th.id, t.accent && accentsFor(th).indexOf(t.accent) >= 0 ? t.accent : null); });
       })),
       now && now.areas ? h('div', { class: 'hint', id: 'lookareas', text: now.name + ' gives each part of the panel its own colour (Room, Shaders, clips, Mix, System), so there is no accent to choose.' }) : [
         h('div', { class: 'k', text: 'Accent' }),
         h('div', { class: 'swatches' },
           h('button', { class: 'btn small', text: 'Default', onclick: function () { apply(t.name, null); } }),
-          ACCENTS.map(function (c) {
+          accentsFor(now).map(function (c) {
             var sw = h('button', { class: 'swatch' + (t.accent === c ? ' cur' : ''), 'aria-label': 'Accent ' + c, onclick: function () { apply(t.name, c); } });
             sw.style.background = c;
             return sw;
-          }))]);
+          })),
+        S.accentDropped ? h('div', { class: 'hint warn', id: 'accentdropped', text: S.accentDropped + '. Tap Default, or another accent.' }) : null],
+      h('h2', { text: 'Your own themes' }),
+      h('div', { class: 'hint', id: 'themehint', text: 'A theme is a small file of colours, shapes and type. Save a look as a file to start from, change it (by hand, or from Figma), and add it here. It travels in a settings file.' }),
+      pick,
+      h('div', { class: 'row wrap', id: 'themeacts' },
+        h('button', { class: 'btn on pri grow', id: 'themeadd', text: 'Add a theme', onclick: function () { pick.click(); } }),
+        h('button', { class: 'btn grow', id: 'themesave', text: 'Save this look as a file', onclick: function () {
+          act('POST', '/api/theme/export', {}, function (d) { saveFile(d.name, d.file); note('Saved ' + d.name + '.' + (d.note ? ' ' + d.note : '')); });
+        } })),
+      h('div', { class: 'msg inmsg' + (lookNote.err ? ' err' : ''), id: 'themeresult', role: 'status', text: lookNote.text }),
+      (S.themeSkipped || []).length ? h('div', { class: 'hint warn', id: 'themeskipped', text: (S.themeSkipped.length === 1 ? 'One theme file on this box could not be used: ' : S.themeSkipped.length + ' theme files on this box could not be used: ')
+        + S.themeSkipped.map(function (k) { return k.file + ': ' + k.why; }).join('. ') + '.' }) : null,
+      yours.length ? h('div', { class: 'list', id: 'themelist' }, yours.map(function (th) {
+        return h('div', { class: 'item' }, h('span', { class: 'lname', text: th.name }),
+          h('div', { class: 'row' }, h('button', { class: 'btn small del', 'data-remove': th.id, 'aria-label': 'Remove the theme ' + th.name, text: 'Remove', onclick: function (e) {
+            confirmRow('Remove the theme ' + th.name + ' from this box?' + (th.id === t.name ? ' It is the look in use: the panel goes back to Dark stage.' : ''), 'Remove', 'Keep it', function () {
+              api('POST', '/api/theme/remove', { id: th.id }).then(function (r) {
+                if (!r.ok) return note((r.data.error || 'The theme was not removed') + '.', true);
+                S.theme = r.data.theme; S.themes = r.data.available; S.themeSkipped = r.data.skipped || []; S.accentDropped = '';
+                lookNote = { text: 'Removed ' + th.name + '.', err: false };
+                fresh();
+                say(lookNote.text);
+              });
+            }, e.currentTarget);
+          } })));
+      })) : null);
   }
   var accessForm = { pin: false, view: true, live: false, seconds: 300, minutes: 60 };  // survives redraws
   var accessTimer = null;
@@ -3610,7 +3727,7 @@
         'A guest code lets someone open this panel on their own phone as ' + roleName('view') + ': they see what plays and change nothing. It stops working by itself.' }));
       live.appendChild(chooser('joinminutes', 'A new code works for', JOIN_MINUTES, accessForm.minutes, function (v) { accessForm.minutes = v; }));
       live.appendChild(h('div', { class: 'row wrap' },
-        h('button', { class: 'btn on small', id: 'newguest', text: 'Guest code', onclick: function (e) { make('view', e.target); } }),
+        h('button', { class: 'btn on pri small', id: 'newguest', text: 'Guest code', onclick: function (e) { make('view', e.target); } }),
         all ? h('button', { class: 'btn small', id: 'newpresenter', text: 'Presenter code', onclick: function (e) { make('live', e.target); } }) : null,
         all ? h('button', { class: 'btn small', id: 'printsheet', text: 'Print access sheet', onclick: function () { printSheet(d); } }) : null));
       if (!codes.length) live.appendChild(h('div', { class: 'hint', id: 'nocodes', text: all ? 'No code is active.' : 'No guest code is active.' }));
@@ -3637,7 +3754,7 @@
         var canShow = all || !scr.other;
         if (canShow) live.appendChild(chooser('showsecs', 'Show it for', SHOW_SECONDS, accessForm.seconds, function (v) { accessForm.seconds = v; }));
         live.appendChild(h('div', { class: 'row wrap' },
-          canShow ? h('button', { class: 'btn on small', id: 'showaccess', text: scr.showing ? 'Show again' : 'Show on the room screen', onclick: function (e) {
+          canShow ? h('button', { class: 'btn on pri small', id: 'showaccess', text: scr.showing ? 'Show again' : 'Show on the room screen', onclick: function (e) {
             var items = all ? ['pin', 'view', 'live'].filter(function (i) { return accessForm[i]; }) : ['view'];
             if (!items.length) return say('Choose what to show.', true);
             function show() { send('/api/access/screen', { show: true, items: items, seconds: accessForm.seconds }, 'On the room screen.'); }

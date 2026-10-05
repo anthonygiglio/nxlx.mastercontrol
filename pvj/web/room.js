@@ -300,7 +300,7 @@
       setup.appendChild(h('h2', { text: 'Set up the room' }));
       if (!d.projectors.length) setup.appendChild(h('div', { class: 'empty', id: 'roomnoproj' },
         h('div', { text: 'No projectors yet. A room is made of projectors, so the first step is to add one.' }),
-        c.openProjectors ? h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'roomaddproj', text: 'Add a projector', onclick: c.openProjectors })) : null));
+        c.openProjectors ? h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'roomaddproj', text: 'Add a projector', onclick: c.openProjectors })) : null));
       // groups
       setup.appendChild(h('div', { class: 'field', text: 'Groups' }));
       setup.appendChild(h('div', { class: 'hint', text: '"All" is always there.' }));
@@ -331,7 +331,7 @@
         } });
       })));
       setup.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn on small', id: 'roomgsave', text: draft.group.id ? 'Save group' : 'Add group', onclick: function () {
+        h('button', { class: 'btn on pri small', id: 'roomgsave', text: draft.group.id ? 'Save group' : 'Add group', onclick: function () {
           keep();
           var known = d.projectors.map(function (p) { return p.id; });
           var g = { name: draft.group.name, projectors: draft.group.projectors.filter(function (p) { return known.indexOf(p) >= 0; }) };
@@ -404,7 +404,7 @@
       params();
       setup.appendChild(kind); setup.appendChild(file); setup.appendChild(loop); setup.appendChild(bank); setup.appendChild(index); setup.appendChild(stream);
       setup.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn on small', id: 'roomssave', text: draft.scene.id ? 'Save scene' : 'Add scene', onclick: function () {
+        h('button', { class: 'btn on pri small', id: 'roomssave', text: draft.scene.id ? 'Save scene' : 'Add scene', onclick: function () {
           keep();
           var out = { name: draft.scene.name, groups: [], box: { action: b.action } };
           if (draft.scene.id) out.id = draft.scene.id;
