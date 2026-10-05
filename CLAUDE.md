@@ -22,5 +22,5 @@ Read first: [HANDOFF.md](HANDOFF.md), then [project-log/](project-log/README.md)
 - Keep scratch files small and delete them when you finish: the dev Mac has little free disk, and a full disk stops every agent.
 - Tests and probes use loopback only. Do not touch the test Pi, a projector or the network unless the brief says so.
 - Anything that takes network input, reads devices, handles uploads or auth, or runs as root gets an independent read-only review before merging, and every finding gets a test.
-- The panel's shared patterns (page shell, the real switch, state chips, inline confirm, list rows, apply on tap or Save) are in D42 and D43; a page holds its own controls by default, and a link to another page is fine where that is clearer (D51); pages for intense work need a laptop layout. Say server and client.
+- The panel's shared patterns (page shell, the real switch, state chips, inline confirm, list rows, apply on tap or Save) are in D42 and D43; a page holds its own controls by default, and a link to another page is fine where that is clearer (D52); pages for intense work need a laptop layout. Say server and client.
 - Finish with a short report: what was built, what was left out, the pull request number, the state of every check, what was not tested, what you are unsure about.

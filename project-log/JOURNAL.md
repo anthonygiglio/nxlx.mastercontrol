@@ -4,6 +4,26 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-04 (evening: what landed, the redesign workspace, a full disk)
+
+Pull request #80. **Not merged by the agent that wrote it. The Room screen's ambience button ran only in CI's browser test (no Playwright on this Mac); nothing in this entry was done on the Pi by this session.** What it says about the Pi is the coordinating session's report, written down here so it is not lost.
+
+**What landed.** #70 to #78 all merged on 2026-10-04 (their entries below say "not merged"; that was true when each was written). master and the test Pi 4 are at the merge of #78: deployed over SSH, files checked by hash, all five services active, still on the wired network. Open: #79 (every bundled shader measured on the Pi 4, in progress) and #65 (the UX proposal, a reference).
+
+**On the Pi the same day** (systemd 257): the runtime folder checklist steps R0, R1, R5, R6, R9 and R10 and the snapshot through the panel's sandbox while a clip played; the new shader engine drawing silk, tunnel and bloom; the three MIDI controllers recognised by their profiles, with no message received from them yet. Not done: a reboot, a boot with no network, an update from the old version, a rollback, any controller pressed, any projector, Wi-Fi. The dev account `pvj-dev` was not made: Claude was not permitted to create it, and the owner may create it himself. Two old paired devices named `claude-test-mac` are still on the box.
+
+**The owner's direction changed in two ways.** The look: "the whole visual style is on the table. I'm open to suggestions, and they can be very different options". The order: "nailing down the design language and style is first, then the projection control, then performing". And "no going elsewhere" is a default now: "you may drop the 'no going elsewhere' rule if the panel design makes sense" (D52; `CLAUDE.md` says so).
+
+**The redesign workspace.** A Figma file with four style directions (A Stage, B Desk, C Gallery, D Signal), https://www.figma.com/design/Cu6AGouBnUBMeBCIPPx02o; a guide, https://claude.ai/artifact/VkC5rzfZiPNRgPFazyYKx1; and a job board for the whole project, https://claude.ai/artifact/V6uoeXTgNYKn7PaqeuVDbj (a claude.ai page with a database: collection `cards`, settings in `settings/links`). The owner's Figma plan met its limits while the file was built (see LESSONS).
+
+**A full disk.** The Mac's disk filled during the day from review copies, worktrees and CI artifacts, and every agent stopped. `CLAUDE.md` has a rule for it now.
+
+**Built in this pull request: ambience on the Room screen (D52).** Staff land on Room, and the control for their most common job was on Live. Room now has a card at the top, while Shaders and Vibes is on: a button of 64 px, "Start ambience", which starts Vibes on the usual set; a set chooser beside it when there is more than one set; while it runs "Ambience is playing: Aurora. Tap to stop" and "Next one". A guest reads one line of state and has no button. With the module off a presenter sees nothing, and the owner one line and "Open Shaders and Vibes" (Back returns to Room). It uses `POST /api/vibes` only. It makes no request of its own while it waits: `app.js` already reads `/api/status` every second on every tab, and now tells the Room screen after each answer, as it tells Live; the sets come from one `GET /api/shaders` when the screen opens and when the tab is shown again. `shaders.js` lends its own helpers (`pvjShaders.vibes`), so the set chosen on Room is the set Live starts, and the name is cleaned the same way. Browser test: the owner's hint with the module off; a presenter lands on Room, starts, reads the name, presses Next one, stops; a guest reads the state; nothing sticks out at 390 px. Screenshot `room-ambience`.
+
+Left out: a Previous button (Live has one); the time until the next shader; the chooser stays beside the button while ambience plays, and choosing there switches the set at once, as on Live. Not sure about: whether "Ambience" as a card title above "Start ambience" is one word too many on a phone; whether staff want the set chooser at all. The sets on a tablet that stays on Room all day are as old as the last time the tab was shown.
+
+**The notes.** `HANDOFF.md` "Start here" is rewritten for this state, and what was stale under it is corrected (the shader count, controller profiles under "Not built", "no speed measured on any board", the staged password check). Three lessons added.
+
 ## 2026-10-04 (the System pages: one set of patterns, and the rest of the audit)
 
 Pull request #78 (D50). **Not merged. Nothing here ran on the Pi, on a phone or with a real projector. The browser test and the screenshots ran only in CI: this Mac has no Playwright and no mpv.**
