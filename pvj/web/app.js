@@ -612,8 +612,9 @@
       });
     }
     function selected() { return d && d.surfaces.filter(function (s) { return s.id === d.edit.selected; })[0]; }
-    function send(b) {
+    function send(b, done) {        // done(): the box took it; called before the card is drawn again
       return mapApi('POST', b).then(function (r) {
+        if (r.ok && done) done();
         if (!document.getElementById('mapcard')) return r;
         if (!r.ok) { say(r.data.error || 'Could not change the mapping', true); if (d) draw(d); return r; }
         say(''); if (!r.stale) draw(r.data); return r;
@@ -811,10 +812,14 @@
           h('button', { class: 'btn small', id: 'mapload', text: 'Load', onclick: function () { send({ action: 'load', name: pick.value }); } }),
           h('button', { class: 'btn small', id: 'mapdelete', text: 'Delete', onclick: function () { send({ action: 'delete', name: pick.value }); } })));
       }
-      var setName = h('input', { class: 'text-input', id: 'mapsetname', 'aria-label': 'Name for this mapping', placeholder: 'Name, e.g. Main stage', maxlength: 40, value: mapUi.name });
+      // The name being typed lives in mapUi.name (every keystroke), so each rebuild starts from it and keepCursor
+      // leaves the text alone (data-kept). It is emptied when the box has taken the Save and BEFORE the card is
+      // drawn again: emptied afterwards, a field that still had the cursor (a tapped button does not take it on
+      // Safari) showed the saved name again while a second Save would have sent an empty one.
+      var setName = h('input', { class: 'text-input', id: 'mapsetname', 'aria-label': 'Name for this mapping', placeholder: 'Name, e.g. Main stage', maxlength: 40, value: mapUi.name, 'data-kept': 'card' });
       setName.addEventListener('input', function () { mapUi.name = setName.value; });
       body.appendChild(h('div', { class: 'row' }, setName, h('button', { class: 'btn small', id: 'mapsave', text: 'Save',
-        onclick: function () { send({ action: 'save', name: mapUi.name.trim() }).then(function (r) { if (r.ok) mapUi.name = ''; }); } })));
+        onclick: function () { send({ action: 'save', name: mapUi.name.trim() }, function () { mapUi.name = ''; }); } })));
       body.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture above (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
       if (body.isConnected) paint();     // at once, so the canvas has its height and nothing below it jumps for a frame under a finger
       requestAnimationFrame(paint);
@@ -1524,24 +1529,35 @@
   // A card that redraws by itself waits while a question is open in it, so the question is not wiped.
   function asking(el) { return !!(el && el.querySelector('#confirmrow')); }
   // A card that is rebuilt whole must not take the cursor from the person using it. rebuild() runs in between; the
-  // control that had the cursor is found again by its id and gets the cursor back, and a field also what was typed
-  // into it and the place in it. (An answer from the box can arrive while a name is being typed: without this the
-  // keyboard closed, and the letters typed after it went nowhere.)
+  // control that had the cursor is found again by its id and gets the cursor back. (An answer from the box can
+  // arrive while a name is being typed: without this the keyboard closed, and the letters typed after it went
+  // nowhere.) A field also gets back what was typed into it and the place in it, but only while it is still the
+  // same field: the rebuilt one must have been given the same content by the card as the old one was (its
+  // defaultValue, or for a list the option marked as chosen). When that differs, the box has something else to say
+  // there (another surface was chosen, the name was changed elsewhere) and the old text would be a lie under a new
+  // label. A field marked data-kept holds its text in the card itself and is never written to here.
+  function builtWith(el) {
+    if (el.tagName !== 'SELECT') return String(el.defaultValue);
+    var chosen = Array.prototype.filter.call(el.options, function (o) { return o.defaultSelected; })[0] || el.options[0];
+    return chosen ? chosen.value : '';
+  }
   function keepCursor(container, rebuild) {
     var a = document.activeElement, keep = null;
     if (a && a.id && container.contains(a)) {
       var field = /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'range';
-      keep = { id: a.id, field: field, value: field ? a.value : null, from: null, to: null };
+      keep = { id: a.id, field: field, tag: a.tagName, value: field ? a.value : null, built: field ? builtWith(a) : null, from: null, to: null };
       try { if (field) { keep.from = a.selectionStart; keep.to = a.selectionEnd; } } catch (e) { /* a field with no place in it */ }
     }
     rebuild();
     var el = keep && document.getElementById(keep.id);
     if (!el || !container.contains(el) || el.disabled) return;
-    if (keep.field && el.tagName === 'SELECT') {
+    var same = keep.field && el.tagName === keep.tag && !el.hasAttribute('data-kept') && builtWith(el) === keep.built;
+    if (same && el.tagName === 'SELECT') {
       if (Array.prototype.some.call(el.options, function (o) { return o.value === keep.value; })) el.value = keep.value;
-    } else if (keep.field) el.value = keep.value;
+    } else if (same) el.value = keep.value;
     try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
-    try { if (keep.field && typeof keep.from === 'number') el.setSelectionRange(keep.from, keep.to); } catch (e) { /* not a text field */ }
+    // the place in the text only where the text is the one it was a place in
+    try { if (keep.field && typeof keep.from === 'number' && el.value === keep.value) el.setSelectionRange(keep.from, keep.to); } catch (e) { /* not a text field */ }
   }
 
   // -- the patterns every System page shares --
