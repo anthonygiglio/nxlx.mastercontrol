@@ -4,6 +4,125 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-05 (effect detail on the Pi 4: effects choose their own working size)
+
+Pull request #87, D58. The owner, on reading the first effects run: "If running on a Pi4 or 3, let's auto-scale clips to 720p or 1080, whichever performs better overall." Built, measured on his test Pi 4 over SSH the same afternoon (15:46 to 17:24 UTC), and written down. Judged from the player's counters and six snapshots; **nobody watched the monitor.**
+
+**The answer first.** On a Pi 4, Automatic works at **720 lines**, at **540 for isf-edge-blowout**, and at 540 for an upload. Over the 1080p clip every filter drops frames at full size; at 720 lines 36 of the 37 hold 30 frames a second with nothing dropped and isf-edge-blowout drops 1.6 a second; at 540 lines every one holds. So 720 is the best picture that holds, with one filter a step down. All 37 were then run at Automatic with the code as it is in the pull request: nothing dropped by any of them.
+
+**What was built.**
+
+- The on/off Half resolution is gone from the card. **Effect detail** is one setting for the box (`fx_detail` in the Shaders and Vibes section; `POST /api/effects/config`, full access; applied on the tap, also to the effect that is on; in a settings export and import; absent while the board's own default is in force): Automatic, 540 lines, 720 lines, Full.
+- With a number the filter draws a picture whose **shorter side** is at most that many lines, by the hook's own `//!WIDTH` and `//!HEIGHT` in the player's arithmetic, relative to the picture it meets: one text for every clip, a clip at or below the cap left alone, a new clip right from its first frame. The code's `RENDERSIZE` does the same sum.
+- **Amount 0** tells the player to leave the filter's pass out (`//!WHEN 0`): the clip at its own size, whatever the cap.
+- `"half": true` is still taken (that effect at 540 lines at most); `false` follows the box.
+- The card says what is in force ("Automatic: working at 720 lines for this 1080p clip."), that fine patterns look larger at a lower size, and for a heavy effect "lower Effect detail to 540 lines" while there is a lower one that would help.
+- Automatic is a table by board (`AUTO`), a Pi 4's row made from the measured `PI4_720` by the rule in D58. Default: Automatic on a Pi 4 (and on a Pi 3 and a small board the box cannot name, at 540 lines, not measured; effects are still not offered on a Pi 3), Full on a Pi 5 and x86, where Automatic scales nothing (not measured).
+
+**The box and the method.** The same Pi 4 Model B Rev 1.5, mpv 0.40.0, 2560 x 1440 at 75 Hz, `CRT.mp4` (H.264, 1920 x 1080, 30 a second) and `testpattern.mkv` (1280 x 720). Before anything, the installed files were compared with `origin/master` (`6f2a9e5`) by hash: the same, 192 files. A temporary full-access device ("claude-measure-temp") was paired with the PIN; a helper in a root-only folder under `/tmp` made every request and asked the player through its socket; each round ran detached and wrote its rows as it went, and a watchdog would have put the box back had the Mac gone silent for 45 minutes. The sound was turned to 0. Per filter: `POST /api/effects`, 4 seconds, a window of 15 seconds with no snapshot in it (45 more where it showed 0.05 to 2.5 dropped frames a second; 60 seconds for nine filters near the top in the last round), then Off. In a window: the rises of the player's two drop counters read every second and added up, the average of every pass read every second, GPU busy from the kernel, and at the end what `GET /api/effects` said (`load`, `working`). Before every window the script checked that its clip was still what played. The branch was installed three times with `install/install.sh --offline` (15:57, 16:30 and 16:57 UTC; each restarts the panel and the player for a few seconds; all five services were active after each).
+
+**1. Before any code went on the box: is mixing at full size affordable?** A reviewer's design was two passes: the filter at the cap into a texture of its own, then a pass at the clip's size that mixes it with the untouched clip, so that the unfiltered share stays sharp. Texts made by the branch's translator on the Mac, the two-pass ones by hand, were given to the player through its socket while master was still installed (`fbo-format rgba8` set by hand, as the engine does):
+
+| Text over the 1080p clip | Filter's pass ms | The mix pass ms | All other passes ms | Dropped a second | GPU busy % |
+| --- | --- | --- | --- | --- | --- |
+| the clip alone | | | 13.2 | 0 | 48 |
+| isf-flip-h, full size | 8.9 | | 22.1 | 1.16 | 96 |
+| isf-flip-h, 720 lines, one pass | 3.7 | | 19.5 | 0 | 77 |
+| isf-flip-h, 720 lines, one pass, amount 0.5 | 4.4 | | 19.2 | 0 | 78 |
+| isf-flip-h, 720 lines, two passes, amount 0.5 | 4.3 | 7.0 | 22.0 | 2.63 | 96 |
+| isf-flip-h, 540 lines, one pass | 2.2 | | 18.2 | 0 | 68 |
+| isf-flip-h, 540 lines, two passes, amount 0.5 | 2.7 | 6.9 | 22.1 | 1.75 | 96 |
+| fx-vignette, 720 lines, one pass, amount 0.5 | 5.0 | | 19.0 | 0 | 80 |
+| fx-vignette, 720 lines, two passes, amount 0.5 | 5.1 | 6.8 | 21.8 | 3.34 | 97 |
+| fx-vignette, 540 lines, two passes, amount 0.5 | 3.1 | 6.9 | 21.9 | 1.94 | 96 |
+| fx-vignette, 720 lines, amount 0 (the hook left out) | none drawn | | 22.6 | 0 | 76 |
+| isf-edge-blowout, 720 lines, one pass | 13.7 | | 18.3 | 1.55 | 97 |
+| isf-edge-blowout, 720 lines, two passes, amount 0.5 | 13.8 | 6.3 | 21.6 | 7.46 | 98 |
+| isf-edge-blowout, 540 lines, one pass | 7.7 | | 17.8 | 0 | 84 |
+| isf-edge-blowout, 540 lines, two passes, amount 0.5 | 7.9 | 6.0 | 21.5 | 4.16 | 97 |
+
+A second pass at 1080 lines costs 6 to 7 ms and keeps everything after it at full size: with it the cheapest filter drops frames at both caps. **The mix stays where the filter draws.** The same probe showed that mpv 0.40 on V3D takes the size arithmetic, and that a hook left out with `//!WHEN 0` draws no pass but does not give back the player's own two passes (22.6 ms against 13.2).
+
+**2. Thirteen filters at full size, 720 lines and 540 lines** (the engine, the branch installed; pass times in ms, dropped frames a second, GPU busy in percent):
+
+| Filter | Full size: pass | dropped | GPU | 720 lines: pass | dropped | GPU | 540 lines: pass | dropped | GPU |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| isf-edge-blowout | 30.4 | 11.15 | 98 | 13.7 | 1.56 | 97 | 7.7 | 0.0 | 84 |
+| isf-corner-color-tint | 20.7 | 7.81 | 98 | 9.2 | 0.0 | 94 | 5.2 | 0.0 | 77 |
+| fx-edge-glow | 21.1 | 7.96 | 98 | 9.9 | 0.0 | 95 | 5.6 | 0.0 | 78 |
+| isf-rgb-halftone | 18.5 | 7.09 | 97 | 8.7 | 0.0 | 92 | 4.9 | 0.0 | 76 |
+| isf-triple-rotate | 18.5 | 7.1 | 98 | 8.7 | 0.0 | 92 | 4.9 | 0.0 | 76 |
+| isf-kaleidoscope-tile | 17.5 | 6.45 | 98 | 8.4 | 0.0 | 91 | 4.8 | 0.0 | 75 |
+| fx-twirl | 16.0 | 5.35 | 97 | 7.6 | 0.0 | 89 | 4.4 | 0.0 | 74 |
+| isf-hyperspace | 14.3 | 4.43 | 97 | 6.3 | 0.0 | 85 | 4.2 | 0.0 | 73 |
+| fx-slit-bands | 13.5 | 3.88 | 97 | 5.9 | 0.0 | 83 | 3.4 | 0.0 | 71 |
+| isf-posterize | 12.0 | 2.96 | 97 | 5.1 | 0.0 | 80 | 2.9 | 0.0 | 70 |
+| fx-wash | 9.1 | 0.93 | 97 | 3.8 | 0.0 | 77 | 2.2 | 0.0 | 68 |
+| isf-flip-h | 8.9 | 0.75 | 97 | 3.7 | 0.0 | 76 | 2.2 | 0.0 | 68 |
+| isf-duotone | 8.2 | 0.26 | 97 | 3.4 | 0.0 | 75 | 2.1 | 0.0 | 67 |
+
+All other passes: 21.5 to 21.8 ms at full size, 19.0 to 19.6 at 720 lines (17.9 for isf-edge-blowout, which was dropping frames), 17.6 to 17.9 at 540. The filter's own pass at 720 lines is 0.41 to 0.48 of full size (0.44 of the pixels), at 540 lines 0.24 to 0.29. The windows of fx-wash, isf-flip-h and isf-duotone at full size and of isf-edge-blowout at 720 lines were 60 seconds (near the line). At the end of each window the engine said `load` "heavy" for the ten that dropped 2.9 or more a second, "tight" for fx-wash (0.93), "ok" for isf-flip-h and isf-duotone (0.75 and 0.26 over a minute: its word is the last six seconds), "tight" for isf-edge-blowout at 720 lines, and "ok" for every window that dropped nothing.
+
+**3. The other twenty-four at 720 lines:**
+
+| Filter | Pass | Dropped | GPU |
+| --- | --- | --- | --- |
+| fx-grade | 4.7 | 0.0 | 79 |
+| fx-kaleido | 8.4 | 0.0 | 90 |
+| fx-mirror-quad | 4.1 | 0.0 | 77 |
+| fx-pixel-grid | 5.6 | 0.0 | 82 |
+| fx-rgb-split | 6.7 | 0.0 | 85 |
+| fx-ring | 7.2 | 0.0 | 87 |
+| fx-ripple | 6.8 | 0.0 | 86 |
+| fx-vignette | 4.7 | 0.0 | 79 |
+| isf-chromatic-aberration | 5.4 | 0.0 | 81 |
+| isf-color-monochrome | 4.7 | 0.0 | 79 |
+| isf-double-vision | 7.2 | 0.0 | 87 |
+| isf-false-color | 4.3 | 0.0 | 78 |
+| isf-flip-v | 3.7 | 0.0 | 76 |
+| isf-gamma-correction | 4.3 | 0.0 | 78 |
+| isf-interlace-mirror | 4.7 | 0.0 | 80 |
+| isf-kaleidoscope | 8.1 | 0.0 | 90 |
+| isf-lgg | 4.9 | 0.0 | 80 |
+| isf-mirror | 3.7 | 0.0 | 76 |
+| isf-quad-tile | 8.5 | 0.0 | 91 |
+| isf-rgb-eq | 4.0 | 0.0 | 77 |
+| isf-rgb-invert | 4.0 | 0.0 | 77 |
+| isf-sine-warp-tile | 7.6 | 0.0 | 88 |
+| isf-white-point-adjust | 3.8 | 0.0 | 77 |
+| isf-zoom | 5.1 | 0.0 | 80 |
+
+**4. All 37 at Automatic.** Run twice: after the table was in the code, and again after the text changed (item 6 below), which is the code of the pull request. Both times: `working.lines` 720 for 36 filters and 540 for isf-edge-blowout, `auto` true, `load` "ok", **nothing dropped by any filter** (60 second windows for isf-edge-blowout, isf-corner-color-tint, fx-edge-glow, isf-rgb-halftone, isf-triple-rotate, isf-quad-tile, fx-kaleido, isf-kaleidoscope-tile and isf-kaleidoscope; 15 seconds for the rest). The pass times of the two rounds agree to within 0.1 ms. The GPU was 94 to 96 percent busy under fx-edge-glow and isf-corner-color-tint and 90 to 92 under six more (fx-kaleido, isf-kaleidoscope, isf-kaleidoscope-tile, isf-quad-tile, isf-rgb-halftone, isf-triple-rotate): they hold, with little room. The clip alone, fourteen windows through the afternoon: 13.0 to 13.2 ms for all passes, GPU 47 to 48 percent, nothing dropped. The board was at 37 to 55 degrees.
+Also in both rounds: fx-vignette at amount 0 (no pass drawn, all passes 22.4 and 22.6 ms, GPU 75 and 76 percent, nothing dropped), at amount 0.5 (5.0 ms, nothing dropped), and isf-rgb-halftone with the old `"half": true` (`working.lines` 540, `auto` false, 4.9 and 5.0 ms, nothing dropped).
+
+**5. The 720p clip at Automatic** (at the cap, so not scaled; run twice, like item 4): fx-edge-glow 9.7 and 9.8 ms, isf-rgb-halftone 8.6, fx-vignette 4.6 and 4.7, isf-flip-h 3.6, all other passes 14.0 to 14.8 ms, nothing dropped; fx-vignette at Full 4.6 and 4.7 ms with 14.2 and 14.8 for the rest. The text with the size lines costs a 720p clip nothing that can be told from the first run's numbers (9.2, 8.1, 4.6, 3.6 and 14.2 then). isf-edge-blowout is scaled to 540 lines there too (7.6 ms, GPU 73 percent, nothing dropped; at Full 13.5 and 13.6 ms, GPU 94 and 95 percent, nothing dropped in 15 seconds, where the first run saw 0.35 a second). The clip alone: 11.8 to 12.1 ms.
+
+**6. What CI found that the board could not.** No clip on the box that stands or is shown turned plays smoothly, so the turned cases are CI's. My first text was told which side of the clip was the shorter one, from the size the clip is stored in, in the belief that the hook meets a turned clip as it is stored. A probe in the GPU test said the opposite in all three ways of drawing: **the player turns the picture before the effect's hook.** The capped picture of a clip turned by a quarter had been capped on the wrong side (34 lines where 60 were meant) and had passed as "softer". The size lines now do the arithmetic for a lying and a standing picture alike (thirty words each; mpv reads thirty-two) and nothing asks for the rotation. That code was installed on the box for the second round of item 4.
+
+**The look** (six snapshots of the playing clip, one per cap for isf-rgb-halftone and fx-edge-glow, taken outside the windows, a 700 x 420 piece of each looked at): the halftone's dots are about 55 pixels across on the 1440 line screen at full size, about 80 at 720 lines, about 110 at 540, with softer rims at 540. The edge filter's outlines are thin and finely textured at full size, thicker at 720 lines, clearly blocky at 540. 720 lines is the smaller change by a visible margin. The snapshots are different frames of a moving clip: sizes can be compared, not pictures.
+
+**Three fixes from the first run's list** (its items 5 and 6), each with a test:
+
+1. **The guard over a clip shorter than its window.** mpv sets its drop counters back to 0 at every loop; the guard started its six seconds again each time and could never say "heavy" for a clip under six seconds. It now adds up the rises across a reset (`pvj/shaderlive.py`, `Guard.sample`), as the measuring script has to. The generators use the same guard; their carrier does not loop.
+2. **`on.picture.fps`** follows the clip also under a filter that never reads the clock (no new text is written for that; the record is brought up to date).
+3. **`error` in `GET /api/effects`** goes when it no longer applies: when an effect goes on, when a change to the effect that is on is taken, at Off, and for "Nothing with a picture is playing" as soon as there is one. A refused file keeps its note in `effects[].refused`.
+
+**Not attempted, as agreed:** an effect put on, changed or taken off over a **paused** clip is still not drawn until the next frame, and that now includes a change of Effect detail. It needs somebody at the screen first.
+
+**After an independent review of the pull request** (the same evening; no security finding, four defects, each fixed with a test that fails on the code before; the Pi was not touched again):
+
+1. **My fix of the lingering `error` could clear a real one.** A flag said "the error is the no-picture one" and outlived the error: Next with nothing playing, then a clip, an effect and a change the GPU refused, with no look at the state in between, and the first look cleared the refusal. The mark is now the error itself, and only the "Nothing with a picture is playing" answer carries it.
+2. **My fix of the guard took any fall of the count for a start from 0.** 5000 to 4990 read as 1663 dropped frames a second; and the two counts were added up although they are read in two requests and one may start again alone. Each count is now followed by itself, a fall counts as "dropped since" only up to 8 a second for the time since the last look, and anything else starts the window again. The generators share this guard and Vibes keeps its heavy marks, so a wrong "heavy" there would have stayed.
+3. **Choosing a detail restated the amount on screen**, so an amount still on its way to the player was lost, and a preset's name with it. The setting now goes to the effect that is on as a wish with nothing in it.
+4. **An amount too small to be written (1e-40) was written as 0.0 and still drawn** as a full capped pass. It is 0 now, where the controls are checked.
+
+Also said plainly where it was missing (the manual, the card's hint, two docstrings): between 0 and 1 the mix is made at the working size, so on a capped clip the picture steps from sharp to slightly softer as Amount leaves 0. The settings test now runs the factory reset itself. None of the four changes what was measured: the texts for amounts above 1e-30 are the same, and the guard was not what the windows were read from.
+
+**Tests.** Unit: the cap's arithmetic for 25 named sizes and 400 random ones against an emulation of the player's 32-bit sums and of the code's, turned clips, the table and the rule, the alias, the setting through the API with roles, validation, a settings export and import, a hand-damaged value, amount 0, the three fixes. GPU, in all three ways of drawing: a capped effect over six shapes of clip (five ways of reading the picture, a mirror, top and bottom, a mix, Blackout, amount 0, and the code's size against the player's, pixel for pixel), over a clip turned by a quarter, a half and three quarters, and behind a mapped surface. Browser: the picker, its line, the choice kept across a reload.
+
+**The box afterwards.** Master was put back with the installer at 17:25 UTC. It is the master of that moment, `9246252`, which is one merge newer than the `6f2a9e5` the box ran before the run (#85, the Signal look on every page: files of the panel only). All 192 installed files of `pvj/` and `bin/` are the same as that commit's by hash, and the five services are active. This branch touches nothing under `install/`, so the unit files were written from the same templates every time. Playback is stopped, no effect is on, the player holds no shader, `fbo-format` is auto, the volume is back at 100, opacity 100, Blackout off. The settings file was compared key by key with its copy from the start: every section is the same, the `shaders` section exactly (no `fx_detail` is left: choosing Automatic removes it), with two exceptions. The temporary device is revoked and gone, and the five that remain are the owner's five. **The pairing PIN is a new one:** the panel makes a new PIN every time it starts, and the four installs started it four times; `sudo pvj-pin` at the box says the current one, and paired devices are not affected. Nothing was written to the media folder. My folder under `/tmp`, the unpacked source and my install log are removed and no helper process is left; `/tmp/install.log` from an earlier deploy was there before and is still there. **The panel and the player were restarted four times** during the run, by the installer: at 15:57, 16:30, 16:57 and 17:25 UTC, with nothing playing each time.
+
+**Not measured.** A Pi 3 (not offered), a Pi 5, x86; a projector at 60 Hz or at 1080 lines; an upload; a clip that stands or is turned on the board; 24, 25, 50, 60 pictures a second; a stream; the mapping together with a cap; the Effects card in a browser on the box; anything by eye, in motion.
 ## 2026-10-05 (Signal everywhere: the look carried through every screen, page and state)
 
 Pull request #85. **Not merged: the owner looks at the pictures first, and two choices wait for a yes (D57).** Panel only: the stylesheet's Signal block, classes and attributes as hooks in `app.js` and `effects.js`, the two Signal theme files (one colour), tests and docs. No backend change. The default look is as it was: the hooks draw nothing in it, the block's selectors are all scoped (the unit test), and the browser test's default-look steps are untouched.

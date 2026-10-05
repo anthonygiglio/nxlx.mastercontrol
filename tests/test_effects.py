@@ -5,8 +5,11 @@ library, and the engine's whole life against the real Player class with a stand-
 a dict, nothing drawn). What a real mpv draws is in tests/test_effects_gpu.py."""
 import hashlib
 import json
+import math
 import os
+import random
 import re
+import struct
 import threading
 import time
 import unittest
@@ -76,9 +79,11 @@ class TranslatorTest(unittest.TestCase):
             self.assertIn("return vec4(mix(pvj_src.rgb, pvj_native(c), 0.25), pvj_src.a);", block)
             self.assertIn("pvj_time = 0.0;", block)                                      # it does not read the clock
             self.assertIn("// nxlx effect 7 3\n", block)                                 # the name inside the code: a text is never alike another
-        half = E.translate(p, controls={"half": True})
-        self.assertEqual(half.count("//!WIDTH HOOKED.w 2 /\n//!HEIGHT HOOKED.h 2 /"), 2)
-        self.assertIn("#define RENDERSIZE (HOOKED_size * 0.5)", half)
+        self.assertNotIn("//!WIDTH", text)                                             # no cap: the hook draws at the clip's own size
+        self.assertNotIn("//!WHEN", text)
+        half = E.translate(p, controls={"half": True})                                 # superseded, and still taken: 540 lines at most
+        self.assertEqual(half.count("\n".join(E.size_lines(540))), 2)
+        self.assertEqual(half.count("#define RENDERSIZE pvj_work\n"), 2)
         # an RGB picture: the YUV hook is still there, for the video that may come next
         self.assertIn("BIND LUMA", E.translate(p, picture={"matrix": "rgb", "levels": "full", "fps": 25.0}))
 
@@ -379,6 +384,179 @@ class TranslatorTest(unittest.TestCase):
                          (3, 1, "medium"))
 
 
+def f32(x):
+    """A number as the player and the GPU hold it: 32 bits."""
+    return struct.unpack("f", struct.pack("f", x))[0]
+
+
+def player_size(line, w, h):
+    """What mpv makes of a //!WIDTH or //!HEIGHT line for a picture of w x h: its own arithmetic (each value before
+    the sign that uses it, in 32-bit numbers, a comparison gives 1 or 0), then rounded to a whole number."""
+    words = line.split()[1:]
+    assert len(words) <= 32, "mpv reads at most 32 words of a size"
+    stack = []
+    for word in words:
+        if word in ("HOOKED.w", "HOOKED.h"):
+            stack.append(f32(w if word.endswith("w") else h))
+        elif word == "!":
+            stack.append(0.0 if stack.pop() else 1.0)
+        elif word in "+-*/<>":
+            b, a = stack.pop(), stack.pop()
+            stack.append(f32({"+": a + b, "-": a - b, "*": a * b, "/": a / b if b else 0.0, ">": float(a > b), "<": float(a < b)}[word]))
+        else:
+            stack.append(f32(float(word)))
+    assert len(stack) == 1, line
+    return int(math.floor(stack[0] + 0.5))
+
+
+def shader_size(text, w, h):
+    """What the generated code takes for RENDERSIZE in a picture of w x h, from its own lines (32-bit numbers)."""
+    assert "    PVJ_HP float pvj_short = min(HOOKED_size.x, HOOKED_size.y);\n" in text
+    m = re.search(r"if \(pvj_short > ([0-9.]+)\) pvj_work = floor\(HOOKED_size - HOOKED_size \* \(pvj_short - \1\) / pvj_short \+ 0\.5\);", text)
+    side, cap = min(w, h), float(m.group(1))
+    if not side > cap:
+        return w, h
+    return tuple(int(math.floor(f32(f32(n - f32(f32(n * f32(side - cap)) / side)) + 0.5))) for n in (w, h))
+
+
+SIZES = [(1920, 1080), (1280, 720), (960, 540), (720, 576), (720, 480), (640, 360), (320, 180), (3840, 2160), (4096, 2160), (1440, 1080), (1998, 1080),
+         (2560, 1080), (1080, 1080), (1206, 2622), (2622, 1206), (1080, 1920), (720, 1280), (1921, 1081), (853, 480), (1366, 768), (721, 1281), (2, 2), (1, 1),
+         (541, 961), (16384, 16384)]
+
+
+class WorkingSizeTest(unittest.TestCase):
+    """Effect detail: the arithmetic of the cap, in the three places it is done (this file's numbers for the panel,
+    the player's size lines, the code's RENDERSIZE), which have to agree for every clip."""
+    def test_the_shorter_side_is_capped_the_shape_is_kept_and_a_small_clip_is_not_touched(self):
+        want = {((1920, 1080), 720): (1280, 720), ((1920, 1080), 540): (960, 540), ((1920, 1080), 1080): (1920, 1080), ((1920, 1080), None): (1920, 1080),
+                ((1280, 720), 720): (1280, 720), ((1280, 720), 540): (960, 540), ((960, 540), 540): (960, 540), ((720, 576), 540): (675, 540),
+                ((3840, 2160), 720): (1280, 720), ((3840, 2160), 1080): (1920, 1080), ((1440, 1080), 720): (960, 720), ((2560, 1080), 720): (1707, 720),
+                ((1080, 1920), 720): (720, 1280), ((1206, 2622), 720): (720, 1565), ((2622, 1206), 720): (1565, 720), ((1206, 2622), 540): (540, 1174),
+                ((1080, 1080), 720): (720, 720), ((1921, 1081), 540): (960, 540), ((640, 360), 540): (640, 360), ((1, 1), 540): (1, 1)}
+        for (size, lines), out in want.items():
+            self.assertEqual(E.work_size(size[0], size[1], lines), out, (size, lines))
+        rng = random.Random(7)
+        for w, h in SIZES + [(rng.randint(2, 4096), rng.randint(2, 4096)) for _ in range(400)]:
+            for lines in (None, 1, 90, 100, 360, 540, 720, 1080, 2160):
+                ow, oh = E.work_size(w, h, lines)
+                what = (w, h, lines)
+                if lines is None or min(w, h) <= lines:
+                    self.assertEqual((ow, oh), (w, h), what)                           # at or below the cap: not scaled at all
+                    continue
+                self.assertEqual(min(ow, oh), lines, what)                             # the shorter side is the cap, exactly
+                self.assertTrue(ow <= w and oh <= h and ow >= 1 and oh >= 1, what)     # never larger than the clip
+                self.assertLessEqual(abs(max(ow, oh) - max(w, h) * lines / min(w, h)), 0.5 + 1e-9, what)    # the shape, to the nearest pixel
+                self.assertTrue(ow == oh or (ow > oh) == (w > h), what)               # what lies stays lying
+                self.assertEqual(E.work_size(h, w, lines), (oh, ow), what)             # turned by a quarter: the same picture, turned
+
+    def test_a_turned_clip_is_capped_like_the_same_clip_stored_upright(self):
+        # The player turns a clip that is to be shown turned (rotate 90 or 270: a phone's upright video, or the
+        # panel's Rotate) before the stage an effect hooks, so the hook meets it standing. Stored lying and turned,
+        # or stored standing: the same number of pixels, and one text for both, which does not ask which it is.
+        width, height = E.size_lines(720)
+        for lines in (540, 720):
+            lying, standing = E.work_size(1920, 1080, lines), E.work_size(1080, 1920, lines)
+            self.assertEqual(lying[0] * lying[1], standing[0] * standing[1])
+            self.assertEqual(sorted(lying), sorted(standing))
+        for w, h in ((1920, 1080), (2622, 1206), (1280, 720), (720, 576), (1000, 1000)):
+            for turn in (0, 90, 180, 270):
+                met = (h, w) if turn % 180 else (w, h)                                  # what the hook meets
+                got = (player_size(width, *met), player_size(height, *met))
+                self.assertEqual(got, E.work_size(*met, 720), (w, h, turn))
+                self.assertEqual(sorted(got), sorted(E.work_size(w, h, 720)), (w, h, turn))        # the same picture, turned
+
+    def test_the_player_the_code_and_the_panel_come_to_the_same_size_for_every_clip(self):
+        p = S.parse(GOOD, S.FILTER)
+        rng = random.Random(11)
+        sizes = SIZES + [(rng.randint(2, 4096), rng.randint(2, 4096)) for _ in range(300)]
+        for lines in (1, 90, 100, 360, 540, 720, 1080):
+            width, height = E.size_lines(lines)
+            self.assertTrue(width.startswith("//!WIDTH ") and height.startswith("//!HEIGHT "))
+            self.assertEqual((len(width.split()) - 1, len(height.split()) - 1), (30, 30))       # mpv reads at most 32 words of a size
+            text = E.translate(p, lines=lines)
+            self.assertEqual((text.count(width + "\n" + height + "\n"), text.count("PVJ_HP vec2 pvj_work;")), (2, 2))
+            for w, h in sizes:                          # lying, standing and square alike: one text for every shape
+                want = E.work_size(w, h, lines)
+                self.assertEqual((player_size(width, w, h), player_size(height, w, h)), want, (w, h, lines))
+                if max(w, h) <= 4096:               # beyond that 32 bits do not hold the products exactly; a pixel either way there
+                    self.assertEqual(shader_size(text, w, h), want, (w, h, lines))
+
+    def test_what_the_text_holds_for_a_cap_for_amount_0_and_for_the_old_half(self):
+        p = S.parse(GOOD, S.FILTER)
+        plain = E.translate(p, desc="nxlx effect 1 1")
+        self.assertEqual(E.translate(p, lines=None, desc="nxlx effect 1 1"), plain)                 # no cap: nothing of it in the text
+        capped = E.translate(p, lines=720, desc="nxlx effect 1 1")
+        self.assertEqual(capped.count(
+            "//!WIDTH HOOKED.w HOOKED.w HOOKED.h > HOOKED.h 720 > * HOOKED.w * HOOKED.h 720 - * HOOKED.h / - HOOKED.w HOOKED.h > ! HOOKED.w 720 > * HOOKED.w 720 - * -\n"
+            "//!HEIGHT HOOKED.h HOOKED.w HOOKED.h > ! HOOKED.w 720 > * HOOKED.h * HOOKED.w 720 - * HOOKED.w / - HOOKED.w HOOKED.h > HOOKED.h 720 > * HOOKED.h 720 - * -\n"), 2)
+        self.assertEqual(capped.count("    if (pvj_short > 720.0) pvj_work = floor("), 2)
+        self.assertIn("vec4 pvj_src = HOOKED_tex(HOOKED_pos);", capped)                # the mix is with the clip itself, read where this pixel lies
+        # the old control: true is 540 lines at most, whatever the cap; false follows the cap
+        self.assertEqual(E.translate(p, controls={"half": True}, lines=720), E.translate(p, controls={"half": True}, lines=540))
+        self.assertEqual(E.translate(p, controls={"half": True}), E.translate(p, controls={"half": True}, lines=540))
+        self.assertIn(E.size_lines(360)[1], E.translate(p, controls={"half": True}, lines=360))     # a lower cap stays
+        self.assertEqual(E.translate(p, controls={"half": False}, lines=720, desc="nxlx effect 1 1"), capped)
+        self.assertEqual(E.HALF_LINES, 540)
+        # amount 0: the player is told to leave both hooks out, so the picture is the clip itself, whatever the cap
+        for lines in (None, 540):
+            zero = E.translate(p, controls={"amount": 0}, lines=lines)
+            self.assertEqual(zero.count("//!WHEN 0\n//!DESC nxlx effect\n"), 2, lines)
+            self.assertNotIn("//!WHEN", E.translate(p, controls={"amount": 0.01}, lines=lines))
+        for bad in (0, -1, 8193, 720.0, True, "720"):
+            with self.assertRaises(S.ShaderError, msg=bad):
+                E.translate(p, lines=bad)
+        # TIME does not know of the cap: every line of the clock is the same with and without one, at any speed
+        moves = S.parse(MOVES, S.FILTER)
+        clock = lambda text: [l for l in text.split("\n") if "pvj_time" in l or "TIMEDELTA" in l or "FRAMEINDEX" in l or "pvj_hi" in l or "pvj_lo" in l]
+        for speed in (1.0, 0.5):
+            picture = E.clean_picture("bt.709", "limited", 29.97)
+            free = clock(E.translate(moves, controls={"speed": speed}, picture=picture))
+            self.assertIn("    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / 29.97%s;" % ("" if speed == 1.0 else " * 0.5"), free)
+            for lines in (540, 720):
+                self.assertEqual(clock(E.translate(moves, controls={"speed": speed}, picture=picture, lines=lines)), free, (speed, lines))
+            self.assertEqual(clock(E.translate(moves, controls={"speed": speed, "half": True}, picture=picture)), free)
+
+    def test_what_automatic_gives_each_board_and_what_a_box_has_when_nobody_chose(self):
+        self.assertEqual(E.DETAILS, ("auto", 540, 720, "full"))
+        self.assertEqual({b: E.default_detail(b) for b in ("pi3", "pi4", "pi5", "x86", "pi-other", "arm-other", None)},
+                         {"pi3": "auto", "pi4": "auto", "pi5": "full", "x86": "full", "pi-other": "auto", "arm-other": "auto", None: "full"})
+        for board in ("pi5", "x86", None, "nope"):                                     # not measured: Automatic scales nothing there
+            self.assertIsNone(E.auto_lines(board, "fx-wash.fs"))
+            self.assertIsNone(E.cap_lines("auto", board, "fx-wash.fs"))
+        for board, row in E.AUTO.items():
+            self.assertIn(row["lines"], (540, 720), board)
+            self.assertIn(row["other"], (540, 720), board)
+            self.assertLessEqual(row["other"], row["lines"], board)                    # an upload nobody measured never gets more than a bundled filter
+            for sid, lines in row["lower"].items():
+                self.assertIn(sid, E.PI4, sid)
+                self.assertTrue(lines in (540, 720) and lines < row["lines"], sid)
+            self.assertEqual(E.auto_lines(board, "fx-wash.fs", bundled=False), row["other"])
+            self.assertEqual(E.auto_lines(board), row["other"])
+        self.assertFalse(E.AUTO["pi3"]["measured"])                                    # the careful value, should effects ever run there
+        # The Pi 4's row is made from what the board measured, by the rule: the largest cap at which the filter held a
+        # 1080 line clip (fewer than half a dropped frame a second), the heavier ones one step down.
+        self.assertTrue(E.AUTO["pi4"]["measured"])
+        self.assertEqual(sorted(E.PI4_720), sorted(E.PI4))
+        for sid, (ms, dropped) in E.PI4_720.items():
+            full, half = E.PI4[sid][1]
+            self.assertTrue(half[0] < ms < full[0] and half[1] <= dropped <= full[1], sid)     # between the 540 line and the full size numbers
+            want = 720 if dropped < E.HOLDS else 540
+            self.assertEqual(E.auto_lines("pi4", sid), want, sid)
+            self.assertLess((E.PI4_720[sid][1] if want == 720 else half[1]), E.HOLDS, sid)    # and at what Automatic gives it, it held
+        self.assertEqual(E.AUTO["pi4"], {"lines": 720, "lower": {"isf-edge-blowout.fs": 540}, "other": 540, "measured": True})
+        self.assertLessEqual(E.AUTO["pi3"]["lines"], E.AUTO["pi4"]["lines"])
+        self.assertEqual(E.AUTO["pi3"]["lines"], 540)
+        for detail, want in (("full", None), (540, 540), (720, 720)):
+            for board in ("pi4", "x86"):
+                self.assertEqual(E.cap_lines(detail, board, "fx-wash.fs"), want)
+                self.assertEqual(E.cap_lines(detail, board, "fx-wash.fs", half=True), 540)       # the old half: 540 at most
+        self.assertEqual(E.cap_lines("auto", "pi4", "fx-wash.fs"), E.AUTO["pi4"]["lower"].get("fx-wash.fs", E.AUTO["pi4"]["lines"]))
+        for bad in (True, False, None, 540.0, 720.0, "720", "Auto", 1080, 360, [], {}):
+            with self.assertRaises(ValueError, msg=bad):
+                E.clean_detail(bad)
+        self.assertEqual([E.clean_detail(d) for d in E.DETAILS], list(E.DETAILS))
+
+
 class FakeMpv:
     """What the panel asks of an mpv, with nothing behind it: properties in a dict, loadfile sets the path, and the
     passes it "drew" are the shader texts it has loaded."""
@@ -386,6 +564,7 @@ class FakeMpv:
         self.pid = 1000
         self.video = {"colormatrix": "bt.709", "colorlevels": "limited", "pixelformat": "yuv420p"}
         self.fps, self.pass_ns, self.vo, self.down, self.drops = 25.0, 1500000, "gpu", False, 0
+        self.decoder_drops = 0      # the player's second count of dropped frames (the decoder's own)
         self.container = True       # False: a stream or a live input, with no frame rate of its own, only the player's estimate
         self.commands = []
         self.props = {}
@@ -421,7 +600,7 @@ class FakeMpv:
                     fresh.append({"desc": "user shader: %s (native)" % desc, "avg": self.pass_ns, "last": self.pass_ns})
                 return {"fresh": fresh, "redraw": []}
             if name in ("frame-drop-count", "decoder-frame-drop-count"):
-                return self.drops if name == "frame-drop-count" else 0
+                return self.drops if name == "frame-drop-count" else self.decoder_drops
             return self.props.get(name)
         if command[0] == "set_property":
             self.props[command[1]] = command[2]
@@ -506,10 +685,13 @@ class LibraryTest(Base):
             row = rows[sid]
             self.assertEqual(row["weight"], weight, sid)
             self.assertEqual(row["measured"], {"board": "pi4",
-                                               "pass_ms": {"1080": large[0][0], "1080_half": large[1][0], "720": small[0][0], "720_half": small[1][0]},
-                                               "drops_per_second": {"1080": large[0][1], "1080_half": large[1][1], "720": small[0][1], "720_half": small[1][1]},
+                                               "pass_ms": {"1080": large[0][0], "1080_half": large[1][0], "720": small[0][0], "720_half": small[1][0],
+                                                           "1080_at_720": E.PI4_720[sid][0]},
+                                               "drops_per_second": {"1080": large[0][1], "1080_half": large[1][1], "720": small[0][1], "720_half": small[1][1],
+                                                                    "1080_at_720": E.PI4_720[sid][1]},
                                                "holds": 1080 if weight == "light" else (720 if weight == "medium" else None),
-                                               "holds_half": 1080 if large[1][1] < E.HOLDS else (720 if small[1][1] < E.HOLDS else None)}, sid)
+                                               "holds_half": 1080 if large[1][1] < E.HOLDS else (720 if small[1][1] < E.HOLDS else None),
+                                               "works_at": E.auto_lines("pi4", sid)}, sid)
             self.assertEqual(row["estimate"]["weight"], E.estimate(self.fx._parsed(self.fx._path(sid)[0])[0])["weight"], sid)       # the count is still told
         self.assertEqual((E.weigh(0, 0), E.weigh(0, 0.49), E.weigh(0, 0.5), E.weigh(0.49, 9), E.weigh(0.5, 9)), ("light", "light", "medium", "medium", "heavy"))
         self.assertEqual((E.HOLDS, E.HOLDS), (L.HOLDS, L.Guard.TIGHT))                 # "holds" is where the guard says "ok", as for a generator
@@ -854,7 +1036,7 @@ class ValuesTest(Base):
         self.pump()
         text = self.text()
         for line in ("const bool lit = true;", "const int mode = 1;", "const vec4 pvj_in_tint" if False else "const vec4 tint = vec4(0.1, 0.2, 0.3, 1.0);",
-                     "const vec2 spot = vec2(0.2, 0.9);", "pvj_native(c), 0.4)", "//!WIDTH HOOKED.w 2 /"):
+                     "const vec2 spot = vec2(0.2, 0.9);", "pvj_native(c), 0.4)", E.size_lines(540)[0]):
             self.assertIn(line, text)
         self.assertEqual(self.state()["on"]["controls"], {"amount": 0.4, "speed": 1.0, "half": True})
 
@@ -1353,6 +1535,478 @@ class ValuesTest(Base):
         self.assertEqual(self.mpv.commands[asked:], [], "a controller's call asked the player something")
 
 
+class DetailTest(Base):
+    """Effect detail: the box's setting, what Automatic makes of it on each board, and what the panel is told."""
+    def setUp(self):
+        super().setUp()
+        self.fx.upload("mine.fs", GOOD)
+        self.mpv.video = dict(self.mpv.video, w=1920, h=1080)
+
+    def pi4(self):
+        self.api.board = dict(self.api.board, kind="pi4")
+
+    def lines_of(self, sid, bundled=True):
+        return E.auto_lines("pi4", sid, bundled)
+
+    def test_on_a_pi_4_an_effect_works_at_what_automatic_chose_and_the_panel_is_told(self):
+        self.pi4()
+        s = self.state()
+        row = E.AUTO["pi4"]
+        self.assertEqual(s["detail"], {"value": "auto", "default": "auto", "choices": ["auto", 540, 720, "full"], "board": "pi4",
+                                       "auto": {"lines": row["lines"], "other": row["other"], "lower": row["lower"], "measured": row["measured"]}})
+        self.assertNotIn("fx_detail", self.settings.data.get("shaders", {}))            # nobody chose: nothing is kept
+        self.fx.put("fx-wash.fs")
+        lines = self.lines_of("fx-wash.fs")
+        w, h = E.work_size(1920, 1080, lines)
+        self.assertEqual(self.text().count("\n".join(E.size_lines(lines)) + "\n"), 2)
+        on = self.state()["on"]
+        self.assertEqual(on["working"], {"lines": lines, "auto": True, "clip": {"width": 1920, "height": 1080, "lines": 1080}, "width": w, "height": h,
+                                         "scaled": True, "lower": 540 if lines > 540 else None})
+        self.assertEqual(on["controls"], {"amount": 1.0, "speed": 1.0, "half": False})  # the controls are what they were
+        # an upload nobody measured works at the careful value
+        self.fx.put("mine.fs")
+        self.assertEqual(self.state()["on"]["working"]["lines"], row["other"])
+        self.assertIn(E.size_lines(row["other"])[1], self.text())
+        # a filter the table steps down works at its own value
+        for sid, lower in row["lower"].items():
+            self.fx.put(sid)
+            self.assertEqual((self.state()["on"]["working"]["lines"], self.state()["on"]["working"]["auto"]), (lower, True), sid)
+
+    def test_a_clip_at_or_below_the_cap_is_not_scaled_and_the_panel_says_so(self):
+        self.pi4()
+        self.mpv.video = dict(self.mpv.video, w=1280, h=720)
+        self.fx.set_detail(720)
+        self.fx.put("fx-wash.fs")
+        on = self.state()["on"]["working"]
+        self.assertEqual((on["lines"], on["auto"], on["clip"]["lines"], on["width"], on["height"], on["scaled"], on["lower"]), (720, False, 720, 1280, 720, False, 540))
+        self.assertEqual((player_size(E.size_lines(720)[0], 1280, 720), player_size(E.size_lines(720)[1], 1280, 720)), (1280, 720))
+        self.fx.set_detail(540)
+        self.pump()
+        on = self.state()["on"]["working"]
+        self.assertEqual((on["lines"], on["width"], on["height"], on["scaled"], on["lower"]), (540, 960, 540, True, None))    # nothing lower to offer
+
+    def test_one_text_fits_every_clip_and_a_new_size_is_told_without_a_new_text(self):
+        self.pi4()
+        self.fx.set_detail(720)
+        self.fx.put("fx-wash.fs")
+        text, made = self.mpv.loaded, self.fx._serial
+        self.mpv.video = dict(self.mpv.video, w=1280, h=720)                            # the next clip is smaller
+        self.fx.adjust("anchor")
+        self.assertEqual((self.mpv.loaded, self.fx._serial), (text, made))             # the same text: the player's own arithmetic fits it
+        on = self.state()["on"]["working"]
+        self.assertEqual((on["clip"], on["width"], on["height"], on["scaled"]), ({"width": 1280, "height": 720, "lines": 720}, 1280, 720, False))
+        self.mpv.video = dict(self.mpv.video, w=1080, h=1920)                           # a clip that stands: its width is the shorter side
+        self.fx.adjust("anchor")
+        self.assertEqual((self.mpv.loaded, self.fx._serial), (text, made))             # still the same text: it does not ask which way a clip lies
+        on = self.state()["on"]["working"]
+        self.assertEqual((on["clip"]["lines"], on["width"], on["height"], on["scaled"]), (1080, 720, 1280, True))
+        self.mpv.video = {k: v for k, v in self.mpv.video.items() if k not in ("w", "h")}    # a player that does not say the size
+        self.fx.put("fx-wash.fs")
+        on = self.state()["on"]["working"]
+        self.assertEqual((on["lines"], on["clip"], on["width"], on["scaled"], on["lower"]), (720, None, None, False, None))
+        self.assertIn(E.size_lines(720)[0], self.text())                               # the cap is in the text all the same
+
+    def test_on_a_board_nobody_measured_nothing_is_scaled_until_someone_chooses(self):
+        self.assertEqual(self.api.board["kind"] in E.AUTO, False)                      # the tests' own board
+        s = self.state()["detail"]
+        self.assertEqual((s["value"], s["default"], s["auto"]), ("full", "full", None))
+        self.fx.put("fx-wash.fs")
+        self.assertNotIn("//!WIDTH", self.text())
+        on = self.state()["on"]["working"]
+        self.assertEqual((on["lines"], on["auto"], on["width"], on["height"], on["scaled"], on["lower"]), (None, False, 1920, 1080, False, 720))
+        self.fx.set_detail("auto")                                                     # Automatic there: still nothing, and it says so
+        self.pump()
+        self.assertNotIn("//!WIDTH", self.text())
+        self.assertEqual((self.state()["on"]["working"]["lines"], self.state()["on"]["working"]["auto"]), (None, True))
+        self.assertEqual(self.settings.data["shaders"]["fx_detail"], "auto")
+        self.fx.set_detail(540)
+        self.pump()
+        self.assertIn(E.size_lines(540)[0], self.text())
+        for kind in ("pi5", "x86"):
+            self.api.board = dict(self.api.board, kind=kind)
+            self.assertEqual(self.state()["detail"]["default"], "full", kind)
+
+    def test_the_setting_applies_on_tap_is_kept_and_only_the_owner_may_change_it(self):
+        self.pi4()
+        full, _ = self.pair()
+        view = self.call("POST", "/api/devices/invite", {"name": "guest", "role": "view"}, token=full)[1]["token"]
+        live = self.call("POST", "/api/devices/invite", {"name": "presenter", "role": "live"}, token=full)[1]["token"]
+        self.assertEqual(self.call("POST", "/api/effects/config", {"detail": 540})[0], 401)
+        for token in (view, live):
+            self.assertEqual(self.call("POST", "/api/effects/config", {"detail": 540}, token=token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/effects/config", {"detail": 540}, token=full, csrf=False)[0], 403)
+        self.assertEqual(self.call("GET", "/api/effects", token=view)[1]["detail"]["value"], "auto")         # everyone may see it
+        self.fx.put("fx-wash.fs")
+        first = self.mpv.loaded
+        for detail in ("full", 540, 720):
+            st, body, _ = self.call("POST", "/api/effects/config", {"detail": detail}, token=full)
+            self.assertEqual((st, body["detail"]["value"], self.settings.data["shaders"]["fx_detail"]), (200, detail, detail))
+            self.assertTrue(body["on"]["pending"])                                     # it goes to the effect that is on, through the worker
+            self.pump()
+            on = self.state()["on"]["working"]
+            self.assertEqual((on["lines"], on["auto"]), (None if detail == "full" else detail, False))
+            self.assertEqual("//!WIDTH" in self.text(), detail != "full")
+            with open(self.settings.path) as f:
+                self.assertEqual(json.load(f)["shaders"]["fx_detail"], detail)        # on disk
+        self.assertNotEqual(self.mpv.loaded, first)
+        # the board's own default is kept by keeping nothing, and writing it twice writes nothing
+        st, body, _ = self.call("POST", "/api/effects/config", {"detail": "auto"}, token=full)
+        self.assertEqual((st, body["detail"]["value"]), (200, "auto"))
+        self.assertNotIn("fx_detail", self.settings.data["shaders"])
+        before = os.stat(self.settings.path).st_mtime_ns
+        self.assertEqual(self.call("POST", "/api/effects/config", {"detail": "auto"}, token=full)[0], 200)
+        self.assertEqual(os.stat(self.settings.path).st_mtime_ns, before)
+        for bad in ({"detail": 1080}, {"detail": 360}, {"detail": "720"}, {"detail": 720.0}, {"detail": True}, {"detail": None}, {"detail": [540]}, {},
+                    {"detail": 540, "half": True}, {"height": 540}):
+            st, body, _ = self.call("POST", "/api/effects/config", bad, token=full)
+            self.assertEqual(st, 400, bad)
+            self.assertIn("auto, 540, 720, full", body["error"])
+        self.assertEqual(self.state()["detail"]["value"], "auto")
+        self.api.registry.set_enabled("shaders", False)
+        self.assertEqual(self.call("POST", "/api/effects/config", {"detail": 540}, token=full)[0], 409)
+
+    def test_the_old_half_still_works_for_one_effect_and_a_preset_that_holds_false_follows_the_box(self):
+        self.pi4()
+        self.fx.set_detail(720)
+        self.fx.put("fx-wash.fs", controls={"half": True})
+        on = self.state()["on"]
+        self.assertEqual((on["controls"]["half"], on["working"]["lines"], on["working"]["auto"], on["working"]["width"]), (True, 540, False, 960))
+        self.assertIn(E.size_lines(540)[0], self.text())
+        self.fx.change({"controls": {"half": False}})
+        self.pump()
+        self.assertEqual((self.state()["on"]["controls"]["half"], self.state()["on"]["working"]["lines"]), (False, 720))
+        self.assertEqual(self.state()["controls"]["half"], {"default": False, "superseded": "detail"})
+        # every preset saved before this holds "half": false: it must follow the box, never mean full size
+        self.fx.preset_save("Kept")
+        self.assertIs(self.settings.data["shaders"]["fx_presets"]["fx-wash.fs"][0]["controls"]["half"], False)
+        self.fx.set_detail("auto")
+        self.fx.off()
+        self.fx.put("fx-wash.fs", preset="Kept")
+        self.assertEqual((self.state()["on"]["working"]["lines"], self.state()["on"]["working"]["auto"]), (self.lines_of("fx-wash.fs"), True))
+        self.fx.set_detail("full")                                                     # and at full size a preset with true still halves its own effect
+        self.fx.put("fx-wash.fs", controls={"half": True})
+        self.assertEqual(self.state()["on"]["working"]["lines"], 540)
+
+    def test_at_amount_0_the_player_leaves_the_effect_out_and_nothing_waits_for_a_frame(self):
+        self.pi4()
+        began = time.monotonic()
+        self.fx.put("fx-wash.fs", controls={"amount": 0})
+        self.assertLess(time.monotonic() - began, 2.0)                                  # no wait for a pass that will not be drawn
+        self.assertEqual(self.text().count("//!WHEN 0\n"), 2)
+        on = self.state()["on"]
+        self.assertEqual((on["id"], on["controls"]["amount"], on["checked"]), ("fx-wash.fs", 0.0, None))     # on, and the GPU has not looked yet
+        self.fx.change({"controls": {"amount": 0.5}})
+        self.pump()
+        self.assertNotIn("//!WHEN", self.text())
+        self.assertIs(self.state()["on"]["checked"], True)                              # now it has
+        self.fx.change({"controls": {"amount": 0}})
+        self.pump()
+        self.assertEqual(self.text().count("//!WHEN 0\n"), 2)
+        # a filter the GPU refuses is found out when the amount leaves 0, and the text with amount 0 stays
+        self.fx.upload("bad.fs", GOOD.replace("* k", "* oops"))
+        self.fx.put("bad.fs", controls={"amount": 0})
+        kept = self.mpv.loaded
+        FakeTap.lines = list(REFUSAL)
+        self.fx.change({"controls": {"amount": 1}})
+        self.pump()
+        FakeTap.lines = []
+        self.assertEqual(self.mpv.loaded, kept)
+        s = self.state()
+        self.assertEqual((s["on"]["controls"]["amount"], s["error"]["id"]), (0.0, "bad.fs"))
+        self.assertIn("undeclared", s["error"]["message"])
+
+    def test_the_setting_goes_round_through_a_settings_file_and_a_factory_reset_clears_it(self):
+        from pvj import boxcare
+        from pvj.settings import default_settings
+        self.pi4()
+        full, _ = self.pair()
+        self.fx.set_detail(540)
+        st, out, _ = self.call("POST", "/api/system/settings/export", {}, token=full)
+        self.assertEqual((st, out["file"]["settings"]["shaders"]["fx_detail"]), (200, 540))
+        self.fx.set_detail("full")
+        self.assertEqual(self.state()["detail"]["value"], "full")
+        st, body, _ = self.call("POST", "/api/system/settings/import?confirm=import", raw=json.dumps(out["file"]).encode(), token=full)
+        self.assertEqual((st, "shaders" in body["imported"]), (200, True), body)
+        self.assertEqual((self.settings.data["shaders"]["fx_detail"], self.state()["detail"]["value"]), (540, 540))
+        for detail in E.DETAILS:
+            self.assertEqual(boxcare.check_shaders({"fx_detail": detail}, None)["fx_detail"], detail)
+            self.assertEqual(L.check_extra({"fx_detail": detail}), {"fx_detail": detail})
+        self.assertNotIn("fx_detail", boxcare.check_shaders({"dwell": 60}, None))       # a file without it: the board's default
+        for bad in (1080, 360, "720", 720.0, True, None, [540], "Full"):
+            with self.assertRaises(ValueError, msg=bad):
+                boxcare.check_shaders({"fx_detail": bad}, None)
+        self.settings.data["shaders"]["fx_detail"] = "ultra"                            # edited by hand: the board's default, not an error
+        self.assertEqual(self.state()["detail"]["value"], "auto")
+        self.settings.data["shaders"]["fx_detail"] = True
+        self.assertEqual(self.state()["detail"]["value"], "auto")
+        self.assertNotIn("shaders", default_settings())                                 # a factory reset leaves no section, so no setting
+        # the factory reset itself, as the panel asks for it (boxcare: _wipe_access puts the defaults in place)
+        self.fx.set_detail(540)
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.settings.data["shaders"]["fx_detail"], self.state()["on"]["working"]["lines"]), (540, 540))
+        st, body, _ = self.call("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, token=full)
+        self.assertEqual(st, 200, body)
+        self.assertNotIn("fx_detail", self.settings.data.get("shaders", {}))
+        with open(self.settings.path) as f:
+            self.assertNotIn("fx_detail", json.load(f).get("shaders", {}))                # on disk too
+        self.api.registry.set_enabled("shaders", True)                                  # the reset switched the module off
+        self.assertEqual((self.state()["detail"]["value"], self.state()["on"]), ("auto", None))
+        self.mpv.video = dict(self.mpv.video, w=1920, h=1080)
+        self.player.play(["/media/a.mp4"])
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.state()["on"]["working"]["lines"], self.state()["on"]["working"]["auto"]), (self.lines_of("fx-wash.fs"), True))
+
+
+class FoundOnThePiTest(Base):
+    """Three things the measuring run on the Pi 4 found (project-log/JOURNAL.md, "effects on the Pi 4", items 5 and 6)."""
+    def test_a_clip_shorter_than_the_guards_window_can_be_called_heavy(self):
+        """mpv sets its count of dropped frames back to 0 each time a clip loops. The guard started its window again
+        at every such step, so over a clip shorter than its six seconds no effect could ever be "heavy"."""
+        now = [100.0]
+        self.fx.guard = L.Guard(self.fx, clock=lambda: now[0])
+        self.fx.upload("all.fs", ALL)
+        self.fx.put("all.fs")
+        loads, rates = [], []
+        for second in range(1, 25):
+            now[0] += 1.0
+            self.mpv.drops = 0 if second % 4 == 0 else self.mpv.drops + 5              # a clip of four seconds: the count starts again
+            seen = self.state()["on"]
+            loads.append(seen["load"])
+            rates.append(seen["drops_per_second"])
+        self.assertEqual(loads[0], None)                                               # the first seconds are not counted
+        self.assertIn("heavy", loads)
+        self.assertEqual(loads[-1], "heavy")
+        self.assertTrue(all(r is None or r >= 0 for r in rates), rates)                # a count that fell is never a negative rate
+        self.assertTrue(3.0 <= rates[-1] <= 5.0, rates[-1])                            # three seconds in four drop five frames
+        # the count after it started again is what was dropped since: a clip that loops and drops nothing is quiet
+        self.fx.guard = L.Guard(self.fx, clock=lambda: now[0])
+        self.mpv.drops = 40
+        self.fx.put("fx-wash.fs")
+        for second in range(1, 16):
+            now[0] += 1.0
+            self.mpv.drops = 0 if second % 4 == 0 else self.mpv.drops
+            load = self.state()["on"]["load"]
+        self.assertEqual((load, self.state()["on"]["drops_per_second"]), ("ok", 0.0))
+        # and the generators' guard is the same one
+        self.assertIs(type(self.gen.guard), L.Guard)
+
+    def test_the_rate_the_panel_shows_follows_the_clip_also_under_a_filter_that_never_reads_the_clock(self):
+        """Such a filter's text is not written anew for a new rate alone (no line that matters has the rate in it),
+        and what `on.picture.fps` said was the rate of the clip the effect went on over."""
+        self.fx.upload("moves.fs", MOVES)
+        self.fx.put("fx-wash.fs")
+        text, made, applied = self.mpv.loaded, self.fx._serial, self.fx.changer.applied
+        self.assertEqual(self.state()["on"]["picture"]["fps"], 25.0)
+        for fps in (50.0, 30.0, 23.976):
+            self.mpv.fps = fps
+            self.fx.adjust("anchor")
+            self.assertEqual(self.state()["on"]["picture"], {"matrix": "bt.709", "levels": "limited", "fps": fps})
+            self.assertEqual((self.mpv.loaded, self.fx._serial, self.fx.changer.applied), (text, made, applied), "a new text for a rate no line uses")
+        # the next text, made for another reason, has the rate that is shown
+        self.fx.change({"controls": {"amount": 0.5}})
+        self.pump()
+        self.assertIn("#define TIMEDELTA %s\n" % S._f(1.0 / 23.976), self.text())
+        self.assertEqual(self.state()["on"]["picture"]["fps"], 23.976)
+        # a stream's estimate that only wobbles is not shown wobbling
+        wobble = iter([29.5, 30.4, 29.7, 30.3, 29.4] * 3)
+        self.mpv.container, self.mpv.fps = False, lambda: next(wobble)
+        self.fx.put("fx-wash.fs")
+        shown = self.state()["on"]["picture"]["fps"]
+        for _ in range(8):
+            self.fx.adjust("anchor")
+            self.assertEqual(self.state()["on"]["picture"]["fps"], shown)
+
+    def test_an_error_is_gone_once_it_no_longer_applies(self):
+        """`error` in GET /api/effects stayed until that same effect went on again: a refusal of one filter was still
+        shown under another that was on and fine, and "nothing is playing" was still shown over a playing clip."""
+        self.fx.upload("bad.fs", GOOD.replace("* k", "* oops"))
+        FakeTap.lines = list(REFUSAL)
+        with self.assertRaises(ApiError):
+            self.fx.put("bad.fs")
+        FakeTap.lines = []
+        self.assertEqual(self.state()["error"]["id"], "bad.fs")
+        self.assertEqual(self.state()["error"]["id"], "bad.fs")                        # reading it does not clear it
+        self.fx.put("fx-wash.fs")                                                      # another effect is on and fine
+        s = self.state()
+        self.assertEqual((s["error"], s["on"]["id"]), (None, "fx-wash.fs"))
+        self.assertIn("undeclared", next(x for x in s["effects"] if x["id"] == "bad.fs")["refused"])       # the file's own note stays
+        # Off: nothing is on and nothing is wanted
+        FakeTap.lines = list(REFUSAL)
+        with self.assertRaises(ApiError):
+            self.fx.put("bad.fs")
+        FakeTap.lines = []
+        self.assertEqual((self.state()["error"]["id"], self.state()["on"]["id"]), ("bad.fs", "fx-wash.fs"))  # the one before is back on, and the refusal is said
+        self.fx.off()
+        self.assertIsNone(self.state()["error"])
+        # values the GPU refused: said, and gone once a change is taken
+        self.fx.upload("all.fs", ALL)
+        self.fx.put("all.fs")
+        FakeTap.lines = list(REFUSAL)
+        self.fx.change({"values": {"mode": 2}})
+        self.pump()
+        FakeTap.lines = []
+        self.assertEqual(self.state()["error"]["id"], "all.fs")
+        self.fx.change({"values": {"k": 0.3}})
+        self.pump()
+        self.assertIsNone(self.state()["error"])
+        self.fx.off()
+        # a controller's Next with nothing playing: said, and gone as soon as there is a picture
+        self.player.clear()
+        self.assertTrue(self.fx.step(1)["ok"])
+        self.pump()
+        self.assertIn("Nothing with a picture is playing", self.state()["error"]["message"])
+        self.assertIn("Nothing with a picture is playing", self.state()["error"]["message"])
+        self.player.play(["/media/a.mp4"])
+        s = self.state()
+        self.assertEqual((s["error"], s["available"]), (None, True))
+
+
+class ReviewTest(Base):
+    """What an independent review of the Effect detail pull request found; each test is the review's own scenario."""
+    def setUp(self):
+        super().setUp()
+        self.fx.upload("all.fs", ALL)
+        self.mpv.video = dict(self.mpv.video, w=1920, h=1080)
+
+    def test_a_refusal_is_not_wiped_by_an_older_nothing_is_playing(self):
+        """A controller's Next with nothing playing left a note that "the error is the no-picture one". A clip, an
+        effect and a refused change later, with nobody having asked for the state in between, the first look took
+        the refusal for that old error and cleared it."""
+        self.player.clear()
+        self.assertTrue(self.fx.step(1)["ok"])
+        self.pump()                                                                    # the worker: nothing to put it on
+        self.assertIn("Nothing with a picture is playing", self.fx.error["message"])
+        self.player.play(["/media/a.mp4"])
+        self.fx.put("all.fs")                                                          # error None; no state() was asked for
+        FakeTap.lines = list(REFUSAL)
+        self.fx.change({"values": {"mode": 2}})
+        self.pump()                                                                    # the GPU refuses the new values
+        FakeTap.lines = []
+        s = self.state()
+        self.assertEqual((s["available"], s["error"] and s["error"]["id"]), (True, "all.fs"))
+        self.assertIn("undeclared", s["error"]["message"])
+        self.assertIn("undeclared", self.state()["error"]["message"])                  # and it stays over the next look
+        # only the no-picture answer is ever cleared by a picture: another 409 from the worker stays
+        self.fx.off()
+        self.assertTrue(self.fx.step(1)["ok"])
+        real = self.fx.available
+        self.fx.available = lambda: (False, E.GENERATOR_HAS_IT)
+        self.pump()
+        self.fx.available = real
+        s = self.state()
+        self.assertEqual((s["available"], s["error"]["message"]), (True, E.GENERATOR_HAS_IT))
+        # and the no-picture answer still goes when a picture comes
+        self.fx.off()
+        self.player.clear()
+        self.fx.step(1)
+        self.pump()
+        self.assertIn(E.NO_PICTURE, self.state()["error"]["message"])
+        self.player.play(["/media/a.mp4"])
+        self.assertIsNone(self.state()["error"])
+
+    def guard(self):
+        now = [100.0]
+        self.fx.guard = L.Guard(self.fx, clock=lambda: now[0])
+        return now
+
+    def looks(self, now, counts):
+        """One look a second, the two counts as given; ([load], [dropped a second]) as the panel was told."""
+        loads, rates = [], []
+        for frame, decoder in counts:
+            now[0] += 1.0
+            self.mpv.drops, self.mpv.decoder_drops = frame, decoder
+            on = self.state()["on"]
+            loads.append(on["load"])
+            rates.append(on["drops_per_second"])
+        return loads, rates
+
+    def test_a_count_that_falls_but_not_to_a_fresh_start_is_not_dropped_frames(self):
+        """The guard took any fall of the player's count for a start from 0 and counted the whole new number as
+        frames dropped since: 5000 to 4990 read as 1663 a second, and two such falls as a heavy effect."""
+        now = self.guard()
+        self.mpv.drops = 5000
+        self.fx.put("all.fs")
+        loads, rates = self.looks(now, [(5000, 0)] * 5 + [(4990, 0)] + [(4990, 0)] * 3 + [(4980, 0)] + [(4980, 0)] * 8)
+        self.assertNotIn("heavy", loads)
+        self.assertNotIn("tight", loads)
+        self.assertTrue(all(r is None or r == 0.0 for r in rates), rates)
+        self.assertEqual((loads[-1], rates[-1]), ("ok", 0.0))                          # and it is watched again afterwards
+        # a real start from 0 with a few frames dropped since is still counted (a short clip that loops)
+        g = L.Guard(self.fx)
+        self.assertEqual((g._rise((40, 0), (3, 0), 1.0), g._rise((40, 7), (43, 7), 1.0), g._rise((40, 7), (0, 0), 1.0)), (3, 3, 0))
+        self.assertEqual(g._rise((40, 0), (8, 0), 1.0), 8)                             # at most PEAK a second can be new
+        self.assertIsNone(g._rise((40, 0), (9, 0), 1.0))
+        self.assertIsNone(g._rise((5000, 0), (4990, 0), 1.0))
+        self.assertEqual(g._rise((5, None), (9, None), 1.0), 4)                        # a player that has only one of the counts
+        self.assertEqual(g._rise((5, None), (9, 3), 1.0), 4)                           # a count that has only now appeared says nothing yet
+
+    def test_one_count_starting_again_alone_is_not_the_other_counts_frames(self):
+        """The two counts are read in two requests and were added up: when one started again by itself the sum fell,
+        and the whole of the other count was taken for frames dropped in that second."""
+        now = self.guard()
+        self.mpv.drops, self.mpv.decoder_drops = 100, 50
+        self.fx.put("all.fs")
+        loads, rates = self.looks(now, [(100, 50)] * 5 + [(100, 0)] + [(100, 0)] * 3 + [(0, 0)] + [(0, 0)] * 8)
+        self.assertNotIn("heavy", loads)
+        self.assertNotIn("tight", loads)
+        self.assertTrue(all(r is None or r == 0.0 for r in rates), rates)
+        # and frames really dropped are still seen, by either count, across a start from 0
+        now = self.guard()
+        self.mpv.drops = self.mpv.decoder_drops = 0
+        self.fx.put("fx-wash.fs")
+        counts, f, d = [], 0, 0
+        for second in range(1, 21):
+            f = 0 if second % 4 == 0 else f + 2
+            d = 0 if second % 5 == 0 else d + 2
+            counts.append((f, d))
+        loads, rates = self.looks(now, counts)
+        self.assertEqual(loads[-1], "heavy")
+        self.assertTrue(2.0 <= rates[-1] <= 4.0, rates)
+
+    def test_choosing_a_detail_keeps_an_amount_that_is_on_its_way_and_the_presets_name(self):
+        self.fx.put("all.fs")
+        self.fx.change({"controls": {"amount": 0.25}})                                 # noted, not yet in the player
+        self.fx.set_detail(720)                                                        # before the worker came round
+        self.pump()
+        on = self.state()["on"]
+        self.assertEqual((on["controls"]["amount"], on["working"]["lines"]), (0.25, 720))
+        self.assertIn("pvj_native(c), 0.25)", self.text())
+        self.assertIn(E.size_lines(720)[0], self.text())
+        # with a preset on, a new detail is not a change of the effect's values: the preset is still what is on
+        self.fx.preset_save("Kept")
+        self.assertEqual(self.state()["on"]["preset"], "Kept")
+        text = self.mpv.loaded
+        self.fx.set_detail(540)
+        self.assertTrue(self.state()["on"]["pending"])
+        self.pump()
+        on = self.state()["on"]
+        self.assertEqual((on["preset"], on["working"]["lines"], on["controls"]["amount"]), ("Kept", 540, 0.25))
+        self.assertNotEqual(self.mpv.loaded, text)
+        self.assertIn(E.size_lines(540)[0], self.text())
+
+    def test_an_amount_too_small_to_be_written_is_amount_0(self):
+        """1e-40 is written into a text as 0.0. It was still taken for "above 0": the whole capped pass was drawn to
+        show the unfiltered clip, at the working size."""
+        p = S.parse(GOOD, S.FILTER)
+        for tiny in (1e-40, 1e-31, 4.9e-324, -0.0, 0):
+            self.assertEqual(L.clean_fx_controls({"amount": tiny})["amount"], 0.0, tiny)
+            self.assertEqual(E.translate(p, controls={"amount": tiny}, lines=720).count("//!WHEN 0\n"), 2, tiny)
+        for small in (1e-29, 1e-6, 0.001):                                             # what is written as a number is one
+            self.assertEqual(L.clean_fx_controls({"amount": small})["amount"], small)
+            text = E.translate(p, controls={"amount": small}, lines=720)
+            self.assertNotIn("//!WHEN", text)
+            self.assertNotIn("pvj_native(c), 0.0)", text)
+        self.fx.set_detail(720)
+        self.fx.put("all.fs", controls={"amount": 1e-40})
+        self.assertEqual(self.text().count("//!WHEN 0\n"), 2)
+        self.assertEqual((self.state()["on"]["controls"]["amount"], self.state()["on"]["checked"]), (0.0, None))
+        self.fx.change({"controls": {"amount": 0.5}})
+        self.pump()
+        self.fx.change({"controls": {"amount": 1e-40}})
+        self.pump()
+        self.assertEqual(self.text().count("//!WHEN 0\n"), 2)
+
+
 class PlayerLayerTest(unittest.TestCase):
     """The player's three shader layers, on the real class."""
     def setUp(self):
@@ -1423,7 +2077,8 @@ class RolesTest(Base):
             self.assertEqual((st, body["enabled"], len(body["effects"]) >= 29), (200, True, True))
         upload = {"action": "upload", "name": "mine.fs", "source": GOOD}
         posts = (("/api/effects", {"id": "fx-wash.fs"}), ("/api/effects/values", {"controls": {"amount": 0.5}}), ("/api/effects/step", {"dir": 1}),
-                 ("/api/effects/preset", {"index": 1}), ("/api/effects/presets", {"action": "save", "name": "x"}), ("/api/effects/library", upload))
+                 ("/api/effects/preset", {"index": 1}), ("/api/effects/presets", {"action": "save", "name": "x"}), ("/api/effects/library", upload),
+                 ("/api/effects/config", {"detail": 540}))
         for path, body in posts:
             self.assertEqual(self.call("POST", path, body)[0], 401, path)
             self.assertEqual(self.call("POST", path, body, token=view)[0], 403, path)
@@ -1453,7 +2108,7 @@ class RolesTest(Base):
         self.api.registry.set_enabled("shaders", False)
         for path, body in (("/api/effects", {"id": "fx-wash.fs"}), ("/api/effects", {"off": True}), ("/api/effects/values", {"controls": {"amount": 1}}),
                            ("/api/effects/step", {"dir": 1}), ("/api/effects/preset", {"index": 1}), ("/api/effects/presets", {"action": "save", "name": "x"}),
-                           ("/api/effects/library", {"action": "delete", "id": "x.fs"})):
+                           ("/api/effects/library", {"action": "delete", "id": "x.fs"}), ("/api/effects/config", {"detail": 540})):
             self.assertEqual(self.call("POST", path, body, token=full)[0], 409, path)
         self.assertEqual(self.call("GET", "/api/effects", token=full)[1]["effects"], [])
 
