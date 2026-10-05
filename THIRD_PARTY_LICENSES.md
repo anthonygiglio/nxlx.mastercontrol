@@ -27,8 +27,8 @@ Two typefaces are shipped with the panel, in `pvj/web/fonts/`, for the look call
 
 | File | What it is | SHA-256 |
 | --- | --- | --- |
-| `archivo-latin.woff2` (26788 bytes) | Archivo, upright, the weight axis from 400 to 900 (Regular to Black), the width axis fixed at 100 | `06fa7831060c673ef6e553b846635fb1e7eaf558e717ddfeb7c0a24fd9280529` |
-| `jetbrains-mono-500-latin.woff2` (8164 bytes) | JetBrains Mono, upright, the one weight 500 (Medium) | `6c95bc2faff7653603df02e7dca2fef5341d7ba49ebe8c952907f8ded2c0eb20` |
+| `archivo-latin.06fa7831.woff2` (26788 bytes) | Archivo, upright, the weight axis from 400 to 900 (Regular to Black), the width axis fixed at 100 | `06fa7831060c673ef6e553b846635fb1e7eaf558e717ddfeb7c0a24fd9280529` |
+| `jetbrains-mono-500-latin.6c95bc2f.woff2` (8164 bytes) | JetBrains Mono, upright, the one weight 500 (Medium) | `6c95bc2faff7653603df02e7dca2fef5341d7ba49ebe8c952907f8ded2c0eb20` |
 | `OFL-Archivo.txt` | Archivo's `OFL.txt`, unchanged | `108b4e57c9c796d3d38d0428ca7ee39de47ad93187302718d9b2d8864b9b716b` |
 | `OFL-JetBrainsMono.txt` | JetBrains Mono's `OFL.txt`, unchanged | `b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d` |
 
@@ -36,7 +36,8 @@ Two typefaces are shipped with the panel, in `pvj/web/fonts/`, for the look call
 - Licence: SIL Open Font License 1.1. Copyright lines, from the two `OFL.txt` files: "Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)" and "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)". Neither file declares a Reserved Font Name, so a changed version may keep the family's name.
 - **The shipped files are Modified Versions in the licence's sense**, made with fontTools 4.62.1 (`fontTools.varLib.instancer` and `fontTools.subset`, WOFF2 through the `brotli` module): the axes were limited as the table says, and the glyphs cut down to Basic Latin (U+0020 to U+007E), Latin-1 Supplement (U+00A0 to U+00FF) and the signs U+2013, U+2014, U+2018, U+2019, U+201C, U+201D, U+2022, U+2026, U+2039, U+203A, U+2190 to U+2193 and U+2212. Layout features kept: `kern`, `liga`, `calt`, `tnum`, `zero` for Archivo; `kern`, `zero` for JetBrains Mono. The name table is unchanged. Nothing else was altered. A sign outside this set (the transport arrows on the Live screen, a name in another script) is drawn in the device's own font.
 - The licence asks that the fonts are not sold by themselves and that the copyright notice and the licence travel with every copy: the two `OFL-*.txt` files are in the same folder, so they are in every release bundle and on every box (a release holds only `pvj/`, `bin/` and `install/`). The licence text for REUSE is `LICENSES/OFL-1.1.txt`; both families are declared in `REUSE.toml`.
-- A test (`tests/test_license.py`) pins the four checksums and the declaration.
+- Each font's file name holds the first eight digits of its SHA-256, because the box lets a browser keep a font for a day: a font that is ever rebuilt gets a new name (rename the file, and the name in `pvj/web/app.css`, `REUSE.toml`, this file and the tests).
+- A test (`tests/test_license.py`) pins the four checksums, the name and the declaration.
 
 ## Shader pack: ISF-Files (new code's side of the tree)
 
