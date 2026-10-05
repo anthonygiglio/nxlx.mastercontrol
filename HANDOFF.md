@@ -75,7 +75,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - **Three of the owner's ten clips cannot be played smoothly on the Pi 4** (two HEVC, one of 1206 x 2622 at 60): 17 to 28 frames dropped a second with no effect.
 - **A fade takes about a third longer than asked** (`Fader.ramp`), and a clip shorter than 6 seconds can never be called "heavy" by the guard (read from the code): both small, both unfixed.
 - **Not run:** the buffer comparison for more than one filter, a restart of the player with an effect on, an upload and a GPU refusal on V3D, the panel in a browser, a controller. A person pressed Stop on the panel at 13:07 UTC and the run ended there.
-- The contact sheets of the run (about 20 pictures, 6 MB) are in a temporary folder on the Mac that macOS will empty in time; the pull request names it.
+- The contact sheets of the run (24 pictures, 7.4 MB) are in a temporary folder on the Mac that macOS will empty in time; the pull request names it.
 - **8-bit buffers under an effect** are right on the Pi 4 for the one filter measured (fx-wash over 1080p: 0.9 dropped a second against 8.5 in the player's own buffers), and left alone on other boards after a black screenshot in CI (D55).
 - **Two things seen in the generators and not touched:** the line a refused generator names is one too high on the Pi's path (GLSL 1.40 counts `#line` differently), and `fbo-format` is set again at every change of a generator's value, which sets mpv's renderer up anew each time. An effect's text and layer do neither; the same two small changes would suit `pvj/shaders.py` and `Player.swap_source`.
 - **On mpv 0.37 with its default scalers a video after one of another size was black in CI until a shader changed** (LESSONS). It is not about effects. A Pi 4 runs with cheap scaling, where it did not happen; an x86 box or a Pi 5 would run with the default scalers: look for it there.
@@ -89,7 +89,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - A projector on the network: nothing of PJLink, the Room scenes or the Projectors page has met a real one.
 - Pressing the controllers: the two-minute check in `pvj/MIDI.md` (does each control do what its drawing says).
 - Controller lights, once #82 is reviewed and on the Pi: the check list "Controller lights" in `tools/DEVICE-TESTING.md` (Test lights, play a pad, start Vibes, black out). For the nanoKONTROL2, LED Mode must be set to External in Korg's editor first.
-- The dev account `pvj-dev` on the Pi. Claude was not permitted to create it; the owner may create it himself.
+- The dev account `pvj-dev` on the Pi: the owner created it on 2026-10-05 (see "Working on the test Pi"). It is for the test box only and has to go before the box goes to the venue.
 - The Mac's disk. It filled on 2026-10-04 and stopped every agent (see LESSONS). Free space before starting several agents.
 - Two old paired devices named `claude-test-mac` on the Pi: remove them under System > People and codes.
 
@@ -171,6 +171,7 @@ Known limits: the panel cannot restart a wedged mpv (unprivileged by design). Me
 ## Working on the test Pi
 
 - SSH as `nxlx@nxlx-mastercontrol.local` (or 192.168.0.169). A session key is set up per session; ask the owner to `ssh-copy-id` a new one.
+- Since 2026-10-05 there is also `ssh pvj-dev@nxlx-mastercontrol.local` (key only, the dev Mac's key, sudo without a password), made by the owner for deploys and measuring runs, so the staged password below is not needed with it. Test box only: before the box goes to the venue, `sudo deluser --remove-home pvj-dev && sudo rm /etc/sudoers.d/pvj-dev`.
 - `sudo` needs the owner's password, which is never written into the repo, memory or chat. When needed, the owner stages it on the Pi with `read -rsp "password: " p; printf '%s' "$p" > /tmp/.pw; chmod 600 /tmp/.pw; unset p; exit` (gone at reboot). Check it with `test -s /tmp/.pw`, not `test -f`: typed from a phone it has come out empty (see LESSONS). Use it only as `S(){ cat /tmp/.pw | sudo -k -S -p "" "$@"; }`, never pipe data into an `S` command (see LESSONS), and delete `/tmp/.pw` when done.
 - Deploy master: `git archive origin/master`, copy it over, run `install/install.sh --offline` as root. Settings have a schema number; never put older code on a box with newer settings.
 
