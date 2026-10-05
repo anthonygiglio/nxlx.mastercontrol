@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: Apache-2.0
-// Every screen, page and state of the panel that the look "Signal" (D54, D55) is looked at and checked on, in one
+// Every screen, page and state of the panel that the look "Signal" (D54, D57) is looked at and checked on, in one
 // list, so the pictures (tests/ui/screenshots.js) and the checks (tests/ui/panel.test.js) are of the same things.
 //
 //   setUp(t)    fills the harness's box with what a room has: projectors in every power state and one that does not
@@ -312,7 +312,7 @@ function pages() {
     await has(t, t.page, '.ctlgrid', 15000);
     const lights = t.page.locator('.ctlcard .ctllights').first();
     if (await lights.count() && (await lights.getAttribute('aria-checked')) !== 'true') await soft(t, 'Lights', lights.click({ timeout: 5000 }));
-    await has(t, t.page, '.ctlcard .ctlbright');
+    await has(t, t.page, '.ctlcard .ctllights[aria-checked="true"]');
   }, { light: true });
   add('midi-teach', 'system', async (t) => {            // one control chosen: what it does, and the choice of another action
     await sys(t.page, 'MIDI controller');
@@ -332,7 +332,8 @@ function pages() {
   add('backup-reset', 'system', async (t) => {          // the danger area with its question open
     await sys(t.page, 'Backup and reset');
     await has(t, t.page, '#resetcard');
-    await t.page.locator('#resetcard button').last().click();
+    await t.page.selectOption('#resetmedia', 'keep');
+    await t.page.click('#resetbtn');
     await t.page.waitForSelector('#confirmrow');
   }, { quick: true });
   add('page-off', 'system', async (t) => {              // a page whose module is off: what it does, and one button
@@ -345,3 +346,119 @@ function pages() {
 }
 
 module.exports = { setUp, pages, closeOthers, sys, sysIndex, WALLS };
+
+// What one screen must hold in Signal (the rules are in pvj/THEMES.md). Returns what is wrong, as sentences; an
+// empty list is a pass. o: { area (null before pairing), light (Signal light) }.
+async function check(pg, o) {
+  return pg.evaluate(([wantArea, light]) => {
+    const out = [];
+    const root = document.documentElement, shell = document.querySelector('.shell');
+    if (!shell) return ['there is no screen'];
+    if (root.getAttribute('data-style') !== 'signal') out.push('the style is gone');
+    if ((root.getAttribute('data-area') || null) !== wantArea) out.push('area is ' + root.getAttribute('data-area') + ', not ' + wantArea);
+    const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+    const name = (el) => (el.id ? '#' + el.id + ' ' : '') + (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 28);
+    // nothing sticks out: not of the window, and not of its card
+    if (root.scrollWidth > window.innerWidth + 1) out.push('the page is wider than the window');
+    document.querySelectorAll('.card').forEach((card) => {
+      const box = card.getBoundingClientRect();
+      card.querySelectorAll('button, input, select, span, img').forEach((el) => {
+        if (el.closest('.ctlscroll')) return;               // a controller's drawing scrolls sideways inside its card, on purpose
+        const r = el.getBoundingClientRect();
+        if (r.width && (r.right > box.right + 1 || r.left < box.left - 1)) out.push('sticks out of its card: ' + name(el));
+      });
+    });
+    // touch targets: 44 px, and 56 px for what staff press on Room and Live
+    shell.querySelectorAll('button, select, summary, input, .xypad').forEach((el) => {
+      if (!shown(el)) return;
+      const r = el.getBoundingClientRect();
+      if (r.height < 43.5 || r.width < 43.5) out.push('small (' + Math.round(r.width) + 'x' + Math.round(r.height) + '): ' + name(el));
+      else if (el.tagName === 'BUTTON' && el.closest('#roomscreen, .livecols, .banks, .row:has(> #fade)') && r.height < 55.5) out.push('under 56 px where staff press: ' + name(el));
+    });
+    // text: size, and contrast against what is behind it
+    const lum = (c) => { const v = c.map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+    const rgb = (s) => { const m = /rgba?\(([^)]+)\)/.exec(s); if (!m) return null; const p = m[1].split(/[ ,/]+/).map(Number); return { c: p.slice(0, 3), a: p.length > 3 ? p[3] : 1 }; };
+    const behind = (el) => { for (let e = el; e; e = e.parentElement) { const b = rgb(getComputedStyle(e).backgroundColor); if (b && b.a > 0.99) return b.c; } return null; };
+    const fits = (el, word, room) => {                    // 0 when this word fits the room it has, in the element's own type; else its width
+      const probe = document.createElement('span');
+      probe.textContent = word;
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+      el.appendChild(probe);
+      const need = probe.getBoundingClientRect().width;
+      el.removeChild(probe);
+      return need <= room + 1 ? 0 : Math.round(need);
+    };
+    const walker = document.createTreeWalker(shell, NodeFilter.SHOW_TEXT);
+    const seen = new Set();
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const el = n.parentElement, text = n.nodeValue.trim();
+      if (!text || seen.has(el) || el.tagName === 'OPTION' || !shown(el)) continue;
+      seen.add(el);
+      const cs = getComputedStyle(el);
+      if (parseFloat(cs.fontSize) < 13) out.push('text of ' + cs.fontSize + ': ' + name(el));
+      // a word in capitals that does not fit is cut by the browser in the middle, which a width check does not see
+      if (cs.textTransform === 'uppercase' && !el.closest('.ctlscroll')) {
+        const word = text.split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
+        const room = el.clientWidth ? el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) : el.getBoundingClientRect().width;
+        const need = word.length > 1 ? fits(el, word, room) : 0;
+        if (need) out.push('a word is cut (' + need + ' px in ' + Math.round(room) + '): ' + name(el));
+        // capitals are for titles, actions and short labels: never a sentence
+        if (/[.!?]\s+\S/.test(text) || text.split(/\s+/).length > 8) out.push('a sentence in capitals: ' + name(el));
+      }
+      let faded = false;
+      for (let e = el; e; e = e.parentElement) if (e.disabled || parseFloat(getComputedStyle(e).opacity) < 1) faded = true;
+      const fg = rgb(cs.color), bg = behind(el);
+      if (faded || !fg || !bg || fg.a < 0.99) continue;
+      const a = lum(fg.c), b = lum(bg);
+      const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      if (ratio < 4.5) out.push('contrast ' + ratio.toFixed(2) + ' (' + cs.color + ' on rgb(' + bg.join(', ') + ')): ' + name(el));
+    }
+    // what a cell of a drawn controller says it does is whole
+    shell.querySelectorAll('.ctlgrid .ctl .ctlwhat').forEach((el) => {
+      if (!shown(el)) return;
+      const word = el.textContent.trim().split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
+      const need = word.length > 1 ? fits(el, word, el.clientWidth) : 0;
+      if (need) out.push('a word is cut in a controller cell (' + need + ' px in ' + Math.round(el.clientWidth) + '): ' + el.textContent);
+    });
+    // names of clips and files keep their case; numbers are in the number face
+    shell.querySelectorAll('#np, .pad .t, .sched-entry .lname, #uploads .k').forEach((el) => {
+      if (shown(el) && getComputedStyle(el).textTransform !== 'none') out.push('a clip or file name in capitals: ' + name(el));
+    });
+    shell.querySelectorAll('.slidervalue, #time, .big-code, .kvv, .addr, input[type=number], input[type=time]').forEach((el) => {
+      if (shown(el) && !/JetBrains Mono/.test(getComputedStyle(el).fontFamily)) out.push('a number not in the number face: ' + name(el));
+    });
+    // a state chip is never the area's colour (Active has a colour of its own), whatever area is open
+    const probeC = document.createElement('span');
+    probeC.style.cssText = 'position:absolute;visibility:hidden;background:' + getComputedStyle(root).getPropertyValue('--ac').trim();
+    document.body.appendChild(probeC);
+    const areaRgb = getComputedStyle(probeC).backgroundColor;
+    document.body.removeChild(probeC);
+    shell.querySelectorAll('.chip, .badge').forEach((el) => {
+      if (shown(el) && getComputedStyle(el).backgroundColor === areaRgb) out.push('a state chip has the area colour: ' + name(el));
+    });
+    // in the light an area's colour is a filled block only: no line, ring or stripe in it (it is too faint on off-white)
+    if (light) shell.querySelectorAll('*').forEach((el) => {
+      if (!shown(el)) return;
+      const cs = getComputedStyle(el);
+      if (cs.backgroundColor === areaRgb) return;
+      const line = ['Top', 'Right', 'Bottom', 'Left'].some((s) => parseFloat(cs['border' + s + 'Width']) > 0 && cs['border' + s + 'Style'] !== 'none' && cs['border' + s + 'Color'] === areaRgb);
+      if (line || (cs.boxShadow !== 'none' && cs.boxShadow.indexOf(areaRgb) >= 0) || (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 && cs.outlineColor === areaRgb)) out.push('a thin line in the area colour, in the light: ' + name(el));
+    });
+    // a slider's fill is where its value is
+    shell.querySelectorAll('input[type=range]').forEach((el) => {
+      if (!shown(el)) return;
+      const min = el.min === '' ? 0 : parseFloat(el.min), max = el.max === '' ? 100 : parseFloat(el.max);
+      const want = max > min ? Math.round(1000 * (parseFloat(el.value) - min) / (max - min)) / 10 : 0;
+      const got = parseFloat(getComputedStyle(el).getPropertyValue('--fill'));
+      if (!(Math.abs(got - want) <= 0.2)) out.push('slider fill ' + got + '% for a value at ' + want + '%: ' + name(el));
+    });
+    // the title: whole, inside the window, in the area's colour; and the open tab too
+    const h1 = document.querySelector('.screen h1');
+    if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
+    const bg = (el) => (el ? getComputedStyle(el).backgroundColor : '');
+    const tab = document.querySelector('nav.tabs .btn.on'), top = h1 && h1.closest('.top');
+    if (!h1 || [bg(h1), bg(top)].indexOf(areaRgb) < 0 || (wantArea && bg(tab) !== areaRgb)) out.push('the title block and the open tab are not the area colour ' + areaRgb + ': ' + JSON.stringify([bg(h1), bg(top), bg(tab)]));
+    return out;
+  }, [o.area, !!o.light]);
+}
+module.exports.check = check;

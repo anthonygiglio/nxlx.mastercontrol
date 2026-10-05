@@ -30,10 +30,10 @@ function startServer() {
   const saved = [];
   const skipped = [];
   // One bad shot must not lose the others.
-  // ONLY=signal takes only the pictures whose names start with that (the set-up between the pictures still runs)
+  // ONLY=signal-room takes only the pictures whose names start with that (a regular expression: ONLY='signal-(live|mix)')
   const only = process.env.ONLY || '';
   async function shot(name, fn) {
-    if (only && name.indexOf(only) !== 0) return;
+    if (only && !new RegExp('^(?:' + only + ')').test(name)) return;
     try { await fn(path.join(out, name + '.png')); saved.push(name); } catch (e) { failures.push(name + ': ' + e.message.split('\n')[0]); }
   }
   try {
@@ -451,7 +451,7 @@ function startServer() {
     await shot('live-desktop', (f) => page.screenshot({ path: f }));
 
     }
-    // The look "Signal" (D54, D55), so the owner can see it without a box: every screen, page and state in the list of
+    // The look "Signal" (D54, D57), so the owner can see it without a box: every screen, page and state in the list of
     // tests/ui/signal-pages.js, on a phone and on a laptop (signal-<name>-phone|laptop), and the ones marked there in
     // Signal light too (signal-<name>-phone-light). The fonts are the box's own; each picture waits for them. The
     // default look is put back at the end.

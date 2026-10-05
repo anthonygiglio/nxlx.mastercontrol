@@ -222,10 +222,10 @@ class ThemeTest(unittest.TestCase):
         self.assertLess(themes.luminance(t["signal"]["tokens"]["bg"]), 0.01)
         self.assertLess(themes.luminance(t["signal"]["tokens"]["cd"]), 0.02)
         # a state is never confused with an area (D54): no state fill is an area's colour or close to one, and the
-        # four state fills differ from each other. "Close" is measured as distance in RGB. The nearest pair is Figma's
-        # own: Set up amber and Room yellow, 44 apart (written down in THEMES.md as a thing for the owner to look at),
-        # so the general limit sits just under that; Active, which was chosen here, must be at least 100 from
-        # every area and every other state.
+        # four state fills differ from each other. "Close" is measured as distance in RGB. Figma's Set up amber was 44
+        # from Room yellow and read as a shade of it on the Room screen, so Set up is an orange now (D57): at least
+        # 60 from every area, and, like every state, at least 100 from every other state (Problem red is the near
+        # one on that side). Active, which was also chosen here, must be at least 100 from every area as well.
         def far(a, b):
             return sum((int(a[i:i + 2], 16) - int(b[i:i + 2], 16)) ** 2 for i in (1, 3, 5)) ** 0.5
         for tid in ("signal", "signal-light"):
@@ -234,12 +234,13 @@ class ThemeTest(unittest.TestCase):
             for sname, sc in states.items():
                 self.assertNotEqual(sc.lower(), t[tid]["tokens"]["fg"].lower(), (tid, sname))      # Ready is the text colour
                 for aname, ac in t[tid]["areas"].items():
-                    self.assertGreater(far(sc, ac), 100 if sname == "active" else 40, (tid, sname, aname))
+                    self.assertGreater(far(sc, ac), {"active": 100, "setup": 60}.get(sname, 40), (tid, sname, aname))
             for a in states:
                 for b in states:
                     if a < b:
                         self.assertGreater(far(states[a], states[b]), 100, (tid, a, b))
             self.assertEqual(t[tid]["states"]["active"], "#00e0ff")
+            self.assertEqual(t[tid]["states"]["setup"], "#ff9500")
 
     def test_addon_theme_with_a_style_or_bad_extras(self):
         addons = tempfile.mkdtemp()
