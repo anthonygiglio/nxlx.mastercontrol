@@ -1373,9 +1373,45 @@ function startServer() {
     await page.unroute('**/api/mapper', slowAnswer);
     assert.strictEqual(await page.inputValue('#mapsetname'), 'Main stage', 'what was typed across the redraw is all there');
     await page.waitForFunction((x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - x) < 0.01), x0);     // the nudge back was taken
-    await page.click('#mapsave');
+    // Save with the cursor left in the name field, as on Safari and iOS, where a tapped button does not take it
+    // (Chromium's click would): the button's own click() presses it and moves nothing.
+    const press = (id) => page.evaluate((x) => document.getElementById(x).click(), id);
+    const nameField = () => page.evaluate(() => { const a = document.activeElement, f = document.getElementById('mapsetname'); return { cursorIn: a ? a.id : '', text: f ? f.value : null }; });
+    await press('mapsave');
     await fitsCard('#mapcard', 'Mapping card');
     await page.waitForSelector('#mapsets >> option:has-text("Main stage")', { state: 'attached' });
+    // Review of #86, finding 2b. The saved name is gone from the field, and stays gone through later redraws: put
+    // back by a redraw it would be shown while a second Save sent an empty name, which the box refuses.
+    assert.deepStrictEqual(await nameField(), { cursorIn: 'mapsetname', text: '' }, 'after Save the name field #mapsetname is empty and still has the cursor: ' + JSON.stringify(await nameField()));
+    for (const arrow of ['mapright', 'mapleft']) {
+      await markMap();
+      await press(arrow);
+      await drawnAgain();
+      assert.deepStrictEqual(await nameField(), { cursorIn: 'mapsetname', text: '' }, 'a redraw after Save does not put the saved name back into #mapsetname: ' + JSON.stringify(await nameField()));
+    }
+    // Finding 2a. The surface's name field belongs to the chosen surface. Another surface is chosen by an answer
+    // that arrives while a new name is being typed (held back here; it could as well come from another phone):
+    // the field then holds the new surface's name, never the text typed for the old one, or Rename would give
+    // that text to the wrong surface. The cursor stays.
+    holdBack = true;
+    await page.route('**/api/mapper', slowAnswer);
+    await markMap();
+    await press('mapadd-triangle');               // its answer, 700 ms later, chooses the new triangle
+    await page.focus('#mapname');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' on the left');
+    assert.strictEqual(await page.inputValue('#mapname'), 'Quad on the left');
+    await drawnAgain();
+    holdBack = false;
+    await page.unroute('**/api/mapper', slowAnswer);
+    const chosen = await page.evaluate(() => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces.filter((x) => x.id === d.edit.selected)[0]));
+    assert.strictEqual(chosen.type, 'triangle', 'the new triangle is the chosen surface');
+    const surfaceName = await page.evaluate(() => { const a = document.activeElement, f = document.getElementById('mapname'); return { cursorIn: a ? a.id : '', text: f ? f.value : null }; });
+    assert.deepStrictEqual(surfaceName, { cursorIn: 'mapname', text: chosen.name }, 'the name field #mapname shows the surface that is chosen now, not what was typed for the one before: ' + JSON.stringify(surfaceName));
+    assert.deepStrictEqual((await get('/api/mapper')).surfaces.map((x) => x.name).sort(), ['Quad', chosen.name].sort(), 'nothing was renamed');
+    await page.click(`.map-entry:has-text("${chosen.name}") >> button:has-text("Remove")`);
+    await page.waitForFunction(() => document.querySelectorAll('.map-entry').length === 1);
+    await page.waitForSelector('.map-entry:has-text("Quad")');
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
     if (shots) await page.screenshot({ path: path.join(shots, '7-mapper.png'), fullPage: true });
