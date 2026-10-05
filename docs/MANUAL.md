@@ -144,7 +144,7 @@ Tap a row to open its page. **‹ System** at the top of a page, or the phone's 
 
 **System > Look** (owner only) changes how the panel is drawn on every phone and laptop that opens this box. Tap a look and it is applied at once; the box remembers it, and it travels in a settings file.
 
-- **Dark stage** is the look the box comes with. **Light**, **Night red** (keeps a dark room dark) and **High contrast** are the same panel in other colours. With these four you can also tap an **Accent** colour, or *Default* to go back to the look's own.
+- **Dark stage** is the look the box comes with. **Light**, **Night red** (keeps a dark room dark) and **High contrast** are the same panel in other colours. With these four you can also tap an **Accent** colour, or *Default* to go back to the look's own. Only the accents that can be read on that look are offered (on Light, one), and an accent that the next look you tap cannot carry is left behind.
 - **Signal** and **Signal light** are a different style, to try: very large capitals, square blocks and thick rules, and one strong colour for each part of the panel, so you can tell where you are from across the room. Room is yellow, Shaders and Vibes pink, Live and Media green, Mix violet, System blue. Signal is for a dark room, Signal light for a bright one. There is no accent to choose with these, because the colour says which part you are in.
 - A state is always written out as well as coloured: Off, Set up, Ready, Active, Problem. In Signal a state never has the colour of a part of the panel: Off is grey, Set up amber, Ready white (black in Signal light), Active light blue, Problem red, on every screen.
 
@@ -157,6 +157,7 @@ Each look is shown as a small picture in its own colours and type, so you can ju
 - **Add a theme** takes the file. It appears among the looks marked "yours"; tap it to use it. Adding the same file again after a change replaces it. The box can hold 16 added themes.
 - **Remove** beside its name takes it off the box, after asking. If it is the look in use, the panel goes back to Dark stage.
 - The box refuses a theme whose text could not be read, and says which pair is too faint ("Text on the Room colour is 2.1 to 1; it needs 4.5"): make that colour lighter or darker and add it again. It also tells you, without refusing, when a state colour is close to the colour of a part of the panel.
+- If a theme file on the box cannot be used (damaged, or put there by hand with a mistake in it), the Look page says which file and why.
 - Added themes travel in a settings file (Backup and reset), so a box set up from another's settings has the same look. A factory reset removes them. Adding and removing cannot be done through remote support.
 
 A theme changes colours, corners, line widths, spacing, the size of controls, the case and weight of titles and the choice between the fonts on the box. It cannot change what is on a screen or where: layouts are built into the panel.

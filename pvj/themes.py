@@ -23,6 +23,7 @@ A theme whose text would not be readable is refused: every pairing of text and g
 import json
 import os
 import re
+import sys
 import stat as stat_mod
 import threading
 
@@ -120,7 +121,7 @@ def _is_hex(v):
 
 def _show(v, most=40):
     """A value from a theme file, made safe to put in a message."""
-    return re.sub(r"[^A-Za-z0-9 ._#:,-]", "?", str(v))[:most]
+    return re.sub(r"[^A-Za-z0-9 ._#:,;()-]", "?", str(v))[:most]
 
 
 def _design_problems(design):
@@ -223,6 +224,16 @@ def _ratio(r):
 
 def contrast_problems(theme):
     return ["%s is %s to 1; it needs %s" % (what, _ratio(r), READABLE) for what, r in pairings(theme) if r < READABLE]
+
+
+def accent_problems(theme, accent):
+    """Why this accent cannot be chosen for this theme, in plain words; empty when it can (or when the theme has a
+    colour per area and so no accent to replace). The same pairings a theme is held to, with the accent in place."""
+    if accent is None or theme.get("areas"):
+        return []
+    if not _is_hex(accent):
+        return ["accent must be #rrggbb"]
+    return ["%s is %s to 1; it needs %s" % (what, _ratio(r), READABLE) for what, r in pairings(theme, accent) if r < READABLE]
 
 
 def warnings(theme):
@@ -332,6 +343,16 @@ def checked(raw, taken=()):
     return theme
 
 
+def name_taken(theme, themes):
+    """True when the theme's name is that of a look that comes with the box (whatever the case of the letters): two
+    looks called Signal on the Look page could not be told apart."""
+    name = theme["name"].strip().lower()
+    return any(t.get("source") == "builtin" and t["name"].strip().lower() == name and k != theme["id"] for k, t in list(themes.items()))
+
+
+NAME_TAKEN = "the name %s is that of a look that comes with the box; give the theme another name"
+
+
 def clean(theme):
     """A theme as a file holds it: the known keys only, in a fixed order."""
     return {k: theme[k] for k in KEYS if k in theme}
@@ -348,7 +369,8 @@ class Store:
         self.addons = addons_dir
         self.dir = os.path.join(addons_dir, "themes") if addons_dir else None
         self.lock = threading.Lock()
-        self.files = {}                 # id -> file name, for what load() or add() put in
+        self.files = {}                 # id -> every file name in the folder that holds that id (the first is the one used)
+        self.skipped = []               # [{"file", "why"}]: files in the folder that load() did not use
 
     def _folder_ok(self):
         return (self.dir is not None and not os.path.islink(self.addons) and not os.path.islink(self.dir)
@@ -379,27 +401,53 @@ class Store:
         finally:
             os.close(fd)
 
+    def _skip(self, name, why):
+        """A file in the folder that is not used: said once in the log, and kept for the Look page to say."""
+        why = _show(why, 160)
+        self.skipped.append({"file": name, "why": why})
+        print("pvj-web: theme file %s was not used: %s" % (name, why), file=sys.stderr, flush=True)
+
     def load(self, out):
-        """Add the owner's themes to `out` ({id: theme}). A file that is broken, unreadable or refused is skipped, a
-        theme with the id of one already there (a built-in one) too, and no more than MAX_ADDED are taken."""
+        """Add the owner's themes to `out` ({id: theme}). A file that is broken, unreadable or refused is skipped and
+        noted (self.skipped), a theme with the id or the name of a built-in one too, and no more than MAX_ADDED are
+        taken. Two files with one id: the one the panel wrote (<id>.json) is used, else the first by name; the others
+        are noted, and go when the theme is removed or replaced."""
         with self.lock:
-            self.files = {}
+            self.files, self.skipped = {}, []
+            found = {}                                       # id -> [(file name, theme)]
             for name in self._names():
-                if len(self.files) >= MAX_ADDED:
-                    break
                 raw = self._read(name)
                 if raw is None:
+                    self._skip(name, "it is not a plain file of at most %d KB" % (MAX_FILE // 1024))
                     continue
                 try:
                     theme = checked(raw)
-                except ThemeError:
+                except ThemeError as e:
+                    self._skip(name, e)
                     continue
-                if theme["id"] in out:
-                    if out[theme["id"]].get("source") == "addon":       # read before, by load_themes: remember its file
-                        self.files.setdefault(theme["id"], name)
+                found.setdefault(theme["id"], []).append((name, theme))
+            for tid in sorted(found):
+                copies = found[tid]
+                copies.sort(key=lambda c: (c[0] != tid + ".json", c[0]))
+                name, theme = copies[0]
+                had = out.get(tid)
+                if had is not None and had.get("source") != "addon":
+                    for n, _t in copies:
+                        self._skip(n, "its id, %s, belongs to a look that comes with the box" % tid)
                     continue
-                out[theme["id"]] = dict(theme, source="addon")
-                self.files[theme["id"]] = name
+                if name_taken(theme, out):
+                    for n, _t in copies:
+                        self._skip(n, NAME_TAKEN % theme["name"])
+                    continue
+                if had is None and len(self.files) >= MAX_ADDED:
+                    for n, _t in copies:
+                        self._skip(n, "there are more than %d themes in the folder" % MAX_ADDED)
+                    continue
+                if had is None:
+                    out[tid] = dict(theme, source="addon")
+                self.files[tid] = [n for n, _t in copies]         # every file of this id: all go when it is removed
+                for n, _t in copies[1:]:
+                    self._skip(n, "it has the same id, %s, as %s, which is the one used" % (tid, name))
         return out
 
     def add(self, theme, themes):
@@ -412,8 +460,10 @@ class Store:
             had = themes.get(tid)
             if had is not None and had.get("source") != "addon":
                 raise _status(ThemeError("the id %s belongs to a look that comes with the box; give the theme another id" % tid), 409)
-            if had is None and sum(1 for t in themes.values() if t.get("source") == "addon") >= MAX_ADDED:
+            if had is None and sum(1 for t in list(themes.values()) if t.get("source") == "addon") >= MAX_ADDED:
                 raise _status(ThemeError("at most %d added themes; remove one first" % MAX_ADDED), 409)
+            if name_taken(theme, themes):
+                raise _status(ThemeError(NAME_TAKEN % theme["name"]), 409)
             try:
                 if os.path.islink(self.addons):
                     raise ThemeError("the add-ons folder is a link; refusing to write there")
@@ -445,10 +495,11 @@ class Store:
                 raise _status(e, 500)
             except OSError as e:
                 raise _status(ThemeError("could not store the theme: %s" % (e.strerror or e)), 500)
-            old = self.files.get(tid)
-            if old and old != tid + ".json":             # the same theme under a name somebody gave it by hand
-                self._unlink(old)
-            self.files[tid] = tid + ".json"
+            for old in self.files.get(tid, []):          # the same id under names somebody gave by hand: one theme, one file
+                if old != tid + ".json":
+                    self._unlink(old)
+            self.files[tid] = [tid + ".json"]
+            self.skipped = [k for k in self.skipped if os.path.lexists(os.path.join(self.dir, k["file"]))]
             themes[tid] = dict(clean(theme), source="addon")
             return had is not None
 
@@ -469,10 +520,14 @@ class Store:
                 raise _status(ThemeError("there is no such theme"), 404)
             if had.get("source") != "addon":
                 raise _status(ThemeError("%s comes with the box and cannot be removed" % had.get("name", tid)), 409)
-            name = self.files.get(tid, tid + ".json")
-            if self._folder_ok() and not self._unlink(name):
-                raise _status(ThemeError("could not remove the theme's file"), 500)
+            names = self.files.get(tid) or [tid + ".json"]
+            if self._folder_ok():
+                left = [n for n in names if not self._unlink(n)]         # every file that holds this id, or it would be back at the next start
+                if left:
+                    self.files[tid] = left
+                    raise _status(ThemeError("could not remove the theme's file"), 500)
             self.files.pop(tid, None)
+            self.skipped = [k for k in self.skipped if k["file"] not in names]
             del themes[tid]
 
     def clear(self, themes):
@@ -483,7 +538,7 @@ class Store:
             for name in self._names():
                 if not self._unlink(name):
                     problems.append("could not remove the theme file %s" % name)
-            self.files = {}
+            self.files, self.skipped = {}, []
             for tid in [k for k, t in themes.items() if t.get("source") == "addon"]:
                 del themes[tid]
         return problems

@@ -47,9 +47,15 @@ class AddAndRemove(Base):
         self.assertEqual(st, 200, out)
         self.assertEqual((out["added"], out["name"], out["replaced"], out["warnings"]), ("soft", "Soft", False, []))
         self.assertEqual(self.files(), ["soft.json"])
-        st, got, _ = self.call("GET", "/api/theme", token=self.view)
+        # a guest and a presenter get what the panel needs to draw itself (names, styles), not every look's tokens
+        for token in (self.view, self.live):
+            st, less, _ = self.call("GET", "/api/theme", token=token)
+            self.assertEqual(set(less), {"theme", "available"})
+            self.assertEqual({t["id"]: (t["style"], t["areas"], t["source"]) for t in less["available"]}["soft"], ("signal", True, "addon"))
+            self.assertTrue(all(set(t) == {"id", "name", "source", "style", "areas"} for t in less["available"]))
+        st, got, _ = self.call("GET", "/api/theme", token=self.full)
         look = {t["id"]: t for t in got["available"]}
-        self.assertEqual(got["max_added"], 16)
+        self.assertEqual((got["max_added"], got["skipped"], got["accent_dropped"]), (16, [], ""))
         self.assertEqual((look["soft"]["source"], look["soft"]["style"], look["soft"]["areas"]), ("addon", "signal", True))
         self.assertEqual(look["signal"]["source"], "builtin")
         # what a preview is drawn from: the theme's own colours, and every design token in force
@@ -208,10 +214,10 @@ class AddAndRemove(Base):
         st, out, _ = self.call("POST", EXPORT, {}, token=self.full)
         self.assertEqual((out["file"]["tokens"]["ac"], out["file"]["tokens"]["on"], out["note"]), ("#22d3ee", "#000000", ""))
         self.assertEqual(themes.validate(out["file"]), [])
-        self.assertEqual(self.call("POST", "/api/theme", {"name": "dark-stage", "accent": "#222222"}, token=self.full)[0], 200)
+        self.settings.data["theme"] = {"name": "dark-stage", "accent": "#222222"}       # kept from before accents were checked
         st, out, _ = self.call("POST", EXPORT, {}, token=self.full)
         self.assertEqual(out["file"]["tokens"], self.api.themes["dark-stage"]["tokens"])
-        self.assertIn("too faint", out["note"])
+        self.assertIn("cannot be read on this look", out["note"])
         self.assertEqual(themes.validate(out["file"]), [])
         # a long id still gives an id the box accepts
         self.add(mine(id="a" * 41))
@@ -240,6 +246,239 @@ class AddAndRemove(Base):
         self.assertEqual(self.add(mine(design={"radius_control": 8}))[0], 200)
         self.assertEqual(self.api.theme_style(), "signal")
         self.assertIn("--tk-r:8px", self.css())
+
+
+class Accent(Base):
+    """An accent chosen under Look replaces a theme's own, so it is held to what a theme is held to (review of #88)."""
+
+    def test_an_accent_that_cannot_be_read_is_refused_and_the_pair_is_named(self):
+        for name, accent, want in (("dark-stage", "#121214", "The accent as text on the page is 1.0 to 1; it needs 4.5"),
+                                   ("light", "#ffffff", "The accent as text on the page is 1.1 to 1; it needs 4.5"),
+                                   ("light", "#f59e0b", "The accent as text on the page"), ("night-red", "#c2410c", "The accent as text"),
+                                   ("high-contrast", "#c2410c", "The accent as text"), ("dark-stage", "#c2410c", "The accent as text")):
+            before = dict(self.settings.data["theme"])
+            st, out, _ = self.call("POST", "/api/theme", {"name": name, "accent": accent}, token=self.full)
+            self.assertEqual(st, 400, (name, accent))
+            self.assertIn("This accent cannot be used with", out["error"])
+            self.assertIn(want, out["error"])
+            self.assertEqual(self.settings.data["theme"], before)
+        # every swatch the panel has is accepted on at least one look, and the ones that pass are accepted
+        swatches = ("#f59e0b", "#c2410c", "#22d3ee", "#e879f9", "#a3e635", "#ffffff")
+        passing = {}
+        for name in ("dark-stage", "light", "night-red", "high-contrast"):
+            passing[name] = [c for c in swatches if not themes.accent_problems(self.api.themes[name], c)]
+            for c in swatches:
+                st = self.call("POST", "/api/theme", {"name": name, "accent": c}, token=self.full)[0]
+                self.assertEqual(st, 200 if c in passing[name] else 400, (name, c))
+        self.assertEqual(passing["light"], ["#c2410c"])
+        self.assertEqual(passing["dark-stage"], ["#f59e0b", "#22d3ee", "#e879f9", "#a3e635", "#ffffff"])
+        self.assertTrue(all(passing.values()))
+        # a theme with a colour per area has no accent to replace: whatever is sent changes nothing it draws
+        self.assertEqual(self.call("POST", "/api/theme", {"name": "signal", "accent": "#0b0b0d"}, token=self.full)[0], 200)
+        self.assertEqual(themes.accent_problems(self.api.themes["signal"], "#0b0b0d"), [])
+        self.assertEqual(themes.accent_problems(self.api.themes["light"], None), [])
+        self.assertEqual(themes.accent_problems(self.api.themes["light"], "red"), ["accent must be #rrggbb"])
+
+    def test_a_faint_accent_in_a_settings_file_refuses_the_import(self):
+        st, out = self.h("POST", "/api/system/settings/export", {}, self.full_dev)
+        file = out["file"]
+        before = json.dumps(self.settings.data, sort_keys=True)
+        for theme in ({"name": "light", "accent": "#ffffff"}, {"name": "dark-stage", "accent": "#121214"}):
+            file["settings"]["theme"] = theme
+            st, body, _ = self.call("POST", "/api/system/settings/import?confirm=import", raw=json.dumps(file).encode(), token=self.full)
+            self.assertEqual(st, 400, theme)
+            self.assertIn("theme: this accent cannot be used with the theme", body["error"])
+            self.assertIn("The accent as text on the page is", body["error"])
+            self.assertEqual(json.dumps(self.settings.data, sort_keys=True), before)
+        file["settings"]["theme"] = {"name": "light", "accent": "#c2410c"}
+        self.assertEqual(self.call("POST", "/api/system/settings/import?confirm=import", raw=json.dumps(file).encode(), token=self.full)[0], 200)
+        self.assertEqual(self.settings.data["theme"], {"name": "light", "accent": "#c2410c"})
+
+    def test_a_faint_accent_already_in_the_settings_is_dropped_not_fatal_and_the_look_page_is_told(self):
+        light = themes.css(self.api.themes["light"])
+        for stored in ("#ffffff", "#f4f3ef", "red", 5, ["#c2410c"], "#fff;}body{display:none"):
+            self.settings.data["theme"] = {"name": "light", "accent": stored}
+            self.assertEqual(self.css(), light, stored)                         # the theme's own accent, as if none was chosen
+            self.assertEqual(self.call("GET", "/")[0], 200)
+            st, got, _ = self.call("GET", "/api/theme", token=self.full)
+            self.assertEqual(st, 200)
+            self.assertIn("The accent kept in the settings is not used, and Light has its own", got["accent_dropped"], stored)
+            self.assertNotRegex(got["accent_dropped"], r"[<>{}]")
+            self.assertNotIn("accent_dropped", self.call("GET", "/api/theme", token=self.view)[1])
+        self.settings.data["theme"] = {"name": "light", "accent": "#c2410c"}
+        self.assertEqual(self.call("GET", "/api/theme", token=self.full)[1]["accent_dropped"], "")
+        self.assertIn("--ac:#c2410c", self.css())
+
+
+class Files(Base):
+    """What the review of #88 found in how theme files on the box are handled."""
+
+    def put(self, name, theme):
+        os.makedirs(self.folder, exist_ok=True)
+        with open(os.path.join(self.folder, name), "wb") as f:
+            f.write(theme if isinstance(theme, bytes) else json.dumps(theme).encode())
+
+    def restart(self):
+        """The box starts again: the looks it comes with, and what its store reads from the folder."""
+        self.api.theme_store = themes.Store(self.addons)
+        self.api.themes.clear()
+        self.api.themes.update(themes.load_themes())
+        self.api.theme_store.load(self.api.themes)
+
+    def test_two_files_with_one_id_are_one_theme_and_removing_it_removes_both(self):
+        self.put("a-old.json", mine(name="Old copy"))
+        self.put("z-new.json", mine(name="New copy"))
+        self.restart()
+        self.assertEqual(self.api.themes["mine"]["name"], "Old copy")
+        self.assertEqual([k["file"] for k in self.api.theme_store.skipped], ["z-new.json"])
+        self.assertIn("it has the same id, mine, as a-old.json", self.api.theme_store.skipped[0]["why"])
+        self.assertEqual(self.call("POST", REMOVE, {"id": "mine"}, token=self.full)[0], 200)
+        self.assertEqual(self.files(), [])
+        self.restart()
+        self.assertNotIn("mine", self.api.themes)                               # it is not back from the other file
+        self.assertEqual(self.api.theme_store.skipped, [])
+        # the file the panel wrote wins over a hand-named copy, whatever the names sort to; adding again leaves one file
+        self.put("a-old.json", mine(name="Old copy"))
+        self.put("mine.json", mine(name="From the panel"))
+        self.put("b-older.json", mine(name="Older copy"))
+        self.restart()
+        self.assertEqual(self.api.themes["mine"]["name"], "From the panel")
+        self.assertEqual(sorted(k["file"] for k in self.api.theme_store.skipped), ["a-old.json", "b-older.json"])
+        self.assertEqual(self.add(mine(name="Newest"))[0], 200)
+        self.assertEqual(self.files(), ["mine.json"])
+        self.assertEqual(self.call("GET", "/api/theme", token=self.full)[1]["skipped"], [])
+        self.restart()
+        self.assertEqual(self.api.themes["mine"]["name"], "Newest")
+        # a factory-style clear takes every copy
+        self.put("copy.json", mine())
+        self.restart()
+        self.assertEqual(self.api.theme_store.clear(self.api.themes), [])
+        self.assertEqual(self.files(), [])
+
+    def test_a_theme_file_that_is_not_used_is_logged_and_shown_to_the_owner(self):
+        import contextlib
+        import io
+        self.put("good.json", mine(id="good", name="Good"))
+        self.put("dim.json", mine(id="dim", tokens=dict(SIGNAL["tokens"], fg="#555555")))
+        self.put("broken.json", b"{")
+        self.put("evil.json", mine(id="evil", name="<img src=x onerror=alert(1)>"))
+        self.put("taken.json", mine(id="signal"))
+        self.put("named.json", mine(id="named", name="dark STAGE"))
+        self.put("big.json", json.dumps(mine(id="big")).encode() + b" " * themes.MAX_FILE)
+        os.symlink(os.path.join(self.folder, "good.json"), os.path.join(self.folder, "link.json"))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.restart()
+        self.assertEqual(sorted(set(self.api.themes) - set(themes.load_themes())), ["good"])
+        log = err.getvalue()
+        skipped = {k["file"]: k["why"] for k in self.api.theme_store.skipped}
+        self.assertEqual(sorted(skipped), ["big.json", "broken.json", "dim.json", "evil.json", "link.json", "named.json", "taken.json"])
+        for file, want in (("dim.json", "Text on the page is 2.6 to 1; it needs 4.5"), ("broken.json", "not valid JSON"), ("evil.json", "the name must be"),
+                           ("taken.json", "its id, signal, belongs to a look that comes with the box"), ("named.json", "is that of a look that comes with the box"),
+                           ("big.json", "not a plain file of at most 16 KB"), ("link.json", "not a plain file")):
+            self.assertIn(want, skipped[file], file)
+            self.assertIn("pvj-web: theme file %s was not used: " % file, log)
+            self.assertNotRegex(skipped[file], r"[<>{}\n\x1b]")
+        self.assertEqual(log.count("\n"), 7)                                    # one line each
+        self.assertNotIn("<img", log)
+        # the owner sees it on the Look page; a guest and a presenter are not told what is in the box's folders
+        st, got, _ = self.call("GET", "/api/theme", token=self.full)
+        self.assertEqual({k["file"] for k in got["skipped"]}, set(skipped))
+        for token in (self.view, self.live):
+            self.assertNotIn("skipped", self.call("GET", "/api/theme", token=token)[1])
+        with open(os.path.join(server.WEB_DIR, "app.js")) as f:
+            js = f.read()
+        self.assertIn("One theme file on this box could not be used: ", js)
+        self.assertIn("k.file + ': ' + k.why", js)
+
+    def test_a_name_of_a_look_that_comes_with_the_box_is_refused(self):
+        for name in ("Signal", "signal", "SIGNAL LIGHT", "Dark stage", "dark Stage", "High contrast"):
+            st, out = self.add(mine(name=name))
+            self.assertEqual(st, 409, name)
+            self.assertIn("is that of a look that comes with the box; give the theme another name", out["error"])
+        self.assertEqual(self.files(), [])
+        self.assertEqual(self.add(mine(name="My Signal"))[0], 200)
+        self.assertEqual(self.add(mine(id="other", name="My Signal"))[0], 200)          # two of the owner's own may share a name: they are marked "yours"
+
+    def test_removing_a_theme_whose_file_cannot_be_removed_changes_nothing(self):
+        self.assertEqual(self.add(mine())[0], 200)
+        self.use("mine")
+        self.api.theme_store._unlink = lambda name: False
+        st, out, _ = self.call("POST", REMOVE, {"id": "mine"}, token=self.full)
+        self.assertEqual((st, out["error"]), (500, "could not remove the theme's file"))
+        self.assertEqual(self.settings.data["theme"]["name"], "mine")               # the look is still the theme, and the theme is still there
+        self.assertIn("mine", self.api.themes)
+        self.assertEqual(self.files(), ["mine.json"])
+        self.assertEqual(self.api.theme_style(), "signal")
+        # and when the settings cannot be saved after the file went: the theme is gone and the box draws its own look
+        del self.api.theme_store._unlink
+        real = self.settings.save
+
+        def full_disk():
+            raise OSError(28, "No space left on device")
+        self.settings.save = full_disk
+        st, out, _ = self.call("POST", REMOVE, {"id": "mine"}, token=self.full)
+        self.settings.save = real
+        self.assertEqual(st, 200, out)
+        self.assertNotIn("mine", self.api.themes)
+        self.assertEqual(self.files(), [])
+        self.assertEqual(self.api.theme_style(), "default")
+        self.assertIn("--bg:#121214", self.css())
+
+    def test_no_theme_is_added_or_removed_while_a_reset_or_an_import_runs(self):
+        self.assertEqual(self.add(mine())[0], 200)
+        for busy in ("a factory reset", "an import"):
+            self.api._care_busy = busy
+            st, out = self.add(mine(id="late"))
+            self.assertEqual((st, out["error"]), (409, "%s is running; try again when it has finished" % busy))
+            self.assertEqual(self.call("POST", REMOVE, {"id": "mine"}, token=self.full)[0], 409)
+        self.api._care_busy = None
+        self.assertEqual(self.files(), ["mine.json"])
+        # an add that is under way holds the lock a reset raises its flag under: the reset waits, then removes it
+        import threading
+        inside, go, done = threading.Event(), threading.Event(), []
+        real = self.api.theme_store.add
+
+        def slow(theme, all_):
+            inside.set()
+            go.wait(10)
+            return real(theme, all_)
+        self.api.theme_store.add = slow
+        adder = threading.Thread(target=lambda: done.append(self.add(mine(id="racing"))[0]))
+        adder.start()
+        self.assertTrue(inside.wait(10))
+        reset = threading.Thread(target=lambda: done.append(self.h("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, self.full_dev)[0]))
+        reset.start()
+        reset.join(0.5)
+        self.assertTrue(reset.is_alive())                                         # it has not got past the add
+        go.set()
+        adder.join(20)
+        reset.join(20)
+        self.assertEqual(sorted(done), [200, 200])
+        self.assertEqual(self.files(), [])
+        self.assertEqual(set(self.api.themes), set(themes.load_themes()))
+
+    def test_many_adds_at_once_at_the_limit_keep_sixteen(self):
+        import threading
+        for i in range(14):
+            self.assertEqual(self.add(mine(id="have-%d" % i))[0], 200)
+        got = []
+        start = threading.Barrier(8)
+
+        def one(i):
+            start.wait(10)
+            got.append(self.h("POST", ADD, {"file": json.dumps(mine(id="new-%d" % i))}, self.full_dev)[0])      # the handler itself: eight at once
+        threads = [threading.Thread(target=one, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        self.assertEqual(sorted(got), [200, 200, 409, 409, 409, 409, 409, 409])
+        self.assertEqual(len(self.files()), 16)
+        self.assertEqual(sum(1 for t in self.api.themes.values() if t["source"] == "addon"), 16)
+        self.assertFalse([n for n in os.listdir(self.folder) if n.startswith(".")])         # no half-written file left
+        self.restart()
+        self.assertEqual(sum(1 for t in self.api.themes.values() if t["source"] == "addon"), 16)
 
 
 class WithTheSettings(Base):
@@ -306,17 +545,21 @@ class WithTheSettings(Base):
         cases = (
             ([mine(tokens=dict(SIGNAL["tokens"], fg="#555555"))], 400, "themes: Mine: Text on the page is 2.6 to 1; it needs 4.5"),
             ([mine(design={"radius_control": 99})], 400, "must be a whole number from 0 to 24"),
-            ([mine(design={"radius_control": 8.0})], 400, "must be a whole number from 0 to 24"),
+            ([mine(design={"radius_control": 8.0})], 400, "themes: Mine: the file is not a theme: it is not valid JSON (a theme holds whole numbers only)"),
+            ([dict(mine(), name="x" * 30, tokens=dict(SIGNAL["tokens"]), areas=dict(SIGNAL["areas"], **{}), states=dict(SIGNAL["states"]),
+                   design=dict(themes.DESIGN_DEFAULTS), id="a" * 41)] * 1 + [], 200, ""),
+            ([mine(name="signal LIGHT")], 400, "the name signal LIGHT is that of a look that comes with the box"),
             ([mine(design={"radius_control": True})], 400, "must be a whole number"),
             ([dict(mine(), css="body{}")], 400, "unknown keys: css"),
             ([mine(tokens=dict(SIGNAL["tokens"], bg="#000;}*{x:y"))], 400, "token bg must be #rrggbb"),
             ([mine(name="<b>x</b>")], 400, "themes: theme 1: the name must be"),
             ([mine(id="signal")], 400, "the id signal belongs to a look that comes with the box"),
             ([mine(), mine()], 400, "the id mine is in the file twice"),
-            ([mine(), "x"], 400, "themes: theme 2: theme is not an object"),
+            ([mine(), "x"], 400, "themes: theme 2: the file is not a theme: a JSON object is expected"),
             ("x", 400, "a list of at most 16 themes is expected"), ({"mine": mine()}, 400, "a list of at most 16"),
             ([mine(id="t-%d" % i) for i in range(17)], 400, "a list of at most 16"),
         )
+        cases = tuple(c for c in cases if c[1] != 200)
         for found, status, want in cases:
             st, out = self.send(dict(base, themes=found, settings=dict(base["settings"], theme={"name": "mine", "accent": None})))
             self.assertEqual(st, status, (want, out))

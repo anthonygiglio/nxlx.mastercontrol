@@ -239,6 +239,9 @@ def check_theme(v, care):
     if theme is None and (not isinstance(name, str) or name not in care.api.themes):
         care.note("the theme %s is not on this box; the theme was left as it is" % _printable(name))
         return copy.deepcopy(care.api.settings.data["theme"])
+    faint = themes_mod.accent_problems(theme or care.api.themes[name], accent)        # as the Look page's own check
+    if faint and faint != ["accent must be #rrggbb"]:
+        raise ValueError("this accent cannot be used with the theme %s: %s" % (_printable(name), "; ".join(faint)))
     try:
         themes_mod.css(theme or care.api.themes[name], accent)
     except themes_mod.ThemeError as e:
@@ -651,9 +654,10 @@ class BoxCare:
         return clean, list(self._notes), passwords
 
     def _check_themes(self, envelope):
-        """{id: theme} for the added themes a file brings, each held to the checks of a theme added through the panel
-        (themes.validate: fixed keys, colours and names by whole match, numbers within their ranges, contrast). One
-        that fails refuses the whole file. Raises ApiError."""
+        """{id: theme} for the added themes a file brings, each read by the function that reads a theme added through
+        the panel (themes.checked: 16 KB each, whole numbers only, fixed keys, colours and names by whole match,
+        numbers within their ranges, contrast). Each is written out again as text for that, so there is one reader
+        and one rule set. One that fails refuses the whole file. Raises ApiError."""
         if "themes" not in envelope:
             return {}
         found, out = envelope["themes"], {}
@@ -664,14 +668,17 @@ class BoxCare:
             label = "themes: theme %d" % (n + 1)
             if isinstance(theme, dict) and isinstance(theme.get("name"), str) and themes_mod._NAME.fullmatch(theme["name"]):
                 label = "themes: %s" % _printable(theme["name"])
-            problems = themes_mod.validate(theme)
-            if problems:
-                raise bad("%s: %s" % (label, "; ".join(themes_mod.PLAIN.get(p, p) for p in problems)))
+            try:
+                theme = themes_mod.checked(json.dumps(theme))
+            except (themes_mod.ThemeError, ValueError, TypeError) as e:
+                raise bad("%s: %s" % (label, e))
             tid = theme["id"]
             if tid in out:
                 raise bad("%s: the id %s is in the file twice" % (label, tid))
             if tid in mine and mine[tid].get("source") != "addon":
                 raise bad("%s: the id %s belongs to a look that comes with the box" % (label, tid))
+            if themes_mod.name_taken(theme, mine):
+                raise bad("%s: %s" % (label, themes_mod.NAME_TAKEN % theme["name"]))
             out[tid] = themes_mod.clean(theme)
         after = {k for k, t in list(mine.items()) if t.get("source") == "addon"} | set(out)
         if len(after) > themes_mod.MAX_ADDED:

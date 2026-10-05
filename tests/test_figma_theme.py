@@ -177,6 +177,40 @@ class Converter(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("not a look that comes with the box", said)
 
+    def test_a_hostile_export_ends_plainly_with_no_traceback_and_no_file(self):
+        """From the review of #88: nesting 5000 deep, a number too large to hold, and terminal escapes in a name."""
+        deep = '{"a":' * 5000 + '1' + '}' * 5000
+        for data, want in ((deep, "Cannot make a theme"), ({"shape/corner": 1e999}, "Cannot make a theme"), ('{"shape/corner": 1e999}', "not a number a theme can use"),
+                           ({"shape/corner": "9" * 400}, "not a number a theme can use"), ({"shape/corner": "1" + "0" * 400 + "px"}, "not a number a theme can use"),
+                           ({"size/control": float("inf")}, "Cannot make a theme"), ({"size/control": 10 ** 400}, "not a number a theme can use")):
+            code, said, theme = run(data)
+            self.assertEqual((code, theme), (2, None), str(data)[:60])
+            self.assertIn(want, said)
+            self.assertNotIn("Traceback", said)
+        # as a program: return code 2, nothing on stderr, no file
+        tmp = tempfile.mkdtemp()
+        for i, text in enumerate((deep, '{"shape/corner": 1e999}', '{"shape/corner": "%s"}' % ("9" * 400))):
+            src, dst = os.path.join(tmp, "in%d.json" % i), os.path.join(tmp, "out%d.json" % i)
+            with open(src, "w") as f:
+                f.write(text)
+            got = subprocess.run([sys.executable, TOOL, src, "-o", dst], capture_output=True, text=True, timeout=60)
+            self.assertEqual((got.returncode, got.stderr), (2, ""), got.stdout[-300:] + got.stderr[-300:])
+            self.assertFalse(os.path.exists(dst))
+        # a name from the export is never printed raw: an escape sequence could redraw the terminal
+        esc = "\x1b[2J\x1b]0;owned\x07evil"
+        data = dict(sample("starter-flat.json"), **{esc + "/name": 4, "colour/" + esc: "#123456"})
+        code, said, theme = run(data)
+        self.assertEqual(code, 0, said)
+        self.assertNotRegex(said, "[\x00-\x09\x0b-\x1f\x7f]")
+        self.assertIn("ignored", said)
+        for data in ({"colour/page": esc}, {"font/words": esc}, {"shape/corner": esc}, {"colour/page": "{" + esc + "}"}, {"colour/page": {"r": 1, "g": 1, "b": 1, "a": esc}}):
+            code, said, theme = run(data)
+            self.assertEqual((code, theme), (2, None))
+            self.assertNotRegex(said, "[\x00-\x09\x0b-\x1f\x7f]")
+        code, said, theme = run(sample("starter-flat.json"), "--mode", esc)
+        self.assertEqual(code, 2)
+        self.assertNotRegex(said, "[\x00-\x09\x0b-\x1f\x7f]")
+
     def test_two_modes_in_one_file_need_a_choice(self):
         dark = sample("figma-ui-kit-export.json")["Signal theme"]["Signal dark"]
         light = json.loads(json.dumps(dark))

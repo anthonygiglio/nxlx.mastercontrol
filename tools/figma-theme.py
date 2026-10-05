@@ -21,6 +21,7 @@ written only if the box would accept it. Standard library only. This tool is nev
 """
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -75,6 +76,13 @@ class Problem(Exception):
     pass
 
 
+def safe(text, most=80):
+    """Text from the export, made safe to print: a name in a file from elsewhere may hold terminal escapes. Every
+    character that is not printable (controls, escapes, direction marks) becomes "?". (The box's own themes._show
+    is stricter and would also take the "/" out of a name, which is what a name here is made of.)"""
+    return "".join(c if c.isprintable() else "?" for c in str(text))[:most]
+
+
 def norm(name):
     """A name as it is matched: var(--bg) is bg, "Colour / On colour" is color/on-color."""
     n = str(name).strip().lower()
@@ -125,13 +133,13 @@ def colour(v):
     """#rrggbb from the ways Figma writes a colour, or Problem."""
     if _is_colour_object(v):
         if v.get("a", 1) not in (1, 1.0):
-            raise Problem("a colour with transparency cannot be used (alpha %s)" % v.get("a"))
+            raise Problem("a colour with transparency cannot be used (alpha %s)" % safe(v.get("a")))
         parts = [v[k] for k in ("r", "g", "b")]
         if not all(isinstance(p, (int, float)) and not isinstance(p, bool) and 0 <= p <= 1 for p in parts):
-            raise Problem("not a colour: %r" % (v,))
+            raise Problem("not a colour: %s" % safe(v))
         return "#%02x%02x%02x" % tuple(int(round(p * 255)) for p in parts)
     if not isinstance(v, str):
-        raise Problem("not a colour: %r" % (v,))
+        raise Problem("not a colour: %s" % safe(v))
     s = v.strip().lower()
     if re.fullmatch(r"#[0-9a-f]{6}", s):
         return s
@@ -139,12 +147,12 @@ def colour(v):
         return "#" + "".join(c * 2 for c in s[1:])
     if re.fullmatch(r"#[0-9a-f]{8}", s):
         if s[7:] != "ff":
-            raise Problem("a colour with transparency cannot be used (%s)" % s)
+            raise Problem("a colour with transparency cannot be used (%s)" % safe(s))
         return s[:7]
     m = re.fullmatch(r"rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})(?:[\s,/]+(1|1\.0+|100%))?\s*\)", s)
     if m and all(int(g) <= 255 for g in m.groups()[:3]):
         return "#%02x%02x%02x" % tuple(int(g) for g in m.groups()[:3])
-    raise Problem("not a colour the box can use (give #rrggbb): %r" % (v,))
+    raise Problem("not a colour the box can use (give #rrggbb): %s" % safe(v))
 
 
 def number(v):
@@ -153,10 +161,10 @@ def number(v):
     if isinstance(v, str):
         m = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*(px)?\s*", v)
         if not m:
-            raise Problem("not a number: %r" % (v,))
+            raise Problem("not a number: %s" % safe(v))
         v = float(m.group(1))
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
-        raise Problem("not a number: %r" % (v,))
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or (isinstance(v, float) and not math.isfinite(v)) or abs(v) > 100000:
+        raise Problem("not a number a theme can use: %s" % safe(v))
     return int(round(v))
 
 
@@ -164,7 +172,7 @@ def word(table, what):
     def read(v):
         key = norm(v) if isinstance(v, str) else None
         if key not in table:
-            raise Problem("%r is not %s the box knows (one of: %s)" % (v, what, ", ".join(sorted(set(table.values())))))
+            raise Problem("%s is not %s the box knows (one of: %s)" % (safe(v), what, ", ".join(sorted(set(table.values())))))
         return table[key]
     return read
 
@@ -175,7 +183,7 @@ def choice(key):
     def read(v):
         if isinstance(v, str) and v.strip().lower() in allowed:
             return v.strip().lower()
-        raise Problem("%r is not one of: %s" % (v, ", ".join(allowed)))
+        raise Problem("%s is not one of: %s" % (safe(v), ", ".join(allowed)))
     return read
 
 
@@ -198,7 +206,7 @@ def convert(data, base, theme_id, name, style="signal", mode=None, flags=None):
         want = norm(mode)
         found = [f for f in found if want in f[0].split("/")]
         if not found:
-            raise Problem("no token is under the mode %r" % mode)
+            raise Problem("no token is under the mode %s" % safe(mode))
 
     def resolve(value, depth=0):
         """{colour.text} or {colour/text}: the value of that token (an alias, as the tokens format writes it)."""
@@ -206,7 +214,7 @@ def convert(data, base, theme_id, name, style="signal", mode=None, flags=None):
             target = norm(value.strip()[1:-1])
             hits = [v for full, v in by_path.items() if full == target or full.endswith("/" + target)]
             if not hits or depth > 8:
-                raise Problem("the alias %s points at nothing in the file" % value)
+                raise Problem("the alias %s points at nothing in the file" % safe(value))
             return resolve(hits[0], depth + 1)
         return value
 
@@ -220,7 +228,7 @@ def convert(data, base, theme_id, name, style="signal", mode=None, flags=None):
     report = {"used": [], "ignored": [], "notes": []}
     exact, shared, claimed = {}, {}, {}
     for full, path, value in found:
-        shown = "/".join(path)
+        shown = safe("/".join(path))
         tail = known(full)
         if tail is None:
             report["ignored"].append(shown)
@@ -316,12 +324,15 @@ def main(argv=None, out=sys.stdout):
         flags = {"title_case": a.title_case, "density": a.density, "tabs": a.tabs, "primary": a.primary,
                  "title_weight": a.title_weight, "text_weight": a.text_weight}
         theme, report = convert(data, load_base(a.base), a.id, name, a.style, a.mode, flags)
-    except (OSError, ValueError, Problem, themes.ThemeError) as e:
-        say("Cannot make a theme: %s" % e)
+    except RecursionError:
+        say("Cannot make a theme: the export is nested too deeply")
+        return 2
+    except (OSError, ValueError, OverflowError, Problem, themes.ThemeError) as e:
+        say("Cannot make a theme: %s" % safe(e, 400))
         return 2
     say("Taken from the export:")
     for shown, place, value in report["used"]:
-        say("  %-28s -> %-28s %s" % (shown, place, value))
+        say("  %-28s -> %-28s %s" % (shown, place, safe(value)))
     for note in report["notes"]:
         say("  note: %s" % note)
     form = themes.form_problems(theme)

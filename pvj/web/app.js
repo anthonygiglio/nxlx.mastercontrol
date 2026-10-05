@@ -91,7 +91,7 @@
       if (r[1].ok) S.banks = r[1].data.banks;
       if (r[2].ok) { S.media = r[2].data.files; S.mediaInfo = r[2].data; }
       if (r[3].ok) S.modules = r[3].data.modules;
-      if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; markLook(); }
+      if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; S.themeSkipped = r[4].data.skipped || []; S.accentDropped = r[4].data.accent_dropped || ''; markLook(); }
       if (r[5] && r[5].ok) S.devices = r[5].data.devices;
     });
   }
@@ -3516,6 +3516,18 @@
     var l = lookLum(c), ra = (Math.max(l, lookLum(a)) + 0.05) / (Math.min(l, lookLum(a)) + 0.05), rb = (Math.max(l, lookLum(b)) + 0.05) / (Math.min(l, lookLum(b)) + 0.05);
     return ra >= rb ? a : b;
   }
+  // An accent may be chosen only where it can be read: the box refuses one that, written on the page or on a surface
+  // of the look in use, is under 4.5 to 1 (themes.accent_problems), so only the swatches that pass are offered.
+  function lookRatio(a, b) { var x = lookLum(a), y = lookLum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+  function accentsFor(th) {
+    var tk = th && th.look && th.look.tokens;
+    if (!tk || !lookColour(tk.bg, null) || !lookColour(tk.cd, null)) return [];
+    return ACCENTS.filter(function (c) {
+      var on = lookRatio(c, '#000000') >= lookRatio(c, '#ffffff') ? '#000000' : '#ffffff';
+      if (lookRatio(c, on) < 4.5) return false;
+      return th.style !== 'default' || (lookRatio(c, tk.bg) >= 4.5 && lookRatio(c, tk.cd) >= 4.5);
+    });
+  }
   function lookTile(th, chosen, onPick) {
     var look = th.look || {}, tk = look.tokens || {}, areas = look.areas || {}, states = look.states || {}, d = look.design || null;
     var bg = lookColour(tk.bg, '#121214'), cd = lookColour(tk.cd, '#1c1c20'), fg = lookColour(tk.fg, '#f2f1ec'), ln = lookColour(tk.ln, fg);
@@ -3563,7 +3575,7 @@
     var note = function (text, isErr) { lookNote = { text: text || '', err: !!isErr }; sayAt(document.getElementById('themeresult'), lookNote.text, lookNote.err); };
     var apply = function (name, accent) {
       act('POST', '/api/theme', { name: name, accent: accent }, function (d) {
-        S.theme = d.theme;
+        S.theme = d.theme; S.accentDropped = '';
         lookNote = { text: '', err: false };
         fresh();
       });
@@ -3580,7 +3592,7 @@
       reader.onload = function () {
         api('POST', '/api/theme/add', { file: String(reader.result) }).then(function (r) {
           if (!r.ok) return note((r.data.error || 'The theme was not added (HTTP ' + r.status + ')') + '. Nothing was changed.', true);
-          S.themes = r.data.available;
+          S.themes = r.data.available; S.themeSkipped = r.data.skipped || [];
           lookNote = { text: (r.data.replaced ? 'Replaced your theme ' : 'Added ') + r.data.name + '.' + (S.theme && S.theme.name === r.data.added ? '' : ' Tap it to use it.')
             + (r.data.warnings || []).map(function (w) { return ' Note: ' + w + '.'; }).join(''), err: false };
           fresh();
@@ -3592,17 +3604,19 @@
     var yours = S.themes.filter(function (th) { return th.source === 'addon'; });
     return h('div', { class: 'card', id: 'lookcard' }, h('h2', { text: 'Appearance' }),
       h('div', { class: 'row wrap', id: 'lookthemes' }, S.themes.map(function (th) {
-        return lookTile(th, th.id === t.name, function () { apply(th.id, t.accent); });
+        // the accent goes with the look only where that look can carry it (the box would refuse it otherwise)
+        return lookTile(th, th.id === t.name, function () { apply(th.id, t.accent && accentsFor(th).indexOf(t.accent) >= 0 ? t.accent : null); });
       })),
       now && now.areas ? h('div', { class: 'hint', id: 'lookareas', text: now.name + ' gives each part of the panel its own colour (Room, Shaders, clips, Mix, System), so there is no accent to choose.' }) : [
         h('div', { class: 'k', text: 'Accent' }),
         h('div', { class: 'swatches' },
           h('button', { class: 'btn small', text: 'Default', onclick: function () { apply(t.name, null); } }),
-          ACCENTS.map(function (c) {
+          accentsFor(now).map(function (c) {
             var sw = h('button', { class: 'swatch' + (t.accent === c ? ' cur' : ''), 'aria-label': 'Accent ' + c, onclick: function () { apply(t.name, c); } });
             sw.style.background = c;
             return sw;
-          }))],
+          })),
+        S.accentDropped ? h('div', { class: 'hint warn', id: 'accentdropped', text: S.accentDropped + '. Tap Default, or another accent.' }) : null],
       h('h2', { text: 'Your own themes' }),
       h('div', { class: 'hint', id: 'themehint', text: 'A theme is a small file of colours, shapes and type. Save a look as a file to start from, change it (by hand, or from Figma), and add it here. It travels in a settings file.' }),
       pick,
@@ -3612,13 +3626,15 @@
           act('POST', '/api/theme/export', {}, function (d) { saveFile(d.name, d.file); note('Saved ' + d.name + '.' + (d.note ? ' ' + d.note : '')); });
         } })),
       h('div', { class: 'msg inmsg' + (lookNote.err ? ' err' : ''), id: 'themeresult', role: 'status', text: lookNote.text }),
+      (S.themeSkipped || []).length ? h('div', { class: 'hint warn', id: 'themeskipped', text: (S.themeSkipped.length === 1 ? 'One theme file on this box could not be used: ' : S.themeSkipped.length + ' theme files on this box could not be used: ')
+        + S.themeSkipped.map(function (k) { return k.file + ': ' + k.why; }).join('. ') + '.' }) : null,
       yours.length ? h('div', { class: 'list', id: 'themelist' }, yours.map(function (th) {
         return h('div', { class: 'item' }, h('span', { class: 'lname', text: th.name }),
           h('div', { class: 'row' }, h('button', { class: 'btn small del', 'data-remove': th.id, 'aria-label': 'Remove the theme ' + th.name, text: 'Remove', onclick: function (e) {
             confirmRow('Remove the theme ' + th.name + ' from this box?' + (th.id === t.name ? ' It is the look in use: the panel goes back to Dark stage.' : ''), 'Remove', 'Keep it', function () {
               api('POST', '/api/theme/remove', { id: th.id }).then(function (r) {
                 if (!r.ok) return note((r.data.error || 'The theme was not removed') + '.', true);
-                S.theme = r.data.theme; S.themes = r.data.available;
+                S.theme = r.data.theme; S.themes = r.data.available; S.themeSkipped = r.data.skipped || []; S.accentDropped = '';
                 lookNote = { text: 'Removed ' + th.name + '.', err: false };
                 fresh();
                 say(lookNote.text);

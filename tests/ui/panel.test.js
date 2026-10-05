@@ -2711,6 +2711,22 @@ function startServer() {
       assert(wide[0] <= wide[1] + 1, 'the Look page is wider than a phone: ' + JSON.stringify(wide));
       const small = await page.$$eval('#lookcard .lt-title, #lookcard .lt-btn, #lookcard .lt-chip, #lookcard .lt-name span', (els) => els.filter((e) => parseFloat(getComputedStyle(e).fontSize) < 13).length);
       assert.strictEqual(small, 0, 'text under 13 px in a look\'s picture');
+      // An accent is offered only where it can be read on the look in use (the box refuses the others): on Dark stage
+      // every swatch but the dark orange, on Light the dark orange alone; and each one offered is taken.
+      const swatches = () => page.$$eval('.swatch', (ss) => ss.map((x) => x.getAttribute('aria-label').replace('Accent ', '')));
+      assert.deepStrictEqual(await swatches(), ['#f59e0b', '#22d3ee', '#e879f9', '#a3e635', '#ffffff'], 'the accents offered on Dark stage');
+      assert.strictEqual(await post('/api/theme', { name: 'dark-stage', accent: '#c2410c' }), 400, 'the box refuses an accent that cannot be read');
+      await page.click('.looktile[data-theme="light"]');
+      await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(244, 243, 239)');
+      assert.deepStrictEqual(await swatches(), ['#c2410c'], 'the accents offered on Light');
+      assert.strictEqual(await post('/api/theme', { name: 'light', accent: '#ffffff' }), 400);
+      await page.click('.swatch');
+      await page.waitForSelector('.swatch.cur');
+      assert.deepStrictEqual((await get('/api/theme')).theme, { name: 'light', accent: '#c2410c' }, 'a swatch that is offered is taken');
+      assert.strictEqual(await page.locator('#accentdropped').count(), 0);
+      await page.click('.looktile[data-theme="dark-stage"]');          // the accent chosen for Light cannot be read on Dark stage: tapping the look must not be refused
+      await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(18, 18, 20)', null, { timeout: 8000 });
+      assert.deepStrictEqual((await get('/api/theme')).theme, { name: 'dark-stage', accent: null }, 'an accent that the next look cannot carry is left behind');
       const signalTheme = (await get('/api/theme')).available.filter((t) => t.id === 'signal')[0].look;
       const own = { id: 'browser-test', name: 'Browser test', style: 'signal', tokens: signalTheme.tokens, areas: Object.assign({}, signalTheme.areas, { room: '#ff8a65', clips: '#4dd0e1' }),
         states: signalTheme.states, design: { radius_control: 14, title_case: 'sentence' } };
