@@ -357,3 +357,61 @@ details.fold { display: block; }
 .list .item.proj-edit { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 6px; padding: 12px 0; }
 .list .item.proj-edit .hint { margin-bottom: 4px; }
 .chooser { display: flex; flex-direction: column; gap: 4px; }
+/* The patterns every System page shares: a label above each field, one kind of list row, one Add form, Save changes */
+.state { font-size: 13px; line-height: 1.4; color: var(--mu); overflow-wrap: anywhere; }
+.kvv { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--mu); text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.fieldwrap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.list.sp { gap: 8px; }
+.list.sp > .item { padding: 10px 0 2px; }
+.list .item.lrow { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 6px; }
+.lhead { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lname { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+.list .item.lrow > .row { margin-left: 0; justify-content: flex-start; }
+.list .item.lrow .btn { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
+.lacts > .btn:first-child { flex: 1 1 auto; }
+.lacts > .morebtn { flex: none; }
+.lacts > .morebtn:first-child { flex: none; }   /* a row whose only button is More: not stretched */
+.moreacts { padding: 8px; border: 1.5px solid var(--ln); border-radius: 6px; }
+.moreacts > .btn { flex: 1 1 9rem; }
+.addform { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--ln); }
+.addform:first-child { border-top: 0; padding-top: 0; }
+.savebar { display: flex; flex-direction: column; gap: 4px; }
+.savebar > .row { align-items: center; }
+.notsaved { font-weight: 600; color: var(--fg); }
+.empty { font-size: 14px; line-height: 1.4; }
+.card details.fold > summary { color: var(--fg); }
+.card details.fold > .list { padding-bottom: 4px; }
+.daychips { gap: 4px; }
+.daychips .btn { flex: 1 1 0; min-width: 0; padding: 0; font-size: 14px; }
+.bigchoice { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; min-height: 64px; padding: 10px 12px; width: 100%; white-space: normal; }
+.bigchoice b { font-size: 18px; }
+.bigchoice span { font-weight: 400; font-size: 14px; }
+table.chan { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+table.chan th, table.chan td { text-align: left; padding: 6px 4px; border-top: 1px solid var(--ln); vertical-align: middle; overflow-wrap: anywhere; }
+table.chan th { font-size: 13px; color: var(--mu); font-weight: 600; border-top: 0; }
+table.chan .num { width: 3.2em; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+table.chan .lvl { width: 36%; }
+.lvlbar { display: flex; align-items: center; gap: 6px; }
+.lvlbar .progress { flex: 1 1 auto; }
+.lvlbar span { flex: none; width: 2.4em; text-align: right; font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.lacts > .btn.plain { flex: none; }
+.renamebox { border-color: var(--ln); }
+.toggle .rot { cursor: default; }
+/* A list with its Add form: one column on a phone; on a laptop the list scrolls by itself and the form sits beside it */
+.syspage .grid2 > .wide { grid-column: 1 / -1; }
+.split { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.split > * { min-width: 0; }
+.proj-below { padding-top: 4px; }
+@media (min-width: 900px) {
+  .split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 28px; align-items: start; }
+  .split.alone { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
+  .split > .splitlist { max-height: calc(100dvh - 300px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
+  .split > .splitside { position: sticky; top: 12px; }
+  .split > .splitside > .addform { border-top: 0; padding-top: 0; }
+}
+.sched-entry.editing { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
+.split.even { }
+@media (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@media (min-width: 900px) {
+  #devicelist, #midimaplist { max-height: calc(100dvh - 420px); min-height: 180px; overflow-y: auto; padding-right: 8px; }
+}

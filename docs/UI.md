@@ -67,13 +67,15 @@ The Live input card (USB capture stick or webcam) appears only when the box has 
 
 ## System
 
-System is a short list in three groups (Everyday, Show tools, This box), with Health above them and one page per row. Each row has a word for how it is doing (Off, Set up, Ready, Active, Problem) and a sentence. A module's page has its switch at the top right; while the module is off the page shows what it does and one button to switch it on. That switch is the only one for a feature: DMX, MIDI, the schedule, OSC and Remote support have no second button inside. A control with one safe effect is applied on tap; a Save button is only where several fields change together. The cards below are each on their own page.
+System is a short list in three groups (Everyday, Show tools, This box), with Health above them and one page per row. Each row has a word for how it is doing (Off, Set up, Ready, Active, Problem) and a sentence. A module's page has its switch at the top right; while the module is off the page shows what it does and one button to switch it on. That switch is the only one for a feature: DMX, MIDI, the schedule, OSC and Remote support have no second button inside. A control with one safe effect is applied on tap; Save changes is only where several fields change together, cannot be pressed until something changed, and says "Not saved yet" while it has. The cards below are each on their own page.
+
+Every page uses the same few patterns (D50): a visible label above each field with an optional hint below (placeholders are examples only); small capitals only for labels of three words or fewer, sentences in normal case; one list row (name, one state line, a red problem line when there is one, at most one main button, **More** for the rest, Remove last); one Add form ("+ Add a ...", open in place, the button says Add, a refusal is said under it); a question in place before every Remove and before anything that changes what the room sees or locks someone out (no browser dialog anywhere); a result said beside the button that caused it as well as in the page's message line; empty states that say what the thing is for and the first step. From about 900 px the pages with a lot on them (Projectors, Schedule, Network, People and codes, MIDI controller, DMX) use two columns, with a list that scrolls by itself and its form beside it. CI makes whole-page pictures of them in the `ui-screenshots` artifact (`page-projectors`, `page-schedule`, `page-dmx`, `page-network`, `page-about`, `page-support`, `page-streams`, `page-autostart`, and `page-projectors-laptop`, `page-schedule-laptop`, `page-network-laptop`, `page-people-laptop`). **The pictures further down this page were made before this pass and show the older cards.**
 
 Shaders and Vibes has one page for everything, and it is an instrument: what is on screen with its load and picture detail, the playing shader's controls by type (sliders, switches, choices, colours, an XY pad, buttons) under Speed, Colour turn and Brightness trim, its presets, the library with its filters, the Vibes settings and sets, and the controllers. A phone stacks them in that order. On a laptop the library is a column on the left that scrolls by itself, the stage (now, controls, presets) is in the middle and the sets and controllers on the right. A small MIDI button beside a control opens its teach box in place. Live keeps the big Vibes button and gets Previous, Next and a strip of the playing shader's Speed and first four controls (a column on the right on a laptop). CI makes pictures of them (`shaders-page`, `shaders-page-laptop`, `shaders-instrument`, `live-vibes`, `live-shader-laptop` in the `ui-screenshots` artifact); they are not in `docs/images/ui` yet.
 
 ### Box and sound output
 
-The Box card: software versions, free space, the screen outputs and their modes, the box clock, and Restart the box and Power off. Sound output chooses where the sound goes and plays a test tone on the left, right or both speakers.
+This box: versions, storage, the screen outputs (their modes under Advanced), the box clock; then Restart and power (Restart player, Restart the box, Power off, each asking first). Sound output chooses where the sound goes (applied on tap) and plays a test sound on the left, right or both speakers.
 
 ![Box card](images/ui/box.png)
 ![Sound output card with test tone buttons](images/ui/sound-output.png)
@@ -90,7 +92,7 @@ The Box card: software versions, free space, the screen outputs and their modes,
 
 The schedule above has an entry of each kind: projectors on, play a clip, a legacy start script, blackout and projectors off.
 
-Projectors (see [PROJECTORS.md](../pvj/PROJECTORS.md)): two projectors at private addresses, each with On, Off, Picture mute, Unmute and Check, and All on and All off for both. The one with a password says so; the password itself is never shown.
+Projectors (see [PROJECTORS.md](../pvj/PROJECTORS.md)): one row per projector with one power button that follows its state (Turn on, Warming up..., Turn off, Cooling down...), the input list, and More (blank the picture, mute the sound, name the inputs, check, edit, remove); All on and All off for two or more. The one with a password says so; the password itself is never shown.
 
 ![Projectors card with two projectors](images/ui/projectors.png)
 
