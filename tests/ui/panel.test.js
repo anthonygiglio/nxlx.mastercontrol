@@ -116,11 +116,19 @@ function startServer() {
     await page.waitForSelector('#uploadbtn');
     await page.setInputFiles('#filepick', { name: 'from-phone.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(300000, 7) });
     await page.waitForSelector('.item:has-text("from-phone.mp4") >> text=Rename', { timeout: 8000 });
-    page.once('dialog', (d) => d.accept('renamed-on-phone.mp4'));
+    // No browser dialog anywhere in the panel: one would be a problem at the end of the test
+    page.on('dialog', (d) => { problems.push('a browser dialog opened: ' + d.message()); d.dismiss(); });
     await page.click('.item:has-text("from-phone.mp4") >> text=Rename');
+    await page.fill('.renamebox input', 'renamed-on-phone.mp4');
+    await page.click('.renamebox button:text-is("Rename")');
     await page.waitForSelector('.item:has-text("renamed-on-phone.mp4")');
-    page.once('dialog', (d) => d.accept());
+    // Delete asks first, in place, naming the file; "Keep it" changes nothing
     await page.click('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
+    await page.waitForSelector('#confirmrow:has-text("Delete renamed-on-phone.mp4? The file is removed from the box.")');
+    await page.click('#confirmno');
+    await page.waitForSelector('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
+    await page.click('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
+    await page.click('#confirmyes');
     await page.waitForFunction(() => !/renamed-on-phone/.test(document.body.textContent));
     await page.setInputFiles('#filepick', { name: 'virus.exe', mimeType: 'application/octet-stream', buffer: Buffer.alloc(100, 1) });
     await page.waitForFunction(() => /only video, image and audio files/.test(document.getElementById('uploads').textContent), null, { timeout: 8000 });
@@ -340,7 +348,13 @@ function startServer() {
     // Autostart: reject a missing clip, then save "play every clip" and see it summarised
     await sys('At power-up');
     await page.waitForSelector('#autoline:has-text("Off")');
+    assert(await page.isDisabled('#autosave'), 'nothing to save until something changed');
+    assert.strictEqual(await page.textContent('#autosave'), 'Save changes');
+    assert.strictEqual(await page.textContent('label[for="automode"]'), 'What happens at power-up', 'a visible label above the choice');
     await page.selectOption('#automode', 'file');
+    assert(await page.isVisible('#autosavedirty') && /Not saved yet/.test(await page.textContent('#autosavedirty')), 'a change says Not saved yet');
+    assert(await page.isDisabled('#autotest') && /Save first to try it/.test(await page.textContent('#autotestnote')), 'Try it now waits for the save');
+    for (const id of ['autofile', 'autoloop', 'autodelay']) assert(await page.isVisible('label[for="' + id + '"]'), 'a visible label for #' + id);
     await page.selectOption('#autofile', { index: 0 });
     await page.fill('#autodelay', '999');
     await page.click('#autosave');
@@ -349,6 +363,13 @@ function startServer() {
     await page.selectOption('#automode', 'all');
     await page.click('#autosave');
     await page.waitForFunction(() => /Play every clip.*after 3 s/.test(document.getElementById('autoline').textContent));
+    assert.strictEqual(await page.textContent('#autosaveresult'), 'Saved', 'the result is said under the button');
+    assert(await page.isDisabled('#autosave') && !(await page.isDisabled('#autotest')), 'saved: nothing more to save, and it can be tried');
+    // Vibes needs its module, which is off here: the choice is marked, and choosing it offers the switch in place
+    assert(/Start Vibes \(Vibes is off\)/.test(await page.textContent('#automode option[value="vibes"]')), 'the Vibes choice is marked off');
+    await page.selectOption('#automode', 'vibes');
+    assert(/Vibes is switched off, so this will do nothing/.test(await page.textContent('#autovibesoff')), 'choosing it says so');
+    assert.strictEqual(await page.textContent('#autovibesoffon'), 'Switch Vibes on');
     await page.selectOption('#automode', 'slideshow');
     assert(await page.isVisible('#autoseconds') && await page.isVisible('#autoshuffle') && !(await page.isVisible('#autofile')), 'slideshow fields');
     await page.fill('#autoseconds', '8');
@@ -420,8 +441,10 @@ function startServer() {
     await page.waitForSelector('#midilearning');
     await page.click('#midicancel');
     await page.waitForSelector('#midilearn');
+    assert.strictEqual(await page.getAttribute('#midibuiltin', 'role'), 'switch', 'the built-in map is a real switch');
     await page.click('#midibuiltin');
-    await page.waitForFunction(() => /Built-in map: off/.test(document.getElementById('midibuiltin').textContent));
+    await page.waitForFunction(() => { const b = document.getElementById('midibuiltin'); return b && b.getAttribute('aria-checked') === 'false'; });
+    assert.strictEqual((await get('/api/midi')).builtin, false, 'the switch applied on tap');
     // Controller profiles: the harness's fake Korg nanoKONTROL2 (pipes, no hardware) is plugged in while the page is
     // open. It is recognised and its layout is drawn; a moved control lights up; a tap changes what a control does.
     const fs = require('fs');
@@ -513,10 +536,14 @@ function startServer() {
     await sys('Streams');
     await switchOn('Streams');
     await page.waitForSelector('#streamempty');
+    assert(/No streams yet\. A stream is live video/.test(await page.textContent('#streamempty')), 'the empty state says what a stream is');
+    assert.strictEqual(await page.textContent('label[for="streamurl"]'), 'Address');
+    assert.strictEqual(await page.textContent('#streamadd'), 'Add');
     await page.fill('#streamname', 'Cam');
     await page.fill('#streamurl', 'file:///etc/passwd');
     await page.click('#streamadd');
     await page.waitForFunction(() => /must start with/.test(document.getElementById('msg').textContent));
+    assert(/must start with/.test(await page.textContent('#streamerr')), 'the refusal is under the Add button too');
     await page.fill('#streamurl', 'rtsp://admin:hunter2@10.0.0.5/live');
     await page.click('#streamadd');
     await page.waitForSelector('.stream-entry:has-text("rtsp://***@10.0.0.5/live")');
@@ -524,8 +551,18 @@ function startServer() {
     await sysIndex();
     await chip('Streams', 'Ready');
     await sys('Streams');
-    await page.click('.stream-entry >> button:has-text("Remove")');
+    // The row: one primary action (Play) and More; Remove is under More and asks first, naming the stream
+    assert.deepStrictEqual(await page.$$eval('.stream-entry .lacts button', (bs) => bs.map((b) => b.textContent)), ['Play', 'More'], 'a stream row has Play and More');
+    assert.strictEqual(await page.locator('#streamopen').count(), 1, 'with a stream saved the Add form is folded behind "+ Add a stream"');
+    await page.click('.stream-entry .morebtn');
+    await page.click('.stream-entry .moreacts button:has-text("Remove")');
+    await page.waitForSelector('#confirmrow:has-text("Remove Cam? Its address is forgotten.")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/streams')).streams.length, 1, '"Keep it" removes nothing');
+    await page.click('.stream-entry .moreacts button:has-text("Remove")');
+    await page.click('#confirmyes');
     await page.waitForSelector('#streamempty');
+    assert(await page.isVisible('#streamname'), 'an empty list has the Add form open');
     await onPage('Streams');
     await sysIndex();
     await chip('Streams', 'Set up');
@@ -801,6 +838,8 @@ function startServer() {
     await page.waitForSelector('#schedempty');
     await page.click('nav >> text=Room');
     await page.click('button[aria-label="Remove scene Console night"]');
+    await page.waitForSelector('#confirmrow:has-text("Remove the scene Console night?")');
+    await page.click('#confirmyes');
     await page.waitForSelector('#roomnoscenes');
     await sys('Room');
     await page.click('#sysswitch');
@@ -958,15 +997,17 @@ function startServer() {
     assert(!/token|pin_hash|a2tra2tr/.test(exportedText), 'no access data or support key in the export');
     const otherDuration = exportedFile.settings.mix.duration === 3 ? 4 : 3;
     assert.strictEqual(await post('/api/mix', { transition: exportedFile.settings.mix.transition, duration: otherDuration }), 200);
-    page.once('dialog', (d) => d.accept());
     await page.setInputFiles('#importpick', { name: 'my-settings.json', mimeType: 'application/json', buffer: Buffer.from(exportedText) });
+    await page.waitForSelector('#confirmrow:has-text("Replace this box\'s settings with my-settings.json?")');
+    await page.click('#confirmyes');
     await page.waitForFunction(() => /Settings imported/.test(document.getElementById('msg').textContent));
     await page.waitForFunction(() => /no passwords/.test(document.getElementById('importresult').textContent));
     const mixNow = await page.evaluate(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.duration));
     assert.strictEqual(mixNow, exportedFile.settings.mix.duration, 'the import put the exported value back');
     assert.strictEqual(await page.evaluate(() => fetch('/api/status').then((r) => r.status)), 200, 'still paired after an import');
-    page.once('dialog', (d) => d.accept());
+    await page.waitForSelector('#importbtn');
     await page.setInputFiles('#importpick', { name: 'twice.json', mimeType: 'application/json', buffer: Buffer.from(exportedText.replace('{', '{"format": "x", ')) });
+    await page.click('#confirmyes');
     await page.waitForFunction(() => /appears twice/.test(document.getElementById('msg').textContent));
     const [diag] = await Promise.all([page.waitForEvent('download'), page.click('#diagbtn')]);
     assert(/^nxlx-diagnostics-.+\.json$/.test(diag.suggestedFilename()), 'diagnostics file name');
@@ -980,10 +1021,12 @@ function startServer() {
     await page.click('#resetbtn');
     await page.waitForFunction(() => /Choose what happens to the clips/.test(document.getElementById('msg').textContent));
     await page.selectOption('#resetmedia', 'keep');
-    let asked = '';
-    page.once('dialog', (d) => { asked = d.message(); d.dismiss(); });
     await page.click('#resetbtn');
-    await page.waitForFunction(() => document.getElementById('resetmedia').value === 'keep');
+    await page.waitForSelector('#confirmrow');
+    const asked = await page.textContent('#confirmrow > span');
+    await page.click('#confirmno');
+    await page.waitForSelector('#resetbtn');
+    assert.strictEqual(await page.inputValue('#resetmedia'), 'keep');
     assert(/every device is unpaired/.test(asked) && /The clips stay/.test(asked), 'the reset question says what it does: ' + asked);
     assert.strictEqual(resets, 0, 'a cancelled reset sends nothing');
     await fitsCard('#settingscard, #diagcard, #resetcard', 'Box care');

@@ -29,7 +29,7 @@
   function screen(c) {
     var h = c.h, live = c.can('live'), full = c.can('full');
     clearTimeout(timer);
-    var scenes = h('div', { class: 'card', id: 'roomscenes' }, h('h2', { text: 'Scenes' }), h('div', { class: 'k', text: 'Loading...' }));
+    var scenes = h('div', { class: 'card', id: 'roomscenes' }, h('h2', { text: 'Scenes' }), h('div', { class: 'hint', text: 'Loading...' }));
     var groups = h('div', { class: 'room-groups', id: 'roomgroups' });
     var setup = full ? h('div', { class: 'card', id: 'roomsetup' }) : null;
     // Let a guest in without leaving the room's controls: the guest code part of People and codes, opened on request
@@ -105,7 +105,7 @@
         } else {
           kids.push(h('div', { class: 'row' }, button('On', 'on'), button('Off', 'off')));
           if (g.inputs.length) {
-            kids.push(h('div', { class: 'k', text: 'Source' }));
+            kids.push(h('div', { class: 'field', text: 'Source' }));
             kids.push(h('div', { class: 'row wrap room-sources' }, g.inputs.map(function (i) {
               var b = button(sourceName(i), 'input', i.input, 'room-source' + (g.input === i.input ? ' on' : ''));
               b.setAttribute('aria-pressed', g.input === i.input ? 'true' : 'false');
@@ -123,7 +123,7 @@
     function drawLive(d) {
       scenes.textContent = '';
       scenes.appendChild(h('h2', { text: 'Scenes' }));
-      if (!d.scenes.length) scenes.appendChild(h('div', { class: 'k', id: 'roomnoscenes', text: full ? 'No scenes yet. Add one under "Set up the room" below.' : 'No scenes yet.' }));
+      if (!d.scenes.length) scenes.appendChild(h('div', { class: 'hint', id: 'roomnoscenes', text: full ? 'No scenes yet. Add one under "Set up the room" below.' : 'No scenes yet.' }));
       else scenes.appendChild(h('div', { class: 'room-scenes' }, d.scenes.map(function (s) {
         var on = !!d.job && d.job.scene === s.id;
         return h('button', { class: 'btn big room-scene' + (on ? ' on' : ''), 'data-id': s.id, text: s.name, disabled: !live, 'aria-pressed': on ? 'true' : 'false',
@@ -199,9 +199,12 @@
       if (!fresh) keep();      // fresh: the draft was just set or emptied on purpose, the page holds the older text
       setup.textContent = '';
       setup.appendChild(h('h2', { text: 'Set up the room' }));
-      if (!d.projectors.length) setup.appendChild(h('div', { class: 'k', id: 'roomnoproj', text: 'Add the projectors under System > Projectors first.' }));
+      if (!d.projectors.length) setup.appendChild(h('div', { class: 'empty', id: 'roomnoproj' },
+        h('div', { text: 'No projectors yet. A room is made of projectors, so the first step is to add one.' }),
+        c.openProjectors ? h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'roomaddproj', text: 'Add a projector', onclick: c.openProjectors })) : null));
       // groups
-      setup.appendChild(h('div', { class: 'k', text: 'Groups ("All" is always there)' }));
+      setup.appendChild(h('div', { class: 'field', text: 'Groups' }));
+      setup.appendChild(h('div', { class: 'hint', text: '"All" is always there.' }));
       var glist = h('div', { class: 'list', id: 'roomglist' });
       d.groups.forEach(function (g) {
         var members = d.projectors.filter(function (p) { return g.projectors.indexOf(p.id) >= 0; }).map(function (p) { return p.name; });
@@ -210,8 +213,10 @@
             h('button', { class: 'btn small', text: 'Edit', 'aria-label': 'Edit group ' + g.name, onclick: function () {
               keep(); draft.group = { id: g.id, name: g.name, projectors: g.projectors.slice() }; drawSetup(last, true);
             } }),
-            h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove group ' + g.name, onclick: function () {
-              edit({ remove_group: g.id }, 'Group removed');
+            h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove group ' + g.name, onclick: function (e) {
+              c.confirmRow('Remove the group ' + g.name + '? Scenes that use it lose that part. The projectors stay.', 'Remove', 'Keep it', function () {
+                edit({ remove_group: g.id }, 'Group removed');
+              }, e.currentTarget);
             } }))));
       });
       setup.appendChild(glist);
@@ -237,7 +242,7 @@
         } }),
         draft.group.id ? h('button', { class: 'btn small', id: 'roomgcancel', text: 'Cancel', onclick: function () { keep(); draft.group = blankGroup(); drawSetup(last, true); } }) : null));
       // scenes
-      setup.appendChild(h('div', { class: 'k', text: 'Scenes' }));
+      setup.appendChild(h('div', { class: 'field', text: 'Scenes' }));
       var slist = h('div', { class: 'list', id: 'roomslist' });
       d.scenes.forEach(function (s) {
         slist.appendChild(h('div', { class: 'item room-sitem' }, h('span', {}, s.name, h('br'), h('span', { class: 'addr', text: describe(s, d) })),
@@ -252,12 +257,14 @@
                 bank: b.pad ? b.pad[0] : 0, index: b.pad ? b.pad[1] : 0, stream: b.stream || '' } };
               drawSetup(last, true);
             } }),
-            h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove scene ' + s.name, onclick: function () {
-              edit({ remove_scene: s.id }, 'Scene removed', function () { if (draft.scene.id === s.id) draft.scene = blankScene(); });
+            h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove scene ' + s.name, onclick: function (e) {
+              c.confirmRow('Remove the scene ' + s.name + '? A schedule entry or a controller that starts it will do nothing.', 'Remove', 'Keep it', function () {
+                edit({ remove_scene: s.id }, 'Scene removed', function () { if (draft.scene.id === s.id) draft.scene = blankScene(); });
+              }, e.currentTarget);
             } }))));
       });
       setup.appendChild(slist);
-      setup.appendChild(h('div', { class: 'k', id: 'roomsformtitle', text: draft.scene.id ? 'Change the scene' : 'Add a scene: what each group gets when it is tapped' }));
+      setup.appendChild(h('div', { class: 'field', id: 'roomsformtitle', text: draft.scene.id ? 'Change the scene' : 'Add a scene: what each group gets when it is tapped' }));
       var sname = h('input', { class: 'text-input', id: 'roomsname', 'aria-label': 'Scene name', placeholder: 'Scene name (Movie night)', maxlength: d.limits.name, value: draft.scene.name });
       sname.addEventListener('input', function () { draft.scene.name = sname.value; });
       setup.appendChild(sname);
@@ -266,7 +273,7 @@
         var r = row(g.id), title = g.id === 'all' ? 'All projectors' : g.name;
         var sources = [['', 'Source: leave']].concat(g.inputs.map(function (i) { return [i.input, sourceName(i)]; }));
         if (r.input && !g.inputs.some(function (i) { return i.input === r.input; })) sources.push([r.input, 'Input ' + r.input]);
-        setup.appendChild(h('div', { class: 'k', text: title }));
+        setup.appendChild(h('div', { class: 'field', text: title }));
         setup.appendChild(h('div', { class: 'room-row', 'data-group': g.id },
           choose('Power of ' + title, [['leave', 'Power: leave'], ['on', 'Switch on'], ['off', 'Switch off']], r.power, function (v) { r.power = v; }),
           choose('Source of ' + title, sources, r.input, function (v) { r.input = v; }),
@@ -313,7 +320,7 @@
           edit({ scene: out }, 'Scene saved', function () { draft.scene = blankScene(); });
         } }),
         draft.scene.id ? h('button', { class: 'btn small', id: 'roomscancel', text: 'Cancel', onclick: function () { keep(); draft.scene = blankScene(); drawSetup(last, true); } }) : null));
-      setup.appendChild(h('div', { class: 'k', text: 'A scene switches on first, then chooses the source once the projector is ready, then mutes. Tapping another scene replaces the one still under way.' }));
+      setup.appendChild(h('div', { class: 'hint', text: 'A scene switches on first, then chooses the source once the projector is ready, then mutes. Tapping another scene replaces the one still under way.' }));
     }
 
     // ---- loading ----
@@ -323,7 +330,15 @@
       if (!d.enabled) {
         scenes.textContent = '';
         scenes.appendChild(h('h2', { text: 'Scenes' }));
-        scenes.appendChild(h('div', { class: 'k', id: 'roommsg', text: 'Off. Switch on "Projector control" and "Room" under System > Modules.' }));
+        scenes.appendChild(h('div', { class: 'hint warn', id: 'roommsg' },
+          h('div', { text: 'Projectors is switched off, so the room can do nothing.' + (c.can('full') ? '' : ' Ask the owner to switch it on.') }),
+          c.can('full') && c.switchFeature ? h('div', { class: 'row' }, h('button', { class: 'btn', id: 'roomprojon', text: 'Switch Projectors on', onclick: function () {
+            c.switchFeature('projectors', true).then(function (r) {
+              if (!r.ok) return c.say(r.data.error || 'Could not switch Projectors on.', true);
+              c.say('Projectors is switched on.');
+              load(true);
+            });
+          } })) : null));
         groups.textContent = '';
         if (setup) setup.textContent = '';
         shownLive = shownSetup = null;
@@ -336,7 +351,7 @@
       var b = JSON.stringify([d.scenes, d.groups.map(plain), d.all ? d.all.inputs : null, d.projectors]);
       var at = document.activeElement;
       var typing = at && setup.contains(at) && /^(INPUT|SELECT)$/.test(at.tagName);
-      if (force || (b !== shownSetup && !typing)) { shownSetup = b; drawSetup(d, force); }
+      if (force || (b !== shownSetup && !typing && !setup.querySelector('#confirmrow'))) { shownSetup = b; drawSetup(d, force); }
     }
     var wait = 2000;       // between two looks; longer after each one that fails, back to 2 seconds when one works
     function load(now) {
@@ -351,7 +366,7 @@
         if (!c.state.device) return;
         timer = setTimeout(function () { if (document.body.contains(root)) load(); }, wait);
         if (!r.ok) {
-          if (last === null) { scenes.textContent = ''; scenes.appendChild(h('h2', { text: 'Scenes' })); scenes.appendChild(h('div', { class: 'k', id: 'roommsg', text: r.data.error || 'Not available' })); }
+          if (last === null) { scenes.textContent = ''; scenes.appendChild(h('h2', { text: 'Scenes' })); scenes.appendChild(h('div', { class: 'hint', id: 'roommsg', text: r.data.error || 'Not available' })); }
           return;
         }
         show(r.data);

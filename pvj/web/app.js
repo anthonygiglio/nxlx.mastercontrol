@@ -896,12 +896,25 @@
             say('Reading ' + d.name + '...');
             act('POST', '/api/media/info', { name: d.name }, function (i) { say(describeClip(d.name, i)); });
           } }),
-          full ? h('button', { class: 'btn small', text: 'Rename', onclick: function () {
-            var to = window.prompt('New name', d.name);
-            if (to && to !== d.name) act('POST', '/api/media/rename', { name: d.name, new: to }, refreshMedia);
+          full ? h('button', { class: 'btn small', text: 'Rename', onclick: function (e) {      // in place: no browser dialog
+            var row = e.currentTarget.closest('.row');
+            var to = h('input', { class: 'text-input', 'aria-label': 'New name for ' + d.name, value: d.name, autocomplete: 'off' });
+            function back() { if (box.parentNode) box.parentNode.removeChild(box); row.hidden = false; }
+            var box = h('div', { class: 'confirm renamebox' }, h('span', { text: 'New name' }), to, h('div', { class: 'row' },
+              h('button', { class: 'btn on grow', text: 'Rename', onclick: function () {
+                var name = to.value.trim();
+                if (!name || name === d.name) return back();
+                act('POST', '/api/media/rename', { name: d.name, new: name }, refreshMedia);
+              } }),
+              h('button', { class: 'btn grow', text: 'Cancel', onclick: back })));
+            row.hidden = true;
+            row.parentNode.insertBefore(box, row.nextSibling);
+            to.focus();
           } }) : null,
-          full ? h('button', { class: 'btn small', text: 'Delete', onclick: function () {
-            if (window.confirm('Delete ' + d.name + '?')) act('POST', '/api/media/delete', { name: d.name }, refreshMedia);
+          full ? h('button', { class: 'btn small', text: 'Delete', onclick: function (e) {
+            confirmRow('Delete ' + d.name + '? The file is removed from the box.', 'Delete', 'Keep it', function () {
+              act('POST', '/api/media/delete', { name: d.name }, refreshMedia);
+            }, e.currentTarget);
           } }) : null));
     });
     // Quick play (the old Video tab): everything in the folder, or the clips whose names start with a number
@@ -969,10 +982,13 @@
                 h('button', { class: 'btn small', text: 'Play', 'aria-label': 'Play ' + f.name + ' from USB', disabled: !can('live'),
                   onclick: function () { act('POST', '/api/play', { usb: drive.drive + '/' + f.name }, function () { say('Playing ' + f.name); poll(); }); } }),
                 can('full') ? h('button', { class: 'btn small', text: have ? 'Copy again' : 'Copy to the box', 'aria-label': 'Copy ' + f.name + ' to the box',
-                  onclick: function () {
-                    if (have && !window.confirm(f.name + ' is already on the box. Replace it?')) return;
-                    S.importNote = '';
-                    act('POST', '/api/media/import', { usb: drive.drive + '/' + f.name, replace: have }, function (d) { watchImport(d); });
+                  onclick: function (e) {
+                    function copy() {
+                      S.importNote = '';
+                      act('POST', '/api/media/import', { usb: drive.drive + '/' + f.name, replace: have }, function (d) { watchImport(d); });
+                    }
+                    if (!have) return copy();
+                    confirmRow(f.name + ' is already on the box. Replace it with the one on the USB drive?', 'Replace', 'Keep it', copy, e.currentTarget);
                   } }) : null));
           }) : h('div', { class: 'k', text: 'No video or image files at the top of this drive.' })));
       }),
@@ -1455,6 +1471,79 @@
     row.parentNode.insertBefore(box, row.nextSibling);
     confirmTimer = setTimeout(no, 8000);
   }
+  // A card that redraws by itself waits while a question is open in it, so the question is not wiped.
+  function asking(el) { return !!(el && el.querySelector('#confirmrow')); }
+
+  // -- the patterns every System page shares --
+  // A visible label above a field and an optional hint below it. Hiding the wrapper hides all three.
+  function labelled(label, input, hint) {
+    return h('div', { class: 'fieldwrap', id: input.id ? input.id + 'wrap' : false },
+      h('label', { class: 'field', for: input.id || false, text: label }), input, hint ? h('div', { class: 'hint', text: hint }) : null);
+  }
+  // One list row: a name, one state line, a red problem line when there is one, at most one primary action, and
+  // "More", which opens the secondary actions in place (Remove last). Which row is open survives redraws.
+  var moreOpen = null;
+  function listRow(o) {
+    var more = (o.more || []).filter(Boolean), open = more.length && moreOpen === o.key;
+    var moreBtn = more.length ? h('button', { class: 'btn morebtn', 'aria-expanded': open ? 'true' : 'false', 'aria-label': 'More for ' + o.name, text: 'More',
+      onclick: function () { moreOpen = open ? null : o.key; o.redraw(); } }) : null;
+    return h('div', { class: 'item lrow' + (o.cls ? ' ' + o.cls : ''), 'data-id': o.data },
+      h('div', { class: 'lhead' }, h('div', { class: 'lname', text: o.name }),
+        o.sub ? h('div', { class: 'addr', text: o.sub }) : null,
+        o.state ? h('div', { class: 'state', text: o.state }) : null,
+        o.problem ? h('div', { class: 'hint warn problem', text: o.problem }) : null,
+        o.note ? h('div', { class: 'hint lnote', text: o.note }) : null),
+      o.primary || moreBtn ? h('div', { class: 'row lacts' }, o.primary || null, moreBtn) : null,
+      open ? h('div', { class: 'row wrap moreacts' }, more) : null,
+      o.below || null);
+  }
+  // "+ Add a ...": the form opens in place, and is open by itself while the list is empty.
+  var addOpen = {};
+  function addBlock(key, what, empty, form, redraw) {
+    if (empty || addOpen[key]) return form(empty ? null : function () { addOpen[key] = false; redraw(); });
+    return h('div', { class: 'row' }, h('button', { class: 'btn grow addopen', id: key + 'open', text: '+ Add ' + what, onclick: function () { addOpen[key] = true; redraw(); } }));
+  }
+  // "Save changes": disabled until something changed, with "Not saved yet" while it has; the result of the save is
+  // said under the button as well as in the page's message line.
+  function saveBar(id, text, onSave, others) {
+    var note = h('span', { class: 'hint notsaved', id: id + 'dirty', text: 'Not saved yet', hidden: true });
+    var result = h('div', { class: 'msg inmsg', id: id + 'result', role: 'status' });
+    var btn = h('button', { class: 'btn on', id: id, text: text || 'Save changes', disabled: true, onclick: function () { onSave(bar); } });
+    var bar = { btn: btn, result: result, note: note, isDirty: false,
+      el: h('div', { class: 'savebar' }, h('div', { class: 'row wrap' }, btn, others || null, note), result),
+      dirty: function (v) { bar.isDirty = !!v; btn.disabled = !v; note.hidden = !v; if (v) bar.say(''); },
+      say: function (t, isErr) { result.textContent = t || ''; result.className = 'msg inmsg' + (isErr ? ' err' : ''); if (t) say(t, isErr); } };
+    return bar;
+  }
+  // A toggle is always the real switch, with a noun for its label and an optional hint.
+  function toggle(id, label, on, set, hint) {
+    var sw = h('button', { class: 'switch', id: id, role: 'switch', 'aria-checked': on ? 'true' : 'false', 'aria-label': label, onclick: function () {
+      var v = sw.getAttribute('aria-checked') !== 'true';
+      sw.setAttribute('aria-checked', v ? 'true' : 'false');
+      if (set) set(v, sw);
+    } });
+    var el = h('div', { class: 'fieldwrap toggle' }, h('div', { class: 'rot between' }, h('span', { text: label }), sw), hint ? h('div', { class: 'hint', text: hint }) : null);
+    el.sw = sw;
+    el.isOn = function () { return sw.getAttribute('aria-checked') === 'true'; };
+    return el;
+  }
+  // A choice that needs a feature that is switched off: said in place, with the switch itself (never "go to its page").
+  function offNotice(id, rowId, name, redraw) {
+    return h('div', { class: 'hint warn', id: id }, h('div', { text: name + ' is switched off, so this will do nothing.' }),
+      h('div', { class: 'row' }, h('button', { class: 'btn', id: id + 'on', text: 'Switch ' + name + ' on', onclick: function () {
+        shaderCtx().switchFeature(rowId, true).then(function (r) {
+          if (!r.ok) return say(r.data.error || 'Could not switch ' + name + ' on.', true);
+          say(name + ' is switched on.');
+          redraw();
+        });
+      } })));
+  }
+  function playingNow() { var pl = (S.status && S.status.player) || {}; return !!(pl.running && (pl.path || pl.vibes || pl.stream)); }
+  // A result said beside the control that caused it, as well as in the page's message line.
+  function sayAt(el, text, isErr) {
+    if (el) { el.textContent = text || ''; el.className = 'msg inmsg' + (isErr ? ' err' : ''); }
+    say(text, isErr);
+  }
   function flipSwitch(opts, steps, on, control) {
     function go() {
       runSwitch(steps, on, opts.offInner, control).then(function (r) {
@@ -1500,31 +1589,38 @@
       h('div', { class: 'row', id: 'sysstate', hidden: true }, h('span', { class: 'chip' }), h('span', { class: 'hint' })),
       body);
   }
+  // About and power: what the box is (versions, storage, screens, the clock), then restarting it. Each power action
+  // asks first, in place, and says what the room will see.
   function aboutPage() {
-    var now = S.status || {}, sys = now.system || {}, pl = now.player || {}, full = can('full');
-    return [boxCard(),
-      h('div', { class: 'card' }, h('h2', { text: 'Vitals' }),
-        kv('Board', sys.model || sys.board || '?'),
-        kv('Temperature', typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : 'n/a'),
-        kv('Player', pl.running ? 'Running' : 'Not running'),
-        kv('This device', S.device ? S.device.name + ', ' + roleName(S.device.role) : '')),
-      full ? h('div', { class: 'card' }, h('h2', { text: 'Player' }),
-        h('button', { class: 'btn', text: 'Restart player now', onclick: function () { act('POST', '/api/player/restart', {}, function () { say('Player restarting. The service brings it straight back.'); }); } })) : null,
-      h('button', { class: 'btn', id: 'forgetdevice', text: 'Forget this device', onclick: function () {
-        if (!S.device) return;
-        if (full) return say('Full-access devices are removed under System, People and codes.', true);
-        S.device = null; render();
-      } })];
+    var full = can('full');
+    var cards = [boxCard()];
+    if (full) {
+      var out = h('div', { class: 'msg inmsg', id: 'powerresult', role: 'status' });
+      var rows = h('div', { class: 'list sp', id: 'powerbody' },
+        h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'restartplayer', text: 'Restart player', onclick: function (e) {
+          confirmRow('Restart the player? The picture stops for a few seconds.', 'Restart player', 'Not now', function () {
+            act('POST', '/api/player/restart', {}, function () { sayAt(out, 'The player is restarting. It is back in a few seconds.'); });
+          }, e.currentTarget);
+        } })));
+      cards.push(h('div', { class: 'card', id: 'powercard' }, h('h2', { text: 'Restart and power' }), rows, out));
+    } else {
+      cards.push(h('div', { class: 'card', id: 'forgetcard' }, h('h2', { text: 'This phone' }),
+        h('div', { class: 'hint', text: S.device ? S.device.name + ', ' + roleName(S.device.role) : '' }),
+        h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'forgetdevice', text: 'Leave this panel', onclick: function (e) {
+          confirmRow('Leave this panel on this phone? You will need a code or the PIN to get back in.', 'Leave', 'Stay', function () { S.device = null; render(); }, e.currentTarget);
+        } }))));
+    }
+    return cards;
   }
   // ---- health (the old Powersupply, Check Services and GPU Usage buttons, in plain words) ----
   var healthTimer = null;
   function healthCard() {
-    var body = h('div', { class: 'list', id: 'healthbody' }, h('div', { class: 'k', text: 'Checking...' }));
+    var body = h('div', { class: 'list', id: 'healthbody' }, h('div', { class: 'hint', text: 'Checking...' }));
     var card = h('div', { class: 'card', id: 'healthcard' }, h('h2', { text: 'Health' }), body);
     var mark = { ok: 'OK', warn: 'Check', bad: 'Problem', unknown: '?' };
     function row(id, label, state, text) {
       return h('div', { class: 'item health-' + (state || 'unknown'), id: id },
-        h('span', {}, h('b', { text: label }), h('br'), h('span', { class: 'k', text: text })),
+        h('span', {}, h('b', { text: label }), h('br'), h('span', { class: 'state', text: text })),
         h('span', { class: 'badge', text: mark[state] || '?' }));
     }
     function draw(d) {
@@ -1542,11 +1638,11 @@
           x.running ? 'Running' : (x.name === 'pvj-netd' ? 'Not running (only needed for network settings)' : 'Not running')));
       });
       (d.projectors || []).forEach(function (x) { body.appendChild(row('healthproj-' + x.id, 'Projector: ' + x.name, x.state, x.text)); });
-      body.appendChild(h('div', { class: 'k', text: 'Open the panel from another device at:' }));
+      body.appendChild(h('div', { class: 'field', text: 'Open the panel from another device at' }));
       body.appendChild(h('div', { class: 'list mono', id: 'healthaddr' }, d.addresses.map(function (a) { return h('div', { class: 'item' }, h('span', { text: a })); })));
-      if (can('full')) body.appendChild(h('button', { class: 'btn small', id: 'healthshowaddr', text: 'Show the address on the display (2 minutes)', onclick: function () {
+      if (can('full')) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'healthshowaddr', text: 'Show the address on the display (2 minutes)', onclick: function () {
         act('POST', '/api/access/screen', { show: true, items: ['address'], seconds: 120 }, function () { say('The address is on the display for 2 minutes.'); });
-      } }));
+      } })));
     }
     function refresh() { api('GET', '/api/health').then(function (r) { if (document.getElementById('healthcard') && r.ok) draw(r.data); }); }
     refresh();
@@ -1554,47 +1650,61 @@
   }
 
   function gb(n) { return (n / 1073741824).toFixed(1) + ' GB'; }
-  // The old Settings and Display tabs' information buttons, on one card.
   function boxCard() {
-    var body = h('div', { class: 'list', id: 'boxbody' }, h('div', { class: 'k', text: 'Loading...' }));
-    var card = h('div', { class: 'card', id: 'boxcard' }, h('h2', { text: 'Box' }), body);
+    var now = S.status || {}, sys = now.system || {};
+    var body = h('div', { class: 'list sp', id: 'boxbody' }, h('div', { class: 'hint', text: 'Loading...' }));
+    var card = h('div', { class: 'card', id: 'boxcard' }, h('h2', { text: 'This box' }), body);
     api('GET', '/api/system').then(function (r) {
       if (!document.getElementById('boxcard')) return;
       body.textContent = '';
-      if (!r.ok) return body.appendChild(h('div', { class: 'k', text: r.data.error || 'Not available' }));
+      if (!r.ok) return body.appendChild(h('div', { class: 'hint', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' }));
       var d = r.data;
+      function head(text) { body.appendChild(h('div', { class: 'field', text: text })); }
+      head('Versions');
       body.appendChild(kv('nxlx.mastercontrol', d.version));
+      body.appendChild(kv('Board', d.board || sys.model || sys.board || '?'));
       body.appendChild(kv('Player', d.mpv || '?'));
-      body.appendChild(kv('System', d.os + ' \u00b7 ' + d.kernel));
+      body.appendChild(kv('System', d.os + ' · ' + d.kernel));
+      body.appendChild(kv('This device', S.device ? S.device.name + ', ' + roleName(S.device.role) : ''));
       if (d.disk) {
-        body.appendChild(kv('Media storage', gb(d.disk.free) + ' free of ' + gb(d.disk.total)));
+        head('Storage');
+        body.appendChild(kv('Clips', gb(d.disk.free) + ' free of ' + gb(d.disk.total)));
         body.appendChild(h('div', { class: 'progress', 'aria-hidden': 'true' }, (function () { var b = h('div', {}); b.style.width = Math.round(100 * d.disk.used / d.disk.total) + '%'; return b; })()));
       }
-      if (d.output) body.appendChild(kv('Output now', d.output.width + ' x ' + d.output.height + (d.output.refresh ? ' at ' + d.output.refresh + ' Hz' : '')));
+      head('Screens');
+      if (d.output) body.appendChild(kv('Picture now', d.output.width + ' x ' + d.output.height + (d.output.refresh ? ' at ' + d.output.refresh + ' Hz' : '')));
+      var modes = [];
       d.screens.forEach(function (sc) {
         body.appendChild(kv(sc.connector, sc.connected ? 'connected' : 'nothing plugged in'));
-        if (sc.connected && sc.modes.length) body.appendChild(h('div', { class: 'k mono', text: 'Modes: ' + sc.modes.join(', ') }));
+        if (sc.connected && sc.modes.length) modes.push(h('div', { class: 'hint mono', text: sc.connector + ': ' + sc.modes.join(', ') }));
       });
+      if (modes.length) body.appendChild(h('details', { class: 'fold', id: 'boxmodes' }, h('summary', { text: 'Advanced: what each screen can show' }), h('div', { class: 'list sp' }, modes)));
       var c = d.clock || {};
       var boxTime = c.now ? new Date(c.now * 1000) : null;
-      body.appendChild(kv('Box clock', (boxTime ? boxTime.toLocaleString() : '?') + (c.clock_from_network === true ? ' (from the network)' : c.clock_from_network === false ? ' (NOT set from the network)' : '')));
+      head('Clock');
+      body.appendChild(kv('Box time', boxTime ? boxTime.toLocaleString() : '?'));
+      body.appendChild(h('div', { class: c.clock_from_network === false ? 'hint warn' : 'hint', id: 'boxclockline',
+        text: c.clock_from_network === true ? 'Set from the network.' : c.clock_from_network === false ? 'Not set from the network, so it may be wrong. The schedule uses this clock.' : '' }));
       if (!can('full') || !d.system_actions) return;
-      if (c.clock_from_network === false) body.appendChild(h('button', { class: 'btn small', id: 'setclock', text: 'Set the box clock to this phone\'s time', onclick: function () {
+      if (c.clock_from_network === false) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'setclock', text: 'Set the box clock to this phone\'s time', onclick: function () {
         act('POST', '/api/system/clock', { epoch: Math.round(Date.now() / 1000) }, function () { say('Box clock set.'); render(); });
-      } }));
-      body.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn small grow', id: 'rebootbtn', text: 'Restart the box', onclick: function () {
-          if (!window.confirm('Restart the box now? The show stops for about a minute.')) return;
-          act('POST', '/api/system/reboot', { confirm: 'reboot' }, function () { say('Restarting. Reconnect in about a minute.'); });
-        } }),
-        h('button', { class: 'btn small grow', id: 'poweroffbtn', text: 'Power off', onclick: function () {
-          if (!window.confirm('Power the box off? Someone must unplug and replug it to start it again.')) return;
-          act('POST', '/api/system/poweroff', { confirm: 'poweroff' }, function () { say('Powering off. Wait for the light to stop blinking before unplugging.'); });
-        } })));
+      } })));
+      var power = document.getElementById('powerbody'), out = document.getElementById('powerresult');
+      if (!power) return;
+      power.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'rebootbtn', text: 'Restart the box', onclick: function (e) {
+        confirmRow('Restart the box? The show stops for about a minute.', 'Restart the box', 'Not now', function () {
+          act('POST', '/api/system/reboot', { confirm: 'reboot' }, function () { sayAt(out, 'Restarting. Open the panel again in about a minute.'); });
+        }, e.currentTarget);
+      } })));
+      power.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'poweroffbtn', text: 'Power off', onclick: function (e) {
+        confirmRow('Power the box off? Someone must unplug it and plug it in again to start it.', 'Power off', 'Keep it on', function () {
+          act('POST', '/api/system/poweroff', { confirm: 'poweroff' }, function () { sayAt(out, 'Powering off. Wait for the light to stop blinking before unplugging.'); });
+        }, e.currentTarget);
+      } })));
     });
     return card;
   }
-  function kv(k, v) { return h('div', { class: 'row between' }, h('span', { text: k }), h('span', { class: 'k', text: String(v) })); }
+  function kv(k, v) { return h('div', { class: 'row between' }, h('span', { text: k }), h('span', { class: 'kvv', text: String(v) })); }
   // ---- DMX and MIDI ---------------------------------------------------
   var dmxForm = { universe: null, start: null, allow: null };  // survive redraws
   function moduleOn(id) { var m = S.modules.filter(function (x) { return x.id === id; })[0]; return !!(m && m.enabled); }
@@ -1827,8 +1937,8 @@
     return wrap;
   }
   function midiCard() {
-    var card = h('div', { class: 'card', id: 'midicard' }, h('h2', { text: 'MIDI controllers' }));
-    var body = h('div', { class: 'list', id: 'midibody' });
+    var card = h('div', { class: 'card', id: 'midicard' }, h('h2', { text: 'Mappings' }));
+    var body = h('div', { class: 'list sp', id: 'midibody' });
     card.appendChild(body);
     function describe(e) {
       var what = MIDI_ACTIONS.filter(function (a) { return a[0] === e.action; })[0];
@@ -1862,100 +1972,121 @@
     function draw(d) {
       body.textContent = '';
       var names = d.devices.map(function (x) { return x.name + (x.connected ? '' : ' (not reading)'); });
-      body.appendChild(h('div', { class: 'k', id: 'midiline', text: !d.enabled ? 'Off' : (d.devices.length ? d.devices.length + ' controller' + (d.devices.length > 1 ? 's' : '') + ': ' + names.join(', ') + (d.last ? '. Last: ' + d.last : '') : 'On, waiting for a controller to be plugged in') }));
-      body.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn small' + (d.builtin ? ' on' : ''), id: 'midibuiltin', 'aria-pressed': d.builtin ? 'true' : 'false',
-          text: 'Built-in map: ' + (d.builtin ? 'on' : 'off'),
-          onclick: function () { act('POST', '/api/midi', { builtin: !d.builtin }, function (data) { draw(data); }); } })));
-      body.appendChild(h('div', { class: 'k', text: 'Your own mappings win over a controller\'s standard layout and over the built-in map (notes 36 to 71 are pads, CC 20 to 25 are levels; see MIDI.md). The built-in map is not used for a controller that has a standard layout.' }));
-      body.appendChild(h('div', { class: 'k', text: 'Mappings' }));
-      if (!d.map.length) body.appendChild(h('div', { class: 'k', id: 'midinomap', text: 'None yet. Choose an action below, tap Learn, then move or press a control.' }));
+      body.appendChild(h('div', { class: 'state', id: 'midiline', text: !d.enabled ? 'Off' : (d.devices.length ? d.devices.length + ' controller' + (d.devices.length > 1 ? 's' : '') + ': ' + names.join(', ') + (d.last ? '. Last: ' + d.last : '') : 'On, waiting for a controller to be plugged in') }));
+      body.appendChild(toggle('midibuiltin', 'Built-in map', d.builtin, function (v) {
+        act('POST', '/api/midi', { builtin: v }, function (data) { draw(data); say('Saved'); });
+      }, 'For a controller the box does not know: notes 36 to 71 play pads, CC 20 to 25 are levels. Your own mappings win over it and over a known controller\'s layout.'));
+      body.appendChild(h('div', { class: 'field', text: 'Your mappings' }));
+      if (!d.map.length) body.appendChild(h('div', { class: 'hint', id: 'midinomap', text: 'None yet. A mapping makes one knob, fader or button do one thing. Choose what it should do below, tap Learn a control, then move or press it.' }));
       d.map.forEach(function (e) {
-        body.appendChild(h('div', { class: 'item midi-entry' }, h('span', { text: describe(e) }),
-          h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + describe(e), onclick: function () {
-            act('POST', '/api/midi/map', { remove: e.id }, function (data) { draw(data); });
-          } })));
+        body.appendChild(listRow({ cls: 'midi-entry', name: describe(e),
+          primary: h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + describe(e), onclick: function (ev) {
+            confirmRow('Remove this mapping? The control goes back to what it did before.', 'Remove', 'Keep it', function () {
+              act('POST', '/api/midi/map', { remove: e.id }, function (data) { draw(data); say('Mapping removed.'); });
+            }, ev.currentTarget);
+          } }) }));
       });
-      if (d.map.length) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'midiclear', text: 'Remove all mappings', onclick: function (ev) {
+      if (d.map.length > 1) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn', id: 'midiclear', text: 'Remove all mappings', onclick: function (ev) {
         confirmRow('Remove all ' + plural(d.map.length, 'mapping') + '?', 'Remove all', 'Keep them', function () {
           act('POST', '/api/midi/map', { clear: true }, function (data) { draw(data); });
         }, ev.currentTarget);
       } })));
       if (!d.enabled) return;
-      var action = h('select', { class: 'text-input', id: 'midiaction', 'aria-label': 'Action to assign' },
+      var action = h('select', { class: 'text-input', id: 'midiaction' },
         MIDI_ACTIONS.map(function (a) { return h('option', { value: a[0], text: a[1], selected: a[0] === midiForm.action }); }));
-      var bank = h('select', { class: 'text-input', id: 'midibank', 'aria-label': 'Bank', hidden: midiForm.action !== 'pad' },
+      var bank = h('select', { class: 'text-input', id: 'midibank' },
         ['A', 'B', 'C'].map(function (n, i) { return h('option', { value: i, text: 'Bank ' + n, selected: i === midiForm.bank }); }));
-      var index = h('select', { class: 'text-input', id: 'midiindex', 'aria-label': 'Pad', hidden: midiForm.action !== 'pad' },
+      var index = h('select', { class: 'text-input', id: 'midiindex' },
         Array.apply(null, Array(12)).map(function (_, i) { return h('option', { value: i, text: 'Pad ' + (i + 1), selected: i === midiForm.index }); }));
-      index.hidden = midiForm.action !== 'pad' && midiForm.action !== 'bank_pad';
+      var bankWrap = labelled('Bank', bank), indexWrap = labelled('Pad', index);
+      function fit() {
+        bankWrap.hidden = action.value !== 'pad';
+        indexWrap.hidden = action.value !== 'pad' && action.value !== 'bank_pad';
+      }
       function remember() {
         midiForm = { action: action.value, bank: parseInt(bank.value, 10), index: parseInt(index.value, 10) };
-        bank.hidden = action.value !== 'pad';
-        index.hidden = action.value !== 'pad' && action.value !== 'bank_pad';
+        fit();
       }
       [action, bank, index].forEach(function (el) { el.addEventListener('change', remember); });
-      body.appendChild(h('div', { class: 'k', text: 'Add a mapping' }));
-      body.appendChild(action); body.appendChild(bank); body.appendChild(index);
+      var form = h('div', { class: 'addform', id: 'midiaddform' }, h('div', { class: 'field', text: 'Add a mapping' }),
+        labelled('What it does', action), bankWrap, indexWrap);
+      fit();
       if (d.learn.active) {
-        body.appendChild(h('div', { class: 'msg', id: 'midilearning', role: 'status', text: 'Move or press a control on any controller now (' + d.learn.seconds_left + ' s)...' }));
-        body.appendChild(h('button', { class: 'btn small', id: 'midicancel', text: 'Cancel', onclick: function () {
+        form.appendChild(h('div', { class: 'msg', id: 'midilearning', role: 'status', text: 'Move or press a control on any controller now (' + d.learn.seconds_left + ' s)...' }));
+        form.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'midicancel', text: 'Cancel', onclick: function () {
           clearTimeout(midiTimer); act('POST', '/api/midi/learn', { start: false }, function (data) { draw(data); });
-        } }));
+        } })));
         poll();
       } else {
-        body.appendChild(h('button', { class: 'btn on small', id: 'midilearn', text: 'Learn a control', onclick: function () {
+        form.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'midilearn', text: 'Learn a control', onclick: function () {
           remember();
           act('POST', '/api/midi/learn', { start: true }, function (data) { draw(data); });
-        } }));
+        } })));
+        form.appendChild(h('div', { class: 'hint', text: 'The box waits 15 seconds or so for you to move or press the control, then saves the mapping.' }));
       }
+      body.appendChild(form);
     }
     midiDrawCard = draw;
     api('GET', '/api/midi').then(function (r) {
       if (!document.getElementById('midicard')) return;
-      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'midimsg', text: r.data.error || 'Not available' })); return; }
+      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'midimsg', text: r.data.error || 'Not available' })); return; }
       draw(r.data);
     });
     return card;
   }
   // ---- audio output -----------------------------------------------------
   function audioCard(full) {
-    var body = h('div', { class: 'list', id: 'audiobody' });
+    var body = h('div', { class: 'list sp', id: 'audiobody' });
     var card = h('div', { class: 'card', id: 'audiocard' }, h('h2', { text: 'Sound output' }), body);
     function label(d) { return d.description ? d.description + ' (' + d.name.replace(/^alsa\//, '') + ')' : d.name; }
-    function draw(d) {
+    function draw(d, saved) {
       body.textContent = '';
       var auto = d.devices.filter(function (x) { return x.name === d.automatic_is; })[0];
-      var sel = h('select', { class: 'text-input', id: 'audiodev', 'aria-label': 'Sound output', disabled: !full },
-        [h('option', { value: 'auto', text: 'Automatic: ' + (auto ? auto.description : 'the player\'s own choice'), selected: d.device === 'auto' })].concat(
-          d.devices.filter(function (x) { return x.name !== 'auto'; }).map(function (x) { return h('option', { value: x.name, text: label(x), selected: x.name === d.device }); })));
-      body.appendChild(h('div', { class: 'k', id: 'audioline', text: d.device === 'auto' ? 'Automatic: on a Pi this is the HDMI port with the screen on it.' : 'Fixed to the output below.' }));
-      body.appendChild(sel);
-      if (full) body.appendChild(h('button', { class: 'btn on small', id: 'audiosave', text: 'Save', onclick: function () {
-        act('POST', '/api/audio', { device: sel.value }, function (data) { say(''); draw(data); });
-      } }));
+      var now = d.devices.filter(function (x) { return x.name === (d.device === 'auto' ? d.automatic_is : d.device); })[0];
+      body.appendChild(h('div', { class: 'state', id: 'audioline', text: d.device === 'auto' ?
+        'Automatic' + (now ? ': ' + label(now) : '') + '. On a Pi this is the HDMI port with the screen on it.' : 'Fixed to ' + (now ? label(now) : d.device) + '.' }));
+      if (full) {
+        var result = h('div', { class: 'msg inmsg', id: 'audiosaved', role: 'status', text: saved ? 'Saved' : '' });
+        var sel = h('select', { class: 'text-input', id: 'audiodev', onchange: function () {
+          api('POST', '/api/audio', { device: sel.value }).then(function (r) {
+            if (!r.ok) return sayAt(result, (r.data.error || 'Could not change the output') + '. Choose another output, or Automatic.', true);
+            say('Saved'); draw(r.data, true);
+          });
+        } },
+          [h('option', { value: 'auto', text: 'Automatic: ' + (auto ? auto.description : 'the player\'s own choice'), selected: d.device === 'auto' })].concat(
+            d.devices.filter(function (x) { return x.name !== 'auto'; }).map(function (x) { return h('option', { value: x.name, text: label(x), selected: x.name === d.device }); })));
+        body.appendChild(labelled('Where the sound comes out', sel, 'Applies as soon as you choose.'));
+        body.appendChild(result);
+      }
       if (can('live')) {
-        body.appendChild(h('div', { class: 'k', text: 'Test tone (5 seconds, 440 Hz; stops what is playing)' }));
-        body.appendChild(h('div', { class: 'row' }, [['left', 'Left'], ['both', 'Both'], ['right', 'Right']].map(function (c) {
-          return h('button', { class: 'btn small grow', id: 'tone-' + c[0], text: c[1], onclick: function () { act('POST', '/api/testtone', { channel: c[0] }, function () { say('Playing a test tone: ' + c[1].toLowerCase()); poll(); }); } });
+        var toneOut = h('div', { class: 'msg inmsg', id: 'toneresult', role: 'status' });
+        body.appendChild(h('div', { class: 'field', text: 'Test sound' }));
+        body.appendChild(h('div', { class: 'hint', text: 'Five seconds of a steady tone, to check left and right.' }));
+        body.appendChild(h('div', { class: 'row', id: 'tonerow' }, [['left', 'Left'], ['both', 'Both'], ['right', 'Right']].map(function (c) {
+          return h('button', { class: 'btn grow', id: 'tone-' + c[0], text: c[1], onclick: function (e) {
+            function go() { act('POST', '/api/testtone', { channel: c[0] }, function () { sayAt(toneOut, 'Playing a test sound: ' + c[1].toLowerCase() + '.'); poll(); }); }
+            if (!playingNow()) return go();
+            confirmRow('Play a test sound? It stops what is playing now.', 'Play the test sound', 'Not now', go, e.currentTarget);
+          } });
         })));
+        body.appendChild(toneOut);
       }
     }
     api('GET', '/api/audio').then(function (r) {
       if (!document.getElementById('audiocard')) return;
-      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'audiomsg', text: r.data.error || 'Not available' })); return; }
+      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'audiomsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
       draw(r.data);
     });
     return card;
   }
   // ---- autostart -------------------------------------------------------
-  var autoForm = null;  // survives redraws: { mode, file, preset, loop, delay }
+  var autoForm = null;  // survives redraws: { mode, file, preset, loop, delay }; null while nothing was changed
+  var autoTried = '';   // what "Try it now" answered, said under the button by the redraw that follows
   function autostartCard(full) {
-    var body = h('div', { class: 'list', id: 'autobody' });
-    var card = h('div', { class: 'card', id: 'autocard' }, h('h2', { text: 'Autostart' }), body);
-    var MODES = [['off', 'Off'], ['file', 'Play one clip'], ['all', 'Play every clip'], ['slideshow', 'Slideshow of the pictures'],
-      ['pad', 'Play a pad'], ['usb', 'Play the USB stick (and any stick plugged in later)'], ['preset', 'Legacy start script'],
-      ['vibes', 'Vibes: shaders, endlessly (needs the Shaders and Vibes module)']];
+    var body = h('div', { class: 'list sp', id: 'autobody' });
+    var card = h('div', { class: 'card', id: 'autocard' }, h('h2', { text: 'At power-up' }), body);
+    var MODES = [['off', 'Nothing: the box waits for you'], ['file', 'Play one clip'], ['all', 'Play every clip'], ['slideshow', 'Slideshow of the pictures'],
+      ['pad', 'Play a pad'], ['usb', 'Play the USB stick (and any stick plugged in later)'], ['vibes', 'Start Vibes'], ['preset', 'Old start script']];
     function padName(p) {
       var b = (S.banks || [])[p[0]], pad = b && b.pads && b.pads[p[1]];
       return 'Bank ' + (p[0] + 1) + ', pad ' + (p[1] + 1) + (pad && (pad.label || pad.file) ? ': ' + (pad.label || pad.file) : '');
@@ -1969,60 +2100,82 @@
         cfg.mode === 'pad' ? ' (' + padName(cfg.pad || [0, 0]) + ')' : cfg.mode === 'slideshow' ? ' (' + (cfg.seconds || 10) + ' s a picture)' : '';
       var line = cfg.mode === 'off' ? 'Off: the box waits for you at power-up.' :
         'On: ' + MODES.filter(function (m) { return m[0] === cfg.mode; })[0][1] + detail + (cfg.shuffle ? ', shuffled' : '') + ', after ' + cfg.delay + ' s.';
-      body.appendChild(h('div', { class: 'k', id: 'autoline', text: line }));
-      if (d.last) body.appendChild(h('div', { class: 'k', id: 'autolast', text: 'Last run ' + d.last.at + ': ' + (d.last.ok ? 'started' : 'failed, ' + d.last.message) }));
+      body.appendChild(h('div', { class: 'state', id: 'autoline', text: line }));
+      if (d.last) body.appendChild(h('div', { class: d.last.ok ? 'hint' : 'hint warn', id: 'autolast', text: 'Last run ' + d.last.at + ': ' + (d.last.ok ? 'started' : 'failed, ' + d.last.message) }));
       if (!full) return;
-      var mode = h('select', { class: 'text-input', id: 'automode', 'aria-label': 'What to play at power-up' },
-        MODES.map(function (m) { return h('option', { value: m[0], text: m[1], selected: m[0] === c.mode }); }));
-      var file = h('select', { class: 'text-input', id: 'autofile', 'aria-label': 'Clip' },
-        S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === (c.file || S.media[0]) }); }));
-      var preset = h('input', { class: 'text-input mono', id: 'autopreset', 'aria-label': 'Start script name', placeholder: 'startlessonce05', value: c.preset, autocomplete: 'off' });
+      var vibesOff = !moduleOn('shaders');
+      var mode = h('select', { class: 'text-input', id: 'automode' },
+        MODES.map(function (m) { return h('option', { value: m[0], text: m[1] + (m[0] === 'vibes' && vibesOff ? ' (Vibes is off)' : ''), selected: m[0] === c.mode }); }));
+      var file = h('select', { class: 'text-input', id: 'autofile' },
+        S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === (c.file || S.media[0]) }); }) : [h('option', { value: '', text: 'No clips on the box yet' })]);
+      var preset = h('input', { class: 'text-input mono', id: 'autopreset', placeholder: 'startlessonce05', value: c.preset, autocomplete: 'off' });
       var pads = [];
       (S.banks || []).forEach(function (bk, bi) { (bk.pads || []).forEach(function (pd, pi) { if (pd.file) pads.push([bi, pi]); }); });
-      var pad = h('select', { class: 'text-input', id: 'autopad', 'aria-label': 'Pad' }, pads.length ? pads.map(function (p) {
+      var pad = h('select', { class: 'text-input', id: 'autopad' }, pads.length ? pads.map(function (p) {
         return h('option', { value: p.join(','), text: padName(p), selected: p[0] === c.pad[0] && p[1] === c.pad[1] });
       }) : [h('option', { value: '', text: 'No pad has a clip yet' })]);
-      var seconds = h('input', { class: 'text-input mono', id: 'autoseconds', type: 'number', min: 1, max: 3600, 'aria-label': 'Seconds a picture', value: c.seconds });
-      var shuffle = h('select', { class: 'text-input', id: 'autoshuffle', 'aria-label': 'Order' },
+      var seconds = h('input', { class: 'text-input mono', id: 'autoseconds', type: 'number', min: 1, max: 3600, value: c.seconds });
+      var shuffle = h('select', { class: 'text-input', id: 'autoshuffle' },
         [[false, 'In name order'], [true, 'Shuffled']].map(function (o) { return h('option', { value: String(o[0]), text: o[1], selected: o[0] === c.shuffle }); }));
-      var loop = h('select', { class: 'text-input', id: 'autoloop', 'aria-label': 'Loop' },
-        [[true, 'Loop'], [false, 'Play once']].map(function (o) { return h('option', { value: String(o[0]), text: o[1], selected: o[0] === c.loop }); }));
-      var delay = h('input', { class: 'text-input mono', id: 'autodelay', type: 'number', min: 0, max: 120, 'aria-label': 'Wait after power-up, seconds', value: c.delay });
-      var secondsLabel = h('label', { class: 'k', for: 'autoseconds', text: 'Seconds a picture' });
-      var delayLabel = h('label', { class: 'k', for: 'autodelay', text: 'Wait after power-up (seconds)' });
+      var loop = h('select', { class: 'text-input', id: 'autoloop' },
+        [[true, 'Play it again, for ever'], [false, 'Stop after one time']].map(function (o) { return h('option', { value: String(o[0]), text: o[1], selected: o[0] === c.loop }); }));
+      var delay = h('input', { class: 'text-input mono', id: 'autodelay', type: 'number', min: 0, max: 120, value: c.delay });
+      var wrap = { file: labelled('Clip', file), preset: labelled('Start script name', preset, 'The name of an old PocketVJ start script, as it was called on the old box.'),
+        pad: labelled('Pad', pad), seconds: labelled('Seconds a picture', seconds), shuffle: labelled('Order', shuffle),
+        loop: labelled('When it ends', loop), delay: labelled('Wait after power-up (seconds)', delay, 'Gives a projector or a screen time to wake before the picture starts.') };
+      var off = offNotice('autovibesoff', 'vibes', 'Vibes', function () { draw(d); });
+      var tryNote = h('span', { class: 'hint', id: 'autotestnote' });
+      var tryBtn = h('button', { class: 'btn', id: 'autotest', text: 'Try it now', onclick: function () {
+        act('POST', '/api/autostart/test', {}, function (data) {
+          autoTried = data.last ? (data.last.ok ? 'Started.' : 'It did not start: ' + data.last.message) : 'Started.';
+          draw(data);
+        });
+      } });
+      var bar = saveBar('autosave', 'Save changes', function () {
+        remember();
+        var b = { mode: autoForm.mode, loop: autoForm.loop, delay: autoForm.delay, shuffle: autoForm.shuffle };
+        if (autoForm.mode === 'file') b.file = autoForm.file;
+        if (autoForm.mode === 'preset') b.preset = autoForm.preset;
+        if (autoForm.mode === 'pad') b.pad = autoForm.pad;
+        if (autoForm.mode === 'slideshow') b.seconds = autoForm.seconds;
+        api('POST', '/api/autostart', b).then(function (r) {
+          if (!r.ok) return bar.say(r.data.error || 'Could not save. Check the fields and try again.', true);
+          autoForm = null; autoTried = 'Saved'; draw(r.data); say('Saved');
+        });
+      }, tryBtn);
       function remember() {
         autoForm = { mode: mode.value, file: file.value, preset: preset.value, loop: loop.value === 'true', delay: parseFloat(delay.value || '0'),
           shuffle: shuffle.value === 'true', seconds: parseFloat(seconds.value || '10'), pad: pad.value ? pad.value.split(',').map(Number) : [0, 0] };
       }
       function show() {
         var m = mode.value;
-        file.hidden = m !== 'file'; preset.hidden = m !== 'preset'; pad.hidden = m !== 'pad';
-        seconds.hidden = secondsLabel.hidden = m !== 'slideshow';
-        shuffle.hidden = ['all', 'slideshow', 'usb'].indexOf(m) < 0;
-        loop.hidden = ['file', 'all', 'slideshow'].indexOf(m) < 0;
-        delay.hidden = delayLabel.hidden = m === 'off';
+        wrap.file.hidden = m !== 'file'; wrap.preset.hidden = m !== 'preset'; wrap.pad.hidden = m !== 'pad';
+        wrap.seconds.hidden = m !== 'slideshow';
+        wrap.shuffle.hidden = ['all', 'slideshow', 'usb'].indexOf(m) < 0;
+        wrap.loop.hidden = ['file', 'all', 'slideshow'].indexOf(m) < 0;
+        wrap.delay.hidden = m === 'off';
+        off.hidden = !(m === 'vibes' && !moduleOn('shaders'));
+        var dirty = !!autoForm;
+        bar.dirty(dirty);
+        tryBtn.disabled = dirty || cfg.mode === 'off' || !can('live');
+        tryNote.textContent = dirty ? 'Save first to try it.' : cfg.mode === 'off' ? 'Nothing is set to happen at power-up.' : '';
       }
-      [mode, file, preset, pad, seconds, shuffle, loop, delay].forEach(function (el) { el.addEventListener('input', remember); el.addEventListener('change', function () { remember(); show(); }); });
-      [mode, file, preset, pad, secondsLabel, seconds, shuffle, loop, delayLabel, delay].forEach(function (el) { body.appendChild(el); });
+      [mode, file, preset, pad, seconds, shuffle, loop, delay].forEach(function (el) {
+        el.addEventListener('input', function () { remember(); show(); });
+        el.addEventListener('change', function () { remember(); show(); });
+      });
+      body.appendChild(labelled('What happens at power-up', mode));
+      body.appendChild(off);
+      ['file', 'preset', 'pad', 'seconds', 'shuffle', 'loop', 'delay'].forEach(function (k) { body.appendChild(wrap[k]); });
+      body.appendChild(bar.el);
+      body.appendChild(tryNote);
       show();
-      body.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn on small', id: 'autosave', text: 'Save', onclick: function () {
-          remember();
-          var b = { mode: autoForm.mode, loop: autoForm.loop, delay: autoForm.delay, shuffle: autoForm.shuffle };
-          if (autoForm.mode === 'file') b.file = autoForm.file;
-          if (autoForm.mode === 'preset') b.preset = autoForm.preset;
-          if (autoForm.mode === 'pad') b.pad = autoForm.pad;
-          if (autoForm.mode === 'slideshow') b.seconds = autoForm.seconds;
-          act('POST', '/api/autostart', b, function (data) { autoForm = null; say(''); draw(data); });
-        } }),
-        h('button', { class: 'btn small', id: 'autotest', text: 'Run it now', disabled: !can('live'), onclick: function () {
-          act('POST', '/api/autostart/test', {}, function (data) { draw(data); });
-        } })));
-      body.appendChild(h('div', { class: 'k', text: 'Runs when the box starts, and again if the player is restarted after a crash. A Stop from the panel is not undone. "Play the USB stick" also plays each new stick the moment it is plugged in.' }));
+      if (autoTried) { bar.result.textContent = autoTried; bar.result.className = 'msg inmsg' + (/did not/.test(autoTried) ? ' err' : ''); autoTried = ''; }
+      body.appendChild(h('div', { class: 'hint', text: 'It runs when the box starts, and again if the player is restarted after a crash. A Stop from the panel is not undone. "Play the USB stick" also plays each new stick the moment it is plugged in.' }));
     }
     api('GET', '/api/autostart').then(function (r) {
       if (!document.getElementById('autocard')) return;
-      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'automsg', text: r.data.error || 'Not available' })); return; }
+      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'automsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
       draw(r.data);
     });
     return card;
@@ -2030,37 +2183,47 @@
   // ---- streams (SRT, RTSP, RTMP) --------------------------------------
   var streamForm = { name: '', url: '' };  // survives redraws
   function streamsCard(full) {
-    var body = h('div', { class: 'list', id: 'streambody' });
+    var body = h('div', { class: 'list sp', id: 'streambody' });
     var card = h('div', { class: 'card', id: 'streamcard' }, h('h2', { text: 'Streams' }), body);
     function draw(d) {
       body.textContent = '';
-      if (!d.streams.length) body.appendChild(h('div', { class: 'k', id: 'streamempty', text: 'No streams saved yet.' }));
+      var playing = ((S.status && S.status.player) || {}).stream;
+      if (!d.streams.length) body.appendChild(h('div', { class: 'empty', id: 'streamempty', text: 'No streams yet. A stream is live video from a camera or another computer on the network.' +
+        (full ? ' Type its address below to save it; then it plays like a clip.' : '') }));
       d.streams.forEach(function (st) {
-        body.appendChild(h('div', { class: 'item stream-entry' },
-          h('span', {}, st.name, h('br'), h('span', { class: 'addr', text: st.url })),
-          h('span', { class: 'row' },
-            h('button', { class: 'btn small', text: 'Play', 'aria-label': 'Play ' + st.name, disabled: !can('live'),
-              onclick: function () { act('POST', '/api/play', { stream: st.id }, function () { say('Playing ' + st.name); poll(); }); } }),
-            full ? h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + st.name, onclick: function () {
-              act('POST', '/api/streams', { action: 'remove', id: st.id }, draw);
-            } }) : null)));
+        body.appendChild(listRow({ cls: 'stream-entry', data: st.id, name: st.name, sub: st.url, key: 'stream-' + st.id, redraw: function () { draw(d); },
+          state: playing === st.name ? 'Playing now' : '',
+          primary: can('live') ? h('button', { class: 'btn on', text: 'Play', 'aria-label': 'Play ' + st.name,
+            onclick: function () { act('POST', '/api/play', { stream: st.id }, function () { say('Playing ' + st.name); poll(); }); } }) : null,
+          more: full ? [h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + st.name, onclick: function (e) {
+            confirmRow('Remove ' + st.name + '? Its address is forgotten.', 'Remove', 'Keep it', function () {
+              act('POST', '/api/streams', { action: 'remove', id: st.id }, function (data) { moreOpen = null; draw(data); say(st.name + ' is removed.'); });
+            }, e.currentTarget);
+          } })] : null }));
       });
       if (!full) return;
-      var name = h('input', { class: 'text-input', id: 'streamname', 'aria-label': 'Stream name', placeholder: 'Name', maxlength: 40, value: streamForm.name });
-      var url = h('input', { class: 'text-input mono', id: 'streamurl', 'aria-label': 'Stream address', placeholder: 'srt://192.168.1.20:9000', value: streamForm.url, autocomplete: 'off' });
-      name.addEventListener('input', function () { streamForm.name = name.value; });
-      url.addEventListener('input', function () { streamForm.url = url.value; });
-      body.appendChild(h('div', { class: 'k', text: 'Add a stream: ' + d.schemes.join(', ') + '. A login inside the address is stored on the box and hidden here.' }));
-      body.appendChild(name); body.appendChild(url);
-      body.appendChild(h('button', { class: 'btn on small', id: 'streamadd', text: 'Save stream', onclick: function () {
-        act('POST', '/api/streams', { action: 'add', name: streamForm.name, url: streamForm.url }, function (data) {
-          streamForm.name = ''; streamForm.url = ''; say(''); draw(data);
-        });
-      } }));
+      body.appendChild(addBlock('stream', 'a stream', !d.streams.length, function (cancel) {
+        var name = h('input', { class: 'text-input', id: 'streamname', placeholder: 'Stage camera', maxlength: 40, value: streamForm.name });
+        var url = h('input', { class: 'text-input mono', id: 'streamurl', placeholder: 'srt://192.168.1.20:9000', value: streamForm.url, autocomplete: 'off' });
+        var err = h('div', { class: 'msg inmsg', id: 'streamerr', role: 'alert' });
+        name.addEventListener('input', function () { streamForm.name = name.value; });
+        url.addEventListener('input', function () { streamForm.url = url.value; });
+        return h('div', { class: 'addform', id: 'streamform' }, h('div', { class: 'field', text: 'Add a stream' }),
+          labelled('Name', name), labelled('Address', url, 'Starts with srt://, rtsp:// or rtmp://. A login in the address is kept on the box and hidden here.'),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn on grow', id: 'streamadd', text: 'Add', onclick: function () {
+              api('POST', '/api/streams', { action: 'add', name: streamForm.name, url: streamForm.url }).then(function (r) {
+                if (!r.ok) return sayAt(err, r.data.error || 'Could not add the stream. Check the address.', true);
+                streamForm.name = ''; streamForm.url = ''; addOpen.stream = false; draw(r.data); say('Stream added.');
+              });
+            } }),
+            cancel ? h('button', { class: 'btn grow', id: 'streamcancel', text: 'Cancel', onclick: cancel }) : null),
+          err);
+      }, function () { draw(d); }));
     }
     api('GET', '/api/streams').then(function (r) {
       if (!document.getElementById('streamcard')) return;
-      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'streammsg', text: r.data.error || 'Not available' })); return; }
+      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'streammsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
       draw(r.data);
     });
     return card;
@@ -2068,7 +2231,7 @@
   // ---- updates (signed bundles, installed by pvj-update as root; D33) ----
   var updateTimer = null;
   function updateCard() {
-    var body = h('div', { class: 'list', id: 'updatebody' }, h('div', { class: 'k', text: 'Loading...' }));
+    var body = h('div', { class: 'list sp', id: 'updatebody' }, h('div', { class: 'hint', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'updatecard' }, h('h2', { text: 'Updates' }), body);
     var watchUntil = 0, startedAt = 0;  // after Install, keep asking for a while: the panel itself restarts
     function later() {
@@ -2082,26 +2245,31 @@
         if (r.ok) draw(r.data); else later();
       }, later);
     }
-    function start(source, version, where) {
-      if (!window.confirm('Install version ' + version + where + '? The panel and the player restart; if the new version does not come up, the box goes back to this one by itself.')) return;
-      act('POST', '/api/system/update', { source: source, version: version, confirm: 'update' }, function () {
-        say('Update to ' + version + ' started.');
-        startedAt = Date.now();
-        watchUntil = startedAt + 10 * 60 * 1000;
-        later();
-      });
+    function start(source, version, where, control) {
+      confirmRow('Install version ' + version + where + '? The panel and the player restart, so the picture stops for a moment. If the new version does not come up, the box goes back to this one by itself.',
+        'Install', 'Not now', function () {
+          act('POST', '/api/system/update', { source: source, version: version, confirm: 'update' }, function () {
+            say('Update to ' + version + ' started.');
+            startedAt = Date.now();
+            watchUntil = startedAt + 10 * 60 * 1000;
+            later();
+          });
+        }, control);
     }
-    function row(text, id, onclick) {
-      return h('div', { class: 'item' }, h('span', { text: text }), h('button', { class: 'btn small', id: id, text: 'Install', onclick: onclick }));
+    function row(name, state, problem, id, go) {
+      return listRow({ cls: 'update-entry', name: name, state: state, problem: problem,
+        primary: h('button', { class: 'btn on', id: id, text: 'Install', onclick: function (e) { go(e.currentTarget); } }) });
     }
     function draw(d) {
       clearTimeout(updateTimer);
+      if (asking(body)) { updateTimer = setTimeout(refresh, 3000); return; }       // a question is open: look again later
       body.textContent = '';
-      body.appendChild(h('div', { class: 'k', id: 'updateversion', text: 'Installed: version ' + d.version }));
+      var waiting = d.usb.length + d.inbox.length;
+      body.appendChild(h('div', { class: 'state', id: 'updateversion', text: 'Version ' + d.version + ' is installed. ' + (waiting ? 'An update is waiting below.' : 'No update is waiting.') }));
       var last = d.last;
       if (last) {
         var words = { running: 'Updating: ', done: 'Last update: ', failed: 'Last update failed: ' };
-        body.appendChild(h('div', { class: 'k', id: 'updatelast', text: (words[last.state] || '') + last.message + (last.at ? ' (' + new Date(last.at * 1000).toLocaleString() + ')' : '') }));
+        body.appendChild(h('div', { class: last.state === 'failed' ? 'hint warn' : 'hint', id: 'updatelast', text: (words[last.state] || '') + last.message + (last.at ? ' (' + new Date(last.at * 1000).toLocaleString() + ')' : '') }));
         if (last.state === 'running') watchUntil = Math.max(watchUntil, Date.now() + 60 * 1000);
         else if (startedAt && last.at && last.at * 1000 >= startedAt - 5000) watchUntil = 0;   // the update we started has ended
       }
@@ -2109,14 +2277,13 @@
       d.usb.forEach(function (b, i) {
         if (seen[b.version]) return;
         seen[b.version] = true;
-        body.appendChild(row('On USB drive ' + b.drive + ': version ' + b.version + (b.signed ? '' : ' (no .sig file: it will be refused)'),
-          'updateusb' + i, function () { start('usb', b.version, ' from the USB drive'); }));
+        body.appendChild(row('Version ' + b.version, 'On the USB drive ' + b.drive, b.signed ? '' : 'Its .sig file is missing from the stick, so it will be refused. Copy both files to the stick.',
+          'updateusb' + i, function (control) { start('usb', b.version, ' from the USB drive', control); }));
       });
       d.inbox.forEach(function (b, i) {
-        body.appendChild(row('Uploaded: version ' + b.version + (b.signed ? '' : ' (upload its .sig file too)'),
-          'updateinbox' + i, function () { start('inbox', b.version, ''); }));
+        body.appendChild(row('Version ' + b.version, 'Uploaded', b.signed ? '' : 'Its .sig file is missing. Upload that file too.',
+          'updateinbox' + i, function (control) { start('inbox', b.version, '', control); }));
       });
-      if (!d.usb.length && !d.inbox.length) body.appendChild(h('div', { class: 'k', text: 'No update waiting. Put pvj-N.N.N.tar.gz and its .sig file in a pvj-update folder on a USB stick, or upload them here.' }));
       var pick = h('input', { type: 'file', id: 'updatepick', multiple: true, accept: '.gz,.sig,.sha256', hidden: true });
       pick.addEventListener('change', function () {
         var files = Array.prototype.slice.call(pick.files);
@@ -2130,13 +2297,17 @@
             .then(function (r) {
               return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || 'upload failed (HTTP ' + r.status + ')'); });
             })
-            .then(function () { say(f.name + ' uploaded.'); next(); }, function (e) { say(e.message || 'upload failed', true); refresh(); });
+            .then(function () { say(f.name + ' uploaded.'); next(); }, function (e) { say((e.message || 'The upload failed') + '. Choose the two update files and try again.', true); refresh(); });
         };
         next();
       });
       body.appendChild(pick);
-      body.appendChild(h('button', { class: 'btn small', id: 'updateupload', text: 'Upload an update (.tar.gz and .sig)', onclick: function () { pick.click(); } }));
-      body.appendChild(h('div', { class: 'k', text: 'Only updates signed with your key are installed; older versions are refused; a failed update goes back by itself. A .sha256 file is optional.' }));
+      body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'updateupload', text: 'Upload an update', onclick: function () { pick.click(); } })));
+      body.appendChild(h('details', { class: 'fold', id: 'updatehow' }, h('summary', { text: 'How to get an update' }), h('div', { class: 'list sp' },
+        h('div', { class: 'hint', text: 'An update is two files with the same name: pvj-N.N.N.tar.gz and pvj-N.N.N.tar.gz.sig (N.N.N is the version). A .sha256 file may come with them and is optional.' }),
+        h('div', { class: 'hint', text: 'From a USB stick: put both files in a folder named pvj-update on the stick, plug it into the box, and the version shows here.' }),
+        h('div', { class: 'hint', text: 'From this phone or laptop: tap Upload an update and choose both files.' }),
+        h('div', { class: 'hint', text: 'Only updates signed with your key are installed. An older version is refused. A failed update goes back by itself.' }))));
       later();
     }
     setTimeout(refresh, 0);   // the card is put on the page after this returns; refresh() asks nothing until it is
@@ -2155,28 +2326,24 @@
   }
   function boxCareCards() {
     var pw = document.getElementById('exportpw'), md = document.getElementById('resetmedia');
-    if (pw) careForm.passwords = pw.checked;       // read from the page before it is rebuilt (an event can be lost)
+    if (pw) careForm.passwords = pw.getAttribute('aria-checked') === 'true';       // read from the page before it is rebuilt
     if (md) careForm.media = md.value;
     var remote = !!(S.device && S.device.remote);
     var cards = [];
 
     // settings
-    var tick = h('input', { type: 'checkbox', id: 'exportpw', checked: careForm.passwords });
-    tick.addEventListener('change', function () { careForm.passwords = tick.checked; });
-    var result = h('div', { class: 'k', id: 'importresult', role: 'status' });
+    var tick = toggle('exportpw', 'Passwords in the file', careForm.passwords, function (v) { careForm.passwords = v; },
+      'Projector passwords and stream logins. Keep a file that has them private.');
+    var result = h('div', { class: 'msg inmsg', id: 'importresult', role: 'status' });
     var pick = h('input', { type: 'file', id: 'importpick', accept: '.json,application/json', hidden: true });
-    pick.addEventListener('change', function () {
-      var f = pick.files && pick.files[0];
-      pick.value = '';
-      if (!f) return;
-      if (!window.confirm('Replace this box\'s settings with ' + f.name + '? The PIN, the paired devices and remote support stay as they are. A copy of the present settings is kept on the box.')) return;
+    function load(f) {
       say('Importing ' + f.name + '...');
       fetch('/api/system/settings/import?confirm=import', { method: 'POST', credentials: 'same-origin',
         headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/json' }, body: f })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, data: j }; }); },
           function () { return { ok: false, status: 0, data: { error: 'no connection' } }; })
         .then(function (r) {
-          if (!r.ok) return say(r.data.error || 'The import failed (HTTP ' + r.status + ')', true);
+          if (!r.ok) return sayAt(document.getElementById('importresult'), (r.data.error || 'The import failed (HTTP ' + r.status + ')') + '. Nothing was changed. Choose a settings file this box or another one exported.', true);
           var lines = (r.data.problems || []).map(function (t) { return 'Check: ' + t; }).concat(r.data.notes || []);
           if (!r.data.passwords_in_file) lines.push('The file holds no passwords; ' + r.data.passwords_kept + ' already on this box were kept.');
           loadAll().then(function () {
@@ -2186,57 +2353,69 @@
             if (el) el.textContent = lines.join(' · ');
           });
         });
+    }
+    pick.addEventListener('change', function () {
+      var f = pick.files && pick.files[0];
+      pick.value = '';
+      var control = document.getElementById('importbtn');
+      if (!f || !control) return;
+      confirmRow('Replace this box\'s settings with ' + f.name + '? The PIN, the paired devices and remote support stay as they are. A copy of the present settings is kept on the box.',
+        'Replace the settings', 'Keep mine', function () { load(f); }, control);
     });
     cards.push(h('div', { class: 'card', id: 'settingscard' }, h('h2', { text: 'Settings file' }),
-      h('div', { class: 'list' },
-        h('div', { class: 'k', text: 'Save this box\'s settings as one file, or load them from one. The PIN, the paired devices and remote support are never in the file.' }),
-        remote ? null : h('label', { class: 'row', for: 'exportpw' }, tick, h('span', { text: 'Include projector passwords and stream logins (keep that file private)' })),
+      h('div', { class: 'list sp' },
+        h('div', { class: 'hint', text: 'Save this box\'s settings as one file, or load them from one. The PIN, the paired devices and remote support are never in the file.' }),
+        remote ? null : tick,
         h('div', { class: 'row' },
-          h('button', { class: 'btn small grow', id: 'exportbtn', text: 'Export settings', onclick: function () {
-            act('POST', '/api/system/settings/export', { passwords: !remote && tick.checked }, function (d) {
+          h('button', { class: 'btn grow', id: 'exportbtn', text: 'Export settings', onclick: function () {
+            act('POST', '/api/system/settings/export', { passwords: !remote && tick.isOn() }, function (d) {
               saveFile(d.name, d.file);
-              say('Settings saved as ' + d.name + (d.file.passwords_included ? ' (with passwords).' : ' (no passwords in it).'));
+              sayAt(document.getElementById('importresult'), 'Settings saved as ' + d.name + (d.file.passwords_included ? ' (with passwords).' : ' (no passwords in it).'));
             });
           } }),
-          remote ? null : h('button', { class: 'btn small grow', id: 'importbtn', text: 'Import settings...', onclick: function () { pick.click(); } })),
+          remote ? null : h('button', { class: 'btn grow', id: 'importbtn', text: 'Import settings...', onclick: function () { pick.click(); } })),
         pick, result)));
 
     // diagnostics
-    var note = h('div', { class: 'k', id: 'diagnote', role: 'status' });
+    var note = h('div', { class: 'msg inmsg', id: 'diagnote', role: 'status' });
     cards.push(h('div', { class: 'card', id: 'diagcard' }, h('h2', { text: 'Diagnostics' }),
-      h('div', { class: 'list' },
-        h('div', { class: 'k', text: 'One file to send to whoever is helping you: versions, the board, modules, health and the settings. No PIN, password, code or key is in it.' }),
-        h('button', { class: 'btn small', id: 'diagbtn', text: 'Download diagnostics file', onclick: function () {
+      h('div', { class: 'list sp' },
+        h('div', { class: 'hint', text: 'One file to send to whoever is helping you: versions, the board, modules, health and the settings. No PIN, password, code or key is in it.' }),
+        h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'diagbtn', text: 'Download diagnostics file', onclick: function () {
           act('GET', '/api/system/diagnostics', null, function (d) {
             saveFile(d.name, d.file);
             say('Diagnostics saved as ' + d.name + '.');
-            note.textContent = d.file.log && d.file.log.note ? 'Log: ' + d.file.log.note : '';
+            note.textContent = d.file.log && d.file.log.note ? 'Log: ' + d.file.log.note : 'Saved as ' + d.name + '.';
           });
-        } }),
+        } })),
         note)));
 
     // factory reset: never through remote support
     if (!remote) {
-      var media = h('select', { class: 'text-input', id: 'resetmedia', 'aria-label': 'What happens to the clips' },
-        [['', 'What happens to the clips?'], ['keep', 'Keep the clips on the box'], ['delete', 'Delete the clips too']].map(function (o) {
+      var media = h('select', { class: 'text-input', id: 'resetmedia' },
+        [['', 'Choose...'], ['keep', 'Keep the clips on the box'], ['delete', 'Delete the clips too']].map(function (o) {
           return h('option', { value: o[0], text: o[1], selected: o[0] === careForm.media });
         }));
       media.addEventListener('change', function () { careForm.media = media.value; });
+      var resetErr = h('div', { class: 'msg inmsg', id: 'resetresult', role: 'alert' });
       cards.push(h('div', { class: 'card', id: 'resetcard' }, h('h2', { text: 'Factory reset' }),
-        h('div', { class: 'list' },
-          h('div', { class: 'k', text: 'Every setting goes back to how a new box starts, and every phone, tablet and guest is unpaired. You pair again with the new PIN on the box\'s display.' }),
-          media,
-          h('button', { class: 'btn small', id: 'resetbtn', text: 'Reset to factory settings', onclick: function () {
-            if (!media.value) return say('Choose what happens to the clips first.', true);
+        h('div', { class: 'list sp' },
+          h('div', { class: 'hint', text: 'Every setting goes back to how a new box starts, and every phone, tablet and guest is unpaired. You pair again with the new PIN on the box\'s display.' }),
+          labelled('What happens to the clips', media),
+          h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'resetbtn', text: 'Reset to factory settings', onclick: function (e) {
+            if (!media.value) return sayAt(resetErr, 'Choose what happens to the clips first.', true);
             var clips = media.value === 'delete' ? 'ALL CLIPS ON THE BOX ARE DELETED.' : 'The clips stay.';
-            if (!window.confirm('Reset this box to factory settings? All settings are lost and every device is unpaired, this one too. ' + clips + ' This cannot be undone.')) return;
-            act('POST', '/api/system/factory-reset', { confirm: 'factory-reset', media: media.value }, function () {
-              careForm = { passwords: false, media: '' };
-              S.device = null;
-              S.msg = '';
-              render();
-            });
-          } }))));
+            confirmRow('Reset this box to factory settings? All settings are lost and every device is unpaired, this one too. ' + clips + ' This cannot be undone.',
+              'Reset this box', 'Keep everything', function () {
+                act('POST', '/api/system/factory-reset', { confirm: 'factory-reset', media: media.value }, function () {
+                  careForm = { passwords: false, media: '' };
+                  S.device = null;
+                  S.msg = '';
+                  render();
+                });
+              }, e.currentTarget);
+          } })),
+          resetErr)));
     }
     return cards;
   }
@@ -2704,7 +2883,7 @@
         c.ssid = out.ssid ? out.ssid.value : '';          // a network name may start or end with a space
         c.security = mode === 'hotspot' ? 'wpa-psk' : out.security.value;
         if (c.security !== 'open') c.password = out.pass ? out.pass.value : '';
-        if (mode === 'hotspot') c.band = out.band.value; else c.hidden = !!(out.hidden && out.hidden.checked);
+        if (mode === 'hotspot') c.band = out.band.value; else c.hidden = !!(out.hidden && out.hidden.isOn());
       }
       return c;
     }
@@ -2796,8 +2975,8 @@
               h('option', { value: 'bg', text: '2.4 GHz (reaches further, every device)' }), h('option', { value: 'a', text: '5 GHz (faster, less crowded)' }));
             fields.appendChild(out.band);
           } else {
-            out.hidden = h('input', { type: 'checkbox', id: 'nethidden' });
-            fields.appendChild(h('label', { class: 'row' }, out.hidden, h('span', { text: 'Hidden network (it does not show in the list)' })));
+            out.hidden = toggle('nethidden', 'Hidden network', false, null, 'Switch on for a network that does not show in the list.');
+            fields.appendChild(out.hidden);
           }
         }
         if (mode === 'static' || mode === 'share' || mode === 'hotspot') {
@@ -2835,17 +3014,14 @@
       fitMode();
       body.appendChild(out.iface); body.appendChild(modes); body.appendChild(help); body.appendChild(fields); body.appendChild(out.secs);
       drawModes(); drawFields(); drawSecs();
-      body.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn small', id: 'netpreview', text: 'Preview commands', onclick: function () {
-          api('POST', '/api/network/plan', config(kind())).then(function (r) {
-            out.preview.hidden = !r.ok; out.msg.className = 'msg' + (r.ok ? '' : ' err');
-            out.msg.textContent = r.ok ? '' : (r.data.error || 'Invalid');
-            if (r.ok) out.preview.textContent = r.data.commands.join('\n');
-          });
-        } }),
-        h('button', { class: 'btn on small', id: 'netapply', text: 'Apply', onclick: function () {
+      var wifiOffAsked = false;
+      var applyBtn = h('button', { class: 'btn on small', id: 'netapply', text: 'Apply', onclick: function () {
           var c = config(kind());
-          if (c.mode === 'off' && !window.confirm('Switch Wi-Fi off? If this phone or tablet reaches the box over Wi-Fi, it loses the connection; the change goes back by itself unless you confirm it from a wired connection.')) return;
+          if (c.mode === 'off' && !wifiOffAsked) {
+            return confirmRow('Switch Wi-Fi off? A phone that reaches the box over Wi-Fi loses it. The change goes back by itself unless it is confirmed from a wired connection.',
+              'Switch Wi-Fi off', 'Keep Wi-Fi on', function () { wifiOffAsked = true; applyBtn.click(); }, applyBtn);
+          }
+          wifiOffAsked = false;
           out.msg.className = 'msg'; out.msg.textContent = 'Applying...';
           api('POST', '/api/network/apply', c).then(function (r) {
             if (!r.ok) { out.msg.className = 'msg err'; out.msg.textContent = r.data.error || 'Could not apply'; return; }
@@ -2858,7 +3034,16 @@
             clearNetForm();
             refresh();
           });
-        } })));
+        } });
+      body.appendChild(h('div', { class: 'row' },
+        h('button', { class: 'btn small', id: 'netpreview', text: 'Preview commands', onclick: function () {
+          api('POST', '/api/network/plan', config(kind())).then(function (r) {
+            out.preview.hidden = !r.ok; out.msg.className = 'msg' + (r.ok ? '' : ' err');
+            out.msg.textContent = r.ok ? '' : (r.data.error || 'Invalid');
+            if (r.ok) out.preview.textContent = r.data.commands.join('\n');
+          });
+        } }),
+        applyBtn));
       body.appendChild(out.preview); body.appendChild(out.msg);
       body.appendChild(h('div', { class: 'k', text: 'A change can cut this connection. It goes back by itself unless you confirm it, and also if the box restarts before you do.' }));
     }
@@ -2990,18 +3175,17 @@
         live.appendChild(h('div', { class: 'hint', id: 'accessscreenline', text: scr.showing ? 'On the room screen now: ' + (shown.join(', ') || 'the address') + '. Hides in ' + left(scr.seconds_left) + '.' :
           scr.other ? 'Something else is on the room screen, put there by the owner. The guest code can be shown when that is gone.' : 'Nothing on the room screen.' }));
         if (all) [['pin', roleName('full') + ': the PIN, as text'], ['view', roleName('view') + ': code and QR'], ['live', roleName('live') + ': code and QR']].forEach(function (it) {
-          var cb = h('input', { type: 'checkbox', id: 'show-' + it[0], checked: accessForm[it[0]] });
-          cb.addEventListener('change', function () { accessForm[it[0]] = cb.checked; });
-          live.appendChild(h('label', { class: 'row', for: 'show-' + it[0] }, cb, h('span', { text: it[1] })));
+          live.appendChild(toggle('show-' + it[0], it[1], accessForm[it[0]], function (v) { accessForm[it[0]] = v; }));
         });
         var canShow = all || !scr.other;
         if (canShow) live.appendChild(chooser('showsecs', 'Show it for', SHOW_SECONDS, accessForm.seconds, function (v) { accessForm.seconds = v; }));
         live.appendChild(h('div', { class: 'row wrap' },
-          canShow ? h('button', { class: 'btn on small', id: 'showaccess', text: scr.showing ? 'Show again' : 'Show on the room screen', onclick: function () {
+          canShow ? h('button', { class: 'btn on small', id: 'showaccess', text: scr.showing ? 'Show again' : 'Show on the room screen', onclick: function (e) {
             var items = all ? ['pin', 'view', 'live'].filter(function (i) { return accessForm[i]; }) : ['view'];
             if (!items.length) return say('Choose what to show.', true);
-            if (all && accessForm.pin && !window.confirm('Anyone who can see the room screen will see the ' + roleName('full') + ' PIN. Show it?')) return;
             function show() { send('/api/access/screen', { show: true, items: items, seconds: accessForm.seconds }, 'On the room screen.'); }
+            if (all && accessForm.pin) return confirmRow('Show the ' + roleName('full') + ' PIN on the room screen? Anyone who can see the screen can then pair with everything allowed.',
+              'Show the PIN', 'Do not show it', show, e.currentTarget);
             // No guest code yet: make it first, for the time chosen above (a code the box makes for a show lasts
             // as long as the show, which is not what was chosen). 409: someone made one meanwhile; show that one.
             if (all || codes.length) return show();
@@ -3042,34 +3226,52 @@
     var first = h('div', { class: 'card', id: 'accesscard' }, h('h2', { text: 'Let someone in' }), letSomeoneIn(full));
     if (!full) return [first];
     var card = h('div', { class: 'card', id: 'devicescard' }, h('h2', { text: 'Paired devices' }));
-    var devices = h('div', { class: 'list' }, S.devices.map(function (d) {
-      return h('div', { class: 'item' }, h('span', { text: d.name }), h('span', { class: 'row' }, h('span', { class: 'hint', text: roleName(d.role) }),
-        h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function () {
-          act('POST', '/api/devices/revoke', { id: d.id }, function () { S.devices = S.devices.filter(function (x) { return x.id !== d.id; }); if (S.device && d.id === S.device.id) { S.device = null; } render(); });
-        } })));
-    }));
+    var devices = h('div', { class: 'list sp', id: 'devicelist' });
+    function drawDevices() {
+      devices.textContent = '';
+      S.devices.forEach(function (d) {
+        var me = !!S.device && d.id === S.device.id;
+        devices.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role) + (me ? ' · this phone' : ''),
+          primary: h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function (e) {
+            confirmRow(me ? 'Remove this phone? You will need the PIN to get back in.' : 'Remove ' + d.name + '? It needs a code, a link or the PIN to get back in.',
+              'Remove', 'Keep it', function () {
+                act('POST', '/api/devices/revoke', { id: d.id }, function () {
+                  S.devices = S.devices.filter(function (x) { return x.id !== d.id; });
+                  if (me) { S.device = null; return render(); }
+                  say(d.name + ' is removed.');
+                  drawDevices();
+                });
+              }, e.currentTarget);
+          } }) }));
+      });
+    }
+    drawDevices();
     var link = h('input', { class: 'text-input mono', readonly: true, 'aria-label': 'Link', hidden: true });
     var linkQr = h('img', { class: 'qr', id: 'linkqr', alt: 'QR code for the link', hidden: true });
     var role = h('select', { class: 'text-input', id: 'linkrole' }, h('option', { value: 'view', text: roleName('view') }), h('option', { value: 'live', text: roleName('live') }));
-    var pinOut = h('div', { class: 'mono', id: 'pinout' });
+    var pinOut = h('div', { class: 'msg inmsg mono', id: 'pinout', role: 'status' });
     card.appendChild(devices);
-    card.appendChild(h('label', { class: 'field', for: 'linkrole', text: 'A link that does not expire' }));
-    card.appendChild(h('div', { class: 'hint', text: 'For someone who is here often. It works until you remove its device from the list above.' }));
-    card.appendChild(role);
-    card.appendChild(h('button', { class: 'btn', id: 'makelink', text: 'Create link', onclick: function () {
+    card.appendChild(labelled('A link that does not expire', role, 'For someone who is here often. It works until you remove its device from the list above.'));
+    card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'makelink', text: 'Create link', onclick: function () {
       act('POST', '/api/devices/invite', { name: role.value === 'view' ? 'Guest link' : 'Presenter link', role: role.value, origin: location.origin }, function (d) {
         link.value = location.origin + '/#token=' + d.token; link.hidden = false; link.select();
         if (d.qr_svg) { linkQr.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(d.qr_svg); linkQr.hidden = false; }
-        api('GET', '/api/devices').then(function (r) { if (r.ok) S.devices = r.data.devices; });
+        api('GET', '/api/devices').then(function (r) { if (r.ok) { S.devices = r.data.devices; drawDevices(); } });
       });
-    } }));
+    } })));
     card.appendChild(link);
     card.appendChild(linkQr);
     card.appendChild(h('div', { class: 'field', text: 'The ' + roleName('full') + ' PIN' }));
-    card.appendChild(h('button', { class: 'btn', text: 'New PIN', onclick: function () { act('POST', '/api/pin/rotate', {}, function (d) { pinOut.textContent = 'New PIN: ' + d.pin; }); } }));
-    card.appendChild(h('button', { class: 'btn', id: 'unlockpair', text: 'Unblock joining', onclick: function () {
-      act('POST', '/api/pin/unlock', {}, function () { pinOut.textContent = 'Joining is open again (the PIN is unchanged).'; });
-    } }));
+    card.appendChild(h('div', { class: 'hint', text: 'The PIN pairs a phone with everything allowed. It is on the box\'s display when nothing is paired.' }));
+    card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'newpin', text: 'New PIN', onclick: function (e) {
+      confirmRow('Make a new PIN? The old PIN stops working. Phones that are already paired stay paired.', 'New PIN', 'Keep the old one', function () {
+        act('POST', '/api/pin/rotate', {}, function (d) { pinOut.textContent = 'New PIN: ' + d.pin; say('The PIN is changed.'); });
+      }, e.currentTarget);
+    } })));
+    card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'unlockpair', text: 'Unblock joining', onclick: function () {
+      act('POST', '/api/pin/unlock', {}, function () { pinOut.textContent = 'Joining is open again (the PIN is unchanged).'; say('Joining is open again.'); });
+    } })));
+    card.appendChild(h('div', { class: 'hint', text: 'After too many wrong PINs or codes the box stops taking them for a while. Unblock joining opens it again at once.' }));
     card.appendChild(pinOut);
     return [first, card];
   }
@@ -3099,7 +3301,11 @@
   // ---- shell ----------------------------------------------------------
   // The Room screen lives in room.js; it borrows these helpers.
   // letIn: the guest code part of People and codes, so staff on the Room screen need not leave it to let a guest in.
-  function roomCtx() { return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); } }; }
+  function roomCtx() {
+    return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
+      confirmRow: confirmRow, switchFeature: shaderCtx().switchFeature,
+      openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
+  }
   function stopTimers() {
     [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer].forEach(clearTimeout);
   }
