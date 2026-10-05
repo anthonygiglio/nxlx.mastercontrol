@@ -1851,7 +1851,7 @@ function startServer() {
     assert.strictEqual((await get('/api/midi')).map.filter((e) => e.action === 'shader_control_1').length, 0);
     await page.click('[data-midi="shader_control_1"]');
     // The library: measured numbers, the pack filter, picture detail from this board's own list
-    assert(/Light work\. 7\.5 to 11\.2 ms on a Pi 4 at 720 lines/.test(await page.textContent('#shadercard [data-shader="nxlx-silk.fs"]')), 'a measured shader says its numbers');
+    assert(/Light work\. 7\.5 ms on a Pi 4 at 720 lines/.test(await page.textContent('#shadercard [data-shader="nxlx-silk.fs"]')), 'a measured shader says its numbers');
     await page.selectOption('#shaderpack', 'isf-files');
     assert.strictEqual((await shownRows()).length, packed.length, 'the pack filter shows the pack');
     await page.selectOption('#shaderpack', 'all');

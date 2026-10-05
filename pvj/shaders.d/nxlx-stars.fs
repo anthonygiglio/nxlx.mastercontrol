@@ -6,7 +6,7 @@
         "Generator",
         "Ambient"
     ],
-    "COST": "low: 2 layers of stars, 3 sines and about 90 sums and products a pixel",
+    "COST": "medium: 2 layers of stars, 3 sines and about 90 sums and products a pixel",
     "INPUTS": [
         {
             "NAME": "speed",

@@ -6,7 +6,7 @@
         "Generator",
         "Performance"
     ],
-    "COST": "low: 4 beams, one atan, one square root, 5 sines and 2 divisions a pixel",
+    "COST": "medium: 4 beams, one atan, one square root, 5 sines and 2 divisions a pixel",
     "INPUTS": [
         {
             "NAME": "rate",

@@ -65,18 +65,71 @@ EVENT_HOLD = 0.25               # how long a pressed event stays true
 MAX_CONTROLS = 8
 V3D_STATS = "/sys/devices/platform/v3dbus/*/gpu_stats"
 
-# The first measurements on a real board (a Raspberry Pi 4, mpv 0.40, 2560 x 1440 at 75 Hz, 2026-10-04): the shader's
-# own pass in milliseconds at 720 lines and the frames dropped each second by drawing height. The six light ones took
-# 7.5 to 11.2 ms and were not noted one by one. "light" kept up at 720 lines, "medium" at 540, "heavy" only at 360.
+# Measured on a real board: a Raspberry Pi 4 (mpv 0.40, desktop OpenGL 3.1 on V3D, Mesa 26.2, a 2560 x 1440 screen at
+# 75 Hz), every bundled shader with its defaults through this engine on 2026-10-05, for 20 seconds at each drawing
+# height (60 where the first look was near the line). Per shader: the class, then (the shader's own pass in
+# milliseconds, frames dropped a second) at 540 lines and at 720 lines. The method and what else was seen are in
+# project-log/JOURNAL.md ("every bundled shader on the Pi 4").
+#   light   holds 30 frames a second at 720 lines
+#   medium  holds at 540 lines only
+#   heavy   drops frames at 540 lines
+# "Holds" is fewer than HOLDS dropped frames a second, the line under which the guard says "ok" (Guard.TIGHT).
+HOLDS = 0.5
 PI4 = {
-    "nxlx-silk.fs": ("light", None, {"720": 0, "1080": 7.5}), "nxlx-lattice.fs": ("light", None, {"720": 0, "1080": 7.5}),
-    "nxlx-horizon.fs": ("light", None, {"720": 0}), "nxlx-prism.fs": ("light", None, {"720": 0}),
-    "nxlx-ember.fs": ("light", None, {"720": 0}), "nxlx-pulse.fs": ("light", None, {"720": 0}),
-    "nxlx-tide.fs": ("medium", 15.1, {"540": 0, "720": 3.3}), "nxlx-aurora.fs": ("medium", 20.6, {"540": 0, "720": 6.7}),
-    "nxlx-drift.fs": ("heavy", 30.0, {"360": 0, "540": 2.1, "720": 10.1}), "nxlx-nebula.fs": ("heavy", 32.7, {"360": 0, "540": 3.9, "720": 11}),
+    "nxlx-aurora.fs": ("medium", (12.9, 0.0), (22.8, 4.87)),
+    "nxlx-drift.fs": ("heavy", (20.1, 2.01), (35.7, 10.55)),
+    "nxlx-ember.fs": ("light", (6.5, 0.0), (11.4, 0.39)),
+    "nxlx-horizon.fs": ("light", (5.5, 0.0), (9.4, 0.0)),
+    "nxlx-lattice.fs": ("light", (4.9, 0.0), (8.3, 0.0)),
+    "nxlx-nebula.fs": ("heavy", (19.6, 1.48), (34.8, 11.55)),
+    "nxlx-prism.fs": ("light", (5.4, 0.0), (9.4, 0.0)),
+    "nxlx-pulse.fs": ("light", (6.2, 0.0), (10.9, 0.27)),
+    "nxlx-silk.fs": ("light", (4.5, 0.0), (7.5, 0.0)),
+    "nxlx-tide.fs": ("medium", (8.7, 0.0), (15.4, 1.17)),
+    "nxlx-bloom.fs": ("medium", (8.2, 0.0), (14.8, 1.17)),
+    "nxlx-caustic.fs": ("light", (5.8, 0.0), (10.4, 0.0)),
+    "nxlx-contour.fs": ("light", (4.6, 0.0), (8.2, 0.0)),
+    "nxlx-dusk.fs": ("light", (5.3, 0.0), (9.9, 0.0)),
+    "nxlx-fringe.fs": ("light", (6.0, 0.0), (11.4, 0.2)),
+    "nxlx-kaleido.fs": ("light", (5.9, 0.0), (10.5, 0.0)),
+    "nxlx-lantern.fs": ("medium", (11.5, 0.0), (20.5, 3.84)),
+    "nxlx-moire.fs": ("light", (4.7, 0.0), (7.5, 0.0)),
+    "nxlx-petal.fs": ("medium", (7.9, 0.0), (13.8, 0.81)),
+    "nxlx-pool.fs": ("medium", (7.2, 0.0), (13.5, 1.1)),
+    "nxlx-ribbon.fs": ("light", (4.8, 0.0), (8.2, 0.0)),
+    "nxlx-ridge.fs": ("medium", (7.1, 0.0), (13.2, 0.79)),
+    "nxlx-stars.fs": ("medium", (7.2, 0.0), (13.3, 0.77)),
+    "nxlx-tiles.fs": ("light", (4.5, 0.0), (7.8, 0.0)),
+    "nxlx-veil.fs": ("light", (4.5, 0.0), (8.3, 0.0)),
+    "nxlx-bars.fs": ("light", (4.0, 0.0), (7.2, 0.0)),
+    "nxlx-beam.fs": ("medium", (6.9, 0.0), (12.5, 1.0)),
+    "nxlx-burst.fs": ("light", (6.3, 0.0), (11.1, 0.15)),
+    "nxlx-checker.fs": ("light", (4.1, 0.0), (7.4, 0.0)),
+    "nxlx-chevron.fs": ("light", (4.6, 0.0), (7.8, 0.0)),
+    "nxlx-glitch.fs": ("light", (5.7, 0.0), (10.0, 0.0)),
+    "nxlx-grid.fs": ("light", (4.9, 0.0), (8.4, 0.0)),
+    "nxlx-halftone.fs": ("light", (4.3, 0.0), (7.5, 0.0)),
+    "nxlx-mirror.fs": ("light", (4.3, 0.0), (7.8, 0.0)),
+    "nxlx-radar.fs": ("light", (6.8, 0.0), (12.6, 0.46)),
+    "nxlx-scope.fs": ("medium", (6.6, 0.0), (11.8, 0.56)),
+    "nxlx-spokes.fs": ("light", (4.9, 0.0), (8.7, 0.0)),
+    "nxlx-stripes.fs": ("light", (4.2, 0.0), (7.4, 0.0)),
+    "nxlx-tunnel.fs": ("light", (5.1, 0.0), (9.1, 0.0)),
+    "nxlx-zoom.fs": ("light", (4.6, 0.0), (8.0, 0.0)),
+    "isf-color-bars.fs": ("light", (2.0, 0.0), (3.5, 0.0)),
+    "isf-corner-colors.fs": ("light", (4.6, 0.0), (8.3, 0.0)),
+    "isf-linear-gradient.fs": ("light", (1.7, 0.0), (2.7, 0.0)),
+    "isf-radial-gradient.fs": ("light", (2.2, 0.0), (3.7, 0.0)),
+    "isf-ridgelines.fs": ("heavy", (16.8, 1.11), (29.8, 7.76)),
+    "isf-simplex-noise.fs": ("medium", (15.7, 0.45), (27.9, 7.18)),
+    "isf-sine-warp-gradient.fs": ("light", (3.6, 0.0), (6.5, 0.0)),
 }
-LIGHT_RANGE = (7.5, 11.2)
-RETUNED = ("nxlx-drift.fs",)    # its look was changed after it was measured; the work per pixel was meant to stay
+RETUNED = ()                    # shaders whose look was changed after they were measured: their numbers are marked stale
+
+
+def weigh(low, high):
+    """The class that two dropped-frame rates (at 540 and at 720 lines) make."""
+    return "light" if high < HOLDS else ("medium" if low < HOLDS else "heavy")
 
 
 def performance(categories):
@@ -96,13 +149,13 @@ def weight_of(sid, cost):
 
 
 def measured(sid):
+    """What was measured for a bundled shader on a Pi 4, or None: the pass time at 720 lines as "pass_ms" (the number
+    the library shows), both heights in "pass_ms_by_lines", and the frames dropped a second by drawing height."""
     if sid not in PI4:
         return None
-    _, ms, drops = PI4[sid]
-    out = {"board": "pi4", "lines": 720, "pass_ms": ms, "drops_per_second": dict(drops), "stale": sid in RETUNED}
-    if ms is None:
-        out["pass_ms_range"] = list(LIGHT_RANGE)
-    return out
+    _, low, high = PI4[sid]
+    return {"board": "pi4", "lines": 720, "pass_ms": high[0], "pass_ms_by_lines": {"540": low[0], "720": high[0]},
+            "drops_per_second": {"540": low[1], "720": high[1]}, "stale": sid in RETUNED}
 
 
 _BRANCH = re.compile(r"\b(?:for|while|if)\s*\(")
