@@ -945,7 +945,8 @@ class Api:
             self._player_call(p.clear)
             self._stop_capture()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
-            self.effects.sweep()            # a Stop takes the effect off (the player did); its text goes too
+            if self.effects.on is not None:     # a Stop takes the effect off (the player did); its text goes too. Only
+                self.effects.sweep()            # then: a Stop with no effect on does nothing more than it did before
         elif action == "seek_to":
             self._player_call(p.seek_to, number(body, "value", 0, 24 * 3600))
         elif action == "shuffle":

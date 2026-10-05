@@ -1144,7 +1144,7 @@ class Engine:
                 try:
                     new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
                     fx = getattr(self.api, "effects", None)
-                    if new is not None and fx is not None and fx is not self:
+                    if new is not None and fx is not None and fx is not self and fx.on is not None:
                         fx.sweep()                  # the generator took an effect off the screen: its text goes too
                 except PlayerError as e:
                     self._cleanup({before["path"]} if before else set())

@@ -75,6 +75,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - **On mpv 0.37 with its default scalers a video after one of another size was black in CI until a shader changed** (LESSONS). It is not about effects. A Pi 4 runs with cheap scaling, where it did not happen; an x86 box or a Pi 5 would run with the default scalers: look for it there.
 - **Seven pack files were taken out after the review** (two matched a public snippet their credit does not name; five more as a precaution, without a comparison). If the owner wants a bulge, a ball or a splash back, they are to be written, not restored.
 - **With nothing playing, Next and the one effect button answer "ok" and then do nothing** (the reason is in the Effects card): the price of a controller's calls never asking the player.
+- **A race in the MIDI hub, found through a test that failed now and then, not fixed here:** when MIDI is switched off between a button's press and its release, the release is dropped and the hub still holds the button as pressed; after MIDI is switched on again the first press of that button does nothing. `tests/test_lights.py` (`test_m1_a_controller_known_by_its_card_id_alone...`) depends on that timing.
 - **Left out on purpose:** a chain of effects, transitions, passes, persistent buffers, an effect that comes back after a restart (the vignette for the painting wall has to be put on again), a preset rename in the panel, pictures of the card in `docs/UI.md`.
 
 **What needs the owner.**
