@@ -754,28 +754,37 @@ class SocketTest(unittest.TestCase):
         self.assertEqual(self.nm.calls, [])
 
     def test_a_helper_that_is_gone_is_still_not_running(self):
-        # a failed write with nothing to read stays what it was: the helper is not there
-        gone = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        path = os.path.join(self.dir, "gone.sock")
-        gone.bind(path)
-        gone.listen(1)
-        done = threading.Event()
-
-        def hang_up():
-            conn, _ = gone.accept()
-            conn.close()
-            done.set()
-        threading.Thread(target=hang_up, daemon=True).start()
+        # A failed write with nothing to read stays what it was: the helper is not there. And since nothing was
+        # asked, the only answer taken after a failed write is a whole refusal: not half a line, not something
+        # that is no refusal, and never one that claims success.
         from unittest import mock
+        for n, said in enumerate((b"", b'{"ok": false, "error": "not al', b'{"ok": true}\n', b'[1]\n', b'junk\n')):
+            gone = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            path = os.path.join(self.dir, "gone%d.sock" % n)
+            gone.bind(path)
+            gone.listen(1)
+            done = threading.Event()
 
-        class LateSender(socket.socket):
-            def sendall(self, *a):
-                assert done.wait(5)
-                return super().sendall(*a)
-        with mock.patch.object(socket, "socket", LateSender):
-            with self.assertRaises(NetError):
-                NetdClient(path, timeout=5).request({"cmd": "status"})
-        gone.close()
+            def hang_up(gone=gone, said=said, done=done):
+                conn, _ = gone.accept()
+                if said:
+                    conn.sendall(said)
+                conn.close()
+                done.set()
+            threading.Thread(target=hang_up, daemon=True).start()
+
+            class LateSender(socket.socket):
+                def __init__(self, *a, fileno=None, **k):
+                    super().__init__(*a, fileno=fileno, **k)
+                    self.mine = fileno is None
+
+                def sendall(self, *a):
+                    assert not self.mine or done.wait(5)
+                    return super().sendall(*a)
+            with mock.patch.object(socket, "socket", LateSender):
+                with self.assertRaises(NetError, msg=said):
+                    NetdClient(path, timeout=5).request({"cmd": "status"})
+            gone.close()
 
     def test_garbage_and_oversized_requests(self):
         for raw in (b"not json\n", b"[1,2]\n", b"[" * 3000 + b"\n", b"x" * 5000 + b"\n"):

@@ -469,8 +469,8 @@ def exchange(path, message, timeout):
 
     A helper refuses a caller it does not know by answering and closing WITHOUT reading. When it is quicker than
     the caller, the caller's write fails with a broken pipe while the refusal is already waiting to be read. So a
-    failed write is not the end: what the helper sent is read first, and the write's error counts only if there
-    was nothing."""
+    failed write is not the end: what the helper sent is read first, and the write's error counts unless that is a
+    whole refusal."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
@@ -483,19 +483,20 @@ def exchange(path, message, timeout):
         except OSError as e:                # a broken pipe or a reset: the helper has closed already
             unsent = e
         data = b""
-        try:
-            while not data.endswith(b"\n") and len(data) < 65536:
-                chunk = s.recv(65536)
-                if not chunk:
-                    break
-                data += chunk
-        except socket.timeout:
-            raise
-        except OSError:                     # closed under us: what was read before counts, if it is a whole answer
-            if not data.endswith(b"\n"):
-                raise
-        if unsent is not None and not data:
-            raise unsent
+        while not data.endswith(b"\n") and len(data) < 65536:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        if unsent is not None:
+            # Nothing was asked, so the only answer there can be is a refusal: a whole line that says "ok": false.
+            # Anything else (nothing, half a line, an answer that claims success) is the failed write's error.
+            try:
+                refused = data.endswith(b"\n") and json.loads(data).get("ok") is False
+            except (ValueError, AttributeError):
+                refused = False
+            if not refused:
+                raise unsent
         return data
     finally:
         s.close()
