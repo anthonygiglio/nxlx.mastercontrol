@@ -1196,5 +1196,8 @@
     } else if (/^[1-8]$/.test(e.key)) keys.preset(+e.key);
   });
 
-  window.pvjShaders = { liveRow: liveRow, liveStrip: liveStrip, patch: patch, page: page, nice: nice };
+  // For the Room screen's ambience control (room.js): the same player state, set choice and request body as the
+  // Vibes row on Live, so a set chosen on one screen is the set the other starts.
+  var lend = { player: player, activeSet: activeSet, startSet: startSet, body: vibesBody, choose: function (id) { ui.startSet = id; } };
+  window.pvjShaders = { liveRow: liveRow, liveStrip: liveStrip, patch: patch, page: page, nice: nice, vibes: lend };
 })();

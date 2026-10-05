@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: Apache-2.0
-// The Room screen (see ROOM.md): scenes to tap, each group of projectors on or off, its source and its mutes, All off
-// with a second tap, and the state of each group at a glance. A view-only device sees the state and no buttons. A
+// The Room screen (see ROOM.md): ambience to start and stop (the Vibes rotation, with the helpers of shaders.js),
+// scenes to tap, each group of projectors on or off, its source and its mutes, All off with a second tap, and the
+// state of each group at a glance. A view-only device sees the state and no buttons. A
 // full-access device also gets the set-up of groups and scenes. Loaded after app.js, which hands its own helpers
 // over in `c` (h, api, say, can, moduleOn, state); text only ever goes into the page as textContent.
 (function () {
@@ -14,6 +15,7 @@
   document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden' && resume) resume(); });
   var names = {};          // scene id -> name, for the schedule card
   var streams = null;      // saved streams, read once when a scene may play one
+  var follow = null;       // the open screen's ambience card, redrawn from each status poll of app.js (no request of its own)
   var draft = { group: blankGroup(), scene: blankScene() };     // what is being typed; survives redraws
 
   function blankGroup() { return { id: '', name: '', projectors: [] }; }
@@ -41,11 +43,90 @@
       if (old) letin.removeChild(old);
       if (letin.open) letin.appendChild(c.letIn());
     });
+    var amb = ambience();
     var root = h('div', { class: 'screen', id: 'roomscreen' },
       h('div', { class: 'top' }, h('h1', { text: 'Room' }), live ? null : h('div', { class: 'pill k', id: 'roomviewonly', text: 'View only' })),
       h('div', { id: 'msg', class: 'msg' + (c.state.msgErr ? ' err' : ''), role: 'status', text: c.state.msg }),
-      scenes, groups, letin, setup);
+      amb, scenes, groups, letin, setup);
     var shownLive = null, shownSetup = null, last = null;
+
+    // ---- ambience: the Vibes rotation, under the name staff use for it ----
+    // What is playing comes from the status app.js already reads every second, so this asks nothing while it waits.
+    // The sets are read once when the screen opens and again when the tab is shown again. A presenter (live access)
+    // gets the buttons, a guest one line of state. With the module off: nothing, and for the owner the way to it.
+    function ambience() {
+      var V = window.pvjShaders && window.pvjShaders.vibes;
+      follow = null;
+      if (!V) return null;
+      if (!c.moduleOn('shaders')) {
+        if (!full || !c.openShaders) return null;
+        return h('div', { class: 'card room-amb', id: 'roomamboff' }, h('div', { class: 'row wrap' },
+          h('span', { class: 'hint grow', text: 'Ambience (Vibes) is switched off.' }),
+          h('button', { class: 'btn', id: 'roomambopen', text: 'Open Shaders and Vibes', onclick: c.openShaders })));
+      }
+      var nice = window.pvjShaders.nice, data = null, held = null, shown = '';
+      var words = h('span', { id: 'roomambwords' }), under = h('span', { class: 'vibessub', id: 'roomambsub' });
+      function post(body, after) {
+        c.api('POST', '/api/vibes', body).then(function (r) {
+          if (!r.ok) { held = null; c.say(r.data.error || 'Something went wrong', true); return draw(); }
+          c.say('');
+          if (after) after();
+          setTimeout(function () { if (document.body.contains(card)) c.poll(); }, 1200);     // the first shader is on within a second
+        });
+      }
+      var big = live ? h('button', { class: 'btn big vibesbig', id: 'roomamb', onclick: function () {
+        var on = !state().on;
+        held = { on: on, until: Date.now() + 5000 };      // say so at once; the box's own word takes over when it agrees
+        draw();
+        post(V.body(data, on));
+      } }, words, under) : null;
+      var next = live ? h('button', { class: 'btn big', id: 'roomambnext', text: 'Next one', 'aria-label': 'Ambience: the next one', hidden: true,
+        onclick: function () { post({ next: true }); } }) : null;
+      var pick = live ? h('select', { class: 'text-input', id: 'roomambset', hidden: true, 'aria-label': 'The set of shaders ambience plays' }) : null;
+      if (pick) pick.addEventListener('change', function () {
+        V.choose(pick.value); pick.blur();
+        if (state().on && data) post(V.body(data, true));          // while it plays, the chosen set takes over
+      });
+      var line = live ? null : h('div', { class: 'room-text', id: 'roomambstate', role: 'status' });
+      var card = h('div', { class: 'card room-amb', id: 'roomambience' }, h('h2', { text: 'Ambience' }),
+        live ? h('div', { class: 'vibesrow' }, big, next, pick) : line);
+      function state() {
+        var pl = V.player(c), on = !!pl.vibes;
+        if (held && (held.on === on || Date.now() > held.until)) held = null;
+        return { on: held ? held.on : on, name: on && !(held && !held.on) ? nice(pl.shader) : '' };
+      }
+      function sets() {
+        if (!pick || !data) return;
+        var shape = JSON.stringify(data.sets.map(function (e) { return [e.id, e.name]; }));
+        if (pick.getAttribute('data-shape') !== shape && document.activeElement !== pick) {
+          pick.textContent = '';
+          data.sets.forEach(function (e) { pick.appendChild(h('option', { value: e.id, text: 'Set: ' + e.name })); });
+          pick.setAttribute('data-shape', shape);
+        }
+        pick.hidden = data.sets.length < 2;
+        if (document.activeElement !== pick) pick.value = (data.vibes.running && data.vibes.set && data.vibes.set.id) || (V.startSet(data) || V.activeSet(data) || {}).id || '';
+      }
+      function draw() {
+        var s = state(), key = JSON.stringify(s);
+        if (key === shown) return;
+        shown = key;
+        var playing = 'Ambience is playing' + (s.name ? ': ' + s.name : '');
+        if (!live) { line.textContent = s.on ? playing + '.' : 'Ambience is not playing.'; return; }
+        words.textContent = s.on ? playing + '.' : 'Start ambience';
+        under.textContent = s.on ? 'Tap to stop' : 'Moving pictures, one after another';
+        big.className = 'btn big vibesbig' + (s.on ? ' on' : '');
+        big.setAttribute('aria-pressed', s.on ? 'true' : 'false');
+        next.hidden = !s.on;
+      }
+      function read() {
+        if (!pick) return;
+        c.api('GET', '/api/shaders').then(function (r) { if (r.ok && document.body.contains(card)) { data = r.data; sets(); } });
+      }
+      follow = { draw: function () { if (document.body.contains(card)) draw(); else if (follow && follow.card === card) follow = null; }, read: read, card: card };
+      draw();
+      read();
+      return card;
+    }
 
     function send(path, body, said) {
       c.api('POST', path, body).then(function (r) {
@@ -356,7 +437,7 @@
     var wait = 2000;       // between two looks; longer after each one that fails, back to 2 seconds when one works
     function load(now) {
       clearTimeout(timer);
-      resume = function () { if (document.body.contains(root)) load(true); };
+      resume = function () { if (document.body.contains(root)) { load(true); if (follow) follow.read(); } };
       if (!c.state.device) return;                                       // no longer paired: nothing more is asked
       if (!now && document.visibilityState === 'hidden') return;         // a hidden tab asks nothing; `resume` looks again
       c.api('GET', '/api/room').then(function (r) {
@@ -364,6 +445,7 @@
         clearTimeout(timer);
         wait = r.ok ? 2000 : Math.min(wait * 2, 30000);
         if (!c.state.device) return;
+        if (follow) follow.draw();
         timer = setTimeout(function () { if (document.body.contains(root)) load(); }, wait);
         if (!r.ok) {
           if (last === null) { scenes.textContent = ''; scenes.appendChild(h('h2', { text: 'Scenes' })); scenes.appendChild(h('div', { class: 'hint', id: 'roommsg', text: r.data.error || 'Not available' })); }
@@ -398,5 +480,5 @@
   }
   function sceneName(id) { return names[id] || '(a scene that was removed, or the Room module is off)'; }
 
-  window.pvjRoom = { screen: screen, scheduleField: scheduleField, sceneName: sceneName };
+  window.pvjRoom = { screen: screen, scheduleField: scheduleField, sceneName: sceneName, patch: function () { if (follow) follow.draw(); } };
 })();
