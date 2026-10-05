@@ -137,14 +137,15 @@ def weigh(small, large):
 def measured(sid):
     """What was measured for a bundled filter on a Pi 4, or None: the filter's own pass in milliseconds and the frames
     dropped a second by the clip's lines, at full size and with Half resolution ("1080", "1080_half", "720",
-    "720_half"), and the largest of the two clips it held 30 frames a second over, at full size and at half."""
+    "720_half"), the largest of the two clips it held 30 frames a second over, at full size and at half, and the
+    lines Automatic lets it work at on that board ("works_at": where it held the 1080 line clip)."""
     if sid not in PI4:
         return None
     _, large, small = PI4[sid]
     by = {"1080": large[0], "1080_half": large[1], "720": small[0], "720_half": small[1]}
     holds = lambda a, b: 1080 if a[1] < HOLDS else (720 if b[1] < HOLDS else None)
     return {"board": "pi4", "pass_ms": {k: v[0] for k, v in by.items()}, "drops_per_second": {k: v[1] for k, v in by.items()},
-            "holds": holds(large[0], small[0]), "holds_half": holds(large[1], small[1])}
+            "holds": holds(large[0], small[0]), "holds_half": holds(large[1], small[1]), "works_at": auto_lines("pi4", sid)}
 
 
 # ---- the working size ("Effect detail") ---------------------------------------------------------------------------------

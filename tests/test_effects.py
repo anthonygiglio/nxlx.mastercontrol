@@ -668,7 +668,8 @@ class LibraryTest(Base):
                                                "pass_ms": {"1080": large[0][0], "1080_half": large[1][0], "720": small[0][0], "720_half": small[1][0]},
                                                "drops_per_second": {"1080": large[0][1], "1080_half": large[1][1], "720": small[0][1], "720_half": small[1][1]},
                                                "holds": 1080 if weight == "light" else (720 if weight == "medium" else None),
-                                               "holds_half": 1080 if large[1][1] < E.HOLDS else (720 if small[1][1] < E.HOLDS else None)}, sid)
+                                               "holds_half": 1080 if large[1][1] < E.HOLDS else (720 if small[1][1] < E.HOLDS else None),
+                                               "works_at": E.auto_lines("pi4", sid)}, sid)
             self.assertEqual(row["estimate"]["weight"], E.estimate(self.fx._parsed(self.fx._path(sid)[0])[0])["weight"], sid)       # the count is still told
         self.assertEqual((E.weigh(0, 0), E.weigh(0, 0.49), E.weigh(0, 0.5), E.weigh(0.49, 9), E.weigh(0.5, 9)), ("light", "light", "medium", "medium", "heavy"))
         self.assertEqual((E.HOLDS, E.HOLDS), (L.HOLDS, L.Guard.TIGHT))                 # "holds" is where the guard says "ok", as for a generator
