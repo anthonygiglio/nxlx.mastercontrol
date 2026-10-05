@@ -51,8 +51,8 @@ function startServer() {
     const problems = [];
     // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a value sent to a
     // shader that has left the screen and the 503 for a screen preview from a harness player with no window are
-    // provoked on purpose.
-    const expected = /status of (400|401|403|409|503)/;
+    // provoked on purpose; so is the 502 for "Try again" on a projector that nothing answers for.
+    const expected = /status of (400|401|403|409|502|503)/;
     page.on('console', (m) => { if (['error', 'warning'].includes(m.type()) && !expected.test(m.text())) problems.push(m.text()); });
     page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
     const base = 'http://127.0.0.1:' + info.port;
@@ -241,7 +241,15 @@ function startServer() {
     await switchOn('Network');
     await page.waitForSelector('#netiface');
     await page.waitForSelector('#netcard >> text=192.168.1.9/24', { timeout: 8000 });  // the address arrives after the card first draws
+    // Every field has a visible label; the box tries a setting, it does not just "apply" it; the rest is under Advanced
     await page.click('#netmodes >> text=Fixed address');
+    await page.waitForSelector('#netgw');
+    for (const [id, text] of [['netaddr', 'Address'], ['netprefix', 'Size of the network'], ['netgw', 'Router (optional)'], ['netdns', 'Name servers (optional)']]) {
+      assert.strictEqual(await page.textContent(`label[for="${id}"]`), text, 'the label of #' + id);
+    }
+    assert.strictEqual(await page.textContent('#netapply'), 'Try this setting');
+    assert(!(await page.isVisible('#netpreview')) && !(await page.isVisible('#netsecs')), 'the commands and the time to go back are under Advanced');
+    assert(await page.isVisible('#netiface'), 'two ports: the choice of port is shown');
     await page.fill('#netaddr', '192.168.50.20');
     await page.fill('#netprefix', '24');
     // The gateway is set without any input event (as a lost or late event would): the redraw must still keep it.
@@ -269,6 +277,7 @@ function startServer() {
     }
     // The card can still be redrawn once more after loading (which clears the preview), so press again until it sticks
     for (let tries = 0; ; tries++) {
+      if (!(await page.isVisible('#netpreview'))) await page.click('#netadv > summary');      // the commands are under Advanced
       await page.click('#netpreview');
       try {
         await page.waitForFunction(() => { const e = document.getElementById('netplan'); return e && /ipv4\.addresses 192\.168\.50\.20\/24/.test(e.textContent); }, null, { timeout: 2500 });
@@ -335,8 +344,20 @@ function startServer() {
     await sys('OSC');
     assert.strictEqual(await page.locator('#osccard, #oscline').count(), 0, 'OSC off shows no card');
     await switchOn('OSC');
-    await page.waitForFunction(() => /Listening on UDP/.test(document.getElementById('oscline').textContent));
+    await page.waitForFunction(() => /^Listening on UDP port \d+\. Nothing received yet\.$/.test(document.getElementById('oscline').textContent));
     assert.strictEqual((await get('/api/osc')).enabled, true, 'the page switch turned OSC on');
+    // Fields have labels; Save changes waits for a change; the extra networks are under Advanced
+    assert.strictEqual(await page.textContent('label[for="oscport"]'), 'UDP port');
+    assert(await page.isDisabled('#oscsave') && !(await page.isVisible('#oscallow')), 'nothing to save yet, and the networks are folded');
+    await page.click('#oscadv > summary');
+    assert.strictEqual(await page.textContent('label[for="oscallow"]'), 'Also accept from these networks');
+    const oscPort = await page.inputValue('#oscport');
+    await page.fill('#oscport', '80');
+    assert(await page.isVisible('#oscsavedirty'), 'a changed port says Not saved yet');
+    await page.click('#oscsave');
+    await page.waitForFunction(() => /Nothing was changed/.test(document.getElementById('oscsaveresult').textContent));
+    await page.fill('#oscport', oscPort);
+    assert(await page.isDisabled('#oscsave'), 'back to the saved port: nothing to save');
     assert.strictEqual(await page.locator('#osctoggle').count(), 0, 'no second switch inside the OSC card');
     await onPage('OSC');
     await sysIndex();
@@ -386,15 +407,27 @@ function startServer() {
     // DMX: ONE switch. It switches the module on and then DMX itself, so the box is listening when it says On.
     await sys('DMX lighting desk');
     await switchOn('DMX lighting desk');
-    await page.waitForSelector('#dmxline:has-text("Listening on UDP")');
+    await page.waitForSelector('#dmxline:text-is("Listening for Art-Net on universe 0. Nothing received yet.")');
     assert(await moduleIsOn('control-dmx') && (await get('/api/dmx')).enabled === true, 'the page switch turned on the module and DMX itself');
     assert.strictEqual(await page.locator('#dmxtoggle').count(), 0, 'no second switch inside the DMX card');
+    for (const id of ['dmxproto', 'dmxuni', 'dmxstart']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
+    assert(await page.isDisabled('#dmxsave') && !(await page.isVisible('#dmxallow')), 'nothing to save yet, and the networks are folded under Advanced');
+    // The channel table: number, what it does, the live level; eight channels from the start channel, and the ninth
+    assert.deepStrictEqual(await page.$$eval('#dmxchannels tbody tr', (rs) => rs.map((r) => r.children[0].textContent + ' ' + r.querySelector('.field').textContent)),
+      ['1 Opacity', '2 Size', '3 Position X', '4 Speed', '5 Volume', '6 Blackout', '7 Pad', '8 Function', '9 Vibes (optional)'], 'the channels, by name');
     await page.fill('#dmxuni', '99999');
+    assert(await page.isVisible('#dmxsavedirty'), 'a change says Not saved yet');
     await page.click('#dmxsave');
     await page.waitForFunction(() => /universe/i.test(document.getElementById('msg').textContent));
+    assert(/universe/i.test(await page.textContent('#dmxsaveresult')), 'the refusal is under the button too');
     await page.fill('#dmxuni', '2');
+    await page.fill('#dmxstart', '101');
     await page.click('#dmxsave');
-    await page.waitForFunction(() => fetch('/api/dmx').then((r) => r.json()).then((d) => d.universe === 2));
+    await page.waitForFunction(() => fetch('/api/dmx').then((r) => r.json()).then((d) => d.universe === 2 && d.start === 101));
+    await page.waitForSelector('#dmxline:has-text("Listening for Art-Net on universe 2.")');
+    await page.waitForSelector('#dmxchannels tr[data-ch="101"]');
+    assert.strictEqual(await page.textContent('#dmxchannels tbody tr >> nth=0 >> td >> nth=0'), '101', 'the table follows the start channel');
+    assert.strictEqual(await page.textContent('#dmxsaveresult'), 'Saved');
     await onPage('DMX lighting desk');
     await sysIndex();
     await chip('DMX lighting desk', 'Ready');
@@ -1091,9 +1124,19 @@ function startServer() {
     await sys('Boxes in step');
     await switchOn('Boxes in step');
     await page.waitForSelector('#syncrole-server');
+    // The first thing asked is what this box does: two large choices, and nothing else to fill in yet
+    assert.strictEqual(await page.textContent('#syncask'), 'What does this box do?');
+    assert.deepStrictEqual(await page.$$eval('#syncroles button', (bs) => bs.map((b) => b.textContent)), ['LeadOther boxes follow this one.', 'FollowThis box follows another.'], 'lead or follow');
+    assert.strictEqual(await page.locator('#syncgroup, #wallfold').count(), 0, 'the group and the wall come after the choice');
     await page.click('#syncrole-server');
-    await page.waitForSelector('#syncline:has-text("Server")');
+    await page.waitForSelector('#syncline:has-text("server of group")');
+    await page.waitForSelector('label[for="syncgroup"]:text-is("Group name")');
+    // The video wall is folded until it is used; a screen's place is offered only inside the chosen size
+    assert(!(await page.isVisible('#wallcols')), 'the wall is folded while it is not in use');
+    await page.click('#wallfold > summary');
+    assert.strictEqual(await page.locator('#wallcol option').count(), 1, 'one column: one place to choose');
     await page.selectOption('#wallcols', '2');
+    assert.strictEqual(await page.locator('#wallcol option').count(), 2, 'two columns: two places');
     await page.selectOption('#wallcol', '1');
     await page.fill('#wallbezel', '3');
     await page.click('#wallsave');
@@ -1103,14 +1146,20 @@ function startServer() {
     // The card is rebuilt by the answer to the save above and, while it is a server, every 2 seconds. A column chosen
     // just before such a rebuild must still be there at the click. It is set without an event (as the Network step
     // does), the line at the top of the card is marked, and the step waits until that line is a new one.
-    await page.evaluate(() => { document.getElementById('syncline').dataset.seen = '1'; document.getElementById('wallcol').value = '2'; });
+    await page.evaluate(() => { document.getElementById('syncline').dataset.seen = '1'; document.getElementById('wallcol').value = '0'; });
     await page.waitForFunction(() => { const l = document.getElementById('syncline'); return l && !l.dataset.seen; }, null, { timeout: 8000 });
-    if (await page.evaluate(() => document.getElementById('wallcol').value) !== '2') throw new Error('a redraw of the Sync card lost the chosen column: ' + await syncState());
+    if (await page.evaluate(() => document.getElementById('wallcol').value) !== '0') throw new Error('a redraw of the Sync card lost the chosen column: ' + await syncState());
+    assert(await page.isVisible('#wallcols'), 'a wall in use stays unfolded through a redraw');
     await page.click('#wallsave');
     try {
-      await page.waitForFunction(() => /inside the wall/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
-    } catch (e) { throw new Error(e.message.split('\n')[0] + ' | no refusal shown: ' + await syncState()); }
+      await page.waitForFunction(() => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.col === 0), null, { timeout: 15000 });
+    } catch (e) { throw new Error(e.message.split('\n')[0] + ' | the column was not saved: ' + await syncState()); }
+    // a tile outside the wall can no longer be chosen in the panel; the box still refuses one
+    assert.strictEqual(await post('/api/sync', { wall: { cols: 2, rows: 1, col: 2, row: 0, bezel: 3 } }), 400, 'the box refuses a tile outside the wall');
+    // Stopping asks first: the other boxes stop following
     await page.click('#syncrole-off');
+    await page.waitForSelector('#confirmrow:has-text("Stop leading? The other boxes stop following this one.")');
+    await page.click('#confirmyes');
     await page.waitForSelector('#syncline:has-text("Off")');
     await fitsCard('#synccard', 'Sync card');
     await onPage('Boxes in step');
@@ -1150,8 +1199,13 @@ function startServer() {
     await page.waitForFunction(() => !document.querySelector('.map-entry'));
     await sys('Remote support');
     // Remote support: off by default; settings saved and checked; allowing it shows the start controls
-    await page.waitForSelector('#supportcard #supportsave');
+    await page.waitForSelector('#supportcard #supportline');
     assert(/Remote support is off/.test(await page.textContent('#supportcard')), 'remote support starts off');
+    // What staff see first is the state; the support server is under Advanced
+    assert(!(await page.isVisible('#support-endpoint')), 'the support server fields are folded');
+    await page.click('#supportadv > summary');
+    for (const id of ['support-endpoint', 'support-server_key', 'support-address', 'support-network']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
+    assert(await page.isDisabled('#supportsave'), 'nothing to save until something is typed');
     assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', 'and its switch is the page switch');
     assert.strictEqual(await page.locator('#supportallow').count(), 0, 'no second switch inside the Remote support card');
     await page.fill('#support-endpoint', 'support.example.com:51820');
@@ -1164,6 +1218,8 @@ function startServer() {
     await page.waitForSelector('#sysswitch[aria-checked="true"]');
     assert.strictEqual((await get('/api/support')).config.allowed, true, 'the page switch allowed remote support');
     await page.waitForSelector('#supportstart');
+    assert(await page.isVisible('label[for="supportminutes"]') && await page.isVisible('label[for="supportrole"]'), 'how long and what support may do have labels');
+    assert(await page.isVisible('#support-address'), 'Advanced stays open through a redraw');
     await page.waitForSelector('#supportwhy');                       // no helper in the test harness: said plainly
     await page.fill('#support-address', '10.99.0.40');
     await page.click('#supportsave');

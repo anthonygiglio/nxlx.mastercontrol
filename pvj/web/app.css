@@ -409,3 +409,5 @@ table.chan .lvl { width: 36%; }
   .split > .splitside > .addform { border-top: 0; padding-top: 0; }
 }
 .sched-entry.editing { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
+.split.even { }
+@media (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }

@@ -211,73 +211,95 @@
         onclick: function () { act('POST', '/api/support/stop', {}, function () { poll(); setTimeout(render, 300); }); } }) : null);
   }
   var supportForm = null;   // survives redraws while typing the settings
+  var supportAdv = false;   // whether "Advanced: support server settings" is open
+  // Remote support. Staff see the state, how long, what support may do and one button. The support server, this
+  // box's key and the list of past sessions are the owner's, under Advanced.
   function supportCard() {
-    var body = h('div', { class: 'list', id: 'supportbody' }, h('div', { class: 'k', text: 'Loading...' }));
+    var body = h('div', { class: 'list sp', id: 'supportbody' }, h('div', { class: 'hint', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'supportcard' }, h('h2', { text: 'Remote support' }), body);
     var timer = null;
-    function refresh() { api('GET', '/api/support').then(function (r) { if (document.getElementById('supportcard') && r.ok) draw(r.data); }); }
+    function refresh() { api('GET', '/api/support').then(function (r) { if (document.getElementById('supportcard') && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } draw(r.data); } }); }
     function post(path, b) { return act('POST', path, b, function (data) { say(''); draw(data); poll(); }); }
+    var ROLES = { full: 'check and change everything', live: 'play and mix only', view: 'watch only' };
     function draw(d) {
       clearTimeout(timer);
       body.textContent = '';
       if (d.active) timer = setTimeout(refresh, 5000);
       if (!d.config) {        // support itself, or a device without full access
-        body.appendChild(h('div', { class: 'k', text: d.active ? 'A support session is open, ' + mins(d.seconds_left) + ' left.' : 'No support session.' }));
+        body.appendChild(h('div', { class: 'state', id: 'supportline', text: d.active ? 'A support session is open, ' + mins(d.seconds_left) + ' left.' : 'No support session is open.' }));
         return;
       }
       var c = d.config;
-      if (d.available === false) body.appendChild(h('div', { class: 'k', id: 'supportwhy', text: 'Not available on this box: ' + (d.why || '') }));
+      body.appendChild(h('div', { class: 'state', id: 'supportline', text: d.active ? 'A support session is open, ' + mins(d.seconds_left) + ' left. Support may ' + ROLES[d.role] + '.' :
+        !c.allowed ? 'Remote support is off. Nothing can reach this box from outside until you switch it on above and start a session.' :
+        d.configured ? 'Ready. No session is open, and nothing can reach this box until you start one.' : 'Switched on, but not set up yet.' }));
+      if (d.available === false) body.appendChild(h('div', { class: 'hint warn', id: 'supportwhy', text: 'It cannot start on this box: ' + (d.why || 'a part it needs is missing') + '. Tell whoever looks after the box.' }));
       if (d.active) {
-        body.appendChild(h('div', { class: 'k', text: 'Read this code to your support contact. They open http://' + d.address + '/ through the support connection and type it.' }));
+        body.appendChild(h('div', { class: 'hint', text: 'Read this code to your support contact. They open http://' + d.address + '/ through the support connection and type it.' }));
         body.appendChild(h('div', { class: 'support-code', id: 'supportcodeshow', text: d.code }));
-        body.appendChild(h('div', { class: 'k', id: 'supportstate', text: (d.connected ? 'Connected to the support server' : 'Waiting for the support server...') +
-          ' · ' + mins(d.seconds_left) + ' left · support signed in ' + d.logins + ' of ' + d.max_logins + ' times · ' +
-          ({ full: 'full access', live: 'play and mix', view: 'watch only' })[d.role] }));
-        var ext = h('select', { class: 'text-input', id: 'supportextend', 'aria-label': 'New time left' }, d.durations.map(function (m) { return h('option', { value: String(m), text: m + ' minutes from now', selected: m === 60 }); }));
-        body.appendChild(h('div', { class: 'row' }, ext,
-          h('button', { class: 'btn small', id: 'supportextendbtn', text: 'Set time', onclick: function () { post('/api/support/extend', { minutes: +ext.value }); } })));
-        body.appendChild(h('button', { class: 'btn on', id: 'supportstop', text: 'Stop the session now', onclick: function () { post('/api/support/stop', {}); } }));
-      } else if (c.allowed && d.configured) {
-        var dur = h('select', { class: 'text-input', id: 'supportminutes', 'aria-label': 'How long' }, d.durations.map(function (m) { return h('option', { value: String(m), text: m < 60 ? m + ' minutes' : (m / 60) + ' hour' + (m > 60 ? 's' : ''), selected: m === 60 }); }));
-        var role = h('select', { class: 'text-input', id: 'supportrole', 'aria-label': 'What support may do' },
-          [['full', 'Full: support can check and change settings'], ['live', 'Play and mix only'], ['view', 'Watch only']].map(function (o) { return h('option', { value: o[0], text: o[1] }); }));
-        body.appendChild(h('div', { class: 'k', text: 'Start a session when support asks for one. The box connects out to the support server; it closes by itself when the time is up, and you can stop it any time.' }));
-        body.appendChild(dur); body.appendChild(role);
-        body.appendChild(h('button', { class: 'btn on', id: 'supportstart', text: 'Start support session', onclick: function (e) {
+        body.appendChild(h('div', { class: 'state', id: 'supportstate', text: (d.connected ? 'Connected to the support server' : 'Waiting for the support server...') +
+          ' · support signed in ' + d.logins + ' of ' + d.max_logins + ' times' }));
+        var ext = h('select', { class: 'text-input', id: 'supportextend' }, d.durations.map(function (m) { return h('option', { value: String(m), text: m + ' minutes from now', selected: m === 60 }); }));
+        body.appendChild(h('div', { class: 'fieldwrap' }, h('label', { class: 'field', for: 'supportextend', text: 'Change how long it stays open' }),
+          h('div', { class: 'row' }, ext, h('button', { class: 'btn', id: 'supportextendbtn', text: 'Set time', onclick: function () { post('/api/support/extend', { minutes: +ext.value }); } }))));
+        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'supportstop', text: 'Stop the session now', onclick: function () { post('/api/support/stop', {}); } })));
+        return;
+      }
+      if (c.allowed && d.configured) {
+        var dur = h('select', { class: 'text-input', id: 'supportminutes' }, d.durations.map(function (m) { return h('option', { value: String(m), text: m < 60 ? m + ' minutes' : (m / 60) + ' hour' + (m > 60 ? 's' : ''), selected: m === 60 }); }));
+        var role = h('select', { class: 'text-input', id: 'supportrole' },
+          [['full', 'Everything: support can check and change settings'], ['live', 'Play and mix only'], ['view', 'Watch only']].map(function (o) { return h('option', { value: o[0], text: o[1] }); }));
+        body.appendChild(h('div', { class: 'hint', text: 'Start a session when support asks for one. It closes by itself when the time is up, and you can stop it at any moment.' }));
+        body.appendChild(labelled('How long', dur));
+        body.appendChild(labelled('What support may do', role));
+        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'supportstart', text: 'Start support session', onclick: function (e) {
           e.target.disabled = true; e.target.textContent = 'Connecting...';
           post('/api/support/start', { confirm: 'start', minutes: +dur.value, role: role.value }).then(function (r) { if (!r.ok) draw(d); });
-        } }));
-      }
-      if (d.active) return;
-      // Settings (only here, at the studio)
-      var f = supportForm || { endpoint: c.endpoint, server_key: c.server_key, address: c.address, network: c.network };
-      body.appendChild(h('div', { class: 'k', text: c.allowed ? 'Remote support is allowed on this box.' : 'Remote support is off. Nothing can reach this box from outside until you switch it on above and start a session.' }));
-      var fields = [['endpoint', 'Support server (host:port)', 'support.example.com:51820'], ['server_key', 'Support server key', '44 characters'],
-        ['address', 'This box on the support network', '10.77.0.5'], ['network', 'Support network', '10.77.0.0/24']];
-      var inputs = {};
-      fields.forEach(function (x) {
-        inputs[x[0]] = h('input', { class: 'text-input mono', id: 'support-' + x[0], 'aria-label': x[1], placeholder: x[2], value: f[x[0]] || '', autocomplete: 'off' });
-        inputs[x[0]].addEventListener('input', function () { supportForm = supportForm || Object.assign({}, f); supportForm[x[0]] = inputs[x[0]].value; });
-        body.appendChild(h('label', { class: 'k', for: 'support-' + x[0], text: x[1] })); body.appendChild(inputs[x[0]]);
-      });
-      body.appendChild(h('button', { class: 'btn small', id: 'supportsave', text: 'Save support settings', onclick: function () {
-        var b = {}; fields.forEach(function (x) { b[x[0]] = inputs[x[0]].value.trim(); });
-        post('/api/support/config', b).then(function (r) { if (r.ok) supportForm = null; });
-      } }));
-      if (d.public_key) {
-        var key = h('input', { class: 'text-input mono', id: 'supportkey', readonly: true, value: d.public_key, 'aria-label': 'This box\'s key' });
-        body.appendChild(h('div', { class: 'k', text: 'This box\'s key: give it to your support team once, so their server knows this box.' }));
-        body.appendChild(h('div', { class: 'row' }, key, h('button', { class: 'btn small', text: 'Copy', onclick: function () {
-          key.select(); (navigator.clipboard ? navigator.clipboard.writeText(d.public_key) : Promise.reject()).then(function () { say('Key copied.'); }, function () { say('Select the key and copy it.'); });
         } })));
+      } else if (c.allowed) {
+        body.appendChild(h('div', { class: 'hint warn', id: 'supportnotset', text: 'Not set up yet. The owner fills in the support server under Advanced.' }));
+      }
+      // Advanced: the support server (filled in once, at the studio), this box's key, past sessions
+      var f = supportForm || { endpoint: c.endpoint, server_key: c.server_key, address: c.address, network: c.network };
+      var fields = [['endpoint', 'Support server', 'support.example.com:51820', 'Its name or address, a colon, and its port.'],
+        ['server_key', 'Support server key', '', 'The 44 characters your support team gave you.'],
+        ['address', 'This box on the support network', '10.77.0.5', 'The address your support team gave this box.'],
+        ['network', 'Support network', '10.77.0.0/24', 'The range support connects from. The address above must be inside it.']];
+      var inputs = {}, inner = h('div', { class: 'list sp' });
+      var bar = saveBar('supportsave', 'Save changes', function () {
+        var b = {}; fields.forEach(function (x) { b[x[0]] = inputs[x[0]].value.trim(); });
+        api('POST', '/api/support/config', b).then(function (r) {
+          if (!r.ok) return bar.say((r.data.error || 'Could not save') + '. Nothing was changed.', true);
+          supportForm = null; draw(r.data); poll(); say('Saved');
+          var out = document.getElementById('supportsaveresult');
+          if (out) out.textContent = 'Saved';
+        });
+      });
+      fields.forEach(function (x) {
+        inputs[x[0]] = h('input', { class: 'text-input mono', id: 'support-' + x[0], placeholder: x[2], value: f[x[0]] || '', autocomplete: 'off' });
+        inputs[x[0]].addEventListener('input', function () { supportForm = supportForm || Object.assign({}, f); supportForm[x[0]] = inputs[x[0]].value; bar.dirty(true); });
+        inner.appendChild(labelled(x[1], inputs[x[0]], x[3]));
+      });
+      inner.appendChild(bar.el);
+      bar.dirty(!!supportForm);
+      if (d.public_key) {
+        var key = h('input', { class: 'text-input mono', id: 'supportkey', readonly: true, value: d.public_key });
+        inner.appendChild(h('div', { class: 'fieldwrap' }, h('label', { class: 'field', for: 'supportkey', text: 'This box\'s key' }),
+          h('div', { class: 'row' }, key, h('button', { class: 'btn', text: 'Copy', onclick: function () {
+            key.select(); (navigator.clipboard ? navigator.clipboard.writeText(d.public_key) : Promise.reject()).then(function () { say('Key copied.'); }, function () { say('Select the key and copy it.'); });
+          } })),
+          h('div', { class: 'hint', text: 'Give it to your support team once, so their server knows this box.' })));
       }
       if (d.log && d.log.length) {
-        body.appendChild(h('div', { class: 'k', text: 'Recent sessions' }));
+        inner.appendChild(h('div', { class: 'field', text: 'Recent sessions' }));
         d.log.slice(0, 5).forEach(function (e) {
-          body.appendChild(h('div', { class: 'item' }, h('span', { text: new Date(e.started * 1000).toLocaleString() + ' · ' + e.by + ' · ' + e.minutes + ' min · ' + e.role +
+          inner.appendChild(h('div', { class: 'item' }, h('span', { text: new Date(e.started * 1000).toLocaleString() + ' · ' + e.by + ' · ' + e.minutes + ' min · ' + e.role +
             (e.ended ? ' · ' + (e.reason || 'ended') + ' · ' + (e.logins || 0) + ' sign-ins' : '') })));
         });
       }
+      var adv = h('details', { class: 'fold', id: 'supportadv', open: supportAdv }, h('summary', { text: 'Advanced: support server settings' }), inner);
+      adv.addEventListener('toggle', function () { supportAdv = adv.open; });
+      body.appendChild(adv);
     }
     refresh();
     return card;
@@ -1071,7 +1093,7 @@
       { id: 'dmx', group: 'show', name: 'DMX lighting desk', role: 'full', module: 'control-dmx', url: '/api/dmx', urlRole: 'full',
         blurb: 'Control the box from a lighting desk or lighting software over the network (Art-Net or sACN): opacity, size, position, speed, volume, blackout and pads. The box only listens.',
         steps: [flagStep('dmx', '/api/dmx', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
-        body: function () { return [dmxCard()]; } },
+        body: dmxCard },
       { id: 'osc', group: 'show', name: 'OSC', role: 'full', url: '/api/osc',
         blurb: 'Control the box from TouchOSC, QLab, Resolume and other programs that send OSC messages over the network.',
         steps: [flagStep('osc', '/api/osc', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
@@ -1226,9 +1248,9 @@
     sync: function (d) {
       var c = d.config;
       if (d.error) return st('problem', d.error);
-      if (c.role === 'off') return st('setup', 'No role chosen: choose server or client inside');
-      if (c.role === 'server') return st('active', 'Server of group "' + c.group + '"');
-      return d.server ? st('active', 'Following ' + d.server) : st('problem', 'Listening for a server');
+      if (c.role === 'off') return st('setup', 'Not chosen yet: lead or follow');
+      if (c.role === 'server') return st('active', 'Leads group "' + c.group + '"');
+      return d.server ? st('active', 'Following ' + d.server) : st('problem', 'Listening for the box that leads');
     },
     midi: function (d) {
       if (!d.enabled) return st('off', '');
@@ -1712,44 +1734,99 @@
   }
   function kv(k, v) { return h('div', { class: 'row between' }, h('span', { text: k }), h('span', { class: 'kvv', text: String(v) })); }
   // ---- DMX and MIDI ---------------------------------------------------
-  var dmxForm = { universe: null, start: null, allow: null };  // survive redraws
+  var dmxForm = { protocol: null, universe: null, start: null, allow: null };  // what was typed and not saved; survives redraws
+  var dmxTimer = null, dmxAdv = false;
+  // What each channel does, in the order of pvj/DMX.md (the ninth is read only if the desk sends it).
+  var DMX_CHANNELS = [['Opacity', '0 to 255 is 0 to 100 percent'], ['Size', '0 to 255 is 1 to 200 percent'], ['Position X', '0 to 255 is left to right'],
+    ['Speed', '0 to 255 is a quarter speed to double'], ['Volume', '0 to 255 is 0 to 100'], ['Blackout', '128 and up is on'],
+    ['Pad', '6 to 11 is pad 1, 12 to 17 pad 2, and so on to pad 36'], ['Function', '50 stop, 100 pause, 150 resume, 200 fade out'],
+    ['Vibes', '50 stop Vibes, 100 start Vibes, 150 next shader']];
   function moduleOn(id) { var m = S.modules.filter(function (x) { return x.id === id; })[0]; return !!(m && m.enabled); }
   function dmxCard() {
-    var card = h('div', { class: 'card', id: 'dmxcard' }, h('h2', { text: 'DMX (Art-Net, sACN)' }));
-    var body = h('div', { class: 'list', id: 'dmxbody' });
+    clearTimeout(dmxTimer);
+    var card = h('div', { class: 'card', id: 'dmxcard' }, h('h2', { text: 'Lighting desk' }));
+    var body = h('div', { class: 'list sp', id: 'dmxbody' });
     card.appendChild(body);
-    function draw(d) {
+    var table = h('div', { class: 'card', id: 'dmxtablecard' }, h('h2', { text: 'Channels' }));
+    function count(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+    function lineText(d) {
+      var what = (d.protocol === 'sacn' ? 'sACN' : 'Art-Net') + ' on universe ' + d.universe;
+      if (d.error) return 'Problem: ' + d.error + '. Check that no other program on the box uses the same port, then save again.';
+      if (!d.listening) return 'Not listening yet.';
+      return 'Listening for ' + what + '. ' + (d.received ? count(d.received) + (d.received === 1 ? ' frame' : ' frames') + ' received.' : 'Nothing received yet.');
+    }
+    function drawTable(d) {
+      table.textContent = '';
+      table.appendChild(h('h2', { text: 'Channels' }));
+      var seen = d.channels || [], n = Math.min(DMX_CHANNELS.length, Math.max(8, seen.length), 513 - d.start);
+      table.appendChild(h('div', { class: 'hint', id: 'dmxtablehint', text: seen.length ? 'What the desk is sending now.' : 'Levels show here once the desk sends something. Set these channels on the desk.' }));
+      var rows = [];
+      for (var i = 0; i < n; i++) {
+        var level = typeof seen[i] === 'number' ? seen[i] : null, bar = h('div', {});
+        bar.style.width = (level === null ? 0 : Math.round(100 * level / 255)) + '%';
+        rows.push(h('tr', { 'data-ch': d.start + i }, h('td', { class: 'num', text: String(d.start + i) }),
+          h('td', {}, h('div', { class: 'field', text: DMX_CHANNELS[i][0] + (i === 8 ? ' (optional)' : '') }), h('div', { class: 'hint', text: DMX_CHANNELS[i][1] })),
+          h('td', { class: 'lvl' }, h('div', { class: 'lvlbar' }, h('div', { class: 'progress', 'aria-hidden': 'true' }, bar), h('span', { class: 'dmxlevel', text: level === null ? '-' : String(level) })))));
+      }
+      table.appendChild(h('table', { class: 'chan', id: 'dmxchannels' },
+        h('thead', {}, h('tr', {}, h('th', { class: 'num', text: 'Ch' }), h('th', { text: 'What it does' }), h('th', { class: 'lvl', text: 'Level now' }))),
+        h('tbody', {}, rows)));
+    }
+    function watch() {       // the state line and the levels follow the desk; the fields are left alone
+      clearTimeout(dmxTimer);
+      dmxTimer = setTimeout(function () {
+        if (!body.isConnected) return;
+        api('GET', '/api/dmx').then(function (r) {
+          if (!body.isConnected) return;
+          var line = document.getElementById('dmxline');
+          if (r.ok && line) { line.textContent = lineText(r.data); line.className = r.data.error ? 'hint warn' : 'state'; drawTable(r.data); }
+          watch();
+        });
+      }, 2000);
+    }
+    function draw(d, saved) {
       body.textContent = '';
-      body.appendChild(h('div', { class: 'k', id: 'dmxline', text: d.error ? 'Problem: ' + d.error :
-        (d.listening ? 'Listening on UDP ' + d.port + ' (' + d.received + ' frames for this universe)' : 'Not listening') }));
-      if (d.channels) body.appendChild(h('div', { class: 'k mono', id: 'dmxlevels', text: 'Channels ' + d.start + '-' + (d.start + d.channels.length - 1) + ': ' + d.channels.join(' ') }));
-      var proto = h('select', { class: 'text-input', id: 'dmxproto', 'aria-label': 'Protocol' },
-        [['artnet', 'Art-Net'], ['sacn', 'sACN (E1.31)']].map(function (p) { return h('option', { value: p[0], text: p[1], selected: p[0] === d.protocol }); }));
-      var uni = h('input', { class: 'text-input mono', id: 'dmxuni', type: 'number', 'aria-label': 'Universe', value: dmxForm.universe === null ? d.universe : dmxForm.universe });
-      var start = h('input', { class: 'text-input mono', id: 'dmxstart', type: 'number', min: 1, max: 505, 'aria-label': 'Start channel', value: dmxForm.start === null ? d.start : dmxForm.start });
-      var allow = h('input', { class: 'text-input mono', id: 'dmxallow', 'aria-label': 'Extra allowed networks, comma separated', placeholder: 'Extra networks, e.g. 192.168.50.0/24',
-        value: dmxForm.allow === null ? d.allow.join(', ') : dmxForm.allow });
-      uni.addEventListener('input', function () { dmxForm.universe = uni.value; });
-      start.addEventListener('input', function () { dmxForm.start = start.value; });
-      allow.addEventListener('input', function () { dmxForm.allow = allow.value; });
-      function send(patch) {
-        act('POST', '/api/dmx', patch, function (data) { dmxForm = { universe: null, start: null, allow: null }; say(''); draw(data); });
+      body.appendChild(h('div', { class: d.error ? 'hint warn' : 'state', id: 'dmxline', text: lineText(d) }));
+      var f = dmxForm;
+      var proto = h('select', { class: 'text-input', id: 'dmxproto' },
+        [['artnet', 'Art-Net'], ['sacn', 'sACN (E1.31)']].map(function (x) { return h('option', { value: x[0], text: x[1], selected: x[0] === (f.protocol === null ? d.protocol : f.protocol) }); }));
+      var uni = h('input', { class: 'text-input mono', id: 'dmxuni', type: 'number', value: f.universe === null ? d.universe : f.universe });
+      var start = h('input', { class: 'text-input mono', id: 'dmxstart', type: 'number', min: 1, max: 505, value: f.start === null ? d.start : f.start });
+      var allow = h('input', { class: 'text-input mono', id: 'dmxallow', placeholder: '192.168.50.0/24', value: f.allow === null ? d.allow.join(', ') : f.allow });
+      function nets() { return allow.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
+      function changed() { return proto.value !== d.protocol || String(uni.value) !== String(d.universe) || String(start.value) !== String(d.start) || nets().join() !== d.allow.join(); }
+      var bar = saveBar('dmxsave', 'Save changes', function () {
+        api('POST', '/api/dmx', { protocol: proto.value, universe: parseInt(uni.value, 10), start: parseInt(start.value, 10), allow: nets() }).then(function (r) {
+          if (!r.ok) return bar.say((r.data.error || 'Could not save') + '. Nothing was changed.', true);
+          dmxForm = { protocol: null, universe: null, start: null, allow: null };
+          draw(r.data, true); drawTable(r.data); say('Saved');
+        });
+      });
+      function touch() {
+        dmxForm = { protocol: proto.value, universe: uni.value, start: start.value, allow: allow.value };
+        bar.dirty(changed());
       }
-      function fields() {
-        return { protocol: proto.value, universe: parseInt(uni.value, 10), start: parseInt(start.value, 10),
-          allow: allow.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean) };
-      }
-      body.appendChild(proto); body.appendChild(h('label', { class: 'k', for: 'dmxuni', text: 'Universe' })); body.appendChild(uni);
-      body.appendChild(h('label', { class: 'k', for: 'dmxstart', text: 'Start channel (uses 8 channels; a ninth, if sent, is Vibes)' })); body.appendChild(start); body.appendChild(allow);
-      body.appendChild(h('button', { class: 'btn small', id: 'dmxsave', text: 'Save', onclick: function () { send(fields()); } }));
-      body.appendChild(h('div', { class: 'k', text: 'Only private networks may send. The first frame only sets a starting point, and the box holds its last state if the signal stops.' }));
+      [proto, uni, start, allow].forEach(function (el) { el.addEventListener('input', touch); el.addEventListener('change', touch); });
+      var adv = h('details', { class: 'fold', id: 'dmxadv', open: dmxAdv }, h('summary', { text: 'Advanced' }), h('div', { class: 'list sp' },
+        labelled('Also accept from these networks', allow, 'Only private networks may send. Add your show network here if the desk is on another one. Separate several with commas.'),
+        h('div', { class: 'hint', text: 'The box listens on UDP port ' + d.port + '.' })));
+      adv.addEventListener('toggle', function () { dmxAdv = adv.open; });
+      body.appendChild(labelled('Protocol', proto, 'What the desk sends. Most desks and programs can send Art-Net.'));
+      body.appendChild(labelled('Universe', uni, 'The same number as on the desk.'));
+      body.appendChild(labelled('Start channel', start, 'The box uses 8 channels from here. A ninth, if the desk sends it, is Vibes.'));
+      body.appendChild(adv);
+      body.appendChild(bar.el);
+      bar.dirty(changed());
+      if (saved) bar.result.textContent = 'Saved';
+      body.appendChild(h('div', { class: 'hint', text: 'The first frame only sets a starting point, and the box holds its last state if the signal stops. The box only listens.' }));
+      watch();
     }
     api('GET', '/api/dmx').then(function (r) {
       if (!document.getElementById('dmxcard')) return;
-      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'dmxmsg', text: r.data.error || 'Not available' })); return; }
-      draw(r.data);
+      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'dmxmsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
+      draw(r.data); drawTable(r.data);
     });
-    return card;
+    return [card, table];
   }
   var MIDI_ACTIONS = [['pad', 'Play a pad'], ['stop', 'Stop'], ['pause', 'Pause / resume'], ['blackout', 'Blackout on / off'], ['fadeout', 'Fade out'],
     ['reset', 'Reset mix'], ['opacity', 'Opacity (fader)'], ['size', 'Size (fader)'], ['position', 'Position X (fader)'], ['speed', 'Speed (fader)'],
@@ -2431,7 +2508,7 @@
   // What was chosen or typed in the card and is not saved yet (vals), and the saved value each field was drawn from
   // (drawn). The card is rebuilt by every answer and, while the box is a server or a client, every 2 seconds: a
   // rebuild between choosing a column and pressing Save put the saved column back, and Save then sent that.
-  var syncForm = { vals: {}, drawn: {} };
+  var syncForm = { vals: {}, drawn: {}, wallOpen: false, choosing: false };
   var SYNC_FIELDS = ['syncgroup', 'wallcols', 'wallrows', 'wallcol', 'wallrow', 'wallbezel'];
   // Read the page just before anything is rebuilt (as the Network card does): a field that differs from what it was
   // drawn from is kept.
@@ -2443,8 +2520,8 @@
     });
   }
   function syncCard() {
-    var body = h('div', { class: 'list', id: 'syncbody' }, h('div', { class: 'k', text: 'Loading...' }));
-    var card = h('div', { class: 'card', id: 'synccard' }, h('h2', { text: 'Sync and video wall' }), body);
+    var body = h('div', { class: 'list sp', id: 'syncbody' }, h('div', { class: 'hint', text: 'Loading...' }));
+    var card = h('div', { class: 'card', id: 'synccard' }, h('h2', { text: 'Boxes in step' }), body);
     var full = can('full');
     // Saves are counted: an answer that is older than a later save does not clear that save's message and is not
     // drawn over it; the card asks again instead. `sent` is what the fields held at the click: once saved, a field
@@ -2454,7 +2531,7 @@
       var n = ++posts;
       return act('POST', '/api/sync', b, function (data) {
         if (n !== posts) return refresh();
-        say('');
+        say('Saved');
         Object.keys(sent || {}).forEach(function (id) { syncForm.drawn[id] = sent[id]; });
         draw(data);
       });
@@ -2473,42 +2550,77 @@
     }
     function draw(d) {
       clearTimeout(syncTimer);
+      if (asking(body)) { syncTimer = setTimeout(refresh, 2000); return; }
       keepSyncForm();
       body.textContent = '';
       var c = d.config, f = d.follow || {};
       var line = c.role === 'off' ? 'Off: this box plays on its own.' :
-        c.role === 'server' ? 'Server: other boxes in group "' + c.group + '" follow this one. ' + (d.sent ? d.sent + ' messages sent.' : '') :
-        'Client of group "' + c.group + '": ' + (d.server ? 'following ' + d.server + '. ' : 'listening for a server. ') +
+        c.role === 'server' ? 'This box leads: it is the server of group "' + c.group + '". ' + (d.sent ? d.sent + ' messages sent.' : 'Nothing sent yet.') :
+        'This box follows: it is a client of group "' + c.group + '", ' + (d.server ? 'following ' + d.server + '. ' : 'listening for the box that leads. ') +
           (f.state || '') + (f.file ? ', ' + f.file : '') + (typeof f.error_ms === 'number' ? ', ' + f.error_ms + ' ms off' : '');
-      body.appendChild(h('div', { class: 'k', id: 'syncline', text: line }));
+      body.appendChild(h('div', { class: 'state', id: 'syncline', text: line }));
       if (c.role !== 'off') syncTimer = setTimeout(refresh, 2000);
       if (!full) return;
-      body.appendChild(h('div', { class: 'row wrap', id: 'syncroles' }, [['off', 'Off'], ['server', 'Server (others follow)'], ['client', 'Client (follow a server)']].map(function (r) {
-        return h('button', { class: 'btn small' + (c.role === r[0] ? ' on' : ''), 'aria-pressed': c.role === r[0] ? 'true' : 'false', id: 'syncrole-' + r[0], text: r[1],
-          onclick: function () { post({ role: r[0] }); } });
-      })));
-      var group = h('input', { class: 'text-input mono', id: 'syncgroup', 'aria-label': 'Group name', value: field('syncgroup', c.group), maxlength: 24 });
-      body.appendChild(h('label', { class: 'k', for: 'syncgroup', text: 'Group name (the same on every box that plays together)' }));
-      body.appendChild(h('div', { class: 'row' }, group, h('button', { class: 'btn small', id: 'syncgroupsave', text: 'Save', onclick: function () { post({ group: group.value.trim() }, { syncgroup: group.value }); } })));
-      body.appendChild(h('div', { class: 'k', text: 'Every box needs the same clips with the same file names (media folder or the top of a USB drive). Clients follow the server\'s clip, position, pause and blackout.' }));
-      var w = c.wall, nums = function (lo, hi) { var a = []; for (var i = lo; i <= hi; i++) a.push(i); return a; };
-      function pick(id, label, values, saved, fmt) {
-        var cur = field(id, saved);
-        return h('select', { class: 'text-input', id: id, 'aria-label': label }, values.map(function (v) { return h('option', { value: String(v), text: fmt(v), selected: String(v) === cur }); }));
+      function choose(role) { syncForm.choosing = false; post({ role: role }); }
+      if (c.role === 'off' || syncForm.choosing) {
+        // the first thing asked: what this box does. Two large choices.
+        body.appendChild(h('div', { class: 'field', id: 'syncask', text: 'What does this box do?' }));
+        body.appendChild(h('div', { class: 'list sp', id: 'syncroles' },
+          h('button', { class: 'btn bigchoice' + (c.role === 'server' ? ' on' : ''), id: 'syncrole-server', 'aria-pressed': c.role === 'server' ? 'true' : 'false', onclick: function () { choose('server'); } },
+            h('b', { text: 'Lead' }), h('span', { text: 'Other boxes follow this one.' })),
+          h('button', { class: 'btn bigchoice' + (c.role === 'client' ? ' on' : ''), id: 'syncrole-client', 'aria-pressed': c.role === 'client' ? 'true' : 'false', onclick: function () { choose('client'); } },
+            h('b', { text: 'Follow' }), h('span', { text: 'This box follows another.' })),
+          c.role !== 'off' ? h('button', { class: 'btn', id: 'syncrole-off', text: 'Neither: play on its own', onclick: function (e) {
+            confirmRow(c.role === 'server' ? 'Stop leading? The other boxes stop following this one.' : 'Stop following? This box plays on its own.', 'Play on its own', 'Keep it', function () { choose('off'); }, e.currentTarget);
+          } }) : null));
+        if (c.role === 'off') body.appendChild(h('div', { class: 'hint', text: 'One box leads and the others follow its clip, position, pause and blackout. Every box needs the same clips with the same file names.' }));
+      } else {
+        body.appendChild(h('div', { class: 'row wrap', id: 'syncroles' },
+          h('button', { class: 'btn grow', id: 'syncchange', text: 'Change what this box does', onclick: function () { syncForm.choosing = true; draw(d); } }),
+          h('button', { class: 'btn grow', id: 'syncrole-off', text: 'Play on its own', onclick: function (e) {
+            confirmRow(c.role === 'server' ? 'Stop leading? The other boxes stop following this one.' : 'Stop following? This box plays on its own.', 'Play on its own', 'Keep it', function () { choose('off'); }, e.currentTarget);
+          } })));
       }
-      var cols = pick('wallcols', 'Columns', nums(1, 8), w.cols, function (v) { return v + (v === 1 ? ' column' : ' columns'); });
-      var rows = pick('wallrows', 'Rows', nums(1, 8), w.rows, function (v) { return v + (v === 1 ? ' row' : ' rows'); });
-      var col = pick('wallcol', 'This screen\'s column', nums(0, 7), w.col, function (v) { return 'column ' + (v + 1); });
-      var row = pick('wallrow', 'This screen\'s row', nums(0, 7), w.row, function (v) { return 'row ' + (v + 1); });
-      var bezel = h('input', { class: 'text-input mono', id: 'wallbezel', type: 'number', min: 0, max: 20, step: 0.5, value: field('wallbezel', w.bezel), 'aria-label': 'Bezel, percent of a screen' });
-      body.appendChild(h('div', { class: 'k', text: 'Video wall: this screen shows one tile of the picture. 1 column and 1 row shows the whole picture.' }));
-      body.appendChild(h('div', { class: 'row wrap' }, cols, rows));
-      body.appendChild(h('div', { class: 'row wrap' }, col, row));
-      body.appendChild(h('label', { class: 'k', for: 'wallbezel', text: 'Frame between screens (percent of a screen, hides that much picture)' }));
-      body.appendChild(h('div', { class: 'row' }, bezel, h('button', { class: 'btn small', id: 'wallsave', text: 'Save wall', onclick: function () {
-        post({ wall: { cols: +cols.value, rows: +rows.value, col: +col.value, row: +row.value, bezel: +bezel.value } },
-          { wallcols: cols.value, wallrows: rows.value, wallcol: col.value, wallrow: row.value, wallbezel: bezel.value });
-      } })));
+      if (c.role === 'off') return;
+      var group = h('input', { class: 'text-input mono', id: 'syncgroup', value: field('syncgroup', c.group), maxlength: 24 });
+      var groupOut = h('div', { class: 'msg inmsg', id: 'syncgroupresult', role: 'status' });
+      body.appendChild(h('div', { class: 'fieldwrap' }, h('label', { class: 'field', for: 'syncgroup', text: 'Group name' }),
+        h('div', { class: 'row' }, group, h('button', { class: 'btn', id: 'syncgroupsave', text: 'Save', onclick: function () { post({ group: group.value.trim() }, { syncgroup: group.value }); } })),
+        h('div', { class: 'hint', text: 'The same on every box that plays together.' }), groupOut));
+      body.appendChild(h('div', { class: 'hint', text: 'Every box needs the same clips with the same file names (in its media folder or at the top of a USB drive).' }));
+      // The video wall: folded unless it is in use
+      var w = c.wall, nums = function (lo, hi) { var a = []; for (var i = lo; i <= hi; i++) a.push(i); return a; };
+      var inUse = w.cols > 1 || w.rows > 1;
+      function pick(id, values, saved, fmt) {
+        var cur = field(id, saved);
+        return h('select', { class: 'text-input', id: id }, values.map(function (v) { return h('option', { value: String(v), text: fmt(v), selected: String(v) === cur }); }));
+      }
+      var cols = pick('wallcols', nums(1, 8), w.cols, function (v) { return v + (v === 1 ? ' column' : ' columns'); });
+      var rows = pick('wallrows', nums(1, 8), w.rows, function (v) { return v + (v === 1 ? ' row' : ' rows'); });
+      // this screen's place: only the columns and rows the chosen size has
+      var col = pick('wallcol', nums(0, +cols.value - 1), w.col, function (v) { return 'Column ' + (v + 1); });
+      var row = pick('wallrow', nums(0, +rows.value - 1), w.row, function (v) { return 'Row ' + (v + 1); });
+      function limit(sel, n, word) {
+        var cur = Math.min(+sel.value || 0, n - 1);
+        sel.textContent = '';
+        nums(0, n - 1).forEach(function (v) { sel.appendChild(h('option', { value: String(v), text: word + ' ' + (v + 1), selected: v === cur })); });
+      }
+      cols.addEventListener('change', function () { limit(col, +cols.value, 'Column'); });
+      rows.addEventListener('change', function () { limit(row, +rows.value, 'Row'); });
+      var bezel = h('input', { class: 'text-input mono', id: 'wallbezel', type: 'number', min: 0, max: 20, step: 0.5, value: field('wallbezel', w.bezel) });
+      var wall = h('details', { class: 'fold', id: 'wallfold', open: inUse || syncForm.wallOpen },
+        h('summary', { text: inUse ? 'Video wall: this screen is column ' + (w.col + 1) + ', row ' + (w.row + 1) + ' of ' + w.cols + ' by ' + w.rows : 'Video wall (not in use)' }),
+        h('div', { class: 'list sp' },
+          h('div', { class: 'hint', text: 'Several screens show one big picture, each its own part. 1 column and 1 row means no wall: this screen shows the whole picture.' }),
+          h('div', { class: 'row wrap' }, labelled('Columns of the wall', cols), labelled('Rows of the wall', rows)),
+          h('div', { class: 'row wrap' }, labelled('This screen\'s column', col), labelled('This screen\'s row', row)),
+          labelled('Frame between screens (percent)', bezel, 'How much of a screen\'s width its frame takes. That much picture is hidden, so lines stay straight across screens.'),
+          h('div', { class: 'row' }, h('button', { class: 'btn on grow', id: 'wallsave', text: 'Save wall', onclick: function () {
+            post({ wall: { cols: +cols.value, rows: +rows.value, col: +col.value, row: +row.value, bezel: +bezel.value } },
+              { wallcols: cols.value, wallrows: rows.value, wallcol: col.value, wallrow: row.value, wallbezel: bezel.value });
+          } }))));
+      wall.addEventListener('toggle', function () { syncForm.wallOpen = wall.open; });
+      body.appendChild(wall);
     }
     refresh();
     return card;
@@ -2983,7 +3095,7 @@
   }
   // ---- network (wired) ------------------------------------------------
   var netTimer = null;
-  var netForm = { mode: 'dhcp', iface: null, vals: {} };  // survives redraws of the System screen, so typing is never wiped
+  var netForm = { mode: 'dhcp', iface: null, vals: {}, adv: false };  // survives redraws of the System screen, so typing is never wiped
   var NET_FIELDS = ['netaddr', 'netprefix', 'netgw', 'netdns', 'netssid', 'netpass'];
   // Copy what is on screen into netForm just before anything is rebuilt. Relying on each field's input event
   // alone lost a value on a slow runner; reading the page at the moment of the redraw cannot miss one.
@@ -3019,8 +3131,8 @@
     return 'wi-fi · ' + (now.hotspot ? 'own hotspot “' : 'joined “') + now.ssid + '”';
   }
   function networkCard() {
-    var body = h('div', { class: 'list', id: 'netbody' });
-    var card = h('div', { class: 'card', id: 'netcard' }, h('h2', { text: 'Network' }), body);
+    var body = h('div', { class: 'list sp', id: 'netbody' });
+    var card = h('div', { class: 'card wide', id: 'netcard' }, h('h2', { text: 'Network' }), body);
     var mode = netForm.mode;
     var out = { iface: null, address: null, prefix: null, gateway: null, dns: null, ssid: null, pass: null, security: null,
       hidden: null, band: null, secs: null, preview: null, msg: null };
@@ -3028,7 +3140,7 @@
       clearTimeout(netTimer);
       api('GET', '/api/network').then(function (r) {
         if (!document.getElementById('netcard')) return;
-        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'netmsg', text: r.data.error || 'Not available' })); return; }
+        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'netmsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
         draw(r.data);
       });
     }
@@ -3052,50 +3164,59 @@
       return c;
     }
     function draw(d) {
+      if (asking(body)) { netTimer = setTimeout(refresh, 2000); return; }
       keepNetForm();
       body.textContent = '';
+      var ports = h('div', { class: 'list sp', id: 'netports' }, h('div', { class: 'field', text: 'Now' }));
       d.interfaces.forEach(function (i) {
-        body.appendChild(h('div', { class: 'item' },
-          h('span', {}, i.name, h('br'), h('span', { class: 'k', id: 'netline-' + i.name, text: i.kind === 'wired'
-            ? 'wired · ' + (i.carrier ? 'connected' : 'no link') + (i.speed_mbps ? ' · ' + i.speed_mbps + ' Mbit/s' : '')
+        ports.appendChild(h('div', { class: 'item' },
+          h('span', {}, i.kind === 'wired' ? 'Cable (' + i.name + ')' : 'Wi-Fi (' + i.name + ')', h('br'), h('span', { class: 'state', id: 'netline-' + i.name, text: i.kind === 'wired'
+            ? 'wired \u00b7 ' + (i.carrier ? 'connected' : 'nothing plugged in') + (i.speed_mbps ? ' \u00b7 ' + i.speed_mbps + ' Mbit/s' : '')
             : wifiLine(i, d.wifi) })),
-          h('span', { class: 'mono', text: (i.addresses || []).join(', ') || '-' })));
+          h('span', { class: 'mono', text: (i.addresses || []).join(', ') || 'no address' })));
       });
-      if (!d.helper) body.appendChild(h('div', { class: 'k', id: 'netmsg', text: 'The network helper (pvj-netd) is not running: changes cannot be applied. You can still preview them.' }));
+      var form = h('div', { class: 'list sp', id: 'netform' });
+      var cols = h('div', { class: 'split even' }, ports, form);
+      body.appendChild(cols);
+      body = form;                 // the rest of this function fills the form column
+      try { fill(d); } finally { body = cols.parentNode; }
+    }
+    function fill(d) {
+      if (!d.helper) body.appendChild(h('div', { class: 'hint warn', id: 'netmsg', text: 'The part of the box that changes the network is not running, so a change cannot be tried. Restart the box; if this stays, tell whoever looks after it.' }));
       if (d.reverting) { body.appendChild(h('div', { class: 'msg err', id: 'netreverting', role: 'alert', text: 'Restoring the previous network. If this page stops responding, reconnect to the box at its old address.' })); netTimer = setTimeout(refresh, 2000); }
       if (d.pending) return drawPending(d.pending);
-      if (!d.interfaces.length) return body.appendChild(h('div', { class: 'k', text: 'No network port found.' }));
+      if (!d.interfaces.length) return body.appendChild(h('div', { class: 'hint', text: 'No network port found on this box.' }));
       var names = d.interfaces.map(function (i) { return i.name; });
       if (names.indexOf(netForm.iface) < 0) netForm.iface = names[0];
       function kindOf(name) { return d.interfaces.filter(function (i) { return i.name === name; })[0].kind; }
-      out.iface = h('select', { class: 'text-input', id: 'netiface', 'aria-label': 'Network port' }, d.interfaces.map(function (i) {
-        return h('option', { value: i.name, text: i.name + (i.kind === 'wifi' ? ' (Wi-Fi)' : ' (wired)'), selected: i.name === netForm.iface });
+      out.iface = h('select', { class: 'text-input', id: 'netiface' }, d.interfaces.map(function (i) {
+        return h('option', { value: i.name, text: (i.kind === 'wifi' ? 'Wi-Fi (' : 'Cable (') + i.name + ')', selected: i.name === netForm.iface });
       }));
       var modes = h('div', { class: 'row wrap', id: 'netmodes' });
-      var help = h('div', { class: 'k', id: 'nethelp' });
-      var fields = h('div', { class: 'list', id: 'netfields' });
+      var help = h('div', { class: 'hint', id: 'nethelp' });
+      var fields = h('div', { class: 'list sp', id: 'netfields' });
       function kind() { return kindOf(out.iface.value); }
       function modeList() { return kind() === 'wifi' ? WIFI_MODES : NET_MODES; }
       function remember(el) {
         if (netForm.vals[el.id]) el.value = netForm.vals[el.id];
         el.addEventListener('input', function () { netForm.vals[el.id] = el.value; });
       }
-      function input(id, label, placeholder, extra) {
-        var el = h('input', Object.assign({ class: 'text-input mono', id: id, 'aria-label': label, placeholder: placeholder }, extra || {}));
+      function input(id, label, placeholder, extra, hint) {
+        var el = h('input', Object.assign({ class: 'text-input mono', id: id, placeholder: placeholder }, extra || {}));
         remember(el);
-        fields.appendChild(el);
+        fields.appendChild(labelled(label, el, hint));
         return el;
       }
       function scanList(list) {
         list.textContent = '';
-        list.appendChild(h('div', { class: 'k', text: 'Looking for networks...' }));
+        list.appendChild(h('div', { class: 'hint', text: 'Looking for networks...' }));
         api('POST', '/api/network/scan', { iface: out.iface.value }).then(function (r) {
           list.textContent = '';
-          if (!r.ok) return list.appendChild(h('div', { class: 'k err', text: r.data.error || 'Could not look for networks' }));
-          if (!r.data.networks.length) return list.appendChild(h('div', { class: 'k', text: 'No networks found.' }));
+          if (!r.ok) return list.appendChild(h('div', { class: 'msg inmsg err', text: (r.data.error || 'Could not look for networks') + '. Try again in a moment.' }));
+          if (!r.data.networks.length) return list.appendChild(h('div', { class: 'hint', text: 'No networks found. Move the box closer to the Wi-Fi, or type the name below.' }));
           r.data.networks.forEach(function (n) {
             var usable = n.security !== 'unsupported';
-            list.appendChild(h('button', { class: 'btn small' + (n.in_use ? ' on' : ''), disabled: !usable,
+            list.appendChild(h('button', { class: 'btn' + (n.in_use ? ' on' : ''), disabled: !usable,
               text: n.ssid + ' · ' + n.signal + '%' + (n.security === 'open' ? ' · open' : '') + (usable ? '' : ' · not supported'),
               onclick: function () {
                 out.ssid.value = netForm.vals.netssid = n.ssid;
@@ -3112,10 +3233,9 @@
         wrap.textContent = '';
         out.pass = null;
         if (mode !== 'hotspot' && out.security && out.security.value === 'open') return;
-        out.pass = h('input', { class: 'text-input mono', id: 'netpass', type: 'password', autocomplete: 'off', 'aria-label': 'Wi-Fi password',
-          placeholder: mode === 'hotspot' ? 'Password for the hotspot (8 to 63 characters)' : 'Wi-Fi password' });
+        out.pass = h('input', { class: 'text-input mono', id: 'netpass', type: 'password', autocomplete: 'off' });
         remember(out.pass);
-        wrap.appendChild(out.pass);
+        wrap.appendChild(labelled(mode === 'hotspot' ? 'Password for the hotspot' : 'Wi-Fi password', out.pass, mode === 'hotspot' ? '8 to 63 characters. People type it to join the box\'s Wi-Fi.' : ''));
       }
       function drawFields() {
         fields.textContent = '';
@@ -3124,39 +3244,40 @@
         if (kind() === 'wifi' && mode !== 'off') {
           if (mode !== 'hotspot') {
             var list = h('div', { class: 'row wrap', id: 'netscan' });
-            fields.appendChild(h('button', { class: 'btn small', id: 'netscanbtn', text: 'Find networks', onclick: function () { scanList(list); } }));
+            fields.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'netscanbtn', text: 'Find networks', onclick: function () { scanList(list); } })));
             fields.appendChild(list);
           }
-          out.ssid = input('netssid', 'Network name', mode === 'hotspot' ? 'Name of the box\'s Wi-Fi' : 'Network name (SSID)', { autocomplete: 'off' });
+          out.ssid = input('netssid', mode === 'hotspot' ? 'Name of the box\'s Wi-Fi' : 'Network name', mode === 'hotspot' ? 'NXLX box' : 'Studio Wi-Fi', { autocomplete: 'off' });
           if (mode !== 'hotspot') {
-            out.security = h('select', { class: 'text-input', id: 'netsec', 'aria-label': 'Security', onchange: drawPass },
+            out.security = h('select', { class: 'text-input', id: 'netsec', onchange: drawPass },
               WIFI_SECURITY.map(function (x) { return h('option', { value: x[0], text: x[1] }); }));
-            fields.appendChild(out.security);
+            fields.appendChild(labelled('Security', out.security));
           }
           fields.appendChild(h('div', { id: 'netpasswrap' }));
           if (mode === 'hotspot') {
-            out.band = h('select', { class: 'text-input', id: 'netband', 'aria-label': 'Band' },
+            out.band = h('select', { class: 'text-input', id: 'netband' },
               h('option', { value: 'bg', text: '2.4 GHz (reaches further, every device)' }), h('option', { value: 'a', text: '5 GHz (faster, less crowded)' }));
-            fields.appendChild(out.band);
+            fields.appendChild(labelled('Band', out.band));
           } else {
             out.hidden = toggle('nethidden', 'Hidden network', false, null, 'Switch on for a network that does not show in the list.');
             fields.appendChild(out.hidden);
           }
         }
         if (mode === 'static' || mode === 'share' || mode === 'hotspot') {
-          out.address = input('netaddr', 'Address', mode === 'hotspot' ? '10.43.0.1' : mode === 'share' ? '10.42.0.1' : '192.168.1.50', { inputmode: 'decimal' });
-          out.prefix = input('netprefix', 'Prefix length', '24 (means 255.255.255.0)', { inputmode: 'numeric' });
+          out.address = input('netaddr', 'Address', mode === 'hotspot' ? '10.43.0.1' : mode === 'share' ? '10.42.0.1' : '192.168.1.50', { inputmode: 'decimal' },
+            mode === 'static' ? 'The box\'s own address. Choose one in the range your other gear uses that nothing else has.' : 'The box\'s own address. Leave empty for the usual one.');
+          out.prefix = input('netprefix', 'Size of the network', '24', { inputmode: 'numeric' }, '24 is the usual size (the same as 255.255.255.0). Leave empty for 24.');
         }
         if (mode === 'static') {
-          out.gateway = input('netgw', 'Gateway (optional)', 'Gateway (optional)', { inputmode: 'decimal' });
-          out.dns = input('netdns', 'DNS servers (optional)', 'DNS servers (optional)');
+          out.gateway = input('netgw', 'Router (optional)', '192.168.1.1', { inputmode: 'decimal' }, 'The address of the router, for reaching the internet. Leave empty on a network with no router.');
+          out.dns = input('netdns', 'Name servers (optional)', '192.168.1.1, 9.9.9.9', null, 'Usually the router\'s address. Leave empty if the box needs no internet names.');
         }
         drawPass();
       }
       function drawModes() {
         modes.textContent = '';
         modeList().forEach(function (m) {
-          modes.appendChild(h('button', { class: 'btn small' + (m[0] === mode ? ' on' : ''), text: m[1], 'aria-pressed': m[0] === mode ? 'true' : 'false',
+          modes.appendChild(h('button', { class: 'btn' + (m[0] === mode ? ' on' : ''), text: m[1], 'aria-pressed': m[0] === mode ? 'true' : 'false',
             onclick: function () { mode = netForm.mode = m[0]; drawModes(); drawFields(); } }));
         });
       }
@@ -3164,31 +3285,35 @@
         var wifi = kind() === 'wifi';
         out.secs.textContent = '';
         [30, 60, 120, 300].forEach(function (n) {
-          out.secs.appendChild(h('option', { value: n, text: 'Revert after ' + n + ' s unless confirmed', selected: n === (wifi ? 120 : 60) }));
+          out.secs.appendChild(h('option', { value: n, text: n < 120 ? n + ' seconds' : (n / 60) + ' minutes', selected: n === (wifi ? 120 : 60) }));
         });
       }
       function fitMode() {
         var ok = modeList().some(function (m) { return m[0] === mode; });
         if (!ok) mode = netForm.mode = 'dhcp';
       }
-      out.secs = h('select', { class: 'text-input', id: 'netsecs', 'aria-label': 'Revert automatically after' });
+      out.secs = h('select', { class: 'text-input', id: 'netsecs' });
       out.iface.addEventListener('change', function () { netForm.iface = out.iface.value; fitMode(); drawModes(); drawFields(); drawSecs(); });
       out.preview = h('pre', { class: 'mono', id: 'netplan', hidden: true });
       out.msg = h('div', { class: 'msg', id: 'netresult', role: 'status' });
       fitMode();
-      body.appendChild(out.iface); body.appendChild(modes); body.appendChild(help); body.appendChild(fields); body.appendChild(out.secs);
+      var ifaceWrap = labelled('Which connection to change', out.iface);
+      ifaceWrap.hidden = d.interfaces.length < 2;         // one port: nothing to choose
+      body.appendChild(ifaceWrap);
+      body.appendChild(h('div', { class: 'field', text: 'How it gets its address' }));
+      body.appendChild(modes); body.appendChild(help); body.appendChild(fields);
       drawModes(); drawFields(); drawSecs();
       var wifiOffAsked = false;
-      var applyBtn = h('button', { class: 'btn on small', id: 'netapply', text: 'Apply', onclick: function () {
+      var applyBtn = h('button', { class: 'btn on grow', id: 'netapply', text: 'Try this setting', onclick: function () {
           var c = config(kind());
           if (c.mode === 'off' && !wifiOffAsked) {
             return confirmRow('Switch Wi-Fi off? A phone that reaches the box over Wi-Fi loses it. The change goes back by itself unless it is confirmed from a wired connection.',
               'Switch Wi-Fi off', 'Keep Wi-Fi on', function () { wifiOffAsked = true; applyBtn.click(); }, applyBtn);
           }
           wifiOffAsked = false;
-          out.msg.className = 'msg'; out.msg.textContent = 'Applying...';
+          out.msg.className = 'msg'; out.msg.textContent = 'Trying it...';
           api('POST', '/api/network/apply', c).then(function (r) {
-            if (!r.ok) { out.msg.className = 'msg err'; out.msg.textContent = r.data.error || 'Could not apply'; return; }
+            if (!r.ok) { out.msg.className = 'msg err'; out.msg.textContent = (r.data.error || 'Could not try it') + '. Nothing was changed.'; return; }
             var where;
             if (c.mode === 'hotspot') where = ' Join the Wi-Fi “' + c.ssid + '” with this phone or tablet, then open http://' + (c.address || '10.43.0.1') + ' and press Confirm before the timer runs out.';
             else if (c.mode === 'static' || c.mode === 'share') where = ' If this page stops responding, open http://' + (c.address || '10.42.0.1') + ' and press Confirm before the timer runs out.';
@@ -3199,30 +3324,36 @@
             refresh();
           });
         } });
-      body.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn small', id: 'netpreview', text: 'Preview commands', onclick: function () {
+      body.appendChild(h('div', { class: 'row' }, applyBtn));
+      body.appendChild(out.msg);
+      body.appendChild(h('div', { class: 'hint', text: 'A change can cut this connection. The box tries it and goes back by itself unless you confirm it, and also if it restarts before you do.' }));
+      var adv = h('details', { class: 'fold', id: 'netadv', open: netForm.adv }, h('summary', { text: 'Advanced' }), h('div', { class: 'list sp' },
+        labelled('Go back by itself after', out.secs, 'How long you have to confirm before the box goes back to the network it had.'),
+        h('div', { class: 'row' },
+        h('button', { class: 'btn grow', id: 'netpreview', text: 'Show the commands', onclick: function () {
           api('POST', '/api/network/plan', config(kind())).then(function (r) {
             out.preview.hidden = !r.ok; out.msg.className = 'msg' + (r.ok ? '' : ' err');
             out.msg.textContent = r.ok ? '' : (r.data.error || 'Invalid');
             if (r.ok) out.preview.textContent = r.data.commands.join('\n');
           });
-        } }),
-        applyBtn));
-      body.appendChild(out.preview); body.appendChild(out.msg);
-      body.appendChild(h('div', { class: 'k', text: 'A change can cut this connection. It goes back by itself unless you confirm it, and also if the box restarts before you do.' }));
+        } })),
+        h('div', { class: 'hint', text: 'The commands the box would run for this setting. Nothing is changed by looking.' }),
+        out.preview));
+      adv.addEventListener('toggle', function () { netForm.adv = adv.open; });
+      body.appendChild(adv);
     }
     function drawPending(p) {
       var what = p.mode === 'hotspot' ? 'own hotspot “' + p.ssid + '”' : p.ssid ? 'joining “' + p.ssid + '”' + (p.mode === 'static' ? ' (fixed address)' : '')
         : p.mode === 'off' ? 'Wi-Fi off' : p.mode;
       body.appendChild(h('div', { class: 'card', id: 'netpending', role: 'alert' },
-        h('div', { text: 'Waiting for your confirmation: ' + p.iface + ' → ' + what }),
-        h('div', { class: 'k', id: 'netleft', text: 'Reverts in ' + p.seconds_left + ' s' }),
-        h('div', { class: 'k', text: S.netNote || '' }),
+        h('div', { class: 'field', text: 'Waiting for your confirmation: ' + p.iface + ' \u2192 ' + what }),
+        h('div', { class: 'state', id: 'netleft', text: 'Reverts in ' + p.seconds_left + ' s' }),
+        h('div', { class: 'hint', text: S.netNote || '' }),
         h('div', { class: 'row' },
-          h('button', { class: 'btn on', id: 'netconfirm', text: 'Confirm: keep this network', onclick: function () {
+          h('button', { class: 'btn on grow', id: 'netconfirm', text: 'Confirm: keep this network', onclick: function () {
             api('POST', '/api/network/confirm', {}).then(function (r) { S.netNote = r.ok ? '' : (r.data.error || ''); refresh(); });
           } }),
-          h('button', { class: 'btn', id: 'netrevert', text: 'Revert now', onclick: function () {
+          h('button', { class: 'btn grow', id: 'netrevert', text: 'Go back now', onclick: function () {
             api('POST', '/api/network/revert', {}).then(function () { S.netNote = ''; refresh(); });
           } }))));
       netTimer = setTimeout(refresh, 1000);
@@ -3230,26 +3361,60 @@
     refresh();
     return card;
   }
+  var oscForm = { port: null, allow: null }, oscAdv = false, oscTimer = null;
   function oscCard() {
-    var line = h('div', { class: 'k', id: 'oscline', text: 'Loading...' });
-    var port = h('input', { class: 'text-input mono', type: 'number', min: 1024, max: 65535, 'aria-label': 'OSC port' });
-    var allow = h('input', { class: 'text-input mono', 'aria-label': 'Extra allowed networks, comma separated', placeholder: 'Extra networks, e.g. 192.168.50.0/24' });
-    function show(d) {
-      line.textContent = d.error ? 'Problem: ' + d.error : (d.listening ? 'Listening on UDP ' + d.port + ' (' + d.received + ' messages received)' : 'Not listening');
-      port.value = d.port;
-      allow.value = d.allow.join(', ');
+    clearTimeout(oscTimer);
+    var body = h('div', { class: 'list sp', id: 'oscbody' }, h('div', { class: 'state', id: 'oscline', text: 'Loading...' }));
+    var card = h('div', { class: 'card', id: 'osccard' }, h('h2', { text: 'OSC' }), body);
+    function count(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+    function lineText(d) {
+      if (d.error) return 'Problem: ' + d.error + '. Choose another port, or stop the other program that uses it, then save.';
+      if (!d.listening) return 'Not listening yet.';
+      return 'Listening on UDP port ' + d.port + '. ' + (d.received ? count(d.received) + (d.received === 1 ? ' message' : ' messages') + ' received.' : 'Nothing received yet.');
     }
-    function push(patch) {
-      act('POST', '/api/osc', patch, function (d) { say(''); show(d); });
+    function watch() {
+      clearTimeout(oscTimer);
+      oscTimer = setTimeout(function () {
+        if (!body.isConnected) return;
+        api('GET', '/api/osc').then(function (r) {
+          var line = document.getElementById('oscline');
+          if (r.ok && line && body.isConnected) { line.textContent = lineText(r.data); line.className = r.data.error ? 'hint warn' : 'state'; }
+          if (body.isConnected) watch();
+        });
+      }, 3000);
     }
-    api('GET', '/api/osc').then(function (r) { if (r.ok) show(r.data); else line.textContent = 'Not available'; });
-    var save = h('button', { class: 'btn small', text: 'Save port and networks', onclick: function () {
-      var nets = allow.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
-      push({ port: parseInt(port.value, 10), allow: nets });
-    } });
-    return h('div', { class: 'card' }, h('h2', { text: 'Control (OSC)' }),
-      h('div', { text: 'Only private networks may send. Shutdown and reboot are never available over OSC.' }),
-      line, h('label', { class: 'k', for: 'oscport', text: 'UDP port' }), (port.id = 'oscport', port), allow, save);
+    function draw(d, saved) {
+      body.textContent = '';
+      body.appendChild(h('div', { class: d.error ? 'hint warn' : 'state', id: 'oscline', text: lineText(d) }));
+      var port = h('input', { class: 'text-input mono', id: 'oscport', type: 'number', min: 1024, max: 65535, value: oscForm.port === null ? d.port : oscForm.port });
+      var allow = h('input', { class: 'text-input mono', id: 'oscallow', placeholder: '192.168.50.0/24', value: oscForm.allow === null ? d.allow.join(', ') : oscForm.allow });
+      function nets() { return allow.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
+      function changed() { return String(port.value) !== String(d.port) || nets().join() !== d.allow.join(); }
+      var bar = saveBar('oscsave', 'Save changes', function () {
+        api('POST', '/api/osc', { port: parseInt(port.value, 10), allow: nets() }).then(function (r) {
+          if (!r.ok) return bar.say((r.data.error || 'Could not save') + '. Nothing was changed.', true);
+          oscForm = { port: null, allow: null };
+          draw(r.data, true); say('Saved');
+        });
+      });
+      function touch() { oscForm = { port: port.value, allow: allow.value }; bar.dirty(changed()); }
+      [port, allow].forEach(function (el) { el.addEventListener('input', touch); });
+      var adv = h('details', { class: 'fold', id: 'oscadv', open: oscAdv }, h('summary', { text: 'Advanced' }), h('div', { class: 'list sp' },
+        labelled('Also accept from these networks', allow, 'Only private networks may send. Add your show network here if the sender is on another one. Separate several with commas.')));
+      adv.addEventListener('toggle', function () { oscAdv = adv.open; });
+      body.appendChild(labelled('UDP port', port, 'The port the other program sends to, with this box\'s address. 9876 unless it was changed here.'));
+      body.appendChild(adv);
+      body.appendChild(bar.el);
+      bar.dirty(changed());
+      if (saved) bar.result.textContent = 'Saved';
+      body.appendChild(h('div', { class: 'hint', text: 'Shutdown and restart are never available over OSC.' }));
+      watch();
+    }
+    api('GET', '/api/osc').then(function (r) {
+      if (!body.isConnected) return;
+      if (r.ok) draw(r.data); else { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'oscline', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); }
+    });
+    return card;
   }
   function appearanceCard() {
     var t = S.theme || {};
@@ -3471,7 +3636,7 @@
       openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
   }
   function stopTimers() {
-    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer].forEach(clearTimeout);
+    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
   }
   function render() {
     stopTimers();
