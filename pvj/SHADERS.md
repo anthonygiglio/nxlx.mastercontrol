@@ -6,7 +6,7 @@ Moving pictures drawn by the box's GPU instead of played from a file, and **Vibe
 
 Switch it on under System > Shaders and Vibes (beta, off by default). Switching it off while a shader is on the screen asks first, because it stops at once. It is offered on a Raspberry Pi 4, a Pi 5 and x86; not on a Pi 3.
 
-**Read this first: what is measured and what is not.** The ten bundled shaders were run on a real Raspberry Pi 4 on 2026-10-04 (mpv 0.40, a 2560 x 1440 screen at 75 Hz; judged from the panel's snapshots, nobody watched the monitor): all ten compile and draw correctly, and their speed is in the table below. Everything built since (live values, the speed control, presets, rotation sets, the guard, the carrier that counts its own frames) has run only in automated tests: against a real mpv with Mesa's software GPU in CI, where the picture is checked through screenshots, and against fakes. A Pi 5 and x86 are not measured at all.
+**Read this first: what is measured and what is not.** All 47 bundled shaders (the first ten, the Ambient and the Performance family, the ISF-Files pack) were run on a real Raspberry Pi 4 on 2026-10-05 through this engine, at 540 and at 720 lines (mpv 0.40, a 2560 x 1440 screen at 75 Hz; judged from snapshots and from the player's counters over SSH, nobody watched the monitor): the GPU took every one, every picture looked right, and their speed is in [the table below](#measured-on-a-raspberry-pi-4). The same run tried the engine itself on that box: a change of each kind of value, the speed control and the carrier that counts its own frames, a preset, Previous and Next, Vibes on both sets and the guard. What it found is said in each section; what it could not show (a single black frame, a controller, a long run) is under [Not verified](#not-verified). A Pi 5 and x86 are not measured at all, and every number here belongs to a 75 Hz screen (see the table's notes for why that matters).
 
 ## Using it
 
@@ -33,7 +33,7 @@ Switch it on under System > Shaders and Vibes (beta, off by default). Switching 
 - **Variation each round** (can be switched off): every number input gets a new value between its MIN and MAX, pulled towards the default, or towards the preset's value (at most 60 percent of the way to either end, since the author chose the default as the good place); the palette is turned by up to 120 degrees either way around the grey axis (black, white and greys stay as they are); and the shader's time starts somewhere else. The values come from a random generator seeded when the service starts.
 - **It never fights the operator** (the autostart rule, D18). It ends when anything else is played (a pad, a clip, a stream, a live input, the test pattern, a schedule entry, a sync server's clip), when Stop is pressed, when one shader is chosen by hand, when the module is switched off, and when the player is restarted. It does not come back by itself; after a player restart it starts again only if Autostart is set to Vibes. The reason it ended is shown on the card. A clip tapped in the middle of a change plays, also with the Mix transition on Dip to black (the first version lost such a clip; see the review notes in the project log).
 - A shader the GPU refuses is left out and the next one is shown; the refusal is remembered until the file changes, so no later run tries it again (a Play by hand does, and a success clears it). If every shader is refused, Vibes ends and the screen is cleared.
-- **The dip takes the Mix duration.** Its steps are paced against the clock; the first version slept a full step and then paid the round trip to the player on top, and a 1.0 second dip took 1.15 to 1.49 seconds on the Pi 4. The way up gets what the way down and the change left of the duration, and at least a quarter of it.
+- **The dip takes the Mix duration.** Its steps are paced against the clock; the first version slept a full step and then paid the round trip to the player on top, and a 1.0 second dip took 1.15 to 1.49 seconds on the Pi 4. The way up gets what the way down and the change left of the duration, and at least a quarter of it. With that, on the Pi 4 (2026-10-05, 29 changes of Vibes watched at 540 and 720 lines): the picture was below its full brightness for 0.80 to 0.92 seconds of a Mix duration of 1.0, it reached black every time, and with a dwell of 12 seconds a new shader came every 13.0 to 13.5 seconds. (The one clip that took the screen from Vibes dipped for 1.43 seconds with the same Mix duration: a clip's own dip is the panel's Fader, which was not changed.) At 540 lines not one frame was dropped in 200 seconds of Vibes on the two default sets, the changes included.
 
 ## Performing
 
@@ -65,13 +65,14 @@ So a change is a new shader text that the GPU compiles. It is made cheap and sea
 
 - A request only checks the values and notes them down; it answers at once. One worker applies the newest values at most **five times a second**, so a dragged slider or a MIDI knob at 50 messages a second is at most five compiles a second, and the last value lands at the latest 0.2 seconds after it came, plus the compile.
 - Only the shader file is exchanged: the carrier keeps playing, nothing is reloaded, the opacity is not touched. mpv draws the old shader until the new one is compiled.
-- On the Pi 4 the first version answered a slider change in 0.10 to 0.15 seconds, which was a full Play each time (measured 2026-10-04). The exchange alone is fewer round trips to the player; it has not been timed on the Pi. In CI (mpv 0.37, Mesa's software GPU, a 320 x 180 window) writing the new text and exchanging it took about 2 ms for a number, a colour or a point, and about 0.58 s the first time a switch or a choice gave the text a new shape, almost all of it the wait for the player's verdict; `tests/test_shaderlive_gpu.py` prints both. Neither number says anything about a Pi.
+- **On the Pi 4** (2026-10-05, at 720 lines, on nxlx-silk, nxlx-tunnel and nxlx-nebula): the request is answered in 7 to 12 ms (the slowest of 210 took 41 ms), and the player reports the new text drawn 0.34 to 0.37 seconds after the request for the two light shaders, the same for a number, a switch, a choice, a colour and a point, and the same the first time a switch or a choice gave the text a new shape. That is an upper limit for when the picture changes: it includes the player's own delay in timing a pass. On nxlx-nebula, which draws only about 18 frames a second at 720 lines, it was 0.54 to 0.61 seconds. Thirty changes sent ten a second became 12 to 15 texts (the worker's five a second); over those 4.5 seconds nxlx-tunnel dropped no frame for any of the five kinds and nxlx-silk one, and the GPU went on drawing 147 to 150 jobs a second as before. (The first version answered a slider change in 0.10 to 0.15 seconds, which was a full Play each time.) In CI (mpv 0.37, Mesa's software GPU, a 320 x 180 window) writing the new text and exchanging it took about 2 ms for a number, a colour or a point, and about 0.58 s the first time a switch or a choice gave the text a new shape, almost all of it the wait for the player's verdict; `tests/test_shaderlive_gpu.py` prints both. Neither number says anything about a Pi.
 - A plain number, colour or point cannot change what the compiler makes of the code, so the GPU is not asked again. A switch, a choice or an event can, so the first time a shader is shown in that shape the panel waits for the player's verdict as it does for a new shader; if the GPU refuses it, the text before it is put back and the values stay as they were. A refused shape is remembered (until the file changes or the service restarts): the same wish again is answered 422 at once and never reaches the GPU, so a pad that toggles a refused switch does not flash the screen each time.
-- **Not verified on hardware:** that the picture does not hitch for a frame or two while a new text compiles on a Pi 4. In CI no screenshot taken during 100 changes was dark.
+- **Does the picture hitch or flash?** Not that the Pi 4 run could see: no frames were dropped by a change (above), and of 21 snapshots taken in the middle of such bursts none was dark or torn; a snapshot before a change and one as soon as the new text was drawn differed only by what was changed. Three snapshots in a burst cannot rule out a single black frame, and nobody watched the screen. In CI no screenshot taken during 100 changes was dark.
+- **What is refused, on the Pi as in the tests:** a value of the wrong kind, an unknown input or control, a choice that is not one of the `VALUES` and a colour with two parts answer 400 with a sentence that names the input. A number, a colour part or a point outside its range is not refused: it is put at the nearest end (speed 9 became 4, and 1 for a Performance shader). No refusal by the GPU could be provoked without uploading a broken file, which the run did not do.
 
 ### The guard for a weak GPU
 
-While a shader is on, the frames the player drops are counted (and on a Pi the kernel's GPU figures in `/sys/devices/platform/v3dbus/*/gpu_stats` are read and shown, when they are there; their form is not verified against a real Pi by this code). More than **2 dropped frames a second for 6 seconds in a row** is "too heavy on this box at this drawing size". The first 3 seconds after a shader comes on or is changed are not counted.
+While a shader is on, the frames the player drops are counted (and on a Pi the kernel's GPU figures in `/sys/devices/platform/v3dbus/*/gpu_stats` are read and shown, when they are there; on the Pi 4 `gpu` in `GET /api/shaders` gave the same busy percent and jobs a second as reading the file by hand). More than **2 dropped frames a second for 6 seconds in a row** is "too heavy on this box at this drawing size". The first 3 seconds after a shader comes on or is changed are not counted.
 
 - **In Vibes** such a shader is marked (with the rate, the drawing height and the board), the rotation goes on to the next one at once, and no rotation shows it again until someone puts it back (its switch, or `{"action": "heavy", "id", "on": false}`). The mark is kept in the settings.
 - **A mark belongs to its drawing height and its board.** It counts at the height it was made at and at greater ones. Choose fewer lines and every marked shader gets another chance (the mark stays in the settings and counts again if you go back up); choose more lines and the marks hold. A mark made on another kind of board is ignored, and a settings import does not bring it along.
@@ -81,38 +82,32 @@ While a shader is on, the frames the player drops are counted (and on a Pi the k
 - It can be switched off (`{"action": "config", "guard": false}`).
 - **Variation does not make a shader heavier.** An input named in the head of a loop or in a condition can change how much the GPU has to do; such an input is marked `"varies": false` and Vibes leaves it at its value. A shader seen dropping frames in a run is shown without the palette turn for the rest of that run: the turn is one more multiplication for every pixel, and on the Pi 4 variation pushed nxlx-pulse from 0 to about 1 dropped frame a second at 720 lines. That the turn was the cause is likely, not proven.
 - What it cannot see: frames that are not drawn while a snapshot is taken (0.3 to 0.4 seconds each on the Pi 4); the player does not count those.
+- **On the Pi 4** (2026-10-05, Vibes with a dwell of 12 seconds):
+  - At 540 lines, the default, on Ambient and on Show: 13 changes, every shader "ok", none marked. No light shader was marked in any run.
+  - nxlx-nebula in a set at 720 lines: marked 9 seconds after it came on (the 3 that are not counted and the 6), with its rate (10.7 a second), the drawing height and the board; the rotation dipped and went on to the next shader at once and did not show it again. nxlx-aurora was taken out of Ambient at 720 lines the same way (6.7 a second).
+  - **A shader that drops frames in bursts gets past it.** nxlx-lantern at 720 lines dropped up to 8 frames a second in Vibes and 3.8 a second over a 20 second measurement, and was "tight" for its whole 12 seconds, never "heavy": Vibes asks every second, the drops of a shader near the limit come in bursts, and one second under 2 starts the 6 seconds again. Whether a dwell of minutes catches it was not tried. The same shader asked about every 3 seconds, as the page does for a shader chosen by hand, was "heavy" in 3 looks of 6: the verdict depends on how often it is asked. A rate averaged over the last 6 seconds would not; that is not built.
+  - The rule for a box that drops frames whatever plays did not come up: no two shaders in a row were marked.
 
 ## The bundled shaders
 
-Original generator shaders, written for this project (Apache-2.0, in `pvj/shaders.d`): the first ten below, and two families added later (the next section). All use short fixed loops (at most 5 rounds) and no textures. The first ten are measured on a Pi 4 (below); the cost notes of the two families are counts of work per pixel, not measurements.
+Original generator shaders, written for this project (Apache-2.0, in `pvj/shaders.d`): the first ten below, and two families added later (the next section). All use short fixed loops (at most 5 rounds) and no textures. All 40, and the seven of the ISF-Files pack, are measured on a Pi 4 ([the table](#measured-on-a-raspberry-pi-4)). A file's `COST` note starts with the class that was measured (low is light, medium, high is heavy); the words after it are a count of work per pixel.
 
 ### The first ten
 
 All slow and quiet. Eight are in the Vibes rotation from the start; the two heavy ones (nxlx-nebula, nxlx-drift) are not.
 
-**Measured on a Raspberry Pi 4** (2026-10-04, mpv 0.40, 2560 x 1440 at 75 Hz, the first version of this module). mpv made a desktop OpenGL 3.1 context (GLSL 1.40, V3D, Mesa 26), not OpenGL ES. The GPU is the only limit (the CPU was at 2 to 4 percent). Every frame pays two fixed passes whatever the shader: scaling to the screen (12.9 ms at 1440p) and a remainder pass (1.0, 2.3, 4.0 and 8.9 ms at 360, 540, 720 and 1080 lines), which leaves about 16 ms for the shader at 720 lines in a frame of 33.3 ms.
-
-| Shader | Picture | Class | Pass at 720 lines | Dropped frames a second at 360 / 540 / 720 lines |
-| --- | --- | --- | --- | --- |
-| nxlx-silk | fine flowing lines | light | 7.5 to 11.2 ms (the six light ones; not noted one by one) | - / - / 0 |
-| nxlx-lattice | two grids turning against each other (moire) | light | as above | - / - / 0 |
-| nxlx-horizon | a dusk sky with a slow sun and haze | light | as above | - / - / 0 |
-| nxlx-prism | rings of colour around the centre | light | as above | - / - / 0 |
-| nxlx-ember | warm blobs that merge and part | light | as above | - / - / 0 |
-| nxlx-pulse | ripples from three wandering points | light, at the edge | as above | - / - / 0 (about 1 with Vibes variation) |
-| nxlx-tide | layers of slow waves | medium | 15.1 ms | - / 0 / 3.3 |
-| nxlx-aurora | curtains of light over a dark sky | medium | 20.6 ms | - / 0 / 6.7 |
-| nxlx-drift | soft clouds of colour | heavy | 30 ms (before its look was changed) | 0 / 2.1 / 10.1 |
-| nxlx-nebula | clouds bent by more clouds | heavy | 32.7 ms | 0 / 3.9 / 11 |
-
-A dash is "not measured". At 1080 lines even nxlx-silk and nxlx-lattice dropped 7 to 8 frames a second. First play of a shader took 0.62 to 0.78 seconds including the GPU check; after 7 hours 43 minutes TIME was still right.
-
-What follows from it:
-
-- **The drawing size depends on the board**: 540 lines by default on a Pi 4 and on a board that is unknown, and 1080 is not offered on a Pi 4. A Pi 5 and x86 start at 720 and keep 1080; **neither is measured**, so those are guesses. mpv scales the result to the screen.
-- **light** kept up at 720 lines, **medium** at 540, **heavy** only at 360. `GET /api/shaders` gives each shader's class as `weight` and these numbers as `measured`; each file's own `COST` note starts with low, medium or high to match. For every other shader (the Ambient and Performance families, the pack, uploads) `weight` is read from the first word of the file's `COST` note (low is light, medium is medium, high is heavy) and `measured` is null: a count from the text, not a measurement.
-- **The default rotation leaves out the two heavy ones.** nxlx-aurora and nxlx-tide are in: at the Pi 4's default of 540 lines they dropped nothing.
-- **nxlx-drift looked dull** in the snapshots (grey, low contrast, blocky). Its two palettes are now laid side by side instead of blended half and half, the cloud is stretched to the full range, and each octave is turned as well as doubled so the grid does not show. The work per pixel was meant to stay the same; **it has not been measured or looked at again on the Pi**, and its 30 ms is from before.
+| Shader | Picture |
+| --- | --- |
+| nxlx-silk | fine flowing lines |
+| nxlx-lattice | two grids turning against each other (moire) |
+| nxlx-horizon | a dusk sky with a slow sun and haze |
+| nxlx-prism | rings of colour around the centre |
+| nxlx-ember | warm blobs that merge and part |
+| nxlx-pulse | ripples from three wandering points |
+| nxlx-tide | layers of slow waves |
+| nxlx-aurora | curtains of light over a dark sky |
+| nxlx-drift | soft clouds of colour |
+| nxlx-nebula | clouds bent by more clouds |
 
 ### Two more families: Ambient and Performance
 
@@ -121,25 +116,25 @@ Written after the first ten, for two uses, and named by the `CATEGORIES` entry i
 - **Ambient**: slow and calm, soft edges, nothing that flashes; made to stay on a wall for hours behind people or beside paintings. They are **in the Vibes rotation** from the start, like the first ten.
 - **Performance**: stronger, rhythmic and graphic, made to be played by hand. There is no sound input, so each has a rate or a beat control to ride. They are in the library, and **not in the Vibes rotation until someone puts them there** (the switch on the shader's row): one tap on Vibes in a room never starts a strobe. The settings keep these in a list `included`, beside `disabled` for the ones taken out, the same list that holds a third-party pack's shaders that were put in. Of the project's own shaders only those of the category "Performance" start outside; an uploaded file is in the rotation whatever it calls itself.
 
-| Shader | Family | Picture | Inputs | Estimated cost per pixel |
+| Shader | Family | Picture | Inputs | Cost note (the class is measured, the rest is a count per pixel) |
 | --- | --- | --- | --- | --- |
-| nxlx-bloom | Ambient | Large soft discs of light that cross slowly, like street lamps far out of focus | Speed, Disc size, Out of focus, Bright rim, First colour (colour), Second colour (colour), Background colour (colour) | low: 4 discs, 8 sines a pixel |
+| nxlx-bloom | Ambient | Large soft discs of light that cross slowly, like street lamps far out of focus | Speed, Disc size, Out of focus, Bright rim, First colour (colour), Second colour (colour), Background colour (colour) | medium: 4 discs, 8 sines a pixel |
 | nxlx-caustic | Ambient | A slow net of light, like sun on the floor of a shallow pool | Speed, Scale, Ripple, Sharpness of the light, Water colour (colour), Light colour (colour) | low: 3 rounds of bending, 9 sines and one division a pixel |
 | nxlx-contour | Ambient | The contour lines of a map whose hills rise and sink very slowly | Speed, Contour lines, Scale, Line strength, Shade each level flat (switch), Valley colour (colour), Peak colour (colour), Line colour (colour) | low: 4 sines a pixel |
 | nxlx-dusk | Ambient | A dusk or dawn sky: a slow glow low on the wall under thin drifting streaks of cloud | Speed, Glow height, Cloud streaks, Hour (choice), Sky colour (colour), Horizon colour (colour) | low: 5 sines and one division a pixel |
 | nxlx-fringe | Ambient | Soft fringes where slow ripples from two or three wandering sources meet | Speed, Ripples, Sources apart, Crispness, Third source (switch), Crest colour (colour), Trough colour (colour) | low: 3 square roots and 9 sines a pixel |
 | nxlx-kaleido | Ambient | A slow kaleidoscope: soft shapes of three colours, mirrored around the centre and turning gently | Speed, Mirrors (choice), Size of the shapes, Turn slowly (switch), First colour (colour), Second colour (colour), Third colour (colour) | low: one atan, one square root, 5 sines and one division a pixel |
-| nxlx-lantern | Ambient | Four paper lanterns that sway a little and glow, each breathing at its own pace | Speed, Lantern size, Sway, Paper ribs, Shape (choice), Light colour (colour), Paper colour (colour) | low: 4 lanterns, 9 sines and 5 divisions a pixel |
+| nxlx-lantern | Ambient | Four paper lanterns that sway a little and glow, each breathing at its own pace | Speed, Lantern size, Sway, Paper ribs, Shape (choice), Light colour (colour), Paper colour (colour) | medium: 4 lanterns, 9 sines and 5 divisions a pixel |
 | nxlx-moire | Ambient | Two sets of fine rings, one circling the other slowly, and the large soft shapes that appear between them | Speed, Rings, Distance between the two, Softness, Invert (switch), Line colour (colour), Background colour (colour), Centre (point) | low: 2 square roots and 4 sines a pixel |
-| nxlx-petal | Ambient | A flower of three rings of petals that open and close a little and turn slowly against each other | Speed, Petals (choice), Size, Softness, Outer colour (colour), Inner colour (colour), Background colour (colour), Centre (point) | low: 3 rings, one atan, one square root, 6 sines a pixel |
-| nxlx-pool | Ambient | Still water at night with a few slow drops: each makes rings that widen and fade under a soft light | How often it drips, Rings in a drop, Ring strength, Light on the water (switch), Water colour (colour), Light colour (colour) | low: 3 drops, 3 square roots, 3 sines and 4 divisions a pixel |
+| nxlx-petal | Ambient | A flower of three rings of petals that open and close a little and turn slowly against each other | Speed, Petals (choice), Size, Softness, Outer colour (colour), Inner colour (colour), Background colour (colour), Centre (point) | medium: 3 rings, one atan, one square root, 6 sines a pixel |
+| nxlx-pool | Ambient | Still water at night with a few slow drops: each makes rings that widen and fade under a soft light | How often it drips, Rings in a drop, Ring strength, Light on the water (switch), Water colour (colour), Light colour (colour) | medium: 3 drops, 3 square roots, 3 sines and 4 divisions a pixel |
 | nxlx-ribbon | Ambient | Wide bands of colour lying over each other and swaying slowly, like layers of cloth | Speed, Bands, Sway, Soft edges, Colours (choice), Own colour, bottom (colour), Own colour, top (colour) | low: 4 sines a pixel |
-| nxlx-ridge | Ambient | Three ranges of hills in morning mist under a pale sun, each drifting at its own slow pace | Speed, Hill height, Mist, Sun (switch), Sky colour (colour), Mist colour (colour), Hill colour (colour) | low: 3 ranges, 6 sines and one division a pixel |
-| nxlx-stars | Ambient | A night sky that barely moves: two layers of stars that twinkle a little over a faint band of light | Drift, Stars, Twinkle, Star size, Band of light (switch), Sky colour (colour), Band colour (colour) | low: 2 layers of stars, 3 sines and about 90 sums and products a pixel |
+| nxlx-ridge | Ambient | Three ranges of hills in morning mist under a pale sun, each drifting at its own slow pace | Speed, Hill height, Mist, Sun (switch), Sky colour (colour), Mist colour (colour), Hill colour (colour) | medium: 3 ranges, 6 sines and one division a pixel |
+| nxlx-stars | Ambient | A night sky that barely moves: two layers of stars that twinkle a little over a faint band of light | Drift, Stars, Twinkle, Star size, Band of light (switch), Sky colour (colour), Band colour (colour) | medium: 2 layers of stars, 3 sines and about 90 sums and products a pixel |
 | nxlx-tiles | Ambient | A wall of soft tiles, each brightening and dimming at its own slow pace | Speed, Rows of tiles, Seams, Contrast, Tiling (choice), Dim colour (colour), Bright colour (colour) | low: one sine and about 70 sums and products a pixel |
 | nxlx-veil | Ambient | Three colours folding slowly into one another, like light through a thin curtain | Speed, Scale, Folds, First colour (colour), Second colour (colour), Third colour (colour) | low: 5 sines a pixel |
 | nxlx-bars | Performance | Bars that flash on the beat in four patterns; at most 3 flashes a second unless Fast is on, which doubles the rate (up to 6 a second: not for photosensitive people) | Beats a second, Bars, Fade after each beat, Pattern (choice), Lying bars (switch), Fast (switch), Lit colour (colour), Unlit colour (colour) | low: one sine and about 40 sums and products a pixel |
-| nxlx-beam | Performance | Up to four beams of light that sweep to and fro from one point, like searchlights in haze | Sweeps a second, Beams (choice), Beam width, Sweep, Haze, First colour (colour), Second colour (colour), Where the beams start (point) | low: 4 beams, one atan, one square root, 5 sines and 2 divisions a pixel |
+| nxlx-beam | Performance | Up to four beams of light that sweep to and fro from one point, like searchlights in haze | Sweeps a second, Beams (choice), Beam width, Sweep, Haze, First colour (colour), Second colour (colour), Where the beams start (point) | medium: 4 beams, one atan, one square root, 5 sines and 2 divisions a pixel |
 | nxlx-burst | Performance | Streaks of light that shoot out from one point, with a ring that leaves the middle on every beat (at most 3 a second) | Beats a second, Streaks, Streak length, Ring on the beat (switch), Fly inward (switch), Streak colour (colour), Background colour (colour), Centre (point) | low: one atan, one square root and about 60 sums and products a pixel |
 | nxlx-checker | Performance | A checkerboard that travels and is bent three ways: into waves, into a bulge or into a twirl | Travel rate, Squares, Bend, Kind of bend (choice), Travel upward (switch), Invert (switch), First colour (colour), Second colour (colour) | low: at most 5 sines a pixel |
 | nxlx-chevron | Performance | Rows of arrowheads that march in lanes, with one in every few lit as it passes on the beat | March rate, Arrows, How pointed, Lanes (choice), Every other lane the other way (switch), March sideways (switch), Arrow colour (colour), Background colour (colour) | low: one sine and about 50 sums and products a pixel |
@@ -156,7 +151,7 @@ Written after the first ten, for two uses, and named by the `CATEGORIES` entry i
 
 The rules every one of them keeps (the tests check what a test can check):
 
-- **Cost.** The owner measured the first ten on a Raspberry Pi 4 at 720 lines, where about 16 ms is there for the shader: nxlx-silk 7.5 ms, nxlx-lattice 8.3, nxlx-horizon 9.4, nxlx-prism 9.4, nxlx-pulse 10.6, nxlx-ember 11.2 (these hold 30 pictures a second), nxlx-tide 15.1, nxlx-aurora 20.6, nxlx-drift 30, nxlx-nebula 32.7. The new ones were written to stay at or under nxlx-ember: a handful of sines, at most one loop of 3 or 4 rounds, no marching, no clouds of noise. "low" in the table means that by the count of operations against those measured ones; "medium" means somewhat above nxlx-ember (only Performance shaders may be medium, since they are not in the rotation; one is, nxlx-scope). Nearest to nxlx-ember among the "low" ones, and the first to look at if a Pi says otherwise: nxlx-lantern, nxlx-bloom, nxlx-petal, nxlx-kaleido, nxlx-fringe, nxlx-stars and nxlx-beam. **None of the new shaders has been measured on a Pi**: the class is an estimate.
+- **Cost.** They were written to stay at or under nxlx-ember by a count of work per pixel: a handful of sines, at most one loop of 3 or 4 rounds, no marching, no clouds of noise. Measured on the Pi 4 since ([the table below](#measured-on-a-raspberry-pi-4)), the count was right for 22 of the 30 and too low for eight: nxlx-lantern (20.5 ms at 720 lines, the heaviest of the two families), nxlx-bloom, nxlx-petal, nxlx-pool, nxlx-ridge, nxlx-stars, nxlx-beam and nxlx-scope are medium, and their cost notes say so now. What the eight have in common is what a count of sines does not see: divisions, square roots, and a loop over three or four objects for every pixel. All 30 hold 30 frames a second at 540 lines, the Pi 4's default, so both sets are as they were.
 - **Inputs.** 4 to 8 each, with plain labels: numbers, switches (`bool`), choices (`long` with `VALUES` and `LABELS`), colours (so a picture can be matched to a room or a show) and, in a few, a point (in 0 to 1 of the picture, so it does not move with the drawing size). Today the panel shows sliders for the numbers only and Vibes varies only numbers, so a switch, a choice, a colour and a point keep their `DEFAULT` until the panel has controls for them; each default is the look the shader was made for.
 - **Time.** `TIME` is never fed into a sine as it is. It is folded first, `fract(TIME * rate)`, a place in a cycle between 0 and 1, so the picture is as smooth after a day as in its first minute (a large number added to a small coordinate loses the coordinate's fine steps).
 - **Shape.** Everything is laid out from `RENDERSIZE`, so circles stay round on a 16:9 and on a 4:3 projector.
@@ -165,14 +160,85 @@ The rules every one of them keeps (the tests check what a test can check):
 - **Own construction.** No code was taken from Shadertoy, The Book of Shaders, ISF-Files or anywhere else, and none of the hash and noise one-liners that are passed around is used: where a shader needs scrambled numbers it makes them from whole-number arithmetic that a 32-bit float holds exactly (see `scramble` in nxlx-bars.fs).
 - **What CI draws.** Every bundled shader is drawn by a real mpv on Mesa's software GPU, on OpenGL ES and on desktop OpenGL, with its defaults and with varied numbers; every new one also with all numbers at MIN, all at MAX, late in `TIME`, and once per switch, per choice and per corner of a point. Each picture must be varied and not dark. That proves they compile and draw on that GPU; it says nothing about speed or about the Pi's driver.
 
+### Measured on a Raspberry Pi 4
+
+**How.** 2026-10-05, the owner's Pi 4 Model B Rev 1.5 over SSH: mpv 0.40 on DRM with `--vo=gpu`, a desktop OpenGL 3.1 context on V3D (read from the player's start-up log in the first run, not read again), Mesa 26.2.2, kernel 6.18, a 2560 x 1440 screen at 75 Hz, the code of master at `b62c353`. Each shader was put on with `POST /api/shaders/play` and its defaults, left for 4 seconds, then watched for 20 seconds with no snapshot in them. The pass time is mpv's own average for the shader's pass (`vo-passes`), the dropped frames are the change of mpv's `frame-drop-count`, GPU busy is the kernel's `gpu_stats` for the render queue. `GET /api/shaders` was asked every 3 seconds meanwhile, as an open Shaders page does. A snapshot was taken after the window and looked at. Where a few frames were dropped in those 20 seconds (between 0.05 and 2.5 a second: 13 shaders at 720 lines, 4 at 540) the shader was watched for 60 seconds more, and its rate is over all 80. The GPU took all 47 at both heights, the player logged no warning about any of them, and every picture looked right.
+
+| Shader | Family | Class | Pass at 540 lines | Dropped a second at 540 | Pass at 720 lines | Dropped a second at 720 | GPU busy at 720 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| nxlx-aurora | First ten | medium | 12.9 ms | 0 | 22.8 ms | 4.87 | 99 percent |
+| nxlx-drift | First ten | heavy | 20.1 ms | 2.01 | 35.7 ms | 10.55 | 99 percent |
+| nxlx-ember | First ten | light | 6.5 ms | 0 | 11.4 ms | 0.39 | 91 percent |
+| nxlx-horizon | First ten | light | 5.5 ms | 0 | 9.4 ms | 0 | 84 percent |
+| nxlx-lattice | First ten | light | 4.9 ms | 0 | 8.3 ms | 0 | 77 percent |
+| nxlx-nebula | First ten | heavy | 19.6 ms | 1.48 | 34.8 ms | 11.55 | 99 percent |
+| nxlx-prism | First ten | light | 5.4 ms | 0 | 9.4 ms | 0 | 80 percent |
+| nxlx-pulse | First ten | light | 6.2 ms | 0 | 10.9 ms | 0.27 | 96 percent |
+| nxlx-silk | First ten | light | 4.5 ms | 0 | 7.5 ms | 0 | 75 percent |
+| nxlx-tide | First ten | medium | 8.7 ms | 0 | 15.4 ms | 1.17 | 93 percent |
+| nxlx-bloom | Ambient | medium | 8.2 ms | 0 | 14.8 ms | 1.17 | 91 percent |
+| nxlx-caustic | Ambient | light | 5.8 ms | 0 | 10.4 ms | 0 | 83 percent |
+| nxlx-contour | Ambient | light | 4.6 ms | 0 | 8.2 ms | 0 | 78 percent |
+| nxlx-dusk | Ambient | light | 5.3 ms | 0 | 9.9 ms | 0 | 89 percent |
+| nxlx-fringe | Ambient | light | 6 ms | 0 | 11.4 ms | 0.2 | 89 percent |
+| nxlx-kaleido | Ambient | light | 5.9 ms | 0 | 10.5 ms | 0 | 79 percent |
+| nxlx-lantern | Ambient | medium | 11.5 ms | 0 | 20.5 ms | 3.84 | 99 percent |
+| nxlx-moire | Ambient | light | 4.7 ms | 0 | 7.5 ms | 0 | 78 percent |
+| nxlx-petal | Ambient | medium | 7.9 ms | 0 | 13.8 ms | 0.81 | 89 percent |
+| nxlx-pool | Ambient | medium | 7.2 ms | 0 | 13.5 ms | 1.1 | 92 percent |
+| nxlx-ribbon | Ambient | light | 4.8 ms | 0 | 8.2 ms | 0 | 80 percent |
+| nxlx-ridge | Ambient | medium | 7.1 ms | 0 | 13.2 ms | 0.79 | 90 percent |
+| nxlx-stars | Ambient | medium | 7.2 ms | 0 | 13.3 ms | 0.77 | 90 percent |
+| nxlx-tiles | Ambient | light | 4.5 ms | 0 | 7.8 ms | 0 | 76 percent |
+| nxlx-veil | Ambient | light | 4.5 ms | 0 | 8.3 ms | 0 | 78 percent |
+| nxlx-bars | Performance | light | 4 ms | 0 | 7.2 ms | 0 | 76 percent |
+| nxlx-beam | Performance | medium | 6.9 ms | 0 | 12.5 ms | 1 | 95 percent |
+| nxlx-burst | Performance | light | 6.3 ms | 0 | 11.1 ms | 0.15 | 86 percent |
+| nxlx-checker | Performance | light | 4.1 ms | 0 | 7.4 ms | 0 | 76 percent |
+| nxlx-chevron | Performance | light | 4.6 ms | 0 | 7.8 ms | 0 | 72 percent |
+| nxlx-glitch | Performance | light | 5.7 ms | 0 | 10 ms | 0 | 82 percent |
+| nxlx-grid | Performance | light | 4.9 ms | 0 | 8.4 ms | 0 | 81 percent |
+| nxlx-halftone | Performance | light | 4.3 ms | 0 | 7.5 ms | 0 | 74 percent |
+| nxlx-mirror | Performance | light | 4.3 ms | 0 | 7.8 ms | 0 | 77 percent |
+| nxlx-radar | Performance | light | 6.8 ms | 0 | 12.6 ms | 0.46 | 90 percent |
+| nxlx-scope | Performance | medium | 6.6 ms | 0 | 11.8 ms | 0.56 | 89 percent |
+| nxlx-spokes | Performance | light | 4.9 ms | 0 | 8.7 ms | 0 | 80 percent |
+| nxlx-stripes | Performance | light | 4.2 ms | 0 | 7.4 ms | 0 | 76 percent |
+| nxlx-tunnel | Performance | light | 5.1 ms | 0 | 9.1 ms | 0 | 81 percent |
+| nxlx-zoom | Performance | light | 4.6 ms | 0 | 8 ms | 0 | 76 percent |
+| isf-color-bars | ISF pack | light | 2 ms | 0 | 3.5 ms | 0 | 64 percent | light |
+| isf-corner-colors | ISF pack | light | 4.6 ms | 0 | 8.3 ms | 0 | 78 percent | light |
+| isf-linear-gradient | ISF pack | light | 1.7 ms | 0 | 2.7 ms | 0 | 64 percent | light |
+| isf-radial-gradient | ISF pack | light | 2.2 ms | 0 | 3.7 ms | 0 | 64 percent | light |
+| isf-ridgelines | ISF pack | heavy | 16.8 ms | 1.11 | 29.8 ms | 7.76 | 99 percent | heavy |
+| isf-simplex-noise | ISF pack | medium | 15.7 ms | 0.45 | 27.9 ms | 7.18 | 99 percent | medium |
+| isf-sine-warp-gradient | ISF pack | light | 3.6 ms | 0 | 6.5 ms | 0 | 72 percent | light |
+
+A pass time moves by about a millisecond from one minute to the next (single frames of nxlx-silk took either 7.2 or 8.3 ms). The CPU was at 4 to 11 percent of the four cores (mpv at 11 to 20 percent of one), the board at 39 to 43 degrees and never throttled: the GPU is the only limit. The first play of a shader took 0.55 to 0.89 seconds, the GPU's look at it included; a later play 0.07 to 0.27.
+
+**The classes.** A shader **holds** 30 frames a second where it drops fewer than 0.5 a second, the line under which the engine itself says "ok". **light** holds at 720 lines (33 shaders), **medium** holds at 540 lines only (11), **heavy** drops frames at 540 lines too (3). `GET /api/shaders` gives the class as `weight` and the numbers as `measured`; each of the project's own files starts its `COST` note with low, medium or high to match (a pack's files are not edited; the table in `pvj/shaderlive.py` is what counts for them). For an upload `weight` is read from the first word of its `COST` note, if it has one, and `measured` is null. Near the line a class is a coin's toss: nxlx-radar (0.46 a second at 720 lines, light), nxlx-scope (0.56, medium) and isf-simplex-noise (0.45 at 540 lines, medium, beside isf-ridgelines at 1.11, heavy) would change sides in another minute's measurement.
+
+**Why 720 lines is tight on this screen.** Every picture pays two more passes whatever the shader: the scale to the screen (8.4 to 12.8 ms at 2560 x 1440, 10 in the middle) and a remainder pass (1.8 ms at 540 lines, 3.2 at 720). The carrier makes 30 pictures a second and this screen shows 75, so pictures are given two and three refreshes in turn: 26.7 ms, then 40. A picture that takes longer than 26.7 ms is late for every other place. That leaves the shader about 15 ms at 540 lines and 13.5 at 720, less whatever the passes vary by. The table agrees. At 540 lines everything up to nxlx-aurora's 12.9 ms is clean, and the four above 15 ms drop frames. At 720 lines everything up to 10.5 ms is clean; from 10.9 to 15.4 ms frames are dropped in bursts (0.15 to 1.2 a second on average: seconds with none, then seconds with 2 to 4); above 20 ms they are dropped all the time. **A 60 Hz screen gives every picture 33.3 ms**, and one of 1920 x 1080 has fewer pixels to scale to, so a projector should be kinder than this monitor. That is reasoning from these numbers, not a measurement.
+
+What follows from it:
+
+- **540 lines is the right default for a Pi 4** (and stays the default for a board that is unknown): 43 of the 47 drop nothing there. 1080 lines is not offered on a Pi 4. A Pi 5 and x86 start at 720 and keep 1080; **neither is measured**, so those are guesses. mpv scales the result to the screen.
+- **The two default sets are as they were.** Ambient is the first ten and the Ambient family without the two heavy ones (nxlx-drift, nxlx-nebula): 23 shaders, every one clean at 540 lines. Show is the 15 Performance shaders, every one clean at 540 lines. No shader had to be moved out.
+- **A box set to 720 lines is not well served by Ambient.** Eight of its 23 drop frames there: nxlx-aurora 4.9 a second, nxlx-lantern 3.8, nxlx-tide, nxlx-bloom and nxlx-pool about 1.1, nxlx-petal, nxlx-ridge and nxlx-stars about 0.8. The guard takes out nxlx-aurora and may miss the others (see the guard). The first version's default was 720, and a box that saved its settings then still has it: choose 540 under Picture detail.
+- **The rate and the Fast switch of a Performance shader cost nothing.** Each of the 15 was also run with its rate at the highest, and nxlx-bars, nxlx-glitch and nxlx-grid with Fast on, at both heights: the pass moved by less than 0.9 ms and no variant dropped frames where its defaults did not.
+- **The two noise shaders of the ISF-Files pack are the heaviest in the library after nxlx-drift and nxlx-nebula** (15.7 and 16.8 ms at 540 lines, 6 octaves of noise each). Its other five are the lightest (1.7 to 4.6 ms at 540 lines).
+- **nxlx-drift's new look is right, and it costs more than the old one.** Its picture is blue and orange clouds now, not the grey it was. The work per pixel was meant to stay the same and did not: 35.7 ms at 720 lines against 30 before, and it still drops 2 frames a second at 540 lines.
+
+**Against the first run** (2026-10-04, the first version of this module, the first ten only, a single window each): the pass times agree within about a tenth (nxlx-tide 15.1 ms then, 15.4 now; nxlx-aurora 20.6 and 22.8; nxlx-nebula 32.7 and 34.8; the six light ones 7.5 to 11.2 then, 7.5 to 11.4 now). The dropped frames do not all agree: nxlx-tide dropped 3.3 a second at 720 lines then and 1.2 now, nxlx-aurora 6.7 and 4.9, nxlx-nebula 3.9 at 540 lines then and 1.5 now, and the scale to the screen took 12.9 ms then and about 10 now. The engine was rewritten in between (the carrier now counts its frames) and the windows were not the same length; the cause is not known. At 1080 lines even nxlx-silk dropped 7 to 8 frames a second in the first run, and at 360 nxlx-drift and nxlx-nebula were clean; neither height was measured again.
+
 ## The ISF-Files pack (third-party shaders)
 
 Seven generators from Vidvox's public ISF collection (https://github.com/Vidvox/ISF-Files, commit `395072d4`, MIT), in `pvj/shaders.d/isf-files`. **They are not this project's work**: each is the upstream file byte for byte under a name without spaces, keeps its own `CREDIT` (shown on its row of the Shaders page, with the pack's name), and the licence, the notices and the full file list are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md). In `GET /api/shaders` they carry `"pack": "isf-files"`; the project's own ten carry `"pack": "nxlx"` and uploads `"pack": "uploads"`, so a page can group and filter by pack.
 
-**They are in the library, not in the Vibes rotation.** A third-party shader joins Vibes only when a full-access device switches it to **In Vibes** (the same switch as for every other shader; `{"action": "vibes", "id": "isf-ridgelines.fs", "on": true}`). The reason: five of the seven are still pictures, made as building blocks for a VJ and not as ambience, and none has been timed on a board.
+**They are in the library, not in the Vibes rotation.** A third-party shader joins Vibes only when a full-access device switches it to **In Vibes** (the same switch as for every other shader; `{"action": "vibes", "id": "isf-ridgelines.fs", "on": true}`). The reason: five of the seven are still pictures, made as building blocks for a VJ and not as ambience, and the two that move are heavy work for a Pi 4.
 
-| Shader | Upstream name | Picture | Moves by itself | Rough cost per pixel (a count, not a measurement) |
-| --- | --- | --- | --- | --- |
+| Shader | Upstream name | Picture | Moves by itself | Rough cost per pixel (a count from the text) | Measured class on a Pi 4 |
+| --- | --- | --- | --- | --- | --- |
 | isf-color-bars | Color Bars | broadcast colour bars | no | low: no loop |
 | isf-corner-colors | Corner Colors | a blend between four corner colours | no | low: no loop |
 | isf-linear-gradient | Linear Gradient | a two-colour gradient at an angle | no | low: no loop |
@@ -181,7 +247,7 @@ Seven generators from Vidvox's public ISF collection (https://github.com/Vidvox/
 | isf-simplex-noise | Simplex Noise | soft clouds of noise | yes | medium: up to 6 octaves of simplex noise |
 | isf-sine-warp-gradient | Sine Warp Gradient | a gradient bent by sines | no | low: no loop |
 
-What is known about speed, and what is not. On the owner's Raspberry Pi 4 (mpv 0.40, desktop OpenGL 3.1 on V3D, measured for the project's own shaders in another branch, not here) about 16 ms are available for the shader pass at 720 lines: passes of 7.5 to 11 ms held 30 frames a second, 15 ms dropped 3 a second, 20 ms dropped 7. **None of the seven has been timed on any board.** By that yardstick anything with ray marching, noise of many octaves or more than a few dozen rounds per pixel is heavy on a Pi 4 and must not be in the default rotation. None of the seven has a long loop (upstream's Random Lines, 60 rounds per pixel, would have been the heavy one; it is not in the pack). `isf-ridgelines` and `isf-simplex-noise` are the ones to watch: up to 6 octaves of noise, with an `octaves` input, and fewer octaves cost less. Play one and read `playing.pass_ms` in `GET /api/shaders` (mpv's own timing of the pass) before putting it into Vibes.
+**Measured on the Pi 4** with their defaults (2026-10-05, [the table above](#measured-on-a-raspberry-pi-4)); the GPU took all seven and their pictures looked right. The five without a loop are the lightest shaders in the library. `isf-ridgelines` (16.8 ms at 540 lines, 29.8 at 720) drops about one frame a second even at 540 lines, and `isf-simplex-noise` (15.7 and 27.9 ms) is at the line there; at 720 lines both drop 7 a second. Both have an `octaves` input, 6 by default, and fewer octaves should cost less; that was not measured, and neither was any other of the seven's inputs. Before putting either into Vibes on a Pi 4, turn `octaves` down and read `playing.pass_ms` in `GET /api/shaders` (mpv's own timing of the pass): about 12 ms or less holds at 540 lines. Upstream's Random Lines (60 rounds per pixel) is not in the pack.
 
 How these seven were chosen: see "The survey of ISF-Files" below.
 
@@ -275,7 +341,7 @@ Checked against a real mpv 0.37 in CI (`tests/test_shaders_gpu.py`); the reasons
 TIME is `offset + speed x (carrier frames since the anchor) / 30`.
 
 - **The carrier counts its own frames.** Each frame of the carrier is painted with its own number in its three colour bytes (a `geq` filter in the same `av://lavfi:` address; nobody sees it, the shader draws in its place), and the shader reads the number from the picture it is hooked on. The player reports the same number as its playing position (`time-pos` x 30). So the panel knows what TIME the shader shows, which is what lets the speed change without a jump: the anchor moves to the frame that plays now and the offset to the TIME reached. The first version counted mpv's own `frame` number instead. That number is `frames_uploaded` in mpv's source: every picture the player has uploaded since it started, clips included; nothing outside the shader can read it, so the speed could not have been changed without a jump of TIME.
-- **Verified in CI** on OpenGL ES and desktop OpenGL (and desktop OpenGL 3.1 with GLSL 1.40, what mpv makes on a Pi 4), on Mesa's software GPU: TIME starts at the offset, runs at the wall clock's pace, goes on through a change of a value, runs three times as fast at speed 3 with no jump at the change, and stands still at speed 0. **Not run on a Pi**: the Pi measurements above were made with the first version's clock. If a GPU does not read the carrier's colour correctly, `{"action": "config", "clock": "frame"}` goes back to the first version's clock (the speed control then makes TIME jump).
+- **Verified in CI** on OpenGL ES and desktop OpenGL (and desktop OpenGL 3.1 with GLSL 1.40, what mpv makes on a Pi 4), on Mesa's software GPU: TIME starts at the offset, runs at the wall clock's pace, goes on through a change of a value, runs three times as fast at speed 3 with no jump at the change, and stands still at speed 0. **On the Pi 4** (2026-10-05, V3D, desktop OpenGL 3.1, on nxlx-silk and nxlx-nebula at 720 lines): the shader reads the carrier's frame number correctly. A shader that had run 43 seconds was frozen (speed 0): the frozen picture, which the panel computes from the player's position, was the picture the shader had just drawn from the carrier (two snapshots 0.9 and 1.2 seconds apart around the change differed by 3.4 and 0.4 of 255 on average; a second of nxlx-silk at speed 2 changes its picture by about 20), and two snapshots a second apart while frozen were the same picture. At speed 0.5, 2 and 4 the picture moved, faster with the speed, and no change of speed (1 to 0, 0.5, 2, 4 and back to 1) made a jump: in the generated texts the TIME a change went on from was the TIME reached, to the last digit written. A Performance shader asked for speed 2 and 4 was answered 1. If a GPU does not read the carrier's colour correctly, `{"action": "config", "clock": "frame"}` goes back to the first version's clock (the speed control then makes TIME jump).
 - While the GPU keeps up, TIME runs at real time. **When the GPU is too slow** the player drops frames; with the carrier's clock TIME stays at real time and the picture moves in larger steps (with the first version's clock TIME ran slower instead).
 - The Mix screen's Speed scales it (the carrier plays faster or slower); Freeze stops it.
 - A redraw does not add a frame (the first version's notes said it did; mpv's source says `frame` counts uploads, not redraws).
@@ -311,8 +377,9 @@ With a player that has no GPU output (the tests' `--vo=null`), nothing can be ch
  "shaders": [{"id": "nxlx-tide.fs", "name": "nxlx-tide", "source": "bundled" | "uploaded", "pack": "nxlx" | "isf-files" | "uploads", "description", "credit",
               "cost": "medium: 5 layers, ...",            the file's own note, as before
               "weight": "light" | "medium" | "heavy" | "",   measured for the bundled ones, else from the note's first word
-              "measured": {"board": "pi4", "lines": 720, "pass_ms": 15.1 | null, "pass_ms_range"?: [7.5, 11.2],
-                           "drops_per_second": {"540": 0, "720": 3.3}, "stale": false} | null,
+              "measured": {"board": "pi4", "lines": 720, "pass_ms": 15.4,       the pass at 720 lines, for every bundled shader
+                           "pass_ms_by_lines": {"540": 8.7, "720": 15.4},
+                           "drops_per_second": {"540": 0.0, "720": 1.17}, "stale": false} | null,     null for an upload
               "vibes": true,                                in the active set
               "heavy": {"at", "drops", "height", "board"?} | null,   the guard's mark, if it counts at this height on this board
               "refused": "line 6: ..." | null,              what this box's GPU said about this file
@@ -357,14 +424,15 @@ Settings live under `"shaders"` in the settings file once something is changed: 
 
 ## Not verified
 
-- **The Shaders page as an instrument has run only in a browser test** against a player that draws nothing: what it sends and shows is checked, not the picture. Nobody has dragged a control on a Pi.
-- **Nobody has watched it on a display.** The first version was measured on one Pi 4 and judged from snapshots. Not run on hardware at all: live values of each type, the speed control and the carrier that counts its frames, presets, rotation sets, the guard, the MIDI actions, nxlx-drift's new look, and a change while the room watches (does the picture hitch).
+- **The Shaders page as an instrument has run only in a browser test** against a player that draws nothing: what it sends and shows is checked, not the picture. Nobody has dragged a control on a Pi; the Pi 4 run of 2026-10-05 sent the same requests the page sends, from a script.
+- **Nobody has watched it on a display.** Both Pi 4 runs were judged from snapshots and from the player's counters. A snapshot cannot show a single black or torn frame, a stutter that drops no frame, or how a dip to black feels in a room.
+- **Run on the Pi 4 on 2026-10-05, and not beyond what is said where each is described:** live values of each type, the speed control and the carrier that counts its frames, a preset saved, left, applied and deleted (the applied picture was the saved one, pixel for pixel in a frozen shader), Previous and Next (0.38 to 0.45 seconds until the neighbour was drawn), rotation sets, the guard, nxlx-drift's new look (blue and orange clouds; it looks right). **Not run on hardware:** the MIDI actions, OSC, DMX, events (no bundled shader has one), a refusal by the GPU of a switch or a choice, the reanchoring after two days, 360 lines with this engine, and a shader left on for hours with the carrier's clock.
+- **Every number is from one Pi 4 on one 2560 x 1440 screen at 75 Hz.** A 60 Hz projector gives every frame the same 33.3 ms and a smaller picture to scale to; neither was measured.
 - **No Pi 5 and no x86 is measured.** Their default of 720 lines and the offer of 1080 are guesses.
 - CI runs mpv 0.37 (Ubuntu's). The Pi 4 has 0.40; mpv 0.35 (Raspberry Pi OS Bookworm) has not been run.
 - **Sync and the video wall.** A sync server that plays a shader or Vibes sends its clients "stop" (a shader is not a file they could play), so the clients go black; shaders in step on several boxes are not built. The wall crop over the carrier picture has not been tried.
 - A player crash and restart during Vibes on a real box; Vibes from autostart across a real reboot; OSC and MIDI from a real controller.
-- The guard's thresholds (2 frames a second for 6 seconds) are chosen from the Pi 4 table, not tuned on a running box.
+- The guard's thresholds (2 frames a second for 6 seconds) are chosen from the first Pi 4 table. On the box they took out what is plainly too heavy within 9 seconds and never marked a light shader, but they let a shader that drops frames in bursts stay (see the guard's section): they are not tuned.
 - A GPU refusal is remembered until the file changes or the service restarts (it is not written to the settings; after a restart the shader is tried once more).
 - Uploaded ISF files from other programs: the translator has now been run over one real collection (Vidvox's ISF-Files, see the survey above) and 27 of its files were drawn by a real player in CI. Other collections, and files from the ISF editor's web site, have not been tried.
-- The ISF-Files pack: never seen on a display and never timed on a board; its cost notes are counts from the text.
-- The ISF-Files pack with the live controls: its inputs of every type are adjustable like any other shader's; none of it has been tried on a board, and its weight is read from its cost notes (counts from the text, not measurements).
+- The ISF-Files pack with the live controls: its inputs of every type are adjustable like any other shader's; on the Pi 4 the seven were played and timed with their defaults only, and none of their inputs was moved.

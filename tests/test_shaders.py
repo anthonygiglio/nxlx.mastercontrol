@@ -44,10 +44,10 @@ BUNDLED = len(FIRST_TEN) + len(AMBIENT) + len(PERFORMANCE)
 # second at 720 lines, a medium one at 540 lines only, a heavy one drops frames at 540 lines too. All that is not
 # named here is light.
 # measured classes: begin
-MEDIUM = ["aurora", "beam", "bloom", "lantern", "petal", "pool", "ridge", "scope", "tide"]
+MEDIUM = ["aurora", "beam", "bloom", "lantern", "petal", "pool", "ridge", "scope", "stars", "tide"]
 HEAVY = ["drift", "nebula"]                   # out of the rotation until someone puts them in
-PACK_MEDIUM = ["isf-ridgelines"]
-PACK_HEAVY = ["isf-simplex-noise"]
+PACK_MEDIUM = ["isf-simplex-noise"]
+PACK_HEAVY = ["isf-ridgelines"]
 # measured classes: end
 ROTATION = [n for n in FIRST_TEN + AMBIENT if n not in HEAVY]
 IN_VIBES = len(ROTATION)
