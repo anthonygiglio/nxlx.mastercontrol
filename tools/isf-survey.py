@@ -220,7 +220,7 @@ def report(rows, out=sys.stdout):
     w("\nTRANSLATES AS AN EFFECT, A FILTER OVER THE PLAYING PICTURE: %d files (work is a count from the text: reads of the picture and loop rounds for one pixel)\n" % len(fx))
     for r in fx:
         e = r["effect_work"]
-        w("  %-34s %-6s reads %d, rounds %d%s\n" % (r["file"], e["weight"], e["reads"], e["rounds"], "" if e["sure"] else "; a loop whose length the text does not say"))
+        w("  %-34s %-6s reads %d, rounds %d%s\n" % (r["file"], e["weight"], e["reads"], e["rounds"], "" if e["sure"] else "; NOT COUNTED, an upload would be refused: %s" % e["why"]))
     w("\nREFUSED, BY WHAT THE FILE NEEDS (a file that needs two things is in both lists; the effects above are counted under filter)\n")
     refused = [r for r in rows if not r["translates"]]
     for f in FEATURES:

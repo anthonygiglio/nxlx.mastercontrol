@@ -160,7 +160,7 @@ Filter shaders from the same collection, the same commit and under the same MIT 
 | `isf-white-point-adjust.fs` | White Point Adjust.fs | by zoidberg |
 | `isf-zoom.fs` | Zoom.fs | by VIDVOX |
 
-How these were chosen (2026-10-05): of the 327 `.fs` files upstream, 114 translate as effects (one picture input called `inputImage`, one pass, no vertex shader). Candidates were only files that **credit no source outside the repository**, in their `CREDIT` or in a comment, and in which no well-known snippet was recognised on reading; of those, the ones that are useful to perform with and distinct from each other. Each candidate was then drawn by a real player in CI over a real picture, in three ways of drawing (OpenGL ES, desktop OpenGL, desktop OpenGL 3.1 with GLSL 1.40), with its defaults, with other values in every input and at amount 0; a file had to pass every time to stay.
+How these were chosen (2026-10-05): of the 327 `.fs` files upstream, 112 translate as effects (114 before the review's stricter rules) (one picture input called `inputImage`, one pass, no vertex shader). Candidates were only files that **credit no source outside the repository**, in their `CREDIT` or in a comment, and in which no well-known snippet was recognised on reading; of those, the ones that are useful to perform with and distinct from each other. Each candidate was then drawn by a real player in CI over a real picture, in three ways of drawing (OpenGL ES, desktop OpenGL, desktop OpenGL 3.1 with GLSL 1.40), with its defaults, with other values in every input and at amount 0; a file had to pass every time to stay.
 
 ### Filters not bundled, although the box can run them: the origin is not clear enough
 

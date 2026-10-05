@@ -281,11 +281,15 @@ def measure(parsed):
 
     * a loop that is not `for (int i = <number>; i < <limit>; i++)`, where the limit is a number, a constant given
       as a number (`const int N = 8;`, `#define N 8`) or a number input (counted at its MAX); `<=`, `>`, `>=`, `++i`,
-      `i--`, `i += <number>` and `i -= <number>` are the other forms; so no `while`, no `do`, no `for(;;)`;
-    * a loop whose counter is written to in its body, or handed to a function that can write to it;
-    * a `#define` that holds a loop, a read of the picture or an assignment (a loop or a read could hide there, and
-      an assignment could move a counter);
-    * functions that call each other in a circle, more than MAX_FUNCTIONS functions, loops more than MAX_NESTING deep.
+      `i--`, `i += <number>` and `i -= <number>` are the other forms, the counter may be declared before the loop
+      (`for (i = 0; ...)`), and the limit may be a local name given one of those once and never changed
+      (`int samples = quality;`); so no `while`, no `do`, no `for(;;)`;
+    * a loop whose counter is written to in its body, or handed there to something that can write to it (a function
+      with an `out` or `inout` argument, a `#define` that holds an assignment), or named in such a `#define`;
+    * a `#define` that holds a loop or a read of the picture (either could hide there);
+    * a function that calls itself, or functions that call each other in a circle (two functions of one name that
+      differ in their arguments may call each other), more than MAX_FUNCTIONS functions and #defines, loops more
+      than MAX_NESTING deep.
     """
     lines, defines, steps = [], {}, [0]
     for line in parsed["body"].split("\n"):
@@ -303,8 +307,6 @@ def measure(parsed):
             raise ShaderError("a #define holds a loop (%s): write the loop where it runs, so its length can be counted" % name)
         if any(w in _READS or w == S.IMAGE for w in rest):
             raise ShaderError("a #define reads the picture (%s): write the read where it happens, so it can be counted" % name)
-        if any(w in _WRITES for w in rest):
-            raise ShaderError("a #define holds an assignment (%s): it could move a loop's counter where the count cannot see it" % name)
         defines.setdefault(name, []).append(rest)
     tok = _TOKEN.findall("\n".join(lines))
     if len(tok) > MAX_STEPS:
@@ -350,6 +352,15 @@ def measure(parsed):
     for name in unsure:
         highest.pop(name, None)
         lowest.pop(name, None)
+    # a local name for one of those, given once and never changed: "int samples = quality;" (checked further down,
+    # once it is known what can write to a name it is handed)
+    aliases = []
+    for i in range(1, len(tok) - 4):
+        if tok[i] in ("int", "float") and tok[i + 2] == "=" and tok[i - 1] != "const" and re.match(r"[A-Za-z_]\w*\Z", tok[i + 1]):
+            end = i + 3
+            while end < len(tok) and tok[end] not in (";", ","):
+                end = match[end] + 1 if tok[end] in _OPEN else end + 1
+            aliases.append((tok[i + 1], tok[i + 3:end]))
     # the functions: a name, round brackets and curly brackets, outside every other bracket
     functions, writers, i = {}, set(), 0
     while i < len(tok):
@@ -368,6 +379,46 @@ def measure(parsed):
             i = match[i] + 1
         else:
             i += 1
+    # what can write to a counter it is given or that it names: a function with an out or inout argument, a #define
+    # that holds an assignment, and a #define that names one of those
+    assigning = {name: set(w for words in bodies for w in words) for name, bodies in defines.items()}
+    writers |= {name for name, words in assigning.items() if words & _WRITES}
+    grown = True
+    while grown:
+        grown = False
+        for name, words in assigning.items():
+            if name not in writers and words & writers:
+                writers.add(name)
+                grown = True
+    def plain(tokens, table):
+        while len(tokens) >= 4 and tokens[0] in ("int", "float") and tokens[1] == "(" and tokens[-1] == ")":
+            tokens = tokens[2:-1]
+        value = _number(tokens)
+        return table.get(tokens[0]) if value is None and len(tokens) == 1 else value
+    given = {}
+    for name, value in aliases:
+        given.setdefault(name, []).append(value)
+    for name, values in given.items():
+        if len(values) != 1 or name in highest or name in unsure or name in defines or name in functions or plain(values[0], highest) is None:
+            continue
+        written = handed = 0
+        for j in range(1, len(tok) - 1):
+            if tok[j] == name and (tok[j + 1] in _WRITES or tok[j - 1] in ("++", "--")):
+                written += 1
+            elif tok[j] in writers and ((tok[j + 1] == "(" and name in tok[j + 2:match[j + 1]]) or name in assigning.get(tok[j], ())):
+                handed += 1
+        if written == 1 and not handed:             # the one write is where it is given
+            highest[name], lowest[name] = plain(values[0], highest), plain(values[0], lowest)
+    # A name counts as a number only while it means one thing: a constant or a local given once is declared exactly
+    # once, an input or a #define never (an argument of a function called `n` would be another `n`).
+    declared = {}
+    for j in range(1, len(tok)):
+        if tok[j] in highest and tok[j - 1] in ("int", "float", "uint", "bool", "vec2", "vec3", "vec4"):
+            declared[tok[j]] = declared.get(tok[j], 0) + 1
+    for name in list(highest):
+        if declared.get(name, 0) != (0 if (name in defines or any(p["name"] == name for p in parsed["inputs"])) else 1):
+            highest.pop(name)
+            lowest.pop(name, None)
     if len(functions) + len(defines) > MAX_FUNCTIONS:
         raise ShaderError("it has more than %d functions and #defines: too intricate to count" % MAX_FUNCTIONS)
     if "main" not in functions:
@@ -398,6 +449,8 @@ def measure(parsed):
             else:
                 part.append(t)
         parts.append(part)
+        if len(parts) == 3 and len(parts[0]) >= 3 and parts[0][1] == "=" and re.match(r"[A-Za-z_]\w*\Z", parts[0][0]):
+            parts[0] = ["int"] + parts[0]               # the counter was declared before the loop: for (i = 0; ...)
         if len(parts) != 3 or len(parts[0]) < 4 or parts[0][0] not in ("int", "float") or parts[0][2] != "=":
             raise ShaderError("a loop does not say how often it runs (for (%s)): %s" % (S._text(" ".join(head), 60), plain))
         var, start = parts[0][1], _number(parts[0][3:])
@@ -422,7 +475,7 @@ def measure(parsed):
             if tok[j] == var:
                 if tok[j + 1] in _WRITES or tok[j - 1] in ("++", "--"):
                     raise ShaderError("a loop's counter (%s) is changed inside the loop, so its length cannot be counted" % var)
-            elif tok[j] in writers and tok[j + 1] == "(" and var in tok[j + 2:match[j + 1]]:
+            elif tok[j] in writers and ((tok[j + 1] == "(" and var in tok[j + 2:match[j + 1]]) or var in assigning.get(tok[j], ())):
                 raise ShaderError("a loop's counter (%s) is handed to %s, which can change it, so the loop's length cannot be counted" % (var, tok[j]))
         span = (limit - start) if up else (start - limit)
         if span < 0:
@@ -453,30 +506,42 @@ def measure(parsed):
 
     costs, walking = {}, []
 
-    def called(name):
-        if name in costs:
-            return costs[name]
-        if name in walking:
-            raise ShaderError("its functions call each other in a circle (%s)" % name)
+    def one(key):
+        """What one function body, or one meaning of a #define, costs. `key` is (name, "f" or "d", which one)."""
+        if key in costs:
+            return costs[key]
+        if key in walking:
+            raise ShaderError("a function calls itself, or functions call each other in a circle (%s)" % key[0])
         if len(walking) >= MAX_FUNCTIONS:
             raise ShaderError("its functions call each other too many levels deep")
-        walking.append(name)
-        reads = rounds = 0
-        for a, b in functions.get(name, ()):         # several of one name: the dearest counts
-            r, n = cost(a, b, 0)
-            reads, rounds = max(reads, r), max(rounds, n)
-        for words in defines.get(name, ()):
+        walking.append(key)
+        if key[1] == "f":
+            a, b = functions[key[0]][key[2]]
+            costs[key] = cost(a, b, 0, key)
+        else:
             r = n = 0
-            for w in words:
-                if (w in functions or w in defines) and w != name:
-                    cr, cn = called(w)
+            for w in defines[key[0]][key[2]]:
+                if w in functions or w in defines:
+                    cr, cn = called(w, key)
                     r, n = r + cr, n + cn
-            reads, rounds = max(reads, r), max(rounds, n)
+            costs[key] = (min(BIG, r), min(BIG, n))
         walking.pop()
-        costs[name] = (reads, rounds)
-        return costs[name]
+        return costs[key]
 
-    def cost(a, b, depth):
+    def called(name, me=None):
+        """What a call of `name` costs at most: the dearest of its meanings. Two functions of one name (they differ
+        in their arguments) may call each other, so from inside one of them the name means the others."""
+        keys = [(name, "f", k) for k in range(len(functions.get(name, ())))] + [(name, "d", k) for k in range(len(defines.get(name, ())))]
+        others = [k for k in keys if k != me]
+        if me in keys and not others:
+            raise ShaderError("a function calls itself, or functions call each other in a circle (%s)" % name)
+        reads = rounds = 0
+        for key in others:
+            r, n = one(key)
+            reads, rounds = max(reads, r), max(rounds, n)
+        return reads, rounds
+
+    def cost(a, b, depth, me=None):
         """(reads, rounds) of the tokens a..b: loops in a row add up, a loop multiplies what is in it."""
         reads = rounds = 0
         i = a
@@ -491,8 +556,8 @@ def measure(parsed):
                 close = match[i + 1]
                 stop = statement(close + 1, b)
                 n = length(tok[i + 2:close], (close + 1, stop))
-                hr, hn = cost(i + 2, close, depth + 1)              # the head is run every round too
-                br, bn = cost(close + 1, stop, depth + 1)
+                hr, hn = cost(i + 2, close, depth + 1, me)          # the head is run every round too
+                br, bn = cost(close + 1, stop, depth + 1, me)
                 reads += min(BIG, (n + 1) * hr + n * br)
                 rounds += min(BIG, (n + 1) * hn + n * max(1, bn))
                 i = stop
@@ -500,7 +565,7 @@ def measure(parsed):
             if t in _READS:
                 reads += 1
             elif t in functions or t in defines:
-                r, n = called(t)
+                r, n = called(t, me)
                 reads, rounds = reads + r, rounds + n
             i += 1
         return min(BIG, reads), min(BIG, rounds)

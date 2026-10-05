@@ -262,7 +262,20 @@ class TranslatorTest(unittest.TestCase):
             ("\n#define LOOP for (int i = 0; i < 100000; ++i)" + loop.replace("for (int i = 0; i < 9; ++i)", "LOOP"), "a #define holds a loop"),
             ("\n#define W while" + BODY, "a #define holds a loop"),
             ("\n#define TAP(p) IMG_NORM_PIXEL(inputImage, p)" + BODY, "a #define reads the picture"),
-            ("\n#define BACK(n) n -= 1" + loop.replace("{ c +=", "{ BACK(i); c +=", 1), "a #define holds an assignment"),
+            ("\n#define BACK(n) n -= 1" + loop.replace("{ c +=", "{ BACK(i); c +=", 1), "handed to BACK"),
+            ("\n#define BACK i -= 1" + loop.replace("{ c +=", "{ BACK; c +=", 1), "handed to BACK"),
+            ("\n#define BACK(n) n -= 1\n#define AGAIN(n) BACK(n)" + loop.replace("{ c +=", "{ AGAIN(i); c +=", 1), "handed to AGAIN"),
+            (loop.replace("vec4 c = vec4(0.0);", "vec4 c = vec4(0.0); int n = 9; n = 100000;").replace("i < 9", "i < n"), "does not say how often it runs"),
+            (loop.replace("vec4 c = vec4(0.0);", "vec4 c = vec4(0.0); int n = 9; n *= 9000;").replace("i < 9", "i < n"), "does not say how often it runs"),
+            ("\nvoid more(inout int n) { n = 100000; }" + loop.replace("vec4 c = vec4(0.0);", "vec4 c = vec4(0.0); int n = 9; more(n);").replace("i < 9", "i < n"),
+             "does not say how often it runs"),
+            (loop.replace("vec4 c = vec4(0.0);", "vec4 c = vec4(0.0); int n = int(k * 9000.0);").replace("i < 9", "i < n"), "does not say how often it runs"),
+            ("\nfloat a(float x) { return a(x); }" + BODY.replace("* k", "* a(k)"), "calls itself"),
+            # a name that means two things is no number: a constant, and a function's argument of the same name
+            ("\nconst int N = 2;\nvec4 blur(int N) { vec4 s = vec4(0.0); for (int j = 0; j < N; j++) s += IMG_NORM_PIXEL(inputImage, vec2(0.5)); return s; }"
+             + BODY.replace("* k", "* k + blur(100000)"), "does not say how often it runs"),
+            ("\nvec4 blur(float k) { vec4 s = vec4(0.0); for (float j = 0.0; j < k; j++) s += IMG_NORM_PIXEL(inputImage, vec2(0.5)); return s; }"
+             + BODY.replace("* k", "* k + blur(100000.0)"), "does not say how often it runs"),
             ("\nfloat a(float x);\nfloat b(float x) { return a(x); }\nfloat a(float x) { return b(x); }" + BODY.replace("* k", "* a(k)"), "call each other in a circle"),
             (loop.replace("{ c +=", "{ for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) for (int d = 0; d < 2; d++) for (int e = 0; e < 2; e++) c +=", 1), "more than 4 deep"),
             ("\n" + "".join("float f%d(float x) { return x; }\n" % n for n in range(70)) + BODY, "more than 64 functions"),
@@ -281,6 +294,12 @@ class TranslatorTest(unittest.TestCase):
             (loop.replace("i < 9", "i < int(taps)"), taps, (20, 20)),
             (loop.replace("i < 9", "i <= taps").replace("int i = 0", "float i = 0.0").replace("++i", "i += 0.5").replace("float(i)", "i"), taps, (41, 41)),
             ("\nconst int N = 12;" + loop.replace("i < 9", "i < N"), None, (12, 12)),
+            # forms honest files use (each is in a file of ISF-Files): a counter declared before its loop, a local
+            # name for an input, two functions of one name where one calls the other, a #define that assigns
+            (loop.replace("vec4 c = vec4(0.0);", "vec4 c = vec4(0.0); int i;").replace("int i = 0; i < 9", "i = 0; i < 9"), None, (9, 9)),
+            (loop.replace("vec4 c = vec4(0.0);", "vec4 c = vec4(0.0); int n = int(taps);").replace("i < 9", "i < n"), taps, (20, 20)),
+            ("\nfloat lum(vec3 c) { return c.r + " + read + ".r; }\nfloat lum(vec4 c) { return lum(c.rgb); }" + BODY.replace("* k", "* lum(vec4(k))"), None, (2, 1)),
+            ("\n#define SORT(a, b) t = a; a = min(a, b); b = max(t, b);" + loop.replace("{ c +=", "{ vec4 t; vec4 u = c; SORT(c, u) c +=", 1), None, (9, 9)),
             ("\n#define N 12\n#undef N\n#define N 40" + loop.replace("i < 9", "i < N"), None, (40, 40)),
             ("\nvec4 tap(vec2 p) { return " + read + "; }\n#define T(p) tap(p)" + loop.replace("IMG_NORM_PIXEL(inputImage, vec2(float(i) / 9.0))", "T(vec2(0.5))"), None, (9, 9)),
             ("\nvec4 tap(vec2 p) { vec4 s = vec4(0.0); for (int j = 0; j < 5; j++) s += " + read + "; return s; }" + loop.replace("IMG_NORM_PIXEL(inputImage, vec2(float(i) / 9.0))", "tap(vec2(0.5)) + tap(vec2(0.1))"), None, (90, 90)),
