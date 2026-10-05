@@ -187,5 +187,5 @@ How these were chosen (2026-10-05): of the 327 `.fs` files upstream, 114 transla
 
 As before, the sources outside GitHub were not opened: "terms not read" means not established, not that anything is wrong with them. And as before, this rule catches borrowing that a file admits to and snippets a reader recognises; it is a reading, not a proof.
 
-**Dropped after drawing: none.** All 32 candidates drew right in all three ways of drawing, every time they were run (123 draws a way with the project's own nine, in three rounds of CI running). Had one passed only sometimes it would have been taken out, not retried.
+**Dropped after drawing: none.** In the three rounds of CI after the test rig itself was reliable, all 32 candidates drew right in all three ways of drawing (123 draws a way with the project's own nine). In the rounds before that, draws failed for reasons that were not the filters': screenshots that the rig drew black for any picture, and a limit for "the picture again" set tighter than one more pass through the GPU allows; no file failed for a reason of its own. A file that passes only sometimes in a rig that works is to be taken out, not retried.
 
