@@ -50,7 +50,7 @@ From these the box works out the rest and serves it as `/theme.css` (custom prop
 
 The panel also puts `data-area` on the root element: `room` on the Room screen, `clips` on Live and Media, `mix` on Mix, `system` on System and its pages, `shaders` on the Shaders and Vibes page. A style may use it; the default one does not.
 
-**To add a style:** add its name to `STYLES` in `themes.py` and to `STYLES` in `app.js`; add its block at the end of `app.css`, every selector scoped; add a theme in `themes.d` that names it; extend the test `test_the_signal_block_of_the_stylesheet_only_ever_applies_under_its_style` to the new marker; run the browser test's style pass on it (`tests/ui/panel.test.js`, the Signal step) and add its screenshots (`tests/ui/screenshots.js`). Fonts go in `pvj/web/fonts` as WOFF2 with their licence text beside them, declared in `REUSE.toml` and `THIRD_PARTY_LICENSES.md`; the server serves only `.woff2` files from that folder. The default look must stay as it is: nothing outside the block may change for a style.
+**To add a style:** add its name to `STYLES` in `themes.py` and to `STYLES` in `app.js`; add its block at the end of `app.css`, every selector scoped; add a theme in `themes.d` that names it; extend the test `test_the_signal_block_of_the_stylesheet_only_ever_applies_under_its_style` to the new marker; run the browser test's style pass on it (`tests/ui/panel.test.js`, the Signal step) and add its screenshots (`tests/ui/screenshots.js`); both go through the list of screens, pages and states in `tests/ui/signal-pages.js`, which is also where a new page is added so that it is pictured and checked in every style. Fonts go in `pvj/web/fonts` as WOFF2 with their licence text beside them, declared in `REUSE.toml` and `THIRD_PARTY_LICENSES.md`; the server serves only `.woff2` files from that folder. The default look must stay as it is: nothing outside the block may change for a style.
 
 ## Signal
 
@@ -68,7 +68,7 @@ Two themes use the style `signal`: **Signal** (dark room) and **Signal light** (
 | Muted text | `#b8b8c0` | `#4a4a52` |
 | Accent (no area) | `#ffd60a` | `#ffd60a` |
 | Off | `#3a3a42` | `#d6d6dc` |
-| Set up | `#ffb020` | `#ffb020` |
+| Set up | `#ffb020` in Figma. **Built as `#ff9500`**, see below | the same |
 | Ready | `#f5f5f0` (the text colour) | `#0b0b0d` (the text colour) |
 | Active | `#ffd60a` on the board; the area's colour on the screens. **Built as `#00e0ff`**, see below | the same |
 | Problem, Danger | `#ff3b30` | `#ff3b30` |
@@ -101,7 +101,7 @@ Two themes use the style `signal`: **Signal** (dark room) and **Signal light** (
 
 - **Mix is violet, `#b78cff`.** Figma names four areas and Mix is not one of them. Violet is the strong colour furthest from the four and from the state colours (amber, red). It is one line in each theme file.
 - **Active is cyan, `#00e0ff`, everywhere. For the owner to confirm.** Figma's board gives Active the fixed yellow `#ffd60a`, which is also Room's colour, and its Shaders screen draws Active in pink, the colour of that area. Either way a state would look like an area. The rule is that a state is never confused with an area, so Active needed a colour that is none of the five area colours, not amber and not red. White is Ready and grey is Off; of the hues left, cyan is the furthest from all of them (black on it is 12.27 to 1; in RGB it is 121 from the clips green, 137 from the System blue and over 200 from the rest). It is one line in each theme file (`states.active`). A test holds the theme files to this: Active at least 100 from every area and every other state, and the browser test fails if any state chip on a screen has the open area's colour.
-- **Set up amber and Room yellow are close, and both are Figma's.** `#ffb020` and `#ffd60a` are 44 apart in RGB, the nearest state to any area. On the Room screen a Set up chip sits on a page whose title block is yellow. The word is on the chip, and the values were kept as drawn; if they read alike on a real phone in the dark, Set up should move toward orange.
+- **Set up is orange, `#ff9500`, not Figma's amber. For the owner to confirm (D57).** Figma's `#ffb020` and Room yellow `#ffd60a` are 44 apart in RGB, the nearest state to any area. Looked at side by side as blocks on the Room screen (a group that is warming up wears the Set up colour under a title block and labels in yellow) and on the System index, they read as two shades of one colour. `#ff9500` is 66 from Room yellow and 102 from Problem red, clear of both (a little further from yellow would bring it under 100 from red); black on it is 8.94 to 1. A test holds it there: Set up at least 60 from every area, every state at least 100 from every other.
 - **Errors are never the accent.** The default look writes an error line in the accent. In Signal that would make a Room error yellow, the colour of Active, so an error line is `#ff3b30` in the dark and `#b00020` in the light (red at 4.5 to 1 on the off-white page; Figma's `#ff3b30` is 3.1 to 1 there).
 - **Lines and focus rings in the light.** An area colour on the off-white page is between 1.2 and 2.7 to 1, too faint for a ring or a thin line. So `--ink` is the area colour in the dark and the text colour in the light, and rings, the stripe beside a chosen row and dashed outlines use it. In the light the area colour is only ever a filled block with black words on it.
 - **The Off chip's words** are the text colour (`#f5f5f0`, 10.3 to 1 on `#3a3a42`); Figma has `#e0e0e6`.
@@ -111,6 +111,26 @@ Two themes use the style `signal`: **Signal** (dark room) and **Signal light** (
 - **Live, Mix, Media, the MIDI controller page, fields, sheets, the pads and the questions asked in place** are not in Figma; they are built from the parts above. On the controller page a knob keeps its round outline: the shape is what tells a knob from a button; a cell is 88 px wide at least (58 in the default look) and in sentence case, so no word of what it does is cut, and a wide controller scrolls sideways inside its card.
 - **A card on a phone has no box** (Figma's phone screens have none: a label, then what belongs to it); on a laptop it is a panel with the 3 px outline.
 - **Names typed by people stay as typed** where the letters matter: fields, addresses, Wi-Fi names in the list of networks, codes. A row's name is in capitals, as Figma draws "MAIN PROJECTOR" and "AURORA".
+
+### What was decided when the look was carried through every page (D57)
+
+Figma draws three screens. Every other screen, page and state was looked at in the pictures of `tests/ui/signal-pages.js` and settled by these rules, which the browser test holds on each of them (at 390 and 1366 px, dark and light):
+
+- **Archivo Black in capitals is for screen titles, a panel's own big name and the largest actions only** (the owner, after seeing the first pass: "feel free to use the lighter font style on smaller button"). That is: the title block, a page's title, a group's name on Room, the shader on stage, and the buttons that are 56 px and up (`.btn.big`, a scene, a source, a projector's power button, Pair and Join). Everything smaller is SemiBold or Bold in sentence case: ordinary buttons, the tabs (the open one Black), chips, the switch's Off and On, section headings (Bold 17 px), row names (Bold 18 px), field labels (SemiBold 14 px), slider names. This replaces Figma's "capitals for titles and buttons" for the small ones; Figma's sizes in the table above still hold for what stays in capitals. Never in capitals, whatever the size: a sentence, the name of a clip or a file, a controller's own name.
+- **Numbers are in the number face:** slider values, clock times, sizes, addresses, codes, number and time fields.
+- **A title is never cut inside a word.** Titles and names break between words only; a page under System has its title at 28 px on a phone (30 on a laptop), so "Projectors" and its switch share a line, and where a title needs the whole width the switch goes under it.
+- **What staff press on Room and on Live is 56 px high at least;** everything else that can be tapped is 44. A word on a button is never cut, in any case.
+- **What destroys something is the danger red, never an area's colour.** A block for what cannot be undone or stops the room (All off, Power off, Reset to factory settings, the "yes" of every question asked in place); a red outline for what removes or deletes one thing, and for Try again on a projector that does not answer. The factory reset is a panel with a red outline under a red "Danger" label.
+- **A state is a chip in its own colour with its word, also where the default look has only a line of text.** A projector's row has one beside its name (On in the Active colour, Off, Warming up and Cooling down in the Set up colour, No answer in the Problem colour); a group on Room has one beside its name, in the same colours. The row's own text line still says it for a screen reader.
+- **The projector's power button looks different in each state:** Turn on is the block of the area's colour, Turn off an outline (it asks first), Warming up and Cooling down a block of the Set up colour that cannot be pressed, Try again an outline in the danger red. 56 px high.
+- **Room is read at arm's length.** A group is a ruled panel: its name at 30 px, the state chip, then On and Off as the two halves of one switch 64 px high (the half in force is filled, On with the screen's colour, as on every switch in the look), then "Source" and its buttons at 64 px with the chosen one filled, then the two mutes, in the lighter type and with a muted outline, then what the last press did in a ruled line on the surface colour. Scenes are blocks 72 px high. "Everything" stands apart under a double rule, with All off in the danger red and its question in place.
+- **Ambience on Room is Room yellow, not Shaders pink.** It starts shaders, but the area's colour belongs to the screen: a second area's colour on Room would say "this part is another place", and staff do not need to know what ambience is made of. So the block's label and its button when it plays are the screen's colour, like everything else that is chosen or on there. The same button on Live (Vibes) is green there, and on the Shaders page pink.
+- **A small set of choices is a segmented control:** one ruled frame on the surface colour, the chosen cell a block of the area's colour (banks on Live, the days of a schedule entry, how the network gets its address, the looks, a controller's brightness, the effects by work). Secondary actions under More and a group's projectors are grids of equal cells, not a ragged line; a field and its button share a line.
+- **A slider's value is a block of its own** beside the name (the text colour, the page colour's digits in the number face), so the number is found without reading the line.
+- **What an action did is a toast:** the page's message line is fixed above the tab bar, where the thumb is, as a block of the text colour (the danger red for an error), and goes by itself after 8 seconds (20 for an error). Results that belong to one control are still said beside it. The animation is `@keyframes signal-toast`, the one rule in the block that is not a scoped selector (only scoped rules use it; the unit test allows an animation named for the style).
+- **On a phone every section starts under a 3 px rule** with its heading, so a long screen (Live, Mix) reads as parts; on a laptop the sections are the ruled panels.
+- **On a laptop a list beside its form does not scroll by itself:** rows are taller than in the default look and a 768 px window showed one and a half of them; the page scrolls and the form stays in view. Room puts ambience beside the scenes and the groups in two or three columns.
+- **Before pairing** the connect screen and the support sign-in have the same title block, in the theme's accent (no area is open yet), and on a laptop the form is a column 560 px wide.
 
 ### Contrast, computed
 
@@ -126,7 +146,7 @@ Two themes use the style `signal`: **Signal** (dark room) and **Signal light** (
 | Black on Mix violet | 7.69 | 7.69 |
 | Black on System blue | 7.90 | 7.90 |
 | Words on the Off chip | 10.30 | 13.59 |
-| Black on Set up amber | 10.75 | 10.75 |
+| Black on Set up orange | 8.94 | 8.94 |
 | Black on Active cyan | 12.27 | 12.27 |
 | Black on Problem red | 5.54 | 5.54 |
 | Ready chip (page colour on text colour) | 17.98 | 17.26 |

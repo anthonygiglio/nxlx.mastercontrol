@@ -505,6 +505,16 @@ class WorkingSizeTest(unittest.TestCase):
         for bad in (0, -1, 8193, 720.0, True, "720"):
             with self.assertRaises(S.ShaderError, msg=bad):
                 E.translate(p, lines=bad)
+        # TIME does not know of the cap: every line of the clock is the same with and without one, at any speed
+        moves = S.parse(MOVES, S.FILTER)
+        clock = lambda text: [l for l in text.split("\n") if "pvj_time" in l or "TIMEDELTA" in l or "FRAMEINDEX" in l or "pvj_hi" in l or "pvj_lo" in l]
+        for speed in (1.0, 0.5):
+            picture = E.clean_picture("bt.709", "limited", 29.97)
+            free = clock(E.translate(moves, controls={"speed": speed}, picture=picture))
+            self.assertIn("    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / 29.97%s;" % ("" if speed == 1.0 else " * 0.5"), free)
+            for lines in (540, 720):
+                self.assertEqual(clock(E.translate(moves, controls={"speed": speed}, picture=picture, lines=lines)), free, (speed, lines))
+            self.assertEqual(clock(E.translate(moves, controls={"speed": speed, "half": True}, picture=picture)), free)
 
     def test_what_automatic_gives_each_board_and_what_a_box_has_when_nobody_chose(self):
         self.assertEqual(E.DETAILS, ("auto", 540, 720, "full"))

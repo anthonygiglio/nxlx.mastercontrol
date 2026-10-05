@@ -2570,213 +2570,105 @@ function startServer() {
       }
       assert(/^"?Archivo/.test(await page.evaluate(() => getComputedStyle(document.querySelector('#syspage h1')).fontFamily)), 'titles are set in Archivo');
 
-      // What one screen must hold in Signal.
+      // Every screen, page and state in the list of tests/ui/signal-pages.js (the same list the pictures are taken
+      // from), at 390 and at 1366 px in the dark and at 390 px in the light, each held to the rules of the look by
+      // that file's check(): nothing sticks out, no word in capitals is cut and no sentence is in capitals, touch
+      // targets (44 px; 56 px for what staff press on Room and Live), no text under 13 px, contrast 4.5 to 1, names
+      // of clips keep their case, numbers in the number face, a state chip never in the area's colour, in the light
+      // no line in an area's colour, slider fills, and the title block and the open tab in the area's colour.
+      const signal = require('./signal-pages');
       const signalBad = [];              // every screen is looked at before the step fails, so one run names everything
-      const signalChecks = async (what, area, opts) => {
-        opts = opts || {};
-        await page.waitForTimeout(700);              // a page's own cards arrive after it opens
-        await page.waitForTimeout(300);              // the fill of a slider the box has just moved is set within a quarter of a second
-        await fitsOn(page, 'Signal, ' + what).catch((e) => signalBad.push(e.message.split('\n')[0]));
-        const found = await page.evaluate(([wantArea, minButton]) => {
-          const out = [];
-          const root = document.documentElement;
-          if (root.getAttribute('data-style') !== 'signal') out.push('the style is gone');
-          if (root.getAttribute('data-area') !== wantArea) out.push('area is ' + root.getAttribute('data-area') + ', not ' + wantArea);
-          const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
-          const name = (el) => (el.id ? '#' + el.id + ' ' : '') + (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 28);
-          // touch targets
-          document.querySelectorAll('.shell button, .shell select, .shell summary, .shell input, .shell .xypad').forEach((el) => {
-            if (!shown(el)) return;
-            const r = el.getBoundingClientRect();
-            if (r.height < 43.5 || r.width < 43.5) out.push('small (' + Math.round(r.width) + 'x' + Math.round(r.height) + '): ' + name(el));
-            if (minButton && el.tagName === 'BUTTON' && el.closest('#roomscreen') && r.height < minButton - 0.5) out.push('under ' + minButton + ' px on Room: ' + name(el));
-          });
-          // text: size, and contrast against what is behind it
-          const lum = (c) => { const v = c.map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
-          const rgb = (s) => { const m = /rgba?\(([^)]+)\)/.exec(s); if (!m) return null; const p = m[1].split(/[ ,/]+/).map(Number); return { c: p.slice(0, 3), a: p.length > 3 ? p[3] : 1 }; };
-          const behind = (el) => { for (let e = el; e; e = e.parentElement) { const b = rgb(getComputedStyle(e).backgroundColor); if (b && b.a > 0.99) return b.c; } return null; };
-          const walker = document.createTreeWalker(document.querySelector('.shell'), NodeFilter.SHOW_TEXT);
-          const seen = new Set();
-          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-            const el = n.parentElement;
-            if (!n.nodeValue.trim() || seen.has(el) || el.tagName === 'OPTION' || !shown(el)) continue;
-            seen.add(el);
-            const cs = getComputedStyle(el);
-            if (parseFloat(cs.fontSize) < 13) out.push('text of ' + cs.fontSize + ': ' + name(el));
-            let faded = false;
-            for (let e = el; e; e = e.parentElement) if (e.disabled || parseFloat(getComputedStyle(e).opacity) < 1) faded = true;
-            const fg = rgb(cs.color), bg = behind(el);
-            if (faded || !fg || !bg || fg.a < 0.99) continue;
-            const a = lum(fg.c), b = lum(bg);
-            const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-            if (ratio < 4.5) out.push('contrast ' + ratio.toFixed(2) + ' (' + cs.color + ' on rgb(' + bg.join(', ') + ')): ' + name(el));
-          }
-          // a button's words are whole: a word in capitals that does not fit is cut by the browser, which a width check does not see
-          document.querySelectorAll('.shell button.btn').forEach((el) => {
-            if (!shown(el) || el.children.length) return;
-            const longest = Math.max.apply(null, el.textContent.trim().split(/\s+/).map((w) => w.length));
-            const probe = document.createElement('span');
-            probe.textContent = el.textContent.trim().split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
-            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
-            el.appendChild(probe);
-            const need = probe.getBoundingClientRect().width;
-            el.removeChild(probe);
-            const cs = getComputedStyle(el);
-            const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-            if (longest > 1 && need > room + 1) out.push('a word is cut (' + Math.round(need) + ' px in ' + Math.round(room) + '): ' + name(el));
-          });
-          // the same for what a cell of a drawn controller says it does
-          document.querySelectorAll('.shell .ctlgrid .ctl .ctlwhat').forEach((el) => {
-            if (!shown(el)) return;
-            const word = el.textContent.trim().split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
-            const probe = document.createElement('span');
-            probe.textContent = word;
-            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
-            el.appendChild(probe);
-            const need = probe.getBoundingClientRect().width;
-            el.removeChild(probe);
-            if (word.length > 1 && need > el.clientWidth + 1) out.push('a word is cut in a controller cell (' + Math.round(need) + ' px in ' + Math.round(el.clientWidth) + '): ' + el.textContent);
-          });
-          // a state chip is never the area's colour (Active has a colour of its own), whatever area is open
-          const areaColour = getComputedStyle(root).getPropertyValue('--ac').trim();
-          const probeC = document.createElement('span');
-          probeC.style.cssText = 'position:absolute;visibility:hidden;background:' + areaColour;
-          document.body.appendChild(probeC);
-          const areaRgb = getComputedStyle(probeC).backgroundColor;
-          document.body.removeChild(probeC);
-          document.querySelectorAll('.shell .chip, .shell .badge').forEach((el) => {
-            if (shown(el) && getComputedStyle(el).backgroundColor === areaRgb) out.push('a state chip has the area colour: ' + name(el));
-          });
-          // a slider's fill is where its value is
-          document.querySelectorAll('.shell input[type=range]').forEach((el) => {
-            if (!shown(el)) return;
-            const min = el.min === '' ? 0 : parseFloat(el.min), max = el.max === '' ? 100 : parseFloat(el.max);
-            const want = max > min ? Math.round(1000 * (parseFloat(el.value) - min) / (max - min)) / 10 : 0;
-            const got = parseFloat(getComputedStyle(el).getPropertyValue('--fill'));
-            if (!(Math.abs(got - want) <= 0.2)) out.push('slider fill ' + got + '% for a value at ' + want + '%: ' + name(el));
-          });
-          // the title: whole, inside the window
-          const h1 = document.querySelector('.screen h1');
-          if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
-          return out;
-        }, [area, opts.room ? 56 : 0]);
-        if (found.length) signalBad.push('Signal, ' + what + ': ' + found.join('; '));
-        // the area's colour drives the title block and the open tab
-        const paint = await page.evaluate(() => {
-          const h1 = document.querySelector('.screen h1'), top = h1 && h1.closest('.top');
-          const tab = document.querySelector('nav.tabs .btn.on');
-          const bg = (el) => (el ? getComputedStyle(el).backgroundColor : '');
-          return { title: [bg(h1), bg(top)], tab: bg(tab), tabText: tab ? getComputedStyle(tab).color : '' };
-        });
-        if (!paint.title.includes(AREA[area]) || paint.tab !== AREA[area]) signalBad.push('Signal, ' + what + ': the title block and the open tab are not the area colour ' + AREA[area] + ': ' + JSON.stringify(paint));
-      };
-      // The Room screen as staff use it: two named groups made from the harness's two projectors, their inputs
-      // labelled, and a button pressed, so named group cards, source buttons and a result line are on the screen that
-      // is checked (the built-in "Everything" card alone is not what staff see).
-      const roomAsStaffSeeIt = async () => {
-        if (!((await get('/api/projectors')).projectors || []).length) {      // the steps above removed theirs: the harness's two again
-          await post('/api/projectors', { add: { name: 'Main projector', host: '127.0.0.1', port: info.projector_ports[0], password: 'secret1' } });
-          await post('/api/projectors', { add: { name: 'Side projector', host: '127.0.0.1', port: info.projector_ports[1], password: '' } });
+      const st = { page, browser, base, info, width: 390, scale: 1, notes: [], contexts: [] };
+      await signal.setUp(st);
+      const signalRound = async (label, light) => {
+        for (const p of signal.pages()) {
+          try {
+            const on = (await p.open(st)) || page;
+            if (!p.quick) await on.waitForTimeout(1000);          // a page's own cards arrive after it opens; a slider's fill is set within a quarter of a second
+            const found = await signal.check(on, { area: p.area, light });
+            if (found.length) signalBad.push('Signal, ' + p.name + label + ': ' + found.join('; '));
+          } catch (e) { signalBad.push('Signal, ' + p.name + label + ' could not be looked at: ' + e.message.split('\n')[0]); }
+          if (p.done) await p.done(st).catch((e) => signalBad.push('Signal, ' + p.name + label + ', putting back: ' + e.message.split('\n')[0]));
         }
-        await sys('Projectors');
-        await post('/api/projector', { id: 'all', action: 'identify' });          // (an edit of a projector's address drops what it said it is; read it again)
-        await page.waitForFunction(() => fetch('/api/projectors').then((r) => r.json()).then((d) => d.projectors.length > 0 && d.projectors.slice(0, 2).every((p) => p.inputs.length > 0)), null, { timeout: 25000, polling: 1000 }).catch(() => {});   // each projector has said which inputs it has
-        const ps = ((await get('/api/projectors')).projectors || []).slice(0, 2);
-        const have = (await get('/api/room')).groups || [];
-        for (let i = 0; i < ps.length; i++) {
-          const codes = (ps[i].inputs || []).map((x) => x.code).slice(0, 2);
-          for (let k = 0; k < codes.length; k++) await post('/api/projectors', { label: { id: ps[i].id, input: codes[k], label: ['Laptop', 'Console'][k] } });
-          const wall = ['Main wall', 'Painting wall'][i];
-          const old = have.filter((g) => g.name === wall)[0];      // a group an earlier step left is given this projector
-          await post('/api/room', { group: old ? { id: old.id, name: wall, projectors: [ps[i].id] } : { name: wall, projectors: [ps[i].id] } });
-        }
-        await page.goto(base + '/');
-        await page.waitForSelector('nav.tabs');
-        await page.click('nav >> text=Room');
-        await page.waitForSelector('#roomscreen');
-        try {
-          await page.waitForSelector('.room-group:has-text("Main wall")', { timeout: 8000 });
-          await page.locator('.room-group:has-text("Main wall") .btn').first().click({ timeout: 5000 });
-          await page.waitForSelector('.room-group:has-text("Main wall") .room-result', { timeout: 15000 });
-        } catch (e) { /* the screen is taken as it is; the test says below what was missing on it */ }
       };
-      // the main screens on a phone
-      await roomAsStaffSeeIt();
+      await signalRound('', false);
+      // The Room screen as staff use it: named group cards, source buttons with their labels and a result line were
+      // on the screen that was checked (the built-in "Everything" card alone is not what staff see).
+      await page.click('nav >> text=Room');
+      await page.waitForSelector('#roomscreen');
+      await page.waitForSelector('.room-group:has-text("Main wall")', { timeout: 8000 }).catch(() => {});
       const onRoom = await page.evaluate(() => ({ named: Array.prototype.filter.call(document.querySelectorAll('.room-group'), (g) => /wall/.test(g.textContent)).length,
         sources: document.querySelectorAll('.room-source').length, results: document.querySelectorAll('.room-result').length,
         labelled: Array.prototype.some.call(document.querySelectorAll('.room-source'), (b) => /Laptop|Console/.test(b.textContent)) }));
       if (onRoom.named < 2 || !onRoom.sources || !onRoom.results || !onRoom.labelled) signalBad.push('Signal, Room: the screen that was checked did not have two named groups, labelled source buttons and a result line: ' + JSON.stringify(onRoom)
         + ' projectors: ' + JSON.stringify(((await get('/api/projectors')).projectors || []).map((x) => [x.name, x.inputs.length, x.status && x.status.power]))
         + ' groups: ' + JSON.stringify(((await get('/api/room')).groups || []).map((g) => [g.name, g.projectors.length, g.inputs && g.inputs.length, g.state])));
-      await signalChecks('Room', 'room', { room: true });
+      // On and Off are the two halves of one switch: the half in force is filled (On with the screen's colour)
+      const halves = await page.evaluate(() => { const g = Array.prototype.filter.call(document.querySelectorAll('.room-group'), (x) => x.querySelector('.room-state.state-on') && x.getAttribute('data-id') !== 'all')[0];
+        return g ? [getComputedStyle(g.querySelector('[data-action="on"]')).backgroundColor, getComputedStyle(g.querySelector('[data-action="off"]')).backgroundColor] : null; });
+      if (halves) assert(halves[0] === AREA.room && halves[1] !== AREA.room, 'a group that is on has its On half in the Room colour: ' + JSON.stringify(halves));
+      // All off is the danger red, never the screen's colour
+      const allOff = await page.evaluate(() => { const b = document.getElementById('roomalloff'); return b ? getComputedStyle(b).backgroundColor : null; });
+      if (allOff) assert.strictEqual(allOff, 'rgb(255, 59, 48)', 'All off is the danger red');
       await page.keyboard.press('Tab');
       const ring = await page.evaluate(() => { const cs = getComputedStyle(document.activeElement); return [document.activeElement.tagName, cs.outlineStyle, cs.outlineWidth, cs.outlineColor]; });
       assert(ring[1] === 'solid' && ring[2] === '3px' && ring[3] === AREA.room, 'the focus ring on Room is the area colour, 3 px: ' + JSON.stringify(ring));
       await page.click('nav >> text=Live');
       await page.waitForSelector('.pads');
-      await signalChecks('Live', 'clips');
       const liveTitle = await page.evaluate(() => { const h1 = document.querySelector('.screen > .top h1'), b = getComputedStyle(h1, '::before');
         return [b.content, b.fontSize, b.textTransform, h1.textContent, getComputedStyle(h1).fontSize]; });
       assert.deepStrictEqual(liveTitle, ['"Live"', '44px', 'uppercase', 'nxlx.mastercontrol', '15px'], 'in Signal the Live screen is titled LIVE, with the panel\'s name small under it');
       await page.click('nav >> text=Mix');
       await page.waitForSelector('#fliph');
-      await signalChecks('Mix', 'mix');
       const moved = await page.evaluate(() => { const r = document.querySelector('.shell input[type=range]:not(:disabled)'); if (!r) return null;
         const min = r.min === '' ? 0 : parseFloat(r.min), max = r.max === '' ? 100 : parseFloat(r.max);
         const was = r.value; r.value = String(min + (max - min) * 0.75); const v = parseFloat(r.value); r.dispatchEvent(new Event('input', { bubbles: true }));
         const out = [Math.round(1000 * (v - min) / (max - min)) / 10, parseFloat(getComputedStyle(r).getPropertyValue('--fill'))];
         r.value = was; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return out; });
       assert(moved && Math.abs(moved[0] - moved[1]) <= 0.2, 'a slider that is moved is filled up to where it is, at once: ' + JSON.stringify(moved));
-      await page.click('nav >> text=Media');
-      await page.waitForSelector('#uploads', { state: 'attached' });
-      await signalChecks('Media', 'clips');
       await sysIndex();
       await page.waitForSelector('.navrow .chip-ready, .navrow .chip-active, .navrow .chip-off');
-      await signalChecks('System index', 'system');
       const subTitle = await page.evaluate(() => getComputedStyle(document.querySelector('#sysindex .top h1'), '::after').content);
       assert.strictEqual(subTitle, '"nxlx.mastercontrol"', 'the other screens carry the panel\'s name as the small line under the title');
       const active = await page.evaluate(() => { const c = document.querySelector('.navrow .chip-active'); return c ? [getComputedStyle(c).backgroundColor, getComputedStyle(c).color, c.textContent] : null; });
       if (active) assert.deepStrictEqual(active, ['rgb(0, 224, 255)', 'rgb(11, 11, 13)', 'Active'], 'Active is its own fixed colour, with the word');
+      const setUpChip = await page.evaluate(() => { const c = document.querySelector('.navrow .chip-setup'); return c ? [getComputedStyle(c).backgroundColor, c.textContent] : null; });
+      if (setUpChip) assert.deepStrictEqual(setUpChip, ['rgb(255, 149, 0)', 'Set up'], 'Set up is the orange that is not Room yellow (D57), with the word');
       const longNames = await page.$$eval('.navname', (ns) => ns.filter((x) => x.scrollWidth > x.clientWidth + 1).map((x) => x.textContent));
       assert.deepStrictEqual(longNames, [], 'a row name is cut off in capitals');
-      // pages under System: the longest titles, the instrument, the controller, and the rest of the pages by name
-      for (const name of ['Projectors', 'People and codes', 'Projection mapping', 'MIDI controller', 'Network', 'Schedule', 'Backup and reset']) {
-        await sys(name);
-        await signalChecks(name + ' page', 'system');
+      // Projectors: every power state is on the page that was checked, each with its own chip and its own button
+      await sys('Projectors');
+      await page.waitForSelector('.proj-entry');
+      const powers = await page.$$eval('.proj-entry', (rows) => rows.map((r) => { const b = r.querySelector('.proj-power');
+        return [r.getAttribute('data-power'), getComputedStyle(r.querySelector('.lname'), '::after').content, b ? getComputedStyle(b).backgroundColor : '']; }));
+      for (const want of ['on', 'off', 'warming up', 'cooling down', 'no answer']) {
+        if (!powers.some((x) => x[0] === want)) signalBad.push('Signal, Projectors: no projector in the state "' + want + '" on the page that was checked: ' + JSON.stringify(powers));
       }
-      await sys('Shaders and Vibes');
-      await page.waitForSelector('#shaderpage');
-      await signalChecks('Shaders and Vibes page', 'shaders');
+      const look = {};
+      powers.forEach((x) => { look[x[0]] = x[1] + ' ' + x[2]; });
+      assert.strictEqual(new Set(Object.values(look)).size, Object.keys(look).length, 'each power state has a chip and a button of its own: ' + JSON.stringify(look));
       // a reload: the server writes the style into the page, so it is there before any script runs
       const html = await page.evaluate(() => fetch('/').then((r) => r.text()));
       assert(/<html lang="en" data-style="signal">/.test(html), 'the page as served carries the style');
       // a laptop
+      st.width = 1366;
       await page.setViewportSize({ width: 1366, height: 800 });
-      await signalChecks('Shaders and Vibes page at 1366', 'shaders');
-      for (const name of ['MIDI controller', 'People and codes', 'Projectors']) {
-        await sys(name);
-        await signalChecks(name + ' page at 1366', 'system');
-      }
-      await page.click('nav >> text=Live');
-      await page.waitForSelector('.pads');
-      await signalChecks('Live at 1366', 'clips');
+      await signalRound(' at 1366', false);
       // the light room
+      st.width = 390;
       await page.setViewportSize({ width: 390, height: 844 });
       assert.strictEqual(await post('/api/theme', { name: 'signal-light', accent: null }), 200);
       await page.goto(base + '/');
       await page.waitForSelector('nav.tabs');
       assert.strictEqual(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(242, 240, 234)', 'Signal light has the off-white page');
+      await signalRound(' in the light', true);
       await page.click('nav >> text=Room');
       await page.waitForSelector('#roomscreen');
-      await signalChecks('Room in the light', 'room', { room: true });
       await page.keyboard.press('Tab');
       const ringLight = await page.evaluate(() => getComputedStyle(document.activeElement).outlineColor);
       assert.strictEqual(ringLight, 'rgb(11, 11, 13)', 'in the light the focus ring is the text colour (yellow on off-white would be lost)');
-      await sysIndex();
-      await signalChecks('System index in the light', 'system');
-      await sys('Shaders and Vibes');
-      await page.waitForSelector('#shaderpage');
-      await signalChecks('Shaders and Vibes page in the light', 'shaders');
+      await signal.closeOthers(st);
+      if (st.notes.length) console.log('Signal, while setting screens up:\n  ' + st.notes.join('\n  '));
       assert.deepStrictEqual(signalBad, [], 'in Signal:\n' + signalBad.join('\n'));
       // back to the default look, as the box was
       await sys('Look');
