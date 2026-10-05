@@ -4,7 +4,7 @@
 
 Play pads, fade and mix from USB MIDI controllers: pad grids, fader boxes, keyboards. Switch it on under System > MIDI controller (full-access devices only) with the switch at the top of the page: it is the only switch, and the box reads controllers as soon as it says On. Off until you switch it on; switching off switches the module off and keeps your mappings. In the API these are still two things: the `control-midi` module and `enabled` in `POST /api/midi`.
 
-**Every controller that is plugged in is read at once**, and a controller unplugged and replugged is picked up again within a couple of seconds. Nothing is written back to a controller (no lights or motor faders yet).
+**Every controller that is plugged in is read at once**, and a controller unplugged and replugged is picked up again within a couple of seconds. The box lights the buttons and pads of a controller it knows (see "Lights"); nothing else is written to a controller, and nothing at all to one it does not know (no motor faders).
 
 **A controller the box knows works as soon as it is plugged in**: a Korg nanoKONTROL2, an Akai MIDI Mix and a Novation Launchpad Mini each have a ready-made layout (a profile). Nothing has to be taught. Any other controller is taught with Learn, as before.
 
@@ -35,7 +35,7 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 - **The same press twice.** Blackout and the Room scenes need two presses of the same button within a second (and at least a quarter of a second apart); one press does nothing. They are marked "2x" on the card. A Room scene can switch projectors off for the whole room, so it is treated like blackout. If you put blackout or a Room scene on a control yourself (on its card), it is guarded too: the chooser shows a switch **Press twice**, on unless you switch it off. Saving a control without changing it stores nothing, so the guard cannot be lost by pressing Save. A mapping made with plain Learn is not guarded, as before.
 - **The controllers' bank.** A nanoKONTROL2 and a MIDI Mix have one row of eight pad buttons, so the box keeps a bank for controllers (A at start, not saved): the row plays pads 1 to 8 of that bank and two buttons step it. Pads 9 to 12 are not on these two layouts. The Launchpad Mini has room for all three banks and needs no bank button.
 - **Same path as everything else.** A profile only chooses which API call a control makes; the call goes through the API as a presenter, so the module switches, every check and the 50 commands a second apply, and no control waits for the shader engine (tested with the engine's lock held, for every control of every layout).
-- **Lights are not built.** See "Not built yet".
+- **Lights.** The box shows its state on the controller's own lights: see "Lights" below. Switching a standard layout off also switches that controller's lights off.
 
 ### Korg nanoKONTROL2 (`korg-nanokontrol2`)
 
@@ -154,7 +154,140 @@ Add one file, `pvj/controllers.d/<id>.json`; nothing else changes. All keys are 
 - `send`: `type` is `note` or `cc`, `number` 0 to 127, `channel` 1 to 16 or 0 for any (use 0 unless two controls differ only by channel).
 - `action` is `null` for a spare control, or an action from the table below with its fields (`pad` needs `bank` 0 to 2 and `index` 0 to 11, `bank_pad` needs `index`). A fader or knob needs an action that follows it; a button or pad one that is pressed. A scene by id and `none` are not allowed in a profile.
 - `guard` (optional, buttons and pads): the press is needed twice. Use it for blackout and anything room-wide. `unverified` (optional): the number is not confirmed by the maker's document; say so in `note` too.
-- Up to 160 controls; no two in one place, no two sending the same message. There is no `lights` key.
+- Up to 160 controls; no two in one place, no two sending the same message.
+
+**A `lights` section** (optional) says which controls have a light and what the box may send to them. It is the only source of bytes that are ever written to the controller, and it is checked as strictly as the rest: an unknown key, a number out of range or a message that is not a note-off, note-on or control change leaves the whole file out.
+
+```json
+"lights": {
+  "default": false,
+  "unverified": true,
+  "note": "Shown on the card: what to set on the controller first, what the colours mean, what is unverified.",
+  "sources": ["The maker's document, its version, the section that gives the messages"],
+  "channel": 1,
+  "brightness": false,
+  "off": 0,
+  "setup": [],
+  "clear": [],
+  "styles": {
+    "clip": {"off": 0, "on": 127, "active": 127, "busy": 127, "pulse": {"active": 0}},
+    "blackout": {"off": 0, "on": 0, "active": 127, "busy": 127}
+  },
+  "controls": ["pad1", "b8"]
+}
+```
+
+- `default`: are the lights on before anyone chose. Use `false` unless the maker's document gives the messages and the controller needs no setting changed first. `unverified`: the messages are not from a maker's document.
+- `channel` (1 to 16): the MIDI channel the lights are sent on. `off` (0 to 127): the value that darkens a light.
+- A light is addressed like its control: a control that sends a note gets a note-on with that note, one that sends a control change gets a control change with that number, and the value is the light. A controller whose lights are addressed differently cannot be described yet.
+- `styles`: per thing a light can show, the value for each of the four states `off`, `on` (there is something here), `active` (it is the one on now) and `busy`. The names are fixed: `clip`, `preset`, `control`, `vibes`, `set`, `step`, `play`, `stop`, `blackout`, `fadeout`, `fadein`, `room`, `bank` (the table under "What a light shows" says which actions belong to which). `pulse` (optional) gives, for `on`, `active` or `busy`, a second value the light alternates with every 0.6 seconds; use it where a light has one colour. With `"brightness": true` each style holds three of these instead, under `low`, `medium` and `high`, and the card offers the choice.
+- `controls`: the ids of the controls that have a light; only buttons and pads. What a light shows is not written here: it follows from what its control does (the table under "What a light shows"), so a spare control that is given an action later, by a new version of the profile or by the person on the card, lights for that action with no change to this section. An action with nothing to show, or with no style in this file, leaves its light dark.
+- `setup` and `clear` (optional, up to eight messages each, every one three numbers: status, data, data; a note-off, note-on or control change on the section's `channel`, and not controllers 120 to 127): sent once when the controller is plugged in, and to darken everything. Only where the maker's document gives them. Without `clear` each light is sent `off`.
+- Then add the controller to `tools/DEVICE-TESTING.md` and say plainly, in `note` and in this file, what was and was not tried on the hardware.
+
+## Lights
+
+The box lights the buttons and pads of a controller it knows, so the controller shows what the box is doing: which pads hold a clip and which one plays, whether Vibes runs, whether the screen is black.
+
+**None of this has been seen on a real controller.** The messages are from the makers' documents where there are any (cited per controller below) and from secondary sources where there are none. Pipes stood in for the devices in every test. Please run the check list in `tools/DEVICE-TESTING.md` ("Controller lights") and say what you see.
+
+### On the page
+
+Each recognised controller's card has, under "Standard layout":
+
+- a state line: "Lights on.", "Lights off.", "Lights are off while the standard layout is off.", "Lights need the box's installer to run once." (see "The service file" below) or "Lights could not be opened (another program may be using the controller). Trying again.";
+- the switch **Lights** (a real switch; it applies on tap). On for a Launchpad Mini from the start; **off for a nanoKONTROL2 and a MIDI Mix until you switch it on**;
+- **Brightness** (Low, Medium, High) where the controller has more than one level: the Launchpad. Low from the start, for a dark room;
+- **Test lights**: every light comes on in turn in the order of the drawing, top left first, all stay on for a second, then they go back to what the box says. A light that stays dark, or one that comes on out of turn, is a wrong number in the profile.
+
+In the drawing a small ring marks each control that has a light; the ring is filled while the box has that light on. The ring shows what the box sent, not what the hardware does.
+
+### What a light shows
+
+A light follows **what its control does now**: if you put another action on a control, its light shows that action's state. Four states exist: off, "there is something here", "it is the one on now", and "busy".
+
+| The control does | Something here | On now | Busy |
+| --- | --- | --- | --- |
+| Play a pad; pad of the controllers' bank | the pad holds a clip | that clip is playing | |
+| Shader preset 1 to 8 | the shader on screen has that preset | it is the preset in use | |
+| Shader control 1 to 8 (as a press) | a shader is on screen (not checked per input) | | |
+| Vibes on / off | Shaders and Vibes is switched on | Vibes is running | |
+| Vibes: start the set Ambient, Show | that set exists | Vibes is running with it | |
+| Previous / next shader; Vibes: next shader | a shader is on screen, or Vibes runs | | |
+| Previous / next clip | a playlist of more than one clip plays | | |
+| Pause / resume | | something is playing | it is paused |
+| Stop | something is playing | nothing is playing | |
+| Blackout on / off | (marks the button) | **the screen is black** | |
+| Fade out | (marks the button) | the picture was faded out and is still down | |
+| Fade in | (marks the button) | | a fade in is running |
+| Room scene 1 to 8, a scene by id | the scene exists (and Room is on) | | it is being applied |
+| Controllers' bank: before, next | | a place mark: the left button on bank A, both on B, the right one on C | |
+| Nothing, a spare control, a level | | | |
+
+"Which clip is playing" is decided by the file's name. Two pads with the same clip both show it.
+
+### Novation Launchpad Mini: lights on, with colour
+
+Source: Novation, *Launchpad S Programmer's Reference Manual* 1.02 (https://fael-downloads-prod.focusrite.com/customer/dev/s3fs-public/novation/downloads/10753/launchpad-s-prm.pdf), read in full by the reviewer of pull request #82. It confirms: a note-on on channel 1 per pad (`90h`, the pad's key, a velocity); in the velocity, red in bits 0 to 1 and green in bits 4 to 5, each 0 to 3, and off is `0Ch`, so the value is 16 x green + red + 12; control changes `68h` to `6Fh` for the round buttons along the top, with the same value; and `B0h 00h 00h`, which turns all LEDs off and restores the power-on settings. The manual also describes double buffering, flashing and a rapid update; none of them is used, only one message per pad. The box sends 200 messages a second at most; that figure is this program's own limit, not one from the manual (an earlier version of this page gave "400 a second" as the manual's, which is not in it).
+
+**Not confirmed from a primary source: that the original Launchpad Mini (USB id `1235:0036`) uses the Launchpad S protocol.** The manual is for the Launchpad S. That the Mini shares it is widely reported, and the recording of the owner's unit fits its key numbers, but Novation's document does not say so. Not seen on the hardware.
+
+| Colour | Means | Value (low, medium, high brightness) |
+| --- | --- | --- |
+| dark | nothing here | 12 |
+| amber | there is something here: a clip on the pad, a preset, a scene, a button that does something now | 29, 29, 46 |
+| green | it is on now: the playing clip, the preset in use, Vibes running, a scene being applied, a fade in running | 28, 44, 60 |
+| dim red | this button darkens the screen (blackout, fade out) or stops what plays | 13, 13, 14 |
+| full red | **the screen is dark**: blackout is on, or the picture was faded out | 15 at every brightness |
+
+Pause / resume is green while something plays and amber while it is paused. Every pad and round button has a light (80). When the controller is plugged in the box sends the reset first (so it is in the X-Y layout the profile expects, with everything dark) and then all 80 lights; once per plug-in, not again when a failed writer is tried again. When lights go off it sends the reset again.
+
+### Korg nanoKONTROL2: off until you switch it on
+
+**Set LED mode to External in Korg's editor first.** In the KORG KONTROL Editor: select the nanoKONTROL2, open Common, set **LED Mode** to **External**, and write the scene to the controller (Communication > Write Scene Data). In the factory setting, Internal, each light follows its own button and ignores the box, so switching Lights on here does nothing you can see. In External mode, as reported, a button no longer lights when you press it: only the box lights it.
+
+Source: Korg's nanoKONTROL2 Parameter Guide (E1), page 9 (https://cdn.korg.com/us/support/download/files/c8d0cd6808e12d3672845cadcdbbfe9b.pdf), read by the reviewer of pull request #82. It says: **LED Mode** [Internal, External] covers the transport buttons and the S, M and R buttons; in External mode an LED lights when the controller receives that button's **On Value** and goes dark when it receives its **Off Value**.
+
+**So the box's messages are right only with the factory values.** The box sends a control change with the button's number and 127 for on, 0 for off, on channel 1. That holds while each button still has its factory On Value (127) and Off Value (0) and the controller is on its factory MIDI channel (1). If a scene was edited in Korg's editor (another channel, other values), the lights stay dark or behave oddly: put the buttons back to On Value 127, Off Value 0 and the channel to 1, or do the factory reset (hold PREV TRACK, NEXT TRACK and CYCLE while plugging in; that also sets LED Mode back to Internal). The guide has no table of factory values, so "127, 0, channel 1" is itself from secondary reports. **Unverified** on a real unit. Which buttons have no LED is not in the guide; from a secondary report (nickhwang.com, "Korg nanoKontrol2 and Max", 2012: "A few buttons on the nanoKontrol2 do not have LEDs behind them") and the guide's list, the box lights S, M and R of each strip, Cycle, and Rewind, Forward, Stop, Play and Rec (30), and takes Track <, Track >, Marker Set, Marker < and Marker > to have none, so the controllers' bank has no light on this controller.
+
+**What Internal mode looks like** (the factory setting, and what you see if the editor step was skipped): each of those buttons lights while you hold it (or toggles, if the button is set to Toggle) and nothing the box does changes any light. Lights "on" on the card with a nanoKONTROL2 whose buttons only light under your finger means LED Mode is still Internal.
+
+| Light | Lit | Slowly pulsing | 
+| --- | --- | --- |
+| S 1 to 8 | pad 1 to 8 of the controllers' bank holds a clip | that clip is playing |
+| M 1 to 8 | the shader on screen has that preset | it is the one in use |
+| R 1 to 4 | the Room scene exists | it is being applied |
+| R 6, R 7 | a fade in is running; the picture is faded out | |
+| R 8 | **the screen is black** | |
+| Cycle | Vibes is running | |
+| Rec | Vibes is running with the set Show | |
+| Play | something is playing | it is paused |
+| Stop | nothing is playing | |
+| Rewind, Forward | a playlist is playing | |
+
+### Akai MIDI Mix: off, unverified
+
+**Nothing about the MIDI Mix's lights is confirmed from a primary source.** No Akai document describes them (the MIDImix User Guide 1.0 says nothing about messages the unit receives), so they are off until you switch them on. The source is secondary: Tero Heikkinen, "AKAI MIDImix & Processing Midibus" (oldmachinery.blogspot.com, 2018-04-15): "Sending note-ons to MUTE, REC ARM or Bank button values with velocity 127 will turn the associated lights on. Sending note-ons with velocity 0 will turn the lights off. Sending note-offs does nothing." Open controller scripts (mfeyx/akai-midimix-bitwig, tstriker/akai-midimix) do the same. The Solo button cannot be lit, and the Solo+Mute row shows only while Solo is held, so neither gets a light from the box.
+
+| Light | Lit | Slowly pulsing |
+| --- | --- | --- |
+| Mute 1 to 8 | pad 1 to 8 of the controllers' bank holds a clip | that clip is playing |
+| Rec Arm 1 to 8 | the shader on screen has that preset | it is the one in use |
+| Bank Left, Bank Right | the bank the controllers are on: left on A, both on B, right on C | |
+
+### How it works
+
+- **Only a controller that is certainly the profile's is opened for writing**, on a second, write-only handle. "Certainly" is stricter than what gives a controller its layout: its USB id is one the profile lists, or the card list was read and gave a product name the profile lists. A match by the card id alone (the fallback when `/proc/asound` cannot be read; "Mini" and "Mix" are the last word of many product names) gives the layout as before and **never** a writer: the card then says "Lights are off: the box could not make sure which controller this is, so it sends it nothing." and the box looks again every ten seconds. A controller without a profile, or with a profile that has no `lights` section, never is opened for writing. The path must be `/dev/snd/midiC<n>D<n>`, not a link, and a character device with ALSA's major number (116).
+- **Only fixed messages are written**: for each light a note-on or a control change on the section's channel with the control's own number, and as its value a number written out in the profile's styles; plus the profile's set-up and clear messages. No SysEx: a profile may list only note-off, note-on and control change, on the section's own channel, and no channel mode message (controllers 120 to 127); the check refuses anything else. A request can say three things about lights (on or off, one of three brightness words, "test") and is refused if it carries anything else; no byte of a request, a clip name or a shader name reaches a controller.
+- **One writer per controller, on its own thread.** It keeps a table of the value each light should have and sends what differs from what the device took, at most 200 messages a second. A burst of changes costs one message per light, not one per change. A device that takes nothing is not waited for and nothing piles up. A write error ends that controller's writer only (it is tried again after ten seconds while the controller is still there); the other controllers and the controls go on.
+- **Unplugged and plugged in again**, the controller gets its set-up message and the whole state. A writer that failed and is tried again sends the whole state without the set-up message.
+- **Closing.** The kernel waits for a MIDI output to drain when its handle is closed, up to about ten seconds, and holds the device's open lock meanwhile. So when a controller is not taking its bytes, the writer drops what is waiting first (`SNDRV_RAWMIDI_IOCTL_DROP`) and the close is quick. If the drop fails, the close can take those ten seconds; it happens on the writer's own thread, and stopping waits 2.5 seconds for it at most. Not run against a real device.
+- **Where the state comes from.** A few times a second (every 0.3 s, and at once after a press) one thread looks at what the box holds in memory (the pads, the mix, Vibes, the shader on screen, the Room's scenes) and asks the player one status question at most every 0.6 s for all lights together. It never takes the shader engine's lock and is never on the thread that reads the controller.
+- **Lights go off** (each light's off value, or the profile's clear message) when you switch Lights off, switch the standard layout off, switch MIDI off, and when the panel shuts down. If the box loses power the lights stay as they were until the controller is unplugged.
+
+### The service file
+
+Writing to a controller needs `DeviceAllow=char-alsa rw` in `pvj-web.service`; it was `r` before (D53 says what that allows and why). The installer writes the service file, and an update from the panel or a USB stick runs the installer, so both bring it. A box whose program files were copied over without the installer keeps the old service file: there the open for writing is refused, the card says **"Lights need the box's installer to run once."**, the controls work as before, and the box does not try again until the controller is plugged in again or a MIDI setting is changed. Run `install/install.sh --offline` as root once.
 
 ## Learn: assign a control to an action
 
@@ -203,16 +336,13 @@ On unless you turn it off (System > MIDI controller > Built-in map). It exists s
 - Only paths of the form `/dev/snd/midiC<n>D<n>` are ever opened, and only if they are character devices (no links).
 - Only the actions in the table are reachable: nothing shuts down, reboots or changes settings (the one setting a controller can change is the Vibes dwell time, between 15 seconds and an hour).
 - At most 50 commands a second reach the player, whatever the controllers send, and a pad or button can fire at most four times a second (a single "play" is many round trips to the player, so the second limit is the one that matters for pads).
-- The web service reads the device through systemd: it needs the `audio` group and read access to ALSA devices, and the unit has both (`DeviceAllow=char-alsa r`).
+- The web service reaches the device through systemd: it needs the `audio` group and access to ALSA devices, and the unit has both (`DeviceAllow=char-alsa rw`: read for the controls, write for the lights; D53).
+- Writing: only to a controller that matched a profile with a `lights` section, only the fixed messages of that section, at most 200 a second per controller. See "Lights > How it works".
 
 ## Not built yet
 
-- **Lights** (a lit pad for a pad with a clip, brighter while it plays; the nanoKONTROL2's button lights). Left out on purpose, with what it would take written down (D49):
-  - The panel's service may only **read** ALSA devices (`DeviceAllow=char-alsa r`, checked by a test). Writing needs `rw` in `install/pvj-web.service`, and a unit file is not part of an update or of a quick deploy, so a box would have code that wants to write under a unit that forbids it; the writer would have to notice and say "lights need the updated service file".
-  - A small writer per profiled controller on a second, write-only handle to the same device (never the reader's), non-blocking, dropping what does not fit, sending only what changed and at most a few dozen messages a second; an optional `lights` section in the profile; never anything to a device without a profile, which is why matching also checks the product name.
-  - What to show needs the pads and what is playing, read from memory only (the writer must not ask the player from the reader's thread).
-  - For the Launchpad (Programmer's Reference): a note-on to a pad's note with a colour as the velocity (its examples: 12 off, 15 red, 60 green, 63 amber; dimmer ones by its formula), `B0 00 00` resets it. For the nanoKONTROL2 (Parameter Guide p. 9): its **LED Mode must be set to External in the KORG KONTROL Editor**; a light then follows a message with that button's own CC number. In Internal mode a button's light follows the button itself.
-  - And it has to be tried on the hardware, which this work could not do.
+- Lights that are addressed differently from their control, more than one light per control, the Launchpad's flashing and double buffering, and lights for the Solo row of a MIDI Mix.
+- A light per shader input (row 8 of the Launchpad is lit while any shader is on screen; the box does not read the shader's input list for it).
 - Motor-fader feedback (needs MIDI output too).
 - Mapping to pads by name, banks that follow the controller's own bank buttons, and relative (endless) encoders.
 
@@ -221,3 +351,5 @@ On unless you turn it off (System > MIDI controller > Built-in map). It exists s
 Verified on a real Raspberry Pi 4 (2026-09-30): the module reads a controller through the systemd sandbox and handled 112 messages in a few seconds from a Launchpad Mini. Three controllers (Korg nanoKONTROL2, Akai MIDI Mix, Novation Launchpad Mini) enumerate. **Learn, the multi-controller hub and the new map have only run against pipes standing in for controllers and the browser test, not yet against the real hardware.** The Vibes and shader actions have run only in unit tests with a fake player and a fake clock: no real controller has sent them.
 
 **Controller profiles (2026-10-04): not tried on any real controller.** The three layouts are from the documents named above and one recording of the Launchpad Mini; the nanoKONTROL2's and the MIDI Mix's numbers are not confirmed by a manufacturer's document at all. Matching uses the card ids, product names and USB ids reported from the owner's Pi and is tested against a copy of that card list, but the code has not run on the Pi. Pickup, the double press, hot-plug and the drawn layout ran against pipes, a fake clock and the browser test's fake controller. Please run the two-minute check.
+
+**Controller lights (2026-10-04): not tried on any real controller, and not on the Pi.** The messages are from Novation's Programmer's Reference for the Launchpad S (that the Mini shares its protocol is not confirmed by a primary source), from Korg's Parameter Guide (nanoKONTROL2: only with LED Mode set to External and the factory On and Off values and channel; unverified) and from a secondary source alone (MIDI Mix; nothing confirmed). An independent review of the pull request read both makers' documents and found one medium and seven low points; each is fixed with a test (the journal lists them). The writer, the mapping from the box's state to each light, unplug and replug, the switch, the brightness, Test lights and the refusal under an older service file ran against pipes and the browser test's fake controller. Whether `DeviceAllow=char-alsa rw` lets the panel open a controller for writing on the Pi's systemd has not been run there. The check list is in `tools/DEVICE-TESTING.md`.

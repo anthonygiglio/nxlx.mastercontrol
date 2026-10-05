@@ -1881,7 +1881,8 @@
     var sig = null;
     function signature(d) {
       return JSON.stringify([d.enabled, d.bank, (d.controllers || []).map(function (c) {
-        return [c.name, c.connected, c.standard, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin, x.guard]; })];
+        return [c.name, c.connected, c.standard, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin, x.guard]; }),
+          c.lights && [c.lights.on, c.lights.state, c.lights.brightness, c.lights.testing]];
       })]);
     }
     function lights(d) {
@@ -1896,6 +1897,7 @@
           if (!el) return;
           el.classList.toggle('lit', x.ago !== null && x.ago < 1.5);
           el.classList.toggle('wait', !!x.waiting);
+          if (x.lit) el.setAttribute('data-lit', x.lit); else el.removeAttribute('data-lit');     // what its light on the controller shows now
           var val = el.querySelector('.ctlval');
           if (val) val.textContent = x.value !== null && (x.kind === 'fader' || x.kind === 'knob') ? String(x.value) : '';
         });
@@ -1989,6 +1991,30 @@
             onclick: function () { act('POST', '/api/midi', { controller: c.name, standard: !c.standard }, changed); } });
           card.appendChild(h('div', { class: 'row' }, h('span', { class: 'grow', text: 'Standard layout' }), h('span', { class: 'switchlabel', text: c.standard ? 'On' : 'Off' }), sw));
         }
+        // Lights (the box lights the controller's own buttons): one state line, the real switch (applies on tap),
+        // the brightness where the controller has one, and a test sweep. The words come from the box.
+        if (c.lights) {
+          var L = c.lights;
+          card.appendChild(h('p', { class: 'hint ctllightline', role: 'status', text: L.line + (L.testing ? ' Testing: each light comes on in turn.' : '') }));
+          if (can('full')) {
+            var lsw = h('button', { class: 'switch ctllights', role: 'switch', 'aria-checked': L.on ? 'true' : 'false', 'aria-label': 'Lights of ' + c.profile.name,
+              onclick: function () { act('POST', '/api/midi', { controller: c.name, lights: !L.on }, changed); } });
+            card.appendChild(h('div', { class: 'row' }, h('span', { class: 'grow', text: 'Lights' }), h('span', { class: 'switchlabel', text: L.on ? 'On' : 'Off' }), lsw));
+            if (L.on && L.levels) {
+              card.appendChild(h('div', { class: 'row wrap' }, h('span', { class: 'grow', text: 'Brightness' }),
+                h('div', { class: 'seg ctlbright', role: 'group', 'aria-label': 'Brightness of the lights of ' + c.profile.name }, ['low', 'medium', 'high'].map(function (lv) {
+                  return h('button', { class: 'btn small segbtn' + (L.brightness === lv ? ' on' : ''), type: 'button', 'data-level': lv, 'aria-pressed': L.brightness === lv ? 'true' : 'false',
+                    text: lv.charAt(0).toUpperCase() + lv.slice(1), onclick: function () { act('POST', '/api/midi', { controller: c.name, brightness: lv }, changed); } });
+                }))));
+            }
+            if (L.state === 'on') {
+              card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small ctltest', type: 'button', text: 'Test lights', disabled: !!L.testing, onclick: function () {
+                act('POST', '/api/midi/lights', { controller: c.name, test: true }, function (data) { say('Each light of ' + c.profile.name + ' comes on in turn, then they go back.'); changed(data); });
+              } })));
+            }
+          }
+          card.appendChild(h('p', { class: 'hint ctllightnote', text: L.note }));
+        }
         var grid = h('div', { class: 'ctlgrid', role: 'group', 'aria-label': 'The controls of ' + c.profile.name });
         grid.style.gridTemplateColumns = 'repeat(' + c.profile.cols + ', minmax(58px, 1fr))';
         grid.style.setProperty('--cols', String(c.profile.cols));       // for a style that gives the cells another width (D54)
@@ -1996,7 +2022,7 @@
         c.controls.forEach(function (x) {
           var chosen = !!midiSel && midiSel.ctl === c.name && midiSel.id === x.id;
           if (chosen) open = x;
-          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' || x.origin === 'any' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : ''), type: 'button',
+          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' || x.origin === 'any' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : '') + (x.light ? ' haslight' : ''), type: 'button',
             'data-id': x.id, 'aria-pressed': chosen ? 'true' : 'false', 'aria-label': x.name + ': ' + midiWhat(x.action),
             onclick: function () { midiSel = chosen ? null : { ctl: c.name, id: x.id }; draw(d); } },
             h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }), h('span', { class: 'ctlval' }));
@@ -2007,6 +2033,7 @@
         card.appendChild(h('div', { class: 'ctlscroll' }, grid));
         if (open) card.appendChild(detail(c, open));
         card.appendChild(h('p', { class: 'hint', text: 'Move a control and it lights up here. Tap one to see' + (can('full') ? ' or change' : '') + ' what it does.' +
+          (c.lights ? ' A small ring marks a control that has a light; it is filled while the box has that light on.' : '') +
           (c.controls.some(function (x) { return x.guard; }) ? ' 2x: press twice within a second.' : '') +
           (c.controls.some(function (x) { return x.action && x.action.action === 'bank_pad'; }) ? ' The pad buttons play bank ' + 'ABC'[d.bank || 0] + ' now.' : '') }));
         card.appendChild(h('p', { class: 'hint ctlnote', text: c.profile.note || c.profile.description }));
