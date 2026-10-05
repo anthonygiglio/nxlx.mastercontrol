@@ -127,6 +127,10 @@ class Converter(unittest.TestCase):
         theme, report = tool.convert(data, SIGNAL, "x", "X")
         self.assertEqual([theme["tokens"][k] for k in ("bg", "fg", "cd", "mu", "ln")], ["#000000", "#ffffff", "#111111", "#ffffff", "#ffffff"])
         self.assertEqual(report["ignored"], [])
+        # a list of named values, as some plugins write it
+        theme, report = tool.convert([{"name": "Colour/Page", "value": "#000000"}, {"name": "shape/corner", "resolvedValue": 6},
+                                      {"collection": "x", "variables": [{"name": "area/live", "$value": "#00ff88"}]}], SIGNAL, "x", "X")
+        self.assertEqual((theme["tokens"]["bg"], theme["design"]["radius_control"], theme["areas"]["clips"]), ("#000000", 6, "#00ff88"))
 
     def test_unknown_names_are_listed_and_the_theme_is_still_made(self):
         data = dict(sample("starter-flat.json"), **{"elevation/card": 4, "motion/fast": "120ms", "colour/brand": "#123456", "space/8": 8, "type/body": 16})
@@ -160,7 +164,9 @@ class Converter(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("warning: The Set up colour is close to the Room colour (44 apart", said)
         # what cannot be read at all
-        for data, want in (("{", "Cannot make a theme"), ("[]", "not a JSON object"), ("{}", "holds no tokens"),
+        for data, want in (("{", "Cannot make a theme"), ("[]", "not a JSON object"), ("{}", "holds no tokens"), ('"x"', "not a JSON object"),
+                           ({"elevation/card": 4, "brand": "#123456"}, "no name in the export is one a theme uses"),
+                           ([{"name": "elevation/card", "value": 4}], "no name in the export is one a theme uses"),
                            ({"colour/page": "#12"}, "colour/page: not a colour the box can use"), ({"shape/corner": "big"}, "shape/corner: not a number"),
                            ({"font/words": "Comic Sans MS"}, "is not a font the box knows"), ({"colour/page": "{colour.nowhere}"}, "points at nothing"),
                            ({"colour/page": "#ffffff80"}, "transparency")):

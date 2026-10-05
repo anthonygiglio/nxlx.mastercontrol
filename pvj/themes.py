@@ -59,7 +59,7 @@ DESIGN = {
     "radius_panel": ("int", 0, 24),
     "border_width": ("int", 0, 4),
     "density": ("one", tuple(DENSITIES)),
-    "control_height": ("int", 44, 64),             # never under 44: a finger needs that
+    "control_height": ("int", 44, 72),             # never under 44: a finger needs that; never over the large one
     "control_height_large": ("int", 56, 72),       # what staff press on Room and Live: never under 56 (D57)
     "title_case": ("one", ("capitals", "sentence")),
     "title_weight": ("one", TITLE_WEIGHTS),

@@ -89,7 +89,7 @@ class AddAndRemove(Base):
             (mine(areas={"room": "#808080"}, tokens=dict(SIGNAL["tokens"], bg="#3c3c3c", cd="#444444", fg="#c8c8c8", mu="#c0c0c0"), states={}), 422,
              "Text on the Room colour is 2.7 to 1; it needs 4.5"),
             (mine(design={"radius_control": 25}), 422, "design.radius_control (the corner radius of controls) must be a whole number from 0 to 24"),
-            (mine(design={"control_height": 40}), 422, "must be a whole number from 44 to 64"),
+            (mine(design={"control_height": 40}), 422, "must be a whole number from 44 to 72"),
             (mine(design={"font_text": "Comic Sans MS"}), 422, "design.font_text (the font of text) must be one of: archivo, system"),
             (mine(css="body{display:none}"), 422, "unknown keys: css"),
             (mine(tokens=dict(SIGNAL["tokens"], bg="#000;}body{display:none")), 422, "token bg must be #rrggbb"),

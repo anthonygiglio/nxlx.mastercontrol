@@ -52,7 +52,7 @@ class DesignTokens(unittest.TestCase):
 
     def test_each_token_is_held_to_its_range_and_its_type(self):
         for key, low, high in (("radius_control", 0, 24), ("radius_panel", 0, 24), ("border_width", 0, 4),
-                               ("control_height", 44, 64), ("control_height_large", 56, 72)):
+                               ("control_height", 44, 72), ("control_height_large", 56, 72)):
             for good in (low, high):
                 extra = {"control_height_large": 72} if key == "control_height" else {}
                 self.assertEqual(themes.validate(mine(design=dict({key: good}, **extra))), [], (key, good))

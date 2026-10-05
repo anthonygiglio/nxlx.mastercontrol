@@ -16,7 +16,7 @@ A theme file never carries CSS. It holds names from fixed lists, colours as `#rr
 **From Figma.** Three ways to get the values out of the Figma file "nxlx.mastercontrol Signal UI kit" (its variable collection "Signal theme"):
 
 1. *Ask Claude.* A Claude session with the Figma connector can read the variables of the file and write the theme file; say which file and what the theme should be called.
-2. *A variables-export plugin.* Export the collection as JSON (the W3C design-tokens shape, or any plugin's nested JSON with `$value` or `value`) and run `tools/figma-theme.py export.json --id my-look --name "My look" -o my-look.json` on a computer that has this repository. It prints what it took, the contrast of every pairing and any name it did not know, and writes the file only if the box would accept it.
+2. *A variables-export plugin.* Export the collection as JSON (the W3C design-tokens shape, any plugin's nested JSON with `$value` or `value`, or a list of named values) and run `tools/figma-theme.py export.json --id my-look --name "My look" -o my-look.json` on a computer that has this repository. It prints what it took, the contrast of every pairing and any name it did not know, and writes the file only if the box would accept it.
 3. *By hand.* Copy `tools/theme-samples/starter-flat.json`, type the dozen values from Figma into it, and run the same command on it.
 
 Then add the file under System > Look. The Figma plan in use allows one mode per collection, so an export holds one theme at a time; if a file ever holds several modes, `--mode "Signal dark"` chooses one.
@@ -36,7 +36,7 @@ Then add the file under System > Look. The Figma plan in use allows one mode per
 }
 ```
 
-(That is `tools/theme-samples/soft-room.json`, a rounded, roomy, sentence-case variant of Signal with its own colours, kept in the repository to show the range. A test holds it valid.)
+(That is `tools/theme-samples/soft-room.json` without the design tokens it leaves at Signal's own value: a rounded, roomy, sentence-case variant of Signal with its own colours, kept in the repository to show the range. A test holds it valid.)
 
 `id` is small letters, digits and hyphens (2 to 41 characters, a letter first) and may not be the id of a look that comes with the box. `name` is what the Look page shows: letters, digits, spaces, dots and hyphens, at most 40. No other key is allowed at the top than the seven shown.
 
@@ -66,7 +66,7 @@ Then add the file under System > Look. The Figma plan in use allows one mode per
 | `radius_panel` | 0 to 24 | 0 | `shape/corner` | corners of panels, sheets, questions asked in place, pictures |
 | `border_width` | 0 to 4 | 3 | `shape/rule` | every outline and rule. At 0 a plain button stands on the surface colour instead of an outline |
 | `density` | `compact`, `regular`, `roomy` | `regular` | none (an option of the converter) | one scale (0.75, 1, 1.3) for the gaps between parts and the padding of rows and panels |
-| `control_height` | 44 to 64 | 44 | `size/control` | height of an ordinary control. Never under 44 px: a finger needs that |
+| `control_height` | 44 to 72 | 44 | `size/control` | height of an ordinary control. Never under 44 px: a finger needs that |
 | `control_height_large` | 56 to 72 | 56 | `size/control big` | height of what staff press on Room and Live, the tabs and the largest actions. Never under 56 (D57), never under `control_height`. Room's On, Off and sources are 8 px more, scenes 16 px more |
 | `title_case` | `capitals`, `sentence` | `capitals` | none (capitals are on Figma's text styles; an option of the converter) | screen titles, a group's name, the shader on stage and the 56 px actions |
 | `title_weight` | 400, 500, 600, 700, 800, 900 | 900 | none (option) | the weight of those same titles. These are the weights the shipped Archivo carries |

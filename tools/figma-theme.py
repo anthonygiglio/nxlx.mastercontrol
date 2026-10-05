@@ -104,6 +104,15 @@ def leaves(data, path=()):
             if str(k).startswith("$"):
                 continue
             yield from leaves(v, path + (str(k),))
+    elif isinstance(data, list):                         # some plugins write a list of {"name": ..., "value": ...}
+        for item in data:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                for marker in ("$value", "value", "resolvedValue"):
+                    if marker in item:
+                        yield path + (item["name"],), item[marker]
+                        break
+            else:
+                yield from leaves(item, path)
     elif path:
         yield path, data
 
@@ -179,7 +188,7 @@ READERS = {"radius_control": number, "radius_panel": number, "border_width": num
 def convert(data, base, theme_id, name, style="signal", mode=None, flags=None):
     """(theme, report) from an export. report: {"used": [(name, where.key, value)], "ignored": [...], "notes": [...]}.
     Raises Problem when the export cannot be read at all, or two tokens claim one place."""
-    if not isinstance(data, dict):
+    if not isinstance(data, (dict, list)) or data == []:
         raise Problem("the export is not a JSON object")
     found = [("/".join(norm(p) for p in path), path, value) for path, value in leaves(data)]
     if not found:
@@ -235,6 +244,9 @@ def convert(data, base, theme_id, name, style="signal", mode=None, flags=None):
             bucket[(where, key)] = (got, shown)
     for place, (got, shown) in list(shared.items()) + list(exact.items()):      # an exact name wins over a shared one
         claimed[place] = (got, shown)
+    if not claimed:
+        raise Problem("no name in the export is one a theme uses (see pvj/THEMES.md, \"Names the converter knows\"); found: %s"
+                      % ", ".join(sorted(report["ignored"])[:12]))
     theme = {"id": theme_id, "name": name, "style": style, "tokens": dict(base["tokens"])}
     for part in ("areas", "states"):
         if base.get(part):
