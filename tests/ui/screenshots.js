@@ -446,7 +446,8 @@ function startServer() {
 
     // The look "Signal" (D54), so the owner can see it without a box: the six pictures named signal-*. The fonts are
     // the box's own; each picture waits for them. The default look is put back at the end.
-    const fontsIn = () => soft('the Signal fonts', page.evaluate(() => document.fonts.ready).then(() => page.waitForFunction(() => document.fonts.check('900 44px Archivo') && document.fonts.check('500 16px "JetBrains Mono"'), null, { timeout: 8000 })));
+    const fontsIn = () => soft('the Signal fonts', page.evaluate(() => Promise.all([document.fonts.load('900 44px Archivo'), document.fonts.load('400 16px Archivo'), document.fonts.load('500 16px "JetBrains Mono"')])
+      .then((r) => { if (r.some((x) => !x.length)) throw new Error('a typeface did not load'); return document.fonts.ready.then(() => true); })));
     try {
       await api('POST', '/api/theme', { name: 'signal', accent: null });
       for (const id of ['room', 'shaders', 'control-midi']) await api('POST', '/api/modules/' + id, { enabled: true });

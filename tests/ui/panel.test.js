@@ -2371,10 +2371,12 @@ function startServer() {
       assert.strictEqual(await page.getAttribute('#lookthemes button[data-theme="signal"]', 'aria-pressed'), 'true');
       assert.deepStrictEqual((await get('/api/theme')).theme.name, 'signal', 'the box remembers the look');
       // the fonts come from the box itself, with the right type
-      await page.evaluate(() => document.fonts.ready);
-      await page.waitForFunction(() => document.fonts.check('900 44px Archivo') && document.fonts.check('500 16px "JetBrains Mono"'), null, { timeout: 8000 });
+      // (a face is fetched when something on the page first uses it; the page asks for both here, as a number would)
+      const faces = await page.evaluate(() => Promise.all([document.fonts.load('900 44px Archivo'), document.fonts.load('500 16px "JetBrains Mono"')]).then((r) => r.map((x) => x.length)));
+      assert.deepStrictEqual(faces, [1, 1], 'both typefaces load');
+      assert(await page.evaluate(() => document.fonts.check('900 44px Archivo') && document.fonts.check('500 16px "JetBrains Mono"')), 'both typefaces are ready');
       const fontNames = fontRequests.map((u) => u.replace(base, '')).sort();
-      assert(fontNames.includes('/fonts/archivo-latin.woff2'), 'Archivo is fetched from the box: ' + fontNames.join(', '));
+      assert(fontNames.includes('/fonts/archivo-latin.woff2') && fontNames.includes('/fonts/jetbrains-mono-500-latin.woff2'), 'both fonts are fetched from the box: ' + fontNames.join(', '));
       assert(fontRequests.every((u) => u.indexOf(base + '/fonts/') === 0), 'a font was asked for somewhere else: ' + fontRequests.join(', '));
       for (const f of ['/fonts/archivo-latin.woff2', '/fonts/jetbrains-mono-500-latin.woff2']) {
         const got = await page.evaluate((u) => fetch(u).then(async (r) => [r.status, r.headers.get('content-type'), (await r.arrayBuffer()).byteLength]), f);
@@ -2383,10 +2385,11 @@ function startServer() {
       assert(/^"?Archivo/.test(await page.evaluate(() => getComputedStyle(document.querySelector('#syspage h1')).fontFamily)), 'titles are set in Archivo');
 
       // What one screen must hold in Signal.
+      const signalBad = [];              // every screen is looked at before the step fails, so one run names everything
       const signalChecks = async (what, area, opts) => {
         opts = opts || {};
         await page.waitForTimeout(700);              // a page's own cards arrive after it opens
-        await fitsOn(page, 'Signal, ' + what);
+        await fitsOn(page, 'Signal, ' + what).catch((e) => signalBad.push(e.message.split('\n')[0]));
         const found = await page.evaluate(([wantArea, minButton]) => {
           const out = [];
           const root = document.documentElement;
@@ -2426,7 +2429,7 @@ function startServer() {
           if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
           return out;
         }, [area, opts.room ? 56 : 0]);
-        assert.deepStrictEqual(found, [], 'Signal, ' + what + ': ' + found.join('; '));
+        if (found.length) signalBad.push('Signal, ' + what + ': ' + found.join('; '));
         // the area's colour drives the title block and the open tab
         const paint = await page.evaluate(() => {
           const h1 = document.querySelector('.screen h1'), top = h1 && h1.closest('.top');
@@ -2434,8 +2437,7 @@ function startServer() {
           const bg = (el) => (el ? getComputedStyle(el).backgroundColor : '');
           return { title: [bg(h1), bg(top)], tab: bg(tab), tabText: tab ? getComputedStyle(tab).color : '' };
         });
-        assert(paint.title.includes(AREA[area]), 'Signal, ' + what + ': the title block is the area colour ' + AREA[area] + ': ' + JSON.stringify(paint));
-        if (!opts.fromLive) assert.strictEqual(paint.tab, AREA[area], 'Signal, ' + what + ': the open tab is the area colour: ' + JSON.stringify(paint));
+        if (!paint.title.includes(AREA[area]) || paint.tab !== AREA[area]) signalBad.push('Signal, ' + what + ': the title block and the open tab are not the area colour ' + AREA[area] + ': ' + JSON.stringify(paint));
       };
       // the main screens on a phone
       await page.click('nav >> text=Room');
@@ -2496,6 +2498,7 @@ function startServer() {
       await sys('Shaders and Vibes');
       await page.waitForSelector('#shaderpage');
       await signalChecks('Shaders and Vibes page in the light', 'shaders');
+      assert.deepStrictEqual(signalBad, [], 'in Signal:\n' + signalBad.join('\n'));
       // back to the default look, as the box was
       await sys('Look');
       await page.click('#lookthemes button[data-theme="dark-stage"]');

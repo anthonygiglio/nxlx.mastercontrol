@@ -140,6 +140,16 @@ The System screen is a short list in three groups, with **Health** above them:
 
 Tap a row to open its page. **‹ System** at the top of a page, or the phone's back gesture, returns to the list.
 
+### The look of the panel
+
+**System > Look** (owner only) changes how the panel is drawn on every phone and laptop that opens this box. Tap a look and it is applied at once; the box remembers it, and it travels in a settings file.
+
+- **Dark stage** is the look the box comes with. **Light**, **Night red** (keeps a dark room dark) and **High contrast** are the same panel in other colours. With these four you can also tap an **Accent** colour, or *Default* to go back to the look's own.
+- **Signal** and **Signal light** are a different style, to try: very large capitals, square blocks and thick rules, and one strong colour for each part of the panel, so you can tell where you are from across the room. Room is yellow, Shaders and Vibes pink, Live and Media green, Mix violet, System blue. Signal is for a dark room, Signal light for a bright one. There is no accent to choose with these, because the colour says which part you are in.
+- A state is always written out as well as coloured: Off, Set up, Ready, Active, Problem. In Signal, Active is the colour of the part you are in; Set up is amber and Problem is red everywhere.
+
+To go back, open System > Look and tap **Dark stage**. Signal brings its own two typefaces, which are on the box; nothing is fetched from the internet. A device that has not received them yet shows its own font for a moment. Technical notes, and how to add a theme of your own: [pvj/THEMES.md](../pvj/THEMES.md).
+
 Each row says how it is doing, with one word and a sentence:
 
 | Word | Meaning |

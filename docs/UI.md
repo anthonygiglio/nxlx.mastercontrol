@@ -22,7 +22,7 @@ Twelve pads per bank, three banks. The pad that is playing is lit. Fade out, Fre
 
 ![Live screen with six labelled pads and one playing](images/ui/live.png)
 
-The wide layout on a laptop or tablet, and one of the four themes (Dark stage is the default; Night red keeps a dark room dark):
+The wide layout on a laptop or tablet, and one of the four colour themes of the default look (Dark stage is the default; Night red keeps a dark room dark). A second style, Signal, is at the end of this page:
 
 ![Live screen at desktop width](images/ui/live-desktop.png)
 ![Live screen in the Night red theme](images/ui/live-night-red.png)
@@ -111,3 +111,23 @@ Network settings (wired and Wi-Fi) always revert by themselves unless you confir
 | ![OSC card](images/ui/control-osc.png) | ![Appearance card](images/ui/appearance.png) | ![Access card with a guest and a presenter code and their QR codes](images/ui/access.png) |
 
 The "Let someone in" card of People and codes shows a guest code and a presenter code, each with its QR code, how long it still works and how many uses are left. The picture above may be older than this: the roles are now named Guest (can watch), Presenter (can play and mix) and Owner (everything), and a presenter gets this card with the guest code only.
+
+## The Signal look
+
+A second style for the whole panel, chosen under System > Look (**Signal** for a dark room, **Signal light** for a bright one). It is not the default; the pictures above are the default look. Signal is the direction "D. Signal" from the redesign's Figma file: a gig poster. Very large capitals in Archivo Black, numbers in JetBrains Mono, square corners, 3 px rules, flat blocks of colour, and one colour per part of the panel.
+
+| Part of the panel | Colour | What takes it |
+| --- | --- | --- |
+| Room | yellow `#ffd60a` | the title block, the open tab, primary and chosen buttons, the On half of a switch, the Active chip, a slider's fill, the focus ring |
+| Shaders and Vibes (the page) | pink `#ff4fa3` | the same |
+| Live and Media | green `#3ddc97` | the same |
+| Mix | violet `#b78cff` | the same |
+| System and its other pages | blue `#7aa2ff` | the same |
+
+States keep their own colours wherever they appear, and always carry the word: Off grey, Set up amber `#ffb020`, Ready the text colour, Problem red `#ff3b30`. Active is the one state drawn in the area's colour. An error line is red, never the area's colour. In Signal light the area colour is only ever a filled block with black words on it; rings and thin lines are black, because yellow on an off-white page cannot be seen.
+
+What changes shape: a card on a phone loses its box (a label, then what belongs to it) and is a ruled panel on a laptop; the switch is two halves that say OFF and ON; a state chip is a solid block; a slider is a ruled bar filled up to its value; the tab bar is five words under a rule, the open one a block of colour. Everything that can be tapped is at least 44 px, 56 px on the Room screen, and no text is under 13 px; the browser test checks these, and the contrast of every text against what is behind it, with Signal on.
+
+The pictures are taken by `tests/ui/screenshots.js` (the six named `signal-`) and are in the `ui-screenshots` artifact of each CI run: the Room screen, the System index and Live on a phone, Shaders and Vibes and the MIDI controller page on a laptop, and the Room screen in Signal light. The values, the decisions that Figma does not hold and how a style is added are in [pvj/THEMES.md](../pvj/THEMES.md).
+
+The Appearance picture further up is older than this: the card now has two more buttons, Signal and Signal light.
