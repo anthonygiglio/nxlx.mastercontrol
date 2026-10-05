@@ -370,6 +370,7 @@ details.fold { display: block; }
 .list .item.lrow .btn { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
 .lacts > .btn:first-child { flex: 1 1 auto; }
 .lacts > .morebtn { flex: none; }
+.lacts > .morebtn:first-child { flex: none; }   /* a row whose only button is More: not stretched */
 .moreacts { padding: 8px; border: 1.5px solid var(--ln); border-radius: 6px; }
 .moreacts > .btn { flex: 1 1 9rem; }
 .addform { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--ln); }
