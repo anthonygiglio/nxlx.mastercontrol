@@ -457,8 +457,28 @@ function startServer() {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();
       await page.waitForSelector('html[data-style="signal"] nav.tabs');
+      // The Room screen as staff use it: two groups made from the harness's projectors, and a button pressed, so the
+      // group cards, their buttons and a result line are on the screen that is checked.
+      const roomAsStaffSeeIt = async () => {
+        await page.waitForSelector('#roomscreen');
+        try {
+          if (!(await page.locator('.room-group').count())) {
+            const members = await page.$$eval('#roomgmembers button', (bs) => bs.map((b) => b.textContent));
+            for (let i = 0; i < Math.min(2, members.length); i++) {
+              const wall = ['Main wall', 'Painting wall'][i];
+              await page.fill('#roomgname', wall, { timeout: 5000 });
+              await page.click(`#roomgmembers >> button:has-text("${members[i]}")`, { timeout: 5000 });
+              await page.click('#roomgsave', { timeout: 5000 });
+              await page.waitForSelector(`.room-group:has-text("${wall}")`, { timeout: 8000 });
+            }
+          }
+          await page.locator('.room-group .btn').first().click({ timeout: 5000 });
+          await page.waitForSelector('.room-result', { timeout: 15000 });
+        } catch (e) { /* the screen is taken as it is; the test says below if no group is on it */ }
+      };
       await shot('signal-room-phone', async (f) => {
         await page.click('nav >> text=Room');
+        await roomAsStaffSeeIt();
         await soft('signal: ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
         await fontsIn();
         await page.waitForTimeout(600);
@@ -499,6 +519,7 @@ function startServer() {
       await page.waitForSelector('html[data-style="signal"] nav.tabs');
       await shot('signal-room-phone-light', async (f) => {
         await page.click('nav >> text=Room');
+        await roomAsStaffSeeIt();
         await soft('signal light: ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
         await fontsIn();
         await page.waitForTimeout(600);

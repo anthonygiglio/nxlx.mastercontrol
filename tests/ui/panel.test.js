@@ -2453,9 +2453,31 @@ function startServer() {
         });
         if (!paint.title.includes(AREA[area]) || paint.tab !== AREA[area]) signalBad.push('Signal, ' + what + ': the title block and the open tab are not the area colour ' + AREA[area] + ': ' + JSON.stringify(paint));
       };
+      // The Room screen as staff use it: two groups made from the harness's projectors, and a button pressed, so the
+      // group cards, their buttons and a result line are on the screen that is checked.
+      const roomAsStaffSeeIt = async () => {
+        await page.waitForSelector('#roomscreen');
+        try {
+          if (!(await page.locator('.room-group').count())) {
+            const members = await page.$$eval('#roomgmembers button', (bs) => bs.map((b) => b.textContent));
+            for (let i = 0; i < Math.min(2, members.length); i++) {
+              const wall = ['Main wall', 'Painting wall'][i];
+              await page.fill('#roomgname', wall, { timeout: 5000 });
+              await page.click(`#roomgmembers >> button:has-text("${members[i]}")`, { timeout: 5000 });
+              await page.click('#roomgsave', { timeout: 5000 });
+              await page.waitForSelector(`.room-group:has-text("${wall}")`, { timeout: 8000 });
+            }
+          }
+          await page.locator('.room-group .btn').first().click({ timeout: 5000 });
+          await page.waitForSelector('.room-result', { timeout: 15000 });
+        } catch (e) { /* the screen is taken as it is; the test says below if no group is on it */ }
+      };
       // the main screens on a phone
       await page.click('nav >> text=Room');
       await page.waitForSelector('#roomscreen');
+      await roomAsStaffSeeIt();
+      const onRoom = await page.evaluate(() => [document.querySelectorAll('.room-group').length, document.querySelectorAll('.room-result').length]);
+      if (!onRoom[0] || !onRoom[1]) signalBad.push('Signal, Room: no group card or no result line was on the screen that was checked: ' + JSON.stringify(onRoom));
       await signalChecks('Room', 'room', { room: true });
       await page.keyboard.press('Tab');
       const ring = await page.evaluate(() => { const cs = getComputedStyle(document.activeElement); return [document.activeElement.tagName, cs.outlineStyle, cs.outlineWidth, cs.outlineColor]; });

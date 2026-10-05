@@ -484,6 +484,12 @@ html[data-style="signal"] .switchwrap .switchlabel { display: none; }      /* th
 html[data-style="signal"] .card { border: 0; border-radius: 0; background: none; padding: 0; gap: 10px; }
 html[data-style="signal"] .card h2 { margin: 0; }
 html[data-style="signal"] .navgroup { padding: 0; gap: 0; }
+/* a fold is something to tap: an outlined bar with a plus that turns into a minus, not a label with nothing under it */
+html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary { min-height: 44px; padding: 4px 14px; border: 3px solid var(--fg); list-style: none; }
+html[data-style="signal"] .fold summary::-webkit-details-marker { display: none; }
+html[data-style="signal"] .fold summary::after { content: "+"; margin-left: auto; padding-left: 10px; font: 900 22px/1 var(--sans); }
+html[data-style="signal"] .fold[open] > summary::after, html[data-style="signal"] details.fold[open] > summary::after { content: "\2212"; }
+html[data-style="signal"] .fold[open] > summary { margin-bottom: 10px; }
 html[data-style="signal"] .card .navhead { padding: 0 0 10px; }
 html[data-style="signal"] .picker .sheet, html[data-style="signal"] .moreacts, html[data-style="signal"] .teachbox, html[data-style="signal"] .confirm { border-radius: 0; border-width: 3px; }
 html[data-style="signal"] .picker .sheet { border-color: var(--fg); border-bottom: 0; background: var(--bg); }
@@ -631,6 +637,7 @@ html[data-style="signal"] .row.transport .btn { flex: 1 1 4.5rem; padding: 4px 6
 html[data-style="signal"] #np { font: 900 20px/1.2 var(--sans); text-transform: uppercase; overflow-wrap: anywhere; }
 html[data-style="signal"] .stageline { font-size: 16px; font-weight: 600; }
 html[data-style="signal"] .shaderstage .shadername { font-size: 30px; line-height: 1.1; }
+html[data-style="signal"] .shader-entry > span:first-child > b { font: 900 20px/1.2 var(--sans); text-transform: uppercase; }
 html[data-style="signal"] .preset.was { border-color: var(--ink); border-style: dashed; }
 html[data-style="signal"] .presetrow .btn, html[data-style="signal"] .preset { text-align: left; }
 
