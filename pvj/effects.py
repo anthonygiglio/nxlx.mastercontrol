@@ -61,6 +61,7 @@ FPS_SAME = 0.06
 # the real layout in hw-pixelformat) is let through.
 UNFIT_FORMATS = re.compile(r"^(?:xyz|gray|y8|y1[0-6]|ya8|ya16|mono[bw]|pal8)")
 UNFIT = "This picture's format cannot take an effect"
+NO_PICTURE = "Nothing with a picture is playing"
 # Kr and Kb of the colour matrices mpv names in video-params/colormatrix. Anything else is treated as BT.709.
 MATRICES = {"bt.601": (0.299, 0.114), "bt.709": (0.2126, 0.0722), "bt.2020-ncl": (0.2627, 0.0593),
             "bt.2020-cl": (0.2627, 0.0593), "smpte-240m": (0.212, 0.087)}
@@ -457,7 +458,10 @@ def _block(parsed, values, c, pic, desc, plane, t, cap=None):
 
 def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effect", today=None, lines=None):
     """The mpv user shader for a parsed ISF filter: `values` replace the inputs' defaults, `controls` are amount (the
-    mix with the picture as it is), speed (of TIME) and half (superseded: work at HALF_LINES at most), `picture` says
+    mix with the picture as it is; under a cap it is done at the working size, so between 0 and 1 the whole picture,
+    the unfiltered share too, is the smaller, softer one, and only at exactly 0, where the hook is left out, is it the
+    clip at its own size: the picture steps from sharp to slightly softer as the amount leaves 0),
+    speed (of TIME) and half (superseded: work at HALF_LINES at most), `picture` says
     what is under it (see clean_picture) and `lines` is the cap on the working size (None: the clip's own size; any
     whole number from 1 up, of which the settings offer DETAILS; see size_lines). The text holds the filter twice, as two hooks of which the player runs one: the first for a picture
     in YUV, the second for one in RGB (a PNG, some streams), so a change between the two kinds in the middle of a
@@ -855,7 +859,7 @@ class Effects(S.Engine):
         self.unfit = False                          # the picture that plays cannot take an effect (see UNFIT_FORMATS)
         self.estimated = False                      # its frame rate is the player's estimate (a stream, a live input)
         self.size = None                            # (width, height) of the playing picture as it is stored, when the player says
-        self._waiting = False                       # `error` says an effect could not go on for want of a picture
+        self._waiting = None                        # the `error` that says an effect could not go on for want of a picture
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
     def config(self):
@@ -900,8 +904,11 @@ class Effects(S.Engine):
                     cfg[L.FX_DETAIL] = keep
                 live._save(cfg)
         on = self._seen()
-        if on is not None:                          # it applies to the effect that is on, at once
-            self.changer.submit(on, controls={"amount": on["controls"]["amount"]})
+        if on is not None:
+            # It applies to the effect that is on, at once: a wish with nothing in it, which the worker answers with
+            # a new text at the new cap. Nothing is restated: an amount named here would be the one on screen, not
+            # the one a moment ago asked for and still on its way, and any named control ends the preset's name.
+            self.changer.submit(on)
 
     def work(self, sid, controls, cfg=None):
         """How the effect `sid` works now: {"lines": the cap or None}."""
@@ -1165,7 +1172,7 @@ class Effects(S.Engine):
         if self.picture() is None:
             if self.unfit:
                 return False, UNFIT + " (it has no colour planes the filter could read). Play another clip."
-            return False, "Nothing with a picture is playing. Play a clip, a stream or a live input, then put an effect on it."
+            return False, NO_PICTURE + ". Play a clip, a stream or a live input, then put an effect on it."
         return True, None
 
     def current(self):
@@ -1367,7 +1374,9 @@ class Effects(S.Engine):
                          gen=job.get("gen"))
             except ApiError as e:
                 self.error = {"id": job["id"], "message": e.message, "at": self._now()}
-                self._waiting = e.status == 409         # there was nothing to put it on: over once there is
+                # There was no picture to put it on: that is over once there is one. It is this error that is over
+                # then, and no other: whatever is said after it (a refusal by the GPU) is another object and stays.
+                self._waiting = self.error if (e.status == 409 and e.message.startswith(NO_PICTURE)) else None
         finally:
             if job.get("gen") == self._gen:
                 self._intent = None                     # carried out, or it could not be: the player's word counts again
@@ -1675,10 +1684,10 @@ class Effects(S.Engine):
         on = self.current() if enabled else None
         rows = self.library() if enabled else []
         ok, why = self.available() if enabled else (False, "The Shaders and Vibes module is off.")
-        if self.error and self._waiting and ok:     # "nothing is playing" is no longer so
+        if self.error is not None and self.error is self._waiting and ok:      # "nothing is playing" is no longer so
             self.error = None
-        if not self.error:
-            self._waiting = False
+        if self.error is not self._waiting:
+            self._waiting = None
         showing = None
         if on:
             wish = self.changer.pending() or {}

@@ -387,10 +387,12 @@
         send(c, '/api/effects/values', { id: s.id, values: values, controls: { amount: 1, speed: 1, half: false } });
         card.ctl = '';
       } })));
-    // Amount first: the mix between the picture as it is and the filtered one, which every effect has
+    // Amount first: the mix between the picture as it is and the filtered one, which every effect has. While the
+    // effect works at a lower size than the clip (Effect detail), the mix is made at that size: at 0% the picture is
+    // the clip itself, and from the first step above 0% all of it is the slightly softer picture. The hint says so.
     var ta = teacher(c, 'effect_amount', 'Amount', 'a knob or a fader');
     add({ common: 'amount', ctl: numberControl(c, rig, { key: 'amount', id: 'fx-amount', label: 'Amount', min: 0, max: 1, value: on.controls.amount, reset: 1, text: percent,
-      extra: ta && ta.btn, hint: '0% is the picture as it is, 100% the effect in full' }) }, ta);
+      extra: ta && ta.btn, hint: '0% is the picture as it is, 100% the effect in full. At a lower Effect detail the picture turns slightly softer as soon as Amount leaves 0%.' }) }, ta);
     if (typeof s.speed_max === 'number') {
       add({ common: 'speed', ctl: numberControl(c, rig, { key: 'speed', id: 'fx-speed', label: 'Speed', min: 0, max: s.speed_max, value: Math.min(on.controls.speed, s.speed_max), reset: 1, text: times,
         hint: s.speed_max <= 1 ? 'This effect moves by itself' + (s.flashes ? ' and may flash' : '') + ': it is kept at its own pace or slower. (Faster is the owner\'s switch on the Shaders page.)'

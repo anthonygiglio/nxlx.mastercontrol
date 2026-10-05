@@ -564,6 +564,7 @@ class FakeMpv:
         self.pid = 1000
         self.video = {"colormatrix": "bt.709", "colorlevels": "limited", "pixelformat": "yuv420p"}
         self.fps, self.pass_ns, self.vo, self.down, self.drops = 25.0, 1500000, "gpu", False, 0
+        self.decoder_drops = 0      # the player's second count of dropped frames (the decoder's own)
         self.container = True       # False: a stream or a live input, with no frame rate of its own, only the player's estimate
         self.commands = []
         self.props = {}
@@ -599,7 +600,7 @@ class FakeMpv:
                     fresh.append({"desc": "user shader: %s (native)" % desc, "avg": self.pass_ns, "last": self.pass_ns})
                 return {"fresh": fresh, "redraw": []}
             if name in ("frame-drop-count", "decoder-frame-drop-count"):
-                return self.drops if name == "frame-drop-count" else 0
+                return self.drops if name == "frame-drop-count" else self.decoder_drops
             return self.props.get(name)
         if command[0] == "set_property":
             self.props[command[1]] = command[2]
@@ -1714,7 +1715,7 @@ class DetailTest(Base):
         self.assertEqual((s["on"]["controls"]["amount"], s["error"]["id"]), (0.0, "bad.fs"))
         self.assertIn("undeclared", s["error"]["message"])
 
-    def test_the_setting_goes_round_through_a_settings_file_and_a_reset_clears_it(self):
+    def test_the_setting_goes_round_through_a_settings_file_and_a_factory_reset_clears_it(self):
         from pvj import boxcare
         from pvj.settings import default_settings
         self.pi4()
@@ -1739,8 +1740,21 @@ class DetailTest(Base):
         self.settings.data["shaders"]["fx_detail"] = True
         self.assertEqual(self.state()["detail"]["value"], "auto")
         self.assertNotIn("shaders", default_settings())                                 # a factory reset leaves no section, so no setting
-        self.settings.data.pop("shaders")
-        self.assertEqual(self.state()["detail"]["value"], "auto")
+        # the factory reset itself, as the panel asks for it (boxcare: _wipe_access puts the defaults in place)
+        self.fx.set_detail(540)
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.settings.data["shaders"]["fx_detail"], self.state()["on"]["working"]["lines"]), (540, 540))
+        st, body, _ = self.call("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, token=full)
+        self.assertEqual(st, 200, body)
+        self.assertNotIn("fx_detail", self.settings.data.get("shaders", {}))
+        with open(self.settings.path) as f:
+            self.assertNotIn("fx_detail", json.load(f).get("shaders", {}))                # on disk too
+        self.api.registry.set_enabled("shaders", True)                                  # the reset switched the module off
+        self.assertEqual((self.state()["detail"]["value"], self.state()["on"]), ("auto", None))
+        self.mpv.video = dict(self.mpv.video, w=1920, h=1080)
+        self.player.play(["/media/a.mp4"])
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.state()["on"]["working"]["lines"], self.state()["on"]["working"]["auto"]), (self.lines_of("fx-wash.fs"), True))
 
 
 class FoundOnThePiTest(Base):
@@ -1845,6 +1859,152 @@ class FoundOnThePiTest(Base):
         self.player.play(["/media/a.mp4"])
         s = self.state()
         self.assertEqual((s["error"], s["available"]), (None, True))
+
+
+class ReviewTest(Base):
+    """What an independent review of the Effect detail pull request found; each test is the review's own scenario."""
+    def setUp(self):
+        super().setUp()
+        self.fx.upload("all.fs", ALL)
+        self.mpv.video = dict(self.mpv.video, w=1920, h=1080)
+
+    def test_a_refusal_is_not_wiped_by_an_older_nothing_is_playing(self):
+        """A controller's Next with nothing playing left a note that "the error is the no-picture one". A clip, an
+        effect and a refused change later, with nobody having asked for the state in between, the first look took
+        the refusal for that old error and cleared it."""
+        self.player.clear()
+        self.assertTrue(self.fx.step(1)["ok"])
+        self.pump()                                                                    # the worker: nothing to put it on
+        self.assertIn("Nothing with a picture is playing", self.fx.error["message"])
+        self.player.play(["/media/a.mp4"])
+        self.fx.put("all.fs")                                                          # error None; no state() was asked for
+        FakeTap.lines = list(REFUSAL)
+        self.fx.change({"values": {"mode": 2}})
+        self.pump()                                                                    # the GPU refuses the new values
+        FakeTap.lines = []
+        s = self.state()
+        self.assertEqual((s["available"], s["error"] and s["error"]["id"]), (True, "all.fs"))
+        self.assertIn("undeclared", s["error"]["message"])
+        self.assertIn("undeclared", self.state()["error"]["message"])                  # and it stays over the next look
+        # only the no-picture answer is ever cleared by a picture: another 409 from the worker stays
+        self.fx.off()
+        self.assertTrue(self.fx.step(1)["ok"])
+        real = self.fx.available
+        self.fx.available = lambda: (False, E.GENERATOR_HAS_IT)
+        self.pump()
+        self.fx.available = real
+        s = self.state()
+        self.assertEqual((s["available"], s["error"]["message"]), (True, E.GENERATOR_HAS_IT))
+        # and the no-picture answer still goes when a picture comes
+        self.fx.off()
+        self.player.clear()
+        self.fx.step(1)
+        self.pump()
+        self.assertIn(E.NO_PICTURE, self.state()["error"]["message"])
+        self.player.play(["/media/a.mp4"])
+        self.assertIsNone(self.state()["error"])
+
+    def guard(self):
+        now = [100.0]
+        self.fx.guard = L.Guard(self.fx, clock=lambda: now[0])
+        return now
+
+    def looks(self, now, counts):
+        """One look a second, the two counts as given; ([load], [dropped a second]) as the panel was told."""
+        loads, rates = [], []
+        for frame, decoder in counts:
+            now[0] += 1.0
+            self.mpv.drops, self.mpv.decoder_drops = frame, decoder
+            on = self.state()["on"]
+            loads.append(on["load"])
+            rates.append(on["drops_per_second"])
+        return loads, rates
+
+    def test_a_count_that_falls_but_not_to_a_fresh_start_is_not_dropped_frames(self):
+        """The guard took any fall of the player's count for a start from 0 and counted the whole new number as
+        frames dropped since: 5000 to 4990 read as 1663 a second, and two such falls as a heavy effect."""
+        now = self.guard()
+        self.mpv.drops = 5000
+        self.fx.put("all.fs")
+        loads, rates = self.looks(now, [(5000, 0)] * 5 + [(4990, 0)] + [(4990, 0)] * 3 + [(4980, 0)] + [(4980, 0)] * 8)
+        self.assertNotIn("heavy", loads)
+        self.assertNotIn("tight", loads)
+        self.assertTrue(all(r is None or r == 0.0 for r in rates), rates)
+        self.assertEqual((loads[-1], rates[-1]), ("ok", 0.0))                          # and it is watched again afterwards
+        # a real start from 0 with a few frames dropped since is still counted (a short clip that loops)
+        g = L.Guard(self.fx)
+        self.assertEqual((g._rise((40, 0), (3, 0), 1.0), g._rise((40, 7), (43, 7), 1.0), g._rise((40, 7), (0, 0), 1.0)), (3, 3, 0))
+        self.assertEqual(g._rise((40, 0), (8, 0), 1.0), 8)                             # at most PEAK a second can be new
+        self.assertIsNone(g._rise((40, 0), (9, 0), 1.0))
+        self.assertIsNone(g._rise((5000, 0), (4990, 0), 1.0))
+        self.assertEqual(g._rise((5, None), (9, None), 1.0), 4)                        # a player that has only one of the counts
+        self.assertEqual(g._rise((5, None), (9, 3), 1.0), 4)                           # a count that has only now appeared says nothing yet
+
+    def test_one_count_starting_again_alone_is_not_the_other_counts_frames(self):
+        """The two counts are read in two requests and were added up: when one started again by itself the sum fell,
+        and the whole of the other count was taken for frames dropped in that second."""
+        now = self.guard()
+        self.mpv.drops, self.mpv.decoder_drops = 100, 50
+        self.fx.put("all.fs")
+        loads, rates = self.looks(now, [(100, 50)] * 5 + [(100, 0)] + [(100, 0)] * 3 + [(0, 0)] + [(0, 0)] * 8)
+        self.assertNotIn("heavy", loads)
+        self.assertNotIn("tight", loads)
+        self.assertTrue(all(r is None or r == 0.0 for r in rates), rates)
+        # and frames really dropped are still seen, by either count, across a start from 0
+        now = self.guard()
+        self.mpv.drops = self.mpv.decoder_drops = 0
+        self.fx.put("fx-wash.fs")
+        counts, f, d = [], 0, 0
+        for second in range(1, 21):
+            f = 0 if second % 4 == 0 else f + 2
+            d = 0 if second % 5 == 0 else d + 2
+            counts.append((f, d))
+        loads, rates = self.looks(now, counts)
+        self.assertEqual(loads[-1], "heavy")
+        self.assertTrue(2.0 <= rates[-1] <= 4.0, rates)
+
+    def test_choosing_a_detail_keeps_an_amount_that_is_on_its_way_and_the_presets_name(self):
+        self.fx.put("all.fs")
+        self.fx.change({"controls": {"amount": 0.25}})                                 # noted, not yet in the player
+        self.fx.set_detail(720)                                                        # before the worker came round
+        self.pump()
+        on = self.state()["on"]
+        self.assertEqual((on["controls"]["amount"], on["working"]["lines"]), (0.25, 720))
+        self.assertIn("pvj_native(c), 0.25)", self.text())
+        self.assertIn(E.size_lines(720)[0], self.text())
+        # with a preset on, a new detail is not a change of the effect's values: the preset is still what is on
+        self.fx.preset_save("Kept")
+        self.assertEqual(self.state()["on"]["preset"], "Kept")
+        text = self.mpv.loaded
+        self.fx.set_detail(540)
+        self.assertTrue(self.state()["on"]["pending"])
+        self.pump()
+        on = self.state()["on"]
+        self.assertEqual((on["preset"], on["working"]["lines"], on["controls"]["amount"]), ("Kept", 540, 0.25))
+        self.assertNotEqual(self.mpv.loaded, text)
+        self.assertIn(E.size_lines(540)[0], self.text())
+
+    def test_an_amount_too_small_to_be_written_is_amount_0(self):
+        """1e-40 is written into a text as 0.0. It was still taken for "above 0": the whole capped pass was drawn to
+        show the unfiltered clip, at the working size."""
+        p = S.parse(GOOD, S.FILTER)
+        for tiny in (1e-40, 1e-31, 4.9e-324, -0.0, 0):
+            self.assertEqual(L.clean_fx_controls({"amount": tiny})["amount"], 0.0, tiny)
+            self.assertEqual(E.translate(p, controls={"amount": tiny}, lines=720).count("//!WHEN 0\n"), 2, tiny)
+        for small in (1e-29, 1e-6, 0.001):                                             # what is written as a number is one
+            self.assertEqual(L.clean_fx_controls({"amount": small})["amount"], small)
+            text = E.translate(p, controls={"amount": small}, lines=720)
+            self.assertNotIn("//!WHEN", text)
+            self.assertNotIn("pvj_native(c), 0.0)", text)
+        self.fx.set_detail(720)
+        self.fx.put("all.fs", controls={"amount": 1e-40})
+        self.assertEqual(self.text().count("//!WHEN 0\n"), 2)
+        self.assertEqual((self.state()["on"]["controls"]["amount"], self.state()["on"]["checked"]), (0.0, None))
+        self.fx.change({"controls": {"amount": 0.5}})
+        self.pump()
+        self.fx.change({"controls": {"amount": 1e-40}})
+        self.pump()
+        self.assertEqual(self.text().count("//!WHEN 0\n"), 2)
 
 
 class PlayerLayerTest(unittest.TestCase):
