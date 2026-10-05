@@ -559,6 +559,16 @@ class LibraryTest(Base):
 
 
 class LifeTest(Base):
+    def test_the_status_names_the_effect_over_the_built_in_test_pattern_too(self):
+        # On the Pi 4 an effect over the colour bars was on in GET /api/effects and on the screen, and the status,
+        # which the Live screen's "now playing" reads, did not name it.
+        self.player.play([self.player.TEST_PATTERN])
+        self.fx.put("fx-wash.fs")
+        st = self.api.status({}, None, "t")["player"]
+        self.assertEqual((st["test_pattern"], st["path"], st["effect"]), (True, None, "fx-wash"))
+        self.fx.off()
+        self.assertNotIn("effect", self.api.status({}, None, "t")["player"])
+
     def test_an_effect_goes_on_over_what_plays_and_never_takes_the_screen(self):
         epoch = self.player.source_epoch
         self.assertEqual((self.state()["available"], self.state()["on"]), (True, None))
