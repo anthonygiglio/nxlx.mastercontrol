@@ -265,6 +265,8 @@ class Api:
     def pair(self, body, device, client):
         try:
             token, dev = self.auth.pair(str(body.get("pin", "")), str(body.get("name", "device")), client)
+        except auth_mod.TooManyDevices as e:
+            raise ApiError(409, str(e))
         except AuthError as e:
             raise ApiError(429 if e.retry_after else 403, str(e), e.retry_after)
         return {"device": dev, "token": token}
@@ -1294,6 +1296,8 @@ class Api:
     def invite(self, body, device, client):
         try:
             token, dev = self.auth.invite(str(body.get("name", "guest"))[:40], body.get("role"))
+        except auth_mod.TooManyDevices as e:
+            raise ApiError(409, str(e))
         except AuthError as e:
             raise bad(str(e))
         if not self._still_paired(device):
@@ -1526,18 +1530,33 @@ class Api:
         return {"enabled": enabled, "projectors": [one(p) for p in self.settings.data["projectors"]]}
 
     def set_projectors(self, body, device, client):
-        """{"add": {name, host, port, password}}, {"remove": id} or {"label": {"id", "input", "label"}}."""
+        """{"add": {name, host, port, password}}, {"remove": id}, {"label": {"id", "input", "label"}} or
+        {"edit": {"id", name?, host?, port?, password?}}. An edit checks what was sent exactly as an add does. A
+        field left out keeps its value: no password field keeps the stored password, an empty one takes it away.
+        A new host or port keeps the labels, drops the stored details and the status, and the background check
+        starts over at the new address (nothing more goes to the old one); a new name changes nothing else."""
         from . import projector as projector_mod
         self._need_projectors()
-        entry = None
-        if "add" in body:
+        entry = change = retire = None
+        if "add" in body or "edit" in body:
             try:
-                entry = projector_mod.validate(body["add"])
-                addr = projector_mod.private_address(entry["host"])      # refuse a public address now; a name lookup is slow, so outside the lock
+                if "add" in body:
+                    entry = projector_mod.validate(body["add"])
+                else:
+                    want = body["edit"]
+                    old = next((p for p in self.settings.data["projectors"] if isinstance(want, dict) and p["id"] == want.get("id")), None)
+                    if isinstance(want, dict) and isinstance(want.get("id"), str) and old is None:
+                        raise ApiError(404, "no such projector")
+                    change = projector_mod.validate_edit(old, want)
+                    entry = dict(old, **change)
+                    if (entry["host"], entry["port"]) == (old["host"], old["port"]):
+                        entry = None              # the address stays: it was checked when it was added, and is before every command
+                if entry is not None:
+                    addr = projector_mod.private_address(entry["host"])      # refuse a public address now; a name lookup is slow, so outside the lock
             except projector_mod.ProjectorError as e:
                 raise bad(str(e))
-            for p in list(self.settings.data["projectors"]):      # the same device under another spelling is one projector, not two
-                if p["port"] != entry["port"]:
+            for p in list(self.settings.data["projectors"]) if entry is not None else []:      # the same device under another spelling is one projector, not two
+                if p["port"] != entry["port"] or p["id"] == entry["id"]:      # an edit is never a duplicate of itself
                     continue
                 try:
                     same = projector_mod.private_address(p["host"]) == addr
@@ -1548,7 +1567,19 @@ class Api:
         with self.settings.lock:
             items = list(self.settings.data["projectors"])
             try:
-                if entry is not None:
+                if change is not None:
+                    at = [i for i, p in enumerate(items) if p["id"] == body["edit"]["id"]]
+                    if not at:                    # removed while the address was being looked up
+                        raise ApiError(404, "no such projector")
+                    cur = items[at[0]]
+                    new = dict(cur, **change)
+                    if (new["host"], new["port"]) != (cur["host"], cur["port"]):
+                        if entry is None or (entry["host"], entry["port"]) != (new["host"], new["port"]):
+                            raise ApiError(409, "that projector was changed from another device; try again")      # not the address that was checked
+                        new.pop("details", None)      # what the old address said it is; the labels stay
+                        retire = new["id"]
+                    items[at[0]] = new
+                elif entry is not None:
                     if len(items) >= projector_mod.MAX_PROJECTORS:
                         raise bad("at most %d projectors" % projector_mod.MAX_PROJECTORS)
                     items.append(entry)
@@ -1571,12 +1602,16 @@ class Api:
                         labels[want["input"]] = label
                     items[at[0]] = dict(old, labels=labels)
                 else:
-                    raise bad("send add, remove or label")
+                    raise bad("send add, edit, remove or label")
             except projector_mod.ProjectorError as e:
                 raise bad(str(e))
             self.settings.data["projectors"] = items
             self.settings.save()
+            if retire:                    # with the save, under the same lock: no answer from the old address is kept after it
+                self.projectors.retire(retire)
         self.projectors.apply()           # a new projector is identified and checked in the background; a removed one is let go
+        if change is not None and not retire:
+            self.projectors.poke(body["edit"]["id"])      # a new password: the status says at once whether it is right
         return self.get_projectors({}, device, client)
 
     def projector_action(self, body, device, client):
@@ -1791,34 +1826,89 @@ class Api:
         return dict(self.autostart.status(), message=message)
 
     # --- join codes and access on the display --------------------------------
-    def _access_state(self):
-        return {"codes": self.auth.list_joins(), "screen": self.pinscreen.status() if self.pinscreen else {"showing": False, "items": [], "seconds_left": 0},
-                "screen_available": self.pinscreen is not None}
+    # These four routes answer a presenter (live) too, for ONE thing: the guest (view) code, to make, see, show on
+    # the room screen and end (D48). So the role is checked again here, per action: the route's minimum role says
+    # only who may ask at all. Everything a presenter is not given is refused with 403, never quietly narrowed.
+    PRESENTER_ITEMS = ("view",)       # what a presenter may put on the room screen, and take off it
+
+    def _access_state(self, device=None):
+        """For a full-access device, everything. For a presenter: the guest code only (the presenter code would be
+        a way to hand out presenter access), and of the room screen only whether the guest code is on it and
+        whether something else is ("other"), never what."""
+        codes = self.auth.list_joins()
+        screen = self.pinscreen.status() if self.pinscreen else {"showing": False, "items": [], "seconds_left": 0}
+        if not Auth.allows(device, "full"):
+            codes = [c for c in codes if c["role"] == "view"]
+            mine = [i for i in screen["items"] if i in self.PRESENTER_ITEMS]
+            screen = {"showing": bool(mine), "items": mine, "seconds_left": screen["seconds_left"] if mine else 0,
+                      "other": any(i not in self.PRESENTER_ITEMS and i != "address" for i in screen["items"])}
+        return {"codes": codes, "screen": screen, "screen_available": self.pinscreen is not None}
 
     def get_access(self, body, device, client):
-        return self._access_state()
+        return self._access_state(device)
 
     def make_join_code(self, body, device, client):
-        try:
-            code = self.auth.create_join(body.get("role"), body.get("minutes", auth_mod.JOIN_DEFAULT_MINUTES), body.get("uses", auth_mod.JOIN_DEFAULT_USES))
+        """{"role": "view" | "live", "minutes"?, "uses"?}. A presenter: "view" only, minutes one of
+        auth.PRESENTER_JOIN_MINUTES, at most auth.PRESENTER_JOIN_MAX_USES uses, and {"replace": true} to put a new
+        code in the place of an active one (409 without it, so a code someone is using is never ended by accident)."""
+        full = Auth.allows(device, "full")
+        role, minutes, uses = body.get("role"), body.get("minutes", auth_mod.JOIN_DEFAULT_MINUTES), body.get("uses", auth_mod.JOIN_DEFAULT_USES)
+        if not full:
+            if role != "view":
+                raise ApiError(403, "a presenter can make a guest code only (full access needed)")
+            if type(minutes) is not int or minutes not in auth_mod.PRESENTER_JOIN_MINUTES:      # the type first: 15.0 == 15
+                raise bad("minutes must be one of %s" % ", ".join(str(m) for m in auth_mod.PRESENTER_JOIN_MINUTES))
+            if type(uses) is not int or not 1 <= uses <= auth_mod.PRESENTER_JOIN_MAX_USES:
+                raise bad("uses must be a whole number from 1 to %d" % auth_mod.PRESENTER_JOIN_MAX_USES)
+        old = next((j for j in self.auth.list_joins() if j["role"] == role), None)       # for the log line only
+        try:        # `check`: a device removed while this request was on its way changes nothing (the active code stays)
+            code = self.auth.create_join(role, minutes, uses, by="owner" if full else "presenter",
+                                         replace=full or body.get("replace") is True, check=lambda: self._still_paired(device))
+        except auth_mod.NotPaired as e:
+            raise ApiError(401, str(e))
+        except auth_mod.JoinExists:
+            raise ApiError(409, "a guest code is already active; ending it means nobody else can join with it")
+        except auth_mod.JoinLimit as e:
+            raise ApiError(429, str(e), e.retry_after)
         except AuthError as e:
             raise bad(str(e))
         if not self._still_paired(device):
             self.auth.cancel_join(code)
             raise ApiError(401, "this device is no longer paired")
-        return self._access_state()
+        if not full:
+            self.log("pvj-web: guest code made by presenter device %s (from %s), %d minutes, %d uses%s"
+                     % (device.get("id"), client, minutes, uses,
+                        ", in the place of the one the %s made" % old["by"] if old else ""))
+        return self._access_state(device)
 
     def cancel_join_code(self, body, device, client):
+        """{"code": "123456"}, {"role": "view" | "live"} or {"all": true}. A presenter: {"role": "view"} only. It
+        cannot name a code by its digits, so it cannot use this to test guesses at the presenter code."""
+        if not Auth.allows(device, "full"):
+            if body.get("role") != "view" or "code" in body or "all" in body:
+                raise ApiError(403, "a presenter can end the guest code only (full access needed)")
+            if not self.auth.cancel_join_role("view"):
+                raise ApiError(404, "no such code")
+            if self.pinscreen is not None:
+                self.pinscreen.hide(only=self.PRESENTER_ITEMS)      # a code that is gone is not left on the room screen
+            self.log("pvj-web: guest code ended by presenter device %s (from %s)" % (device.get("id"), client))
+            return self._access_state(device)
         if body.get("all") is True:
             self.auth.cancel_join(None)
+        elif body.get("role") in auth_mod.JOIN_ROLES and "code" not in body:
+            if not self.auth.cancel_join_role(body["role"]):
+                raise ApiError(404, "no such code")
         elif not isinstance(body.get("code"), str) or not self.auth.cancel_join(body["code"]):
             raise ApiError(404, "no such code")
-        return self._access_state()
+        return self._access_state(device)
 
-    def access_qr(self, target, origin):
+    def access_qr(self, target, origin, device=None):
         """An SVG QR code for the panel address ("panel", no access in it) or for a live join code ("view", "live").
-        The address comes from the Host the browser used, so the code works from the same network as the viewer."""
+        The address comes from the Host the browser used, so the code works from the same network as the viewer.
+        With `device` (the server passes it): a presenter gets "panel" and "view"; "live" needs full access."""
         from . import qr as qr_mod
+        if device is not None and target not in ("panel", "view"):
+            self.require(device, "full")
         if not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]{1,100}", origin or ""):
             raise bad("unknown address")
         base = "http://%s/" % origin
@@ -1834,20 +1924,48 @@ class Api:
         return qr_mod.svg(qr_mod.encode(text)).encode()
 
     def show_access(self, body, device, client):
-        """Put the PIN and/or the guest and presenter codes on the display for a while, or take them off."""
+        """Put the PIN and/or the guest and presenter codes on the display for a while, or take them off.
+        A presenter: {"show": true, "items": ["view"], "seconds"?} and {"show": false}, which takes only the guest
+        code off. What is drawn is fixed words, the code's digits and the box's address, each through the display's
+        character whitelist (pinscreen.clean); nothing in the request is drawn, so this cannot put text on the
+        display. While a full-access device has the PIN or the presenter code on the display, a presenter's show
+        is refused (409): it would otherwise replace them, or keep them up for longer."""
+        from . import pinscreen as pinscreen_mod
         if self.pinscreen is None:
             raise ApiError(404, "the on-screen display is not available")
+        full = Auth.allows(device, "full")
+        only = None if full else self.PRESENTER_ITEMS
         show = body.get("show")
         if not isinstance(show, bool):
             raise bad("show must be true or false")
         if not show:
-            self.pinscreen.hide()
-            return self._access_state()
+            self.pinscreen.hide(only=only)
+            if not full:
+                self.log("pvj-web: guest code taken off the room screen by presenter device %s (from %s)" % (device.get("id"), client))
+            return self._access_state(device)
+        made = []           # the codes this very call made, to take back if the device turns out to be gone
         try:
-            self.pinscreen.show(body.get("items"), body.get("seconds", 60))
+            self.pinscreen.show(body.get("items"), body.get("seconds", 60), by="owner" if full else "presenter", only=only,
+                                made=made, check=lambda: self._still_paired(device))
+        except auth_mod.NotPaired as e:
+            raise ApiError(401, str(e))
+        except PermissionError as e:
+            raise ApiError(403, "%s (full access needed)" % e)
+        except pinscreen_mod.Busy as e:
+            raise ApiError(409, str(e))
+        except auth_mod.JoinLimit as e:
+            raise ApiError(429, str(e), e.retry_after)
         except (ValueError, AuthError) as e:
             raise bad(str(e))
-        return self._access_state()
+        if not self._still_paired(device):
+            for code in made:
+                self.auth.cancel_join(code)
+            self.pinscreen.hide(only=only)
+            raise ApiError(401, "this device is no longer paired")
+        if not full:
+            self.log("pvj-web: guest code put on the room screen for %d s by presenter device %s (from %s)%s"
+                     % (body.get("seconds", 60), device.get("id"), client, "; a guest code was made for it" if made else ""))
+        return self._access_state(device)
 
     # --- DMX and MIDI input --------------------------------------------
     def _need_control(self, module, manager):
@@ -2108,10 +2226,11 @@ class Api:
             ("GET", "/api/system/update"): ("full", self.update_status),
             ("POST", "/api/system/update"): ("full", self.start_update),
             ("POST", "/api/mix"): ("live", self.set_mix),
-            ("GET", "/api/access"): ("full", self.get_access),
-            ("POST", "/api/access/code"): ("full", self.make_join_code),
-            ("POST", "/api/access/cancel"): ("full", self.cancel_join_code),
-            ("POST", "/api/access/screen"): ("full", self.show_access),
+            # live, not full: a presenter may handle the GUEST code. Each handler checks the role again per action.
+            ("GET", "/api/access"): ("live", self.get_access),
+            ("POST", "/api/access/code"): ("live", self.make_join_code),
+            ("POST", "/api/access/cancel"): ("live", self.cancel_join_code),
+            ("POST", "/api/access/screen"): ("live", self.show_access),
             ("GET", "/api/inputs"): ("view", self.get_inputs),
             ("GET", "/api/overlay"): ("view", self.get_overlay),
             ("POST", "/api/overlay"): ("live", self.set_overlay),

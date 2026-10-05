@@ -342,9 +342,12 @@ def check_projectors(v, care):
         seen.add(clean["id"])
         if "details" in entry:
             clean["details"] = _projector_details(entry["details"])
-        if "labels" in entry:                      # a label is for one of the inputs the projector itself listed
-            known = (clean.get("details") or {}).get("inputs") or []
-            labels = {code: projector_mod.validate_label(known, code, label) for code, label in _obj(entry["labels"], "labels").items()}
+        if "labels" in entry:
+            # A label is typed for an input the projector listed at the time, and the box keeps it when the list
+            # later changes or goes (a refresh that lists fewer inputs, an Edit to another address): such a label
+            # is stored and not shown. So the box's own export can hold a label for a code that is not in the
+            # list, or with no list at all, and that must import: the code only has to be of the standard's form.
+            labels = {code: projector_mod.validate_label([code], code, label) for code, label in _obj(entry["labels"], "labels").items()}
             clean["labels"] = {code: label for code, label in labels.items() if label}
         try:                                       # an address is judged now; a name is looked up (and judged) at each use
             ipaddress.ip_address(clean["host"])

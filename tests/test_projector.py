@@ -1373,6 +1373,259 @@ class ApiTest(ServerBase):
         self.assertEqual(self.post("/api/projector", {"id": "all", "action": "on"}, token=view)[0], 403)
         self.assertEqual(self.post("/api/projectors", {"add": {"host": "192.168.0.5"}}, token=live)[0], 403)
 
+    # --- edit ---------------------------------------------------------------------------------------------
+    def fast(self):
+        """The background checks every 50 ms, so "nothing more is sent" can be seen in a second."""
+        mon = self.api.projectors
+        mon.interval, mon.changing, mon.stagger = 0.05, 0.05, 0.0
+
+    def stored(self, pid=None):
+        items = self.settings.data["projectors"]
+        return next(p for p in items if p["id"] == pid) if pid else items[0]
+
+    def test_edit_a_name_changes_nothing_else(self):
+        pid = self.add()[1]["projectors"][0]["id"]
+        self.assertTrue(wait_for(lambda: self.projector()["details"] and self.projector()["status"].get("ok")))
+        self.assertEqual(self.post("/api/projectors", {"label": {"id": pid, "input": "31", "label": "Matrix"}})[0], 200)
+        before, threads, status = dict(self.stored()), self.api.projectors.threads(), self.projector()["status"]
+        st, body, _ = self.post("/api/projectors", {"edit": {"id": pid, "name": "  Main wall "}})
+        self.assertEqual(st, 200)
+        self.assertEqual(self.stored(), dict(before, name="Main wall"))       # the password, details and labels as they were
+        self.assertEqual((body["projectors"][0]["name"], body["projectors"][0]["has_password"]), ("Main wall", True))
+        self.assertEqual(self.api.projectors.threads(), threads)              # the same worker: no restart
+        self.assertEqual(self.projector()["status"]["power"], status["power"])
+        self.assertNotIn("pw1", json.dumps(body))
+
+    def test_edit_the_password_left_out_keeps_it_an_empty_one_clears_it_and_it_is_never_returned(self):
+        pid = self.add()[1]["projectors"][0]["id"]
+        st, body, _ = self.post("/api/projectors", {"edit": {"id": pid, "name": "Side"}})
+        self.assertEqual((st, self.stored()["password"], body["projectors"][0]["has_password"]), (200, "pw1", True))
+        self.assertEqual(self.post("/api/projector", {"id": pid, "action": "on"})[0], 200)                 # and it still works
+        self.assertTrue(wait_for(lambda: self.stored().get("details")))
+        details = dict(self.stored()["details"])
+        st, body, _ = self.post("/api/projectors", {"edit": {"id": pid, "password": "Secret-2"}})
+        self.assertEqual((st, self.stored()["password"]), (200, "Secret-2"))
+        self.assertNotIn("Secret-2", json.dumps(body))
+        self.assertNotIn("Secret-2", json.dumps(self.call("GET", "/api/projectors", token=self.full)[1]))
+        self.assertEqual(self.stored()["details"], details)                                                # a new password keeps the details
+        self.assertEqual(self.post("/api/projector", {"id": pid, "action": "off"})[0], 502)                # the projector's is still pw1
+        self.assertTrue(wait_for(lambda: "wrong projector password" in (self.projector()["status"].get("error") or ""), 3))   # said at once, not 45 s later
+        st, body, _ = self.post("/api/projectors", {"edit": {"id": pid, "password": ""}})
+        self.assertEqual((st, self.stored()["password"], body["projectors"][0]["has_password"]), (200, "", False))
+        for bad_pw in ("with space", "x" * 33, 5, None, "café"):
+            self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "password": bad_pw}})[0], 400, bad_pw)
+        self.assertEqual(self.stored()["password"], "")
+
+    def test_edit_is_checked_like_an_add(self):
+        pid = self.add()[1]["projectors"][0]["id"]
+        core = lambda: {k: self.stored()[k] for k in ("id", "name", "host", "port", "password")}      # the details arrive in the background
+        before = core()
+        for change in ({"host": "8.8.8.8"}, {"host": "169.254.169.254"}, {"host": "127.0.0.1x!"}, {"host": ""}, {"host": 7},
+                       {"host": "a" * 64 + ".lan"},                        # a label DNS cannot encode
+                       {"host": "x..lan"}, {"port": 0}, {"port": 65536}, {"port": "4352"}, {"port": True},
+                       {"name": ""}, {"name": "x" * 41}, {"name": "bad‮name"}, {"name": 5}, {}):
+            st, body, _ = self.post("/api/projectors", {"edit": dict(change, id=pid)})
+            self.assertEqual(st, 400, (change, body))
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": "nope", "name": "x"}})[0], 404)
+        for junk in ("x", None, [pid], {"name": "x"}, {"id": 5, "name": "x"}):
+            self.assertEqual(self.post("/api/projectors", {"edit": junk})[0], 400, junk)
+        self.assertEqual(core(), before)
+        public = lambda host, port, proto=0: [(0, 0, 0, "", ("93.184.216.34", port))]
+        real = projector.private_address
+        with mock.patch.object(projector, "private_address", lambda host, resolve=None: real(host, public)):   # a name that points at the internet
+            self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "host": "beamer.example"}})[0], 400)
+        self.assertEqual(core(), before)
+        # full access only, with the CSRF header, and only with the module on
+        live = self.post("/api/devices/invite", {"name": "g", "role": "live"})[1]["token"]
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "name": "Mine"}}, token=live)[0], 403)
+        self.assertEqual(self.call("POST", "/api/projectors", {"edit": {"id": pid, "name": "Mine"}}, token=self.full, csrf=False)[0], 403)
+        self.call("POST", "/api/modules/projector", {"enabled": False}, token=self.full)
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "name": "Mine"}})[0], 409)
+        self.assertEqual(core(), before)
+
+    def test_edit_cannot_make_a_duplicate_except_of_itself(self):
+        other = FakeProjector()
+        self.addCleanup(other.close)
+        with mock.patch.object(self.api.projectors, "apply", lambda: None):
+            pid = self.add()[1]["projectors"][0]["id"]
+            side = self.post("/api/projectors", {"add": {"name": "Side", "host": "127.0.0.1", "port": other.port}})[1]["projectors"][1]["id"]
+            st, body, _ = self.post("/api/projectors", {"edit": {"id": side, "port": self.fake.port}})
+            self.assertEqual(st, 409)
+            self.assertIn("already in the list as Main", body["error"])
+            by_name = lambda host, resolve=None: "127.0.0.1"      # another spelling of the same device
+            with mock.patch.object(projector, "private_address", by_name):
+                self.assertEqual(self.post("/api/projectors", {"edit": {"id": side, "host": "beamer.lan", "port": self.fake.port}})[0], 409)
+                st, body, _ = self.post("/api/projectors", {"edit": {"id": pid, "host": "beamer.lan"}})       # itself under a new spelling
+                self.assertEqual((st, self.stored(pid)["host"]), (200, "beamer.lan"))
+            # sending its own unchanged address is no duplicate either
+            self.assertEqual(self.post("/api/projectors", {"edit": {"id": side, "host": "127.0.0.1", "port": other.port, "name": "Side wall"}})[0], 200)
+            self.assertEqual((self.stored(side)["name"], self.stored(side)["port"]), ("Side wall", other.port))
+            self.assertEqual(len(self.settings.data["projectors"]), 2)
+
+    def test_edit_does_not_touch_the_limit_of_8(self):
+        with mock.patch.object(self.api.projectors, "apply", lambda: None):
+            for n in range(projector.MAX_PROJECTORS):
+                self.assertEqual(self.post("/api/projectors", {"add": {"name": "P%d" % n, "host": "192.168.9.%d" % (n + 1)}})[0], 200)
+            self.assertEqual(self.post("/api/projectors", {"add": {"host": "192.168.9.99"}})[0], 400)
+            pid = self.stored()["id"]
+            self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "host": "192.168.9.77", "name": "Moved"}})[0], 200)
+            self.assertEqual([len(self.settings.data["projectors"]), self.stored()["host"]], [projector.MAX_PROJECTORS, "192.168.9.77"])
+
+    def test_edit_the_address_keeps_labels_and_starts_over_at_the_new_one_with_one_thread(self):
+        self.fast()
+        other = FakeProjector("pw1", inputs=("31", "33"), name="The other one")
+        self.addCleanup(other.close)
+        pid = self.add()[1]["projectors"][0]["id"]
+        self.assertTrue(wait_for(lambda: (self.projector()["details"] or {}).get("name") == "Fake projector" and self.projector()["status"].get("ok")))
+        self.assertEqual(self.post("/api/projectors", {"label": {"id": pid, "input": "31", "label": "Matrix"}})[0], 200)
+        st, body, _ = self.post("/api/projectors", {"edit": {"id": pid, "port": other.port}})
+        self.assertEqual(st, 200)
+        now = body["projectors"][0]
+        self.assertEqual((now["id"], now["port"], now["has_password"]), (pid, other.port, True))
+        self.assertEqual(self.stored()["labels"], {"31": "Matrix"})       # the labels stay
+        time.sleep(0.3)                    # a command already on the wire when the edit landed was the last one
+        sent = len(self.fake.raw)
+        self.assertTrue(wait_for(lambda: (self.projector()["details"] or {}).get("name") == "The other one"))      # identified anew
+        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+        self.assertEqual([(i["code"], i["label"]) for i in self.projector()["inputs"]], [("31", "Matrix"), ("33", "")])
+        time.sleep(0.5)                    # ten rounds of the background check
+        self.assertEqual(len(self.fake.raw), sent, "nothing goes to the old address after an edit")
+        self.assertGreater(len(other.raw), 10)
+        self.assertEqual(len(self.api.projectors.threads()), 1)
+        self.assertTrue(wait_for(lambda: len(poll_threads()) <= 1))       # an earlier test's thread may still be ending
+        self.assertEqual(self.projector()["status"]["waiting"], False)
+
+    def test_edit_the_address_drops_the_details_and_the_status_at_once(self):
+        pid = self.add()[1]["projectors"][0]["id"]
+        self.assertTrue(wait_for(lambda: self.projector()["details"] and self.projector()["status"].get("ok")))
+        self.api.projectors.stop()                                        # no worker: nothing fills them in again behind the test
+        with mock.patch.object(self.api.projectors, "apply", lambda: None):
+            st, body, _ = self.post("/api/projectors", {"edit": {"id": pid, "host": "192.168.7.7"}})
+        self.assertEqual(st, 200)
+        self.assertIsNone(body["projectors"][0]["details"])               # what the old address said it is
+        self.assertNotIn("ok", body["projectors"][0]["status"])
+        self.assertNotIn("details", self.stored())
+
+    def test_edit_while_the_old_address_is_silent_never_makes_a_second_thread(self):
+        """The common case: the address was typed wrong, so the worker is in the middle of a connection that will
+        never be answered. The edit does not wait for it, and the same thread goes on at the right address."""
+        self.fast()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        silent = raw_server(self, lambda rfile, wfile: release.wait(20))
+        real = self.api._pjlink
+        self.api._pjlink = lambda e: projector.PJLink(e["host"], e["port"], e["password"], timeout=1.5)
+        self.addCleanup(setattr, self.api, "_pjlink", real)
+        st, body, _ = self.post("/api/projectors", {"add": {"name": "Main", "host": "127.0.0.1", "port": silent, "password": "pw1"}})
+        pid = body["projectors"][0]["id"]
+        time.sleep(0.2)                    # the worker is now waiting for a greeting that does not come
+        began = time.monotonic()
+        st, body, _ = self.post("/api/projectors", {"edit": {"id": pid, "port": self.fake.port}})
+        self.assertEqual(st, 200)
+        self.assertLess(time.monotonic() - began, 1.0)                    # not held up by the old address
+        self.assertTrue(body["projectors"][0]["status"]["waiting"])       # the old command is still ending
+        self.assertEqual(len(self.api.projectors.threads()), 1)
+        self.assertTrue(wait_for(lambda: (self.projector()["details"] or {}).get("name") == "Fake projector", 8))
+        self.assertEqual(len(self.api.projectors.threads()), 1)
+        self.assertTrue(wait_for(lambda: len(poll_threads()) == 1))
+
+    def test_an_answer_from_the_old_address_is_not_kept_after_an_edit(self):
+        """Refresh details asked the old address; the edit lands before the answer is saved."""
+        other = FakeProjector("pw1", name="The other one")
+        self.addCleanup(other.close)
+        with mock.patch.object(self.api.projectors, "apply", lambda: None):
+            pid = self.add()[1]["projectors"][0]["id"]
+            old = dict(self.stored())
+            self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port}})[0], 200)
+            self.assertIsNone(self.api.projectors.identify(old))          # asked of the old address, as a request under way would
+            self.assertNotIn("details", self.stored())
+            self.assertEqual(self.api.projectors.identify(self.stored())["name"], "The other one")
+
+    def test_settings_export_and_import_after_an_edit_to_another_projector(self):
+        """The whole story: inputs named, the projector swapped for one at another address that lists other inputs,
+        the box reads the new one. A name for an input the new one does not list is kept and not shown, and the
+        box's own export of that state imports again."""
+        other = FakeProjector("pw1", inputs=("31", "33"), name="The other one")
+        self.addCleanup(other.close)
+        with mock.patch.object(self.api.projectors, "apply", lambda: None):
+            pid = self.add()[1]["projectors"][0]["id"]
+            self.assertEqual(self.api.projectors.identify(self.stored())["inputs"], ["11", "31", "32"])
+            for code, label in (("31", "Matrix"), ("32", "Box")):
+                self.assertEqual(self.post("/api/projectors", {"label": {"id": pid, "input": code, "label": label}})[0], 200)
+            self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port, "name": "New one"}})[0], 200)
+            self.assertEqual(self.api.projectors.identify(self.stored())["inputs"], ["31", "33"])
+            self.assertEqual(self.stored()["labels"], {"31": "Matrix", "32": "Box"})
+            self.assertEqual([(i["code"], i["label"]) for i in self.projector()["inputs"]], [("31", "Matrix"), ("33", "")])
+            before = json.loads(json.dumps(self.settings.data["projectors"]))
+            st, out, _ = self.post("/api/system/settings/export", {"passwords": True})
+            self.assertEqual(st, 200, out)
+            self.assertEqual(out["file"]["settings"]["projectors"], before)
+            self.settings.data["projectors"] = []
+            st, body, _ = self.call("POST", "/api/system/settings/import?confirm=import", raw=json.dumps(out["file"]).encode(), token=self.full)
+            self.assertEqual(st, 200, body)
+            self.assertEqual(self.settings.data["projectors"], before)
+
+    def test_an_input_change_asked_before_an_edit_goes_nowhere_after_it(self):
+        """Review finding 2. The input was chosen from the old projector's list. Queued behind the edit it is not
+        sent to the old address and not to the new one; refused by the old one as the edit lands, it is not
+        retried at the new one (which may not have that input at all)."""
+        self.fast()
+        other = FakeProjector("pw1", inputs=("11", "33"), name="The other one")
+        self.addCleanup(other.close)
+        pid = self.add()[1]["projectors"][0]["id"]
+        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+        asked_before = dict(self.stored())                              # what a request under way holds
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port}})[0], 200)
+        time.sleep(0.3)
+        sent = len(self.fake.raw)
+        with self.assertRaises(projector.ProjectorError) as e:
+            self.api.projectors.set_input(asked_before, "31")
+        self.assertEqual(e.exception.code, "stopped")
+        self.assertIn("address was changed", str(e.exception))
+        self.assertEqual(len(self.fake.raw), sent)                      # the old one got nothing after the edit
+        # the edit lands while the old address is answering "unavailable" (it is in standby)
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": self.fake.port}})[0], 200)
+        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+        held, real = dict(self.stored()), self.api._pjlink
+
+        def link(entry):
+            lk = real(entry)
+            if entry["port"] == self.fake.port:
+                send = lk.set_input
+
+                def set_input(code):
+                    try:
+                        return send(code)                               # the old projector: ERR3
+                    finally:
+                        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port}})[0], 200)
+                lk.set_input = set_input
+            return lk
+        with mock.patch.object(self.api, "_pjlink", link):
+            with self.assertRaises(projector.ProjectorError) as e:
+                self.api.projectors.set_input(held, "31")
+            self.assertEqual(e.exception.code, "stopped")
+            self.assertTrue(wait_for(lambda: (self.projector()["details"] or {}).get("name") == "The other one"))
+            self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+            time.sleep(0.6)                                             # six retry periods of a retry that must not exist
+        self.assertIsNone(self.projector()["status"]["pending_input"])
+        self.assertEqual([r for r in other.received if "INPT 3" in r or "INPT 1" in r], [])       # the new one got no input command
+        sent = len(self.fake.raw)
+        time.sleep(0.3)
+        self.assertEqual(len(self.fake.raw), sent)
+        # an input chosen after the edit, from what is stored now, goes to the new address as before
+        self.assertEqual(self.api.projectors.set_input(self.stored(), "33"), {"pending": True})
+
+    def test_groups_keep_pointing_at_an_edited_projector(self):
+        with mock.patch.object(self.api.projectors, "apply", lambda: None):
+            pid = self.add()[1]["projectors"][0]["id"]
+            self.call("POST", "/api/modules/room", {"enabled": True}, token=self.full)
+            st, body, _ = self.post("/api/room", {"group": {"name": "Main wall", "projectors": [pid]}})
+            self.assertEqual(st, 200, body)
+            self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "name": "Renamed", "host": "192.168.7.7"}})[0], 200)
+            room = self.call("GET", "/api/room", token=self.full)[1]
+            self.assertEqual(room["groups"][0]["projectors"], [pid])
+            self.assertIn("Renamed", json.dumps(room))
+
 
 class ScheduleAndOscTest(unittest.TestCase):
     def test_schedule_accepts_presets_and_projector_power(self):

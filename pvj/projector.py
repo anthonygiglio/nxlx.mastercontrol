@@ -123,6 +123,24 @@ def validate(entry):
     return {"id": uuid.uuid4().hex[:8], "name": name.strip(), "host": host, "port": port, "password": password}
 
 
+EDITABLE = ("name", "host", "port", "password")
+
+
+def validate_edit(old, change):
+    """The fields of `change` ({"id", "name"?, "host"?, "port"?, "password"?}) that were sent, checked exactly as
+    for a new projector: {field: clean value}. A field left out is not in the answer, so it keeps its stored value
+    (the password too); an empty password is a value and takes the password away."""
+    if not isinstance(change, dict) or not isinstance(change.get("id"), str):
+        raise ProjectorError("edit must be {id, name, host, port, password}")
+    sent = [k for k in EDITABLE if k in change]
+    if not sent:
+        raise ProjectorError("nothing to change: send a name, host, port or password")
+    merged = {k: old[k] for k in EDITABLE}
+    merged.update({k: change[k] for k in sent})
+    clean = validate(merged)
+    return {k: clean[k] for k in sent}
+
+
 def _read_line(sock, limit, deadline):
     """One PJLink line: it ends with a carriage return alone (not a line feed), so readline() would wait forever.
     `deadline` (time.monotonic) bounds the whole line, so a device that sends a byte now and then cannot hold us.
@@ -420,6 +438,21 @@ class Monitor:
         self._notice.pop(w.pid, None)
         self._leaving.append(w)
 
+    def retire(self, pid):
+        """This projector's address was changed: its worker stops now (it sends nothing more, and saves nothing),
+        and its status, notice and any input change being retried are dropped. An input change that was asked for
+        the old address and has not gone out yet is not sent anywhere (set_input reads the stored address again
+        under the input lock), and one refused by the old address is not retried at the new one. What cannot be
+        taken back is a command already on the wire to the old address when the edit is saved. apply() afterwards gives the
+        projector a new worker, which reads its details anew; while the old worker's thread is still ending a
+        command, the projector is "waiting", and that same thread then takes it over, so there are never two."""
+        with self.lock:
+            w = self._workers.pop(pid, None)
+            if w is not None:
+                self._retire(w)
+            self._status.pop(pid, None)
+            self._notice.pop(pid, None)
+
     def stop(self, final=False):
         """Stop every worker. `final`: the panel is closing, start none again."""
         with self.lock:
@@ -486,7 +519,8 @@ class Monitor:
     def identify(self, entry, w=None):
         """Ask the projector who it is and keep the answer in the settings. What it would not say this time, or
         said in a form that is not the standard's, keeps its older value (the input list too). Labels are left
-        alone. Nothing is saved for a projector that was removed, or once the module is off. Raises
+        alone. Nothing is saved for a projector that was removed or whose address was changed meanwhile, or once
+        the module is off. Raises
         ProjectorError if the projector cannot be reached."""
         got = self._link(entry, w).identify()             # no lock held: this is the slow part
         settings = self.api.settings
@@ -496,6 +530,8 @@ class Monitor:
             items = list(settings.data.get("projectors") or [])
             for i, p in enumerate(items):
                 if p["id"] == entry["id"]:
+                    if (p["host"], p["port"]) != (entry["host"], entry["port"]):
+                        return None               # edited meanwhile: these are another address's answers
                     details = dict(p.get("details") or {})
                     details.update({k: v for k, v in got.items() if v is not None or k not in details})
                     details["read"] = int(time.time())
@@ -519,9 +555,15 @@ class Monitor:
         it says no, a newer choice was made while this one waited, and nothing is sent ("stopped"). `cancel`: an
         Event that, once set, also keeps the command from being sent."""
         pid = entry["id"]
+        def moved():        # edited to another address since `entry` was read: that input was chosen for the old one
+            now = self._entry(pid)
+            return now is None or (now["host"], now["port"]) != (entry["host"], entry["port"])
+        gone = ProjectorError("the projector's address was changed; choose the input again", "stopped")
         with self._input_lock(pid):
             if wanted is not None and not wanted():
                 raise ProjectorError("stopped", "stopped")
+            if moved():                                # nothing goes to the old address, and nothing of this to the new one
+                raise gone
             with self.lock:
                 w = self._workers.get(pid)
                 if w:
@@ -540,6 +582,8 @@ class Monitor:
                     w = self._workers.get(pid)
                     if w is None or w.stop.is_set():
                         raise
+                    if moved():                        # the edit landed while the old address was being asked: no retry at the new one
+                        raise gone
                     w.pending = {"input": code, "until": now + self.retry_for, "next": now + self.retry_every}
                     w.wake.set()
                 return {"pending": True}

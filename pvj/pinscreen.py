@@ -50,6 +50,10 @@ MANUAL_MIN_SECONDS, MANUAL_MAX_SECONDS, MANUAL_DEFAULT_SECONDS = 10, 3600, 60
 LABELS = {"pin": "Full access PIN", "view": "Guest, watch only, code", "live": "Presenter, play and mix, code"}
 
 
+class Busy(Exception):
+    """The display shows something this caller may not replace."""
+
+
 class PinScreen:
     def __init__(self, api, auth, log=print, interval=3.0, hostname=None, clock=None):
         import time
@@ -78,26 +82,61 @@ class PinScreen:
             pass
         return out
 
-    def show(self, items, seconds=MANUAL_DEFAULT_SECONDS):
+    def show(self, items, seconds=MANUAL_DEFAULT_SECONDS, by="owner", only=None, made=None, check=None):
         """Put access details on the display for `seconds`, even over a playing clip (it is an explicit request).
         `items` is any of "pin" (full access), "view" (guest code), "live" (presenter code); a code that does not
-        exist yet is made. Returns the status. Raises ValueError for bad input."""
+        exist yet is made (`by` says by whom). Returns the status. Raises ValueError for bad input.
+        `only` (a presenter's request): the items this caller may put up or take down. Checked here, under the same
+        lock as the change, so nothing a full-access device put up meanwhile (the PIN, the presenter code) is ever
+        replaced or kept up longer by it: PermissionError for an item outside `only`, Busy when such an item (other
+        than the plain address, which is no secret) is on the display now.
+        A code made here for a presenter keeps to the presenter's limits: it lasts the shortest of
+        auth.PRESENTER_JOIN_MINUTES that covers the show, has the presenter's number of uses, never replaces a code,
+        and counts towards the presenter's codes per hour. `made`: a list that gets the codes this call made.
+        `check`: asked under the lock before anything is changed; auth.NotPaired if it says no."""
+        from . import auth as auth_mod
         if (not isinstance(items, list) or not items or len(items) > len(MANUAL_ITEMS) or len(set(items)) != len(items)
                 or not all(i in MANUAL_ITEMS for i in items)):
             raise ValueError("choose what to show: pin, view, live and/or address")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not MANUAL_MIN_SECONDS <= seconds <= MANUAL_MAX_SECONDS:
             raise ValueError("seconds must be %d to %d" % (MANUAL_MIN_SECONDS, MANUAL_MAX_SECONDS))
+        if only is not None and not all(i in only for i in items):
+            raise PermissionError("this device may show the guest code only")
         with self._lock:
+            m = self._current()
+            if only is not None and m and not all(i in only or i == "address" for i in m["items"]):      # the address is no secret: it may be replaced
+                raise Busy("something else is on the room screen; a full-access device takes it off")
+            if check is not None and not check():
+                raise auth_mod.NotPaired("this device is no longer paired")
             have = {j["role"] for j in self.auth.list_joins()}
             for role in items:
                 if role in ("view", "live") and role not in have:
-                    self.auth.create_join(role, minutes=min(120, max(15, -(-seconds // 60))))
+                    minutes = min(120, max(15, -(-seconds // 60)))
+                    if by == "presenter":
+                        minutes = min(m for m in auth_mod.PRESENTER_JOIN_MINUTES if m >= minutes)
+                        try:
+                            code = self.auth.create_join(role, minutes=minutes, uses=auth_mod.PRESENTER_JOIN_MAX_USES, by=by, replace=False)
+                        except auth_mod.JoinExists:       # made by someone else this instant: that one is shown
+                            continue
+                    else:
+                        code = self.auth.create_join(role, minutes=minutes, by=by)
+                    if made is not None:
+                        made.append(code)
             self.manual = {"until": self._clock() + seconds, "items": list(items)}
             self.tick()
             return self.status()
 
-    def hide(self):
+    def hide(self, only=None):
+        """Take the access details off the display. `only` (a presenter's request): just these items go; what a
+        full-access device put up besides them stays, for the time it was given."""
         with self._lock:
+            m = self._current()
+            rest = [i for i in m["items"] if i not in only] if m and only is not None else []
+            if rest:
+                self.manual = {"until": m["until"], "items": rest}
+                self._qr_sig = None           # the QR codes are drawn again without the one that went
+                self.tick()
+                return self.status()
             self.manual = None
             self.clear()
             return self.status()

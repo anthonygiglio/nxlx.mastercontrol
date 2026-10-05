@@ -354,3 +354,6 @@ details.fold { display: block; }
   .room-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
   .room-scenes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+.list .item.proj-edit { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 6px; padding: 12px 0; }
+.list .item.proj-edit .hint { margin-bottom: 4px; }
+.chooser { display: flex; flex-direction: column; gap: 4px; }

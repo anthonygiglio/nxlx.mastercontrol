@@ -18,25 +18,31 @@ The web panel listens on port 80. Connect the box and your phone to the same net
 
 ## 2. Pair your phone
 
-Open `http://<address of the box>/` in a browser. The box makes a new four digit PIN every time it starts. Until the first device has paired, the box draws the PIN and its address on its own screen whenever nothing is playing; after that it stays off, so it cannot show at a gig. If every paired device is later removed it comes back, which is the way in for a box nobody can reach; a clip that starts clears it at once. You can always read it with `sudo pvj-pin`, and any full-access device can make a new PIN or a guest link in System.
+Open `http://<address of the box>/` in a browser. The box makes a new four digit PIN every time it starts. Until the first device has paired, the box draws the PIN and its address on its own screen whenever nothing is playing; after that it stays off, so it cannot show at a gig. If every paired device is later removed it comes back, which is the way in for a box nobody can reach; a clip that starts clears it at once. You can always read it with `sudo pvj-pin`, and any full-access device can make a new PIN or a link for someone in System > People and codes.
 
 ![Connect screen](images/ui/connect.png)
 
 A paired phone is remembered until you remove it. A wrong PIN is throttled. If someone locks new pairing by guessing, a paired full-access device clears it with **New PIN** in System.
 
-There are three access levels: **view** (look only), **live** (play and mix) and **full** (change pads, modules, files and settings).
+There are three kinds of access, and the panel uses these names for them everywhere: **Guest (can watch)**, **Presenter (can play and mix)** and **Owner (everything)**: pads, modules, files, settings and who may come in. (In the API and the settings file they are `view`, `live` and `full`.)
 
 ### Letting other people in: codes and QR codes on the display
 
-For a studio or a gig, the person running the show (a full-access device) opens System > People and codes:
+For a studio or a gig, open System > People and codes. The first card is **Let someone in**:
 
-- **New guest code** (watch only) or **New presenter code** (play and mix) makes a 6 digit code. Codes expire (15 minutes by default, up to 2 hours), work a limited number of times, and a new code for the same role replaces the old one. They are never written to disk, so a restart clears them.
-- **Show on display** puts the chosen codes on the box's screen, each with a big **QR code** in the top right corner (guest on the left, presenter on the right), together with the panel address, for 1 minute to 1 hour, even over a playing clip. **Hide from display** takes them off at once. A phone camera that scans a code opens the panel with the code filled in; one tap on **Join with code** and it is in, with exactly that access. The code travels in the part of the address after `#`, which a browser does not send to the box or anyone else, and the panel removes it from the address bar straight away (a phone's camera or scanner app may still remember what it scanned).
-- The full access PIN can be shown too (as text, never as a QR code), but the panel asks first: everyone who can see the screen can then take over the box. While anything is on the display, a snapshot taken by a guest or presenter shows only the video, never the text or the QR codes, so nobody can read the PIN or a presenter code remotely.
+- Choose how long a new code works: **15 minutes, 1 hour or 2 hours**. It is 1 hour unless you choose otherwise.
+- **Guest code** (Guest, can watch) or **Presenter code** (Presenter, can play and mix) makes a 6 digit code, shown large with its QR code, the time it still works and the uses it has left (20). There is one code of each kind at a time: if one is active, the panel asks before it makes a new one, because the old one stops working. Codes are never written to disk, so a restart clears them.
+- **End this code** ends a code now, after asking. People who already joined with it stay; remove them under Paired devices.
+- **Show on the room screen** puts the chosen codes on the box's screen, each with a big **QR code** in the top right corner (guest on the left, presenter on the right), together with the panel address, for 1 minute to 1 hour, even over a playing clip. **Take it off the room screen** takes them off at once. A phone camera that scans a code opens the panel with the code filled in; one tap on **Join with code** and it is in, with exactly that access. The code travels in the part of the address after `#`, which a browser does not send to the box or anyone else, and the panel removes it from the address bar straight away (a phone's camera or scanner app may still remember what it scanned).
+- The Owner PIN can be shown too (as text, never as a QR code), but the panel asks first: everyone who can see the screen can then take over the box. While anything is on the display, a snapshot taken by a guest or presenter shows only the video, never the text or the QR codes, so nobody can read the PIN or a presenter code remotely.
 - If someone blocks joining by guessing wrong codes, **Unblock joining** opens it again without changing the PIN.
 - The panel answers only to its IP addresses, `localhost`, its own name and `<name>.local`. To use another name (a studio DNS name), add it to `PVJ_ALLOWED_HOSTS` in `/etc/pvj/pvj.env` (comma separated). This stops a web page elsewhere from driving the panel through a visitor's browser (DNS rebinding).
 - **Print access sheet** prints a page to pin up: a QR code for the panel address (no access in it; people still need a code), and the current guest and presenter codes.
-- **Create guest link** makes a link that does not expire (until you remove the device), with its QR code; hand it to a resident operator.
+- Under **Paired devices**, **Create link** makes a link for a guest or a presenter that does not expire (until you remove its device from the list), with its QR code; hand it to a resident operator.
+
+**How many, and for how long.** A phone that joined with a guest code is forgotten once it has not opened the panel for 7 days; it joins again with a new code. Phones paired with the PIN, with a link or with a presenter code stay until you remove them. The box keeps at most 200 paired devices, and 20 of those places are only for devices paired with the PIN, so however many guests have joined, the owner can always pair another phone. When the list is full for guests, joining says so; remove some under Paired devices.
+
+**Staff who are presenters can let a guest in.** A presenter's People and codes (and "Let someone in" at the bottom of the Room screen) has the guest part only: the time, **Guest code**, the code with its QR code, **Show on the room screen** and **End this code**. So whoever is running the room can let a visitor watch without the owner being there. A presenter cannot make a presenter code, see the one the owner made, show or change the PIN, make a link, or see or remove devices; the box refuses those, it is not only that the buttons are missing. A presenter sees a guest code the owner made and can show it; ending it or replacing it asks first and says the owner made it. A presenter's guest code works for 15 minutes, 1 hour or 2 hours and at most 20 times, and presenters together can make 6 guest codes in an hour; after that the panel says how long to wait (the owner is not limited). While the owner has the PIN or the presenter code on the room screen, a presenter cannot put the guest code up (it would replace them); taking the guest code off leaves the owner's items there. None of this can be done through remote support.
 
 ![Access card with a guest and a presenter code and their QR codes](images/ui/access.png)
 
@@ -152,7 +158,7 @@ Each row says how it is doing, with one word and a sentence:
 
 **When a change is saved.** A control that does one safe thing (a switch, a tick, a choice from a list) is applied when you tap it. A Save button appears only where several fields must change together, such as the DMX universe and start channel or the Remote support server.
 
-A presenter sees only Health, Projectors, Shaders and Vibes, Sound, Streams, Boxes in step and About and power (and only the modules that are on); a guest sees Health, About and power, and Shaders and Vibes while that is on (to see what is playing). Modules that are not built yet are listed at the bottom, folded, with no switches.
+A presenter sees only Health, Projectors, Shaders and Vibes, People and codes (to let a guest in), Sound, Streams, Boxes in step and About and power (and only the modules that are on); a guest sees Health, About and power, and Shaders and Vibes while that is on (to see what is playing). Modules that are not built yet are listed at the bottom, folded, with no switches.
 
 | What | Where to read |
 | --- | --- |
@@ -188,7 +194,7 @@ Projectors and the schedule (here with projector power, a clip, a start script a
 
 ![Projectors](images/ui/projectors.png)
 
-The Projectors card shows what each projector says it is (maker, model), its state without asking (on, off, warming up, cooling down), its input, mutes and lamp hours, and lets a presenter choose the input and mute picture and sound separately (a full-access device can label each input; labelling does not switch the projector); its lamp hours and warnings (fan, lamp, temperature, cover, filter) are also on System > Health. The picture above may be older than this. This is built from the published PJLink standard and tested against a fake projector only: **no real projector has been tested**. Details: [pvj/PROJECTORS.md](../pvj/PROJECTORS.md).
+The Projectors card shows what each projector says it is (maker, model), its state without asking (on, off, warming up, cooling down), its input, mutes and lamp hours, and lets a presenter choose the input and mute picture and sound separately (a full-access device can label each input; labelling does not switch the projector; **Edit** changes a projector's name, address, port or password in place, keeping the input names); its lamp hours and warnings (fan, lamp, temperature, cover, filter) are also on System > Health. The picture above may be older than this. This is built from the published PJLink standard and tested against a fake projector only: **no real projector has been tested**. Details: [pvj/PROJECTORS.md](../pvj/PROJECTORS.md).
 ![Schedule](images/ui/schedule.png)
 
 Check the box clock before relying on the schedule: a Pi has no battery clock, and until the network sets the time the clock is wrong.

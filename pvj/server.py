@@ -188,11 +188,13 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 self._json(e.status, {"error": e.message})
 
         def _qr(self):
-            """GET /api/qr.svg?for=panel|view|live (full access): a QR code to print or show."""
+            """GET /api/qr.svg?for=panel|view|live: a QR code to print or show. A presenter gets the panel address
+            and the guest code; the presenter code needs full access (checked in access_qr)."""
             try:
-                api.require(self._who("GET", "/api/qr.svg"), "full")
+                device = self._who("GET", "/api/qr.svg")
+                api.require(device, "live")
                 target = (parse_qs(urlsplit(self.path).query).get("for") or [""])[0]
-                self._send(200, api.access_qr(target, self.headers.get("Host", "")), "image/svg+xml")
+                self._send(200, api.access_qr(target, self.headers.get("Host", ""), device), "image/svg+xml")
             except ApiError as e:
                 self._json(e.status, {"error": e.message})
 

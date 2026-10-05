@@ -621,6 +621,46 @@ function startServer() {
     await page.waitForFunction(() => !/muted/.test(document.querySelector('.proj-status').textContent), null, { timeout: 15000 });
     await page.click('button[aria-label="Refresh details Main"]');
     await page.waitForFunction(() => /Refresh details: done/.test(document.getElementById('msg').textContent));
+    // Edit, in place: the add form filled in. Nothing to save until something changed; a refusal is said under the
+    // button; the password is never in the form; a rename keeps the password and the input names.
+    await page.click('button[aria-label="Edit Main"]');
+    await page.waitForSelector('#projedit');
+    if (!(await page.isDisabled('#projeditsave'))) problems.push('Save changes can be pressed with nothing changed');
+    if (await page.inputValue('#projeditpw') !== '') problems.push('the edit form has something in its password field');
+    if (!/A password is set\. Type a new one to change it, or leave empty to keep it\./.test(await page.textContent('#projeditpwhint'))) problems.push('the edit form does not say that a password is set');
+    for (const id of ['projeditname', 'projedithost', 'projeditport', 'projeditpw']) {
+      if (!(await page.locator(`label[for="${id}"]`).isVisible())) problems.push(`no visible label above #${id}`);
+    }
+    if (await page.inputValue('#projedithost') !== '127.0.0.1' || await page.inputValue('#projeditport') !== String(info.projector_ports[0])) problems.push('the edit form is not filled in with the projector\'s address and port');
+    if (await page.isVisible('#projeditmoved')) problems.push('the new-address hint shows before the address was changed');
+    await page.fill('#projedithost', '8.8.8.8');
+    if (await page.isDisabled('#projeditsave')) problems.push('Save changes stays disabled after a change');
+    if (!/If the password belongs to the old projector only, remove it or type the new one\./.test(await page.textContent('#projeditmoved')) || !(await page.isVisible('#projeditmoved')))
+      problems.push('a new address does not say that the stored password is used there');
+    await page.click('#projeditsave');
+    await page.waitForSelector('#projediterr:has-text("private network")');
+    await page.fill('#projedithost', '127.0.0.1');
+    if (!(await page.isDisabled('#projeditsave'))) problems.push('Save changes is enabled again although the address is back as it was');
+    await page.fill('#projeditname', 'Main wall');
+    await page.click('#projeditclear');                              // "Remove the password": the field is closed, and what was typed stays
+    await page.waitForSelector('#projeditpwhint:has-text("will be removed")');
+    if (!(await page.isDisabled('#projeditpw'))) problems.push('the password field is still open with Remove the password on');
+    if (await page.inputValue('#projeditname') !== 'Main wall') problems.push('the name being typed was lost when the form was drawn again');
+    await page.click('#projeditclear');
+    await page.waitForSelector('#projeditpwhint:has-text("A password is set")');
+    await page.click('#projeditsave');
+    await page.waitForSelector('.proj-entry:has-text("Main wall")');
+    if (await page.$('#projedit')) problems.push('the edit form is still open after saving');
+    if (!/password set/.test(await page.textContent('.proj-entry'))) problems.push('a rename lost the projector password');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the fake projector moved after a rename');
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });      // the label is kept, and it still answers with the kept password
+    await page.click('button[aria-label="Check Main wall"]');
+    await page.waitForFunction(() => /Power: on/.test(document.querySelector('.proj-entry').textContent), null, { timeout: 15000 });
+    await page.click('button[aria-label="Edit Main wall"]');
+    await page.fill('#projeditname', 'Main');
+    await page.click('#projeditsave');
+    await page.waitForSelector('button[aria-label="Edit Main"]');
+    if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page after an edit');
     await onPage('Projectors');
     await sysIndex();
     await chip('Projectors', 'Problem');                             // the projector's own warning reaches the index row
@@ -709,6 +749,14 @@ function startServer() {
       assert.strictEqual(await staff.locator('#roomalloff').count(), role === 'view' ? 0 : 1, role + ': All off');
       assert.strictEqual(await staff.locator('#roomviewonly').count(), role === 'view' ? 1 : 0, role + ': the view only note');
       assert.strictEqual(await staff.locator('#roomsetup').count(), 0, role + ': no set-up');
+      // Letting a guest in is on the Room screen itself for staff (a presenter), and not there for a guest
+      assert.strictEqual(await staff.locator('#roomletin').count(), role === 'view' ? 0 : 1, role + ': Let someone in');
+      if (role === 'live') {
+        await staff.click('#roomletin summary');
+        await staff.waitForSelector('#roomletin #newguest');
+        assert.strictEqual(await staff.locator('#newpresenter, #show-pin, #printsheet').count(), 0, 'staff on the Room screen get the guest code only');
+        await staff.waitForSelector('#roomletin #nocodes');
+      }
       await roomCtx.close();
     }
     // All off: a double tap sends nothing (its second tap lands on the question, which is not taken yet); the
@@ -875,9 +923,12 @@ function startServer() {
     await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(0, 0, 0)');
     await onPage('Look');
     await sys('People and codes');
-    await page.click('text=Create guest link');
-    await page.waitForFunction(() => { const i = document.querySelector('input[aria-label="Guest link"]'); return i && !i.hidden && /#token=/.test(i.value); });
-    const guestLink = await page.inputValue('input[aria-label="Guest link"]');
+    assert.deepStrictEqual(await page.$$eval('#linkrole option', (os) => os.map((o) => o.textContent)), ['Guest (can watch)', 'Presenter (can play and mix)'], 'the link roles, in the one vocabulary');
+    assert(/Owner \(everything\)/.test(await page.textContent('#devicescard')), 'this device is named Owner (everything) in the list');
+    assert(!/watch only|View only|\(play and mix\)/.test(await page.textContent('#sysbody')), 'no other names for the roles on People and codes: ' + await page.textContent('#sysbody'));
+    await page.click('#makelink');
+    await page.waitForFunction(() => { const i = document.querySelector('input[aria-label="Link"]'); return i && !i.hidden && /#token=/.test(i.value); });
+    const guestLink = await page.inputValue('input[aria-label="Link"]');
     await onPage('People and codes');
     await sys('Sound');
     await page.waitForSelector('#audioline, #audiomsg');
@@ -960,15 +1011,21 @@ function startServer() {
     // Scan-to-join: the owner makes a guest code; a phone opens the QR code's link and joins with one tap as view only
     await sys('People and codes');
     await page.waitForSelector('#newguest');
-    await page.click('#newguest');
+    assert.deepStrictEqual(await page.$$eval('#joinminutes option', (os) => os.map((o) => o.textContent)), ['15 minutes', '1 hour', '2 hours'], 'how long a new code works');
+    assert.strictEqual(await page.inputValue('#joinminutes'), '60', 'one hour unless chosen otherwise');
+    await page.selectOption('#joinminutes', '15');
+    const [codeReq] = await Promise.all([page.waitForRequest((r) => r.url().endsWith('/api/access/code')), page.click('#newguest')]);
+    assert.strictEqual(JSON.parse(codeReq.postData()).minutes, 15, 'the chosen time is what is sent');
     await page.waitForSelector('.join-code[data-role="view"]');
+    assert(/Works for 1[45]:[0-9]{2} more/.test(await page.textContent('.join-code[data-role="view"]')), 'the code says how long it works: ' + await page.textContent('.join-code[data-role="view"]'));
+    await page.selectOption('#joinminutes', '60');
     const joinCode = await page.evaluate(() => document.querySelector('.join-code[data-role="view"] .big-code').textContent);
     assert(/^[0-9]{6}$/.test(joinCode), 'a 6 digit guest code: ' + joinCode);
     await page.waitForFunction(() => { const i = document.querySelector('.join-code[data-role="view"] img.qr'); return i && i.complete && i.naturalWidth > 0; });
     await page.click('#showaccess');
-    await page.waitForFunction(() => /On the display now/.test(document.getElementById('accessscreenline').textContent));
+    await page.waitForFunction(() => /On the room screen now: the Guest \(can watch\) code/.test(document.getElementById('accessscreenline').textContent));
     await page.click('#hideaccess');
-    await page.waitForFunction(() => /Nothing on the display/.test(document.getElementById('accessscreenline').textContent));
+    await page.waitForFunction(() => /Nothing on the room screen/.test(document.getElementById('accessscreenline').textContent));
     const scanCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const scanner = await scanCtx.newPage();
     scanner.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push('scanner: ' + m.text()); });
@@ -1644,8 +1701,79 @@ function startServer() {
     await presenter.click('nav >> text=System');
     await presenter.waitForSelector('#sysindex');
     assert.deepStrictEqual(await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent)),
-      ['Health', 'Projectors', 'Shaders and Vibes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
+      ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
     assert.strictEqual(await presenter.locator('#notbuilt').count(), 0, 'a presenter gets no list of modules');
+    // A presenter's People and codes (D48): the guest code and nothing else. The owner has a guest code and a
+    // presenter code active; the presenter sees the first, is asked before replacing or ending it, and never sees
+    // the second.
+    assert.strictEqual(await post('/api/access/code', { role: 'view', minutes: 60 }), 200);
+    assert.strictEqual(await post('/api/access/code', { role: 'live', minutes: 60 }), 200);
+    const ownersCodes = (await get('/api/access')).codes;
+    const ownersGuest = ownersCodes.filter((c) => c.role === 'view')[0].code, ownersPresenter = ownersCodes.filter((c) => c.role === 'live')[0].code;
+    await presenter.click('.navrow:has-text("People and codes")');
+    await presenter.waitForSelector('#accesscard .join-code[data-role="view"]');
+    assert.strictEqual(await presenter.textContent('#accesscard h2'), 'Let someone in');
+    assert.strictEqual(await presenter.locator('#devicescard, #newpresenter, #printsheet, #show-pin, #show-live, #makelink, #unlockpair, .join-code[data-role="live"]').count(), 0,
+      'a presenter gets no devices, presenter code, PIN, link or print sheet');
+    assert.strictEqual(await presenter.locator('#syspage .switch').count(), 0, 'and no switch');
+    assert.strictEqual(await presenter.textContent('.join-code .big-code'), ownersGuest, 'a presenter sees the owner\'s guest code');
+    assert(/Made by the owner/.test(await presenter.textContent('.join-code')), 'and is told who made it');
+    assert(!(await presenter.content()).includes(ownersPresenter), 'the presenter code is nowhere on a presenter\'s page');
+    assert(/Guest \(can watch\)/.test(await presenter.textContent('#accesscard')) && !/watch only|View only/.test(await presenter.textContent('#accesscard')), 'the one vocabulary for roles');
+    assert.deepStrictEqual(await presenter.$$eval('#joinminutes option', (os) => os.map((o) => o.textContent)), ['15 minutes', '1 hour', '2 hours']);
+    assert.strictEqual(await presenter.inputValue('#joinminutes'), '60', 'one hour unless chosen otherwise');
+    await presenter.waitForFunction(() => { const i = document.querySelector('.join-code img.qr'); return i && i.complete && i.naturalWidth > 0; });
+    assert(!(await presenter.getAttribute('.join-code img.qr', 'src')).includes(ownersGuest), 'the code is not in the QR picture\'s address');
+    await presenter.click('.endcode');                               // ending the owner's code asks first
+    await presenter.waitForSelector('#confirmrow:has-text("The owner made this code")');
+    await presenter.click('#confirmno');
+    await presenter.waitForSelector('.join-code .big-code');
+    assert.strictEqual((await get('/api/access')).codes.filter((c) => c.role === 'view')[0].code, ownersGuest, '"Keep it" ended nothing');
+    await presenter.selectOption('#joinminutes', '120');
+    await presenter.click('#newguest');                              // so does replacing it
+    await presenter.waitForSelector('#confirmrow:has-text("The owner made the code that is active")');
+    const [guestReq] = await Promise.all([presenter.waitForRequest((r) => r.url().endsWith('/api/access/code')), presenter.click('#confirmyes')]);
+    assert.deepStrictEqual(JSON.parse(guestReq.postData()), { role: 'view', minutes: 120, replace: true }, 'the chosen two hours are sent');
+    await presenter.waitForFunction((old) => { const c = document.querySelector('.join-code .big-code'); return c && /^[0-9]{6}$/.test(c.textContent) && c.textContent !== old; }, ownersGuest);
+    const staffCode = await presenter.textContent('.join-code .big-code');
+    assert(/Works for 1(19|20):[0-9]{2} more/.test(await presenter.textContent('.join-code')), 'the new code works for two hours: ' + await presenter.textContent('.join-code'));
+    assert(!/Made by the owner/.test(await presenter.textContent('.join-code')), 'the presenter\'s own code is not called the owner\'s');
+    const after = (await get('/api/access')).codes;
+    assert.deepStrictEqual(after.map((c) => [c.role, c.by]).sort(), [['live', 'owner'], ['view', 'presenter']], 'one guest code, the presenter\'s; the presenter code untouched');
+    assert.strictEqual(after.filter((c) => c.role === 'live')[0].code, ownersPresenter);
+    await presenter.selectOption('#showsecs', '60');
+    await presenter.click('#showaccess');
+    await presenter.waitForFunction(() => /On the room screen now: the Guest \(can watch\) code/.test(document.getElementById('accessscreenline').textContent));
+    assert.deepStrictEqual((await get('/api/access')).screen.items, ['view'], 'only the guest code went on the room screen');
+    assert.strictEqual(await presenter.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a presenter\'s People and codes');
+    {
+      const wide = await presenter.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert(wide <= 1, 'a presenter\'s People and codes: ' + wide + ' px wider than the phone');
+    }
+    await presenter.click('#hideaccess');
+    await presenter.waitForFunction(() => /Nothing on the room screen/.test(document.getElementById('accessscreenline').textContent));
+    // what the page does not offer, the box refuses: asked straight from the presenter's browser
+    const refused = await presenter.evaluate((digits) => Promise.all([
+      ['/api/access/code', { role: 'live' }], ['/api/access/code', { role: 'view', minutes: 121, replace: true }], ['/api/access/code', { role: 'view', uses: 21, replace: true }],
+      ['/api/access/cancel', { all: true }], ['/api/access/cancel', { role: 'live' }], ['/api/access/cancel', { code: digits }],
+      ['/api/access/screen', { show: true, items: ['pin'] }], ['/api/access/screen', { show: true, items: ['view', 'live'] }],
+      ['/api/devices/invite', { name: 'x', role: 'view' }], ['/api/devices/revoke', { id: 'x' }], ['/api/pin/rotate', {}], ['/api/pin/unlock', {}]
+    ].map((x) => fetch(x[0], { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(x[1]) }).then((r) => r.status))), ownersPresenter);
+    assert.deepStrictEqual(refused, [403, 400, 400, 403, 403, 403, 403, 403, 403, 403, 403, 403], 'what a presenter is refused');
+    assert.strictEqual(await presenter.evaluate(() => fetch('/api/qr.svg?for=live').then((r) => r.status)), 403, 'no QR code of the presenter code for a presenter');
+    assert.strictEqual(await presenter.evaluate(() => fetch('/api/access/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"role":"view","replace":true}' }).then((r) => r.status)), 403,
+      'and nothing without the request header (CSRF)');
+    assert.strictEqual((await get('/api/access')).codes.filter((c) => c.role === 'view')[0].code, staffCode, 'none of that changed the guest code');
+    await presenter.click('.endcode');
+    await presenter.waitForSelector('#confirmrow:has-text("End this code?")');
+    assert(!/The owner made/.test(await presenter.textContent('#confirmrow')), 'ending the presenter\'s own code does not mention the owner');
+    await presenter.click('#confirmyes');
+    await presenter.waitForSelector('#nocodes');
+    assert.deepStrictEqual((await get('/api/access')).codes.map((c) => c.role), ['live'], 'the guest code is ended, the presenter code is still the owner\'s');
+    assert.strictEqual(await post('/api/access/cancel', { all: true }), 200);
+    await presenter.click('#sysback');
+    await presenter.waitForSelector('#sysindex');
+    await presenter.waitForSelector(`${rowOf('People and codes')} .navstate:has-text("No guest code")`);
     await presenter.click('.navrow:has-text("Projectors")');
     await presenter.waitForSelector('#projline');
     assert.strictEqual(await presenter.locator('.switch').count(), 0, 'a presenter gets no switch');

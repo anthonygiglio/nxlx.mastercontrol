@@ -1026,9 +1026,11 @@
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
         },
         body: function () { return window.pvjShaders ? [window.pvjShaders.page(shaderCtx())] : []; } },
-      { id: 'access', group: 'everyday', name: 'People and codes', role: 'full', url: '/api/access', urlRole: 'full',
-        blurb: 'The phones and tablets paired with this box, codes for guests and presenters, and the PIN.',
-        body: function () { return [accessCard()]; } },
+      // A presenter gets this row too (D48): the guest code, to make, show on the room screen and end, and nothing else.
+      { id: 'access', group: 'everyday', name: 'People and codes', role: 'live', url: '/api/access', urlRole: 'live',
+        blurb: full ? 'The phones and tablets paired with this box, codes for guests and presenters, and the PIN.' :
+          'Let a guest watch from their own phone, with a code that stops working by itself.',
+        body: accessCards },
       { id: 'sound', group: 'everyday', name: 'Sound', role: 'live', url: '/api/audio',
         blurb: 'Where the sound comes out, and a test tone to check left and right.',
         body: function () { return [audioCard(full)]; } },
@@ -1096,6 +1098,7 @@
     return rows;
   }
   function rowShown(row) {
+    if (row.id === 'access' && S.device && S.device.remote) return false;      // codes are refused through the support connection, whatever the role
     if (!can(row.role) && !(row.id === 'support' && S.device && S.device.remote)) return false;
     if (!row.module) return true;
     var m = mod(row.module);
@@ -1170,6 +1173,7 @@
     },
     access: function (d) {
       var guests = d.codes.filter(function (c) { return c.role === 'view'; }).length, presenters = d.codes.length - guests;
+      if (!can('full')) return st(null, guests ? 'A guest code is active' : 'No guest code');
       return st(null, [plural(S.devices.length, 'device'), guests ? plural(guests, 'guest code') : '', presenters ? plural(presenters, 'presenter code') : ''].filter(Boolean).join(', '));
     },
     sound: function (d) {
@@ -1503,7 +1507,7 @@
         kv('Board', sys.model || sys.board || '?'),
         kv('Temperature', typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : 'n/a'),
         kv('Player', pl.running ? 'Running' : 'Not running'),
-        kv('This device', S.device ? S.device.name + ' (' + S.device.role + ')' : '')),
+        kv('This device', S.device ? S.device.name + ', ' + roleName(S.device.role) : '')),
       full ? h('div', { class: 'card' }, h('h2', { text: 'Player' }),
         h('button', { class: 'btn', text: 'Restart player now', onclick: function () { act('POST', '/api/player/restart', {}, function () { say('Player restarting. The service brings it straight back.'); }); } })) : null,
       h('button', { class: 'btn', id: 'forgetdevice', text: 'Forget this device', onclick: function () {
@@ -2328,6 +2332,9 @@
   // ---- projectors (PJLink) ---------------------------------------------
   var projForm = { name: '', host: '', port: '4352', password: '' };  // survives redraws
   var projLabels = {};  // projector id -> { code, text }: the input being labelled and the label being typed; survives redraws
+  // The projector being edited, in place of its row: { id, name, host, port, password, clear, error }; null when none.
+  // It survives redraws (the list is read again every 5 seconds). The password is only ever what was typed here.
+  var projEdit = null;
   var projTimer = null;
   function projectorsCard(full) {
     clearTimeout(projTimer);
@@ -2368,6 +2375,10 @@
         var el = document.getElementById(f[0]);
         if (el && body.contains(el)) projForm[f[1]] = el.value;
       });
+      if (projEdit) [['projeditname', 'name'], ['projedithost', 'host'], ['projeditport', 'port'], ['projeditpw', 'password']].forEach(function (f) {
+        var el = document.getElementById(f[0]);
+        if (el && body.contains(el) && !el.disabled) projEdit[f[1]] = el.value;
+      });
       Array.prototype.forEach.call(body.querySelectorAll('.proj-label'), function (el) {
         var which = body.querySelector('.proj-labelfor[data-id="' + el.getAttribute('data-id') + '"]');
         projLabels[el.getAttribute('data-id')] = { code: which ? which.value : '', text: el.value };
@@ -2387,6 +2398,68 @@
         var typing = a && body.contains(a) && /^(INPUT|SELECT)$/.test(a.tagName);
         if (force || (JSON.stringify(r.data) !== shown && !typing)) draw(r.data);
       });
+    }
+    // The add form's fields, filled in, in place of the projector's row. Only what was changed is sent: a password
+    // field left empty is not sent at all, so the stored password stays; "Remove the password" sends an empty one.
+    function editForm(p) {
+      var e = projEdit, ids = 'projedit';
+      var name = h('input', { class: 'text-input', id: ids + 'name', maxlength: 40, value: e.name });
+      var host = h('input', { class: 'text-input mono', id: ids + 'host', value: e.host, autocomplete: 'off' });
+      var port = h('input', { class: 'text-input mono', id: ids + 'port', type: 'number', min: 1, max: 65535, value: e.port });
+      var pw = h('input', { class: 'text-input mono', id: ids + 'pw', type: 'password', autocomplete: 'new-password', disabled: e.clear });
+      pw.value = e.clear ? '' : e.password;      // the property, not an attribute: a typed password never becomes page HTML
+      var err = h('div', { class: 'msg err', id: ids + 'err', role: 'alert', text: e.error || '' });
+      var moved = h('div', { class: 'hint', id: ids + 'moved', text: 'A new address or port: the box asks the projector at the new one who it is. The names you gave its inputs are kept.' +
+        (p.has_password ? ' The stored password is then used at the new address. If the password belongs to the old projector only, remove it or type the new one.' : '') });
+      function read() { e.name = name.value; e.host = host.value; e.port = port.value; if (!e.clear) e.password = pw.value; }
+      function change() {           // what would be sent
+        var out = { id: p.id }, n = parseInt(e.port, 10);
+        if (e.name.trim() !== p.name) out.name = e.name;
+        if (e.host.trim() !== p.host) out.host = e.host.trim();
+        if (String(n) !== String(p.port)) out.port = n;
+        if (e.clear) out.password = ''; else if (e.password) out.password = e.password;
+        return out;
+      }
+      var clear = !p.has_password ? null : h('button', { class: 'switch', id: ids + 'clear', role: 'switch', 'aria-checked': e.clear ? 'true' : 'false', 'aria-label': 'Remove the password',
+        onclick: function () { read(); e.clear = !e.clear; if (e.clear) e.password = ''; e.error = ''; draw(JSON.parse(shown), true); } });
+      var save = h('button', { class: 'btn on grow', id: ids + 'save', text: 'Save changes', onclick: function () {
+        read();
+        var out = change();
+        if (out.port !== undefined && !(out.port >= 1 && out.port <= 65535)) { e.error = 'The port is a number from 1 to 65535 (4352 unless it was changed on the projector).'; err.textContent = e.error; return; }
+        save.disabled = true;
+        api('POST', '/api/projectors', { edit: out }).then(function (r) {
+          if (!projEdit || projEdit.id !== p.id) return;
+          if (!r.ok) { e.error = r.data.error || 'Could not save the changes.'; err.textContent = e.error; save.disabled = false; return; }
+          projEdit = null; delete states[p.id];
+          say('Changes saved.'); draw(r.data, true); load();
+        });
+      } });
+      function fresh() {
+        read();
+        var out = change();
+        save.disabled = Object.keys(out).length < 2;
+        moved.hidden = out.host === undefined && out.port === undefined;
+        if (e.error) { e.error = ''; err.textContent = ''; }
+      }
+      [name, host, port, pw].forEach(function (el) { el.addEventListener('input', fresh); });
+      var first = change();
+      save.disabled = Object.keys(first).length < 2;
+      moved.hidden = first.host === undefined && first.port === undefined;
+      return h('div', { class: 'item proj-edit', id: 'projedit', 'data-id': p.id },
+        h('b', { text: 'Edit ' + p.name }),
+        h('label', { class: 'field', for: ids + 'name', text: 'Name' }), name,
+        h('label', { class: 'field', for: ids + 'host', text: 'Address' }), host,
+        h('div', { class: 'hint', text: 'The projector\'s IP address or name on this network. Only a private address (such as 192.168.x.x) is taken.' }),
+        h('label', { class: 'field', for: ids + 'port', text: 'Port' }), port,
+        h('div', { class: 'hint', text: '4352 unless it was changed on the projector.' }),
+        moved,
+        h('label', { class: 'field', for: ids + 'pw', text: 'PJLink password' }), pw,
+        h('div', { class: 'hint', id: ids + 'pwhint', text: e.clear ? 'The password will be removed when you save.' :
+          p.has_password ? 'A password is set. Type a new one to change it, or leave empty to keep it.' : 'No password is set. Type one if the projector asks for it.' }),
+        clear ? h('label', { class: 'rot between' }, h('span', { text: 'Remove the password' }), clear) : null,
+        h('div', { class: 'row' }, save,
+          h('button', { class: 'btn grow', id: ids + 'cancel', text: 'Cancel', onclick: function () { projEdit = null; draw(JSON.parse(shown), true); } })),
+        err);
     }
     function run(pid, action, label, extra) {
       var msg = { id: pid, action: action };
@@ -2408,6 +2481,7 @@
     function draw(d, fresh) {
       if (!fresh) keep();
       shown = JSON.stringify(d);
+      if (projEdit && !d.projectors.some(function (p) { return p.id === projEdit.id; })) projEdit = null;     // removed from another device
       body.textContent = '';
       body.appendChild(h('div', { class: 'k', id: 'projline', text: d.projectors.length ?
         'Controlled over the network with PJLink, like the old Beamer On and Off buttons.' :
@@ -2418,14 +2492,23 @@
       d.projectors.forEach(function (p) {
         var st = p.status || {}, mute = st.mute || {}, warn = warningText(p);
         var line = function (cls, text) { return text ? [h('br'), h('span', { class: cls, text: text })] : null; };
+        if (full && projEdit && projEdit.id === p.id) return body.appendChild(editForm(p));
         body.appendChild(h('div', { class: 'item proj-entry', 'data-id': p.id },
           h('span', {}, p.name, h('br'), h('span', { class: 'addr', text: p.host + (p.port !== 4352 ? ':' + p.port : '') + (p.has_password ? ' · password set' : '') }),
             line('addr proj-details', detailsText(p)), line('k proj-status', statusText(p)), line('k proj-warn', warn),
             line('k proj-note', st.pending_input ? 'Switching to ' + inputText(p, st.pending_input) + ' when the projector is ready (up to 90 seconds)' : (st.notice ? st.notice.text : '')),
             line('k', states[p.id])),
-          full ? h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function () {
-            act('POST', '/api/projectors', { remove: p.id }, function (data) { draw(data); });
-          } }) : null));
+          full ? h('span', { class: 'row' },
+            h('button', { class: 'btn small proj-editbtn', text: 'Edit', 'aria-label': 'Edit ' + p.name, onclick: function () {
+              keep();
+              projEdit = { id: p.id, name: p.name, host: p.host, port: String(p.port), password: '', clear: false, error: '' };
+              draw(JSON.parse(shown), true);
+              var first = document.getElementById('projeditname');
+              if (first) first.focus();
+            } }),
+            h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function () {
+              act('POST', '/api/projectors', { remove: p.id }, function (data) { draw(data); });
+            } })) : null));
         if (!can('live')) return;
         var buttons = [['on', 'On'], ['off', 'Off'],
           mute.picture ? ['unmute_picture', 'Unmute picture'] : ['mute_picture', 'Mute picture'],
@@ -2841,79 +2924,140 @@
           return sw;
         })));
   }
-  var accessForm = { pin: false, view: true, live: false, seconds: 300 };  // survives redraws
+  var accessForm = { pin: false, view: true, live: false, seconds: 300, minutes: 60 };  // survives redraws
   var accessTimer = null;
-  function accessCard() {
-    var card = h('div', { class: 'card', id: 'accesscard' }, h('h2', { text: 'Access' }));
+  // One vocabulary for the three kinds of access, wherever the panel names them.
+  function roleName(r) { return r === 'view' ? 'Guest (can watch)' : r === 'live' ? 'Presenter (can play and mix)' : 'Owner (everything)'; }
+  var JOIN_MINUTES = [[15, '15 minutes'], [60, '1 hour'], [120, '2 hours']];       // how long a new code works; what a presenter may choose (auth.py)
+  var SHOW_SECONDS = [[60, '1 minute'], [300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour']];
+  // "Let someone in": codes people join with, and putting them on the room screen. `all`: the owner's page, with the
+  // presenter code and the PIN too. Without it only the guest code, which is all a presenter may handle (the server
+  // decides that; this only leaves out what would be refused). Also used on the Room screen.
+  function letSomeoneIn(all) {
+    var live = h('div', { class: 'list', id: 'accesslive' });
+    var last = null;
+    var qrOf = {};       // role -> { code, n }: the QR picture is asked for again only when the code changed (the code itself is never put in an address)
+    function left(sec) { var m = Math.floor(sec / 60), s2 = sec % 60; return m + ':' + (s2 < 10 ? '0' : '') + s2; }
+    function chooser(id, label, options, value, set) {
+      var sel = h('select', { class: 'text-input', id: id }, options.map(function (o) { return h('option', { value: o[0], text: o[1], selected: o[0] === value }); }));
+      sel.addEventListener('change', function () { set(parseInt(sel.value, 10)); });
+      return h('div', { class: 'chooser' }, h('label', { class: 'field', for: id, text: label }), sel);
+    }
+    function send(path, body, said) {
+      return api('POST', path, body).then(function (r) {
+        if (!live.isConnected) return;
+        if (!r.ok) { say(r.data.error || 'Something went wrong', true); return refresh(true); }
+        say(said || '');
+        drawLive(r.data);
+      });
+    }
+    function make(role, control) {
+      var existing = last && last.codes.filter(function (c) { return c.role === role; })[0];
+      var time = JOIN_MINUTES.filter(function (o) { return o[0] === accessForm.minutes; })[0][1];
+      function go(replace) { send('/api/access/code', { role: role, minutes: accessForm.minutes, replace: replace }, roleName(role) + ' code made. It works for ' + time + '.'); }
+      if (!existing) return go(false);
+      confirmRow((existing.by === 'owner' && !can('full') ? 'The owner made the code that is active. ' : '') + 'Make a new code? The one that is active stops working.',
+        'New code', 'Keep it', function () { go(true); }, control);
+    }
+    function drawLive(d) {
+      last = d;
+      live.textContent = '';
+      var scr = d.screen, codes = d.codes.filter(function (c) { return all || c.role === 'view'; });
+      live.appendChild(h('div', { class: 'hint', id: 'accesshint', text: all ?
+        'A code lets someone open this panel on their own phone, by typing it or scanning its QR code. It stops working by itself.' :
+        'A guest code lets someone open this panel on their own phone as ' + roleName('view') + ': they see what plays and change nothing. It stops working by itself.' }));
+      live.appendChild(chooser('joinminutes', 'A new code works for', JOIN_MINUTES, accessForm.minutes, function (v) { accessForm.minutes = v; }));
+      live.appendChild(h('div', { class: 'row wrap' },
+        h('button', { class: 'btn on small', id: 'newguest', text: 'Guest code', onclick: function (e) { make('view', e.target); } }),
+        all ? h('button', { class: 'btn small', id: 'newpresenter', text: 'Presenter code', onclick: function (e) { make('live', e.target); } }) : null,
+        all ? h('button', { class: 'btn small', id: 'printsheet', text: 'Print access sheet', onclick: function () { printSheet(d); } }) : null));
+      if (!codes.length) live.appendChild(h('div', { class: 'hint', id: 'nocodes', text: all ? 'No code is active.' : 'No guest code is active.' }));
+      codes.forEach(function (c) {
+        var byOwner = c.by === 'owner' && !can('full');
+        if (!qrOf[c.role] || qrOf[c.role].code !== c.code) qrOf[c.role] = { code: c.code, n: Date.now() };
+        live.appendChild(h('div', { class: 'item join-code', 'data-role': c.role },
+          h('span', {}, roleName(c.role), h('br'), h('span', { class: 'mono big-code', text: c.code }), h('br'),
+            h('span', { class: 'hint', text: 'Works for ' + left(c.seconds_left) + ' more, ' + plural(c.uses_left, 'use') + ' left' + (byOwner ? '. Made by the owner.' : '') })),
+          h('img', { class: 'qr', alt: 'QR code for the ' + roleName(c.role) + ' code', src: '/api/qr.svg?for=' + c.role + '&t=' + qrOf[c.role].n }),
+          h('button', { class: 'btn small endcode', text: 'End this code', 'aria-label': 'End the ' + roleName(c.role) + ' code', onclick: function (e) {
+            confirmRow((byOwner ? 'The owner made this code. ' : '') + 'End this code? Nobody else can join with it. People who already joined stay.',
+              'End this code', 'Keep it', function () { send('/api/access/cancel', { role: c.role }, 'The code is ended.'); }, e.target);
+          } })));
+      });
+      if (d.screen_available) {
+        var shown = scr.items.filter(function (i) { return i !== 'address'; }).map(function (i) { return i === 'pin' ? 'the ' + roleName('full') + ' PIN' : 'the ' + roleName(i) + ' code'; });
+        live.appendChild(h('div', { class: 'field', text: 'On the room screen' }));
+        live.appendChild(h('div', { class: 'hint', id: 'accessscreenline', text: scr.showing ? 'On the room screen now: ' + (shown.join(', ') || 'the address') + '. Hides in ' + left(scr.seconds_left) + '.' :
+          scr.other ? 'Something else is on the room screen, put there by the owner. The guest code can be shown when that is gone.' : 'Nothing on the room screen.' }));
+        if (all) [['pin', roleName('full') + ': the PIN, as text'], ['view', roleName('view') + ': code and QR'], ['live', roleName('live') + ': code and QR']].forEach(function (it) {
+          var cb = h('input', { type: 'checkbox', id: 'show-' + it[0], checked: accessForm[it[0]] });
+          cb.addEventListener('change', function () { accessForm[it[0]] = cb.checked; });
+          live.appendChild(h('label', { class: 'row', for: 'show-' + it[0] }, cb, h('span', { text: it[1] })));
+        });
+        var canShow = all || !scr.other;
+        if (canShow) live.appendChild(chooser('showsecs', 'Show it for', SHOW_SECONDS, accessForm.seconds, function (v) { accessForm.seconds = v; }));
+        live.appendChild(h('div', { class: 'row wrap' },
+          canShow ? h('button', { class: 'btn on small', id: 'showaccess', text: scr.showing ? 'Show again' : 'Show on the room screen', onclick: function () {
+            var items = all ? ['pin', 'view', 'live'].filter(function (i) { return accessForm[i]; }) : ['view'];
+            if (!items.length) return say('Choose what to show.', true);
+            if (all && accessForm.pin && !window.confirm('Anyone who can see the room screen will see the ' + roleName('full') + ' PIN. Show it?')) return;
+            function show() { send('/api/access/screen', { show: true, items: items, seconds: accessForm.seconds }, 'On the room screen.'); }
+            // No guest code yet: make it first, for the time chosen above (a code the box makes for a show lasts
+            // as long as the show, which is not what was chosen). 409: someone made one meanwhile; show that one.
+            if (all || codes.length) return show();
+            api('POST', '/api/access/code', { role: 'view', minutes: accessForm.minutes, replace: false }).then(function (r) {
+              if (!live.isConnected) return;
+              if (!r.ok && r.status !== 409) { say(r.data.error || 'Something went wrong', true); return refresh(true); }
+              show();
+            });
+          } }) : null,
+          scr.showing ? h('button', { class: 'btn small', id: 'hideaccess', text: 'Take it off the room screen', onclick: function () {
+            send('/api/access/screen', { show: false }, 'Taken off the room screen.');
+          } }) : null));
+      }
+      clearTimeout(accessTimer);
+      if (scr.showing || scr.other || d.codes.length) accessTimer = setTimeout(function () { if (live.isConnected) refresh(); }, 5000);
+    }
+    function refresh(force) {
+      // The check is after the answer arrives: on the first call the part is not on the page yet.
+      api('GET', '/api/access').then(function (r) {
+        if (!live.isConnected) return;
+        var a = document.activeElement;
+        if (!force && last && (live.querySelector('#confirmrow') || (a && live.contains(a) && a.tagName === 'SELECT'))) {     // a question is open, or a choice is being made: look again later
+          clearTimeout(accessTimer);
+          accessTimer = setTimeout(function () { if (live.isConnected) refresh(); }, 5000);
+          return;
+        }
+        if (r.ok) drawLive(r.data);
+        else { live.textContent = ''; live.appendChild(h('div', { class: 'hint', text: r.data.error || 'Not available' })); }
+      });
+    }
+    refresh();
+    return live;
+  }
+  // People and codes. A presenter gets the first card only, with the guest code only. The owner also gets the paired
+  // devices, the links that do not expire and the PIN.
+  function accessCards() {
+    var full = can('full');
+    var first = h('div', { class: 'card', id: 'accesscard' }, h('h2', { text: 'Let someone in' }), letSomeoneIn(full));
+    if (!full) return [first];
+    var card = h('div', { class: 'card', id: 'devicescard' }, h('h2', { text: 'Paired devices' }));
     var devices = h('div', { class: 'list' }, S.devices.map(function (d) {
-      return h('div', { class: 'item' }, h('span', { text: d.name }), h('span', { class: 'row' }, h('span', { class: 'k', text: d.role }),
-        h('button', { class: 'btn small', text: 'Remove', onclick: function () {
+      return h('div', { class: 'item' }, h('span', { text: d.name }), h('span', { class: 'row' }, h('span', { class: 'hint', text: roleName(d.role) }),
+        h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function () {
           act('POST', '/api/devices/revoke', { id: d.id }, function () { S.devices = S.devices.filter(function (x) { return x.id !== d.id; }); if (S.device && d.id === S.device.id) { S.device = null; } render(); });
         } })));
     }));
-    var live = h('div', { class: 'list', id: 'accesslive' });
-    function roleName(r) { return r === 'view' ? 'Guest (watch only)' : 'Presenter (play and mix)'; }
-    function clock(sec) { var m = Math.floor(sec / 60), s2 = sec % 60; return m + ':' + (s2 < 10 ? '0' : '') + s2; }
-    function drawLive(d) {
-      live.textContent = '';
-      var scr = d.screen;
-      live.appendChild(h('div', { class: 'k', id: 'accessscreenline', text: scr.showing ? 'On the display now: ' + scr.items.map(function (i) { return i === 'pin' ? 'full access PIN' : roleName(i).toLowerCase(); }).join(', ') + ', hides in ' + clock(scr.seconds_left) : 'Nothing on the display.' }));
-      var boxes = [['pin', 'Full access PIN (owner only)'], ['view', 'Guest code and QR (watch only)'], ['live', 'Presenter code and QR (play and mix)']].map(function (it) {
-        var cb = h('input', { type: 'checkbox', id: 'show-' + it[0], checked: accessForm[it[0]] });
-        cb.addEventListener('change', function () { accessForm[it[0]] = cb.checked; });
-        return h('label', { class: 'row', for: 'show-' + it[0] }, cb, h('span', { text: it[1] }));
-      });
-      var secs = h('select', { class: 'text-input', id: 'showsecs', 'aria-label': 'Show for' },
-        [[60, '1 minute'], [300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour']].map(function (o) { return h('option', { value: o[0], text: 'Show for ' + o[1], selected: o[0] === accessForm.seconds }); }));
-      secs.addEventListener('change', function () { accessForm.seconds = parseInt(secs.value, 10); });
-      live.appendChild(h('div', { class: 'k', text: 'Show on the display' }));
-      boxes.forEach(function (b) { live.appendChild(b); });
-      live.appendChild(secs);
-      live.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn on small', id: 'showaccess', text: scr.showing ? 'Show again' : 'Show on display', onclick: function () {
-          var items = ['pin', 'view', 'live'].filter(function (i) { return accessForm[i]; });
-          if (!items.length) return say('Choose what to show.', true);
-          if (accessForm.pin && !window.confirm('Anyone who can see the display will see the full access PIN. Show it?')) return;
-          act('POST', '/api/access/screen', { show: true, items: items, seconds: accessForm.seconds }, function (data) { say(''); drawLive(data); });
-        } }),
-        h('button', { class: 'btn small', id: 'hideaccess', text: 'Hide from display', disabled: !scr.showing, onclick: function () {
-          act('POST', '/api/access/screen', { show: false }, function (data) { drawLive(data); });
-        } })));
-      live.appendChild(h('div', { class: 'k', text: 'Join codes (6 digits; they expire and work a limited number of times)' }));
-      if (!d.codes.length) live.appendChild(h('div', { class: 'k', id: 'nocodes', text: 'None active.' }));
-      d.codes.forEach(function (c) {
-        live.appendChild(h('div', { class: 'item join-code', 'data-role': c.role },
-          h('span', {}, roleName(c.role), h('br'), h('span', { class: 'mono big-code', text: c.code }), h('br'),
-            h('span', { class: 'k', text: 'expires in ' + clock(c.seconds_left) + ' · ' + c.uses_left + ' uses left' })),
-          h('img', { class: 'qr', alt: 'QR code for the ' + roleName(c.role).toLowerCase() + ' code', src: '/api/qr.svg?for=' + c.role + '&t=' + Date.now() }),
-          h('button', { class: 'btn small', text: 'Cancel', onclick: function () { act('POST', '/api/access/cancel', { code: c.code }, drawLive); } })));
-      });
-      live.appendChild(h('div', { class: 'row wrap' },
-        h('button', { class: 'btn small', id: 'newguest', text: 'New guest code', onclick: function () { act('POST', '/api/access/code', { role: 'view', minutes: 60 }, drawLive); } }),
-        h('button', { class: 'btn small', id: 'newpresenter', text: 'New presenter code', onclick: function () { act('POST', '/api/access/code', { role: 'live', minutes: 60 }, drawLive); } }),
-        h('button', { class: 'btn small', id: 'printsheet', text: 'Print access sheet', onclick: function () { printSheet(d); } })));
-      clearTimeout(accessTimer);
-      if (scr.showing || d.codes.length) accessTimer = setTimeout(function () { if (document.getElementById('accesscard')) refresh(); }, 5000);
-    }
-    function refresh() {
-      // The check is after the answer arrives: on the first call the card is not on the page yet.
-      api('GET', '/api/access').then(function (r) {
-        if (!document.getElementById('accesscard')) return;
-        if (r.ok) drawLive(r.data);
-        else { live.textContent = ''; live.appendChild(h('div', { class: 'k', text: r.data.error || 'Not available' })); }
-      });
-    }
-    var link = h('input', { class: 'text-input mono', readonly: true, 'aria-label': 'Guest link', hidden: true });
-    var linkQr = h('img', { class: 'qr', id: 'linkqr', alt: 'QR code for the guest link', hidden: true });
-    var role = h('select', { class: 'text-input', 'aria-label': 'Access level' }, h('option', { value: 'view', text: 'View only' }), h('option', { value: 'live', text: 'Live (play and mix)' }));
+    var link = h('input', { class: 'text-input mono', readonly: true, 'aria-label': 'Link', hidden: true });
+    var linkQr = h('img', { class: 'qr', id: 'linkqr', alt: 'QR code for the link', hidden: true });
+    var role = h('select', { class: 'text-input', id: 'linkrole' }, h('option', { value: 'view', text: roleName('view') }), h('option', { value: 'live', text: roleName('live') }));
     var pinOut = h('div', { class: 'mono', id: 'pinout' });
-    card.appendChild(h('div', { class: 'k', text: 'Paired devices' }));
     card.appendChild(devices);
-    card.appendChild(live);
-    card.appendChild(h('div', { class: 'k', text: 'Guest link that does not expire (until you remove it above)' }));
+    card.appendChild(h('label', { class: 'field', for: 'linkrole', text: 'A link that does not expire' }));
+    card.appendChild(h('div', { class: 'hint', text: 'For someone who is here often. It works until you remove its device from the list above.' }));
     card.appendChild(role);
-    card.appendChild(h('button', { class: 'btn', text: 'Create guest link', onclick: function () {
-      act('POST', '/api/devices/invite', { name: 'Guest (' + role.value + ')', role: role.value, origin: location.origin }, function (d) {
+    card.appendChild(h('button', { class: 'btn', id: 'makelink', text: 'Create link', onclick: function () {
+      act('POST', '/api/devices/invite', { name: role.value === 'view' ? 'Guest link' : 'Presenter link', role: role.value, origin: location.origin }, function (d) {
         link.value = location.origin + '/#token=' + d.token; link.hidden = false; link.select();
         if (d.qr_svg) { linkQr.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(d.qr_svg); linkQr.hidden = false; }
         api('GET', '/api/devices').then(function (r) { if (r.ok) S.devices = r.data.devices; });
@@ -2921,13 +3065,13 @@
     } }));
     card.appendChild(link);
     card.appendChild(linkQr);
+    card.appendChild(h('div', { class: 'field', text: 'The ' + roleName('full') + ' PIN' }));
     card.appendChild(h('button', { class: 'btn', text: 'New PIN', onclick: function () { act('POST', '/api/pin/rotate', {}, function (d) { pinOut.textContent = 'New PIN: ' + d.pin; }); } }));
     card.appendChild(h('button', { class: 'btn', id: 'unlockpair', text: 'Unblock joining', onclick: function () {
       act('POST', '/api/pin/unlock', {}, function () { pinOut.textContent = 'Joining is open again (the PIN is unchanged).'; });
     } }));
     card.appendChild(pinOut);
-    refresh();
-    return card;
+    return [first, card];
   }
   // A page to print and pin up in a studio: the panel address as a QR code (no access in it), plus the current guest
   // and presenter codes if any. Printed from the browser; nothing leaves the box.
@@ -2938,8 +3082,8 @@
       h('div', { class: 'sheet-row' },
         h('figure', {}, h('img', { class: 'qr-big', alt: 'QR code for the control panel', src: '/api/qr.svg?for=panel' }), h('figcaption', { text: location.origin + '/' }))),
       d.codes.length ? h('div', { class: 'sheet-row' }, d.codes.map(function (c) {
-        return h('figure', {}, h('img', { class: 'qr-big', alt: 'QR code for the ' + c.role + ' code', src: '/api/qr.svg?for=' + c.role + '&t=' + Date.now() }),
-          h('figcaption', { text: (c.role === 'view' ? 'Guest (watch only)' : 'Presenter (play and mix)') + ': ' + c.code + ' (expires)' }));
+        return h('figure', {}, h('img', { class: 'qr-big', alt: 'QR code for the ' + roleName(c.role) + ' code', src: '/api/qr.svg?for=' + c.role + '&t=' + Date.now() }),
+          h('figcaption', { text: roleName(c.role) + ': ' + c.code + ' (expires)' }));
       })) : null,
       h('p', { class: 'k', text: 'Codes shown here expire. The panel address above does not.' }));
     document.body.appendChild(sheet);
@@ -2954,7 +3098,8 @@
 
   // ---- shell ----------------------------------------------------------
   // The Room screen lives in room.js; it borrows these helpers.
-  function roomCtx() { return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S }; }
+  // letIn: the guest code part of People and codes, so staff on the Room screen need not leave it to let a guest in.
+  function roomCtx() { return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); } }; }
   function stopTimers() {
     [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer].forEach(clearTimeout);
   }

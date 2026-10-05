@@ -228,7 +228,7 @@ function startServer() {
     await pageShot('network', 'Network', 'Network', () => page.waitForSelector('#netiface'));
     await pageShot('control-osc', 'OSC', 'Control \\(OSC\\)', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('oscline').textContent)));
     await pageShot('appearance', 'Look', 'Appearance');
-    await pageShot('access', 'People and codes', 'Access', () => page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));
+    await pageShot('access', 'People and codes', 'Let someone in', () => page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));
     // Shaders and Vibes: the page with Vibes playing (opened from Live, as staff do), and Live with the big button.
     await api('POST', '/api/modules/shaders', { enabled: true });
     await api('POST', '/api/vibes', { on: true });
