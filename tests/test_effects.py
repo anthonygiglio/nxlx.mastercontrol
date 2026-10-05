@@ -19,8 +19,9 @@ from tests.test_shaders import FakeTap, REFUSAL, WELL_KNOWN
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PACK_DIR = os.path.join(E.EFFECTS_DIR, "isf-files")
-OWN = ["fx-edge-glow", "fx-grade", "fx-kaleido", "fx-mirror-quad", "fx-pixel-grid", "fx-rgb-split", "fx-slit-bands", "fx-vignette", "fx-wash"]
-MOVING = ["fx-kaleido", "fx-rgb-split", "fx-slit-bands"]                # they read TIME: the flash limit applies
+OWN = ["fx-edge-glow", "fx-grade", "fx-kaleido", "fx-mirror-quad", "fx-pixel-grid", "fx-rgb-split", "fx-ring", "fx-ripple", "fx-slit-bands", "fx-twirl",
+       "fx-vignette", "fx-wash"]
+MOVING = ["fx-kaleido", "fx-rgb-split", "fx-ring", "fx-ripple", "fx-slit-bands"]                # they read TIME: the flash limit applies
 PICTURE = {"NAME": "inputImage", "TYPE": "image"}
 BODY = "\nvoid main() {\n    gl_FragColor = IMG_THIS_PIXEL(inputImage) * k;\n}\n"
 K = {"NAME": "k", "TYPE": "float", "MIN": 0, "MAX": 2, "DEFAULT": 1}

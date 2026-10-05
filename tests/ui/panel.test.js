@@ -2340,7 +2340,7 @@ function startServer() {
       await page.waitForSelector('#fxlist [data-effect="fx-vignette.fs"]', { timeout: 20000 });
       assert.strictEqual(await page.textContent('nav button[aria-current="page"]'), 'Mix', 'the Effects link on Live opens Mix');
       const fxs = (await get('/api/effects')).effects;
-      assert(fxs.length >= 29 && fxs.filter((s) => s.pack === 'nxlx').length === 9 && fxs.every((s) => !s.error), 'the project\'s nine filters and the pack are listed');
+      assert(fxs.length >= 29 && fxs.filter((s) => s.pack === 'nxlx').length === 12 && fxs.every((s) => !s.error), 'the project\'s twelve filters and the pack are listed');
       assert.strictEqual(await page.locator('#fxlist [data-effect]').count(), fxs.length, 'every filter has a row');
       assert.strictEqual(await page.textContent('#fxname'), 'No effect is on');
       assert.strictEqual(await page.textContent('#fxchip'), 'Off');

@@ -134,9 +134,7 @@ Filter shaders from the same collection, the same commit and under the same MIT 
 
 | File here | Upstream name | CREDIT in the file |
 | --- | --- | --- |
-| `isf-bump-distortion.fs` | Bump Distortion.fs | by carter rosenberg |
 | `isf-chromatic-aberration.fs` | Chromatic Aberration.fs | by VIDVOX |
-| `isf-circle-splash-distortion.fs` | Circle Splash Distortion.fs | by VIDVOX |
 | `isf-color-monochrome.fs` | Color Monochrome.fs | by zoidberg |
 | `isf-corner-color-tint.fs` | Corner Color Tint.fs | VIDVOX |
 | `isf-double-vision.fs` | Double Vision.fs | by VIDVOX |
@@ -152,18 +150,13 @@ Filter shaders from the same collection, the same commit and under the same MIT 
 | `isf-kaleidoscope.fs` | Kaleidoscope.fs | by VIDVOX |
 | `isf-lgg.fs` | LGG.fs | VIDVOX |
 | `isf-mirror.fs` | Mirror.fs | by VIDVOX |
-| `isf-pixellate.fs` | Pixellate.fs | by VIDVOX |
 | `isf-posterize.fs` | Posterize.fs | VIDVOX |
 | `isf-quad-tile.fs` | Quad Tile.fs | by VIDVOX |
 | `isf-rgb-eq.fs` | RGB EQ.fs | by VIDVOX |
 | `isf-rgb-halftone.fs` | RGB Halftone.fs | by zoidberg |
 | `isf-rgb-invert.fs` | RGB Invert.fs | by VIDVOX |
-| `isf-ripples.fs` | Ripples.fs | by carter rosenberg |
-| `isf-shockwave.fs` | Shockwave.fs | by VIDVOX |
 | `isf-sine-warp-tile.fs` | Sine Warp Tile.fs | by VIDVOX |
-| `isf-sphere-map.fs` | Sphere Map.fs | VIDVOX |
 | `isf-triple-rotate.fs` | Triple Rotate.fs | by VIDVOX |
-| `isf-twirl.fs` | Twirl.fs | by VIDVOX |
 | `isf-white-point-adjust.fs` | White Point Adjust.fs | by zoidberg |
 | `isf-zoom.fs` | Zoom.fs | by VIDVOX |
 
@@ -184,8 +177,11 @@ How these were chosen (2026-10-05): of the 327 `.fs` files upstream, 114 transla
 | Frosted Glass.fs, Smoke Screen.fs, Boxinator.fs | credited to a web site or a person outside VIDVOX (geeks3d, jackdavenport, mojovideotech) | whether they were written for this repository was not established, and they were not needed |
 | the four `v002` files (Bleach Bypass, Crosshatch, Technicolor, Vignette) and v002-CRT-Displacement.fs | credited to v002 and vade, whose plug-ins have their own licence | an outside project's code, terms not read |
 | Layer Position.fs, Sliding Strips.fs, Power Warp.fs, Quad Mask.fs, Replicate.fs, Replicate Random.fs | an empty `CREDIT` | nobody is named as the author; with enough credited files to choose from they were not needed |
+| Shockwave.fs | credited "by VIDVOX"; its lines 60 to 77 match the "2D Shockwave" of the Geeks3D Shader Library almost line for line, and no licence is stated there | **bundled at first, taken out after the independent review** (2026-10-05): a widely circulated snippet without a credit, which this pack's own rule excludes. The reader who chose the pack did not recognise it; the reviewer did. The project's own `fx-ring.fs` is a ring of another construction |
+| Twirl.fs | credited "by VIDVOX"; it matches the Geeks3D "Swirl" post-processing filter, which says it is adapted from evanw's webgl-filter | **bundled at first, taken out after the review**, for the same reason. The project's own `fx-twirl.fs` stands in (the turning done on the angle of a polar form, with another falloff) |
+| Sphere Map.fs, Pixellate.fs, Bump Distortion.fs, Ripples.fs, Circle Splash Distortion.fs | credited to VIDVOX or to Carter Rosenberg; each is a short, classic distortion of the kind the same public libraries hold (the Geeks3D shader library, evanw's glfx.js and webgl-filter, The Book of Shaders) | **bundled at first, taken out after the review, as a precaution**: after two of the pack's files turned out to be such snippets, the coordinator decided that these five come out unless each could be shown, against those sources, not to be one. That comparison was not made (it would have had to prove an absence from sources that were not all read), so nothing is claimed about them either way. The project's own `fx-ripple.fs` and `fx-pixel-grid.fs` cover a ripple and big pixels; a bulge, a ball and a splash are not in this version |
 
 As before, the sources outside GitHub were not opened: "terms not read" means not established, not that anything is wrong with them. And as before, this rule catches borrowing that a file admits to and snippets a reader recognises; it is a reading, not a proof.
 
-**Dropped after drawing: none.** In the three rounds of CI after the test rig itself was reliable, all 32 candidates drew right in all three ways of drawing (123 draws a way with the project's own nine). In the rounds before that, draws failed for reasons that were not the filters': screenshots that the rig drew black for any picture, and a limit for "the picture again" set tighter than one more pass through the GPU allows; no file failed for a reason of its own. A file that passes only sometimes in a rig that works is to be taken out, not retried.
+**Dropped after drawing: none.** In the three rounds of CI after the test rig itself was reliable, all 32 files that were candidates then (the 25 above and the seven taken out after the review) drew right in all three ways of drawing (123 draws a way with the project's own nine of that time). In the rounds before that, draws failed for reasons that were not the filters': screenshots that the rig drew black for any picture, and a limit for "the picture again" set tighter than one more pass through the GPU allows; no file failed for a reason of its own. A file that passes only sometimes in a rig that works is to be taken out, not retried.
 

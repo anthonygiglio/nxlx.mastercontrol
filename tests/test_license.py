@@ -56,10 +56,8 @@ ISF_FILES = ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.f
              "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs"]
 # -- the effects pack (pvj/effects.d/isf-files): filters from the same repository at the same commit --
 FX_PACK = "pvj/effects.d/isf-files/"
-FX_SUMS_SHA256 = "1d603f38d2a7d45c8345332c3a778bbbba82da87a6627bf57e156cf6e3ffaf5c"
-FX_FILES = ["isf-bump-distortion.fs",
-            "isf-chromatic-aberration.fs",
-            "isf-circle-splash-distortion.fs",
+FX_SUMS_SHA256 = "7b68f9458af80da4a7dbf5bbaba00dcd05d0a047177dbfe243aa986bb3d1022b"
+FX_FILES = ["isf-chromatic-aberration.fs",
             "isf-color-monochrome.fs",
             "isf-corner-color-tint.fs",
             "isf-double-vision.fs",
@@ -75,18 +73,13 @@ FX_FILES = ["isf-bump-distortion.fs",
             "isf-kaleidoscope.fs",
             "isf-lgg.fs",
             "isf-mirror.fs",
-            "isf-pixellate.fs",
             "isf-posterize.fs",
             "isf-quad-tile.fs",
             "isf-rgb-eq.fs",
             "isf-rgb-halftone.fs",
             "isf-rgb-invert.fs",
-            "isf-ripples.fs",
-            "isf-shockwave.fs",
             "isf-sine-warp-tile.fs",
-            "isf-sphere-map.fs",
             "isf-triple-rotate.fs",
-            "isf-twirl.fs",
             "isf-white-point-adjust.fs",
             "isf-zoom.fs"]
 # -- end of the effects pack --
@@ -187,7 +180,7 @@ class LicenseTest(unittest.TestCase):
             self.assertIn("ISF-Files", by_licence[p][-1][1], p)
             self.assertNotIn("Ashima", by_licence[p][-1][1], p)                   # none of these holds the simplex noise
         own = sorted(p for p in tracked() if re.fullmatch(r"pvj/effects\.d/[^/]+\.fs", p))
-        self.assertEqual(len(own), 9)
+        self.assertEqual(len(own), 12)
         for p in own + [FX_PACK + "SHA256SUMS"]:
             self.assertEqual([licence for licence, _ in by_licence.get(p, [])], ["Apache-2.0"], p)
         for name, digest in (("LICENSE", ISF_LICENSE_SHA256), ("SHA256SUMS", FX_SUMS_SHA256)):

@@ -98,9 +98,7 @@ NEUTRAL = {
     "isf-white-point-adjust.fs": {"newWhite": [1.0, 0.55, 0.3, 1.0]},
     "isf-zoom.fs": {"level": 2.0, "center": [0.5, 0.5]},
     "isf-triple-rotate.fs": {"angle1": 0.25, "angle2": 0.5, "angle3": 0.125, "angle4": 0.375},
-    "isf-twirl.fs": {"amount": 2.0, "radius": 0.6},
     "isf-double-vision.fs": {"hShift": 0.04, "vShift": 0.03},
-    "isf-shockwave.fs": {"positionVal": 0.35},
 }
 
 
@@ -136,6 +134,10 @@ def quick_rows(path):
 # for the "varied" draw (all four switches of Edge Blowout off is the picture untouched, by design).
 OTHER = {
     "isf-edge-blowout.fs": {"doHorizontal": True, "doVertical": True, "insideBleed": True, "outsideBleed": False},
+    # the project's own three that bend the picture: a strength of nearly nothing would be no change to judge
+    "fx-twirl.fs": {"turns": 1.2, "size": 0.9},
+    "fx-ripple.fs": {"depth": 0.035, "reach": 1.6},
+    "fx-ring.fs": {"bend": 0.9, "width": 0.3, "travel": 0.3, "rate": 0.0},
 }
 
 
