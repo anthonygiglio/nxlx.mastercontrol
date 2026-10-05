@@ -88,8 +88,10 @@
         if (state().on && data) post(V.body(data, true));          // while it plays, the chosen set takes over
       });
       var line = live ? null : h('div', { class: 'room-text', id: 'roomambstate', role: 'status' });
+      // For the owner only, and only when it applies: the saved picture detail is above this board's usual one.
+      var detail = full ? h('div', { class: 'row wrap', id: 'roomambdetail', hidden: true }) : null;
       var card = h('div', { class: 'card room-amb', id: 'roomambience' }, h('h2', { text: 'Ambience' }),
-        live ? h('div', { class: 'vibesrow' }, big, next, pick) : line);
+        live ? h('div', { class: 'vibesrow' }, big, next, pick) : line, detail);
       function state() {
         var pl = V.player(c), on = !!pl.vibes;
         if (held && (held.on === on || Date.now() > held.until)) held = null;
@@ -97,6 +99,21 @@
       }
       function sets() {
         if (!pick || !data) return;
+        if (detail) {
+          var high = V.detailHigh(data);
+          detail.hidden = !high;
+          detail.textContent = '';
+          if (high) {
+            detail.appendChild(h('span', { class: 'hint grow', text: high.words }));
+            detail.appendChild(h('button', { class: 'btn', id: 'roomambuse', text: high.button, onclick: function () {
+              c.api('POST', '/api/shaders', high.body).then(function (r) {
+                if (!r.ok) return c.say(r.data.error || 'Could not save', true);
+                c.say('Picture detail is ' + high.body.height + ' lines now.');
+                read();
+              });
+            } }));
+          }
+        }
         var shape = JSON.stringify(data.sets.map(function (e) { return [e.id, e.name]; }));
         if (pick.getAttribute('data-shape') !== shape && document.activeElement !== pick) {
           pick.textContent = '';

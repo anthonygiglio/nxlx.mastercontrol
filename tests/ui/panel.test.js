@@ -1875,6 +1875,24 @@ function startServer() {
       await page.waitForSelector('#shaderheight');
       await page.selectOption('#shaderheight', String(render.height));
       await page.waitForFunction((x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), render.height);
+      // A saved picture detail above this board's usual one (a box set up by the first version): a plain line beside
+      // the load says so, and one tap puts it back
+      const saved = (await get('/api/shaders')).config.height, above = render.heights.find((x) => x > render.default);
+      assert(above, 'this board offers a height above its usual one');
+      if (saved <= render.default) assert.strictEqual(await page.locator('#detailhigh').count(), 0, 'nothing is said while the detail is the usual one or lower');
+      assert.strictEqual(await post('/api/shaders', { action: 'config', height: above }), 200);
+      await page.waitForSelector('#shadernow #detailhigh', { timeout: 15000 });
+      assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is ' + above + ' lines. This box is happier at ' + render.default + '.');
+      assert.strictEqual(await page.textContent('#detailuse'), 'Use ' + render.default);
+      await onPage('Shaders and Vibes');
+      const lowered = page.waitForResponse((r) => r.url().endsWith('/api/shaders') && r.request().method() === 'POST' && r.request().postData() === JSON.stringify({ action: 'config', height: render.default }));
+      await page.click('#detailuse');
+      assert.strictEqual((await lowered).status(), 200, 'Use ' + render.default + ' applies on tap');
+      await page.waitForFunction(() => !document.getElementById('detailhigh'), null, { timeout: 15000 });
+      assert.strictEqual((await get('/api/shaders')).config.height, render.default);
+      assert.strictEqual(await page.inputValue('#shaderheight'), String(render.default), 'and the chooser shows it');
+      assert.strictEqual(await post('/api/shaders', { action: 'config', height: saved }), 200);       // as it was, for the steps that follow
+      await page.waitForFunction((x) => document.getElementById('shaderheight') && document.getElementById('shaderheight').value === String(x), saved, { timeout: 15000 });
     }
     // What this harness cannot make happen by itself (no GPU): a load that is too high and a GPU refusal. The box's
     // answer is given those fields on its way to the page.
@@ -2194,7 +2212,25 @@ function startServer() {
         return pg;
       };
       const vibesPost = (pg, body) => pg.waitForResponse((r) => r.url().endsWith('/api/vibes') && r.request().method() === 'POST' && r.request().postData() === body);
+      // The owner, and only the owner, also reads on Room that the saved picture detail is above this board's usual
+      // one, with the one tap that puts it back
+      const shaderState = await get('/api/shaders');
+      const usual = shaderState.render.default, above = shaderState.render.heights.find((x) => x > usual);
+      assert.strictEqual(await post('/api/shaders', { action: 'config', height: above }), 200);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.reload();
+      await page.waitForSelector('nav >> text=Room');
+      await page.click('nav >> text=Room');
+      await page.waitForSelector('#roomscreen #roomambdetail:visible', { timeout: 15000 });
+      assert.strictEqual(await page.textContent('#roomambdetail .hint'), 'Picture detail is ' + above + ' lines. This box is happier at ' + usual + '.');
+      await fitsOn(page, "the owner's Room screen with the picture detail line");
       const staff = await open(tokens[0], 'ambience presenter');
+      await staff.waitForSelector('#roomambset:visible');
+      assert.strictEqual(await staff.locator('#roomambdetail, #roomambuse').count(), 0, 'a presenter is not told about the picture detail');
+      await page.click('#roomambuse');
+      await page.waitForFunction(() => document.getElementById('roomambdetail').hidden, null, { timeout: 15000 });
+      assert.strictEqual((await get('/api/shaders')).config.height, usual, 'Use ' + usual + ' on Room applies on tap');
+      assert.strictEqual(await post('/api/shaders', { action: 'config', height: shaderState.config.height }), 200);
       assert.strictEqual(await staff.textContent('#roomambwords'), 'Start ambience');
       assert.strictEqual(await staff.getAttribute('#roomamb', 'aria-pressed'), 'false');
       assert((await staff.evaluate(() => document.getElementById('roomamb').getBoundingClientRect().height)) >= 56, 'the ambience button is at least 56 px high');
