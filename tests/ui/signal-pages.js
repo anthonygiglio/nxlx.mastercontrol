@@ -324,6 +324,14 @@ function pages() {
     await t.page.locator('.ctlgrid .ctl').nth(3).click();
     await has(t, t.page, '#ctldetail');
   });
+  add('network-wifi', 'system', async (t) => {          // Wi-Fi: the networks the box can see (names come from strangers, and keep their letters)
+    await sys(t.page, 'Network');
+    await has(t, t.page, '#netiface');
+    await t.page.selectOption('#netiface', 'wlan0');
+    await has(t, t.page, '#netscanbtn');
+    await t.page.click('#netscanbtn');
+    await has(t, t.page, '#netscan .btn');
+  });
   add('network-pending', 'system', async (t) => {       // a change applied: confirm it or it goes back
     await sys(t.page, 'Network');
     await has(t, t.page, '#netiface');
