@@ -506,6 +506,9 @@ html[data-style="signal"] .btn.on, html[data-style="signal"] .pad.on, html[data-
 html[data-style="signal"] .btn.danger { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
 html[data-style="signal"] .btn.back { border-width: 0 0 3px; padding: 4px 2px; }
 html[data-style="signal"] .list .item .btn { white-space: normal; }
+/* a row of buttons goes to a second line before a word in capitals is cut: no button is narrower than its longest word */
+html[data-style="signal"] .card .row, html[data-style="signal"] .sheet .row { flex-wrap: wrap; }
+html[data-style="signal"] .row > .btn, html[data-style="signal"] .row > .btn.small { min-width: min-content; }
 html[data-style="signal"] #netscan .btn, html[data-style="signal"] .btn.keepcase { text-transform: none; letter-spacing: 0; font-weight: 600; }
 html[data-style="signal"] button.linkish { min-height: 44px; font-weight: 600; text-decoration-thickness: 3px; }
 html[data-style="signal"] .seg .segbtn, html[data-style="signal"] .seg .segbtn:first-child, html[data-style="signal"] .seg .segbtn:last-child { border-radius: 0; margin-left: -3px; }
