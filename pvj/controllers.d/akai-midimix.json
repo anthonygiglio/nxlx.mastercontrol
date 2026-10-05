@@ -81,10 +81,9 @@
       "preset": {"off": 0, "on": 127, "active": 127, "busy": 127, "pulse": {"active": 0}},
       "bank": {"off": 0, "on": 0, "active": 127, "busy": 127}
     },
-    "controls": {
-      "mute1": "clip", "rec1": "preset", "mute2": "clip", "rec2": "preset", "mute3": "clip", "rec3": "preset", "mute4": "clip", "rec4": "preset",
-      "mute5": "clip", "rec5": "preset", "mute6": "clip", "rec6": "preset", "mute7": "clip", "rec7": "preset", "mute8": "clip", "rec8": "preset",
-      "bank_left": "bank", "bank_right": "bank"
-    }
+    "controls": [
+      "mute1", "rec1", "mute2", "rec2", "mute3", "rec3", "mute4", "rec4", "mute5", "rec5",
+      "mute6", "rec6", "mute7", "rec7", "mute8", "rec8", "bank_left", "bank_right"
+    ]
   }
 }

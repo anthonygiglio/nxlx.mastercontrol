@@ -78,17 +78,17 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 
 | # | Do | See on the controller | See on its card |
 | --- | --- | --- | --- |
-| L1 | Plug in the Launchpad Mini | Within about three seconds: pad 1 (top left of the grid) amber; H (bottom right, round) dim red; the third round button along the top amber; everything without a clip dark. Dim, not glaring | "Lights on.", the switch Lights on, Brightness Low |
+| L1 | Plug in the Launchpad Mini | Within about three seconds, seven lights and no more: pad 1 (top left of the grid) amber; along the top the third (Vibes) and the seventh (fade in) amber and the eighth (fade out) dim red; on the right E and F amber (the two Vibes sets) and H (bottom) dim red. Everything else dark. Dim, not glaring | "Lights on.", the switch Lights on, Brightness Low |
 | L2 | If the card says "Lights need the box's installer to run once." | Nothing lights | Run the installer once, then unplug and plug in. Tell us: this is the older service file |
 | L3 | Press **Test lights** | Every light comes on in turn, the top row first, then row by row, left to right; all 80 stay on for a second; then back to L1. Note any that stay dark or come on out of turn, and the colours you see (amber, green, red) | "Testing: each light comes on in turn." |
-| L4 | Press pad 1 | It plays, and pad 1 turns green. G (round, right, second from the bottom) turns dim red; the sixth round button along the top turns green | The ring on pad 1 is filled |
-| L5 | Press the third round button along the top (Vibes) | Vibes starts and that button turns green; pad 1 should go back to amber (the clip no longer plays) | |
+| L4 | Press pad 1 | It plays, and pad 1 turns green. The sixth round button along the top (pause) turns green and G (right, second from the bottom: stop) turns dim red | The ring on pad 1 is filled |
+| L5 | Press the third round button along the top (Vibes) | Vibes starts: that button and E turn green; the first two along the top (previous and next shader) and the whole bottom row of the grid turn amber; pad 1 should go back to amber (the clip no longer plays) | |
 | L6 | Press H twice within a second (blackout) | The screen goes black and H turns **full red**. Twice again: back to dim red | |
 | L7 | Brightness: Medium, then High | Green gets brighter at Medium; amber and dim red too at High | |
 | L8 | Unplug the Launchpad, wait five seconds, plug it in | The same lights as before come back by themselves | The card goes and comes back |
 | L9 | Switch Lights off | Every light goes dark | "Lights off." |
-| L10 | nanoKONTROL2: first set **LED Mode to External** in the KORG KONTROL Editor (Common), write the scene; then switch Lights on on its card and press Test lights | S, M, R of each strip, Cycle, Rewind, Forward, Stop, Play, Rec come on in turn (30). Tell us if Track or Marker buttons have a light too. Afterwards S 1 is lit (pad A1 holds a clip) and Stop is lit while nothing plays | "Lights on." |
-| L11 | MIDI Mix: switch Lights on on its card, press Test lights | Mute 1 to 8, Rec Arm 1 to 8, Bank Left and Bank Right come on in turn (18). Afterwards Mute 1 and Bank Left are lit | "Lights on." |
+| L10 | nanoKONTROL2: first set **LED Mode to External** in the KORG KONTROL Editor (Common), write the scene; then switch Lights on on its card and press Test lights | S, M, R of each strip, Cycle, Rewind, Forward, Stop, Play, Rec come on in turn (30). Tell us if Track or Marker buttons have a light too. Afterwards, with nothing playing, exactly two are lit: S 1 (pad A1 holds a clip) and Stop. Play pad A1 with S 1: S 1 pulses slowly, Play is lit, Stop goes dark. Press R 8 twice: R 8 is lit while the screen is black | "Lights on." |
+| L11 | MIDI Mix: switch Lights on on its card, press Test lights | Mute 1 to 8, Rec Arm 1 to 8, Bank Left and Bank Right come on in turn (18). Afterwards exactly two are lit: Mute 1 (pad A1 holds a clip) and Bank Left (bank A). Play pad A1 with Mute 1: it pulses slowly. Press Bank Right: both bank buttons are lit (bank B) and Mute 1 goes dark | "Lights on." |
 | L12 | `journalctl -u pvj-web -b \| grep -i -e light -e midi` | | No permission errors, no line that repeats |
 
 ### Runtime folders: who owns what in /run (D45)

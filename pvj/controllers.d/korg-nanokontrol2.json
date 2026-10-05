@@ -80,11 +80,10 @@
       "fadeout": {"off": 0, "on": 0, "active": 127, "busy": 127},
       "fadein": {"off": 0, "on": 0, "active": 127, "busy": 127}
     },
-    "controls": {
-      "cycle": "vibes", "rewind": "step", "forward": "step", "stop": "stop", "play": "play", "rec": "set", "s1": "clip", "m1": "preset",
-      "r1": "room", "s2": "clip", "m2": "preset", "r2": "room", "s3": "clip", "m3": "preset", "r3": "room", "s4": "clip",
-      "m4": "preset", "r4": "room", "s5": "clip", "m5": "preset", "r5": "spare", "s6": "clip", "m6": "preset", "r6": "fadein",
-      "s7": "clip", "m7": "preset", "r7": "fadeout", "s8": "clip", "m8": "preset", "r8": "blackout"
-    }
+    "controls": [
+      "cycle", "rewind", "forward", "stop", "play", "rec", "s1", "m1", "r1", "s2",
+      "m2", "r2", "s3", "m3", "r3", "s4", "m4", "r4", "s5", "m5",
+      "r5", "s6", "m6", "r6", "s7", "m7", "r7", "s8", "m8", "r8"
+    ]
   }
 }

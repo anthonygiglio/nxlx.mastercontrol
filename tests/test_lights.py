@@ -85,11 +85,36 @@ class LightsFilesTest(unittest.TestCase):
         mix = set(BY_ID[MIX]["lights"]["controls"])
         self.assertEqual(mix, {"%s%d" % (row, n) for row in ("mute", "rec") for n in range(1, 9)} | {"bank_left", "bank_right"})
         self.assertEqual(set(BY_ID[PAD]["lights"]["controls"]), {c["id"] for c in BY_ID[PAD]["controls"]})
-        for p in BY_ID.values():                              # no fader or knob has a light, and each says what it shows
-            for cid, meaning in p["lights"]["controls"].items():
+        for p in BY_ID.values():                              # no fader or knob has a light
+            for cid in p["lights"]["controls"]:
                 ctl = next(c for c in p["controls"] if c["id"] == cid)
                 self.assertIn(ctl["kind"], ("button", "pad"))
-                self.assertEqual(meaning, midi.light_meaning(ctl["action"]), cid)
+            # and every standard action of a lit control has a style in its own file, so none is dark by oversight
+            for ctl in p["controls"]:
+                if ctl["id"] in p["lights"]["controls"] and ctl["action"] is not None:
+                    self.assertIn(midi.light_meaning(ctl["action"]), p["lights"]["styles"], (p["id"], ctl["id"]))
+
+    def test_a_lights_section_does_not_depend_on_what_the_controls_do(self):
+        """Another branch may give a spare control an action, or add an action this file has never heard of. Neither
+        may make a profile fail its check (it would lose its whole layout): the section only lists which controls
+        have a light, and a light with nothing to show is dark."""
+        p = raw(PAD)
+        spare = next(c for c in p["controls"] if c["id"] == "pad17")
+        self.assertIsNone(spare["action"])
+        spare["action"] = {"action": "blackout"}
+        clean = midi.validate_profile(p, PAD)
+        self.assertIn("pad17", clean["lights"]["controls"])
+        action = next(c for c in clean["controls"] if c["id"] == "pad17")["action"]
+        self.assertEqual([value(PAD, action, snap()), value(PAD, action, snap(blackout=True))], [13, 15])       # and its light follows it
+        with mock.patch.dict(midi.ACTIONS, {"strobe": ("trigger", None, None), "smear": ("level", 0, 1)}):
+            p = raw(PAD)
+            next(c for c in p["controls"] if c["id"] == "pad18")["action"] = {"action": "strobe"}
+            next(c for c in p["controls"] if c["id"] == "top1")["action"] = {"action": "strobe"}
+            clean = midi.validate_profile(p, PAD)
+            self.assertEqual(len(clean["lights"]["controls"]), 80)
+            self.assertIsNone(midi.light_meaning({"action": "strobe"}))
+            self.assertEqual(value(PAD, {"action": "strobe"}, snap(running=True, blackout=True, vibes=True)), 12)     # dark, not an error
+            self.assertEqual(value(NANO, {"action": "strobe"}, snap()), 0)
 
     def test_the_bytes_of_a_light_are_the_makers(self):
         pad, nano, mix = BY_ID[PAD], BY_ID[NANO], BY_ID[MIX]
@@ -149,12 +174,13 @@ class LightsFilesTest(unittest.TestCase):
         broken(lambda v: v["styles"]["clip"]["low"].update(pulse={"off": 1}), "pulse")
         broken(lambda v: v["styles"]["clip"].pop("high"), "missing high")
         broken(lambda v: v["styles"].update(disco={}), "not something a light can show")
-        broken(lambda v: v["styles"].pop("clip"), "lights.styles has no clip")
-        broken(lambda v: v["controls"].update(nosuch="clip"), "no control called")
-        broken(lambda v: v["controls"].update(pad11="blackout"), "shows 'clip' by its action")
-        broken(lambda v: v.update(controls={}), "1 to 160")
+        broken(lambda v: v["controls"].append("nosuch"), "no control called")
+        broken(lambda v: v["controls"].append(7), "no control called")
+        broken(lambda v: v["controls"].append("pad11"), "listed twice")
+        broken(lambda v: v.update(controls=[]), "1 to 160")
+        broken(lambda v: v.update(controls={"pad11": "clip"}), "1 to 160")
         nano = raw(NANO)
-        nano["lights"]["controls"]["fader1"] = "spare"
+        nano["lights"]["controls"].append("fader1")
         with self.assertRaises(midi.MidiError) as e:
             midi.validate_profile(nano, NANO)
         self.assertIn("only a button or pad has a light", str(e.exception))
@@ -558,8 +584,9 @@ class LightsHubTest(LightsHubBase):
         self.wait(lambda: self.out[C_PAD].lit()[(0x90, 120)] == 15)         # the Launchpad goes on
         self.wait(lambda: self.lights_of("nanoKONTROL2")["state"] == "failed")
         self.assertEqual(self.lights_of("Mini")["state"], "on")
-        self.send(C_NANO, [0xB0, 42, 127])                                  # and the nanoKONTROL2's controls still work
-        self.wait(lambda: any(c[0] == "clear" or c[0] == "stop" for c in self.player.calls) or self.player.calls)
+        before = len(self.player.calls)
+        self.send(C_NANO, [0xB0, 42, 127])                                  # and the nanoKONTROL2's controls still work: Stop
+        self.wait(lambda: len(self.player.calls) > before)
 
     def test_test_lights_and_the_roles(self):
         self.plug(C_PAD)

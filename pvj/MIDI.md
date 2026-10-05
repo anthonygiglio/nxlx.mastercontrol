@@ -173,7 +173,7 @@ Add one file, `pvj/controllers.d/<id>.json`; nothing else changes. All keys are 
     "clip": {"off": 0, "on": 127, "active": 127, "busy": 127, "pulse": {"active": 0}},
     "blackout": {"off": 0, "on": 0, "active": 127, "busy": 127}
   },
-  "controls": {"pad1": "clip", "b8": "blackout"}
+  "controls": ["pad1", "b8"]
 }
 ```
 
@@ -181,7 +181,7 @@ Add one file, `pvj/controllers.d/<id>.json`; nothing else changes. All keys are 
 - `channel` (1 to 16): the MIDI channel the lights are sent on. `off` (0 to 127): the value that darkens a light.
 - A light is addressed like its control: a control that sends a note gets a note-on with that note, one that sends a control change gets a control change with that number, and the value is the light. A controller whose lights are addressed differently cannot be described yet.
 - `styles`: per thing a light can show, the value for each of the four states `off`, `on` (there is something here), `active` (it is the one on now) and `busy`. The names are fixed: `clip`, `preset`, `control`, `vibes`, `set`, `step`, `play`, `stop`, `blackout`, `fadeout`, `fadein`, `room`, `bank` (the table under "What a light shows" says which actions belong to which). `pulse` (optional) gives, for `on`, `active` or `busy`, a second value the light alternates with every 0.6 seconds; use it where a light has one colour. With `"brightness": true` each style holds three of these instead, under `low`, `medium` and `high`, and the card offers the choice.
-- `controls`: each control that has a light, with what it shows by its standard action (`spare` for a control with no action). The check refuses a name that does not fit the action, so the file cannot say one thing and do another. Only buttons and pads.
+- `controls`: the ids of the controls that have a light; only buttons and pads. What a light shows is not written here: it follows from what its control does (the table under "What a light shows"), so a spare control that is given an action later, by a new version of the profile or by the person on the card, lights for that action with no change to this section. An action with nothing to show, or with no style in this file, leaves its light dark.
 - `setup` and `clear` (optional, up to eight messages each, every one three numbers: status, data, data): sent once when the controller is opened, and to darken everything. Only where the maker's document gives them. Without `clear` each light is sent `off`.
 - Then add the controller to `tools/DEVICE-TESTING.md` and say plainly, in `note` and in this file, what was and was not tried on the hardware.
 

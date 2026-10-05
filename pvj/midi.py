@@ -352,7 +352,8 @@ _MEANING = {"vibes": "vibes", "vibes_ambient": "set", "vibes_show": "set", "vibe
 
 
 def light_meaning(action):
-    """What the light of a control that does `action` (a clean action, or None) is about, or None for no light."""
+    """What the light of a control that does `action` (a clean action, or None) is about. None for an action
+    that has nothing to show (a level, or an action added after this was written): its light stays dark."""
     a = action["action"] if action else None
     if a is None or a == "none":
         return "spare"
@@ -395,8 +396,9 @@ def _style(v, what):
 
 def validate_lights(v, controls):
     """A clean lights section, checked as strictly as the rest of the file. `controls` are the profile's clean
-    controls: a light belongs to a button or pad of the layout, and the meaning written next to it must be the one
-    its standard action has, so the file says truthfully what each light shows."""
+    controls: a light belongs to a button or pad of the layout. The section does not say what a light shows: that
+    follows from what its control does (light_meaning), so giving a spare control an action, or adding an action,
+    never makes a lights section wrong."""
     _keys(v, "lights", ("default", "unverified", "note", "sources", "channel", "brightness", "off", "styles", "controls"), ("setup", "clear"))
     for flag in ("default", "unverified", "brightness"):
         if not isinstance(v[flag], bool):
@@ -421,21 +423,19 @@ def validate_lights(v, controls):
             one = _style(style, what)
             styles[name] = {level: one for level in LIGHT_LEVELS}
     out["styles"] = styles
-    if not isinstance(v["controls"], dict) or not 1 <= len(v["controls"]) <= MAX_CONTROLS:
-        raise MidiError("lights.controls must name 1 to %d controls" % MAX_CONTROLS)
+    if not isinstance(v["controls"], list) or not 1 <= len(v["controls"]) <= MAX_CONTROLS:
+        raise MidiError("lights.controls must list 1 to %d controls" % MAX_CONTROLS)
     by_id = {c["id"]: c for c in controls}
-    lit = {}
-    for cid, meaning in v["controls"].items():
-        ctl = by_id.get(cid)
+    lit = []
+    for cid in v["controls"]:
+        ctl = by_id.get(cid) if isinstance(cid, str) else None
         if ctl is None:
             raise MidiError("lights.controls: no control called %r" % (cid,))
         if ctl["kind"] not in ("button", "pad"):
             raise MidiError("lights.controls: %s is a fader or knob; only a button or pad has a light" % cid)
-        if meaning != light_meaning(ctl["action"]):
-            raise MidiError("lights.controls: %s shows %r by its action, not %r" % (cid, light_meaning(ctl["action"]), meaning))
-        if meaning != "spare" and meaning not in styles:
-            raise MidiError("lights.controls: %s shows %s, and lights.styles has no %s" % (cid, meaning, meaning))
-        lit[cid] = meaning
+        if cid in lit:
+            raise MidiError("lights.controls: %s is listed twice" % cid)
+        lit.append(cid)
     out["controls"] = lit
     return out
 
@@ -1345,13 +1345,12 @@ class MidiHub:
             if found is None or profile is None or not found[1].alive:
                 raise MidiError("the lights of that controller are not on")
             lights, level = profile["lights"], self.light_choice(source, profile)[1]
-            first = next(iter(lights["styles"]))
+            first, doing = next(iter(lights["styles"])), self._doing(source, profile, self.cfg())
             values = {}
             for ctl in profile["controls"]:
-                meaning = lights["controls"].get(ctl["id"])
-                if meaning is None:
+                if ctl["id"] not in lights["controls"]:
                     continue
-                style = lights["styles"].get(meaning, lights["styles"][first])[level]
+                style = lights["styles"].get(light_meaning(doing[ctl["id"]]), lights["styles"][first])[level]
                 values[light_message(lights, ctl, 0)[:2]] = next((style[k] for k in ("active", "on", "busy") if style[k] != lights["off"]), style["active"])
             writer = found[1]
         if not writer.test(values):
@@ -1623,7 +1622,7 @@ class MidiHub:
         if profile is None:
             return out
         out["lights"] = self._light_status(device["path"], source, profile)
-        lit, has = self._lit.get(device["path"], {}), (profile["lights"] or {}).get("controls", {})
+        lit, has = self._lit.get(device["path"], {}), (profile["lights"] or {}).get("controls", ())
         out["profile"] = {k: profile[k] for k in ("id", "name", "description", "note", "sources")}
         out["profile"].update(profile["layout"])
         mine = {}
