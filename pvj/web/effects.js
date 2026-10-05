@@ -17,6 +17,15 @@
   var teachers = [], learnTimer = null, soonTimer = null;
   var UPPER = { rgb: 'RGB', lgg: 'LGG', eq: 'EQ', h: 'H', v: 'V' };
   var WORK = { light: 'Light work', medium: 'Medium work', heavy: 'Heavy work' };
+  // How much work an effect is: for a bundled one what a Raspberry Pi 4 measured (the largest clip it held 30 frames
+  // a second over, at full size and with Half resolution), for an upload the count from its text.
+  function work(s) {
+    var words = WORK[s.weight] || '', m = s.measured;
+    if (!m || m.board !== 'pi4') return words;
+    var full = m.holds ? 'holds a ' + m.holds + 'p clip' : 'drops frames over a 720p clip';
+    var half = m.holds_half && m.holds_half !== m.holds ? ', a ' + m.holds_half + 'p clip at half resolution' : '';
+    return words + ' on a Pi 4: ' + full + half;
+  }
   var LOAD = { ok: 'Running smoothly', tight: 'Close to the limit', heavy: 'Too heavy with this clip: try Half resolution, or another effect' };
   var WHERE = { path: '/api/effects/values', gone: 'Not sent: that effect is not on any more.' };
 
@@ -244,7 +253,7 @@
           } });
       }));
     var lib = h('div', { class: 'fxlib' }, h('div', { class: 'field', text: 'Effects' }), filter, weights,
-      h('div', { class: 'hint', id: 'fxworknote', text: 'How much work an effect is, is counted from its text. Nothing here has been measured on a board yet.' }),
+      h('div', { class: 'hint', id: 'fxworknote', text: 'How much work an effect is was measured on a Raspberry Pi 4 for the ones that come with the box, and is counted from its text for one you add. It grows with the size of the clip: Half resolution is the way out.' }),
       h('div', { class: 'list', id: 'fxlist' }), h('div', { id: 'fxadd' }));
     box.appendChild(h('div', { class: 'fxgrid' }, stage, lib));
     if (X.data) setTimeout(function () { if (box.isConnected && X.data) drawCard(c, X.data, box); }, 0);
@@ -403,7 +412,7 @@
     if (!rows.length) { el.appendChild(h('div', { class: 'hint', id: 'fxnone', text: d.effects.length ? 'No effect matches. Clear the name or choose All.' : 'No effects on this box.' })); return; }
     rows.forEach(function (s) {
       var name = nice(s.name), isOn = s.id === onId;
-      var facts = [WORK[s.weight] || '', s.moves ? 'moves by itself' : '', s.flashes ? 'may flash' : '',
+      var facts = [work(s), s.moves ? 'moves by itself' : '', s.flashes ? 'may flash' : '',
         s.source === 'uploaded' ? 'your upload' : (s.pack === 'nxlx' ? '' : 'from the ' + s.pack + ' pack' + (s.credit ? ', ' + s.credit.replace(/^by /i, 'by ') : ''))].filter(Boolean).join(' · ');
       var item = h('div', { class: 'item fxrow' + (isOn ? ' on' : ''), 'data-effect': s.id },
         h('span', { class: 'fxwords' }, h('b', { text: name }), isOn ? h('span', { class: 'chip chip-active', text: 'On' }) : null, h('br'),

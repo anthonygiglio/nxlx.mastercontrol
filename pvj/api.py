@@ -389,6 +389,9 @@ class Api:
         path = status.get("path")
         if path == getattr(self.player, "TEST_PATTERN", None):
             status["path"], status["test_pattern"] = None, True
+            effect = self.effects.current()               # the colour bars are a picture too, and take an effect (seen on the Pi 4)
+            if effect is not None:
+                status["effect"] = effect["id"][:-3]
             return status
         if self.shaders.is_carrier(path):                 # a shader source: the blank picture under it is not a clip
             showing = self.shaders.on_screen()
