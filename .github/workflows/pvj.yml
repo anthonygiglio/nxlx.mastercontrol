@@ -59,6 +59,20 @@ jobs:
       - name: Effects on the real mpv (a skip here is a failure)
         run: env ${{ matrix.env }} PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_effects_gpu
 
+  effects-diagnosis:
+    # Temporary: why the first screenshot of a clip is black in the effect tests.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install mpv, a virtual display and Mesa
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
+      - name: Watch clips as the tests play them
+        run: xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.diag_effects yes
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:

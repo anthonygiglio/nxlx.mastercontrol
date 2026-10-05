@@ -54,6 +54,42 @@ WEBGL_NOISE_LICENSE_SHA256 = "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356
 ISF_SUMS_SHA256 = "38066ce8878457610d44950a371fca5f2a78bac89132c16b94169a1535d00a4e"
 ISF_FILES = ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs", "isf-radial-gradient.fs", "isf-ridgelines.fs",
              "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs"]
+# -- the effects pack (pvj/effects.d/isf-files): filters from the same repository at the same commit --
+FX_PACK = "pvj/effects.d/isf-files/"
+FX_SUMS_SHA256 = "1d603f38d2a7d45c8345332c3a778bbbba82da87a6627bf57e156cf6e3ffaf5c"
+FX_FILES = ["isf-bump-distortion.fs",
+            "isf-chromatic-aberration.fs",
+            "isf-circle-splash-distortion.fs",
+            "isf-color-monochrome.fs",
+            "isf-corner-color-tint.fs",
+            "isf-double-vision.fs",
+            "isf-duotone.fs",
+            "isf-edge-blowout.fs",
+            "isf-false-color.fs",
+            "isf-flip-h.fs",
+            "isf-flip-v.fs",
+            "isf-gamma-correction.fs",
+            "isf-hyperspace.fs",
+            "isf-interlace-mirror.fs",
+            "isf-kaleidoscope-tile.fs",
+            "isf-kaleidoscope.fs",
+            "isf-lgg.fs",
+            "isf-mirror.fs",
+            "isf-pixellate.fs",
+            "isf-posterize.fs",
+            "isf-quad-tile.fs",
+            "isf-rgb-eq.fs",
+            "isf-rgb-halftone.fs",
+            "isf-rgb-invert.fs",
+            "isf-ripples.fs",
+            "isf-shockwave.fs",
+            "isf-sine-warp-tile.fs",
+            "isf-sphere-map.fs",
+            "isf-triple-rotate.fs",
+            "isf-twirl.fs",
+            "isf-white-point-adjust.fs",
+            "isf-zoom.fs"]
+# -- end of the effects pack --
 
 
 class LicenseTest(unittest.TestCase):
@@ -130,6 +166,49 @@ class LicenseTest(unittest.TestCase):
             self.assertNotIn(b"Apache-2.0", data, name)
             self.assertNotIn(b"NXLX", data, name)
             self.assertIn("`%s`" % name, inventory, name + " is not in THIRD_PARTY_LICENSES.md")
+
+    def test_the_effects_pack_keeps_its_own_licence_and_is_declared(self):
+        """The filters from Vidvox's ISF-Files (MIT) under the same rules as the generators' pack: unchanged from
+        upstream, never labelled Apache-2.0 or as the project's, upstream's licence shipped beside them, every file
+        named in the inventory. The project's own filters next to the pack folder are the project's."""
+        files = sorted(p for p in tracked() if p.startswith(FX_PACK))
+        shaders = [p for p in files if p.endswith(".fs")]
+        self.assertEqual([os.path.basename(p) for p in shaders], FX_FILES)        # the pack, by name: a change is a decision
+        self.assertTrue(20 <= len(shaders) <= 32, len(shaders))
+        self.assertTrue(all(re.fullmatch(r"isf-[a-z0-9-]+\.fs", os.path.basename(p)) for p in shaders), shaders)
+        self.assertEqual(sorted(set(files) - set(shaders)), [FX_PACK + "LICENSE", FX_PACK + "SHA256SUMS"])
+        by_licence = {}
+        for licence, patterns, holders in annotations(holders=True):
+            for p in tracked():
+                if p.startswith("pvj/effects.d/") and any(matches(p, pattern) for pattern in patterns):
+                    by_licence.setdefault(p, []).append((licence, holders))
+        for p in shaders + [FX_PACK + "LICENSE"]:
+            self.assertEqual({licence for licence, _ in by_licence.get(p, [])}, {"MIT"}, p)
+            self.assertIn("ISF-Files", by_licence[p][-1][1], p)
+            self.assertNotIn("Ashima", by_licence[p][-1][1], p)                   # none of these holds the simplex noise
+        own = sorted(p for p in tracked() if re.fullmatch(r"pvj/effects\.d/[^/]+\.fs", p))
+        self.assertEqual(len(own), 9)
+        for p in own + [FX_PACK + "SHA256SUMS"]:
+            self.assertEqual([licence for licence, _ in by_licence.get(p, [])], ["Apache-2.0"], p)
+        for name, digest in (("LICENSE", ISF_LICENSE_SHA256), ("SHA256SUMS", FX_SUMS_SHA256)):
+            with open(os.path.join(REPO, FX_PACK, name), "rb") as f:
+                self.assertEqual(hashlib.sha256(f.read()).hexdigest(), digest, name)
+        with open(os.path.join(REPO, FX_PACK, "SHA256SUMS")) as f:
+            sums = dict(reversed(line.rstrip("\n").split("  ", 1)) for line in f)
+        self.assertEqual(sorted(sums), FX_FILES)
+        with open(os.path.join(REPO, "THIRD_PARTY_LICENSES.md")) as f:
+            inventory = f.read()
+        for p in shaders:
+            name = os.path.basename(p)
+            with open(os.path.join(REPO, p), "rb") as f:
+                data = f.read()
+            self.assertEqual(hashlib.sha256(data).hexdigest(), sums[name], name + " differs from upstream")
+            self.assertNotIn(b"Apache-2.0", data, name)
+            self.assertNotIn(b"NXLX", data, name)
+            self.assertIn("`%s`" % name, inventory, name + " is not in THIRD_PARTY_LICENSES.md")
+        for p in own:                                                              # and no file of ours claims to be upstream's
+            with open(os.path.join(REPO, p)) as f:
+                self.assertIn("SPDX-License-Identifier: Apache-2.0", f.read(), p)
 
     def test_no_compiled_or_cache_files_are_tracked(self):
         junk = [p for p in tracked() if "__pycache__" in p or p.endswith((".pyc", ".DS_Store"))

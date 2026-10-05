@@ -637,7 +637,22 @@ class FxCase(GpuCase):
         time.sleep(0.4)
         d = differ(self.shot(), plain)
         self.assertLess(d[1], 1.0, "an effect taken off a frozen clip: not the picture (max %d, mean %.2f)" % (d[0], d[1]))
+        # Why an effect does not set the buffers' format: what a screenshot shows after that setting, over the frozen
+        # clip, with and without a filter in the list. Printed, not asserted: it is the player's behaviour, not ours.
+        seen = []
+        for label, filter_on in (("no filter", False), ("a filter on", True)):
+            if filter_on:
+                self.fx.put("same.fs")
+                time.sleep(0.4)
+            for value in ("rgba8", "rgba8", "auto"):
+                self.real.ipc.request("set_property", "fbo-format", value)
+                time.sleep(0.4)
+                d = differ(self.shot(), plain)
+                seen.append("%s, fbo-format=%s: max %d mean %.1f" % (label, value, d[0], d[1]))
+            self.fx.off()
+        print("buffers, ES %s: over a frozen clip, against the picture: %s" % (self.ES, "; ".join(seen)))
         self.real.ipc.request("set_property", "pause", False)
+        self.settle()
         shots = 0
         for n in range(6):
             self.fx.put("same.fs", controls={"amount": 0.5 + 0.08 * n})
