@@ -75,7 +75,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - **On mpv 0.37 with its default scalers a video after one of another size was black in CI until a shader changed** (LESSONS). It is not about effects. A Pi 4 runs with cheap scaling, where it did not happen; an x86 box or a Pi 5 would run with the default scalers: look for it there.
 - **Seven pack files were taken out after the review** (two matched a public snippet their credit does not name; five more as a precaution, without a comparison). If the owner wants a bulge, a ball or a splash back, they are to be written, not restored.
 - **With nothing playing, Next and the one effect button answer "ok" and then do nothing** (the reason is in the Effects card): the price of a controller's calls never asking the player.
-- **A race in the MIDI hub, found through a test that failed now and then, not fixed here:** when MIDI is switched off between a button's press and its release, the release is dropped and the hub still holds the button as pressed; after MIDI is switched on again the first press of that button does nothing. `tests/test_lights.py` (`test_m1_a_controller_known_by_its_card_id_alone...`) depends on that timing.
+- **A race in the MIDI hub, found through a test that failed now and then:** when MIDI was switched off between a button's press and its release, the hub kept the button as pressed, and its first press after MIDI was back did nothing. Fixed in pull request #86 (the hub forgets what was held when it stops listening); see "Test failures that come and go" below.
 - **Left out on purpose:** a chain of effects, transitions, passes, persistent buffers, an effect that comes back after a restart (the vignette for the painting wall has to be put on again), a preset rename in the panel, pictures of the card in `docs/UI.md`.
 
 **What needs the owner.**
@@ -107,6 +107,25 @@ Further out, unchanged: live coding with a last-good fallback and projectM as an
 - The System pages (D50) and the Room screen's ambience button (D52) have run only in CI's browser test: see them on a real phone at arm's length.
 
 **How to work here.** Three or four agents at once hit the usage limit four times on 2026-10-04 and each time killed every agent mid-task; later the same day the Mac's disk filled and did the same. Run one or two agents, keep scratch files small and delete them, have each agent open the pull request after the first commit and push after every step, and expect to resume from the branch. The dev Mac has no mpv and no Playwright, so the browser test runs only in CI. The owner allows merging reviewed, green pull requests and deploying to the test Pi over SSH without asking (no new images); say when a deploy happened, since it restarts the panel and the player.
+
+## Test failures that come and go
+
+Looked at together on 2026-10-05 in pull request #86 (not merged when this was written). The journal entry of that day has the table with the evidence for each. A new one goes in this list with the run it was seen in.
+
+| Failure | State |
+| --- | --- |
+| Browser test, mapper step ("Main stage" not seen in `#mapsets`) | Cause shown and fixed in the panel (#86): a rebuilt mapping card took the name field away while it was being typed in. |
+| `tests.test_netd`, a refused caller: broken pipe | Cause shown and fixed in the three helper clients (#86). |
+| `tests.test_projector`, an input change as an edit lands: 'ERR3' != 'stopped' | Cause shown and fixed in `Monitor.set_input` (#86). |
+| MIDI: a button held when MIDI goes off (`tests.test_lights`, `test_m1_...`) | Cause shown and fixed in the hub (#86). |
+| "Cancelled" `test` jobs | It was the matrix's fail-fast after the other Python had failed; switched off (#86). |
+| Browser test, Shaders page: `#shadernow #detailhigh` not seen (once) | A lost update of the shader settings was found and fixed (#86). That it was the cause that one time is inferred from the request times. The step prints its state if it happens again. |
+| Browser test: a staff device not seeing the painting wall "Warming up" (once, 2026-10-04) | Not explained. The step's diagnostic and the report of every open page print the state. |
+| A `test` job that sat in the unit tests for 35 minutes (once, controller-lights) | Not explained and not seen again in 189 runs of that step. The step ends after 20 minutes with every thread's stack. |
+| `test_projectors_are_not_all_asked_at_once` (once: 0.295 s where more than 0.3 was wanted) | Not looked at. |
+| `test_no_secret_is_in_it` (once, on the Mac: the PIN's digits inside a byte count) | Not fixed (LESSONS). |
+
+When a browser step fails, the job's log has, after the `FAILED:` line, what every open page showed (screen, message line, cursor, the elements the step named, the whole screen's text) and the box's last answers to it. Read that first. The server's request log, with times, is in the same job log. The two `test` jobs no longer cancel each other, so both logs are there.
 
 ## What exists
 
