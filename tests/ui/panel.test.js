@@ -2453,7 +2453,7 @@ function startServer() {
       await page.waitForSelector('#fliph');
       await signalChecks('Mix', 'mix');
       await page.click('nav >> text=Media');
-      await page.waitForSelector('#uploads');
+      await page.waitForSelector('#uploads', { state: 'attached' });
       await signalChecks('Media', 'clips');
       await sysIndex();
       await page.waitForSelector('.navrow .chip-ready, .navrow .chip-active, .navrow .chip-off');
