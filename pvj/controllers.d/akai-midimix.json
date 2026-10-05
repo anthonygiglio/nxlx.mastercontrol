@@ -72,7 +72,7 @@
     "default": false,
     "unverified": true,
     "note": "Unverified: no Akai document describes the lights, so they are off until you switch them on. Lit: there is something here; slowly pulsing: it is the one on now. Bank Left is lit on bank A, both on B, Bank Right on C. The Solo button and the Solo+Mute row have no light from the box.",
-    "sources": ["No Akai document found: the MIDImix User Guide 1.0 says nothing about messages the unit receives", "Secondary: Tero Heikkinen, 'AKAI MIDImix & Processing Midibus' (oldmachinery.blogspot.com, 2018-04-15): a note-on with a Mute, Rec Arm or Bank button's note and velocity 127 lights it, velocity 0 darkens it, a note-off does nothing, Solo cannot be lit; open controller scripts (mfeyx/akai-midimix-bitwig, tstriker/akai-midimix) do the same"],
+    "sources": ["No primary source: no Akai document describes the lights (the MIDImix User Guide 1.0 says nothing about messages the unit receives). Nothing about this controller's lights is confirmed", "Secondary: Tero Heikkinen, 'AKAI MIDImix & Processing Midibus' (oldmachinery.blogspot.com, 2018-04-15): a note-on with a Mute, Rec Arm or Bank button's note and velocity 127 lights it, velocity 0 darkens it, a note-off does nothing, Solo cannot be lit; open controller scripts (mfeyx/akai-midimix-bitwig, tstriker/akai-midimix) do the same"],
     "channel": 1,
     "brightness": false,
     "off": 0,

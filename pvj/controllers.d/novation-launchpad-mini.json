@@ -91,8 +91,8 @@
   "lights": {
     "default": true,
     "unverified": false,
-    "note": "Amber: there is something here. Green: it is on now. Red: this darkens the screen; bright red: the screen is dark. The messages are from Novation's reference and have not been seen on a real Launchpad Mini yet: press Test lights and say what you see.",
-    "sources": ["Novation, Launchpad S Programmer's Reference Manual 1.02 (https://fael-downloads-prod.focusrite.com/customer/dev/s3fs-public/novation/downloads/10753/launchpad-s-prm.pdf): 'Set grid LEDs' (note-on 90h, the pad's key, velocity = 16 x green + red + 12, green and red 0 to 3)", "The same manual: 'Set Automap/Live control LEDs' (B0h, 68h to 6Fh, the same value), 'Reset Launchpad' (B0h 00h 00h: all LEDs off, power-on settings), at most 400 messages a second"],
+    "note": "Amber: there is something here. Green: it is on now. Red: this darkens the screen; bright red: the screen is dark. The messages are from Novation's reference for the Launchpad S; that the Mini takes the same ones is not confirmed by Novation and has not been seen on a real one yet: press Test lights and say what you see.",
+    "sources": ["Novation, Launchpad S Programmer's Reference Manual 1.02 (https://fael-downloads-prod.focusrite.com/customer/dev/s3fs-public/novation/downloads/10753/launchpad-s-prm.pdf), read in full by the reviewer of pull request #82: a note-on on channel 1 per pad, red in bits 0 to 1 and green in bits 4 to 5 of the velocity, off is 0Ch (so 16 x green + red + 12)", "The same manual: control changes 68h to 6Fh for the top row, with the same value; B0h 00h 00h turns all LEDs off and restores the power-on settings", "Not confirmed from a primary source: that the original Launchpad Mini (USB id 1235:0036) uses the Launchpad S protocol. It is widely reported and the recording of the owner's unit fits its key numbers"],
     "channel": 1,
     "brightness": true,
     "off": 12,

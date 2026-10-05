@@ -77,7 +77,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 1. The owner picks a style direction in the Figma file (A, B, C or D, or a mix).
 2. In that style: the room and the projector screens (Room, Projectors).
 3. Then performing (the Shaders page, controllers). Live, Media and Mix are not redesigned yet; the proposal (#65) is the reference for them.
-4. Controller lights are built and wait for a security review and for the owner's check on the hardware (pull request #82, D53): the sandbox line `DeviceAllow=char-alsa rw` is the thing to review.
+4. Controller lights are built and reviewed (pull request #82, D53; the security review's findings are fixed, the sandbox line `DeviceAllow=char-alsa rw` was judged acceptable with its documented cost) and wait for the owner to merge and for the check on the hardware. Follow-up from the review, to try on the Pi: a udev group for MIDI nodes so the panel can drop the `audio` group (D53).
 5. ISF filters over the playing clip (today only generators are played).
 6. PJLink Phase 2 (class 2 volume, freeze, input names, signal resolution, "Find projectors", status notices), after the first real projector has answered what Phase 1 could not: what it says in standby, how long it is unavailable after power-on, whether 90 seconds is enough for a scene's source and mutes, whether "Cooling down" is reported.
 

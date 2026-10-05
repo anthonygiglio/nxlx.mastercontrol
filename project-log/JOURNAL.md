@@ -6,7 +6,7 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
 ## 2026-10-04 (night: controller lights)
 
-Pull request #82. **Not merged: it widens the panel's sandbox and writes to devices, so it waits for an independent security review. Nothing in it was tried on a controller or on the Pi; the Pi was not touched.** Decision D53.
+Pull request #82. **Not merged by its author. It widens the panel's sandbox and writes to devices; the independent security review is done (its findings are at the end of this entry). Nothing in it was tried on a controller or on the Pi; the Pi was not touched.** Decision D53.
 
 **Built.** The box lights the buttons and pads of a controller it knows. Each profile file has a `lights` section (a list of the controls that have a light, the channel, the value per state, the fixed set-up and clear messages; what a light shows follows from what its control does, so the section does not break when a spare control gets an action), checked as strictly as the rest. The hub opens a second, write-only handle only to a controller that matched such a profile; one writer thread per controller keeps a table of wanted values and sends what differs, at most 200 messages a second; a device that takes nothing is not waited for; a controller plugged in again gets the whole state; lights go off with the switch, with "Standard layout" off, with MIDI off and at shutdown. One more thread looks at the box every 0.3 seconds (memory, and one player status call at most every 0.6 seconds for all lights).
 
@@ -16,13 +16,26 @@ Pull request #82. **Not merged: it widens the panel's sandbox and writes to devi
 
 **The unit.** `DeviceAllow=char-alsa rw`. D53 says exactly what that adds: MIDI output, SysEx included, to any attached ALSA MIDI device (a taken-over panel could rewrite a controller's stored settings), and nothing about sound that the old `r` had really prevented (the kernel's mixer and PCM code do not look at the open mode; six kernel files were fetched and searched for it). An older unit gives the line "Lights need the box's installer to run once." and no retry loop.
 
-**Sources.** Novation's Launchpad S Programmer's Reference 1.02; Korg's Parameter Guide for the mode, secondary reports for the values; a blog post and open scripts for the MIDI Mix. How each was read is in D53 and MIDI.md.
+**Sources.** Novation's Launchpad S Programmer's Reference 1.02 (that the Mini shares its protocol is not confirmed by a primary source); Korg's Parameter Guide for the mode and the On and Off values; a blog post and open scripts for the MIDI Mix. How each was read is in D53 and MIDI.md.
 
 **Tests.** `tests/test_lights.py` (31): the files, every kind of light for every profile, the writer (only changes, the rate, a full pipe, a cut write, unplug, stop, the sweep, no permission), the hub with pipes for all three controllers (only the profile's bytes ever arrive), the API and roles, export and import, and the picture of the box taken with the shader engine's lock held. `tests/test_units.py` pins the whole device policy and the rest of the sandbox. A browser step for the switch, the ring marks and Test lights (CI only: no Playwright on the Mac).
 
 **Left out.** A light per shader input; lights addressed differently from their control; the Launchpad's flashing; the MIDI Mix's Solo row. The narrower sandbox (a udev group for MIDI nodes, or a helper) is described in D53 and not built.
 
 **One CI job hung, cause not found.** Of the first four runs of the unit tests on the same commit, one (Python 3.12) sat in the unit test step for 35 minutes until it was cancelled; the same job passed when run again, and the other three passed. A cancelled job's log could not be fetched, so which test it was is not known. master has no such hang in its last thirty runs, so this branch is the suspect: every hub now has one more thread. What was done: the writer's switch-off deadline uses the real clock (it used the hub's, which a test may freeze), and `tests/test_lights.py` now ends the run with every thread's stack if that module ever takes seven minutes. If it happens again outside that module, add the same watch around the whole run.
+
+**After the independent security review (2026-10-05), each fixed with a test.** Verdict on the sandbox line: acceptable as it is with the documented cost; the narrower group design is a follow-up for the Pi.
+
+- M1 (medium): a writer was started on a match by the card id alone (the fallback when `/proc/asound` cannot be read), so a "Launchkey Mini" with an unreadable description got the reset and eighty lights. Now a writer needs a USB id match or a readable product name the profile lists (`sure_match`); the layout may still rest on the card id; an unsure answer is asked again every ten seconds and never kept as good. The card says why the lights are off.
+- L1: switching MIDI off and on while the player was slow left two lights loops. Each loop has its own stop signal now.
+- L2: closing a rawmidi output can take ten seconds in the kernel when bytes are waiting. They are dropped first (`SNDRV_RAWMIDI_IOCTL_DROP`, the kernel's number, written out with a comment); the bound without it is documented. Checked against a pipe and a watched call, not a device.
+- L3: `setup` and `clear` must be on the section's channel and may not be controllers 120 to 127.
+- L4: the sources are stated as the reviewer read them; the "400 messages a second" claim is withdrawn; the nanoKONTROL2's lights are right only with the factory On and Off values and channel; that the Mini shares the Launchpad S protocol, and everything about the MIDI Mix, is said to be unconfirmed. The reset goes once per plug-in, not on each ten-second retry.
+- L5: tests for the check after the open (a regular file, a FIFO, /dev/null, a link: refused, no handle left) and for the two conditions a writer needs.
+- L6: `POST /api/midi` with `lights` or `brightness` refuses any other key.
+- L7: lights are not held back from a remote-support session, like the rest of the MIDI page; `docs/REMOTE-SUPPORT.md` says so.
+- The CI hang: not found by the reviewer either. The test jobs have `timeout-minutes` and the unit tests run under `timeout -s ABRT 1200 python -X faulthandler`, so a repeat ends after twenty minutes with every thread's stack in the log.
+- D53 has the reviewer's sequencer answer, the full list of what `rw` adds, why the unit cannot be narrower, and the udev follow-up. The owner's check list has two more steps (lights go off at `systemctl stop pvj-web`; what Internal LED mode looks like).
 
 **Not sure about.** Whether a pulsing light is calm enough in a dark room (it is one line in a profile to change). Whether the nanoKONTROL2's Track and Marker buttons really have no light. Whether the Launchpad's reset on plug-in has a visible side effect. Whether the Pi's systemd lets the open for writing through with `rw` (it should; nobody ran it).
 

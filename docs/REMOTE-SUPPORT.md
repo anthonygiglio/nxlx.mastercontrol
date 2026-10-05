@@ -45,6 +45,8 @@ For a fleet, the server, its key and the network can be put in `/etc/pvj/support
 
 - The support network (10.77.0.0/24 by default) must not be a network the box is already on; the panel refuses it, because the studio's own devices would then look like remote support. Remote rules apply only while a session is open.
 
+- **MIDI and controller lights are not held back from a support session.** Someone signed in through the tunnel with full access can change the MIDI page like anyone with full access in the room, including a controller's Lights switch, its brightness and Test lights (`POST /api/midi`, `POST /api/midi/lights`). That is the same rule as for the rest of the MIDI page and was left as it is on purpose: those calls can only say on, off, a brightness word or "test", and what reaches a controller is fixed by its profile file.
+
 - The support server sees panel traffic during a session (the panel is plain HTTP inside the encrypted tunnel) and can reach any box that has a session open. Keep it small, updated, and used only for this.
 - A box's private key never leaves it (`/var/lib/pvj-support`, root only). Removing the box on the server revokes it.
 - A Pi has no clock battery. If it has not got the time from the network yet, the support server may refuse its first contact; the card then says "Waiting for the support server". Wait for the clock, or start the session again.
