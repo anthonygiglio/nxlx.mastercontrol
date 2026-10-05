@@ -1125,12 +1125,14 @@
 
   // -- what each row says about itself --
   function schedWhat(e) {
-    return e.action === 'play' ? 'Play ' + e.file : e.action === 'preset' ? 'Start script ' + e.preset :
-      ({ stop: 'Stop', blackout: 'Blackout', show: 'Show screen', projector_on: 'Projectors on', projector_off: 'Projectors off', vibes: 'Start Vibes' })[e.action] || e.action;
+    if (e.action === 'scene') return 'Scene ' + (window.pvjRoom ? window.pvjRoom.sceneName(e.scene) : e.scene);
+    return e.action === 'play' ? 'Play ' + e.file : e.action === 'preset' ? 'Old start script ' + e.preset :
+      ({ stop: 'Stop playing', blackout: 'Screen to black', show: 'Screen back on', projector_on: 'Projectors on', projector_off: 'Projectors off', vibes: 'Start Vibes' })[e.action] || e.action;
   }
-  function schedNext(d) {       // the next entry by the box's own clock; days count from Monday
+  // The next entry by the box's own clock (days count from Monday): { off: days from today, e: the entry }, or null.
+  function schedNextEntry(d) {
     var m = /^(\d+)-(\d+)-(\d+) (\d+):(\d+)/.exec(d.now || '');
-    if (!m) return '';
+    if (!m) return null;
     var today = (new Date(+m[1], +m[2] - 1, +m[3]).getDay() + 6) % 7, nowMin = +m[4] * 60 + +m[5], best = null;
     d.entries.forEach(function (e) {
       var t = /^(\d+):(\d+)$/.exec(e.time || '');
@@ -1139,10 +1141,14 @@
       (e.days || []).forEach(function (day) {
         var off = (day - today + 7) % 7;
         if (off === 0 && at <= nowMin) off = 7;
-        if (!best || off * 1440 + at < best.key) best = { key: off * 1440 + at, off: off, e: e };
+        if (!best || off * 1440 + at < best.key) best = { key: off * 1440 + at, off: off, day: DAYS[(today + off) % 7], e: e };
       });
     });
-    return best ? (best.off === 0 ? '' : DAYS[(today + best.off) % 7] + ' ') + best.e.time + ' ' + schedWhat(best.e) : '';
+    return best;
+  }
+  function schedNext(d) {
+    var best = schedNextEntry(d);
+    return best ? (best.off === 0 ? '' : best.day + ' ') + best.e.time + ' ' + schedWhat(best.e) : '';
   }
   var SYS_STATE = {
     health: function (d) {
@@ -1489,8 +1495,8 @@
       onclick: function () { moreOpen = open ? null : o.key; o.redraw(); } }) : null;
     return h('div', { class: 'item lrow' + (o.cls ? ' ' + o.cls : ''), 'data-id': o.data },
       h('div', { class: 'lhead' }, h('div', { class: 'lname', text: o.name }),
-        o.sub ? h('div', { class: 'addr', text: o.sub }) : null,
-        o.state ? h('div', { class: 'state', text: o.state }) : null,
+        o.sub ? h('div', { class: 'addr' + (o.subCls ? ' ' + o.subCls : ''), text: o.sub }) : null,
+        !o.state ? null : typeof o.state === 'string' ? h('div', { class: 'state', text: o.state }) : o.state,
         o.problem ? h('div', { class: 'hint warn problem', text: o.problem }) : null,
         o.note ? h('div', { class: 'hint lnote', text: o.note }) : null),
       o.primary || moreBtn ? h('div', { class: 'row lacts' }, o.primary || null, moreBtn) : null,
@@ -2510,26 +2516,32 @@
 
   // ---- projectors (PJLink) ---------------------------------------------
   var projForm = { name: '', host: '', port: '4352', password: '' };  // survives redraws
-  var projLabels = {};  // projector id -> { code, text }: the input being labelled and the label being typed; survives redraws
+  // The projector whose inputs are being named, with what was typed: { id, texts: { code: text } }; null when none.
+  var projNaming = null;
   // The projector being edited, in place of its row: { id, name, host, port, password, clear, error }; null when none.
   // It survives redraws (the list is read again every 5 seconds). The password is only ever what was typed here.
   var projEdit = null;
   var projTimer = null;
+  // What kind of socket an input is, from the PJLink standard's five kinds (the first digit of its code). The
+  // standard names the kinds, not the sockets, so this is a hint; it has not been checked against a real projector.
+  var PJ_KIND_HINT = { '1': ' (computer, VGA)', '3': ' (HDMI or DVI)', '4': ' (USB)' };
+  var PJ_POWER = { 'on': 'On', 'off': 'Off', 'warming up': 'Warming up', 'cooling down': 'Cooling down' };
   function projectorsCard(full) {
     clearTimeout(projTimer);
-    var body = h('div', { class: 'list', id: 'projbody' });
-    var card = h('div', { class: 'card', id: 'projcard' }, h('h2', { text: 'Projectors' }), body);
+    var body = h('div', { class: 'list sp', id: 'projbody' });
+    var card = h('div', { class: 'card wide', id: 'projcard' }, h('h2', { text: 'Projectors' }), body);
     var states = {};  // id -> the last answer shown under it
     var shown = null; // what is on the page, to leave it alone while nothing changed
+    function plainInput(i) { return i.name + (PJ_KIND_HINT[i.code.charAt(0)] || ''); }
     function inputText(p, code) {
       var i = p.inputs.filter(function (x) { return x.code === code; })[0];
-      return i ? (i.label ? i.label + ' (' + i.name + ')' : i.name) : code;
+      return i ? (i.label ? i.label + ' (' + i.name + ')' : plainInput(i)) : code;
     }
     function statusText(p) {
       var st = p.status || {};
       if (st.ok === undefined) return st.waiting ? 'Waiting for an earlier check to end' : 'Checking...';
-      if (!st.ok) return 'No answer: ' + st.error;
-      var t = st.power.charAt(0).toUpperCase() + st.power.slice(1);
+      if (!st.ok) return 'No answer';
+      var t = PJ_POWER[st.power] || st.power;
       if (st.input) t += ' · input ' + inputText(p, st.input);
       if (st.mute && (st.mute.picture || st.mute.sound)) t += ' · ' + (st.mute.picture && st.mute.sound ? 'picture and sound' : st.mute.picture ? 'picture' : 'sound') + ' muted';
       if (st.lamps && st.lamps.length) t += ' · lamp ' + st.lamps.map(function (l) { return l.hours; }).join(', ') + ' h';
@@ -2545,10 +2557,11 @@
     }
     function detailsText(p) {
       var d = p.details;
-      if (!d) return 'Details not read yet';
-      var who = [d.maker, d.model].filter(Boolean).join(' ') || 'Unknown make';
-      return who + (d.name ? ' "' + d.name + '"' : '') + (d.info ? ' · ' + d.info : '') + (d['class'] ? ' · PJLink class ' + d['class'] : '');
+      if (!d) return '';
+      var who = [d.maker, d.model].filter(Boolean).join(' ');
+      return who + (d.name && d.name !== who ? (who ? ' "' + d.name + '"' : d.name) : '');
     }
+    function where(p) { return p.host + (p.port !== 4352 ? ':' + p.port : ''); }
     function keep() {  // what is being typed, copied from the page before it is rebuilt (an input event can be lost)
       [['projname', 'name'], ['projhost', 'host'], ['projport', 'port'], ['projpw', 'password']].forEach(function (f) {
         var el = document.getElementById(f[0]);
@@ -2558,10 +2571,7 @@
         var el = document.getElementById(f[0]);
         if (el && body.contains(el) && !el.disabled) projEdit[f[1]] = el.value;
       });
-      Array.prototype.forEach.call(body.querySelectorAll('.proj-label'), function (el) {
-        var which = body.querySelector('.proj-labelfor[data-id="' + el.getAttribute('data-id') + '"]');
-        projLabels[el.getAttribute('data-id')] = { code: which ? which.value : '', text: el.value };
-      });
+      if (projNaming) Array.prototype.forEach.call(body.querySelectorAll('.proj-nameinput'), function (el) { projNaming.texts[el.getAttribute('data-code')] = el.value; });
     }
     function load(force) {
       clearTimeout(projTimer);
@@ -2570,12 +2580,13 @@
         clearTimeout(projTimer);
         projTimer = setTimeout(function () { if (document.body.contains(card)) load(); }, 5000);
         if (!r.ok) {
-          if (shown === null) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'projmsg', text: r.data.error || 'Not available' })); }
+          if (shown === null) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'projmsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); }
           return;
         }
         var a = document.activeElement;
         var typing = a && body.contains(a) && /^(INPUT|SELECT)$/.test(a.tagName);
-        if (force || (JSON.stringify(r.data) !== shown && !typing)) draw(r.data);
+        // a question that is open, or a field being typed in, is never drawn over by the 5 second look
+        if (force || (JSON.stringify(r.data) !== shown && !typing && !asking(body))) draw(r.data);
       });
     }
     // The add form's fields, filled in, in place of the projector's row. Only what was changed is sent: a password
@@ -2644,177 +2655,330 @@
       var msg = { id: pid, action: action };
       Object.keys(extra || {}).forEach(function (k) { msg[k] = extra[k]; });
       api('POST', '/api/projector', msg).then(function (r) {
-        if (!r.ok) { say(r.data.error || 'The projector did not answer', true); return load(true); }
+        if (!r.ok) { say((r.data.error || 'The projector did not answer') + '. Check that it has power and is on the network, then try again.', true); return load(true); }
         var failed = [], waiting = false;
         Object.keys(r.data.results).forEach(function (k) {
           var x = r.data.results[k];
-          states[k] = x.ok ? (x.power ? 'Power: ' + x.power : (x.pending ? '' : label + ': done')) : 'Failed: ' + x.error;
+          states[k] = x.ok ? (x.power ? 'Power: ' + x.power : (x.pending ? '' : label + ': done')) : 'It did not work: ' + x.error;
           if (!x.ok) failed.push(x.error);
           if (x.pending) waiting = true;
         });
-        if (failed.length) say(failed.length + ' projector(s) did not answer: ' + failed[0], true);
+        if (failed.length) say(plural(failed.length, 'projector') + ' did not answer: ' + failed[0] + '. Check its power and network cable, then try again.', true);
         else say(waiting ? 'The projector is not ready yet; trying again for up to 90 seconds.' : label + ': done');
         load(true);
       });
+    }
+    // The one power button of a projector, from what it last said.
+    function powerButton(p) {
+      var st = p.status || {}, id = 'projpower-' + p.id;
+      function still(text) { return h('button', { class: 'btn proj-power', id: id, text: text, disabled: true }); }
+      if (st.ok === undefined) return still('Checking...');
+      if (!st.ok) return h('button', { class: 'btn proj-power proj-retry', id: id, text: 'Try again', 'aria-label': 'Try ' + p.name + ' again', onclick: function () { run(p.id, 'state', 'Check now'); } });
+      if (st.power === 'warming up') return still('Warming up...');
+      if (st.power === 'cooling down') return still('Cooling down...');
+      if (st.power === 'on') return h('button', { class: 'btn proj-power', id: id, text: 'Turn off', 'aria-label': 'Turn off ' + p.name, onclick: function (e) {
+        confirmRow('Turn off ' + p.name + '? It needs about a minute to cool before it can come on again.', 'Turn off', 'Keep it on', function () { run(p.id, 'off', 'Turn off'); }, e.currentTarget);
+      } });
+      return h('button', { class: 'btn on proj-power', id: id, text: 'Turn on', 'aria-label': 'Turn on ' + p.name, onclick: function () { run(p.id, 'on', 'Turn on'); } });
+    }
+    // "Name the inputs": one row per input with a text field and Show, one Save names. Its own panel, so that
+    // naming an input never switches the projector to it.
+    function namingPanel(p) {
+      var n = projNaming, fields = {};
+      function changed() { return p.inputs.filter(function (i) { return (n.texts[i.code] === undefined ? i.label : n.texts[i.code]).trim() !== i.label; }); }
+      var err = h('div', { class: 'msg inmsg', id: 'projnameserr', role: 'alert' });
+      var save = h('button', { class: 'btn on grow', id: 'projnamessave', text: 'Save names', onclick: function () {
+        keep();
+        var todo = changed();
+        save.disabled = true;
+        (function next(last) {
+          var i = todo.shift();
+          if (!i) { projNaming = null; say('Names saved.'); if (last) draw(last, true); return load(true); }
+          api('POST', '/api/projectors', { label: { id: p.id, input: i.code, label: n.texts[i.code].trim() } }).then(function (r) {
+            if (!r.ok) { save.disabled = false; return sayAt(err, (r.data.error || 'Could not save the name') + '. Use up to 24 letters, digits and spaces.', true); }
+            next(r.data);
+          });
+        })(null);
+      } });
+      save.disabled = !changed().length;
+      return h('div', { class: 'addform proj-names', id: 'projnames', 'data-id': p.id },
+        h('div', { class: 'field', text: 'Name the inputs of ' + p.name }),
+        h('div', { class: 'hint', text: 'Naming an input does not switch the projector. Give each one the name of what is plugged into it.' }),
+        p.inputs.map(function (i) {
+          var f = fields[i.code] = h('input', { class: 'text-input proj-nameinput', id: 'projname-' + p.id + '-' + i.code, 'data-code': i.code, maxlength: 24, placeholder: 'Matrix',
+            value: n.texts[i.code] === undefined ? i.label : n.texts[i.code] });
+          f.addEventListener('input', function () { n.texts[i.code] = f.value; save.disabled = !changed().length; });
+          return h('div', { class: 'fieldwrap proj-namerow' }, h('label', { class: 'field', for: f.id, text: plainInput(i) }),
+            h('div', { class: 'row' }, f, can('live') ? h('button', { class: 'btn', text: 'Show', 'aria-label': 'Show ' + plainInput(i) + ' on ' + p.name,
+              onclick: function () { keep(); run(p.id, 'input', 'Input ' + inputText(p, i.code), { input: i.code }); } }) : null));
+        }),
+        h('div', { class: 'row' }, save, h('button', { class: 'btn grow', id: 'projnamescancel', text: 'Close', onclick: function () { projNaming = null; draw(JSON.parse(shown), true); } })),
+        err);
     }
     function draw(d, fresh) {
       if (!fresh) keep();
       shown = JSON.stringify(d);
       if (projEdit && !d.projectors.some(function (p) { return p.id === projEdit.id; })) projEdit = null;     // removed from another device
+      if (projNaming && !d.projectors.some(function (p) { return p.id === projNaming.id; })) projNaming = null;
+      function redraw() { draw(JSON.parse(shown)); }
       body.textContent = '';
-      body.appendChild(h('div', { class: 'k', id: 'projline', text: d.projectors.length ?
-        'Controlled over the network with PJLink, like the old Beamer On and Off buttons.' :
-        'No projectors added. Most network projectors speak PJLink; switch it on in the projector\'s network menu.' }));
-      if (d.projectors.length > 1 && can('live')) body.appendChild(h('div', { class: 'row' },
-        h('button', { class: 'btn small grow', id: 'projallon', text: 'All on', onclick: function () { run('all', 'on', 'All on'); } }),
-        h('button', { class: 'btn small grow', id: 'projalloff', text: 'All off', onclick: function () { run('all', 'off', 'All off'); } })));
-      d.projectors.forEach(function (p) {
-        var st = p.status || {}, mute = st.mute || {}, warn = warningText(p);
-        var line = function (cls, text) { return text ? [h('br'), h('span', { class: cls, text: text })] : null; };
-        if (full && projEdit && projEdit.id === p.id) return body.appendChild(editForm(p));
-        body.appendChild(h('div', { class: 'item proj-entry', 'data-id': p.id },
-          h('span', {}, p.name, h('br'), h('span', { class: 'addr', text: p.host + (p.port !== 4352 ? ':' + p.port : '') + (p.has_password ? ' · password set' : '') }),
-            line('addr proj-details', detailsText(p)), line('k proj-status', statusText(p)), line('k proj-warn', warn),
-            line('k proj-note', st.pending_input ? 'Switching to ' + inputText(p, st.pending_input) + ' when the projector is ready (up to 90 seconds)' : (st.notice ? st.notice.text : '')),
-            line('k', states[p.id])),
-          full ? h('span', { class: 'row' },
-            h('button', { class: 'btn small proj-editbtn', text: 'Edit', 'aria-label': 'Edit ' + p.name, onclick: function () {
-              keep();
-              projEdit = { id: p.id, name: p.name, host: p.host, port: String(p.port), password: '', clear: false, error: '' };
-              draw(JSON.parse(shown), true);
-              var first = document.getElementById('projeditname');
-              if (first) first.focus();
-            } }),
-            h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function () {
-              act('POST', '/api/projectors', { remove: p.id }, function (data) { draw(data); });
-            } })) : null));
-        if (!can('live')) return;
-        var buttons = [['on', 'On'], ['off', 'Off'],
-          mute.picture ? ['unmute_picture', 'Unmute picture'] : ['mute_picture', 'Mute picture'],
-          mute.sound ? ['unmute_sound', 'Unmute sound'] : ['mute_sound', 'Mute sound'],
-          ['mute', 'Mute both'], ['unmute', 'Unmute both'], ['state', 'Check'], ['identify', 'Refresh details']];
-        body.appendChild(h('div', { class: 'row wrap proj-ctl' }, buttons.map(function (a) {
-          return h('button', { class: 'btn small', text: a[1], 'aria-label': a[1] + ' ' + p.name, onclick: function () { run(p.id, a[0], a[1]); } });
-        })));
-        if (!p.inputs.length) return;
-        var sel = h('select', { class: 'text-input proj-input', 'aria-label': 'Input of ' + p.name, onchange: function () {
-          if (sel.value) run(p.id, 'input', 'Input ' + inputText(p, sel.value), { input: sel.value });
-        } }, [h('option', { value: '', text: 'Input...', selected: !st.input && !st.pending_input })].concat(p.inputs.map(function (i) {
-          return h('option', { value: i.code, text: inputText(p, i.code), selected: i.code === (st.pending_input || st.input) });
-        })));
-        body.appendChild(sel);
-        if (!full) return;
-        // Labels: their own chooser, so naming an input never switches the projector to it
-        var draft = projLabels[p.id] || { code: '', text: '' };
-        var known = p.inputs.filter(function (i) { return i.code === draft.code; })[0];
-        var which = h('select', { class: 'text-input proj-labelfor', 'data-id': p.id, 'aria-label': 'Input of ' + p.name + ' to label', onchange: function () {
-          var i = p.inputs.filter(function (x) { return x.code === which.value; })[0];
-          label.value = i ? i.label : '';
-        } }, [h('option', { value: '', text: 'Label an input...', selected: !known })].concat(p.inputs.map(function (i) {
-          return h('option', { value: i.code, text: i.name + (i.label ? ' = ' + i.label : ''), selected: !!known && i.code === draft.code });
-        })));
-        var label = h('input', { class: 'text-input proj-label', 'data-id': p.id, 'aria-label': 'Label for that input of ' + p.name, placeholder: 'Label (Matrix, Box)', maxlength: 24, value: known ? draft.text : '' });
-        body.appendChild(which);
-        body.appendChild(h('div', { class: 'row' }, label, h('button', { class: 'btn small proj-setlabel', text: 'Set label', 'aria-label': 'Set the label of that input of ' + p.name, onclick: function () {
-          if (!which.value) return say('Choose the input to label first', true);
-          act('POST', '/api/projectors', { label: { id: p.id, input: which.value, label: label.value } }, function (data) { projLabels[p.id] = null; say('Label saved'); draw(data, true); });
+      var n = d.projectors.length, live = can('live');
+      var lit = d.projectors.filter(function (p) { return /^(on|warming)/.test((p.status || {}).power || ''); }).length;
+      if (n) body.appendChild(h('div', { class: 'state', id: 'projline', text: plural(n, 'projector') + ', ' + (lit ? lit + ' on.' : 'none on.') + ' The box asks each one how it is every few seconds.' }));
+      else body.appendChild(h('div', { class: 'empty', id: 'projline', text: 'No projectors yet. On the projector, open its network menu and switch PJLink on. Then add it here.' }));
+      if (n > 1 && live) body.appendChild(h('div', { class: 'row', id: 'projall' },
+        h('button', { class: 'btn grow', id: 'projallon', text: 'All on', onclick: function (e) {
+          confirmRow('Turn on all ' + n + ' projectors?', 'Turn all on', 'Not now', function () { run('all', 'on', 'All on'); }, e.currentTarget);
+        } }),
+        h('button', { class: 'btn grow', id: 'projalloff', text: 'All off', onclick: function (e) {
+          confirmRow('Turn off all ' + n + ' projectors? They need about a minute to cool before they can come on again.', 'Turn all off', 'Keep them on', function () { run('all', 'off', 'All off'); }, e.currentTarget);
         } })));
+      var list = h('div', { class: 'list sp splitlist', id: 'projlist' });
+      d.projectors.forEach(function (p) {
+        var st = p.status || {}, mute = st.mute || {}, warn = warningText(p), silent = st.ok === false;
+        if (full && projEdit && projEdit.id === p.id) return list.appendChild(editForm(p));
+        var below = [];
+        if (live && !silent) {
+          if (p.inputs.length) {
+            var sel = h('select', { class: 'text-input proj-input', id: 'projinput-' + p.id, onchange: function () {
+              if (sel.value) run(p.id, 'input', 'Input ' + inputText(p, sel.value), { input: sel.value });
+            } }, [h('option', { value: '', text: 'Choose...', selected: !st.input && !st.pending_input })].concat(p.inputs.map(function (i) {
+              return h('option', { value: i.code, text: inputText(p, i.code), selected: i.code === (st.pending_input || st.input) });
+            })));
+            below.push(labelled('Input', sel));
+          } else {
+            below.push(h('div', { class: 'hint proj-noinputs', text: 'Inputs appear once the projector is on. Turn it on, wait for On, then tap Read inputs.' }));
+            below.push(h('div', { class: 'row' }, h('button', { class: 'btn grow proj-readinputs', text: 'Read inputs', 'aria-label': 'Read the inputs of ' + p.name, onclick: function () { run(p.id, 'identify', 'Read inputs'); } })));
+          }
+        }
+        if (full && projNaming && projNaming.id === p.id && p.inputs.length) below.push(namingPanel(p));
+        function act1(action, label) { return h('button', { class: 'btn', text: label, 'aria-label': label + ' on ' + p.name, onclick: function () { run(p.id, action, label); } }); }
+        var more = !live ? [] : [
+          silent ? null : mute.picture ? act1('unmute_picture', 'Show the picture') : act1('mute_picture', 'Blank the picture'),
+          silent ? null : mute.sound ? act1('unmute_sound', 'Unmute the sound') : act1('mute_sound', 'Mute the sound'),
+          full && p.inputs.length ? h('button', { class: 'btn proj-namebtn', text: 'Name the inputs', 'aria-label': 'Name the inputs of ' + p.name, onclick: function () {
+            keep(); projNaming = { id: p.id, texts: {} }; moreOpen = null; draw(JSON.parse(shown), true);
+          } }) : null,
+          h('button', { class: 'btn', text: 'Check now', 'aria-label': 'Check ' + p.name, onclick: function () { run(p.id, 'state', 'Check now'); } }),
+          h('button', { class: 'btn', text: 'Read details again', 'aria-label': 'Read the details of ' + p.name + ' again', onclick: function () { run(p.id, 'identify', 'Read details again'); } }),
+          full ? h('button', { class: 'btn proj-editbtn', text: 'Edit', 'aria-label': 'Edit ' + p.name, onclick: function () {
+            keep();
+            projEdit = { id: p.id, name: p.name, host: p.host, port: String(p.port), password: '', clear: false, error: '' };
+            moreOpen = null;
+            draw(JSON.parse(shown), true);
+            var first = document.getElementById('projeditname');
+            if (first) first.focus();
+          } }) : null,
+          full ? h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function (e) {
+            confirmRow('Remove ' + p.name + '? The box forgets its address, its password and the names of its inputs. The projector itself stays as it is.', 'Remove', 'Keep it', function () {
+              act('POST', '/api/projectors', { remove: p.id }, function (data) { moreOpen = null; say(p.name + ' is removed.'); draw(data, true); });
+            }, e.currentTarget);
+          } }) : null];
+        var who = detailsText(p);
+        list.appendChild(listRow({ cls: 'proj-entry', data: p.id, name: p.name, key: 'proj-' + p.id, redraw: redraw,
+          sub: (who ? who + ' · ' : '') + where(p) + (p.has_password ? ' · password set' : ''), subCls: 'proj-details',
+          state: h('div', { class: 'state proj-status' }, statusText(p), warn ? h('span', { class: 'proj-warn', text: ' · ' + warn }) : null),
+          problem: silent ? 'Not answering at ' + where(p) + '. Is it plugged in at the wall, and is PJLink switched on in its network menu?' + (st.error ? ' (The box says: ' + st.error + '.)' : '') : '',
+          note: [st.pending_input ? 'Switching to ' + inputText(p, st.pending_input) + ' when the projector is ready (up to 90 seconds).' : (st.notice ? st.notice.text : ''), states[p.id]].filter(Boolean).join(' '),
+          primary: live ? powerButton(p) : null, more: more, below: below.length ? h('div', { class: 'list sp proj-below' }, below) : null }));
       });
-      if (!full) return;
-      var name = h('input', { class: 'text-input', id: 'projname', 'aria-label': 'Projector name', placeholder: 'Name', maxlength: 40, value: projForm.name });
-      var host = h('input', { class: 'text-input mono', id: 'projhost', 'aria-label': 'Projector address', placeholder: '192.168.1.50', value: projForm.host, autocomplete: 'off' });
-      var port = h('input', { class: 'text-input mono', id: 'projport', type: 'number', min: 1, max: 65535, 'aria-label': 'Port', value: projForm.port });
-      var pw = h('input', { class: 'text-input mono', id: 'projpw', type: 'password', 'aria-label': 'PJLink password (if set on the projector)', placeholder: 'Password, if the projector has one', autocomplete: 'new-password' });
-      pw.value = projForm.password;     // the property, not an attribute: a typed password never becomes page HTML
-      name.addEventListener('input', function () { projForm.name = name.value; });
-      host.addEventListener('input', function () { projForm.host = host.value; });
-      port.addEventListener('input', function () { projForm.port = port.value; });
-      pw.addEventListener('input', function () { projForm.password = pw.value; });
-      body.appendChild(h('div', { class: 'k', text: 'Add a projector on this network (a private address only). The password is stored on the box and never shown again.' }));
-      body.appendChild(name); body.appendChild(host); body.appendChild(port); body.appendChild(pw);
-      body.appendChild(h('button', { class: 'btn on small', id: 'projadd', text: 'Add projector', onclick: function () {
-        keep();
-        act('POST', '/api/projectors', { add: { name: projForm.name || projForm.host, host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password } }, function (data) {
-          projForm = { name: '', host: '', port: '4352', password: '' }; say(''); draw(data, true); load();
-        });
-      } }));
+      var side = !full ? null : addBlock('proj', 'a projector', !n, function (cancel) {
+        var name = h('input', { class: 'text-input', id: 'projname', placeholder: 'Main wall', maxlength: 40, value: projForm.name });
+        var host = h('input', { class: 'text-input mono', id: 'projhost', placeholder: '192.168.1.50', value: projForm.host, autocomplete: 'off' });
+        var port = h('input', { class: 'text-input mono', id: 'projport', type: 'number', min: 1, max: 65535, value: projForm.port });
+        var pw = h('input', { class: 'text-input mono', id: 'projpw', type: 'password', autocomplete: 'new-password' });
+        pw.value = projForm.password;     // the property, not an attribute: a typed password never becomes page HTML
+        var err = h('div', { class: 'msg inmsg', id: 'projerr', role: 'alert' });
+        name.addEventListener('input', function () { projForm.name = name.value; });
+        host.addEventListener('input', function () { projForm.host = host.value; });
+        port.addEventListener('input', function () { projForm.port = port.value; });
+        pw.addEventListener('input', function () { projForm.password = pw.value; });
+        return h('div', { class: 'addform', id: 'projform' }, h('div', { class: 'field', text: 'Add a projector' }),
+          labelled('Name', name, 'What people in the room call it.'),
+          labelled('Address', host, 'The projector\'s IP address, from its network menu. Only a private address (such as 192.168.x.x) is taken.'),
+          labelled('Port', port, '4352 unless it was changed on the projector.'),
+          labelled('PJLink password', pw, 'Only if the projector asks for one. It is kept on the box and never shown again.'),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn on grow', id: 'projadd', text: 'Add', onclick: function () {
+              keep();
+              api('POST', '/api/projectors', { add: { name: projForm.name || projForm.host, host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password } }).then(function (r) {
+                if (!r.ok) return sayAt(err, r.data.error || 'Could not add the projector. Check the address.', true);
+                projForm = { name: '', host: '', port: '4352', password: '' }; addOpen.proj = false; say('Projector added. The box is asking it who it is.'); draw(r.data, true); load();
+              });
+            } }),
+            cancel ? h('button', { class: 'btn grow', id: 'projcancel', text: 'Cancel', onclick: function () { keep(); cancel(); } }) : null),
+          err);
+      }, function () { keep(); draw(JSON.parse(shown), true); });
+      body.appendChild(h('div', { class: 'split' + (n ? '' : ' alone') }, n ? list : null, side ? h('div', { class: 'splitside' }, side) : null));
     }
     load();
     return card;
   }
   // ---- schedule -------------------------------------------------------
   var DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  var schedForm = { time: '18:00', days: [0, 1, 2, 3, 4, 5, 6], action: 'play', file: '', preset: '', label: '' };  // survives redraws
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function blankSched() { return { id: '', time: '18:00', days: [0, 1, 2, 3, 4, 5, 6], action: 'play', file: '', loop: true, preset: '', label: '', scene: '', set: '' }; }
+  var schedForm = blankSched();  // the entry being added, or (with an id) changed; survives redraws
+  // "Every day", "Mon to Fri", "Sat, Sun", or a list
+  function daysText(days) {
+    var d = (days || []).slice().sort();
+    if (d.length === 7) return 'Every day';
+    if (d.length >= 3 && d[d.length - 1] - d[0] === d.length - 1) return DAYS[d[0]] + ' to ' + DAYS[d[d.length - 1]];
+    return d.map(function (x) { return DAYS[x]; }).join(', ');
+  }
+  function boxTimeText(d) {
+    var m = /^(\d+)-(\d+)-(\d+) (\d+):(\d+)/.exec(d.now || '');
+    if (!m) return d.now || '?';
+    return DAYS[(new Date(+m[1], +m[2] - 1, +m[3]).getDay() + 6) % 7] + ' ' + (+m[3]) + ' ' + MONTHS[+m[2] - 1] + ', ' + m[4] + ':' + m[5] + ' (' + d.timezone + ')';
+  }
   function scheduleCard() {
-    var body = h('div', { class: 'list', id: 'schedbody' });
-    var card = h('div', { class: 'card', id: 'schedcard' }, h('h2', { text: 'Schedule' }), body);
-    function save(cfg, done) {
-      api('POST', '/api/schedule', { enabled: cfg.enabled, entries: cfg.entries }).then(function (r) {
-        if (!r.ok) return say(r.data.error || 'Could not save the schedule', true);
-        say(''); draw(r.data); if (done) done();
+    var body = h('div', { class: 'list sp', id: 'schedbody' });
+    var card = h('div', { class: 'card wide', id: 'schedcard' }, h('h2', { text: 'Schedule' }), body);
+    var last = null, clock = null, sets = null;      // the last answer; the box clock's own state; the Vibes sets, when there are several
+    function redraw() { if (last) draw(last); }
+    // What each choice needs: a feature that may be switched off. The choice is then marked, and choosing it offers
+    // the switch in place.
+    var NEEDS = { vibes: ['shaders', 'vibes', 'Vibes'], scene: ['room', 'room', 'Room'], projector_on: ['projector', 'projectors', 'Projectors'], projector_off: ['projector', 'projectors', 'Projectors'] };
+    function isOff(action) { return !!NEEDS[action] && !moduleOn(NEEDS[action][0]); }
+    function save(entries, done, err) {
+      api('POST', '/api/schedule', { enabled: last.enabled, entries: entries }).then(function (r) {
+        if (!r.ok) return sayAt(err || null, (r.data.error || 'Could not save the schedule') + '. Nothing was changed.', true);
+        if (done) done();
+        draw(r.data);
       });
     }
-    function describe(e) {
-      if (e.action === 'scene') return e.time + ' · ' + e.days.map(function (d) { return DAYS[d]; }).join(' ') + ' · Scene ' + (window.pvjRoom ? window.pvjRoom.sceneName(e.scene) : e.scene);
-      var what = e.action === 'play' ? 'Play ' + e.file : e.action === 'preset' ? 'Start script ' + e.preset :
-        ({ stop: 'Stop', blackout: 'Blackout', show: 'Show screen', projector_on: 'Projectors on', projector_off: 'Projectors off', vibes: 'Start Vibes' })[e.action] || e.action;
-      return e.time + ' · ' + e.days.map(function (d) { return DAYS[d]; }).join(' ') + ' · ' + what;
-    }
-    function draw(d) {
-      body.textContent = '';
-      body.appendChild(h('div', { class: 'k', id: 'schedclock', text: 'Box clock: ' + d.now + ' (' + d.timezone + '). Times use this clock; check it before a show.' }));
-      if (!d.entries.length) body.appendChild(h('div', { class: 'k', id: 'schedempty', text: 'No entries yet.' }));
-      d.entries.forEach(function (e) {
-        var last = d.last[e.id];
-        body.appendChild(h('div', { class: 'item sched-entry' },
-          h('span', {}, (e.label ? e.label + ': ' : '') + describe(e),
-            last ? h('br') : null, last ? h('span', { class: 'k', text: 'Last run ' + last.at + (last.ok ? '' : ' failed: ' + last.message) }) : null),
-          h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + describe(e), onclick: function () {
-            save({ enabled: d.enabled, entries: d.entries.filter(function (x) { return x.id !== e.id; }) });
-          } })));
-      });
-      var time = h('input', { class: 'text-input mono', id: 'schedtime', type: 'time', 'aria-label': 'Time', value: schedForm.time });
-      time.addEventListener('input', function () { schedForm.time = time.value; });
-      var days = h('div', { class: 'row wrap', id: 'scheddays' }, DAYS.map(function (name, i) {
-        var on = schedForm.days.indexOf(i) >= 0;
-        return h('button', { class: 'btn small' + (on ? ' on' : ''), text: name, 'aria-pressed': on ? 'true' : 'false', onclick: function () {
-          var at = schedForm.days.indexOf(i);
-          if (at >= 0) schedForm.days.splice(at, 1); else schedForm.days.push(i);
+    function form(d, cancel) {
+      var f = schedForm, editing = !!f.id;
+      var err = h('div', { class: 'msg inmsg', id: 'schederr', role: 'alert' });
+      var time = h('input', { class: 'text-input mono', id: 'schedtime', type: 'time', value: f.time });
+      time.addEventListener('input', function () { f.time = time.value; });
+      function setDays(list) { f.days = list.slice(); draw(d); }
+      function same(list) { return f.days.slice().sort().join() === list.join(); }
+      var shortcuts = h('div', { class: 'row wrap', id: 'schedshort' }, [['Every day', [0, 1, 2, 3, 4, 5, 6]], ['Weekdays', [0, 1, 2, 3, 4]], ['Weekend', [5, 6]]].map(function (sc) {
+        return h('button', { class: 'btn small grow' + (same(sc[1]) ? ' on' : ''), text: sc[0], 'aria-pressed': same(sc[1]) ? 'true' : 'false', onclick: function () { setDays(sc[1]); } });
+      }));
+      var days = h('div', { class: 'row daychips', id: 'scheddays' }, DAYS.map(function (name, i) {
+        var on = f.days.indexOf(i) >= 0;
+        return h('button', { class: 'btn' + (on ? ' on' : ''), text: name, 'aria-pressed': on ? 'true' : 'false', onclick: function () {
+          var at = f.days.indexOf(i);
+          if (at >= 0) f.days.splice(at, 1); else f.days.push(i);
           draw(d);
         } });
       }));
-      var action = h('select', { class: 'text-input', id: 'schedaction', 'aria-label': 'What to do' },
-        [['play', 'Play a clip'], ['preset', 'Run a legacy start script'], ['stop', 'Stop the clip'], ['blackout', 'Blackout'], ['show', 'Show screen'],
-          ['projector_on', 'Projectors on'], ['projector_off', 'Projectors off'], ['vibes', 'Start Vibes (shaders)']].map(function (a) {
-          return h('option', { value: a[0], text: a[1], selected: a[0] === schedForm.action });
-        }));
-      var scene = window.pvjRoom ? window.pvjRoom.scheduleField(roomCtx(), action, schedForm, function () { draw(d); }) : null;
-      var file = h('select', { class: 'text-input', id: 'schedfile', 'aria-label': 'Clip to play', hidden: schedForm.action !== 'play' },
-        S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === schedForm.file }); }));
-      if (!schedForm.file && S.media.length) schedForm.file = S.media[0];
-      var preset = h('input', { class: 'text-input mono', id: 'schedpreset', 'aria-label': 'Start script name', placeholder: 'startlessonce05', value: schedForm.preset, hidden: schedForm.action !== 'preset', autocomplete: 'off' });
-      preset.addEventListener('input', function () { schedForm.preset = preset.value; });
-      action.addEventListener('change', function () { schedForm.action = action.value; file.hidden = action.value !== 'play'; preset.hidden = action.value !== 'preset'; });
-      file.addEventListener('change', function () { schedForm.file = file.value; });
-      var label = h('input', { class: 'text-input', id: 'schedlabel', 'aria-label': 'Label (optional)', placeholder: 'Label (optional)', maxlength: 40, value: schedForm.label });
-      label.addEventListener('input', function () { schedForm.label = label.value; });
-      body.appendChild(h('div', { class: 'k', text: 'Add an entry' }));
-      body.appendChild(time); body.appendChild(days); body.appendChild(action); body.appendChild(file); body.appendChild(preset); body.appendChild(label);
-      if (scene) body.insertBefore(scene, label);
-      body.appendChild(h('button', { class: 'btn on small', id: 'schedadd', text: 'Add entry', onclick: function () {
-        if (!schedForm.days.length) return say('Choose at least one day.', true);
-        var entry = { time: schedForm.time, days: schedForm.days.slice(), action: schedForm.action, label: schedForm.label };
-        if (schedForm.action === 'play') { if (!schedForm.file) return say('Upload a clip first.', true); entry.file = schedForm.file; }
-        if (schedForm.action === 'preset') { if (!schedForm.preset) return say('Type the start script name.', true); entry.preset = schedForm.preset.trim(); }
-        if (schedForm.action === 'scene') { if (!schedForm.scene) return say('Add a scene on the Room screen first.', true); entry.scene = schedForm.scene; }
-        save({ enabled: d.enabled, entries: d.entries.concat(entry) });
-      } }));
+      function opt(a) { return h('option', { value: a[0], text: a[1] + (isOff(a[0]) ? ' (' + NEEDS[a[0]][2] + ' is off)' : ''), selected: a[0] === f.action }); }
+      var action = h('select', { class: 'text-input', id: 'schedaction' },
+        [['play', 'Play a clip'], ['vibes', 'Start Vibes'], ['scene', 'Apply a Room scene'], ['projector_on', 'Projectors on'], ['projector_off', 'Projectors off'],
+          ['blackout', 'Screen to black'], ['show', 'Screen back on'], ['stop', 'Stop playing']].filter(function (a) { return a[0] !== 'scene' || !!window.pvjRoom; }).map(opt),
+        h('optgroup', { label: 'Advanced' }, opt(['preset', 'Old start script'])));
+      var scene = window.pvjRoom ? window.pvjRoom.scheduleField(roomCtx(), action, f, function () { draw(d); }) : null;
+      if (!f.file && S.media.length) f.file = S.media[0];
+      var file = h('select', { class: 'text-input', id: 'schedfile' },
+        S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === f.file }); }) : [h('option', { value: '', text: 'No clips on the box yet' })]);
+      var preset = h('input', { class: 'text-input mono', id: 'schedpreset', placeholder: 'startlessonce05', value: f.preset, autocomplete: 'off' });
+      var set = h('select', { class: 'text-input', id: 'schedset' }, [h('option', { value: '', text: 'The set that is in use then', selected: !f.set })].concat((sets || []).map(function (e) {
+        return h('option', { value: e.id, text: e.name, selected: e.id === f.set });
+      })));
+      var label = h('input', { class: 'text-input', id: 'schedlabel', placeholder: 'Opening time', maxlength: 40, value: f.label });
+      var wrap = { file: labelled('Clip', file), set: labelled('Which shaders', set), scene: scene ? labelled('Scene', scene) : null,
+        preset: labelled('Start script name', preset, 'The name of an old PocketVJ start script, such as startlessonce05.') };
+      var off = h('div', { id: 'schedoffwrap' });
+      function fit() {
+        var a = action.value;
+        wrap.file.hidden = a !== 'play';
+        wrap.preset.hidden = a !== 'preset';
+        wrap.set.hidden = a !== 'vibes' || !sets || sets.length < 2 || isOff('vibes');
+        if (wrap.scene) { wrap.scene.hidden = a !== 'scene' || isOff('scene'); scene.hidden = false; }
+        off.textContent = '';
+        if (isOff(a)) off.appendChild(offNotice('schedoff', NEEDS[a][1], NEEDS[a][2], function () { loadSets(); draw(d); }));
+      }
+      preset.addEventListener('input', function () { f.preset = preset.value; });
+      action.addEventListener('change', function () { f.action = action.value; fit(); });
+      file.addEventListener('change', function () { f.file = file.value; });
+      set.addEventListener('change', function () { f.set = set.value; });
+      label.addEventListener('input', function () { f.label = label.value; });
+      fit();
+      function done() { schedForm = blankSched(); addOpen.sched = false; moreOpen = null; }
+      return h('div', { class: 'addform', id: 'schedform' }, h('div', { class: 'field', id: 'schedformtitle', text: editing ? 'Change the entry' : 'Add an entry' }),
+        labelled('Time', time, 'By the box\'s own clock, shown above.'),
+        h('div', { class: 'fieldwrap' }, h('div', { class: 'field', text: 'Days' }), shortcuts, days),
+        labelled('What happens', action), off, wrap.file, wrap.set, wrap.scene, wrap.preset,
+        labelled('Note (optional)', label, 'A word for yourself, shown in the list.'),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn on grow', id: 'schedadd', text: editing ? 'Save changes' : 'Add', onclick: function () {
+            if (!f.days.length) return sayAt(err, 'Choose at least one day.', true);
+            if (!/^\d\d:\d\d/.test(f.time)) return sayAt(err, 'Choose a time.', true);
+            var entry = { time: f.time.slice(0, 5), days: f.days.slice(), action: f.action, label: f.label };
+            if (editing) entry.id = f.id;
+            if (f.action === 'play') { if (!f.file) return sayAt(err, 'There are no clips on the box yet. Upload one on the Media screen, or choose something else to happen.', true); entry.file = f.file; entry.loop = f.loop !== false; }
+            if (f.action === 'preset') { if (!f.preset) return sayAt(err, 'Type the start script name.', true); entry.preset = f.preset.trim(); }
+            if (f.action === 'scene') { if (!f.scene) return sayAt(err, isOff('scene') ? 'Switch Room on first, with the button above.' : 'There is no scene yet. Make one on the Room screen, or choose something else to happen.', true); entry.scene = f.scene; }
+            if (f.action === 'vibes' && f.set) entry.set = f.set;
+            save(editing ? d.entries.map(function (x) { return x.id === f.id ? entry : x; }) : d.entries.concat(entry), function () { done(); say(editing ? 'Entry changed.' : 'Entry added.'); }, err);
+          } }),
+          cancel || editing ? h('button', { class: 'btn grow', id: 'schedcancel', text: 'Cancel', onclick: function () { done(); draw(d); } }) : null),
+        err,
+        h('div', { class: 'hint', text: 'An entry runs only if the box is on at that minute. A missed entry is not caught up.' }));
     }
-    api('GET', '/api/schedule').then(function (r) {
-      if (!document.getElementById('schedcard')) return;
-      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', id: 'schedmsg', text: r.data.error || 'Not available' })); return; }
-      draw(r.data);
-    });
+    function draw(d) {
+      last = d;
+      body.textContent = '';
+      body.appendChild(h('div', { class: 'state', id: 'schedclock', text: 'Box time now: ' + boxTimeText(d) }));
+      var next = schedNextEntry(d);
+      if (next) body.appendChild(h('div', { class: 'state', id: 'schednext', text: 'Next: ' + (next.off === 0 ? 'today' : next.off === 1 ? 'tomorrow' : next.off === 7 ? 'next ' + next.day : next.day) + ' ' + next.e.time + ', ' + schedWhat(next.e) }));
+      if (clock && clock.clock_from_network === false) body.appendChild(h('div', { class: 'hint warn', id: 'schedclockwarn' },
+        h('div', { text: 'The box clock was not set from the network, so it may be wrong. Compare the time above with your own before you trust the schedule.' }),
+        clock.can_set ? h('div', { class: 'row' }, h('button', { class: 'btn', id: 'schedsetclock', text: 'Set the box clock to this phone\'s time', onclick: function () {
+          act('POST', '/api/system/clock', { epoch: Math.round(Date.now() / 1000) }, function () { say('Box clock set.'); loadClock(); refresh(); });
+        } })) : null));
+      var list = h('div', { class: 'list sp splitlist', id: 'schedlist' });
+      if (!d.entries.length) list.appendChild(h('div', { class: 'empty', id: 'schedempty', text: 'No entries yet. An entry makes something happen by itself at a set time on the days you choose: Vibes at opening time, the projectors off at night. Add the first one here.' }));
+      d.entries.slice().sort(function (x, y) { return x.time < y.time ? -1 : x.time > y.time ? 1 : Math.min.apply(null, x.days) - Math.min.apply(null, y.days); }).forEach(function (e) {
+        var ran = d.last[e.id], what = schedWhat(e) + (e.action === 'vibes' && e.set && sets ? ' (' + ((sets.filter(function (x) { return x.id === e.set; })[0] || {}).name || 'a set that was removed') + ')' : '');
+        var needs = isOff(e.action) ? NEEDS[e.action][2] + ' is switched off, so this entry will do nothing.' : '';
+        list.appendChild(listRow({ cls: 'sched-entry' + (schedForm.id === e.id ? ' editing' : ''), data: e.id, name: e.time + ' \u00b7 ' + what, key: 'sched-' + e.id, redraw: redraw,
+          state: daysText(e.days) + (e.label ? ' \u00b7 ' + e.label : ''),
+          problem: ran && !ran.ok ? 'The last run failed (' + ran.at + '): ' + ran.message : needs,
+          note: ran && ran.ok ? 'Last ran ' + ran.at : '',
+          more: [h('button', { class: 'btn', text: 'Edit', 'aria-label': 'Edit ' + e.time + ' ' + what, onclick: function () {
+            schedForm = { id: e.id, time: e.time, days: e.days.slice(), action: e.action, file: e.file || '', loop: e.loop !== false, preset: e.preset || '', label: e.label || '', scene: e.scene || '', set: e.set || '' };
+            addOpen.sched = true; moreOpen = null; draw(d);
+            var first = document.getElementById('schedtime');
+            if (first) first.focus();
+          } }),
+          h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + e.time + ' ' + what, onclick: function (ev) {
+            confirmRow('Remove ' + e.time + ' ' + what + ' (' + daysText(e.days) + ')? It will no longer happen.', 'Remove', 'Keep it', function () {
+              save(d.entries.filter(function (x) { return x.id !== e.id; }), function () { moreOpen = null; if (schedForm.id === e.id) schedForm = blankSched(); say('Entry removed.'); });
+            }, ev.currentTarget);
+          } })] }));
+      });
+      var side = addBlock('sched', 'an entry', !d.entries.length || !!schedForm.id, function (cancel) { return form(d, cancel); }, redraw);
+      body.appendChild(h('div', { class: 'split' }, list, h('div', { class: 'splitside' }, side)));
+    }
+    function loadClock() {
+      api('GET', '/api/system').then(function (r) {
+        if (!r.ok || !body.isConnected) return;
+        clock = { clock_from_network: (r.data.clock || {}).clock_from_network, can_set: !!r.data.system_actions };
+        if (clock.clock_from_network === false && !asking(body)) redraw();
+      });
+    }
+    function loadSets() {
+      if (!moduleOn('shaders')) return;
+      api('GET', '/api/shaders').then(function (r) {
+        if (!r.ok || !body.isConnected || !r.data.sets) return;
+        var had = JSON.stringify(sets);
+        sets = r.data.sets.map(function (e) { return { id: e.id, name: e.name }; });
+        var a = document.activeElement;
+        if (JSON.stringify(sets) !== had && !asking(body) && !(a && body.contains(a) && /^(INPUT|SELECT)$/.test(a.tagName))) redraw();
+      });
+    }
+    function refresh() {
+      api('GET', '/api/schedule').then(function (r) {
+        if (!document.getElementById('schedcard')) return;
+        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'schedmsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
+        draw(r.data);
+      });
+    }
+    refresh(); loadClock(); loadSets();
     return card;
   }
   // ---- network (wired) ------------------------------------------------

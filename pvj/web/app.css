@@ -380,7 +380,8 @@ details.fold { display: block; }
 .empty { font-size: 14px; line-height: 1.4; }
 .card details.fold > summary { color: var(--fg); }
 .card details.fold > .list { padding-bottom: 4px; }
-.daychips .btn { flex: 1 1 0; min-width: 40px; padding: 0 2px; }
+.daychips { gap: 4px; }
+.daychips .btn { flex: 1 1 0; min-width: 0; padding: 0; font-size: 14px; }
 .bigchoice { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; min-height: 64px; padding: 10px 12px; width: 100%; white-space: normal; }
 .bigchoice b { font-size: 18px; }
 .bigchoice span { font-weight: 400; font-size: 14px; }
@@ -395,3 +396,16 @@ table.chan .lvl { width: 36%; }
 .lacts > .btn.plain { flex: none; }
 .renamebox { border-color: var(--ln); }
 .toggle .rot { cursor: default; }
+/* A list with its Add form: one column on a phone; on a laptop the list scrolls by itself and the form sits beside it */
+.syspage .grid2 > .wide { grid-column: 1 / -1; }
+.split { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.split > * { min-width: 0; }
+.proj-below { padding-top: 4px; }
+@media (min-width: 900px) {
+  .split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 28px; align-items: start; }
+  .split.alone { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
+  .split > .splitlist { max-height: calc(100dvh - 300px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
+  .split > .splitside { position: sticky; top: 12px; }
+  .split > .splitside > .addform { border-top: 0; padding-top: 0; }
+}
+.sched-entry.editing { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }

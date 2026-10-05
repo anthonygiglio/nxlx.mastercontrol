@@ -552,6 +552,7 @@ function startServer() {
     await chip('Streams', 'Ready');
     await sys('Streams');
     // The row: one primary action (Play) and More; Remove is under More and asks first, naming the stream
+    await page.waitForSelector('.stream-entry .lacts');
     assert.deepStrictEqual(await page.$$eval('.stream-entry .lacts button', (bs) => bs.map((b) => b.textContent)), ['Play', 'More'], 'a stream row has Play and More');
     assert.strictEqual(await page.locator('#streamopen').count(), 1, 'with a stream saved the Add form is folded behind "+ Add a stream"');
     await page.click('.stream-entry .morebtn');
@@ -570,10 +571,47 @@ function startServer() {
     await sys('Schedule');
     await switchOn('Schedule');
     await page.waitForSelector('#schedclock');
+    const schedRow = (n) => `.sched-entry >> nth=${n}`;
+    const schedNames = () => page.$$eval('.sched-entry .lname', (ns) => ns.map((x) => x.textContent));
+    const schedDays = () => page.$$eval('#scheddays button[aria-pressed="true"]', (bs) => bs.map((b) => b.textContent));
+    async function removeEntry(n) {
+      await page.click(`${schedRow(n)} >> .morebtn`);
+      await page.click(`${schedRow(n)} >> button:text-is("Remove")`);
+      await page.waitForSelector('#confirmrow');
+      await page.click('#confirmyes');
+    }
+    assert(/^Box time now: (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d+ [A-Z][a-z]{2}, \d\d:\d\d \(.+\)$/.test(await page.textContent('#schedclock')), 'the box time, readable, with its zone: ' + await page.textContent('#schedclock'));
+    assert(/^No entries yet\. An entry makes something happen by itself at a set time/.test(await page.textContent('#schedempty')), 'the empty state says what an entry is for');
+    for (const id of ['schedtime', 'schedaction', 'schedlabel']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
+    assert(/An entry runs only if the box is on at that minute\. A missed entry is not caught up\./.test(await page.textContent('#schedform')), 'the form says what happens to a missed entry');
+    // What happens, in plain words; a choice whose feature is off is marked; the old start script is under Advanced
+    assert.deepStrictEqual(await page.$$eval('#schedaction option', (os) => os.map((o) => o.textContent)),
+      ['Play a clip', 'Start Vibes (Vibes is off)', 'Apply a Room scene (Room is off)', 'Projectors on (Projectors is off)', 'Projectors off (Projectors is off)',
+        'Screen to black', 'Screen back on', 'Stop playing', 'Old start script'], 'the choices of the schedule');
+    assert.strictEqual(await page.locator('#schedaction optgroup[label="Advanced"] option[value="preset"]').count(), 1, 'the old start script is under Advanced');
+    // Choosing one that is off says so and has the switch right there; it is switched on without leaving the page
+    await page.selectOption('#schedaction', 'vibes');
+    assert(/Vibes is switched off, so this will do nothing\./.test(await page.textContent('#schedoff')), 'choosing Vibes while it is off says so');
+    assert.strictEqual(await page.textContent('#schedoffon'), 'Switch Vibes on');
+    await page.click('#schedoffon');
+    await page.waitForFunction(() => !document.getElementById('schedoff') && /Vibes is switched on/.test(document.getElementById('msg').textContent));
+    assert(await moduleIsOn('shaders'), 'the button switched Vibes on in place');
+    assert.strictEqual(await page.textContent('#schedaction option[value="vibes"]'), 'Start Vibes', 'the mark is gone once it is on');
+    assert.strictEqual(await page.textContent('#syspage h1'), 'Schedule', 'still on the Schedule page');
+    // Days: three shortcuts above seven chips
+    await page.click('#schedshort button:text-is("Weekdays")');
+    assert.deepStrictEqual(await schedDays(), ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], 'Weekdays');
+    await page.click('#schedshort button:text-is("Weekend")');
+    assert.deepStrictEqual(await schedDays(), ['Sat', 'Sun'], 'Weekend');
+    await page.click('#schedshort button:text-is("Every day")');
+    assert.strictEqual((await schedDays()).length, 7, 'Every day');
     await page.selectOption('#schedaction', 'stop');
     await page.fill('#schedlabel', 'Close');
     await page.click('#schedadd');
-    await page.waitForSelector('.sched-entry:has-text("Close: 18:00")');
+    await page.waitForSelector('.sched-entry:has-text("18:00 \u00b7 Stop playing")');
+    assert.strictEqual(await page.textContent('.sched-entry .state'), 'Every day \u00b7 Close', 'the days in words, then the note');
+    await page.waitForSelector('#schednext');
+    assert(/^Next: (today|tomorrow) 18:00, Stop playing$/.test(await page.textContent('#schednext')), 'what happens next: ' + await page.textContent('#schednext'));
     assert.strictEqual(await page.locator('#schedtoggle').count(), 0, 'no second switch inside the Schedule card');
     let sched = await get('/api/schedule');
     assert(sched.enabled === true && sched.entries.length === 1, 'with no entries the switch turned the schedule on without asking, and the entry was added');
@@ -602,65 +640,180 @@ function startServer() {
     await chip('Schedule', 'Ready');
     await page.waitForSelector(`${rowOf('Schedule')} .navstate:has-text("18:00 Stop")`);    // the row shows the next one
     await sys('Schedule');
-    await page.click('.sched-entry >> button:has-text("Remove")');
+    // A second entry, earlier in the day: the list is in time order, and its days read "Mon to Fri"
+    await page.waitForSelector('.sched-entry');
+    await page.click('#schedopen');
+    await page.fill('#schedtime', '09:30');
+    await page.click('#schedshort button:text-is("Weekdays")');
+    await page.selectOption('#schedaction', 'blackout');
+    await page.click('#schedadd');
+    await page.waitForFunction(() => document.querySelectorAll('.sched-entry').length === 2);
+    assert.deepStrictEqual(await schedNames(), ['09:30 \u00b7 Screen to black', '18:00 \u00b7 Stop playing'], 'entries are sorted by time');
+    assert.strictEqual(await page.textContent(`${schedRow(0)} >> .state`), 'Mon to Fri');
+    // Edit: the same form, filled in. Saving changes that entry, keeps its id, and leaves the other one alone.
+    const schedBefore = await get('/api/schedule');
+    await page.click(`${schedRow(0)} >> .morebtn`);
+    assert.deepStrictEqual(await page.$$eval('.sched-entry .moreacts button', (bs) => bs.map((b) => b.textContent)), ['Edit', 'Remove'], 'Edit and Remove are under More');
+    await page.click(`${schedRow(0)} >> button:text-is("Edit")`);
+    await page.waitForSelector('#schedformtitle:text-is("Change the entry")');
+    assert.strictEqual(await page.inputValue('#schedtime'), '09:30', 'the form holds the entry\'s time');
+    assert.strictEqual(await page.inputValue('#schedaction'), 'blackout', 'and what it does');
+    assert.deepStrictEqual(await schedDays(), ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], 'and its days');
+    assert.strictEqual(await page.textContent('#schedadd'), 'Save changes');
+    await page.fill('#schedtime', '19:15');
+    await page.click('#scheddays button:text-is("Sat")');
+    await page.selectOption('#schedaction', 'show');
+    await page.click('#schedadd');
+    await page.waitForSelector('.sched-entry:has-text("19:15 \u00b7 Screen back on")');
+    const schedAfter = await get('/api/schedule');
+    const wasEntry = schedBefore.entries.find((e) => e.action === 'blackout'), isEntry = schedAfter.entries.find((e) => e.action === 'show');
+    assert(schedAfter.entries.length === 2 && isEntry && isEntry.id === wasEntry.id && isEntry.time === '19:15' && isEntry.days.join() === '0,1,2,3,4,5',
+      'the edit changed that entry and kept its id: ' + JSON.stringify(schedAfter.entries));
+    assert(schedAfter.entries.some((e) => e.label === 'Close' && e.action === 'stop' && e.time === '18:00'), 'the other entry is untouched by the edit');
+    assert.deepStrictEqual(await schedNames(), ['18:00 \u00b7 Stop playing', '19:15 \u00b7 Screen back on'], 'the edited entry moved to its place in time order');
+    assert.strictEqual(await page.textContent(`${schedRow(1)} >> .state`), 'Mon to Sat');
+    assert.strictEqual(await page.textContent('#schedformtitle, #schedopen'), '+ Add an entry', 'the form is folded again after the edit');
+    await onPage('Schedule');
+    // A laptop: the list on the left, the form beside it, nothing sticking out
+    await page.setViewportSize({ width: 1366, height: 800 });
+    await page.waitForFunction(() => { const l = document.getElementById('schedlist'), f = document.getElementById('schedopen'); return l && f && f.getBoundingClientRect().left > l.getBoundingClientRect().right - 2; });
+    await fitsCard('.card, #syspage', 'Schedule page on a laptop');
+    assert.strictEqual(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Schedule on a laptop is not wider than the window');
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Remove is under More, asks first and names the entry; "Keep it" removes nothing
+    await page.click(`${schedRow(1)} >> .morebtn`);
+    await page.click(`${schedRow(1)} >> button:text-is("Remove")`);
+    await page.waitForSelector('#confirmrow:has-text("Remove 19:15 Screen back on (Mon to Sat)? It will no longer happen.")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/schedule')).entries.length, 2, '"Keep it" removes nothing');
+    await page.click(`${schedRow(1)} >> button:text-is("Remove")`);
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => document.querySelectorAll('.sched-entry').length === 1);
+    await removeEntry(0);
     await page.waitForSelector('#schedempty');
     await page.selectOption('#schedaction', 'preset');
     await page.fill('#schedpreset', 'startlessonce01');
     await page.click('#schedadd');
-    await page.waitForSelector('.sched-entry:has-text("Start script startlessonce01")');
-    await page.click('.sched-entry >> button:has-text("Remove")');
+    await page.waitForSelector('.sched-entry:has-text("Old start script startlessonce01")');
+    await removeEntry(0);
+    await page.waitForSelector('#schedempty');
+    // Vibes was switched on from the schedule's form: off again, on its own page, as the rest of this test expects
+    await sys('Shaders and Vibes');
+    await switchOff('Shaders and Vibes');
+    await sys('Schedule');
     await page.waitForSelector('#schedempty');
     await onPage('Schedule');
     // Projectors: a public address is refused; the harness's fake PJLink projector (loopback, allowed there only)
-    // is added, says who it is, shows its state, lamp hours and a warning, takes an input, a label and a mute
+    // is added, says who it is, shows its state, lamp hours and a warning in its one state line, has ONE power button
+    // that follows its state, takes an input, names for its inputs and a blanked picture
     await sys('Projectors');
     await switchOn('Projectors');
     await page.waitForSelector('#projline');
+    assert.strictEqual(await page.textContent('#projline'), 'No projectors yet. On the projector, open its network menu and switch PJLink on. Then add it here.', 'the empty state says the first step');
+    assert(!/Beamer/.test(await page.textContent('#sysbody')), 'no word about the old Beamer buttons');
+    for (const id of ['projname', 'projhost', 'projport', 'projpw']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
+    assert.strictEqual(await page.textContent('#projadd'), 'Add');
     await page.fill('#projname', 'Main');
     await page.fill('#projhost', '8.8.8.8');
     await page.click('#projadd');
     await page.waitForFunction(() => /private/.test(document.getElementById('msg').textContent));
+    assert(/private/.test(await page.textContent('#projerr')), 'the refusal is under the Add button too');
     await page.fill('#projhost', '127.0.0.1');
     await page.fill('#projport', String(info.projector_ports[0]));
     await page.fill('#projpw', 'secret1');
     await page.click('#projadd');
     await page.waitForSelector('.proj-entry:has-text("password set")');
     // The password is gone from the form (page.content() does not show what an input holds, so ask the input),
-    // and no answer of the API carries it
+    // and no answer of the API carries it. With a projector in the list the form is behind "+ Add a projector".
+    await page.click('#projopen');
     if (await page.inputValue('#projpw') !== '') problems.push('the projector password is still in the form');
+    await page.click('#projcancel');
+    await page.waitForSelector('#projopen');
     const told = await page.evaluate(() => Promise.all(['/api/projectors', '/api/health', '/api/status', '/api/modules'].map((u) => fetch(u).then((r) => r.text()))));
     if (told.join(' ').includes('secret1')) problems.push('the projector password came back from the API');
     if (!told[0].includes('"has_password": true') && !told[0].includes('"has_password":true')) problems.push('the projector list did not answer: ' + told[0].slice(0, 200));
     if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page');
     await page.waitForSelector('.proj-details:has-text("NXLX Test Works FP-1")', { timeout: 15000 });
     await page.waitForSelector('.proj-status:has-text("lamp 1234 h")', { timeout: 15000 });
-    if (!/^on/i.test(await page.textContent('.proj-status'))) problems.push('the projector status does not say On: ' + await page.textContent('.proj-status'));
-    await page.waitForSelector('.proj-warn:has-text("Warning: filter")');
+    if (!/^On/.test(await page.textContent('.proj-status'))) problems.push('the projector status does not say On: ' + await page.textContent('.proj-status'));
+    await page.waitForSelector('.proj-status .proj-warn:has-text("Warning: filter")');       // the warning is in the state line
+    // One power button, from the state: it is on, so the button turns it off; the row has that and More, nothing else
+    await page.waitForSelector('.proj-power:text-is("Turn off")');
+    assert.deepStrictEqual(await page.$$eval('.proj-entry .lacts button', (bs) => bs.map((b) => b.textContent)), ['Turn off', 'More'], 'a projector row has one power button and More');
+    // Inputs: a plain hint from the PJLink kind until somebody names them; the choice applies when made
+    assert.deepStrictEqual(await page.$$eval('.proj-input option', (os) => os.map((o) => o.textContent)),
+      ['Choose...', 'RGB 1 (computer, VGA)', 'Digital 1 (HDMI or DVI)', 'Digital 2 (HDMI or DVI)'], 'unnamed inputs say what kind of socket they are');
+    assert(await page.isVisible('label[for^="projinput-"]'), 'the input choice has a visible label');
     await page.selectOption('.proj-input', '31');
-    await page.waitForSelector('.proj-status:has-text("input Digital 1")', { timeout: 15000 });
+    await page.waitForSelector('.proj-status:has-text("input Digital 1 (HDMI or DVI)")', { timeout: 15000 });
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the fake projector is not on input 31');
-    // Labels have their own chooser: naming an input that is not in use must not switch the projector to it
-    await page.selectOption('.proj-labelfor', '32');
-    await page.fill('.proj-label', 'Box');
-    await page.click('.proj-setlabel');
+    // More: the secondary actions in plain words, Remove last
+    await page.click('.proj-entry .morebtn');
+    assert.deepStrictEqual(await page.$$eval('.proj-entry .moreacts button', (bs) => bs.map((b) => b.textContent)),
+      ['Blank the picture', 'Mute the sound', 'Name the inputs', 'Check now', 'Read details again', 'Edit', 'Remove'], 'what is under More, in order');
+    // Name the inputs: one row per input, one Save names; naming an input that is not in use does not switch to it
+    await page.click('.proj-namebtn');
+    await page.waitForSelector('#projnames');
+    assert(/Naming an input does not switch the projector\./.test(await page.textContent('#projnames')), 'the naming panel says it does not switch');
+    assert.strictEqual(await page.locator('.proj-nameinput').count(), 3, 'one field per input');
+    assert(await page.isDisabled('#projnamessave'), 'no names to save yet');
+    await page.fill('.proj-nameinput[data-code="32"]', 'Box');
+    await page.fill('.proj-nameinput[data-code="31"]', 'Matrix');
+    await page.click('#projnamessave');
     await page.waitForSelector('.proj-input option:has-text("Box (Digital 2)")', { state: 'attached', timeout: 15000 });
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('naming an input switched the projector to it');
+    assert.strictEqual(await page.locator('#projnames').count(), 0, 'the naming panel closes after Save names');
+    // "Show" in the naming panel does switch, so the person can see which socket is which
+    await page.click('.proj-entry .morebtn');
+    await page.click('.proj-namebtn');
+    await page.click('button[aria-label="Show Digital 2 (HDMI or DVI) on Main"]');
+    await page.waitForSelector('.proj-status:has-text("input Box (Digital 2)")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '32') problems.push('Show did not switch the projector to that input');
+    await page.click('button[aria-label="Show Digital 1 (HDMI or DVI) on Main"]');
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
+    await page.click('#projnamescancel');
+    await page.click('.proj-entry .morebtn');
     await page.click('button[aria-label="Check Main"]');          // a fresh status, so a wrong switch would show
     await page.waitForFunction(() => /Power: on/.test(document.querySelector('.proj-entry').textContent), null, { timeout: 15000 });
-    if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('labelling an input switched the projector to it');
-    if (!/input Digital 1/.test(await page.textContent('.proj-status'))) problems.push('the status moved after labelling: ' + await page.textContent('.proj-status'));
-    await page.selectOption('.proj-labelfor', '31');
-    await page.fill('.proj-label', 'Matrix');
-    await page.click('.proj-setlabel');
-    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
-    await page.click('button[aria-label="Mute picture Main"]');
+    await page.click('button[aria-label="Blank the picture on Main"]');
     await page.waitForSelector('.proj-status:has-text("picture muted")', { timeout: 15000 });
-    await page.click('button[aria-label="Unmute picture Main"]');
+    await page.click('button[aria-label="Show the picture on Main"]');
     await page.waitForFunction(() => !/muted/.test(document.querySelector('.proj-status').textContent), null, { timeout: 15000 });
-    await page.click('button[aria-label="Refresh details Main"]');
-    await page.waitForFunction(() => /Refresh details: done/.test(document.getElementById('msg').textContent));
+    await page.click('button[aria-label="Read the details of Main again"]');
+    await page.waitForFunction(() => /Read details again: done/.test(document.getElementById('msg').textContent));
+    // Turn off asks first, in place, naming the projector and what it costs; "Keep it on" sends nothing
+    await page.click('.proj-power');
+    await page.waitForSelector('#confirmrow:has-text("Turn off Main? It needs about a minute to cool before it can come on again.")');
+    await page.click('#confirmno');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('"Keep it on" switched the projector off');
+    await page.click('.proj-power');
+    await page.click('#confirmyes');
+    await page.waitForSelector('.proj-power:text-is("Turn on")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '0') problems.push('Turn off did not switch the projector off');
+    assert(/\bon\b/.test(await page.getAttribute('.proj-power', 'class')), 'Turn on is the accent button');
+    assert(/^Off/.test(await page.textContent('.proj-status')), 'the state line says Off');
+    // Cooling down: this fake goes straight to standby, so the box's answer is given that state on its way to the
+    // page. The button waits, disabled, and says so. (Warming up is the second fake projector, further down.)
+    const cooling = async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const res = await route.fetch(), d = await res.json();
+      d.projectors.forEach((x) => { if (x.status && x.status.ok) x.status.power = 'cooling down'; });
+      await route.fulfill({ response: res, json: d });
+    };
+    await page.route('**/api/projectors', cooling);
+    await page.waitForSelector('.proj-power:text-is("Cooling down...")', { timeout: 15000 });
+    assert(await page.isDisabled('.proj-power'), 'no power button to press while it cools');
+    assert(/^Cooling down/.test(await page.textContent('.proj-status')));
+    await page.unroute('**/api/projectors', cooling);
+    await page.waitForSelector('.proj-power:text-is("Turn on")', { timeout: 15000 });
+    await page.click('.proj-power');                                 // on needs no question
+    await page.waitForSelector('.proj-power:text-is("Turn off")', { timeout: 15000 });
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '1') problems.push('Turn on did not switch the projector on');
+    await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });
     // Edit, in place: the add form filled in. Nothing to save until something changed; a refusal is said under the
     // button; the password is never in the form; a rename keeps the password and the input names.
-    await page.click('button[aria-label="Edit Main"]');
+    await page.click('button[aria-label="Edit Main"]');                 // More is still open
     await page.waitForSelector('#projedit');
     if (!(await page.isDisabled('#projeditsave'))) problems.push('Save changes can be pressed with nothing changed');
     if (await page.inputValue('#projeditpw') !== '') problems.push('the edit form has something in its password field');
@@ -691,12 +844,13 @@ function startServer() {
     if (!/password set/.test(await page.textContent('.proj-entry'))) problems.push('a rename lost the projector password');
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the fake projector moved after a rename');
     await page.waitForSelector('.proj-status:has-text("input Matrix (Digital 1)")', { timeout: 15000 });      // the label is kept, and it still answers with the kept password
+    await page.click('.proj-entry .morebtn');
     await page.click('button[aria-label="Check Main wall"]');
     await page.waitForFunction(() => /Power: on/.test(document.querySelector('.proj-entry').textContent), null, { timeout: 15000 });
     await page.click('button[aria-label="Edit Main wall"]');
     await page.fill('#projeditname', 'Main');
     await page.click('#projeditsave');
-    await page.waitForSelector('button[aria-label="Edit Main"]');
+    await page.waitForSelector('.proj-entry .lname:text-is("Main")');
     if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page after an edit');
     await onPage('Projectors');
     await sysIndex();
@@ -711,6 +865,7 @@ function startServer() {
     if ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.text()))).includes('secret1')) problems.push('the projector password came back from the API');
     // The room: the harness's second fake projector (in standby, slow to warm up), two groups, a scene tapped on the
     // Room screen, a wall's own buttons, All off with a second tap, what a guest and a presenter get, the schedule
+    await page.click('#projopen');
     await page.fill('#projname', 'Painting');
     await page.fill('#projhost', '127.0.0.1');
     await page.fill('#projport', String(info.projector_ports[1]));
@@ -834,8 +989,20 @@ function startServer() {
     await page.selectOption('#schedaction', 'scene');
     await page.click('#schedadd');
     await page.waitForSelector('.sched-entry:has-text("Scene Console night")');
-    await page.click('.sched-entry >> button:has-text("Remove")');
+    await removeEntry(0);
     await page.waitForSelector('#schedempty');
+    // A box whose clock was not set from the network says so on this page (this harness has no clock helper, so the
+    // box's answer is given that on its way to the page)
+    const noClock = async (route) => {
+      const res = await route.fetch(), d = await res.json();
+      d.clock = Object.assign({}, d.clock, { clock_from_network: false });
+      await route.fulfill({ response: res, json: d });
+    };
+    await page.route('**/api/system', noClock);
+    await sys('Schedule');
+    await page.waitForSelector('#schedclockwarn:has-text("The box clock was not set from the network, so it may be wrong.")');
+    await onPage('Schedule');
+    await page.unroute('**/api/system', noClock);
     await page.click('nav >> text=Room');
     await page.click('button[aria-label="Remove scene Console night"]');
     await page.waitForSelector('#confirmrow:has-text("Remove the scene Console night?")');
@@ -846,10 +1013,59 @@ function startServer() {
     await page.waitForSelector('#sysoff');
     await page.waitForFunction(() => !/Room/.test(document.querySelector('nav').textContent));
     await sys('Projectors');
+    // The second fake projector was switched on by the scene and is slow: it is still warming up, and says so on
+    // a button that cannot be pressed. The first one was switched off by All off.
+    const rowP = (name) => `.proj-entry:has(.lname:text-is("${name}"))`;
+    await page.waitForSelector(`${rowP('Painting')} .proj-power:text-is("Warming up...")`, { timeout: 15000 });
+    assert(await page.isDisabled(`${rowP('Painting')} .proj-power`), 'no power button to press while it warms up');
+    await page.waitForSelector(`${rowP('Main')} .proj-power:text-is("Turn on")`, { timeout: 15000 });
+    // All on and All off ask first and name the count
+    await page.click('#projalloff');
+    await page.waitForSelector('#confirmrow:has-text("Turn off all 2 projectors? They need about a minute to cool before they can come on again.")');
+    await page.click('#confirmno');
+    await page.click('#projallon');
+    await page.waitForSelector('#confirmrow:has-text("Turn on all 2 projectors?")');
+    await page.click('#confirmno');
+    if (await pjlink(info.projector_ports[0], 'secret1', 'POWR ?') !== '0') problems.push('a question that was answered no switched a projector');
+    // Laptop: the list and the Add form side by side, nothing sticking out
+    await page.setViewportSize({ width: 1366, height: 800 });
+    await page.waitForFunction(() => { const l = document.getElementById('projlist'), f = document.getElementById('projopen'); return l && f && f.getBoundingClientRect().left > l.getBoundingClientRect().right - 2; });
+    await fitsCard('.card, #syspage', 'Projectors page on a laptop');
+    assert.strictEqual(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Projectors on a laptop is not wider than the window');
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Remove is under More and asks first, naming the projector
+    await page.click(`${rowP('Painting')} .morebtn`);
     await page.click('button[aria-label="Remove Painting"]');
+    await page.waitForSelector('#confirmrow:has-text("Remove Painting? The box forgets its address, its password and the names of its inputs.")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/projectors')).projectors.length, 2, '"Keep it" removes nothing');
+    await page.click('button[aria-label="Remove Painting"]');
+    await page.click('#confirmyes');
     await page.waitForFunction(() => document.querySelectorAll('.proj-entry').length === 1);
-    await page.click('.proj-entry >> button:has-text("Remove")');
+    // A projector that does not answer (nothing listens at this port): the row says what to check, and the one
+    // button is Try again
+    await page.click('#projopen');
+    await page.fill('#projname', 'Ghost');
+    await page.fill('#projhost', '127.0.0.1');
+    await page.fill('#projport', '1');
+    await page.click('#projadd');
+    await page.waitForSelector(`${rowP('Ghost')} .problem`, { timeout: 20000 });
+    assert(/^Not answering at 127\.0\.0\.1:1\. Is it plugged in at the wall, and is PJLink switched on in its network menu\?/.test(await page.textContent(`${rowP('Ghost')} .problem`)),
+      'a silent projector says what to check: ' + await page.textContent(`${rowP('Ghost')} .problem`));
+    assert.strictEqual(await page.textContent(`${rowP('Ghost')} .proj-power`), 'Try again');
+    await page.click(`${rowP('Ghost')} .proj-power`);
+    await page.waitForSelector(`${rowP('Ghost')} .problem`, { timeout: 20000 });
+    await onPage('Projectors');
+    await page.click(`${rowP('Ghost')} .morebtn`);
+    await page.click('button[aria-label="Remove Ghost"]');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => document.querySelectorAll('.proj-entry').length === 1);
+    await page.click('.proj-entry .morebtn');
+    await page.click('button[aria-label="Remove Main"]');
+    await page.click('#confirmyes');
     await page.waitForFunction(() => !document.querySelector('.proj-entry'));
+    await page.waitForSelector('#projline:has-text("No projectors yet")');
+    assert(await page.isVisible('#projname'), 'an empty list has the Add form open');
     // Sync and video wall: switch the module on, be a server, set a wall tile, back to off
     // This step failed twice in CI only. If it fails again it says what the form held, what the message was, what is
     // saved, and every /api/sync request the page made with its answer.
@@ -1820,7 +2036,7 @@ function startServer() {
     await presenter.click('.navrow:has-text("Projectors")');
     await presenter.waitForSelector('#projline');
     assert.strictEqual(await presenter.locator('.switch').count(), 0, 'a presenter gets no switch');
-    assert.strictEqual(await presenter.locator('#projadd').count(), 0, 'and no form to add a projector');
+    assert.strictEqual(await presenter.locator('#projadd, #projopen').count(), 0, 'and no form to add a projector');
     await presenter.click('#sysback');
     await presenter.waitForSelector('#sysindex');
     await liveCtx.close();

@@ -379,8 +379,9 @@
   // The schedule card's "Apply a Room scene": one more action and a chooser for the scene. `redraw` is called
   // once the scene names are known, so entries show a name and not an id.
   function scheduleField(c, action, form, redraw) {
+    // The schedule's own list has the choice (marked when Room is off); this adds only the scene to choose.
     if (!c.moduleOn('room')) return null;
-    action.appendChild(c.h('option', { value: 'scene', text: 'Apply a Room scene', selected: form.action === 'scene' }));
+    if (!action.querySelector('option[value="scene"]')) action.appendChild(c.h('option', { value: 'scene', text: 'Apply a Room scene', selected: form.action === 'scene' }));
     var ids = Object.keys(names);
     if (!names[form.scene]) form.scene = ids.length ? ids[0] : '';
     var pick = c.h('select', { class: 'text-input', id: 'schedscene', 'aria-label': 'Scene to apply', hidden: form.action !== 'scene' },
