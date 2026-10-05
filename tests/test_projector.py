@@ -799,10 +799,15 @@ class MonitorTest(unittest.TestCase):
         self.mon.stagger = 0.4
         a, _ = self.add()
         b, _ = self.add()
+        started = time.monotonic()
         self.mon.apply()
-        self.assertTrue(wait_for(lambda: any("POWR ?" in r for r in b.received)))
+        self.assertTrue(wait_for(lambda: any("POWR ?" in r for r in a.received) and any("POWR ?" in r for r in b.received)))
         first = lambda f: [t for r, t in zip(f.received, f.times) if "POWR ?" in r][0]
-        self.assertGreater(first(b) - first(a), 0.3)
+        # The second projector's first check waits its turn, 0.4 s after the checks were started. It is measured
+        # from that start. It used to be measured from the first projector's first check ("more than 0.3 s
+        # later"), but a projector is asked who it is before its first check, and on a loaded runner that took the
+        # first one long enough to bring the two within 0.3 s of each other (0.295 and 0.248 s in CI).
+        self.assertGreaterEqual(first(b) - started, 0.4)
 
     def test_the_input_list_is_read_once_the_projector_is_on(self):
         fake, e = self.add(standby_answers=False, slow=True)

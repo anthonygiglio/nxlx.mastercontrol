@@ -131,7 +131,8 @@ Looked at together on 2026-10-05 in pull request #86 (not merged when this was w
 | Browser test: a staff device not seeing the painting wall "Warming up" (once, 2026-10-04) | Not explained. The step's diagnostic and the report of every open page print the state. |
 | A `test` job that sat in the unit tests for 35 minutes (once, controller-lights) | Not explained and not seen again in 189 runs of that step. The step ends after 20 minutes with every thread's stack. |
 | A `panel-ui` job twenty minutes in "Install mpv and a browser" (once, 2026-10-05) | That runner's package mirror was slow (about 50 kB a second); nothing of ours. Every job of `pvj.yml` has a time limit now and every install step ten minutes (#86): rerun it. |
-| `test_projectors_are_not_all_asked_at_once` (once: 0.295 s where more than 0.3 was wanted) | Not looked at. |
+| `test_projectors_are_not_all_asked_at_once` (twice: 0.295 and 0.248 s where more than 0.3 was wanted) | Cause shown and the test fixed (#86): it measured the gap between two projectors' first checks, which a slow "who are you" narrows; it now measures the stagger itself. |
+| `tests.test_shaderlive_gpu` `test_time_goes_on_across_a_change_of_a_value_and_of_the_speed`: "no reply from mpv" to a screenshot (once, 2026-10-05, Python 3.9, the GLSL 1.40 step, run 37339188136 attempt 3) | Not explained. The control socket waits 2 seconds; the speed had just been set to 0. |
 | `test_no_secret_is_in_it` (once, on the Mac: the PIN's digits inside a byte count) | Not fixed (LESSONS). |
 
 When a browser step fails, the job's log has, after the `FAILED:` line, what every open page showed (screen, message line, cursor, the elements the step named, the whole screen's text) and the box's last answers to it. Read that first. The server's request log, with times, is in the same job log. The two `test` jobs no longer cancel each other, so both logs are there.
