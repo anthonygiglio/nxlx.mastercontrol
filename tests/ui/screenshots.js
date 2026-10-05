@@ -355,12 +355,17 @@ function startServer() {
       }
       try {                                                   // a module that is off: its page says what it does, and one button
         await api('POST', '/api/modules/inputs-srt', { enabled: false });
-        await page.click('nav >> text=Live');
-        await sys('Streams');
+        await page.reload();                                  // the panel reads which modules are on when it loads
+        await page.waitForSelector('.pads');
+        await page.click('nav.tabs button:text-is("System")');
+        await page.waitForSelector('#sysindex');
+        await page.click('#nav-streams');
         await page.waitForSelector('#sysswitchon', { timeout: 8000 });
         await mock(device, 'system-page-off');
-      } catch (e) { failures.push('mock-up ' + device + ' system-page-off: ' + e.message.split('\n')[0]); }
+      } catch (e) { failures.push('mock-up ' + device + ' system-page-off: ' + e.message.split('\n').slice(0, 3).join(' | ')); }
       await api('POST', '/api/modules/inputs-srt', { enabled: true });
+      await page.reload();
+      await page.waitForSelector('.pads');
       try {                                                   // the Room screen, as staff see it
         await page.click('nav >> text=Room');
         await page.waitForSelector('#roomscenes', { timeout: 8000 });
