@@ -276,6 +276,8 @@ class ThemeTest(unittest.TestCase):
                 if depth == 0 or (depth == 1 and at_media):
                     if sel.startswith("@font-face"):
                         faces += 1
+                    elif sel.startswith("@keyframes signal-"):
+                        pass      # an animation named for the style: only a scoped rule can use it
                     elif not sel.startswith("@media"):
                         unscoped += [part.strip() for part in sel.split(",") if not part.strip().startswith(scope)]
                 if depth == 0:

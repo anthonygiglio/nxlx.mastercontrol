@@ -461,9 +461,10 @@ function startServer() {
       .then((r) => { if (r.some((x) => !x.length)) throw new Error('a typeface did not load'); return document.fonts.ready.then(() => true); })).catch((e) => t.notes.push('the fonts: ' + e.message.split('\n')[0])));
     // The whole screen with the tab bar at its foot (fixed, it would lie across the middle of a tall page)
     const wholeOf = async (pg, f) => {
-      await pg.evaluate(() => { const b = document.querySelector('.tabs'); if (b) b.style.setProperty('position', 'static', 'important'); });
+      // (the same for the message line, which Signal shows as a toast fixed above the tab bar)
+      await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.setProperty('position', 'static', 'important'); b.style.setProperty('animation', 'none', 'important'); } }); });
       try { await pg.locator('.shell').first().screenshot({ path: f }); } finally {
-        await pg.evaluate(() => { const b = document.querySelector('.tabs'); if (b) b.style.removeProperty('position'); }).catch(() => {});
+        await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.removeProperty('position'); b.style.removeProperty('animation'); } }); }).catch(() => {});
       }
     };
     const signalRound = async (suffix, pick) => {

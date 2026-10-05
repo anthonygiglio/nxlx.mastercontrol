@@ -74,6 +74,11 @@ from pvj import midi as midi_mod  # noqa: E402
 _midi_dir = os.path.join(tmp, "midi")
 os.makedirs(_midi_dir)
 _midi_names = {"/dev/snd/midiC7D0": "nanoKONTROL2", "/dev/snd/midiC8D0": "keys"}
+# A third, plugged in only while <midi_dir>/plug-launchpad exists: a Novation Launchpad Mini, whose profile has lights
+# with a brightness. For the pictures and checks of a style (tests/ui/signal-pages.js); the steps of the browser test
+# that count controllers never make that file.
+_midi_pad = "/dev/snd/midiC9D0"
+_midi_names[_midi_pad] = "Mini"
 _midi_pipes = {}
 
 
@@ -123,8 +128,9 @@ def _midi_light_open(path):
 
 
 api.midi.stop()
-api.midi = midi_mod.MidiHub(api, api.settings, open_fn=_midi_open, namer=lambda p: _midi_names[p], describer=lambda p: _midi_names[p],
-                            lister=lambda: sorted(_midi_names) if os.path.exists(os.path.join(_midi_dir, "plug")) else [], scan_interval=0.3,
+api.midi = midi_mod.MidiHub(api, api.settings, open_fn=_midi_open, namer=lambda p: _midi_names[p], describer=lambda p: "Launchpad Mini" if p == _midi_pad else _midi_names[p],
+                            lister=lambda: [p for p in sorted(_midi_names) if os.path.exists(os.path.join(_midi_dir, "plug-launchpad" if p == _midi_pad else "plug"))],
+                            scan_interval=0.3,
                             light_open_fn=_midi_light_open)
 api.midi.apply()
 threading.Thread(target=_midi_feed, daemon=True).start()

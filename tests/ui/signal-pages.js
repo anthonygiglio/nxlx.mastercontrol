@@ -58,7 +58,7 @@ async function setUp(t) {
   const page = t.page;
   for (const id of MODULES) await post(t, '/api/modules/' + id, { enabled: true });
   for (const f of ['midi', 'dmx', 'osc']) await post(t, '/api/' + f, { enabled: true });
-  try { fs.writeFileSync(path.join(t.info.midi_dir, 'plug'), ''); } catch (e) { t.notes.push('the fake controller could not be plugged in'); }
+  try { for (const f of ['plug', 'plug-launchpad']) fs.writeFileSync(path.join(t.info.midi_dir, f), ''); } catch (e) { t.notes.push('the fake controllers could not be plugged in'); }
 
   // clips: a short name, a long one with no space in it (it must wrap, never widen the page), pictures
   const haveClips = (await get(t, '/api/media')).files || [];
@@ -250,7 +250,7 @@ function pages() {
     await tab(t.page, 'Media');
     await has(t, t.page, '#uploadbtn');
     await soft(t, 'the upload', t.page.setInputFiles('#filepick', { name: 'New loop (take 2).mkv', mimeType: 'video/x-matroska', buffer: Buffer.alloc(200000, 7) }));
-    await soft(t, 'Info', t.page.locator('.item:has-text("loop-a.mkv") button:text-is("Info")').first().click({ timeout: 8000 }));
+    await soft(t, 'Info', t.page.locator('.item:has-text("intro.mkv") button:text-is("Info")').first().click({ timeout: 8000 }));      // a real clip: the box reads it
     await soft(t, 'what Info says', t.page.waitForFunction(() => { const m = document.getElementById('msg'); return m && m.textContent && !/^Reading/.test(m.textContent); }, null, { timeout: 8000 }));
   }, { light: true });
   add('media-usb', 'clips', async (t) => {              // a USB stick, as the box lists one, and the question before a file is deleted
@@ -311,19 +311,30 @@ function pages() {
     await sys(t.page, 'Shaders and Vibes');
     await has(t, t.page, '#shadercontrols', 15000);
   }, { light: true });
-  add('midi', 'system', async (t) => {                  // the drawn controller with its lights on
+  add('midi', 'system', async (t) => {                  // the drawn controllers with their lights on: the switch, the brightness, Test lights
     await sys(t.page, 'MIDI controller');
     await has(t, t.page, '.ctlgrid', 15000);
-    const lights = t.page.locator('.ctlcard .ctllights').first();
-    if (await lights.count() && (await lights.getAttribute('aria-checked')) !== 'true') await soft(t, 'Lights', lights.click({ timeout: 5000 }));
+    for (let i = 0; i < 4; i++) {                       // each card that has lights: switched on (the page redraws after each)
+      const off = t.page.locator('.ctlcard .ctllights[aria-checked="false"]').first();
+      if (!(await off.count())) break;
+      await soft(t, 'Lights', off.click({ timeout: 5000 }));
+      await t.page.waitForTimeout(700);
+    }
     await has(t, t.page, '.ctlcard .ctllights[aria-checked="true"]');
+    await has(t, t.page, '.ctlcard .ctlbright');
   }, { light: true });
-  add('midi-teach', 'system', async (t) => {            // one control chosen: what it does, and the choice of another action
+  add('midi-control', 'system', async (t) => {          // one control chosen: what it does, and the choice of another action
     await sys(t.page, 'MIDI controller');
     await has(t, t.page, '.ctlgrid', 15000);
     await t.page.locator('.ctlgrid .ctl').nth(3).click();
     await has(t, t.page, '#ctldetail');
   });
+  add('midi-teach', 'system', async (t) => {            // teaching: the box waits for a control to be moved
+    await sys(t.page, 'MIDI controller');
+    await has(t, t.page, '#midilearn', 15000);
+    await t.page.click('#midilearn');
+    await has(t, t.page, '#midilearning');
+  }, { done: async (t) => { await soft(t, 'the box went on waiting for a control', t.page.click('#midicancel', { timeout: 3000 })); } });
   add('network-wifi', 'system', async (t) => {          // Wi-Fi: the networks the box can see (names come from strangers, and keep their letters)
     await sys(t.page, 'Network');
     await has(t, t.page, '#netiface');
@@ -408,14 +419,15 @@ async function check(pg, o) {
       seen.add(el);
       const cs = getComputedStyle(el);
       if (parseFloat(cs.fontSize) < 13) out.push('text of ' + cs.fontSize + ': ' + name(el));
-      // a word in capitals that does not fit is cut by the browser in the middle, which a width check does not see
-      if (cs.textTransform === 'uppercase' && !el.closest('.ctlscroll')) {
+      // a word that does not fit (in capitals, or on a button) is cut by the browser in the middle, which a width check does not see
+      const caps = cs.textTransform === 'uppercase';
+      if ((caps || el.closest('button.btn')) && !el.closest('.ctlscroll')) {
         const word = text.split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
         const room = el.clientWidth ? el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) : el.getBoundingClientRect().width;
         const need = word.length > 1 ? fits(el, word, room) : 0;
         if (need) out.push('a word is cut (' + need + ' px in ' + Math.round(room) + '): ' + name(el));
         // capitals are for titles, actions and short labels: never a sentence
-        if (/[.!?]\s+\S/.test(text) || text.split(/\s+/).length > 8) out.push('a sentence in capitals: ' + name(el));
+        if (caps && (/[.!?]\s+\S/.test(text) || text.split(/\s+/).length > 8)) out.push('a sentence in capitals: ' + name(el));
       }
       let faded = false;
       for (let e = el; e; e = e.parentElement) if (e.disabled || parseFloat(getComputedStyle(e).opacity) < 1) faded = true;
