@@ -129,6 +129,7 @@ Looked at together on 2026-10-05 in pull request #86 (not merged when this was w
 | Browser test, Shaders page: `#shadernow #detailhigh` not seen (once) | A lost update of the shader settings was found and fixed (#86). That it was the cause that one time is inferred from the request times. The step prints its state if it happens again. |
 | Browser test: a staff device not seeing the painting wall "Warming up" (once, 2026-10-04) | Not explained. The step's diagnostic and the report of every open page print the state. |
 | A `test` job that sat in the unit tests for 35 minutes (once, controller-lights) | Not explained and not seen again in 189 runs of that step. The step ends after 20 minutes with every thread's stack. |
+| A `panel-ui` job twenty minutes in "Install mpv and a browser" (once, 2026-10-05) | That runner's package mirror was slow (about 50 kB a second); nothing of ours. Every job of `pvj.yml` has a time limit now and every install step ten minutes (#86): rerun it. |
 | `test_projectors_are_not_all_asked_at_once` (once: 0.295 s where more than 0.3 was wanted) | Not looked at. |
 | `test_no_secret_is_in_it` (once, on the Mac: the PIN's digits inside a byte count) | Not fixed (LESSONS). |
 

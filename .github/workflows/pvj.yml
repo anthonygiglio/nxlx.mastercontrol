@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+# Every job has an end, and every step that downloads has an earlier one. On 2026-10-05 a panel-ui job spent more
+# than twenty minutes in "Install mpv and a browser" (usually 45 seconds): that runner got its packages at about
+# 50 kB a second. With no limit of its own a job may go on for six hours. A step that runs out of time fails with
+# what it had printed, and a rerun lands on another runner.
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -27,6 +31,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install mpv
+        timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
       - name: Unit tests (real mpv, headless)
         # About nine minutes. After twenty, SIGABRT: faulthandler prints every thread's stack and the step fails.
@@ -45,6 +50,7 @@ jobs:
     # not wait for the long test job. Three ways of drawing: OpenGL ES, desktop OpenGL, and desktop OpenGL 3.1 with
     # GLSL 1.40, the context mpv makes on a Raspberry Pi 4. A software GPU: nothing here says how fast a board is.
     runs-on: ubuntu-latest
+    timeout-minutes: 30       # about ten
     strategy:
       fail-fast: false
       matrix:
@@ -62,12 +68,14 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install mpv, a virtual display and Mesa
+        timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
       - name: Effects on the real mpv (a skip here is a failure)
         run: env ${{ matrix.env }} PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_effects_gpu
 
   shellcheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck the installer and image scripts (strict)
@@ -78,15 +86,18 @@ jobs:
     # over an old shared folder, restarts, a crash and a reinstall (D45). The runner is thrown away afterwards.
     # Not a test of a Raspberry Pi: no display, and not the box's systemd.
     runs-on: ubuntu-latest
+    timeout-minutes: 15       # about two
     steps:
       - uses: actions/checkout@v4
       - name: Install mpv
+        timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
       - name: Real install as root and the owners of the runtime folders
         run: sudo PVJ_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
 
   panel-ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 30       # about seven
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -96,6 +107,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install mpv and a browser
+        timeout-minutes: 10
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
           mkdir /tmp/pw && cd /tmp/pw && npm init -y >/dev/null && npm install playwright@1.56.1 pngjs@7.0.0 ag-psd@31.0.2
