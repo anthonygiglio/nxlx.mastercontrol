@@ -373,18 +373,29 @@
   // seconds still dropped 1.3), so nothing here repeats by itself.
   function previewBlock() {
     var img = h('img', { id: 'preview', alt: 'What the screen was showing', hidden: true });
-    var note = h('div', { class: 'k', id: 'previewmsg', hidden: true });
+    var note = h('div', { class: 'hint', id: 'previewmsg', hidden: true });
     var btn = h('button', { class: 'btn small', id: 'previewbtn', text: 'Take snapshot' });
-    function done() { btn.disabled = false; }
-    img.addEventListener('load', function () { note.hidden = true; img.hidden = false; done(); });
-    img.addEventListener('error', function () { img.hidden = true; note.hidden = false; note.textContent = 'No picture: the player may be idle or not running.'; done(); });
+    function tell(text) { img.hidden = true; note.hidden = false; note.textContent = text; btn.disabled = false; }
+    img.addEventListener('load', function () { note.hidden = true; img.hidden = false; btn.disabled = false; });
+    img.addEventListener('error', function () { tell('No picture: the player gave something that is not a picture. Try again in a moment.'); });
+    // Asked with fetch, so the answer's status can be read: an idle player is not an error. The picture is then
+    // shown from a data: address (the page's policy allows no blob: pictures).
     btn.addEventListener('click', function () {
       btn.disabled = true; note.hidden = false; note.textContent = 'Taking a snapshot...';
-      img.src = '/api/preview.jpg?t=' + Date.now();
+      fetch('/api/preview.jpg?t=' + Date.now(), { credentials: 'same-origin' }).then(function (r) {
+        if (r.status === 409) return tell('Nothing is on the screen right now.');
+        if (!r.ok) return tell('No picture: the player is not running or could not make one. Try again in a moment.');
+        return r.blob().then(function (blob) {
+          var reader = new FileReader();
+          reader.onload = function () { img.src = reader.result; };
+          reader.onerror = function () { tell('No picture: it could not be read. Try again.'); };
+          reader.readAsDataURL(blob);
+        });
+      }, function () { tell('No picture: no connection to the box.'); });
     });
     return h('div', { class: 'card', id: 'previewcard' },
       h('div', { class: 'row between' }, h('div', { class: 'k', text: 'Screen' }), btn),
-      h('div', { class: 'k', text: 'A snapshot briefly stalls playback, so it only happens when you tap.' }),
+      h('div', { class: 'hint', text: 'A snapshot briefly stalls playback, so it only happens when you tap.' }),
       img, note);
   }
   // Position: a slider that follows the clip, and jumps where it is released. While a finger is on it, the

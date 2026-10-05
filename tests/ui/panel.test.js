@@ -103,6 +103,17 @@ function startServer() {
     await page.click('#stop');
     await page.waitForFunction(() => /Player idle/.test(document.getElementById('np').textContent), null, { timeout: 8000 });
 
+    // A snapshot with nothing playing is not an error: the Screen card says so in plain words. (An earlier answer
+    // is remembered by the box for a few seconds, so this asks until the box has looked again.)
+    for (let tries = 0; ; tries++) {
+      await page.waitForFunction(() => !document.getElementById('previewbtn').disabled);
+      await page.click('#previewbtn');
+      try {
+        await page.waitForFunction(() => { const m = document.getElementById('previewmsg'); return m && !m.hidden && m.textContent === 'Nothing is on the screen right now.'; }, null, { timeout: 2500 });
+        break;
+      } catch (e) { if (tries >= 4) throw new Error('an idle snapshot does not say that nothing is on the screen: ' + await page.textContent('#previewmsg')); }
+    }
+    assert(!(await page.isVisible('#preview')), 'no broken picture for an idle snapshot');
     // Pad endings: the pad editor offers loop, once, and hold
     await page.click('text=Edit pads');
     await page.click('.pad >> nth=1');
