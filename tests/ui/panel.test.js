@@ -2468,7 +2468,9 @@ function startServer() {
       assert.strictEqual(await page.locator('#fxlist [data-effect]').count(), fxs.length, 'every filter has a row');
       assert.strictEqual(await page.textContent('#fxname'), 'No effect is on');
       assert.strictEqual(await page.textContent('#fxchip'), 'Off');
-      assert(/Light work/.test(await page.textContent('#fxlist [data-effect="fx-vignette.fs"]')), 'a filter says how much work it is');
+      assert(/Medium work on a Pi 4: holds a 720p clip, a 1080p clip at half resolution/.test(await page.textContent('#fxlist [data-effect="fx-vignette.fs"]')), 'a filter says how much work it is, as a Pi 4 measured it');
+      assert(/Light work on a Pi 4: holds a 1080p clip/.test(await page.textContent('#fxlist [data-effect="isf-duotone.fs"]')), 'the one filter that held a 1080p clip at full size says so');
+      assert(/measured on a Raspberry Pi 4/.test(await page.textContent('#fxworknote')), 'the list says where its words about work come from');
       assert(/from the isf-files pack, by VIDVOX/.test(await page.textContent('#fxlist [data-effect="isf-mirror.fs"]')), 'somebody else\'s filter says whose it is');
       assert(/moves by itself/.test(await page.textContent('#fxlist [data-effect="fx-kaleido.fs"]')), 'a filter that moves by itself says so');
       // the list by name and by weight
