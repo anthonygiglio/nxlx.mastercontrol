@@ -796,13 +796,25 @@ class MonitorTest(unittest.TestCase):
         self.assertIsNone(self.entry(e["id"]).get("details"))
 
     def test_projectors_are_not_all_asked_at_once(self):
+        # Three projectors, 0.4 s apart: the first is checked at once, the second no sooner than 0.4 s after the
+        # checks were started, the third no sooner than 0.8 s. Each is measured from that start. (It used to be the
+        # gap between the first two, "more than 0.3 s": a projector is asked who it is before its first check, and
+        # on a loaded runner that brought the two within 0.295 and 0.248 s in CI.) Here each already has its
+        # details, so nobody is asked who it is and the first one's check has nothing to wait for. One delay for
+        # all, or for all but the first, does not pass.
         self.mon.stagger = 0.4
-        a, _ = self.add()
-        b, _ = self.add()
+        fakes = [self.add()[0] for _ in range(3)]
+        with self.settings.lock:
+            self.settings.data["projectors"] = [dict(p, details={"name": "known", "read": 1}) for p in self.settings.data["projectors"]]
+        started = time.monotonic()
         self.mon.apply()
-        self.assertTrue(wait_for(lambda: any("POWR ?" in r for r in b.received)))
-        first = lambda f: [t for r, t in zip(f.received, f.times) if "POWR ?" in r][0]
-        self.assertGreater(first(b) - first(a), 0.3)
+        self.assertTrue(wait_for(lambda: all(any("POWR ?" in r for r in f.received) for f in fakes), 6))
+        first = lambda f: [t for r, t in zip(f.received, f.times) if "POWR ?" in r][0] - started
+        a, b, c = (first(f) for f in fakes)
+        self.assertEqual([r for f in fakes for r in f.received if "NAME" in r], [])     # nobody was asked who it is
+        self.assertLess(a, 0.4)
+        self.assertGreaterEqual(b, 0.4)
+        self.assertGreaterEqual(c, 0.8)
 
     def test_the_input_list_is_read_once_the_projector_is_on(self):
         fake, e = self.add(standby_answers=False, slow=True)
@@ -1564,6 +1576,91 @@ class ApiTest(ServerBase):
             st, body, _ = self.call("POST", "/api/system/settings/import?confirm=import", raw=json.dumps(out["file"]).encode(), token=self.full)
             self.assertEqual(st, 200, body)
             self.assertEqual(self.settings.data["projectors"], before)
+
+    def test_an_input_change_refused_as_the_edit_lands_says_so_even_while_the_old_check_is_still_ending(self):
+        """The test below failed now and then with 'ERR3' in place of 'stopped'. When the edit lands while the old
+        worker's thread is in the middle of a status check, the projector has no worker for a moment (the old thread
+        takes it over when it is done), and set_input looked for the worker before it looked at the address: the
+        person was told "unavailable" about an address they had just replaced. Here the old check is held open, so
+        it is so every time."""
+        self.fast()
+        other = FakeProjector("pw1", inputs=("11", "33"), name="The other one")
+        self.addCleanup(other.close)
+        pid = self.add()[1]["projectors"][0]["id"]
+        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+        held, real = dict(self.stored()), self.api._pjlink
+        inside, let_go, mine = threading.Event(), threading.Event(), threading.current_thread()
+        self.addCleanup(let_go.set)
+
+        def link(entry):
+            lk = real(entry)
+            if entry["port"] == self.fake.port and threading.current_thread() is not mine:
+                state = lk.state
+
+                def slow_state():                                       # the background check, held in the middle
+                    inside.set()
+                    let_go.wait(5)
+                    return state()
+                lk.state = slow_state
+            elif entry["port"] == self.fake.port:
+                send = lk.set_input
+
+                def set_input(code):
+                    try:
+                        return send(code)                               # the old projector: ERR3
+                    finally:
+                        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "port": other.port}})[0], 200)
+                        self.assertTrue(self.api.projectors.status(pid)["waiting"])     # no worker: the old thread still has it
+                lk.set_input = set_input
+            return lk
+        with mock.patch.object(self.api, "_pjlink", link):
+            self.assertTrue(inside.wait(5))
+            with self.assertRaises(projector.ProjectorError) as e:
+                self.api.projectors.set_input(held, "31")
+            self.assertEqual(e.exception.code, "stopped")
+            self.assertIn("address was changed", str(e.exception))
+            let_go.set()
+            self.assertTrue(wait_for(lambda: (self.projector()["details"] or {}).get("name") == "The other one"))
+        self.assertIsNone(self.projector()["status"]["pending_input"])
+        self.assertEqual([r for r in other.received if "INPT" in r and "?" not in r], [])       # the new one got no input command
+
+    def test_an_input_change_refused_as_the_projector_is_removed_or_switched_off_gets_no_retry(self):
+        """Review of #86, finding 1. The projector is taken out of the settings (or the module is switched off) while
+        it is answering "unavailable", and its worker has not been stopped yet (the settings are saved before the
+        workers are matched to them). The refusal comes back as it is; nothing is kept to try again for a
+        projector that is no longer there."""
+        self.fast()
+        pid = self.add()[1]["projectors"][0]["id"]
+        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
+        real, saved = self.api._pjlink, list(self.settings.data["projectors"])
+
+        def gone_from_the_settings():
+            self.settings.data["projectors"] = []
+
+        def module_off():
+            self.api.registry.set_enabled("projector", False)
+        for vanish, back in ((gone_from_the_settings, lambda: self.settings.data.__setitem__("projectors", saved)),
+                             (module_off, lambda: self.api.registry.set_enabled("projector", True))):
+            held = dict(saved[0])
+
+            def link(entry):
+                lk = real(entry)
+                send = lk.set_input
+
+                def set_input(code):
+                    try:
+                        return send(code)                               # in standby: ERR3
+                    finally:
+                        vanish()                                        # and no apply(): the worker is still there
+                lk.set_input = set_input
+                return lk
+            with mock.patch.object(self.api, "_pjlink", link):
+                with self.assertRaises(projector.ProjectorError) as e:
+                    self.api.projectors.set_input(held, "31")
+            self.assertEqual(e.exception.code, "ERR3", vanish.__name__)
+            self.assertIsNotNone(self.api.projectors._workers.get(pid), "the worker was still there, as the finding says")
+            self.assertIsNone(self.api.projectors.status(pid)["pending_input"], vanish.__name__)
+            back()
 
     def test_an_input_change_asked_before_an_edit_goes_nowhere_after_it(self):
         """Review finding 2. The input was chosen from the old projector's list. Queued behind the edit it is not

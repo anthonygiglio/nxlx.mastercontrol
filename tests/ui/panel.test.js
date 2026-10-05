@@ -45,6 +45,78 @@ function startServer() {
   const { p: server, info } = await startServer();
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
   let failed = false;
+  // For a failure that comes and goes: every page the test opens is kept, with the box's last answers to it, and
+  // when a step fails report() prints what each open page showed at that moment (the screen, the message line, the
+  // field in use, the cards the failed step named) and those answers. Nothing here changes what the test does.
+  const opened = [];
+  const noteAnswer = (who) => (res) => {
+    const req = res.request(), url = res.url(), at = url.indexOf('/api/');
+    if (at < 0) return;
+    const entry = { t: Date.now(), line: req.method() + ' ' + url.slice(at) + ' ' + res.status() };
+    const quiet = req.method() === 'GET' && res.status() < 400 && /\/api\/status$/.test(url);     // asked every second
+    if (quiet) { who.polls = (who.polls || 0) + 1; return; }
+    if (req.method() !== 'GET') entry.line += ' sent ' + String(req.postData() || '').slice(0, 300);
+    who.answers.push(entry);
+    if (who.answers.length > 30) who.answers.shift();
+    if (res.status() >= 400) res.text().then((t) => { entry.line += ' answered ' + t.slice(0, 300); }, () => {});
+  };
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async (options) => {
+    const c = await newContext(options);
+    const who = { n: opened.length + 1, answers: [], page: null };
+    opened.push(who);
+    c.on('page', (pg) => { who.page = who.page || pg; });
+    c.on('response', noteAnswer(who));
+    return c;
+  };
+  const within = (promise, ms) => Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(null), ms))]);
+  async function report(error) {
+    const ids = Array.from(new Set((String(error && error.message).match(/#[A-Za-z][\w-]*/g) || []).map((x) => x.slice(1)))).slice(0, 8);
+    const now = Date.now();
+    for (const who of opened) {
+      const pg = who.page;
+      if (!pg || pg.isClosed()) continue;
+      let seen = null;
+      try {
+        seen = await within(pg.evaluate((names) => {
+          const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + ' [...]' : t; };
+          const text = (el) => (el ? cut(el.innerText || el.textContent, 1500) : null);
+          const one = (q) => document.querySelector(q);
+          const screen = one('.shell > .screen') || one('#app > *');
+          const active = document.activeElement;
+          const tab = one('nav.tabs [aria-current="page"]');
+          return {
+            screen: screen ? (screen.id || screen.className) + (screen.dataset && screen.dataset.page ? ' (' + screen.dataset.page + ')' : '') : 'none',
+            tab: tab ? tab.textContent : null,
+            title: text(one('h1')),
+            msg: one('#msg') ? one('#msg').className + ': ' + cut(one('#msg').textContent, 300) : null,
+            asking: text(one('#confirmrow')),
+            offline: Array.from(document.querySelectorAll('.offline, #offline')).some((el) => !el.hidden),
+            focus: active && active !== document.body ? (active.id ? '#' + active.id : active.tagName.toLowerCase()) + ('value' in active ? ' = ' + JSON.stringify(cut(active.value, 80)) : '') : 'nothing',
+            named: names.map((id) => {
+              const el = document.getElementById(id);
+              if (!el) return '#' + id + ': not in the page';
+              const box = el.getBoundingClientRect(), card = el.closest('.card');
+              return '#' + id + ': ' + (box.width && box.height ? 'shown' : 'hidden or empty') + (el.disabled ? ', disabled' : '') +
+                ('value' in el && el.tagName !== 'BUTTON' ? ', value ' + JSON.stringify(cut(el.value, 80)) : '') + ', text ' + JSON.stringify(cut(el.innerText || el.textContent, 300)) +
+                (card && card !== el ? ' | its card' + (card.id ? ' #' + card.id : '') + ': ' + JSON.stringify(cut(card.innerText, 900)) : '');
+            }),
+            all: text(screen),
+          };
+        }, ids), 5000);
+      } catch (e) { seen = null; }
+      console.error('--- page ' + who.n + (who.n === 1 ? ' (the full-access phone)' : '') + ' at ' + pg.url().replace(/#.*/, '#...') + ' ---');
+      if (!seen) console.error('  the page did not answer');
+      else {
+        console.error('  screen: ' + seen.screen + ' | tab: ' + seen.tab + ' | title: ' + seen.title + ' | focus: ' + seen.focus + (seen.offline ? ' | OFFLINE banner shown' : ''));
+        console.error('  message line: ' + seen.msg + (seen.asking ? ' | a question is open: ' + seen.asking : ''));
+        seen.named.forEach((line) => console.error('  ' + line));
+        console.error('  the whole screen: ' + seen.all);
+      }
+      console.error('  the last answers of the box (seconds before the failure; ' + (who.polls || 0) + ' status polls left out):');
+      who.answers.slice(-25).forEach((a) => console.error('    -' + ((now - a.t) / 1000).toFixed(2) + ' ' + a.line));
+    }
+  }
   try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
@@ -1265,12 +1337,81 @@ function startServer() {
     await page.waitForFunction((b) => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces[0].vertices[0][0] < b[0] - 100), before);
     await page.selectOption('#mapstep', '50');
     const x0 = await page.evaluate(() => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces[0].vertices[0][0]));
+    // The card is drawn again by the answer to every change. drawnAgain() marks the line at its top and waits until
+    // that line is a new one (as the Sync step does): the step goes on from what the panel shows, not from what
+    // the box already knows. (The box knows a change a few milliseconds before its answer is back.)
+    const markMap = () => page.evaluate(() => { document.getElementById('mapstatus').dataset.seen = '1'; });
+    const drawnAgain = () => page.waitForFunction(() => { const l = document.getElementById('mapstatus'); return l && !l.dataset.seen; }, null, { timeout: 8000 });
+    await markMap();
     await page.click('#mapright');
     await page.waitForFunction((x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - (x + 50)) < 0.01), x0);
-    await page.fill('#mapsetname', 'Main stage');
-    await page.click('#mapsave');
+    await drawnAgain();
+    // A name is typed while the card is drawn again. This is the failure that came and went here ("Main stage" not
+    // seen in 30 s): the answer to the nudge arrived between the moment the name field was chosen and the typing,
+    // the card was rebuilt, the letters went nowhere and Save sent an empty name, which the box refused. Here the
+    // answer is held back for a moment, as on a slow link, so it happens every time: the field must keep the
+    // cursor, the letters typed so far and the place in them, and take the rest.
+    let holdBack = true;
+    const slowAnswer = async (route) => {
+      if (holdBack && route.request().method() === 'POST') await new Promise((r) => setTimeout(r, 700));
+      await route.continue();
+    };
+    await page.route('**/api/mapper', slowAnswer);
+    await markMap();
+    await page.click('#mapleft');                 // back to where it was; its answer comes 700 ms later
+    await page.focus('#mapsetname');
+    await page.keyboard.type('Min');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');       // the cursor is after the M
+    await drawnAgain();
+    const typing = await page.evaluate(() => { const a = document.activeElement, f = document.getElementById('mapsetname'); return { cursorIn: a ? a.id : '', text: f ? f.value : null, at: f ? f.selectionStart : null }; });
+    assert.deepStrictEqual(typing, { cursorIn: 'mapsetname', text: 'Min', at: 1 }, 'a redraw of the mapping card took #mapsetname away from the person typing in it: ' + JSON.stringify(typing));
+    await page.keyboard.type('a');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' stage');
+    holdBack = false;
+    await page.unroute('**/api/mapper', slowAnswer);
+    assert.strictEqual(await page.inputValue('#mapsetname'), 'Main stage', 'what was typed across the redraw is all there');
+    await page.waitForFunction((x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - x) < 0.01), x0);     // the nudge back was taken
+    // Save with the cursor left in the name field, as on Safari and iOS, where a tapped button does not take it
+    // (Chromium's click would): the button's own click() presses it and moves nothing.
+    const press = (id) => page.evaluate((x) => document.getElementById(x).click(), id);
+    const nameField = () => page.evaluate(() => { const a = document.activeElement, f = document.getElementById('mapsetname'); return { cursorIn: a ? a.id : '', text: f ? f.value : null }; });
+    await press('mapsave');
     await fitsCard('#mapcard', 'Mapping card');
     await page.waitForSelector('#mapsets >> option:has-text("Main stage")', { state: 'attached' });
+    // Review of #86, finding 2b. The saved name is gone from the field, and stays gone through later redraws: put
+    // back by a redraw it would be shown while a second Save sent an empty name, which the box refuses.
+    assert.deepStrictEqual(await nameField(), { cursorIn: 'mapsetname', text: '' }, 'after Save the name field #mapsetname is empty and still has the cursor: ' + JSON.stringify(await nameField()));
+    for (const arrow of ['mapright', 'mapleft']) {
+      await markMap();
+      await press(arrow);
+      await drawnAgain();
+      assert.deepStrictEqual(await nameField(), { cursorIn: 'mapsetname', text: '' }, 'a redraw after Save does not put the saved name back into #mapsetname: ' + JSON.stringify(await nameField()));
+    }
+    // Finding 2a. The surface's name field belongs to the chosen surface. Another surface is chosen by an answer
+    // that arrives while a new name is being typed (held back here; it could as well come from another phone):
+    // the field then holds the new surface's name, never the text typed for the old one, or Rename would give
+    // that text to the wrong surface. The cursor stays.
+    holdBack = true;
+    await page.route('**/api/mapper', slowAnswer);
+    await markMap();
+    await press('mapadd-triangle');               // its answer, 700 ms later, chooses the new triangle
+    await page.focus('#mapname');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' on the left');
+    assert.strictEqual(await page.inputValue('#mapname'), 'Quad on the left');
+    await drawnAgain();
+    holdBack = false;
+    await page.unroute('**/api/mapper', slowAnswer);
+    const chosen = await page.evaluate(() => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces.filter((x) => x.id === d.edit.selected)[0]));
+    assert.strictEqual(chosen.type, 'triangle', 'the new triangle is the chosen surface');
+    const surfaceName = await page.evaluate(() => { const a = document.activeElement, f = document.getElementById('mapname'); return { cursorIn: a ? a.id : '', text: f ? f.value : null }; });
+    assert.deepStrictEqual(surfaceName, { cursorIn: 'mapname', text: chosen.name }, 'the name field #mapname shows the surface that is chosen now, not what was typed for the one before: ' + JSON.stringify(surfaceName));
+    assert.deepStrictEqual((await get('/api/mapper')).surfaces.map((x) => x.name).sort(), ['Quad', chosen.name].sort(), 'nothing was renamed');
+    await page.click(`.map-entry:has-text("${chosen.name}") >> button:has-text("Remove")`);
+    await page.waitForFunction(() => document.querySelectorAll('.map-entry').length === 1);
+    await page.waitForSelector('.map-entry:has-text("Quad")');
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
     if (shots) await page.screenshot({ path: path.join(shots, '7-mapper.png'), fullPage: true });
@@ -1927,7 +2068,20 @@ function startServer() {
       assert(above, 'this board offers a height above its usual one');
       if (saved <= render.default) assert.strictEqual(await page.locator('#detailhigh').count(), 0, 'nothing is said while the detail is the usual one or lower');
       assert.strictEqual(await post('/api/shaders', { action: 'config', height: above }), 200);
-      await page.waitForSelector('#shadernow #detailhigh', { timeout: 15000 });
+      try {
+        await page.waitForSelector('#shadernow #detailhigh', { timeout: 15000 });
+      } catch (e) {
+        // Timed out here once (2026-10-05) with the box holding the new height and the page asking every 3 seconds.
+        // The page does not draw a card again while a field in it has the cursor or a question waits in it: say
+        // which of those it was, or that it was neither.
+        const why = await page.evaluate(() => fetch('/api/shaders').then((r) => r.json()).then((d) => {
+          const a = document.activeElement, slot = document.querySelector('.slot-now'), q = document.getElementById('confirmrow'), pick = document.getElementById('shaderheight');
+          return { boxHeight: d.config.height, usual: d.render.default, chooserShows: pick ? pick.value : null, pageThere: !!document.getElementById('shaderpage'),
+            cursorIn: a && a !== document.body ? a.tagName.toLowerCase() + '#' + a.id : 'nothing', cursorInTheNowCard: !!(a && slot && slot.contains(a)),
+            question: q ? q.textContent.slice(0, 80) : null, questionInTheNowCard: !!(q && slot && slot.contains(q)), line: (document.getElementById('shaderline') || {}).textContent };
+        }));
+        throw new Error(e.message.split('\n')[0] + ' | the line about a high picture detail did not come (#shadernow #detailhigh): ' + JSON.stringify(why));
+      }
       assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is ' + above + ' lines. This box is happier at ' + render.default + '.');
       assert.strictEqual(await page.textContent('#detailuse'), 'Use ' + render.default);
       await onPage('Shaders and Vibes');
@@ -2686,6 +2840,7 @@ function startServer() {
   } catch (e) {
     failed = true;
     console.error('FAILED:', e.message, (e.stack || '').split('\n').filter(function (l) { return /panel.test.js/.test(l); }).slice(0, 2).join(' | '));
+    try { await report(e); } catch (x) { console.error('(no report of the pages: ' + x.message + ')'); }
   } finally {
     await browser.close();
     server.kill();

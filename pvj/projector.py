@@ -579,11 +579,17 @@ class Monitor:
                     raise
                 now = time.monotonic()
                 with self.lock:
-                    w = self._workers.get(pid)
-                    if w is None or w.stop.is_set():
-                        raise
-                    if moved():                        # the edit landed while the old address was being asked: no retry at the new one
+                    # The address first. Just after an edit the projector can be without a worker for a moment (the
+                    # old one's thread is still ending a check and takes it over then): looking for the worker
+                    # first told the person "unavailable" about an address they had just replaced.
+                    # The entry is read once, here: a projector removed, or a module switched off, a moment ago is
+                    # out of the settings before its worker is stopped, and must not be given a retry.
+                    cur = self._entry(pid)
+                    if cur is not None and moved():    # the edit landed while the old address was being asked: no retry at the new one
                         raise gone
+                    w = self._workers.get(pid)
+                    if cur is None or w is None or w.stop.is_set():    # removed, or switched off: the refusal as it came
+                        raise
                     w.pending = {"input": code, "until": now + self.retry_for, "next": now + self.retry_every}
                     w.wake.set()
                 return {"pending": True}

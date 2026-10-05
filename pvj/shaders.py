@@ -1366,20 +1366,25 @@ class Engine:
             self._save(cfg)
         elif action == "config":
             cfg = self.config()
-            if "dwell" in body:
-                d = body["dwell"]
-                if isinstance(d, bool) or not isinstance(d, (int, float)) or d != d or not DWELL_MIN <= d <= DWELL_MAX:
-                    raise ApiError(400, "each shader stays %d to %d seconds" % (DWELL_MIN, DWELL_MAX))
-                cfg["dwell"] = int(d)
-            if "vary" in body:
-                if not isinstance(body["vary"], bool):
-                    raise ApiError(400, "vary must be true or false")
-                cfg["vary"] = body["vary"]
-            if "height" in body:
-                if isinstance(body["height"], bool) or body["height"] not in HEIGHTS:
-                    raise ApiError(400, "height must be one of %s" % ", ".join(str(h) for h in HEIGHTS))
-                cfg["height"] = body["height"]
+            self._config_keys(cfg, body)
             self._save(cfg)
         else:
             raise ApiError(400, "action must be upload, delete, vibes or config")
         return self.state()
+
+    @staticmethod
+    def _config_keys(cfg, body):
+        """Put the "config" action's dwell, vary and height into `cfg`, each checked. Raises ApiError."""
+        if "dwell" in body:
+            d = body["dwell"]
+            if isinstance(d, bool) or not isinstance(d, (int, float)) or d != d or not DWELL_MIN <= d <= DWELL_MAX:
+                raise ApiError(400, "each shader stays %d to %d seconds" % (DWELL_MIN, DWELL_MAX))
+            cfg["dwell"] = int(d)
+        if "vary" in body:
+            if not isinstance(body["vary"], bool):
+                raise ApiError(400, "vary must be true or false")
+            cfg["vary"] = body["vary"]
+        if "height" in body:
+            if isinstance(body["height"], bool) or body["height"] not in HEIGHTS:
+                raise ApiError(400, "height must be one of %s" % ", ".join(str(h) for h in HEIGHTS))
+            cfg["height"] = body["height"]
