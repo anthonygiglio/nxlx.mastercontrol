@@ -12,21 +12,45 @@
   var ui = { filter: '', weight: 'all', open: '', teach: '', taught: '', upload: null, more: false };
   var X = { data: null, at: 0, busy: false, key: '' };          // the box's last answer, shared by the strip and the card
   var strip = { shape: '', amount: null };
-  var card = { head: '', ctl: '', pre: '', list: '', add: '', ctls: [], half: null };
+  var card = { head: '', det: '', ctl: '', pre: '', list: '', add: '', ctls: [] };
   var midi = { data: null, asked: false };
   var teachers = [], learnTimer = null, soonTimer = null;
   var UPPER = { rgb: 'RGB', lgg: 'LGG', eq: 'EQ', h: 'H', v: 'V' };
   var WORK = { light: 'Light work', medium: 'Medium work', heavy: 'Heavy work' };
   // How much work an effect is: for a bundled one what a Raspberry Pi 4 measured (the largest clip it held 30 frames
-  // a second over, at full size and with Half resolution), for an upload the count from its text.
+  // a second over at full size, and the lines it has to work at to hold a 1080p clip), for an upload the count from
+  // its text.
   function work(s) {
     var words = WORK[s.weight] || '', m = s.measured;
     if (!m || m.board !== 'pi4') return words;
-    var full = m.holds ? 'holds a ' + m.holds + 'p clip' : 'drops frames over a 720p clip';
-    var half = m.holds_half && m.holds_half !== m.holds ? ', a ' + m.holds_half + 'p clip at half resolution' : '';
-    return words + ' on a Pi 4: ' + full + half;
+    var full = m.holds ? 'holds a ' + m.holds + 'p clip at full size' : 'drops frames over a 720p clip';
+    var capped = m.works_at && m.holds !== 1080 ? ', a 1080p clip at ' + m.works_at + ' lines' : '';
+    return words + ' on a Pi 4: ' + full + capped;
   }
-  var LOAD = { ok: 'Running smoothly', tight: 'Close to the limit', heavy: 'Too heavy with this clip: try Half resolution, or another effect' };
+  var LOAD = { ok: 'Running smoothly', tight: 'Close to the limit', heavy: 'Too heavy with this clip' };
+  var DETAIL = { auto: 'Automatic', full: 'Full', 540: '540 lines', 720: '720 lines' };
+  // What to do about an effect that is too heavy: a lower Effect detail while there is one that would make the
+  // filter's picture smaller, else another effect or a smaller clip.
+  function heavyWords(on) {
+    var w = on.working;
+    if (w && w.lower) return 'Too heavy with this clip: lower Effect detail to ' + w.lower + ' lines, or try another effect';
+    return 'Too heavy with this clip, also at the lowest Effect detail: try another effect or a smaller clip';
+  }
+  // One plain line: the size the effect works at for the clip that plays, or what the setting would do.
+  function workingWords(d) {
+    var det = d.detail || {}, w = d.on && d.on.working;
+    if (!w) {
+      if (det.value === 'full') return 'Effects work at the clip\'s full size.';
+      if (det.value !== 'auto') return 'Effects work at ' + det.value + ' lines at most. A smaller clip is left as it is.';
+      if (!det.auto) return 'Automatic works at full size on this box: nothing was measured on this board.';
+      return 'Automatic works at ' + det.auto.lines + ' lines at most on this box' +
+        (det.auto.other < det.auto.lines ? ' (' + det.auto.other + ' for the heaviest effects and for ones you add)' : '') + '. A smaller clip is left as it is.';
+    }
+    var lead = w.auto ? 'Automatic: working at ' : 'Working at ';
+    if (!w.clip) return lead + (w.lines ? w.lines + ' lines at most.' : 'the clip\'s full size.');
+    if (w.scaled) return lead + Math.min(w.width, w.height) + ' lines for this ' + w.clip.lines + 'p clip.';
+    return lead + 'full size for this ' + w.clip.lines + 'p clip' + (w.lines ? ' (it is within ' + w.lines + ' lines).' : '.');
+  }
   var WHERE = { path: '/api/effects/values', gone: 'Not sent: that effect is not on any more.' };
 
   function kit() { return window.pvjShaders && window.pvjShaders.kit; }
@@ -234,13 +258,13 @@
   function mixCard(c) {
     var h = c.h;
     var box = h('div', { class: 'card fxcard', id: 'fxcard' }, h('div', { class: 'k sent', text: 'Effects (beta): a filter over what plays' }));
-    card.head = card.ctl = card.pre = card.list = card.add = '';
-    card.ctls = []; card.half = null; teachers = [];
+    card.head = card.det = card.ctl = card.pre = card.list = card.add = '';
+    card.ctls = []; teachers = [];
     if (!c.moduleOn('shaders') || !kit()) {
       box.appendChild(h('div', { class: 'hint', id: 'fxmsg', text: 'Off. Switch it on under System, Shaders and Vibes (beta).' }));
       return box;
     }
-    var stage = h('div', { class: 'fxstage' }, h('div', { id: 'fxhead' }), h('div', { id: 'fxctl' }), h('div', { id: 'fxpre' }));
+    var stage = h('div', { class: 'fxstage' }, h('div', { id: 'fxhead' }), h('div', { id: 'fxdetail' }), h('div', { id: 'fxctl' }), h('div', { id: 'fxpre' }));
     var filter = h('input', { class: 'text-input', id: 'fxfilter', type: 'search', placeholder: 'Find an effect by name', 'aria-label': 'Find an effect by name', value: ui.filter });
     filter.addEventListener('input', function () { ui.filter = filter.value; if (X.data) drawList(c, X.data); });
     var weights = h('div', { class: 'seg', id: 'fxweight', role: 'radiogroup', 'aria-label': 'Show effects by how much work they are' },
@@ -253,7 +277,7 @@
           } });
       }));
     var lib = h('div', { class: 'fxlib' }, h('div', { class: 'field', text: 'Effects' }), filter, weights,
-      h('div', { class: 'hint', id: 'fxworknote', text: 'How much work an effect is was measured on a Raspberry Pi 4 for the ones that come with the box, and is counted from its text for one you add. It grows with the size of the clip: Half resolution is the way out.' }),
+      h('div', { class: 'hint', id: 'fxworknote', text: 'How much work an effect is was measured on a Raspberry Pi 4 for the ones that come with the box, and is counted from its text for one you add. It grows with the size of the clip: Effect detail makes the effect work on a smaller copy of the picture.' }),
       h('div', { class: 'list', id: 'fxlist' }), h('div', { id: 'fxadd' }));
     box.appendChild(h('div', { class: 'fxgrid' }, stage, lib));
     if (X.data) setTimeout(function () { if (box.isConnected && X.data) drawCard(c, X.data, box); }, 0);
@@ -264,13 +288,14 @@
   function drawCard(c, d, box) {
     if (!document.getElementById('fxhead')) return;
     drawHead(c, d);
+    drawDetail(c, d);
     drawControls(c, d);
     drawPresets(c, d);
     drawList(c, d);
     drawAdd(c, d);
   }
   function loadWords(on) {
-    var parts = [LOAD[on.load] || 'Watching the load...'];
+    var parts = [on.load === 'heavy' ? heavyWords(on) : (LOAD[on.load] || 'Watching the load...')];
     if (typeof on.drops_per_second === 'number' && on.drops_per_second > 0) parts.push(kit().round(on.drops_per_second) + ' dropped frames a second.');
     if (on.pass_ms) parts.push(on.pass_ms + ' ms a frame.');
     return parts.join(' ');
@@ -312,18 +337,45 @@
       if (p) p.hidden = !on.pending;
     }
   }
+  // Effect detail: the size an effect works at, one setting for the box (full access changes it; it applies on tap).
+  function drawDetail(c, d) {
+    var h = c.h, el = document.getElementById('fxdetail'), det = d.detail;
+    if (!el || !det) return;
+    var full = c.can('full');
+    var shape = JSON.stringify([det.value, det['default'], det.choices, full]);
+    if (shape !== card.det && !busyIn(el)) {
+      card.det = shape;
+      el.textContent = '';
+      var name = function (v) { return DETAIL[v] + (v === 'auto' && det['default'] === 'auto' ? ' (recommended on this box)' : ''); };
+      var pick = null;
+      if (full) {
+        pick = h('select', { class: 'text-input', id: 'fxdetailpick', 'aria-label': 'Effect detail' }, det.choices.map(function (v) {
+          return h('option', { value: String(v), text: name(v) });
+        }));
+        pick.value = String(det.value);
+        pick.addEventListener('change', function () {
+          var v = pick.value;
+          pick.blur();
+          send(c, '/api/effects/config', { detail: v === 'auto' || v === 'full' ? v : Number(v) }).then(function (r) { if (!r.ok) { card.det = ''; drawAll(c); } });
+        });
+      }
+      el.appendChild(h('div', { class: 'row between wrap' }, h('div', { class: 'field', text: 'Effect detail' }),
+        pick || h('span', { id: 'fxdetailnow', text: name(det.value) })));
+      el.appendChild(h('div', { class: 'hint', id: 'fxworking', role: 'status' }));
+      el.appendChild(h('div', { class: 'hint', id: 'fxdetailnote', text: 'A lower detail is lighter for the box. The picture is softer, and fine patterns (dots, lines, tiles) look larger when an effect works at a lower size.' }));
+    }
+    var line = document.getElementById('fxworking'), words = workingWords(d);
+    if (line && line.textContent !== words) line.textContent = words;
+  }
   function drawControls(c, d) {
     var h = c.h, k = kit(), el = document.getElementById('fxctl'), on = d.on, s = on ? rowOf(d, on.id) : null, live = c.can('live');
     var shape = JSON.stringify(s && live ? [s.id, s.speed_max, d.faster, midiOk(c), s.inputs.map(function (i) { return [i.name, i.type, i.min, i.max, i.values, i.labels, i['default']]; })] : null);
     if (shape === card.ctl) {
-      if (on && !on.pending) {
-        k.syncControls(card.ctls, on);
-        if (card.half && card.half.ch.free()) card.half.sw.setAttribute('aria-checked', on.controls.half ? 'true' : 'false');
-      }
+      if (on && !on.pending) k.syncControls(card.ctls, on);
       return;
     }
     if (busyIn(el)) return;
-    card.ctl = shape; card.ctls = []; card.half = null;
+    card.ctl = shape; card.ctls = [];
     el.textContent = '';
     if (!s || !live) return;
     var rig = rigFor(c), list = h('div', { class: 'ctls', id: 'fxctls' });
@@ -335,24 +387,17 @@
         send(c, '/api/effects/values', { id: s.id, values: values, controls: { amount: 1, speed: 1, half: false } });
         card.ctl = '';
       } })));
-    // Amount first: the mix between the picture as it is and the filtered one, which every effect has
+    // Amount first: the mix between the picture as it is and the filtered one, which every effect has. While the
+    // effect works at a lower size than the clip (Effect detail), the mix is made at that size: at 0% the picture is
+    // the clip itself, and from the first step above 0% all of it is the slightly softer picture. The hint says so.
     var ta = teacher(c, 'effect_amount', 'Amount', 'a knob or a fader');
     add({ common: 'amount', ctl: numberControl(c, rig, { key: 'amount', id: 'fx-amount', label: 'Amount', min: 0, max: 1, value: on.controls.amount, reset: 1, text: percent,
-      extra: ta && ta.btn, hint: '0% is the picture as it is, 100% the effect in full' }) }, ta);
+      extra: ta && ta.btn, hint: '0% is the picture as it is, 100% the effect in full. At a lower Effect detail the picture turns slightly softer as soon as Amount leaves 0%.' }) }, ta);
     if (typeof s.speed_max === 'number') {
       add({ common: 'speed', ctl: numberControl(c, rig, { key: 'speed', id: 'fx-speed', label: 'Speed', min: 0, max: s.speed_max, value: Math.min(on.controls.speed, s.speed_max), reset: 1, text: times,
         hint: s.speed_max <= 1 ? 'This effect moves by itself' + (s.flashes ? ' and may flash' : '') + ': it is kept at its own pace or slower. (Faster is the owner\'s switch on the Shaders page.)'
           : 'Faster than 1× is allowed on this box: mind people who are sensitive to flashing light.' }) });
     }
-    var hnote = k.noteLine(), hch = rig.channel('c:half', function (v) { return { controls: { half: v } }; }, hnote.say);
-    var sw = h('button', { class: 'switch', id: 'fx-half', role: 'switch', 'aria-checked': on.controls.half ? 'true' : 'false', 'aria-label': 'Half resolution', onclick: function () {
-      var want = sw.getAttribute('aria-checked') !== 'true';
-      sw.setAttribute('aria-checked', want ? 'true' : 'false');
-      hch.send(want);
-    } });
-    card.half = { ch: hch, sw: sw };
-    list.appendChild(h('div', { class: 'ctl ctl-bool', 'data-common': 'half' }, h('div', { class: 'ctlrow' },
-      h('span', { class: 'ctllabel grow', text: 'Half resolution (lighter for the box, a softer picture)' }), hnote.el, sw)));
     var knob = k.knobOf(s.inputs);
     s.inputs.forEach(function (i) {
       var n = knob[i.name], v = on.values[i.name];

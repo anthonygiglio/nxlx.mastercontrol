@@ -2413,6 +2413,7 @@ class Api:
             ("POST", "/api/effects/preset"): ("live", self.effects.api_preset),
             ("POST", "/api/effects/presets"): ("full", self.effects.api_presets),
             ("POST", "/api/effects/library"): ("full", self.effects.api_library),
+            ("POST", "/api/effects/config"): ("full", self.effects.api_config),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),

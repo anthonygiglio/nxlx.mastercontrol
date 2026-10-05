@@ -2357,7 +2357,7 @@ function startServer() {
       assert.strictEqual(await page.locator('#fxlist [data-effect]').count(), fxs.length, 'every filter has a row');
       assert.strictEqual(await page.textContent('#fxname'), 'No effect is on');
       assert.strictEqual(await page.textContent('#fxchip'), 'Off');
-      assert(/Medium work on a Pi 4: holds a 720p clip, a 1080p clip at half resolution/.test(await page.textContent('#fxlist [data-effect="fx-vignette.fs"]')), 'a filter says how much work it is, as a Pi 4 measured it');
+      assert(/Medium work on a Pi 4: holds a 720p clip at full size, a 1080p clip at (720|540) lines/.test(await page.textContent('#fxlist [data-effect="fx-vignette.fs"]')), 'a filter says how much work it is, as a Pi 4 measured it');
       assert(/Light work on a Pi 4: holds a 1080p clip/.test(await page.textContent('#fxlist [data-effect="isf-duotone.fs"]')), 'the one filter that held a 1080p clip at full size says so');
       assert(/measured on a Raspberry Pi 4/.test(await page.textContent('#fxworknote')), 'the list says where its words about work come from');
       assert(/from the isf-files pack, by VIDVOX/.test(await page.textContent('#fxlist [data-effect="isf-mirror.fs"]')), 'somebody else\'s filter says whose it is');
@@ -2380,8 +2380,42 @@ function startServer() {
       await fxName('fxname', 'Vignette');
       assert.strictEqual(await page.textContent('#fxchip'), 'On');
       assert((await get('/api/status')).player.path, 'the clip is still what plays');
-      assert.deepStrictEqual(await page.$$eval('#fxctls > .ctl', (els) => els.slice(0, 2).map((e) => e.getAttribute('data-common'))), ['amount', 'half'],
-        'Amount is the first control, then Half resolution (a filter that does not move has no Speed)');
+      assert.deepStrictEqual(await page.$$eval('#fxctls > .ctl', (els) => els.slice(0, 2).map((e) => e.getAttribute('data-common') || 'input')), ['amount', 'input'],
+        'Amount is the first control, then the filter\'s own (a filter that does not move has no Speed)');
+      assert.strictEqual(await page.locator('#fx-half').count(), 0, 'the Half resolution switch is gone: Effect detail took its place');
+      // Effect detail: one setting for the box, the size an effect works at. It applies on tap and is kept.
+      {
+        const det = (await get('/api/effects')).detail;
+        assert.deepStrictEqual(det.choices, ['auto', 540, 720, 'full']);
+        assert.strictEqual(det.value, det.default, 'nobody chose yet: the board\'s own default');
+        assert.strictEqual(await page.inputValue('#fxdetailpick'), String(det.value), 'the picker shows what is in force');
+        assert.deepStrictEqual(await page.$$eval('#fxdetailpick option', (els) => els.map((e) => e.textContent)),
+          ['Automatic' + (det.default === 'auto' ? ' (recommended on this box)' : ''), '540 lines', '720 lines', 'Full']);
+        assert(/fine patterns \(dots, lines, tiles\) look larger/.test(await page.textContent('#fxdetailnote')), 'the price in look is said');
+        const lineIs = (re) => page.waitForFunction((src) => new RegExp(src).test((document.getElementById('fxworking') || {}).textContent || ''), re.source, { timeout: 20000 });
+        const clip = (await get('/api/effects')).on.working.clip;
+        assert(clip && clip.lines > 0 && clip.lines <= 540, 'the test clip is a small one: ' + JSON.stringify(clip));
+        const other = det.value === 540 ? 720 : 540;
+        const saved = page.waitForResponse((r) => r.url().endsWith('/api/effects/config') && r.request().method() === 'POST');
+        await page.selectOption('#fxdetailpick', String(other));
+        assert.strictEqual((await saved).status(), 200, 'a choice is sent as it is made');
+        await lineIs(new RegExp('^Working at full size for this ' + clip.lines + 'p clip \\(it is within ' + other + ' lines\\)\\.$'));
+        assert.strictEqual((await get('/api/effects')).detail.value, other);
+        await page.reload();
+        await page.click('nav >> text=Mix');
+        await page.waitForSelector('#fxdetailpick', { timeout: 20000 });
+        assert.strictEqual(await page.inputValue('#fxdetailpick'), String(other), 'the choice is kept');
+        const full = page.waitForResponse((r) => r.url().endsWith('/api/effects/config') && r.request().method() === 'POST');
+        await page.selectOption('#fxdetailpick', 'full');
+        assert.strictEqual((await full).status(), 200);
+        await lineIs(new RegExp('^Working at full size for this ' + clip.lines + 'p clip\\.$'));
+        const back = page.waitForResponse((r) => r.url().endsWith('/api/effects/config') && r.request().method() === 'POST');
+        await page.selectOption('#fxdetailpick', String(det.default));
+        assert.strictEqual((await back).status(), 200);
+        await page.waitForFunction((want) => fetch('/api/effects').then((r) => r.json()).then((d) => d.detail.value === want), det.default, { timeout: 15000 });
+        if (det.default === 'auto') await lineIs(/^Automatic: working at /);
+        await fxName('fxname', 'Vignette');
+      }
       assert.deepStrictEqual(await page.$$eval('#fxctls > .ctl[data-input]', (els) => els.map((e) => e.getAttribute('data-type'))),
         ['float', 'float', 'float', 'long', 'point2D', 'color'], 'its own inputs are drawn by type');
       assert.strictEqual(await page.locator('#fxlist [data-effect="fx-vignette.fs"] [data-off]').count(), 1, 'its row offers Off');
