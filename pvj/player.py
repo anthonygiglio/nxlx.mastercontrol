@@ -565,10 +565,14 @@ class Player:
             return True
 
     def clear_effect(self, serial=None, why="off"):
-        """Take the effect off; with `serial`, only that one. True if one was on and is now off."""
+        """Take the effect off; with `serial`, only that one. True if one was on and is now off. Without `serial`
+        (somebody said Off) the effect serial moves on even when nothing is on: an effect that was asked for before
+        the Off and has not reached the player yet must not arrive after it."""
         with self._lock:
             self._check_effect()
             if self._effect is None or (serial is not None and serial != self.effect_serial):
+                if serial is None:
+                    self.effect_serial += 1
                 return False
             self._end_effect(why)
             return True

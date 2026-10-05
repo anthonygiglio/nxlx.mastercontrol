@@ -48,11 +48,29 @@ MAX_READS = 64                  # an upload may read the picture at most this of
 MAX_ROUNDS = 256                # and its loops may run at most this many rounds for one pixel
 UNKNOWN_ROUNDS = 32             # what a loop counts for when its length cannot be read from the text
 DEFAULT_FPS = 30.0
+SWITCH_GAP = 0.35               # seconds between two switches of the effect asked for through the worker (the flash limit)
+# A stream or a live input has no frame rate of its own: the player estimates one from the frames as they come, and
+# the estimate moves all the time. It is taken for the common rate nearest to it when one is close, and an estimate
+# within FPS_SAME of the rate the text on screen was made for is the same rate. A file's own rate is exact and is
+# followed exactly.
+COMMON_FPS = (10.0, 12.0, 12.5, 15.0, 23.976, 24.0, 25.0, 29.97, 30.0, 48.0, 50.0, 59.94, 60.0, 100.0, 120.0)
+FPS_NEAR = 0.03
+FPS_SAME = 0.06
+# Pictures the effect's two hooks cannot take: a hook binds the LUMA plane (a video) or the RGB plane. A picture in XYZ
+# has neither, and one with no colour (grey, grey with alpha, black and white, a palette) was never drawn through
+# them. The list names what is known not to fit; a format it does not know (a decoder's own, such as drm_prime with
+# the real layout in hw-pixelformat) is let through.
+UNFIT_FORMATS = re.compile(r"^(?:xyz|gray|y8|y1[0-6]|ya8|ya16|mono[bw]|pal8)")
+UNFIT = "This picture's format cannot take an effect"
 # Kr and Kb of the colour matrices mpv names in video-params/colormatrix. Anything else is treated as BT.709.
 MATRICES = {"bt.601": (0.299, 0.114), "bt.709": (0.2126, 0.0722), "bt.2020-ncl": (0.2627, 0.0593),
             "bt.2020-cl": (0.2627, 0.0593), "smpte-240m": (0.212, 0.087)}
 ENDED = {"stop": "Stop was pressed", "generator": "a generator shader took the screen", "restart": "the player was restarted",
-         "module": "the module was switched off", "panel": "the panel was restarted"}
+         "module": "the module was switched off", "panel": "the panel was restarted", "format": "a picture came that cannot take an effect"}
+
+
+GENERATOR_HAS_IT = ("A generator shader has the screen. An effect changes a picture that is playing, and a generator is drawn "
+                    "from nothing, so there is no picture to change. Play a clip, a stream or a live input first.")
 
 
 # ---- colours ---------------------------------------------------------------------------------------------------------
@@ -106,6 +124,32 @@ def native_glsl(colormatrix, levels, prefix="pvj"):
     o = "vec3(%s)" % ", ".join(_g(v) for v in off)
     return ["vec3 %s_rgb(vec3 n) { return clamp(%s * (n - %s), 0.0, 1.0); }" % (prefix, _mat3(to_rgb), o),
             "vec3 %s_native(vec3 c) { return %s * c + %s; }" % (prefix, _mat3(to_native), o)]
+
+
+def fits(params):
+    """Whether the effect's hooks can take a picture the player describes so (video-out-params or video-params)."""
+    if not isinstance(params, dict):
+        return True
+    name = params.get("hw-pixelformat") or params.get("pixelformat")
+    if isinstance(name, str) and UNFIT_FORMATS.match(name):
+        return False
+    return params.get("colormatrix") != "xyz"
+
+
+def near_common(fps):
+    """The player's estimate of a frame rate, taken for the common rate it is close to, if any."""
+    rate = min(COMMON_FPS, key=lambda r: abs(fps - r))
+    return rate if abs(fps - rate) <= FPS_NEAR * rate else fps
+
+
+def steady_picture(new, old, clock, estimated=False):
+    """The picture a text is to be made for, given the one the text on screen was made for: the frame rate stays
+    what it was when the filter never reads the clock (the rate is then in no line that matters), and when it is
+    the player's estimate and has only wobbled."""
+    if old is None:
+        return new
+    same = not clock or (estimated and abs(new["fps"] - old["fps"]) <= FPS_SAME * old["fps"])
+    return dict(new, fps=old["fps"]) if same else new
 
 
 def clean_picture(matrix=None, levels=None, fps=None):
@@ -325,6 +369,15 @@ class Effects(S.Engine):
         self.playing = None                         # the base class's word; an effect never "plays"
         self.last = None                            # why the last effect came off, in words, or None
         self.recent = None                          # the effect that was on last: what "on" puts back
+        # What was asked for and has not reached the player yet. Every request to switch (on, off, a step) gets the
+        # next number; the worker's job carries its number and is dropped when a later request exists. `_intent`
+        # is what the last request wanted (True: an effect on) until it has been carried out: one button acts on
+        # that, not on what the player has, so two quick presses are on and off, never on twice.
+        self._gen = 0
+        self._intent = None
+        self._switched = -1e9                       # when an effect last went on or came off (the gap between switches)
+        self.unfit = False                          # the picture that plays cannot take an effect (see UNFIT_FORMATS)
+        self.estimated = False                      # its frame rate is the player's estimate (a stream, a live input)
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
     def config(self):
@@ -513,7 +566,8 @@ class Effects(S.Engine):
     # -- what is under the effect --
     def picture(self):
         """What the player says of the picture that plays, as an effect's text needs it, or None when nothing with a
-        picture is playing."""
+        picture is playing or the picture is one the hooks cannot take (`self.unfit` says which)."""
+        self.unfit = self.estimated = False
         try:
             ipc = self.api.player.ipc
             params = ipc.request("get_property", "video-params")
@@ -521,11 +575,15 @@ class Effects(S.Engine):
             return None
         if not isinstance(params, dict):
             return None
+        decoded = params
         try:                        # what the output was given, after the player's own video filters, if it says
             out = ipc.request("get_property", "video-out-params")
             params = out if isinstance(out, dict) and out.get("colormatrix") else params
         except Exception:
             pass
+        if not (fits(params) and fits(decoded)):
+            self.unfit = True
+            return None
         fps = None
         for name in ("container-fps", "estimated-vf-fps"):
             try:
@@ -533,8 +591,27 @@ class Effects(S.Engine):
             except Exception:
                 fps = None
             if isinstance(fps, (int, float)) and not isinstance(fps, bool) and 1.0 <= fps <= 240.0:
+                if name == "estimated-vf-fps":
+                    fps, self.estimated = near_common(fps), True
                 break
         return clean_picture(params.get("colormatrix"), params.get("colorlevels"), fps)
+
+    def _seen(self):
+        """The effect that is on, from what this process remembers: no question to the player and no lock, for the
+        calls a controller makes (they run on the thread that reads it). A player that was restarted is noticed by
+        the worker's look, within a second."""
+        rec, player = self.on, self.api.player
+        if rec is None or getattr(player, "effect_shader", None) is None or player.effect_serial != rec["epoch"]:
+            return None
+        return rec
+
+    def _blocked(self):
+        """Why a controller's wish for an effect cannot even be noted, or None: what can be said without asking the
+        player. Whether there is a picture is found out by the worker, which then says so in `error`."""
+        vibes = getattr(self.api, "vibes", None)
+        if getattr(self.api.player, "source_shader", None) or (vibes is not None and vibes.running):
+            return GENERATOR_HAS_IT
+        return None
 
     def available(self):
         """(True, None), or (False, why an effect cannot be put on now, in plain words)."""
@@ -543,9 +620,10 @@ class Effects(S.Engine):
         player = self.api.player
         vibes = getattr(self.api, "vibes", None)
         if getattr(player, "source_shader", None) or self._live().on_screen() is not None or (vibes is not None and vibes.running):
-            return False, ("A generator shader has the screen. An effect changes a picture that is playing, and a generator is drawn "
-                           "from nothing, so there is no picture to change. Play a clip, a stream or a live input first.")
+            return False, GENERATOR_HAS_IT
         if self.picture() is None:
+            if self.unfit:
+                return False, UNFIT + " (it has no colour planes the filter could read). Play another clip."
             return False, "Nothing with a picture is playing. Play a clip, a stream or a live input, then put an effect on it."
         return True, None
 
@@ -617,7 +695,16 @@ class Effects(S.Engine):
     def _now(self):
         return time.strftime("%Y-%m-%d %H:%M:%S")
 
-    def put(self, sid, values=None, controls=None, preset=None, serial=None, epoch=None, queued=False):
+    def show_wait(self, job):
+        """Seconds the worker is to wait before it carries out this job (shaderlive.Changer asks). Off never waits.
+        An effect goes on at the earliest SWITCH_GAP after the last switch, so a button held down, a sequencer or a
+        fader mapped to Next cannot switch a filter on and off faster than about three times a second; the owner's
+        "faster" opt-in lifts that."""
+        if job.get("off") or self.faster():
+            return 0.0
+        return max(0.0, self._switched + SWITCH_GAP - self._clock())
+
+    def put(self, sid, values=None, controls=None, preset=None, serial=None, epoch=None, queued=False, gen=None):
         """Put an effect on over what plays (in place of the one that is on, if any). Without values or a preset it
         uses the preset called default, else the file's defaults. With `serial` and `epoch` (the worker's call),
         only if no effect went on or off and nothing was played or stopped since they were handed out; None is
@@ -626,6 +713,8 @@ class Effects(S.Engine):
         self._need()
         path, _ = self._path(sid)
         with self._lock:
+            if gen is not None and gen != self._gen:    # something was asked for after this (an Off, another effect)
+                return None
             ok, why = self.available()
             if not ok:
                 raise ApiError(409, why)
@@ -670,6 +759,14 @@ class Effects(S.Engine):
                     if serial is None:
                         raise ApiError(409, self.available()[1] or "the screen changed hands; try again")
                     return None
+                if gen is not None and gen != self._gen:    # an Off came while the player was taking it: it does not stay
+                    try:
+                        player.clear_effect(new, "off")
+                    except PlayerError:
+                        pass
+                    self.on = None
+                    self._cleanup(set())
+                    return None
                 verdict, message = self._watch(tap, desc) if tap else ("unknown", "")
             finally:
                 if tap:
@@ -702,18 +799,31 @@ class Effects(S.Engine):
                        "path": out, "desc": desc, "epoch": new, "digest": digest, "preset": name,
                        "checked": True if (verdict == "ok" or key in self._checked) else None}
             self.recent, self.last = sid, None
+            self._switched = self._clock()
+            if gen is None:
+                self._intent = None                     # put on directly: what the player has is what was wanted
             self._cleanup({out})
             self.changer.keep()                         # look at the picture under it from now on
             return {"ok": True, "id": sid}
 
     def play_job(self, job):
-        """The worker's call for a whole effect (a step, on, a preset of another effect)."""
-        if not self.enabled():
-            return
+        """The worker's call for a switch that was asked for without waiting: a whole effect (a step, on, a preset
+        of another effect), or Off from a controller's one button."""
         try:
-            self.put(job["id"], job.get("values"), job.get("controls"), job.get("preset"), serial=job["serial"], epoch=job["epoch"], queued=True)
-        except ApiError as e:
-            self.error = {"id": job["id"], "message": e.message, "at": self._now()}
+            if job.get("off"):
+                if job["gen"] == self._gen:
+                    self.off(asked=job["gen"])
+                return
+            if not self.enabled():
+                return
+            try:
+                self.put(job["id"], job.get("values"), job.get("controls"), job.get("preset"), serial=job["serial"], epoch=job["epoch"], queued=True,
+                         gen=job.get("gen"))
+            except ApiError as e:
+                self.error = {"id": job["id"], "message": e.message, "at": self._now()}
+        finally:
+            if job.get("gen") == self._gen:
+                self._intent = None                     # carried out, or it could not be: the player's word counts again
 
     def adjust(self, job):
         """The worker's call (see shaderlive.Changer): new values or controls for the effect that is on, the release
@@ -734,13 +844,23 @@ class Effects(S.Engine):
                 return False
             try:
                 parsed, digest = self._parsed(self._path(p["id"])[0])
+                seen = self.picture() if look else None
+                if look and seen is None and self.unfit:        # a picture the hooks cannot take: not "on" over nothing drawn
+                    try:
+                        self.api.player.clear_effect(p["epoch"], "format")
+                    except Exception:
+                        pass
+                    self.on, self.last, self._switched = None, ENDED["format"], self._clock()
+                    self._cleanup(set())
+                    return False
                 state = {"values": dict(p["values"], **job["values"]), "held": dict(job["held"]),
                          "controls": self.limit(parsed, dict(p["controls"], **job["controls"])),
-                         "picture": (self.picture() or p["picture"]) if look else p["picture"]}
+                         "picture": seen or p["picture"]}
                 if look:
                     self.changer.keep()
                     self.guard.sample(p)
-                    if state["picture"] == p["picture"] and state["controls"] == p["controls"]:
+                    # a frame rate that only wobbles, or that no line of this filter uses, is no reason for a new text
+                    if steady_picture(state["picture"], p["picture"], parsed.get("clock"), self.estimated) == p["picture"] and state["controls"] == p["controls"]:
                         return bool(p.get("held"))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
@@ -795,15 +915,22 @@ class Effects(S.Engine):
             self._cleanup({out})
             return bool(state["held"])
 
-    def off(self, why=None):
+    def off(self, why=None, asked=None):
         """Take the effect off (the Off button, or the module going off). Never waits for the GPU: it is one request
-        to the player."""
-        self.changer.clear()
+        to the player. Whatever was asked for before it and has not reached the player is dropped, also when no
+        effect is on: the player's effect serial and this engine's own count both move on. `asked` is the worker
+        carrying out an Off that was already counted (off_soon)."""
+        if asked is None:
+            self._gen += 1
+            self._intent = False
+            self.changer.clear()
         rec = self.on
         try:
-            self.api.player.clear_effect(None, "off")
+            was = self.api.player.clear_effect(None, "off")
         except Exception:
-            pass
+            was = False
+        if was:
+            self._switched = self._clock()
         self.on = None
         if rec is not None or why:
             self.last = why
@@ -823,7 +950,7 @@ class Effects(S.Engine):
         {amount, speed, half}, "id"?: the effect it is meant for}, or from a controller {"control": 1 to 8, "level":
         0 to 127} or {"control": n, "press": true}. Everything is checked here; the GPU gets it from the worker."""
         self._need()
-        on = self.current()
+        on = self._seen()
         if on is None:
             raise ApiError(409, "no effect is on")
         if body.get("id") is not None and body["id"] != on["id"]:
@@ -865,14 +992,26 @@ class Effects(S.Engine):
                 "controls": self.limit(parsed, after["controls"])}
 
     def _queue(self, sid, preset=None):
+        """Note that this effect is to go on and return: the worker puts it on. Nothing here asks the player."""
         player = self.api.player
-        self.changer.show({"id": sid, "preset": preset, "serial": player.effect_serial, "epoch": player.source_epoch})
+        self._gen += 1
+        self._intent = True
+        self.changer.show({"id": sid, "preset": preset, "serial": getattr(player, "effect_serial", 0), "epoch": getattr(player, "source_epoch", 0),
+                           "gen": self._gen})
+
+    def off_soon(self):
+        """Off, noted for the worker (a controller's button: its thread asks the player nothing). What was asked for
+        before it is dropped at once, by the count; the player hears of it when the worker comes round, which is at
+        once unless the GPU is looking at a new filter."""
+        self._gen += 1
+        self._intent = False
+        self.changer.show({"off": True, "gen": self._gen})
 
     def apply_preset(self, body):
         """{"name"} or {"index": 1 to 16} for the effect that is on, or with "id" for another one, which is then put
         on with it. Answers at once; the worker does it."""
         self._need()
-        on = self.current()
+        on = self._seen()
         sid = body.get("id") if body.get("id") is not None else (on["id"] if on else None)
         if sid is None:
             raise ApiError(409, "no effect is on")
@@ -901,8 +1040,8 @@ class Effects(S.Engine):
                 if self.changer._adjust:
                     self.changer._adjust["preset"] = name
         else:
-            ok, why = self.available()
-            if not ok:
+            why = self._blocked()
+            if why:
                 raise ApiError(409, why)
             self._queue(sid, name)
         return {"ok": True, "id": sid, "preset": name}
@@ -912,32 +1051,34 @@ class Effects(S.Engine):
         last when none is). Answers at once; the worker puts it on, and only if nothing was played, stopped or put
         on in between."""
         self._need()
-        if direction not in (1, -1):
+        if isinstance(direction, bool) or not isinstance(direction, int) or direction not in (1, -1):
             raise ApiError(400, "dir must be 1 (next) or -1 (the one before)")
-        ok, why = self.available()
-        if not ok:
+        why = self._blocked()
+        if why:
             raise ApiError(409, why)
         ids = self.order()
         if not ids:
             raise ApiError(409, "there is no effect that can be put on")
-        on = self.current()
+        on = self._seen() if self._intent is not False else None
         player = self.api.player
         wish = self.changer.queued()
-        wish = wish if wish and (wish.get("serial"), wish.get("epoch")) == (player.effect_serial, player.source_epoch) else None
+        wish = wish if wish and (wish.get("serial"), wish.get("epoch")) == (getattr(player, "effect_serial", 0), getattr(player, "source_epoch", 0)) else None
         at = (wish or {}).get("id") or (on["id"] if on else None)
         nxt = ids[(ids.index(at) + direction) % len(ids)] if at in ids else ids[0 if direction == 1 else -1]
         self._queue(nxt)
         return {"ok": True, "id": nxt}
 
     def toggle(self):
-        """On or off from one button (a controller's): off if an effect is on, otherwise the one that was on last
-        (or the first of the library) is put back."""
+        """On or off from one button (a controller's): off if an effect is on or on its way, otherwise the one that
+        was on last (or the first of the library) is put back. It acts on what was last asked for, so two quick
+        presses are on and off whether or not the worker came round in between. Answers at once; the worker does
+        it, and the player is not asked anything here."""
         self._need()
-        if self.current() is not None:
-            self.off()
+        if self._intent if self._intent is not None else (self._seen() is not None):
+            self.off_soon()
             return {"ok": True, "on": False}
-        ok, why = self.available()
-        if not ok:
+        why = self._blocked()
+        if why:
             raise ApiError(409, why)
         ids = self.order()
         if not ids:
@@ -1001,6 +1142,9 @@ class Effects(S.Engine):
         """Live access: {"id": "fx-vignette.fs", "values"?, "controls"?: {"amount"?, "speed"?, "half"?}, "preset"?}
         puts an effect on over what plays; {"off": true} takes it off; {"toggle": true} is a controller's one button."""
         self._need()
+        for word in ("off", "toggle"):
+            if word in body and body[word] is not True:
+                raise ApiError(400, "%s must be true" % word)
         if body.get("off") is True:
             self.off()
         elif body.get("toggle") is True:

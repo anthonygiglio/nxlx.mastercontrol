@@ -1130,6 +1130,9 @@ class Engine:
                     self.api.fader.cancel()
                 try:
                     new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                    fx = getattr(self.api, "effects", None)
+                    if new is not None and fx is not None and fx is not self:
+                        fx.sweep()                  # the generator took an effect off the screen: its text goes too
                 except PlayerError as e:
                     self._cleanup({before["path"]} if before else set())
                     raise ApiError(503, str(e))

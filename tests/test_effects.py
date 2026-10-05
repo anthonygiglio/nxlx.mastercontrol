@@ -221,6 +221,7 @@ class FakeMpv:
         self.pid = 1000
         self.video = {"colormatrix": "bt.709", "colorlevels": "limited", "pixelformat": "yuv420p"}
         self.fps, self.pass_ns, self.vo, self.down, self.drops = 25.0, 1500000, "gpu", False, 0
+        self.container = True       # False: a stream or a live input, with no frame rate of its own, only the player's estimate
         self.commands = []
         self.props = {}
         self.restart(same=True)
@@ -241,9 +242,9 @@ class FakeMpv:
             if name == "current-vo":
                 return self.vo
             if name in ("video-params", "container-fps", "estimated-vf-fps"):
-                if self.props["path"] is None or self.video is None:
+                if self.props["path"] is None or self.video is None or (name == "container-fps" and not self.container):
                     raise PlayerError("mpv: property unavailable")
-                return dict(self.video) if name == "video-params" else self.fps
+                return dict(self.video) if name == "video-params" else (self.fps() if callable(self.fps) else self.fps)
             if name == "vo-passes":
                 fresh = []
                 for path in self.props["glsl-shaders"]:
@@ -296,6 +297,7 @@ class Base(ServerBase):
 
     def pump(self):
         self.fx.changer._last = -1e9                    # as if the fifth of a second between two texts had passed
+        self.fx._switched = -1e9                        # and the gap between two switches (tested by itself below)
         self.assertTrue(self.fx.changer.pump(), "nothing was due")
 
     def state(self):
@@ -427,11 +429,20 @@ class LifeTest(Base):
     def test_it_needs_a_picture_to_be_put_on(self):
         self.player.clear()
         self.assertEqual((self.state()["available"], "Nothing with a picture is playing" in self.state()["unavailable"]), (False, True))
-        for call in (lambda: self.fx.put("fx-wash.fs"), lambda: self.fx.step(1), lambda: self.fx.toggle(), lambda: self.fx.apply_preset({"id": "fx-wash.fs", "name": "x"})):
+        for call in (lambda: self.fx.put("fx-wash.fs"), lambda: self.fx.apply_preset({"id": "fx-wash.fs", "name": "x"})):
             with self.assertRaises(ApiError) as c:
                 call()
             self.assertIn(c.exception.status, (409, 404))
         self.assertEqual(self.mpv.loaded, [])
+        # Next and the one button answer at once and ask the player nothing (a controller's thread makes these calls):
+        # the worker finds out that there is no picture, puts nothing on and says why
+        for call in (lambda: self.fx.step(1), lambda: self.fx.toggle()):
+            self.fx.error = None
+            self.assertTrue(call()["ok"])
+            self.pump()
+            self.assertEqual((self.mpv.loaded, self.state()["on"]), ([], None))
+            self.assertIn("Nothing with a picture is playing", self.state()["error"]["message"])
+            self.fx.off()
         self.player.play(["/media/song.mp3"])                                          # sound only: no picture either
         self.mpv.video = None
         with self.assertRaises(ApiError) as c:
@@ -492,6 +503,14 @@ class LifeTest(Base):
         self.assertIsNotNone(self.gen.on_screen())                                     # the generator was never disturbed
         self.player.play(["/media/a.mp4"])                                             # a clip again: effects are back, none is on
         self.assertEqual((self.state()["available"], self.state()["on"], self.mpv.loaded), (True, None, []))
+
+    def test_the_effects_text_is_removed_when_a_generator_takes_the_screen(self):
+        """It stayed in the runtime folder until the next effect or Stop; nothing read it, and it is tidier gone."""
+        self.fx.put("fx-wash.fs")
+        self.assertEqual(len(self.texts()), 1)
+        self.gen.show("nxlx-silk.fs")
+        self.assertEqual(self.texts(), [])
+        self.assertEqual((self.fx.on, self.state()["last"]), (None, "a generator shader took the screen"))
 
     def test_vibes_takes_it_off_and_the_module_going_off_too(self):
         self.fx.put("fx-wash.fs")
@@ -680,6 +699,80 @@ class ValuesTest(Base):
         self.assertIn("refused these values before", c.exception.message)
         self.assertEqual(self.fx.change({"values": {"mode": 1}})["values"]["mode"], 1)
 
+    def test_a_frame_rate_that_wobbles_does_not_make_a_new_text_every_second(self):
+        """A stream or a live input has no frame rate of its own, and the player's estimate of it moves all the time.
+        The look, once a second, used to take each new number for another kind of picture: a new text (a compile)
+        every second for as long as the effect was on, and a guard that never got to settle."""
+        wobble = iter([29.2, 30.4, 29.71, 30.02, 29.5, 30.3, 29.97, 30.1, 29.4, 30.25, 29.8] * 4)
+        self.mpv.container, self.mpv.fps = False, lambda: next(wobble)
+        for sid, moves in (("fx-wash.fs", False), ("moves.fs", True)):
+            self.fx.off()
+            self.fx.put(sid)
+            self.assertEqual(self.fx.library()[[s["id"] for s in self.fx.library()].index(sid)]["moves"], moves)
+            texts, serial, made = [self.mpv.loaded], self.player.effect_serial, self.fx._serial
+            for _ in range(10):
+                self.fx.adjust("anchor")
+                texts.append(self.mpv.loaded)
+            self.assertEqual(len({tuple(t) for t in texts}), 1, "%s: ten looks, %d texts" % (sid, len({tuple(t) for t in texts})))
+            self.assertEqual((self.fx._serial, self.player.effect_serial), (made, serial), sid)
+        # the estimate is taken for the common rate it is close to; a real change of rate is still followed
+        self.assertEqual([E.near_common(x) for x in (29.9, 30.2, 24.1, 14.95, 59.6, 27.0, 8.3)], [29.97, 30.0, 24.0, 15.0, 59.94, 27.0, 8.3])
+        self.assertEqual(self.fx.on["picture"]["fps"], 29.97)
+        self.mpv.fps = 50.0
+        self.fx.adjust("anchor")
+        self.assertEqual(self.fx.on["picture"]["fps"], 50.0)                            # moves.fs reads the clock: its text follows
+        self.assertNotEqual(self.mpv.loaded, texts[-1])
+        # a file's own rate is exact and is followed exactly, also by a little (24 and 25 pictures a second)
+        self.mpv.container, self.mpv.fps = True, 24.0
+        self.fx.adjust("anchor")
+        self.mpv.fps = 25.0
+        self.fx.adjust("anchor")
+        self.assertEqual(self.fx.on["picture"]["fps"], 25.0)
+        # a filter that never reads the clock keeps its text whatever the rate does, and takes the new rate along
+        # when another kind of picture makes a new text anyway
+        self.fx.put("fx-wash.fs")
+        text = self.mpv.loaded
+        self.mpv.fps = 25.0
+        self.fx.adjust("anchor")
+        self.assertEqual(self.mpv.loaded, text)
+        self.assertEqual(E.steady_picture({"matrix": "bt.709", "levels": "limited", "fps": 60.0}, {"matrix": "bt.709", "levels": "limited", "fps": 25.0}, False)["fps"], 25.0)
+        self.assertEqual(E.steady_picture({"matrix": "bt.709", "levels": "limited", "fps": 25.4}, {"matrix": "bt.709", "levels": "limited", "fps": 25.0}, True, True)["fps"], 25.0)
+        self.assertEqual(E.steady_picture({"matrix": "bt.709", "levels": "limited", "fps": 27.0}, {"matrix": "bt.709", "levels": "limited", "fps": 25.0}, True, True)["fps"], 27.0)
+        self.assertEqual(E.steady_picture({"matrix": "bt.709", "levels": "limited", "fps": 25.4}, {"matrix": "bt.709", "levels": "limited", "fps": 25.0}, True)["fps"], 25.4)
+
+    def test_a_picture_whose_format_the_hooks_cannot_take_gets_no_effect(self):
+        """An effect's text hooks the LUMA plane or the RGB plane. A picture in XYZ has neither and one without
+        colour was never drawn through them: the effect would be "on" with nothing drawn. The box says so instead,
+        and an effect that is on when such a picture starts comes off with the reason."""
+        for video in ({"pixelformat": "xyz12le", "colormatrix": "xyz", "colorlevels": "full"}, {"pixelformat": "gray", "colormatrix": "bt.601", "colorlevels": "full"},
+                      {"pixelformat": "gray10le", "colormatrix": "bt.709", "colorlevels": "limited"}, {"pixelformat": "ya8", "colormatrix": "bt.601", "colorlevels": "full"},
+                      {"pixelformat": "pal8", "colormatrix": "rgb", "colorlevels": "full"}, {"pixelformat": "monow", "colormatrix": "bt.601", "colorlevels": "full"},
+                      {"pixelformat": "drm_prime", "hw-pixelformat": "gray", "colormatrix": "bt.601", "colorlevels": "limited"}):
+            self.mpv.video = video
+            state = self.state()
+            self.assertEqual((state["available"], state["on"]), (False, None), video)
+            self.assertIn("This picture's format cannot take an effect", state["unavailable"])
+            with self.assertRaises(ApiError) as c:
+                self.fx.put("fx-wash.fs")
+            self.assertEqual((c.exception.status, "format cannot take an effect" in c.exception.message, self.mpv.loaded), (409, True, []))
+        # what is not known to be unfit is let through: above all a decoder's own format, with the real layout beside it
+        for video in ({"pixelformat": "drm_prime", "hw-pixelformat": "nv12", "colormatrix": "bt.709", "colorlevels": "limited"},
+                      {"pixelformat": "vaapi", "hw-pixelformat": "yuv420p", "colormatrix": "bt.709", "colorlevels": "limited"},
+                      {"pixelformat": "videotoolbox", "colormatrix": "bt.709", "colorlevels": "limited"}, {"pixelformat": "yuv444p10", "colormatrix": "bt.2020-ncl"},
+                      {"pixelformat": "gbrp", "colormatrix": "rgb", "colorlevels": "full"}, {"pixelformat": "rgb24", "colormatrix": "rgb"},
+                      {"pixelformat": "yuyv422", "colormatrix": "bt.601"}, {"pixelformat": "some-new-format"}, {}):
+            self.mpv.video = video
+            self.fx.put("fx-wash.fs")
+            self.assertEqual((len(self.mpv.loaded), self.state()["on"]["id"]), (1, "fx-wash.fs"), video)
+            self.fx.off()
+        # a clip of such a format starts under an effect that is on: at the next look it comes off, with the reason
+        self.fx.put("fx-wash.fs")
+        self.mpv.video = {"pixelformat": "xyz12le", "colormatrix": "xyz", "colorlevels": "full"}
+        self.fx.adjust("anchor")
+        state = self.state()
+        self.assertEqual((self.mpv.loaded, state["on"], state["last"]), ([], None, "a picture came that cannot take an effect"))
+        self.assertEqual(self.texts(), [])
+
     def test_previous_and_next_step_through_the_filters_and_one_button_switches_on_and_off(self):
         ids = self.fx.order()
         self.assertEqual((ids[0], ids[-3:]), ("fx-edge-glow.fs", ["all.fs", "moves.fs", "strobe.fs"]))
@@ -698,13 +791,154 @@ class ValuesTest(Base):
         self.fx.step(-1)
         self.pump()
         self.assertEqual(self.state()["on"]["id"], ids[-1])                            # round the end
-        self.assertEqual(self.fx.toggle(), {"ok": True, "on": False})
+        self.assertEqual(self.fx.toggle(), {"ok": True, "on": False})                  # noted; the worker takes it off
+        self.pump()
         self.assertEqual(self.mpv.loaded, [])
         self.assertEqual(self.fx.toggle(), {"ok": True, "on": True, "id": ids[-1]})    # the one that was on last
         self.pump()
         self.assertEqual(self.state()["on"]["id"], ids[-1])
-        with self.assertRaises(ApiError):
-            self.fx.step(2)
+        for bad in (2, 0, 1.0, -1.0, True, "1", None):
+            with self.assertRaises(ApiError) as c:
+                self.fx.step(bad)
+            self.assertEqual(c.exception.status, 400, bad)
+        for body in ({"off": 1}, {"off": "yes"}, {"toggle": 1}, {"toggle": False}, {"off": False, "id": ids[0]}):
+            with self.assertRaises(ApiError) as c:
+                self.fx.api_put(body, None, "t")
+            self.assertEqual((c.exception.status, "must be true" in c.exception.message), (400, True), body)
+        self.assertEqual(self.state()["on"]["id"], ids[-1])
+
+    def test_an_off_ends_what_was_asked_for_before_it_also_when_nothing_is_on(self):
+        """The review's case. Nothing is on; Next (or the one button) notes an effect for the worker; the worker has
+        taken the job; Off arrives. There was nothing for Off to take off, and the job went on afterwards. Now an
+        Off always moves the player's effect serial on, so the job is no longer the newest thing asked for."""
+        for ask in (lambda: self.fx.step(1), lambda: self.fx.toggle(), lambda: self.fx.apply_preset({"id": "all.fs", "index": 1})):
+            self.fx.put("all.fs")
+            self.fx.preset_save("One")
+            self.fx.off()
+            self.assertEqual((self.mpv.loaded, self.fx.on), ([], None))
+            serial = self.player.effect_serial
+            ask()
+            with self.fx.changer._cond:                                                # the worker takes the job ...
+                job, self.fx.changer._show = self.fx.changer._show, None
+            self.assertEqual(job["serial"], serial)
+            self.fx.off()                                                              # ... and Off arrives before it reaches the player
+            self.assertGreater(self.player.effect_serial, serial)
+            self.fx.play_job(job)
+            self.assertEqual((self.mpv.loaded, self.fx.on, self.state()["on"]), ([], None, None))
+            # the player's own rule, without the engine's count: the same job is refused by its serial alone
+            self.assertIsNone(self.fx.put(job["id"], serial=job["serial"], epoch=job["epoch"], queued=True))
+            self.assertEqual(self.mpv.loaded, [])
+        # and through the player directly
+        serial = self.player.effect_serial
+        self.assertFalse(self.player.clear_effect())                                   # nothing was on
+        self.assertEqual(self.player.effect_serial, serial + 1)
+        self.assertFalse(self.player.clear_effect(serial + 1, "refused"))              # "only that one": no Off, the serial stays
+        self.assertEqual(self.player.effect_serial, serial + 1)
+
+    def test_an_off_from_the_one_button_ends_a_job_the_worker_is_in_the_middle_of(self):
+        """The controller's Off is noted for the worker (its thread asks the player nothing). The worker may be in
+        the middle of putting the effect on: it does not stay on."""
+        self.fx.toggle()
+        with self.fx.changer._cond:
+            job, self.fx.changer._show = self.fx.changer._show, None
+        real = self.player.put_effect
+
+        def put_effect(*args):                          # the button is pressed again while the player is taking the text
+            self.fx.toggle()
+            return real(*args)
+        self.player.put_effect = put_effect
+        self.fx.play_job(job)
+        self.player.put_effect = real
+        self.assertEqual((self.mpv.loaded, self.fx.on), ([], None))
+        self.pump()                                     # the Off that was noted: nothing left to do, and nothing goes on
+        self.assertEqual((self.mpv.loaded, self.state()["on"]), ([], None))
+        self.assertFalse(self.fx.changer.pump())
+
+    def test_the_one_button_acts_on_what_was_asked_for_last(self):
+        """Two quick presses are on and off, whether or not the worker came round in between; they used to note
+        "on" twice."""
+        ids = self.fx.order()
+        self.assertEqual(self.fx.toggle(), {"ok": True, "on": True, "id": ids[0]})
+        self.assertEqual(self.fx.toggle(), {"ok": True, "on": False})
+        self.pump()
+        self.assertEqual((self.mpv.loaded, self.state()["on"]), ([], None))
+        self.assertEqual([self.fx.toggle()["on"] for _ in range(5)], [True, False, True, False, True])
+        self.pump()
+        self.assertEqual(self.state()["on"]["id"], ids[0])
+        self.assertEqual([self.fx.toggle()["on"] for _ in range(3)], [False, True, False])
+        self.pump()
+        self.assertEqual(self.mpv.loaded, [])
+        # put on from the panel in between: the button then acts on what the player has
+        self.fx.toggle()
+        self.fx.put(ids[1])
+        self.assertEqual(self.fx.toggle()["on"], False)
+        self.pump()
+        self.assertEqual(self.mpv.loaded, [])
+        # Next after an Off that the worker has not carried out yet starts from "none on"
+        self.fx.put(ids[3])
+        self.fx.toggle()
+        self.assertEqual(self.fx.step(1)["id"], ids[0])
+        self.pump()
+        self.assertEqual(self.state()["on"]["id"], ids[0])
+
+    def test_effects_switch_at_most_about_three_times_a_second_unless_faster_is_on(self):
+        """The flash limit for switching: an effect goes on at the earliest 0.35 seconds after the last switch, so a
+        sequencer on the one button or on Next cannot flash a filter. Off never waits. The last wish always lands."""
+        t = [100.0]
+        self.fx._clock = self.fx.changer._clock = lambda: t[0]
+        self.assertEqual(E.SWITCH_GAP, 0.35)
+
+        def burst(press, presses, seconds):
+            before, shown, end = self.player.effect_serial, 0, t[0] + seconds
+            for n in range(presses):
+                press()
+                while self.fx.changer.pump():
+                    pass
+                shown, before = shown + (1 if self.fx.on is not None and self.player.effect_serial != before and self.mpv.loaded else 0), self.player.effect_serial
+                t[0] += seconds / presses
+            return shown
+        went_on = burst(self.fx.toggle, 20, 2.0)                                       # a button at ten presses a second
+        self.assertTrue(1 <= went_on <= 6, went_on)                                    # at most 3 a second
+        t[0] += 1.0
+        while self.fx.changer.pump():
+            pass
+        self.assertEqual(self.mpv.loaded, [])                                          # twenty presses: off at the end
+        self.fx.toggle()
+        t[0] += 1.0
+        self.fx.changer.pump()
+        self.assertEqual(len(self.mpv.loaded), 1)                                      # twenty-one: on
+        went_on = burst(lambda: self.fx.step(1), 20, 2.0)                              # Next at ten a second
+        self.assertTrue(1 <= went_on <= 6, went_on)
+        # a wish that has to wait lands when the gap is over, and Off does not wait
+        self.fx.off()
+        t[0] += 1.0
+        self.fx.put("fx-wash.fs")
+        self.fx.step(1)
+        self.assertFalse(self.fx.changer.pump())
+        self.assertEqual(self.state()["on"]["id"], "fx-wash.fs")
+        with self.fx.changer._cond:
+            self.assertAlmostEqual(self.fx.changer._take()[1], 0.35, 2)                # the worker sleeps that long
+        t[0] += 0.2
+        self.fx.toggle()                                                               # off: at once
+        self.assertTrue(self.fx.changer.pump())
+        self.assertEqual(self.mpv.loaded, [])
+        self.fx.toggle()
+        self.assertFalse(self.fx.changer.pump())
+        t[0] += 0.36
+        self.assertTrue(self.fx.changer.pump())
+        self.assertEqual(len(self.mpv.loaded), 1)
+        # values of the effect that is on are not held up by a switch that waits
+        self.fx.step(1)
+        self.fx.change({"controls": {"amount": 0.5}})
+        self.fx.changer._last = -1e9
+        self.assertTrue(self.fx.changer.pump())
+        self.assertEqual(self.fx.on["controls"]["amount"], 0.5)
+        # the owner's "faster" opt-in lifts the gap
+        cfg = self.gen.config()
+        cfg["faster"] = True
+        self.gen._save(cfg)
+        self.fx.step(1)
+        self.assertTrue(self.fx.changer.pump())
 
     def test_what_was_asked_for_before_the_screen_changed_hands_is_dropped(self):
         """The epoch rule: a step, an "on" or a change that waits for the worker belongs to the moment it was asked
@@ -839,13 +1073,56 @@ class ValuesTest(Base):
             self.api.status({}, None, "t")
             self.fx.current()
             self.fx.sweep()
-            self.fx.toggle()                                                           # off: one request to the player
+            self.fx.toggle()                                                           # off: noted for the worker
             took = time.monotonic() - began
         finally:
             go.set()
             t.join()
         self.assertLess(took, 1.0, "a controller's call waited for the engine's lock")
+        self.pump()
         self.assertEqual(self.mpv.loaded, [])
+
+    def test_nothing_a_controller_sends_asks_the_player_or_waits_for_its_lock(self):
+        """Everything a controller can send for an effect (a value, the amount, a control, a press, Next, Previous,
+        the one button, a preset) is noted and answered from what this process remembers. The player's lock may be
+        held (a clip is being started, the player is being restarted), the player may not answer at all, and the
+        engine's lock may be held by the GPU's look: the thread that reads the controller goes on."""
+        self.fx.put("all.fs")
+        self.fx.preset_save("One")
+        hub = M.MidiHub(self.api, self.settings, log=lambda *_: None, lister=lambda: [])
+        self.addCleanup(hub.stop)
+        hub.calls = M.RateLimiter(time.monotonic, rate=1e9, burst=1e9)
+        held, go = threading.Event(), threading.Event()
+
+        def busy():
+            with self.player._lock, self.fx._lock:
+                held.set()
+                go.wait(10)
+        t = threading.Thread(target=busy)
+        t.start()
+        self.assertTrue(held.wait(2))
+        asked = len(self.mpv.commands)
+        answers = []
+
+        def controller():
+            for path, body in (("/api/effects/values", {"controls": {"amount": 0.4}}), ("/api/effects/values", {"control": 1, "level": 90}),
+                               ("/api/effects/values", {"control": 3, "press": True}), ("/api/effects/preset", {"index": 1}),
+                               ("/api/effects/step", {"dir": 1}), ("/api/effects/step", {"dir": -1}), ("/api/effects", {"toggle": True}),
+                               ("/api/effects", {"toggle": True}), ("/api/effects/preset", {"id": "fx-wash.fs", "name": "nope"})):
+                answers.append(hub._do(path, body))
+            answers.append(hub._target("effect_amount"))
+        c = threading.Thread(target=controller, daemon=True)
+        began = time.monotonic()
+        c.start()
+        c.join(3)
+        took, alive = time.monotonic() - began, c.is_alive()
+        go.set()
+        t.join()
+        c.join(5)
+        self.assertFalse(alive, "a controller's call waited for the player's lock")
+        self.assertLess(took, 1.0)
+        self.assertEqual(len(answers), 10)
+        self.assertEqual(self.mpv.commands[asked:], [], "a controller's call asked the player something")
 
 
 class PlayerLayerTest(unittest.TestCase):
@@ -1002,7 +1279,8 @@ class MidiTest(Base):
         self.assertEqual((self.state()["on"]["controls"]["amount"], self.state()["on"]["values"]["k"]), (0.25, 2.0))
         self.assertEqual(hub._target("effect_amount"), 0.25)                           # what a fader has to reach before it takes over
         self.assertTrue(hub._do("/api/effects/step", {"dir": 1}))
-        self.assertTrue(hub._do("/api/effects", {"toggle": True}))                    # off
+        self.assertTrue(hub._do("/api/effects", {"toggle": True}))                    # off: it was on, and another was on its way
+        self.pump()
         self.assertEqual((self.mpv.loaded, hub._target("effect_amount")), ([], None))
         # a controller is a presenter: it saves no preset and adds no file
         self.assertEqual(self.api.handle("POST", "/api/effects/presets", {"action": "save", "name": "x"}, M.MIDI_DEVICE, "midi")[0], 403)

@@ -564,30 +564,37 @@ class Changer:
         self._cond.notify_all()
 
     def _take(self):
-        """The job that is due now, or (None, seconds to wait)."""
+        """The job that is due now, or (None, seconds to wait). A whole shader may have to wait (the engine's
+        `show_wait`: the effects keep a gap between two switches); what else is due is done meanwhile."""
         now = self._clock()
+        hold = None
         if self._show is not None:
-            job, self._show = self._show, None
-            return ("show", job), 0.0
+            hold = getattr(self.engine, "show_wait", lambda job: 0.0)(self._show)
+            if hold <= 0:
+                job, self._show = self._show, None
+                return ("show", job), 0.0
+
+        def sooner(wait):
+            return None, (wait if hold is None else min(wait, hold))
         if self._adjust is not None:
             wait = self._last + APPLY_GAP - now
             if wait > 0:
-                return None, wait
+                return sooner(wait)
             job, self._adjust = self._adjust, None
             return ("adjust", job), 0.0
         if self._release is not None:
             wait = self._release - now
             if wait > 0:
-                return None, wait
+                return sooner(wait)
             self._release = None
             return ("release", None), 0.0
         if self._refresh is not None:
             wait = self._refresh - now
             if wait > 0:
-                return None, wait
+                return sooner(wait)
             self._refresh = None
             return ("refresh", "anchor"), 0.0
-        return None, None
+        return None, hold
 
     def pump(self):
         """Apply what is due (the worker's one step; tests call it with a fake clock). True if something was done."""
