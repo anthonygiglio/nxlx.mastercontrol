@@ -44,16 +44,20 @@ HTML_TAG = b'<html lang="en">'          # in index.html; the style of the chosen
 def static_files(web_dir):
     """What the panel may be asked for, as {request path: file under web_dir}: the files at the top of the folder and
     the .woff2 files in fonts/, nothing else. The map is fixed when the server starts and a request is looked up in
-    it whole, so no request path is ever joined to a folder."""
+    it whole, so no request path is ever joined to a folder. A symbolic link is never in it (a file or the fonts
+    folder itself): the panel serves what was installed there, not what something there points at."""
+
+    def plain(path):
+        return os.path.isfile(path) and not os.path.islink(path)
     out = {"/": "index.html"}
     if os.path.isdir(web_dir):
         for name in sorted(os.listdir(web_dir)):
-            if os.path.isfile(os.path.join(web_dir, name)):
+            if plain(os.path.join(web_dir, name)):
                 out["/" + name] = name
         fonts = os.path.join(web_dir, "fonts")
-        if os.path.isdir(fonts):
+        if os.path.isdir(fonts) and not os.path.islink(fonts):
             for name in sorted(os.listdir(fonts)):
-                if name.endswith(".woff2") and os.path.isfile(os.path.join(fonts, name)):
+                if name.endswith(".woff2") and plain(os.path.join(fonts, name)):
                     out["/fonts/" + name] = os.path.join("fonts", name)
     return out
 
@@ -251,8 +255,9 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             if name == "index.html":
                 body = styled_html(body, api.theme_style())
             ext = os.path.splitext(name)[1]
-            # a font is the same bytes until the next release, and a phone that fetched it at every page would show
-            # the fallback type first each time; everything else is never kept
+            # a font's name holds the start of its checksum, so the same name is always the same bytes and may be
+            # kept (a phone that fetched it at every page would show the fallback type first each time); everything
+            # else is never kept
             self._send(200, body, TYPES.get(ext, "application/octet-stream"), cache="max-age=86400" if ext == ".woff2" else "no-store")
 
         def _upload(self, update=False):

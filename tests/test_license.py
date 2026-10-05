@@ -48,8 +48,8 @@ def matches(path, pattern):
 FONTS = "pvj/web/fonts/"
 # The two fonts as built from github.com/google/fonts at commit 9710da1e (THIRD_PARTY_LICENSES.md says how), and each
 # family's OFL.txt as fetched there on 2026-10-04.
-FONT_SUMS = {"archivo-latin.woff2": "06fa7831060c673ef6e553b846635fb1e7eaf558e717ddfeb7c0a24fd9280529",
-             "jetbrains-mono-500-latin.woff2": "6c95bc2faff7653603df02e7dca2fef5341d7ba49ebe8c952907f8ded2c0eb20",
+FONT_SUMS = {"archivo-latin.06fa7831.woff2": "06fa7831060c673ef6e553b846635fb1e7eaf558e717ddfeb7c0a24fd9280529",
+             "jetbrains-mono-500-latin.6c95bc2f.woff2": "6c95bc2faff7653603df02e7dca2fef5341d7ba49ebe8c952907f8ded2c0eb20",
              "OFL-Archivo.txt": "108b4e57c9c796d3d38d0428ca7ee39de47ad93187302718d9b2d8864b9b716b",
              "OFL-JetBrainsMono.txt": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"}
 OFL_SHA256 = "8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd"      # SPDX's text of OFL-1.1 (license-list-data)
@@ -161,6 +161,9 @@ class LicenseTest(unittest.TestCase):
                 self.assertNotIn(b"with Reserved Font Name", data, name)      # a subset may keep the family's name
             else:
                 self.assertEqual(data[:4], b"wOF2", name)
+                # the name holds the first eight digits of the checksum: fonts may be kept by a browser for a day, so
+                # a font that changes must change its name (and a test must notice a file replaced under an old name)
+                self.assertEqual(name.split(".")[-2], digest[:8], name)
         self.assertIn("https://github.com/google/fonts", inventory)
         self.assertIn("9710da1eacb3be272583c3224dcb70f9da6eadbb", inventory)
         self.assertIn("Modified Versions", inventory)

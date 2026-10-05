@@ -2376,9 +2376,9 @@ function startServer() {
       assert.deepStrictEqual(faces, [1, 1], 'both typefaces load');
       assert(await page.evaluate(() => document.fonts.check('900 44px Archivo') && document.fonts.check('500 16px "JetBrains Mono"')), 'both typefaces are ready');
       const fontNames = fontRequests.map((u) => u.replace(base, '')).sort();
-      assert(fontNames.includes('/fonts/archivo-latin.woff2') && fontNames.includes('/fonts/jetbrains-mono-500-latin.woff2'), 'both fonts are fetched from the box: ' + fontNames.join(', '));
+      assert(fontNames.includes('/fonts/archivo-latin.06fa7831.woff2') && fontNames.includes('/fonts/jetbrains-mono-500-latin.6c95bc2f.woff2'), 'both fonts are fetched from the box: ' + fontNames.join(', '));
       assert(fontRequests.every((u) => u.indexOf(base + '/fonts/') === 0), 'a font was asked for somewhere else: ' + fontRequests.join(', '));
-      for (const f of ['/fonts/archivo-latin.woff2', '/fonts/jetbrains-mono-500-latin.woff2']) {
+      for (const f of ['/fonts/archivo-latin.06fa7831.woff2', '/fonts/jetbrains-mono-500-latin.6c95bc2f.woff2']) {
         const got = await page.evaluate((u) => fetch(u).then(async (r) => [r.status, r.headers.get('content-type'), (await r.arrayBuffer()).byteLength]), f);
         assert(got[0] === 200 && got[1] === 'font/woff2' && got[2] > 4000, f + ' is served by the box as a font: ' + JSON.stringify(got));
       }

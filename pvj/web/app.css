@@ -433,8 +433,8 @@ table.chan .lvl { width: 36%; }
    text on the page, else the text colour (a yellow ring on an off-white page is lost); --err is an error line's
    colour. A state never borrows the area colour, except Active, which is the area's colour with the word on it.
    Keep additions inside this block, and every selector under the scope. */
-@font-face { font-family: "Archivo"; src: url(/fonts/archivo-latin.woff2) format("woff2"); font-weight: 400 900; font-style: normal; font-display: swap; }
-@font-face { font-family: "JetBrains Mono"; src: url(/fonts/jetbrains-mono-500-latin.woff2) format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "Archivo"; src: url(/fonts/archivo-latin.06fa7831.woff2) format("woff2"); font-weight: 400 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url(/fonts/jetbrains-mono-500-latin.6c95bc2f.woff2) format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
 html[data-style="signal"] {
   --sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;

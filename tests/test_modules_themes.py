@@ -152,10 +152,29 @@ class ThemeTest(unittest.TestCase):
         self.assertEqual(themes.validate(dict(base, style="from-the-future")), [])
         self.assertEqual(themes.style_of(dict(base, style="from-the-future")), "default")
         self.assertEqual(themes.style_of(base), "default")
-        for bad in (5, None, ["signal"], "", "Signal", "signal;}body{display:none", "a b", "x" * 60, "signal\n"):
+        for bad in (5, None, ["signal"], "", "Signal", "signal;}body{display:none", "a b", "x" * 60, "signal\n", "\nsignal"):
             self.assertIn("bad style", themes.validate(dict(base, style=bad)), repr(bad))
             self.assertEqual(themes.style_of(dict(base, style=bad)), "default", repr(bad))
         self.assertEqual(themes.style_of(None), "default")
+
+    def test_a_trailing_newline_is_not_part_of_a_colour_or_a_name(self):
+        """`$` in a pattern also matches before a newline at the end, so `match` let "#ffffff\\n" through and the
+        newline reached /theme.css (found by the review). Every check is a whole match now."""
+        t = themes.load_themes()
+        good = {"id": "mine", "name": "Mine", "tokens": dict(t["signal"]["tokens"])}
+        self.assertEqual(themes.validate(good), [])
+        for bad in ("#ffffff\n", "\n#ffffff", "#ffffff\r", "#ffffff\n;}"):
+            self.assertNotEqual(themes.validate(dict(good, tokens=dict(good["tokens"], bg=bad))), [], repr(bad))
+            self.assertNotEqual(themes.validate(dict(good, areas={"room": bad})), [], repr(bad))
+            self.assertNotEqual(themes.validate(dict(good, states={"off": bad})), [], repr(bad))
+            for theme in (t["dark-stage"], t["signal"]):
+                with self.assertRaises(themes.ThemeError):
+                    themes.css(theme, bad)
+        for bad in ("mine\n", "\nmine", "mine\r\n"):
+            self.assertIn("bad id", themes.validate(dict(good, id=bad)), repr(bad))
+            self.assertIn("bad style", themes.validate(dict(good, style=bad)), repr(bad))
+        for tid in t:
+            self.assertNotIn("\n", themes.css(t[tid]))
 
     def test_area_and_state_colours_are_fixed_names_with_hex_values(self):
         t = themes.load_themes()
@@ -258,8 +277,8 @@ class ThemeTest(unittest.TestCase):
         self.assertEqual(unscoped, [])
         self.assertEqual(faces, 2)
         fonts = os.path.join(os.path.dirname(themes.__file__), "web", "fonts")
-        self.assertEqual(sorted(os.listdir(fonts)), ["OFL-Archivo.txt", "OFL-JetBrainsMono.txt", "archivo-latin.woff2", "jetbrains-mono-500-latin.woff2"])
-        self.assertEqual(sorted(re.findall(r"url\(/fonts/([a-z0-9.-]+)\)", block)), ["archivo-latin.woff2", "jetbrains-mono-500-latin.woff2"])
+        self.assertEqual(sorted(os.listdir(fonts)), ["OFL-Archivo.txt", "OFL-JetBrainsMono.txt", "archivo-latin.06fa7831.woff2", "jetbrains-mono-500-latin.6c95bc2f.woff2"])
+        self.assertEqual(sorted(re.findall(r"url\(/fonts/([a-z0-9.-]+)\)", block)), ["archivo-latin.06fa7831.woff2", "jetbrains-mono-500-latin.6c95bc2f.woff2"])
         self.assertLess(sum(os.path.getsize(os.path.join(fonts, n)) for n in os.listdir(fonts)), 300 * 1024)
         self.assertNotRegex(block, r"https?:|//[a-z]")           # nothing from the network
 

@@ -405,6 +405,27 @@ class ServerTest(ServerBase):
         self.settings.data["theme"] = {"name": "later", "accent": None}
         self.assertEqual(self.api.theme_style(), "default")
         self.assertNotIn(b"data-style", self.call("GET", "/")[1])
+        # a damaged settings file: the page and its colours still come, in the look the box comes with (found by the
+        # review: the page is served before anyone has paired, and it dropped the connection)
+        with open(os.path.join(server.WEB_DIR, "index.html"), "rb") as f:
+            plain_page = f.read()
+        for broken in ({}, None, "x", 5, [], {"name": ["a"]}, {"name": None}, {"name": {"a": 1}}, {"accent": "#ffffff"}, {"name": "signal", "accent": ["x"]},
+                       {"name": "signal", "accent": "#ffffff\n"}):
+            self.settings.data["theme"] = broken
+            st, page, _ = self.call("GET", "/")
+            self.assertEqual((st, page), (200, plain_page) if not (isinstance(broken, dict) and broken.get("name") == "signal") else (st, page), repr(broken))
+            self.assertEqual(st, 200, repr(broken))
+            st, css, _ = self.call("GET", "/theme.css")
+            self.assertEqual(st, 200, repr(broken))
+            self.assertRegex(css, rb"^:root\{[-a-z0-9:#;]+\}$", repr(broken))
+        for broken in ({}, None, "x", {"name": ["a"]}):
+            self.settings.data["theme"] = broken
+            self.assertEqual(self.api.theme_style(), "default", repr(broken))
+            self.assertIn(b"--bg:#121214", self.call("GET", "/theme.css")[1], repr(broken))
+        self.settings.data["theme"] = {"name": "dark-stage", "accent": None}
+        for body in ({"name": ["signal"]}, {"name": {"a": 1}}, {"name": None}, {"name": "signal", "accent": "#ffffff\n"}, {"name": "light", "accent": "\n#ffffff"}):
+            self.assertEqual(self.call("POST", "/api/theme", body, token=token)[0], 400, body)
+        self.settings.data["theme"] = {"name": "later", "accent": None}
         self.api.themes["later"]["style"] = 'x"><script>'           # not a name from the fixed set: never written
         self.assertNotIn(b"script>", self.call("GET", "/")[1].split(b"<head>")[0])
         self.assertEqual(server.styled_html(b'<html lang="en">', 'x"><script>'), b'<html lang="en">')
@@ -418,7 +439,7 @@ class ServerTest(ServerBase):
         st, page, r = self.call("GET", "/")
         self.assertIn("font-src 'self'", r.getheader("Content-Security-Policy"))
         self.assertIn("default-src 'none'", r.getheader("Content-Security-Policy"))
-        for name in ("archivo-latin.woff2", "jetbrains-mono-500-latin.woff2"):
+        for name in ("archivo-latin.06fa7831.woff2", "jetbrains-mono-500-latin.6c95bc2f.woff2"):
             st, body, r = self.call("GET", "/fonts/" + name)
             self.assertEqual(st, 200, name)
             self.assertEqual(r.getheader("Content-Type"), "font/woff2")
@@ -429,8 +450,8 @@ class ServerTest(ServerBase):
                 self.assertEqual(body, f.read())
         self.assertEqual(self.call("GET", "/app.css")[2].getheader("Cache-Control"), "no-store")
         for path in ("/fonts", "/fonts/", "/fonts/OFL-Archivo.txt", "/fonts/../app.css", "/fonts/%2e%2e/app.css", "/fonts/..%2fapp.css",
-                     "/fonts/../../settings.json", "/fonts/archivo-latin.woff2/", "/fonts//archivo-latin.woff2", "/fonts/nope.woff2",
-                     "/fonts/archivo-latin.woff2%00", "/FONTS/archivo-latin.woff2"):
+                     "/fonts/../../settings.json", "/fonts/archivo-latin.06fa7831.woff2/", "/fonts//archivo-latin.06fa7831.woff2", "/fonts/nope.woff2",
+                     "/fonts/archivo-latin.06fa7831.woff2%00", "/FONTS/archivo-latin.06fa7831.woff2"):
             self.assertEqual(self.call("GET", path)[0], 404, path)
         # the map is made of files only: a folder, or a file with another ending, is never in it
         web = tempfile.mkdtemp()
@@ -440,6 +461,31 @@ class ServerTest(ServerBase):
             with open(os.path.join(web, name), "w") as f:
                 f.write("x")
         self.assertEqual(server.static_files(web), {"/": "index.html", "/index.html": "index.html", "/fonts/a.woff2": os.path.join("fonts", "a.woff2")})
+        # a symbolic link is never served (found by the review): not a linked font, not a linked file beside the page,
+        # and not a fonts folder that is itself a link
+        secret = os.path.join(tempfile.mkdtemp(), "settings.json")
+        with open(secret, "w") as f:
+            f.write("secret")
+        os.symlink(secret, os.path.join(web, "fonts", "leak.woff2"))
+        os.symlink(secret, os.path.join(web, "leak.js"))
+        os.symlink(os.path.join(web, "fonts", "a.woff2"), os.path.join(web, "fonts", "inside.woff2"))
+        self.assertEqual(server.static_files(web), {"/": "index.html", "/index.html": "index.html", "/fonts/a.woff2": os.path.join("fonts", "a.woff2")})
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, web))
+        httpd.daemon_threads = True
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.port = httpd.server_address[1]
+        self.assertEqual(self.call("GET", "/fonts/a.woff2")[0], 200)
+        for path in ("/fonts/leak.woff2", "/leak.js", "/fonts/inside.woff2"):
+            st, body, _ = self.call("GET", path)
+            self.assertEqual(st, 404, path)
+            self.assertNotIn(b"secret", body if isinstance(body, bytes) else json.dumps(body).encode(), path)
+        linked = tempfile.mkdtemp()
+        with open(os.path.join(linked, "index.html"), "w") as f:
+            f.write("x")
+        os.symlink(os.path.join(web, "fonts"), os.path.join(linked, "fonts"))
+        self.assertEqual(server.static_files(linked), {"/": "index.html", "/index.html": "index.html"})
 
     def test_pin_rotation_writes_pin_file_and_invalidates_old_pin(self):
         token, _ = self.pair()

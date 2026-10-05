@@ -54,7 +54,7 @@ def validate(theme):
     problems = []
     if not isinstance(theme, dict):
         return ["theme is not an object"]
-    if not isinstance(theme.get("id"), str) or not _ID.match(theme["id"]):
+    if not isinstance(theme.get("id"), str) or not _ID.fullmatch(theme["id"]):
         problems.append("bad id")
     if not isinstance(theme.get("name"), str) or not theme.get("name") or len(theme["name"]) > 40:
         problems.append("bad name")
@@ -62,7 +62,7 @@ def validate(theme):
     if not isinstance(tokens, dict):
         return problems + ["tokens missing"]
     for t in TOKENS:
-        if not isinstance(tokens.get(t), str) or not _HEX.match(tokens[t]):
+        if not isinstance(tokens.get(t), str) or not _HEX.fullmatch(tokens[t]):
             problems.append("token %s must be #rrggbb" % t)
     extra = set(tokens) - set(TOKENS)
     if extra:
@@ -79,7 +79,7 @@ def validate(theme):
         for n in sorted(group, key=str):
             if n not in names:
                 problems.append("unknown name in %s: %s" % (key, str(n)[:40]))
-            elif not isinstance(group[n], str) or not _HEX.match(group[n]):
+            elif not isinstance(group[n], str) or not _HEX.fullmatch(group[n]):
                 problems.append("%s.%s must be #rrggbb" % (key, n))
     return problems
 
@@ -126,7 +126,7 @@ def css(theme, accent=None):
     """CSS custom properties for a theme, with an optional validated accent override."""
     tokens = dict(theme["tokens"])
     if accent is not None:
-        if not isinstance(accent, str) or not _HEX.match(accent):
+        if not isinstance(accent, str) or not _HEX.fullmatch(accent):
             raise ThemeError("accent must be #rrggbb")
         if not theme.get("areas"):       # a theme with a colour per area has no one accent to replace
             tokens["ac"] = accent.lower()
