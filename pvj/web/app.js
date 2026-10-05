@@ -1874,6 +1874,8 @@
     if (MIDI_SHORT[a.action]) return MIDI_SHORT[a.action];
     var slot = /^shader_(control|preset)_([1-8])$/.exec(a.action);
     if (slot) return 'Shader ' + slot[1] + ' ' + slot[2];
+    var fx = /^effect_control_([1-8])$/.exec(a.action);
+    if (fx) return 'Effect control ' + fx[1];
     var found = MIDI_ACTIONS.filter(function (x) { return x[0] === a.action; })[0];
     return found ? found[1].replace(' (fader)', '') : a.action;
   }

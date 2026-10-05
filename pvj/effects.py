@@ -154,7 +154,12 @@ def _block(parsed, values, c, pic, desc, plane, t):
               "vec4 pvj_img_px(vec2 p) { return pvj_at(vec2(p.x, RENDERSIZE.y - p.y) / RENDERSIZE); }",
               "vec2 pvj_img_size() { return RENDERSIZE; }"]
     lines += S.input_lines(parsed, values)
-    lines += ["#line %d" % parsed["line"], parsed["code"], "",
+    # The file's own line numbers, for what the compiler says. "#line n" names the next line n on OpenGL ES and from
+    # GLSL 3.30 on, and n + 1 before that (GLSL 1.40, what a Raspberry Pi 4 gets: seen in CI, where the same mistake
+    # was reported one line further down).
+    lines += ["#if defined(GL_ES) || __VERSION__ >= 330", "#define PVJ_LINE %d" % parsed["line"], "#else",
+              "#define PVJ_LINE %d" % max(0, parsed["line"] - 1), "#endif",
+              "#line PVJ_LINE", parsed["code"], "",
               "vec4 hook() {",
               "    vec4 pvj_src = HOOKED_tex(HOOKED_pos);"]
     if parsed.get("clock"):
@@ -506,6 +511,11 @@ class Effects(S.Engine):
             return None
         if not isinstance(params, dict):
             return None
+        try:                        # what the output was given, after the player's own video filters, if it says
+            out = ipc.request("get_property", "video-out-params")
+            params = out if isinstance(out, dict) and out.get("colormatrix") else params
+        except Exception:
+            pass
         fps = None
         for name in ("container-fps", "estimated-vf-fps"):
             try:

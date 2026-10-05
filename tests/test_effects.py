@@ -71,6 +71,7 @@ class TranslatorTest(unittest.TestCase):
         for block in (first, second):
             self.assertIn("const float k = 1.5;", block)
             self.assertIn("#define RENDERSIZE HOOKED_size\n", block)
+            self.assertIn("#define PVJ_LINE 1\n#else\n#define PVJ_LINE 0\n#endif\n#line PVJ_LINE\n", block)
             self.assertIn("return vec4(mix(pvj_src.rgb, pvj_native(c), 0.25), pvj_src.a);", block)
             self.assertIn("pvj_time = 0.0;", block)                                      # it does not read the clock
             self.assertIn("// nxlx effect 7 3\n", block)                                 # the name inside the code: a text is never alike another

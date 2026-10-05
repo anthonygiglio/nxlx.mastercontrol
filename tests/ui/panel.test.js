@@ -524,6 +524,7 @@ function startServer() {
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob3"] .ctlwhat'), 'Shader control 3');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r8"] .ctlwhat'), 'Blackout on / off 2x');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader8"] .ctlwhat'), 'Spare');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader7"] .ctlwhat'), 'Effect amount');
     assert.strictEqual(await page.locator(nano + ' .ctl.lit').count(), 0, 'nothing is lit before a control is moved');
     await page.waitForSelector(nano + ' .ctlquiet:has-text("Nothing received yet. Move a control. If this is a nanoKONTROL2, hold SET MARKER and CYCLE while plugging it in")');
     fs.appendFileSync(midiIn, 'B0 10 40\n');                                    // knob 1 is turned
@@ -537,7 +538,7 @@ function startServer() {
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), 'the drawn layout made the page scroll sideways');
     // a tap opens the chooser; the choice is saved as this person's mapping, and "Back to the standard" undoes it
     await page.click(nano + ' .ctl[data-id="r5"]');
-    await page.waitForSelector('#ctldetail #ctlnow:has-text("R 5: Spare")');
+    await page.waitForSelector('#ctldetail #ctlnow:has-text("R 5: Effect on / off (standard layout)")');     // it was spare before effects came
     assert.strictEqual(await page.locator('#ctlaction option[value="opacity"]').count(), 0, 'a button is not offered a fader\'s action');
     await page.selectOption('#ctlaction', 'pad');
     await page.selectOption('#ctlbank', '1');
@@ -549,7 +550,7 @@ function startServer() {
     assert.deepStrictEqual(midiMap.map((e) => [e.source, e.kind, e.number, e.action, e.bank, e.index]), [['nanoKONTROL2', 'cc', 68, 'pad', 1, 2]]);
     await page.waitForSelector('#midicard .midi-entry:has-text("nanoKONTROL2")');       // and it is listed with the other mappings
     await page.click('#ctlback');
-    await page.waitForSelector(nano + ' .ctl[data-id="r5"]:not(.mine):has-text("Spare")');
+    await page.waitForSelector(nano + ' .ctl[data-id="r5"]:not(.mine):has-text("Effect on / off")');
     assert.strictEqual((await get('/api/midi')).map.length, 0, 'Back to the standard removed the mapping');
     // Save on a guarded control that was not changed is not offered, so the press-twice guard cannot be saved away
     await page.click(nano + ' .ctl[data-id="r8"]');
