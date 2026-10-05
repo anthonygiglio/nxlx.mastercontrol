@@ -863,6 +863,36 @@ class SetsTest(Live):
             self.now[0] += 4000
         return out
 
+    def test_a_set_of_one_shader_stays_on_without_a_dip_or_a_reload(self):
+        """On the Pi a set with one shader went dark for the Mix duration at every dwell and came back the same."""
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+        for vary in (False, True):
+            one = self.add("Solo %s" % vary, ["nxlx-silk.fs"], dwell=30, vary=vary)
+            self.vibes.api_vibes({"on": True, "set": one["id"]}, None, "t")
+            self.assertTrue(self.vibes.tick())
+            self.pump()
+            epoch, text, calls = self.player.source_epoch, self.text(), len(self.player.calls)
+            for n in range(3):
+                self.now[0] += 31
+                self.assertFalse(self.vibes.tick())                   # nothing was put on
+                self.assertEqual(self.vibes.due, self.now[0] + 30)    # and the next look is a dwell away
+                self.pump()
+            after = [c[0] for c in self.player.calls[calls:]]
+            self.assertNotIn("opacity", after)                        # no dip
+            self.assertNotIn("play_source", after)                    # not loaded again
+            self.assertEqual((self.player.source_epoch, self.vibes.current, self.vibes.running), (epoch, "nxlx-silk.fs", True))
+            self.assertEqual(self.vibes.status()["rounds"], 4)
+            if vary:                                                  # its numbers still move, through the live change
+                self.assertIn("swap_source", after)
+                self.assertNotEqual(self.text(), text)
+            else:
+                self.assertEqual((after, self.text()), ([], text))
+            self.vibes.stop()
+        two = self.add("Pair", ["nxlx-silk.fs", "nxlx-ember.fs"], dwell=30, vary=False, order="listed")      # two members: the usual change
+        self.vibes.api_vibes({"on": True, "set": two["id"]}, None, "t")
+        self.assertEqual(self.rounds(3), ["nxlx-silk.fs", "nxlx-ember.fs", "nxlx-silk.fs"])
+        self.vibes.stop()
+
     def test_the_first_set_is_there_without_anything_saved(self):
         st = self.engine.state()
         self.assertEqual([(e["id"], e["name"], e["dwell"], e["vary"], e["order"], len(e["shaders"])) for e in st["sets"]], [("00000000", "Ambient", 180, True, "shuffle", IN_VIBES), ("00000001", "Show", 180, True, "shuffle", len(PERFORMANCE))])
@@ -1091,10 +1121,17 @@ class GuardTest(Live):
             st = self.engine.state()
         self.assertEqual((st["playing"]["load"], st["playing"]["drops_per_second"]), ("heavy", 4.0))
         self.assertEqual((st["playing"]["id"], self.row("nxlx-nebula.fs")["heavy"]), ("nxlx-nebula.fs", None))     # nothing is taken off or noted
+        # The load is the average over the guard's window (changed on purpose with the guard: it was the last look
+        # alone, so one quiet second read "ok" in the middle of a heavy shader). It comes down as the window empties.
         self.second(1)
-        self.assertEqual(self.engine.state()["playing"]["load"], "tight")
-        self.second(0)
-        self.assertEqual(self.engine.state()["playing"]["load"], "ok")
+        self.assertEqual(self.engine.state()["playing"]["load"], "heavy")
+        seen = []
+        for _ in range(7):
+            self.second(0)
+            st = self.engine.state()["playing"]
+            seen.append(st["load"])
+        self.assertEqual(seen, ["heavy", "heavy", "tight", "tight", "ok", "ok", "ok"])      # 17, 13, 9, 5, 1, 0, 0 frames in the last six seconds
+        self.assertEqual(st["drops_per_second"], 0.0)
 
     def test_vibes_moves_on_from_a_shader_that_keeps_dropping_frames_and_leaves_it_out(self):
         self.vibes.start()
@@ -1110,10 +1147,13 @@ class GuardTest(Live):
         self.assertLess(n, 9)                                         # after about six seconds over the limit, not after the dwell time
         self.assertNotEqual(self.vibes.current, bad)
         row = self.row(bad)
-        self.assertEqual((row["vibes"], row["heavy"]["drops"], row["heavy"]["height"]), (True, 3.0, 720))
+        # 2.5: the average over the six seconds it was judged on, of which the first was still quiet (it was 3.0
+        # while the guard looked at the last second only; changed on purpose)
+        self.assertEqual((row["vibes"], row["heavy"]["drops"], row["heavy"]["height"]), (True, 2.5, 720))
+        self.assertIs(type(self.settings.data["shaders"]["heavy"][bad]["height"]), int)
         self.assertNotIn(bad, self.engine.vibes_ids())
         self.assertTrue(any("left out" in n and bad in n for n in self.notes))
-        self.assertEqual(self.settings.data["shaders"]["heavy"][bad]["drops"], 3.0)       # kept across a restart
+        self.assertEqual(self.settings.data["shaders"]["heavy"][bad]["drops"], 2.5)       # kept across a restart
         self.vibes.stop()
         self.vibes.start()
         seen = set()
@@ -1193,11 +1233,14 @@ class GuardTest(Live):
         for _ in range(4):
             self.second(0)
             self.vibes.tick()
-        for pattern in ((5, 5, 5, 0), (9, 0, 0, 0)) * 4:              # never six seconds in a row
+        # One hitch, however many frames it costs, and a few frames now and then: under two a second over any six
+        # seconds once a single look counts for at most eight. (This was "(5, 5, 5, 0) is never six seconds in a
+        # row"; that pattern is 3.75 a second and is now marked, on purpose: see the bursty test.)
+        for pattern in ((30, 0, 0, 0, 0, 0, 0, 0), (9, 0, 0, 0, 0, 0, 1, 0)) * 3:
             for d in pattern:
                 self.second(d)
                 self.assertFalse(self.vibes.tick())
-        for _ in range(5):
+        for _ in range(3):
             self.second(3)
             self.vibes.tick()
         self.engine.change({"values": {"speed": 1.0}})               # a change is a new text: the count starts over
@@ -1206,6 +1249,69 @@ class GuardTest(Live):
             self.second(3)
             self.assertFalse(self.vibes.tick())
         self.assertEqual((self.vibes.current, self.engine.config().get("heavy")), (first, None))
+
+    def test_a_shader_that_drops_its_frames_in_bursts_is_marked(self):
+        """nxlx-lantern at 720 lines on the Pi 4: up to 8 frames a second, 3.8 on average, with a quiet second in
+        every six. The guard counted seconds in a row over the limit, started again at each quiet one, and never
+        marked it."""
+        self.vibes.start()
+        self.vibes.tick()
+        bad = self.vibes.current
+        for _ in range(3):
+            self.second(0)
+            self.vibes.tick()
+        burst = (8, 0, 7, 0, 8, 0)                                    # 23 in six seconds: 3.8 a second, never two bad seconds in a row
+        for n in range(4 * len(burst)):
+            self.second(burst[n % len(burst)])
+            if self.vibes.tick():
+                break
+        self.assertLess(n, 9)
+        self.assertNotEqual(self.vibes.current, bad)
+        mark = self.engine.config()["heavy"][bad]
+        self.assertGreaterEqual(mark["drops"], 2.0)
+        self.assertEqual((mark["height"], type(mark["height"])), (720, int))
+        self.vibes.stop()
+
+    def test_how_often_the_guard_is_asked_does_not_change_its_answer(self):
+        burst = (8, 0, 7, 0, 8, 0)
+        for every in (1, 2, 3):                                       # a look every second, every two, every three
+            self.engine.play("nxlx-tide.fs")
+            self.now[0] += 4
+            self.engine.state()
+            states = []
+            for n in range(24):
+                self.second(burst[n % len(burst)])
+                if n % every == every - 1:
+                    states.append(self.engine.state()["playing"]["load"])
+            self.assertEqual(states[-1], "heavy", every)
+            self.engine.off()
+            self.engine.state()
+
+    def test_a_light_shader_is_never_marked(self):
+        self.vibes.start()
+        self.vibes.tick()
+        first = self.vibes.current
+        for n in range(150):                                          # a frame every three seconds: 0.3 a second
+            self.second(1 if n % 3 == 0 else 0)
+            self.assertFalse(self.vibes.tick())
+            load = self.engine.state()["playing"]["load"]
+            self.assertNotEqual(load, "heavy")
+            if n > 12:                                                # once there is a whole window to average over
+                self.assertEqual(load, "ok")
+        self.assertEqual((self.vibes.current, self.engine.config().get("heavy")), (first, None))
+        self.vibes.stop()
+
+    def test_a_heavy_mark_keeps_its_lines_as_a_whole_number(self):
+        """The mark of the first run on the Pi read 720.0: the check that every settings write goes through made a
+        float of it."""
+        self.engine.note_heavy("nxlx-tide.fs", {"drops_per_second": 3.3})
+        self.engine.api_set({"action": "config", "guard": True}, None, "t")        # any later write of the settings
+        mark = self.settings.data["shaders"]["heavy"]["nxlx-tide.fs"]
+        self.assertEqual((mark["height"], type(mark["height"]), mark["drops"]), (720, int, 3.3))
+        self.assertEqual(json.dumps(mark["height"]), "720")
+        self.assertEqual(L.check_heavy({"a.fs": {"height": 720.0, "drops": 2.26}})["a.fs"], {"at": "", "drops": 2.3, "height": 720})
+        self.assertIs(type(L.check_heavy({"a.fs": {"height": 540.0}})["a.fs"]["height"]), int)
+        self.assertIs(type(self.row("nxlx-tide.fs")["heavy"]["height"]), int)
 
     def test_the_guard_can_be_switched_off(self):
         self.engine.api_set({"action": "config", "guard": False}, None, "t")
@@ -1223,11 +1329,18 @@ class GuardTest(Live):
 
     def test_variation_leaves_alone_what_changes_the_work_and_drops_the_palette_turn_when_frames_drop(self):
         self.engine.upload("all.fs", ALL)
-        show = self.engine.api_set({"action": "set", "op": "add", "name": "One", "shaders": ["all.fs"]}, None, "t")["sets"][-1]
+        # Two members, and only all.fs is looked at: a set of one no longer comes on again each round (it stays on,
+        # see test_a_set_of_one_shader_stays_on_without_a_dip_or_a_reload), so this set got a second shader on purpose.
+        show = self.engine.api_set({"action": "set", "op": "add", "name": "One", "order": "listed", "shaders": ["all.fs", "nxlx-silk.fs"]}, None, "t")["sets"][-1]
         self.vibes.start(show["id"])
         steps, levels, hues = set(), set(), []
-        for n in range(12):
+        n = -1
+        while n < 11:
             self.assertTrue(self.vibes.tick())
+            if self.vibes.current != "all.fs":
+                self.now[0] += 200
+                continue
+            n += 1
             steps.add(self.engine.playing["values"].get("steps", 3.0))
             levels.add(self.engine.playing["values"]["level"])
             hues.append(self.engine.playing["hue"])

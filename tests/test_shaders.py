@@ -6,6 +6,8 @@ import json
 import os
 import random
 import re
+import threading
+import time
 import unittest
 
 from pvj import autostart, osc, scheduler, shaders as S, vibes as V
@@ -566,6 +568,76 @@ class Base(ServerBase):
 
 
 class EngineTest(Base):
+    def test_shader_texts_nobody_uses_go_at_start_and_on_stop(self):
+        """Seen on the Pi: the text an earlier panel process generated stayed in the panel's runtime folder until the
+        first play, and the last one stayed after Stop."""
+        loaded = []
+        real = self.player.ipc.request
+
+        def request(*command):
+            if command[:2] == ("get_property", "glsl-shaders"):
+                if loaded == ["cannot say"]:
+                    raise RuntimeError("no answer")
+                return list(loaded)
+            return real(*command)
+        self.player.ipc.request = request
+        self.player.is_running = lambda: True
+
+        def leave(*names):
+            for n in names:
+                with open(os.path.join(self.rundir, n), "w") as f:
+                    f.write("// old")
+        other = ("shader-1-7.glsl", "shader-1-8.glsl.tmp", "shader-99999-1.glsl")
+        leave(*other)
+        leave("overlay-1.bgra", "notes.glsl")
+        # at start: what the player still has loaded stays, the rest goes, and nothing else in the folder is touched
+        loaded[:] = [os.path.join(self.rundir, "shader-1-7.glsl"), "/somewhere/else/mapping.glsl"]
+        self.engine.tidy()
+        self.assertEqual(self.generated(), ["shader-1-7.glsl"])
+        self.assertEqual(sorted(n for n in os.listdir(self.rundir) if not n.startswith("shader-") and n != "player.sock"), ["notes.glsl", "overlay-1.bgra"])
+        # a player that runs and cannot say what it has loaded: nothing is removed
+        leave(*other)
+        loaded[:] = ["cannot say"]
+        self.engine.tidy()
+        self.assertEqual(self.generated(), sorted(other))
+        # a player that is down has nothing loaded
+        self.player.is_running = lambda: False
+        self.engine.tidy()
+        self.assertEqual(self.generated(), [])
+        self.player.is_running = lambda: True
+        # the build of the panel does it (pvj/server.py), so an old text does not wait for the first play
+        import inspect
+        from pvj import server
+        self.assertIn("api.shaders.tidy()", inspect.getsource(server.build))
+        # a shader that is on keeps its text; Stop removes it
+        loaded[:] = []
+        self.engine.show("nxlx-aurora.fs")
+        (mine,) = self.generated()
+        leave("shader-1-7.glsl")
+        self.engine.tidy()
+        self.assertEqual(self.generated(), [mine])
+        self.api.control({"action": "stop"}, None, "t")
+        self.assertEqual((self.player.source_shader, self.generated()), (None, []))
+        # Stop never waits for the engine (its lock is held while the GPU looks at a shader): the tidy steps aside
+        leave("shader-1-7.glsl")
+        held, done = threading.Event(), threading.Event()
+
+        def hold():
+            with self.engine._lock:
+                held.set()
+                done.wait(5)
+        t = threading.Thread(target=hold, daemon=True)
+        t.start()
+        self.assertTrue(held.wait(5))
+        began = time.monotonic()
+        self.api.control({"action": "stop"}, None, "t")
+        self.assertLess(time.monotonic() - began, 1.0)
+        self.assertEqual(self.generated(), ["shader-1-7.glsl"])          # left for the next look
+        done.set()
+        t.join(5)
+        self.engine.tidy()
+        self.assertEqual(self.generated(), [])
+
     def test_nothing_is_offered_until_the_module_is_on_and_the_pi_3_never_gets_it(self):
         self.api.registry.set_enabled("shaders", False)
         self.assertEqual((self.engine.state()["enabled"], self.engine.state()["shaders"]), (False, []))
@@ -1147,15 +1219,18 @@ class VibesTest(Base):
         self.assertIn("loud.fs", self.engine.vibes_ids())
 
     def test_each_round_varies_the_numbers_inside_min_and_max_and_shifts_the_palette(self):
+        # Two shaders stay in, and only aurora's rounds are read: a rotation of one no longer loads its shader again
+        # each round (it stays on without a dip; tests/test_shader_engine.py), so the second one is here on purpose.
         for sid in self.engine.vibes_ids():
-            if sid != "nxlx-aurora.fs":
+            if sid not in ("nxlx-aurora.fs", "nxlx-silk.fs"):
                 self.engine.api_set({"action": "vibes", "id": sid, "on": False}, None, "t")
         texts = []
         self.vibes.start()
-        for _ in range(25):
+        while len(texts) < 25:
             self.assertTrue(self.vibes.tick())
-            with open(self.player.source_shader) as f:
-                texts.append(f.read())
+            if self.vibes.current == "nxlx-aurora.fs":
+                with open(self.player.source_shader) as f:
+                    texts.append(f.read())
             self.now[0] += 180
         speeds = [float(re.search(r"const float speed = ([0-9.e-]+);", t).group(1)) for t in texts]
         self.assertTrue(all(0.2 <= v <= 2.0 for v in speeds), speeds)
@@ -1164,6 +1239,10 @@ class VibesTest(Base):
         self.assertGreater(len({re.search(r"/ 30\.0 \+ ([0-9.]+);", t).group(1) for t in texts}), 20)   # where time starts
         self.engine.api_set({"action": "config", "vary": False}, None, "t")
         self.assertTrue(self.vibes.tick())
+        if self.vibes.current != "nxlx-aurora.fs":
+            self.now[0] += 180
+            self.assertTrue(self.vibes.tick())
+        self.assertEqual(self.vibes.current, "nxlx-aurora.fs")
         with open(self.player.source_shader) as f:
             plain = f.read()
         self.assertIn("const float speed = 1.0;", plain)

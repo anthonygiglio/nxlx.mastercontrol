@@ -882,6 +882,42 @@ class Engine:
                 except OSError:
                     pass
 
+    def tidy(self):
+        """Remove generated shader texts nobody uses: called when the panel starts (an earlier panel process leaves
+        its last text behind, and it stayed until the first play) and after Stop (the text of the shader that was on
+        stayed until the next one). What the player has loaded is kept: the player outlives the panel, and it reads a
+        text again when its video output starts anew. If the player runs and cannot say what it has loaded, nothing
+        is removed. It never waits: the engine's lock is held while the GPU looks at a shader, and a Stop from a
+        controller or the schedule must not wait for that; whoever holds the lock removes the leftovers itself when
+        it is done (`_cleanup`)."""
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            player = self.api.player
+            if not getattr(player, "rundir", None):
+                return                              # a player with no folder of its own has no texts either
+            keep = set()
+            on = self.on_screen()
+            if on:
+                keep.add(on["path"])
+            if getattr(player, "source_shader", None):
+                keep.add(player.source_shader)
+            try:
+                up = player.is_running()
+            except Exception:
+                up = True                           # not known: ask it
+            if up:
+                try:
+                    loaded = player.ipc.request("get_property", "glsl-shaders")
+                except Exception:
+                    return
+                if not isinstance(loaded, list):
+                    return
+                keep.update(p for p in loaded if isinstance(p, str))
+            self._cleanup(keep)
+        finally:
+            self._lock.release()
+
     # -- the player --
     is_carrier = staticmethod(is_carrier)
 

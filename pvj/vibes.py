@@ -75,6 +75,7 @@ class Vibes:
         self.history = []           # the shaders this run has shown, the newest last (for "the one before")
         self._want = None           # the shader to show next whatever the order says
         self._tight = set()         # shaders seen dropping a few frames in this run: shown without the palette turn
+        self._asked = False         # Next or Previous was pressed: the coming change is wanted, whatever the set holds
         self._marked = []           # shaders the guard marked heavy one after another, with no healthy one between
 
     # -- state --
@@ -165,6 +166,7 @@ class Vibes:
                 self._want = self.history[-2]
                 del self.history[-2:]
             self.due = self._clock()
+            self._asked = True                      # a person's Next or Previous: the shader comes on again, also in a set of one
         self._kick()
         return self.status()
 
@@ -376,7 +378,44 @@ class Vibes:
         self._undip()
         return False
 
+    def _stay(self):
+        """The set has one shader that can play, and it is the one on the screen: there is nothing to change to, so it
+        stays on. No dip to black, and the shader is not loaded again (on the Pi a set of one went dark for the Mix
+        duration every dwell and came back as the same picture). With variation on, its numbers get new values through
+        the engine's live change, which keeps TIME and does not flash; the palette turn and the start time stay as
+        they are, and so does everything while variation is off (switching variation off shows at the next Start or
+        Next). A person's Next or Previous still loads it again. Returns True when it stayed."""
+        asked, self._asked = self._asked, False
+        change = getattr(self.engine, "change", None)
+        if change is None:                          # the first version's engine cannot change a shader that is on: it loads it again
+            return False
+        if asked or not (self.started and self.current) or self._want not in (None, self.current):
+            return False
+        try:
+            rotation = self.engine.playable(self.set_id)
+        except ApiError:
+            return False                            # the set is gone: the usual path says so and ends
+        if [e["id"] for e in rotation["shaders"] if e["id"] not in self.refused] != [self.current]:
+            return False
+        if rotation["vary"]:
+            try:
+                inputs = next((s["inputs"] for s in self.engine.library() if s["id"] == self.current), [])
+                centre = self.engine.entry_values(self.current, rotation["shaders"][0].get("preset"))[0]
+                values = vary(inputs, self._rng, centre)
+                if values:
+                    change({"id": self.current, "values": values})
+            except ApiError:
+                pass                                # it left the screen meanwhile, or the GPU refused these: it stays as it is
+        with self._state:
+            self._want = None
+            self.rounds += 1
+            self.shown_at = self._clock()
+            self.due = self.shown_at + rotation["dwell"]
+        return True
+
     def _change(self):
+        if self._stay():
+            return False
         api = self.api
         half = api.settings.data["mix"]["duration"] / 2.0
         began = self._clock()

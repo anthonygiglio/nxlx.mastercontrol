@@ -62,6 +62,13 @@
     var e = ui.startSet && d.sets.length > 1 ? setById(d, ui.startSet) : null;
     return e && e.id !== d.active ? e : null;
   }
+  // The saved picture detail is above what this board is given by default: the words, the button and the request
+  // that puts it back. Null when there is nothing to say. (Also used by the Room screen's ambience control.)
+  function detailHigh(d) {
+    var now = d && d.config && d.config.height, usual = d && d.render && d.render['default'];
+    if (typeof now !== 'number' || typeof usual !== 'number' || now <= usual) return null;
+    return { words: 'Picture detail is ' + now + ' lines. This box is happier at ' + usual + '.', button: 'Use ' + usual, body: { action: 'config', height: usual } };
+  }
   function vibesBody(d, on) { var e = on && d ? startSet(d) : null; return e ? { on: true, set: e.id } : { on: on }; }
   // The inputs a controller's knobs 1 to 8 drive, in the box's own count: numbers, switches, choices and events.
   function knobOf(inputs) {
@@ -686,6 +693,11 @@
         });
         picks.appendChild(h('div', { class: 'detailbox' }, h('label', { class: 'field', for: 'shaderheight' }, 'Picture detail ', savedMark('height')), height));
         if (!d.render.measured) card.appendChild(h('p', { class: 'hint', id: 'detailhint', text: 'Speed on this board is not measured: choose fewer lines if the picture stutters.' }));
+        // A box set up by an earlier version keeps the detail it saved then (the test Pi 4: 720 lines, where eight of
+        // the Ambient shaders drop frames, against 540 now). Say so, with the way back in one tap.
+        var high = detailHigh(d);
+        if (high) card.appendChild(h('div', { class: 'row wrap detailhigh', id: 'detailhigh' }, h('span', { class: 'hint grow', id: 'detailhighwords', text: high.words }),
+          h('button', { class: 'btn', id: 'detailuse', text: high.button, onclick: function () { send('/api/shaders', high.body, null, 'shadernowmsg'); } })));
       }
       if (!running && v.last && v.last.message && v.last.message !== 'stopped') {
         card.appendChild(h('div', { class: 'hint', id: 'vibeslast', text: 'Vibes ' + v.last.message + ' (' + v.last.at + ').' }));
@@ -1196,5 +1208,8 @@
     } else if (/^[1-8]$/.test(e.key)) keys.preset(+e.key);
   });
 
-  window.pvjShaders = { liveRow: liveRow, liveStrip: liveStrip, patch: patch, page: page, nice: nice };
+  // For the Room screen's ambience control (room.js): the same player state, set choice and request body as the
+  // Vibes row on Live, so a set chosen on one screen is the set the other starts.
+  var lend = { player: player, activeSet: activeSet, startSet: startSet, body: vibesBody, choose: function (id) { ui.startSet = id; }, detailHigh: detailHigh };
+  window.pvjShaders = { liveRow: liveRow, liveStrip: liveStrip, patch: patch, page: page, nice: nice, vibes: lend };
 })();

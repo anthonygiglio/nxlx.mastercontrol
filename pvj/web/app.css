@@ -199,11 +199,16 @@ details.fold { display: block; }
 .vibessub { font-size: 13px; font-weight: 400; }
 #shaderslink, #vibesskip, #liveprev { flex: 1 1 0; min-width: 0; padding: 0 8px; }
 #liveset { flex: 1 1 100%; min-height: 56px; }
+/* The Room screen's ambience control: the same big button as Live; Next one and the set chooser share the row under it */
+#roomambnext, #roomambset { flex: 1 1 0; min-width: 0; min-height: 56px; }
+.room-amb .row .btn { min-height: 44px; }
 .liveside h2 { font-size: 20px; overflow-wrap: anywhere; min-width: 0; }
 @media (min-width: 900px) {
   .vibesbig { flex: 1 1 0; }
   #shaderslink, #vibesskip, #liveprev { flex: none; }
   #liveset { flex: 0 1 14rem; }
+  #roomambnext { flex: none; }
+  #roomambset { flex: 0 1 14rem; }
   .shell:has(.livecols.has-side) { max-width: 1500px; }
   .livecols.has-side { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
   .livecols.has-side > * { grid-column: 1; }

@@ -106,6 +106,7 @@
         var left = document.getElementById('supportleft');
         if (left && now) left.textContent = (S.device && S.device.remote ? 'You are connected as remote support' : 'Remote support session is open') + ' · ' + mins(r.data.support.seconds_left) + ' left';
         patchLive();
+        if (window.pvjRoom && window.pvjRoom.patch) window.pvjRoom.patch();
       }
     });
   }
@@ -3645,7 +3646,8 @@
   // letIn: the guest code part of People and codes, so staff on the Room screen need not leave it to let a guest in.
   function roomCtx() {
     return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
-      confirmRow: confirmRow, switchFeature: shaderCtx().switchFeature,
+      confirmRow: confirmRow, switchFeature: shaderCtx().switchFeature, poll: poll,
+      openShaders: function () { openSys('vibes', S.tab === 'system' ? null : S.tab); },
       openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
   }
   function stopTimers() {

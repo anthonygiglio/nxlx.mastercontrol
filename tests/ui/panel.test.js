@@ -972,6 +972,13 @@ function startServer() {
     await fitsCard('#roomscreen .card', 'Room');
     const roomWide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (roomWide > 1) problems.push('the Room screen is ' + roomWide + ' px wider than the phone');
+    // Shaders and Vibes is off: the owner gets one line and the way to its page (Back returns to Room), no ambience button
+    assert.strictEqual(await page.locator('#roomambience, #roomamb').count(), 0, 'no ambience control while Shaders and Vibes is off');
+    assert.strictEqual(await page.textContent('#roomamboff .hint'), 'Ambience (Vibes) is switched off.');
+    await page.click('#roomambopen');
+    await page.waitForSelector('#syspage h1:text-is("Shaders and Vibes")');
+    await page.click('#sysback');
+    await page.waitForSelector('#roomscreen.screen #roomamboff');
     await page.click('.room-scene:has-text("Console night")');
     await page.waitForFunction(() => /Main wall: on, input Box, sound muted\. Painting wall: switching on \(warming up\)\. Box: playing tunnel\.mkv\./.test((document.getElementById('roomjob') || {}).textContent || ''), null, { timeout: 20000 });
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '32') problems.push('the scene did not switch the main wall to input 32');
@@ -1005,6 +1012,7 @@ function startServer() {
       assert.strictEqual(await staff.locator('#roomalloff').count(), role === 'view' ? 0 : 1, role + ': All off');
       assert.strictEqual(await staff.locator('#roomviewonly').count(), role === 'view' ? 1 : 0, role + ': the view only note');
       assert.strictEqual(await staff.locator('#roomsetup').count(), 0, role + ': no set-up');
+      assert.strictEqual(await staff.locator('#roomambience, #roomamboff').count(), 0, role + ': nothing about ambience while Shaders and Vibes is off');
       // Letting a guest in is on the Room screen itself for staff (a presenter), and not there for a guest
       assert.strictEqual(await staff.locator('#roomletin').count(), role === 'view' ? 0 : 1, role + ': Let someone in');
       if (role === 'live') {
@@ -1867,6 +1875,24 @@ function startServer() {
       await page.waitForSelector('#shaderheight');
       await page.selectOption('#shaderheight', String(render.height));
       await page.waitForFunction((x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), render.height);
+      // A saved picture detail above this board's usual one (a box set up by the first version): a plain line beside
+      // the load says so, and one tap puts it back
+      const saved = (await get('/api/shaders')).config.height, above = render.heights.find((x) => x > render.default);
+      assert(above, 'this board offers a height above its usual one');
+      if (saved <= render.default) assert.strictEqual(await page.locator('#detailhigh').count(), 0, 'nothing is said while the detail is the usual one or lower');
+      assert.strictEqual(await post('/api/shaders', { action: 'config', height: above }), 200);
+      await page.waitForSelector('#shadernow #detailhigh', { timeout: 15000 });
+      assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is ' + above + ' lines. This box is happier at ' + render.default + '.');
+      assert.strictEqual(await page.textContent('#detailuse'), 'Use ' + render.default);
+      await onPage('Shaders and Vibes');
+      const lowered = page.waitForResponse((r) => r.url().endsWith('/api/shaders') && r.request().method() === 'POST' && r.request().postData() === JSON.stringify({ action: 'config', height: render.default }));
+      await page.click('#detailuse');
+      assert.strictEqual((await lowered).status(), 200, 'Use ' + render.default + ' applies on tap');
+      await page.waitForFunction(() => !document.getElementById('detailhigh'), null, { timeout: 15000 });
+      assert.strictEqual((await get('/api/shaders')).config.height, render.default);
+      assert.strictEqual(await page.inputValue('#shaderheight'), String(render.default), 'and the chooser shows it');
+      assert.strictEqual(await post('/api/shaders', { action: 'config', height: saved }), 200);       // as it was, for the steps that follow
+      await page.waitForFunction((x) => document.getElementById('shaderheight') && document.getElementById('shaderheight').value === String(x), saved, { timeout: 15000 });
     }
     // What this harness cannot make happen by itself (no GPU): a load that is too high and a GPU refusal. The box's
     // answer is given those fields on its way to the page.
@@ -2168,6 +2194,88 @@ function startServer() {
     await presenter.click('#sysback');
     await presenter.waitForSelector('#sysindex');
     await liveCtx.close();
+
+    // Ambience on the Room screen (the Vibes rotation under the name staff use): a presenter lands on Room, starts it
+    // there, reads the shader's name, goes to the next one and stops it. A guest reads the state and has nothing to
+    // press. Nothing sticks out on a phone. Room is switched on for this step only.
+    assert.strictEqual(await post('/api/modules/room', { enabled: true }), 200);
+    {
+      const tokens = await page.evaluate(() => Promise.all(['live', 'view'].map((role) => fetch('/api/devices/invite', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'ambience ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));
+      const open = async (token, who) => {
+        const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+        const pg = await c.newPage();
+        pg.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push(who + ': ' + m.text()); });
+        pg.on('pageerror', (e) => problems.push(who + ' pageerror: ' + e.message));
+        await pg.goto(base + '/#token=' + token);
+        await pg.waitForSelector('#roomscreen #roomambience', { timeout: 15000 });
+        return pg;
+      };
+      const vibesPost = (pg, body) => pg.waitForResponse((r) => r.url().endsWith('/api/vibes') && r.request().method() === 'POST' && r.request().postData() === body);
+      // The owner, and only the owner, also reads on Room that the saved picture detail is above this board's usual
+      // one, with the one tap that puts it back
+      const shaderState = await get('/api/shaders');
+      const usual = shaderState.render.default, above = shaderState.render.heights.find((x) => x > usual);
+      assert.strictEqual(await post('/api/shaders', { action: 'config', height: above }), 200);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.reload();
+      await page.waitForSelector('nav >> text=Room');
+      await page.click('nav >> text=Room');
+      await page.waitForSelector('#roomscreen #roomambdetail:visible', { timeout: 15000 });
+      assert.strictEqual(await page.textContent('#roomambdetailwords'), 'Picture detail ' + above + ' is high here.');
+      assert.strictEqual(await page.textContent('#roomambuse'), 'Use ' + usual);
+      {
+        const one = await page.evaluate(() => { const w = document.getElementById('roomambdetailwords'), b = document.getElementById('roomambuse').getBoundingClientRect(), r = w.getBoundingClientRect();
+          return { lines: r.height / parseFloat(getComputedStyle(w).lineHeight), beside: b.left >= r.right - 1 && b.top < r.bottom && b.bottom > r.top }; });
+        assert(one.lines < 1.5 && one.beside, 'the picture detail line on Room is one line with its button beside it: ' + JSON.stringify(one));
+      }
+      await fitsOn(page, "the owner's Room screen with the picture detail line");
+      const staff = await open(tokens[0], 'ambience presenter');
+      await staff.waitForSelector('#roomambset:visible');
+      assert.strictEqual(await staff.locator('#roomambdetail, #roomambuse').count(), 0, 'a presenter is not told about the picture detail');
+      await page.click('#roomambuse');
+      await page.waitForFunction(() => document.getElementById('roomambdetail').hidden, null, { timeout: 15000 });
+      assert.strictEqual((await get('/api/shaders')).config.height, usual, 'Use ' + usual + ' on Room applies on tap');
+      assert.strictEqual(await post('/api/shaders', { action: 'config', height: shaderState.config.height }), 200);
+      assert.strictEqual(await staff.textContent('#roomambwords'), 'Start ambience');
+      assert.strictEqual(await staff.getAttribute('#roomamb', 'aria-pressed'), 'false');
+      assert((await staff.evaluate(() => document.getElementById('roomamb').getBoundingClientRect().height)) >= 56, 'the ambience button is at least 56 px high');
+      assert(!(await staff.isVisible('#roomambnext')), 'no Next one while nothing plays');
+      await staff.waitForSelector('#roomambset:visible');           // two sets: a chooser beside the button
+      assert.deepStrictEqual(await staff.$$eval('#roomambset option', (os) => os.map((o) => o.textContent)), ['Set: Ambient', 'Set: Show']);
+      const started = vibesPost(staff, '{"on":true}');             // the usual set: nothing is said about sets
+      await staff.click('#roomamb');
+      assert.strictEqual((await started).status(), 200, 'a presenter starts ambience on the Room screen');
+      await staff.waitForFunction(() => /^Ambience is playing: [A-Z].*\.$/.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 20000 });
+      assert.strictEqual(await staff.textContent('#roomambsub'), 'Tap to stop');
+      assert.strictEqual(await staff.getAttribute('#roomamb', 'aria-pressed'), 'true');
+      assert((await get('/api/shaders')).vibes.running, 'the rotation is running on the box');
+      const guest2 = await open(tokens[1], 'ambience guest');
+      await guest2.waitForFunction(() => /^Ambience is playing: [A-Z].*\.$/.test((document.getElementById('roomambstate') || {}).textContent), null, { timeout: 20000 });
+      assert.strictEqual(await guest2.locator('#roomamb, #roomambnext, #roomambset, #roomambience button, #roomambience select').count(), 0, 'a guest reads the state and has nothing to press');
+      await fitsOn(guest2, "a guest's Room screen while ambience plays");
+      await staff.waitForSelector('#roomambnext:visible');
+      assert((await staff.evaluate(() => document.getElementById('roomambnext').getBoundingClientRect().height)) >= 56, 'Next one is easy to hit');
+      const nexted = vibesPost(staff, '{"next":true}');
+      await staff.click('#roomambnext');
+      assert.strictEqual((await nexted).status(), 200, 'Next one goes to the next shader');
+      await staff.waitForFunction(() => /^Ambience is playing: [A-Z]/.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 20000 });
+      await fitsOn(staff, "a presenter's Room screen while ambience plays");
+      if (shots) await staff.screenshot({ path: path.join(shots, '9-room-ambience.png') });
+      const stopped = vibesPost(staff, '{"on":false}');
+      await staff.click('#roomamb');
+      assert.strictEqual((await stopped).status(), 200, 'a tap stops it');
+      await staff.waitForFunction(() => (document.getElementById('roomambwords') || {}).textContent === 'Start ambience');
+      await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running), null, { timeout: 20000 });
+      await guest2.waitForFunction(() => (document.getElementById('roomambstate') || {}).textContent === 'Ambience is not playing.', null, { timeout: 20000 });
+      await staff.waitForFunction(() => document.getElementById('roomambnext').hidden && document.getElementById('roomamb').getAttribute('aria-pressed') === 'false', null, { timeout: 20000 });
+      await fitsOn(staff, "a presenter's Room screen with ambience stopped");
+      await staff.context().close();
+      await guest2.context().close();
+    }
+    await page.click('nav >> text=Live');                // off the Room screen before its module goes, so it asks nothing more
+    await page.waitForSelector('.pads');
+    assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
 
     // A laptop: the Shaders page is a workspace. The library is a column that scrolls by itself, what is playing and
     // its controls are beside it and in view, the settings and controllers are a third column; nothing sticks out at

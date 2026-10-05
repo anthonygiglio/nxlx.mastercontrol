@@ -19,7 +19,8 @@ Read first: [HANDOFF.md](HANDOFF.md), then [project-log/](project-log/README.md)
 - Do not rerun a baseline: on the dev Mac (no mpv, no Playwright, BSD tools) these fail on master and are not yours: `tests.test_update` (10), `tests.test_install` (6), `tests.test_netd` (4), `tests.test_release` (3). Run only the test modules you touched, one at a time; CI (real mpv, Playwright) is the judge. Fix a red check at its cause; never loosen an assertion.
 - Python is standard library only. Panel code is plain JavaScript with no build step, a strict CSP and `textContent` only. `node --check` what you touch.
 - Scratch files go in a private folder from `mktemp -d`. Look at `git status` before each commit.
+- Keep scratch files small and delete them when you finish: the dev Mac has little free disk, and a full disk stops every agent.
 - Tests and probes use loopback only. Do not touch the test Pi, a projector or the network unless the brief says so.
 - Anything that takes network input, reads devices, handles uploads or auth, or runs as root gets an independent read-only review before merging, and every finding gets a test.
-- The panel's shared patterns (page shell, the real switch, state chips, inline confirm, list rows, apply on tap or Save) are in D42 and D43; a page holds its own controls and never sends the person elsewhere; pages for intense work need a laptop layout. Say server and client.
+- The panel's shared patterns (page shell, the real switch, state chips, inline confirm, list rows, apply on tap or Save) are in D42 and D43; a page holds its own controls by default, and a link to another page is fine where that is clearer (D52); pages for intense work need a laptop layout. Say server and client.
 - Finish with a short report: what was built, what was left out, the pull request number, the state of every check, what was not tested, what you are unsure about.

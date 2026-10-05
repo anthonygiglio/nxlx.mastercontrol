@@ -934,6 +934,7 @@ class Api:
         elif action == "stop":
             self._player_call(p.clear)
             self._stop_capture()
+            self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
         elif action == "seek_to":
             self._player_call(p.seek_to, number(body, "value", 0, 24 * 3600))
         elif action == "shuffle":

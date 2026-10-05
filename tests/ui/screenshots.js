@@ -275,6 +275,22 @@ function startServer() {
       await page.waitForTimeout(600);
       await whole(f);
     });
+    // The Room screen while ambience (the same rotation) plays: the big button staff land on, with Next one beside it.
+    await shot('room-ambience', async (f) => {
+      await api('POST', '/api/modules/room', { enabled: true });
+      try {
+        await page.reload();
+        await page.waitForSelector('.pads');
+        await page.click('nav >> text=Room');
+        await soft('ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
+        await page.waitForTimeout(600);
+        await whole(f);
+      } finally {
+        await api('POST', '/api/modules/room', { enabled: false });
+        await page.reload();
+        await page.waitForSelector('.pads');
+      }
+    });
     await shot('shaders-page-laptop', async (f) => {
       await page.setViewportSize({ width: 1366, height: 768 });
       try {
