@@ -462,6 +462,7 @@ function startServer() {
       const roomAsStaffSeeIt = async () => {
         try {
           await sys('Projectors');
+          await api('POST', '/api/projector', { id: 'all', action: 'identify' });          // (an edit of a projector's address drops what it said it is; read it again)
           await page.waitForFunction(() => fetch('/api/projectors').then((r) => r.json()).then((d) => d.projectors.length > 0 && d.projectors.slice(0, 2).every((p) => p.inputs.length > 0)), null, { timeout: 25000, polling: 1000 }).catch(() => {});   // each projector has said which inputs it has
           const ps = ((await page.evaluate(() => fetch('/api/projectors').then((r) => r.json()))).projectors || []).slice(0, 2);
           const have = ((await page.evaluate(() => fetch('/api/room').then((r) => r.json()))).groups || []).map((g) => g.name);

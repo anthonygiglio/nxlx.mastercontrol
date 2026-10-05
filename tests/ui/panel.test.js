@@ -2532,6 +2532,7 @@ function startServer() {
       // is checked (the built-in "Everything" card alone is not what staff see).
       const roomAsStaffSeeIt = async () => {
         await sys('Projectors');
+        await post('/api/projector', { id: 'all', action: 'identify' });          // (an edit of a projector's address drops what it said it is; read it again)
         await page.waitForFunction(() => fetch('/api/projectors').then((r) => r.json()).then((d) => d.projectors.length > 0 && d.projectors.slice(0, 2).every((p) => p.inputs.length > 0)), null, { timeout: 25000, polling: 1000 }).catch(() => {});   // each projector has said which inputs it has
         const ps = ((await get('/api/projectors')).projectors || []).slice(0, 2);
         const have = ((await get('/api/room')).groups || []).map((g) => g.name);
