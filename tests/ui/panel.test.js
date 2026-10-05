@@ -52,7 +52,8 @@ function startServer() {
     // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a value sent to a
     // shader that has left the screen and the 503 for a screen preview from a harness player with no window are
     // provoked on purpose; so is the 502 for "Try again" on a projector that nothing answers for.
-    const expected = /status of (400|401|403|409|502|503)/;
+    // And the 422 for a theme file the box refuses (its text cannot be read, or it holds CSS).
+    const expected = /status of (400|401|403|409|422|502|503)/;
     page.on('console', (m) => { if (['error', 'warning'].includes(m.type()) && !expected.test(m.text())) problems.push(m.text()); });
     page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
     const fontRequests = [];             // the default look must never ask for a font file; Signal asks the box itself
@@ -1310,7 +1311,13 @@ function startServer() {
     await page.waitForFunction(() => /Remote support is off/.test(document.getElementById('supportcard').textContent));
     assert.strictEqual((await get('/api/support')).config.allowed, false, 'the page switch turned remote support off');
     await onPage('Remote support');
+    // The Look page draws each look as a small picture in that look's own type, so it is the one place where the
+    // default look asks the box for the two shipped fonts (D59). Nowhere before it, and never from anywhere else.
+    assert.deepStrictEqual(fontRequests, [], 'a font file was fetched before the Look page was opened: ' + fontRequests.join(', '));
     await sys('Look');
+    await page.waitForSelector('#lookthemes .looktile[data-theme="signal"] .lt-title');
+    assert.deepStrictEqual(await page.$$eval('#lookthemes .looktile', (ts) => ts.map((t) => t.getAttribute('data-theme')).sort()),
+      ['dark-stage', 'high-contrast', 'light', 'night-red', 'signal', 'signal-light'], 'every look has its picture');
     await page.click('button:has-text("Night red")');
     await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(0, 0, 0)');
     await onPage('Look');
@@ -2504,7 +2511,7 @@ function startServer() {
     // text reads at 4.5 to 1 on what is behind it, and the title, the open tab and the focus ring take the area's
     // colour. This step comes last and puts the default look back.
     {
-      assert.deepStrictEqual(fontRequests, [], 'the default look fetched a font file: ' + fontRequests.join(', '));
+      assert(fontRequests.every((u) => u.indexOf(base + '/fonts/') === 0), 'a font was asked for somewhere other than the box: ' + fontRequests.join(', '));
       assert.strictEqual(await page.evaluate(() => document.documentElement.hasAttribute('data-style')), false, 'the default look has no style on the root element');
       const AREA = { room: 'rgb(255, 214, 10)', shaders: 'rgb(255, 79, 163)', clips: 'rgb(61, 220, 151)', mix: 'rgb(183, 140, 255)', system: 'rgb(122, 162, 255)' };
       await page.setViewportSize({ width: 390, height: 844 });
@@ -2641,6 +2648,104 @@ function startServer() {
       await page.click('#lookthemes button[data-theme="dark-stage"]');
       await page.waitForFunction(() => !document.documentElement.hasAttribute('data-style'));
       assert((await page.locator('.swatch').count()) > 0, 'the default look offers accents again');
+      assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
+      await page.setViewportSize({ width: 1280, height: 800 });
+    }
+
+    // ---- A theme of the owner's own (D59): a small file added on the Look page. One that cannot be read is refused in
+    // plain words; a good one shows among the looks marked "yours", applies on tap (its radius, its sentence-case
+    // titles and its two colours are on Room and on Live), can be saved as a file again, and is removed with a
+    // question asked in place, the panel going back to the look it came with.
+    {
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.strictEqual(await post('/api/modules/room', { enabled: true }), 200);
+      await page.goto(base + '/');
+      await page.waitForSelector('nav.tabs');
+      await sys('Look');
+      await page.waitForSelector('#lookthemes .looktile');
+      // the pictures: each look in its own colours, type and case
+      const tiles = await page.$$eval('#lookthemes .looktile', (ts) => ts.map((t) => { const art = t.querySelector('.lt-art'), ti = t.querySelector('.lt-title'), cs = getComputedStyle(ti);
+        return [t.getAttribute('data-theme'), getComputedStyle(art).backgroundColor, cs.textTransform, cs.fontFamily.split(',')[0].replace(/"/g, ''), t.querySelectorAll('.lt-areas i').length, t.querySelector('.lt-btn').textContent, t.querySelector('.lt-chip').textContent]; }));
+      const tile = {};
+      tiles.forEach((x) => { tile[x[0]] = x.slice(1); });
+      assert.deepStrictEqual(tile.signal, ['rgb(11, 11, 13)', 'uppercase', 'Archivo', 5, 'Play', 'Active'], 'Signal\'s picture: ' + JSON.stringify(tile.signal));
+      assert.deepStrictEqual(tile['signal-light'].slice(0, 2), ['rgb(242, 240, 234)', 'uppercase']);
+      assert.deepStrictEqual([tile['dark-stage'][0], tile['dark-stage'][1], tile['dark-stage'][3]], ['rgb(18, 18, 20)', 'none', 1], 'Dark stage\'s picture: ' + JSON.stringify(tile['dark-stage']));
+      assert.strictEqual(await page.locator('#lookthemes .looktile.on[data-theme="dark-stage"] .lt-inuse').count(), 1, 'the look in use says so in words');
+      assert.strictEqual(await page.locator('.lt-mine').count(), 0, 'nothing is marked "yours" before a theme is added');
+      const wide = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+      assert(wide[0] <= wide[1] + 1, 'the Look page is wider than a phone: ' + JSON.stringify(wide));
+      const small = await page.$$eval('#lookcard .lt-title, #lookcard .lt-btn, #lookcard .lt-chip, #lookcard .lt-name span', (els) => els.filter((e) => parseFloat(getComputedStyle(e).fontSize) < 13).length);
+      assert.strictEqual(small, 0, 'text under 13 px in a look\'s picture');
+      const signalTheme = (await get('/api/theme')).available.filter((t) => t.id === 'signal')[0].look;
+      const own = { id: 'browser-test', name: 'Browser test', style: 'signal', tokens: signalTheme.tokens, areas: Object.assign({}, signalTheme.areas, { room: '#ff8a65', clips: '#4dd0e1' }),
+        states: signalTheme.states, design: { radius_control: 14, title_case: 'sentence' } };
+      // one whose text cannot be read: refused, with the pair named, and nothing added
+      const dim = Object.assign({}, own, { id: 'dim', name: 'Dim', tokens: Object.assign({}, own.tokens, { fg: '#555555' }) });
+      await page.setInputFiles('#themepick', { name: 'dim.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(dim)) });
+      await page.waitForFunction(() => { const m = document.getElementById('themeresult'); return m && /err/.test(m.className) && /Text on the page is 2\.6 to 1; it needs 4\.5/.test(m.textContent); }, null, { timeout: 8000 });
+      assert(/^This theme cannot be used: /.test(await page.textContent('#themeresult')), 'the refusal is said plainly: ' + await page.textContent('#themeresult'));
+      assert.strictEqual(await page.locator('.looktile[data-theme="dim"]').count(), 0);
+      // CSS in a theme never gets as far as the page
+      await page.setInputFiles('#themepick', { name: 'css.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(Object.assign({}, own, { css: 'body{display:none}' }))) });
+      await page.waitForFunction(() => /unknown keys: css/.test(document.getElementById('themeresult').textContent), null, { timeout: 8000 });
+      await page.setInputFiles('#themepick', { name: 'huge.json', mimeType: 'application/json', buffer: Buffer.alloc(40000, 32) });
+      await page.waitForFunction(() => /too large for a theme/.test(document.getElementById('themeresult').textContent), null, { timeout: 8000 });
+      // a good one
+      await page.setInputFiles('#themepick', { name: 'browser-test.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(own, null, 2)) });
+      await page.waitForSelector('.looktile[data-theme="browser-test"] .lt-mine:text-is("yours")', { timeout: 8000 });
+      assert.strictEqual(await page.textContent('#themeresult'), 'Added Browser test. Tap it to use it.');
+      assert.strictEqual(await page.evaluate(() => document.documentElement.hasAttribute('data-style')), false, 'adding a theme does not put it on');
+      const mineTile = await page.$eval('.looktile[data-theme="browser-test"]', (t) => [getComputedStyle(t.querySelector('.lt-title')).textTransform, getComputedStyle(t.querySelector('.lt-btn')).backgroundColor, getComputedStyle(t.querySelector('.lt-btn')).borderTopLeftRadius, getComputedStyle(t.querySelector('.lt-areas i:nth-child(3)')).backgroundColor]);
+      assert.deepStrictEqual(mineTile, ['none', 'rgb(255, 138, 101)', '12px', 'rgb(77, 208, 225)'], 'its picture shows its case, its radius and its two colours before it is tapped: ' + JSON.stringify(mineTile));
+      // tap: it is the look, at once
+      await page.click('.looktile[data-theme="browser-test"]');
+      await page.waitForSelector('html[data-style="signal"]');
+      await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--tk-r').trim() === '14px', null, { timeout: 8000 });
+      assert.strictEqual((await get('/api/theme')).theme.name, 'browser-test');
+      const seen = async () => page.evaluate(() => { const top = document.querySelector('.screen > .top:first-child'), h1 = top.querySelector('h1'), tab = document.querySelector('nav.tabs .btn.on'), plain = document.querySelector('nav.tabs .btn:not(.on)');
+        return [getComputedStyle(top).backgroundColor, getComputedStyle(h1).textTransform, getComputedStyle(h1, '::before').textTransform, getComputedStyle(tab).backgroundColor, getComputedStyle(plain).borderTopLeftRadius, getComputedStyle(plain).minHeight]; });
+      await page.click('nav >> text=Room');
+      await page.waitForSelector('#roomscreen');
+      await page.waitForFunction(() => document.documentElement.getAttribute('data-area') === 'room');
+      const onRoom = await seen();
+      assert.deepStrictEqual([onRoom[0], onRoom[1], onRoom[3], onRoom[4], onRoom[5]], ['rgb(255, 138, 101)', 'none', 'rgb(255, 138, 101)', '14px', '56px'], 'Room in the owner\'s theme: its colour, sentence case, rounded: ' + JSON.stringify(onRoom));
+      const roomBtn = await page.evaluate(() => { const b = document.querySelector('#roomscreen .btn'); return b ? [getComputedStyle(b).borderTopLeftRadius, b.getBoundingClientRect().height >= 55.5] : null; });
+      if (roomBtn) assert.deepStrictEqual(roomBtn, ['14px', true], 'a button on Room is rounded and still 56 px: ' + JSON.stringify(roomBtn));
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('.pads');
+      await page.waitForFunction(() => document.documentElement.getAttribute('data-area') === 'clips');
+      const onLive = await seen();
+      assert.deepStrictEqual([onLive[0], onLive[2], onLive[3], onLive[4]], ['rgb(77, 208, 225)', 'none', 'rgb(77, 208, 225)', '14px'], 'Live in the owner\'s theme: ' + JSON.stringify(onLive));
+      assert.strictEqual(await page.evaluate(() => getComputedStyle(document.querySelector('.pad')).borderTopLeftRadius), '14px', 'a pad is rounded');
+      const html2 = await page.evaluate(() => fetch('/').then((r) => r.text()));
+      assert(/<html lang="en" data-style="signal">/.test(html2), 'the page as served carries the style of the owner\'s theme');
+      const css2 = await page.evaluate(() => fetch('/theme.css').then((r) => r.text()));
+      assert(/^:root\{[^{}<>]*--tk-r:14px;[^{}<>]*\}$/.test(css2) && !/display|url\(/.test(css2), 'what the box serves for the theme is one block of variables: ' + css2.slice(0, 200));
+      // a laptop: the pictures fit, and the theme is saved as a file that holds what was added
+      await page.setViewportSize({ width: 1366, height: 800 });
+      await sys('Look');
+      await page.waitForSelector('.looktile[data-theme="browser-test"].on .lt-inuse');
+      const wide2 = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth, document.querySelectorAll('#lookthemes .looktile').length]);
+      assert(wide2[0] <= wide2[1] + 1 && wide2[2] === 7, 'the Look page on a laptop: ' + JSON.stringify(wide2));
+      assert.strictEqual(await page.locator('.swatch').count(), 0, 'a theme with a colour per area offers no accent');
+      const [download] = await Promise.all([page.waitForEvent('download'), page.click('#themesave')]);
+      assert.strictEqual(download.suggestedFilename(), 'nxlx-theme-browser-test.json');
+      const saved = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+      assert.deepStrictEqual([saved.id, saved.name, saved.areas.room, saved.design.radius_control, saved.design.title_case, saved.design.border_width], ['browser-test', 'Browser test', '#ff8a65', 14, 'sentence', 3], 'the saved file: ' + JSON.stringify(saved));
+      // removing the look in use asks first, in place, and says what will happen
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.click('#themelist button[data-remove="browser-test"]');
+      await page.waitForSelector('#confirmrow:has-text("Remove the theme Browser test from this box? It is the look in use: the panel goes back to Dark stage.")');
+      await page.click('#confirmno');
+      assert.strictEqual((await get('/api/theme')).theme.name, 'browser-test', '"Keep it" changes nothing');
+      await page.click('#themelist button[data-remove="browser-test"]');
+      await page.click('#confirmyes');
+      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-style') && !document.querySelector('.looktile[data-theme="browser-test"]'), null, { timeout: 8000 });
+      assert.deepStrictEqual((await get('/api/theme')).theme, { name: 'dark-stage', accent: null }, 'the box is back on the look it came with');
+      assert.strictEqual(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(18, 18, 20)');
+      assert.strictEqual(await page.locator('#themelist').count(), 0);
+      assert.strictEqual(await page.textContent('#themeresult'), 'Removed Browser test.');
       assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
       await page.setViewportSize({ width: 1280, height: 800 });
     }

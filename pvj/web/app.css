@@ -458,6 +458,22 @@ table.chan .lvl { width: 36%; }
   #devicelist, #midimaplist { max-height: calc(100dvh - 420px); min-height: 180px; overflow-y: auto; padding-right: 8px; }
 }
 
+/* -- Look: each look as a small picture drawn from its own tokens (app.js: lookTile sets the colours, the radius and
+   the type through the script). The name under it is the panel's own text; "yours" marks a theme the owner added. -- */
+#lookthemes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
+.looktile { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 44px; padding: 6px; border: 1.5px solid var(--ln); border-radius: 8px; background: var(--cd); color: var(--fg); cursor: pointer; text-align: left; }
+.looktile.on { border-color: var(--fg); box-shadow: inset 0 0 0 2px var(--fg); }
+.lt-art { display: flex; flex-direction: column; gap: 6px; padding: 8px; overflow: hidden; }
+.lt-areas { display: flex; gap: 3px; height: 10px; }
+.lt-areas i { flex: 1 1 0; }
+.lt-title { font-size: 18px; font-weight: 700; line-height: 1.15; }
+.lt-surface { display: flex; align-items: center; gap: 6px; padding: 6px; flex-wrap: wrap; }
+.lt-btn, .lt-chip { font-size: 13px; font-weight: 600; line-height: 1.3; padding: 3px 8px; white-space: nowrap; }
+.lt-name { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 14px; font-weight: 600; }
+.lt-label { overflow-wrap: anywhere; min-width: 0; }
+.lt-mine, .lt-inuse { font-size: 13px; font-weight: 400; color: var(--mu); }
+@media (min-width: 900px) { #lookthemes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
+
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
    element carries data-style="signal", which the server writes for a theme that names that style. The look above is
@@ -958,3 +974,12 @@ html[data-style="signal"] .switch::after { border-radius: 0 var(--tk-r, 0) var(-
 html[data-style="signal"] #msg, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .syshead h1, html[data-style="signal"] .screen > .top:first-child h1,
 html[data-style="signal"] .slider label .k, html[data-style="signal"] .ctlhead .slidervalue, html[data-style="signal"] .seg, html[data-style="signal"] .banks, html[data-style="signal"] #netmodes, html[data-style="signal"] .daychips,
 html[data-style="signal"] #roomscreen .room-amb > h2, html[data-style="signal"] #roomscreen #roomscenes > h2, html[data-style="signal"] .proj-entry .lname::after, html[data-style="signal"] .danger-h, html[data-style="signal"] #roomscreen .room-result { border-radius: var(--tk-r, 0); }
+
+/* -- Look: the pictures of the looks in one frame; the look in use has the ink line round it and says "in use" -- */
+html[data-style="signal"] #lookthemes { padding: 8px; gap: 8px; border-radius: var(--tk-rp, 0); }
+html[data-style="signal"] .looktile { border: var(--rule) solid var(--mu); border-radius: var(--tk-r, 0); background: var(--bg); padding: 8px; font-family: var(--sans); }
+html[data-style="signal"] .looktile.on { border-color: var(--ink); box-shadow: inset 0 0 0 3px var(--ink); }
+html[data-style="signal"] .lt-name { font: 700 16px/1.25 var(--sans); }
+html[data-style="signal"] .lt-mine, html[data-style="signal"] .lt-inuse { font: 600 13px/1.35 var(--sans); color: var(--mu); }
+html[data-style="signal"] #themelist .lname { text-transform: none; }
+@media (min-width: 900px) { html[data-style="signal"] #lookthemes { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }

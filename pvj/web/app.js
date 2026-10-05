@@ -3499,22 +3499,100 @@
     var area = !S.device ? null : S.tab === 'room' ? 'room' : S.tab === 'mix' ? 'mix' : S.tab === 'system' ? (S.sys === 'vibes' ? 'shaders' : 'system') : 'clips';
     if (area) document.documentElement.setAttribute('data-area', area); else document.documentElement.removeAttribute('data-area');
   }
+  // A small picture of a look, drawn from its own tokens (the page, a surface, the colour of each part of the panel, a
+  // title in its font and case, a button and a state chip), so a look can be judged before it is tapped. Every value
+  // is set through the script (the policy allows that, not a style attribute), a colour only if it is #rrggbb, a font
+  // only from this list: nothing of a theme file is ever written into the page as text of a style.
+  var LOOK_FONTS = { archivo: '"Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', system: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+    'jetbrains-mono': '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace' };
+  var LOOK_AREAS = ['room', 'shaders', 'clips', 'mix', 'system'];
+  function lookColour(c, fallback) { return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c : fallback; }
+  function lookNumber(v, low, high, fallback) { return typeof v === 'number' && isFinite(v) ? Math.max(low, Math.min(high, v)) : fallback; }
+  function lookLum(c) {
+    var v = [1, 3, 5].map(function (i) { var x = parseInt(c.slice(i, i + 2), 16) / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  }
+  function lookOn(c, a, b) {       // of a and b, the one that reads better on c (as the box works out the text on an area)
+    var l = lookLum(c), ra = (Math.max(l, lookLum(a)) + 0.05) / (Math.min(l, lookLum(a)) + 0.05), rb = (Math.max(l, lookLum(b)) + 0.05) / (Math.min(l, lookLum(b)) + 0.05);
+    return ra >= rb ? a : b;
+  }
+  function lookTile(th, chosen, onPick) {
+    var look = th.look || {}, tk = look.tokens || {}, areas = look.areas || {}, states = look.states || {}, d = look.design || null;
+    var bg = lookColour(tk.bg, '#121214'), cd = lookColour(tk.cd, '#1c1c20'), fg = lookColour(tk.fg, '#f2f1ec'), ln = lookColour(tk.ln, fg);
+    var ac = lookColour(areas.room, lookColour(tk.ac, fg)), on = areas.room ? lookOn(ac, bg, fg) : lookColour(tk.on, bg);
+    var chipBg = lookColour(states.active, cd), chipFg = states.active ? lookOn(chipBg, bg, fg) : fg;
+    var radius = d ? lookNumber(d.radius_control, 0, 24, 0) : 6, panel = d ? lookNumber(d.radius_panel, 0, 24, 0) : 6, rule = d ? lookNumber(d.border_width, 0, 4, 3) : 1.5;
+    var art = h('span', { class: 'lt-art' });
+    art.style.background = bg; art.style.color = fg; art.style.borderRadius = Math.min(panel, 14) + 'px';
+    var strip = h('span', { class: 'lt-areas' });
+    (th.areas ? LOOK_AREAS.map(function (a) { return lookColour(areas[a], null); }).filter(Boolean) : [ac]).forEach(function (c) {
+      var block = h('i'); block.style.background = c; strip.appendChild(block);
+    });
+    var title = h('span', { class: 'lt-title', text: 'Room' });
+    if (d) {
+      title.style.fontFamily = Object.prototype.hasOwnProperty.call(LOOK_FONTS, d.font_title) ? LOOK_FONTS[d.font_title] : LOOK_FONTS.system;
+      title.style.fontWeight = String(lookNumber(d.title_weight, 400, 900, 900));
+      if (d.title_case === 'capitals') { title.style.textTransform = 'uppercase'; title.style.letterSpacing = '.04em'; }
+    }
+    var surface = h('span', { class: 'lt-surface' });
+    surface.style.background = cd; surface.style.borderRadius = Math.min(panel, 10) + 'px';
+    var btn = h('span', { class: 'lt-btn', text: 'Play' });
+    var outlined = d && d.primary === 'outlined';
+    btn.style.background = outlined ? 'transparent' : ac; btn.style.color = outlined ? fg : on;
+    btn.style.border = Math.max(rule, outlined ? 1 : 0) + 'px solid ' + (outlined ? fg : ac); btn.style.borderRadius = Math.min(radius, 12) + 'px';
+    var chip = h('span', { class: 'lt-chip', text: 'Active' });
+    chip.style.background = chipBg; chip.style.color = chipFg; chip.style.borderRadius = (d ? Math.min(radius, 12) : 10) + 'px';
+    if (!states.active) chip.style.border = '1px solid ' + ln;
+    if (d) [btn, chip].forEach(function (el) { el.style.fontFamily = Object.prototype.hasOwnProperty.call(LOOK_FONTS, d.font_text) ? LOOK_FONTS[d.font_text] : LOOK_FONTS.system; });
+    surface.appendChild(btn); surface.appendChild(chip);
+    art.appendChild(strip); art.appendChild(title); art.appendChild(surface);
+    return h('button', { class: 'looktile' + (chosen ? ' on' : ''), 'data-theme': th.id, 'data-mine': th.source === 'addon' ? '1' : false, 'aria-pressed': chosen ? 'true' : 'false', onclick: onPick },
+      art, h('span', { class: 'lt-name' }, h('span', { class: 'lt-label', text: th.name }),
+        th.source === 'addon' ? h('span', { class: 'lt-mine', text: 'yours' }) : null, chosen ? h('span', { class: 'lt-inuse', text: 'in use' }) : null));
+  }
+  var lookNote = { text: '', err: false };      // what adding, saving or removing a theme said; survives the redraw
+  var THEME_BYTES = 16 * 1024;                  // themes.MAX_FILE: the box refuses more, and so nothing larger is read here
   function appearanceCard() {
     var t = S.theme || {};
+    var fresh = function () {
+      document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now());
+      markLook();
+      render();
+      fillRanges();
+    };
+    var note = function (text, isErr) { lookNote = { text: text || '', err: !!isErr }; sayAt(document.getElementById('themeresult'), lookNote.text, lookNote.err); };
     var apply = function (name, accent) {
       act('POST', '/api/theme', { name: name, accent: accent }, function (d) {
         S.theme = d.theme;
-        document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now());
-        markLook();
-        render();
-        fillRanges();
+        lookNote = { text: '', err: false };
+        fresh();
       });
     };
     var now = chosenTheme();
-    return h('div', { class: 'card' }, h('h2', { text: 'Appearance' }),
+    var pick = h('input', { type: 'file', id: 'themepick', accept: '.json,application/json', hidden: true });
+    pick.addEventListener('change', function () {
+      var f = pick.files && pick.files[0];
+      pick.value = '';
+      if (!f) return;
+      if (f.size > THEME_BYTES) return note(f.name + ' is too large for a theme (at most 16 KB). Choose a theme file: a small .json file saved from this page or made with tools/figma-theme.py.', true);
+      var reader = new FileReader();
+      reader.onerror = function () { note('Could not read ' + f.name + '.', true); };
+      reader.onload = function () {
+        api('POST', '/api/theme/add', { file: String(reader.result) }).then(function (r) {
+          if (!r.ok) return note((r.data.error || 'The theme was not added (HTTP ' + r.status + ')') + '. Nothing was changed.', true);
+          S.themes = r.data.available;
+          lookNote = { text: (r.data.replaced ? 'Replaced your theme ' : 'Added ') + r.data.name + '.' + (S.theme && S.theme.name === r.data.added ? '' : ' Tap it to use it.')
+            + (r.data.warnings || []).map(function (w) { return ' Note: ' + w + '.'; }).join(''), err: false };
+          fresh();
+          say(lookNote.text);
+        });
+      };
+      reader.readAsText(f);
+    });
+    var yours = S.themes.filter(function (th) { return th.source === 'addon'; });
+    return h('div', { class: 'card', id: 'lookcard' }, h('h2', { text: 'Appearance' }),
       h('div', { class: 'row wrap', id: 'lookthemes' }, S.themes.map(function (th) {
-        return h('button', { class: 'btn small' + (th.id === t.name ? ' on' : ''), text: th.name, 'data-theme': th.id, 'aria-pressed': th.id === t.name ? 'true' : 'false',
-          onclick: function () { apply(th.id, t.accent); } });
+        return lookTile(th, th.id === t.name, function () { apply(th.id, t.accent); });
       })),
       now && now.areas ? h('div', { class: 'hint', id: 'lookareas', text: now.name + ' gives each part of the panel its own colour (Room, Shaders, clips, Mix, System), so there is no accent to choose.' }) : [
         h('div', { class: 'k', text: 'Accent' }),
@@ -3524,7 +3602,30 @@
             var sw = h('button', { class: 'swatch' + (t.accent === c ? ' cur' : ''), 'aria-label': 'Accent ' + c, onclick: function () { apply(t.name, c); } });
             sw.style.background = c;
             return sw;
-          }))]);
+          }))],
+      h('h2', { text: 'Your own themes' }),
+      h('div', { class: 'hint', id: 'themehint', text: 'A theme is a small file of colours, shapes and type. Save a look as a file to start from, change it (by hand, or from Figma), and add it here. It travels in a settings file.' }),
+      pick,
+      h('div', { class: 'row wrap', id: 'themeacts' },
+        h('button', { class: 'btn on pri grow', id: 'themeadd', text: 'Add a theme', onclick: function () { pick.click(); } }),
+        h('button', { class: 'btn grow', id: 'themesave', text: 'Save this look as a file', onclick: function () {
+          act('POST', '/api/theme/export', {}, function (d) { saveFile(d.name, d.file); note('Saved ' + d.name + '.' + (d.note ? ' ' + d.note : '')); });
+        } })),
+      h('div', { class: 'msg inmsg' + (lookNote.err ? ' err' : ''), id: 'themeresult', role: 'status', text: lookNote.text }),
+      yours.length ? h('div', { class: 'list', id: 'themelist' }, yours.map(function (th) {
+        return h('div', { class: 'item' }, h('span', { class: 'lname', text: th.name }),
+          h('div', { class: 'row' }, h('button', { class: 'btn small del', 'data-remove': th.id, 'aria-label': 'Remove the theme ' + th.name, text: 'Remove', onclick: function (e) {
+            confirmRow('Remove the theme ' + th.name + ' from this box?' + (th.id === t.name ? ' It is the look in use: the panel goes back to Dark stage.' : ''), 'Remove', 'Keep it', function () {
+              api('POST', '/api/theme/remove', { id: th.id }).then(function (r) {
+                if (!r.ok) return note((r.data.error || 'The theme was not removed') + '.', true);
+                S.theme = r.data.theme; S.themes = r.data.available;
+                lookNote = { text: 'Removed ' + th.name + '.', err: false };
+                fresh();
+                say(lookNote.text);
+              });
+            }, e.currentTarget);
+          } })));
+      })) : null);
   }
   var accessForm = { pin: false, view: true, live: false, seconds: 300, minutes: 60 };  // survives redraws
   var accessTimer = null;
