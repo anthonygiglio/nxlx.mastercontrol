@@ -374,7 +374,7 @@ module.exports = { setUp, pages, closeOthers, sys, sysIndex, WALLS };
 // What one screen must hold in Signal (the rules are in pvj/THEMES.md). Returns what is wrong, as sentences; an
 // empty list is a pass. o: { area (null before pairing), light (Signal light) }.
 async function check(pg, o) {
-  return pg.evaluate(([wantArea, light]) => {
+  return pg.evaluate(async ([wantArea, light]) => {
     const out = [];
     const root = document.documentElement, shell = document.querySelector('.shell');
     if (!shell) return ['there is no screen'];
@@ -469,14 +469,19 @@ async function check(pg, o) {
       const line = ['Top', 'Right', 'Bottom', 'Left'].some((s) => parseFloat(cs['border' + s + 'Width']) > 0 && cs['border' + s + 'Style'] !== 'none' && cs['border' + s + 'Color'] === areaRgb);
       if (line || (cs.boxShadow !== 'none' && cs.boxShadow.indexOf(areaRgb) >= 0) || (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 && cs.outlineColor === areaRgb)) out.push('a thin line in the area colour, in the light: ' + name(el));
     });
-    // a slider's fill is where its value is
-    shell.querySelectorAll('input[type=range]').forEach((el) => {
-      if (!shown(el)) return;
+    // a slider's fill is where its value is. The panel sets it on every input and four times a second (the box moves
+    // sliders too: the position in a clip jumps once a second), so one that is off is looked at again 300 ms later.
+    const fillOff = (el) => {
       const min = el.min === '' ? 0 : parseFloat(el.min), max = el.max === '' ? 100 : parseFloat(el.max);
       const want = max > min ? Math.round(1000 * (parseFloat(el.value) - min) / (max - min)) / 10 : 0;
       const got = parseFloat(getComputedStyle(el).getPropertyValue('--fill'));
-      if (!(Math.abs(got - want) <= 0.2)) out.push('slider fill ' + got + '% for a value at ' + want + '%: ' + name(el));
-    });
+      return Math.abs(got - want) <= 0.2 ? '' : 'slider fill ' + got + '% for a value at ' + want + '%: ' + name(el);
+    };
+    const late = Array.prototype.filter.call(shell.querySelectorAll('input[type=range]'), (el) => shown(el) && fillOff(el));
+    if (late.length) {
+      await new Promise((done) => setTimeout(done, 300));
+      late.forEach((el) => { const still = fillOff(el); if (still) out.push(still); });
+    }
     // the title: whole, inside the window, in the area's colour; and the open tab too
     const h1 = document.querySelector('.screen h1');
     if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
