@@ -1,0 +1,44 @@
+{
+  "id": "soft-room",
+  "name": "Soft room",
+  "style": "signal",
+  "tokens": {
+    "bg": "#101418",
+    "cd": "#1b2229",
+    "fg": "#eef2f5",
+    "ln": "#5b6772",
+    "mu": "#a9b4be",
+    "ac": "#ffd166",
+    "on": "#101418"
+  },
+  "areas": {
+    "room": "#ffd166",
+    "shaders": "#f58ad2",
+    "clips": "#7fd6a4",
+    "mix": "#c4a7ff",
+    "system": "#8fb8ff"
+  },
+  "states": {
+    "off": "#37424d",
+    "setup": "#ff8a1f",
+    "active": "#22d3ee",
+    "problem": "#ff3d55",
+    "error": "#ff6b78"
+  },
+  "design": {
+    "radius_control": 12,
+    "radius_panel": 18,
+    "border_width": 2,
+    "density": "roomy",
+    "control_height": 48,
+    "control_height_large": 60,
+    "title_case": "sentence",
+    "title_weight": 800,
+    "text_weight": 400,
+    "font_title": "archivo",
+    "font_text": "archivo",
+    "font_number": "jetbrains-mono",
+    "tabs": "outlined",
+    "primary": "filled"
+  }
+}
