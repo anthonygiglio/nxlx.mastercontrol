@@ -8,8 +8,9 @@ StartLimitIntervalSec=0
 
 [Service]
 # Talks to the player only through its socket in /run/pvj/player (group "pvj"); it has
-# no access to the screen or the sound card. The one device it may read is a USB MIDI
-# controller (/dev/snd/midi*, group "audio"), for the optional MIDI module.
+# no access to the screen. The devices it uses are USB MIDI controllers (/dev/snd/midi*,
+# group "audio"), for the optional MIDI module: read for the controls, write for the lights.
+# The device policy below cannot tell a MIDI node from the other ALSA nodes (see D53).
 User=pvj-web
 Group=pvj
 # audio: USB MIDI controllers; video: live input from a USB capture device (read by a helper this service starts)
@@ -44,14 +45,18 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 # Not PrivateDevices: that would hide /dev/snd/midi*. The device policy allows only the basic
-# devices and read access to ALSA (MIDI) devices.
+# devices, ALSA devices and capture devices. "char-alsa rw" (it was "r" until D53) lets the
+# panel light a known MIDI controller's buttons. It is every ALSA node, not only MIDI ones:
+# systemd can name a class of devices or one fixed node, and a controller's node appears when
+# it is plugged in. The program itself opens only /dev/snd/midiC<n>D<n> of a controller that
+# matched a profile, and writes only the fixed messages of that profile (pvj/midi.py).
 DevicePolicy=closed
 DeviceAllow=/dev/null rw
 DeviceAllow=/dev/zero rw
 DeviceAllow=/dev/full rw
 DeviceAllow=/dev/random r
 DeviceAllow=/dev/urandom r
-DeviceAllow=char-alsa r
+DeviceAllow=char-alsa rw
 DeviceAllow=char-video4linux rw
 ReadWritePaths=/var/lib/pvj /run/pvj/web
 ProtectKernelTunables=yes
