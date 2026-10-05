@@ -1279,12 +1279,13 @@ class Api:
 
     def get_theme(self, body, device, client):
         t = self.settings.data["theme"]
-        return {"theme": t, "available": [{"id": k, "name": v["name"], "source": v["source"]}
+        return {"theme": t, "available": [{"id": k, "name": v["name"], "source": v["source"],
+                                           "style": themes_mod.style_of(v), "areas": bool(v.get("areas"))}
                                           for k, v in self.themes.items()]}
 
     def set_theme(self, body, device, client):
         name, accent = body.get("name"), body.get("accent")
-        if name not in self.themes:
+        if not isinstance(name, str) or name not in self.themes:
             raise bad("unknown theme")
         try:
             themes_mod.css(self.themes[name], accent)
@@ -1295,11 +1296,25 @@ class Api:
             self.settings.save()
         return {"theme": self.settings.data["theme"]}
 
+    def theme_style(self):
+        """The style of the chosen theme: always one of themes.STYLES, "default" for anything unknown."""
+        return themes_mod.style_of(self._stored_theme()[0])
+
+    def _stored_theme(self):
+        """(theme, accent) for what the settings hold. Both the page and /theme.css are served before anyone has
+        paired, so a settings file that was damaged (the theme not an object, its name not a text, a theme that is
+        gone) must give the theme the box comes with, never an error."""
+        t = self.settings.data.get("theme") if isinstance(self.settings.data, dict) else None
+        name = t.get("name") if isinstance(t, dict) else None
+        theme = self.themes.get(name) if isinstance(name, str) else None
+        if theme is None:
+            return self.themes["dark-stage"], None
+        return theme, t.get("accent")
+
     def theme_css(self):
-        t = self.settings.data["theme"]
-        theme = self.themes.get(t["name"]) or self.themes["dark-stage"]
+        theme, accent = self._stored_theme()
         try:
-            return themes_mod.css(theme, t.get("accent"))
+            return themes_mod.css(theme, accent)
         except ThemeError:
             return themes_mod.css(theme)
 

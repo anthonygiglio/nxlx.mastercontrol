@@ -274,6 +274,32 @@ class ImportTest(Base):
                 self.assertEqual((out["passwords_kept"], self.settings.data["projectors"][0]["password"]), (0, ""))
             self.assertNotIn(STREAM_PASSWORD, json.dumps(self.settings.data["streams"]))
 
+    def test_the_look_goes_round_and_an_unknown_one_leaves_the_look_alone(self):
+        """A look is a theme (D54): its name is all the file holds, so Signal and Signal light travel like any other
+        theme; the style comes from the theme file on the box that imports."""
+        for name in ("signal", "signal-light"):
+            self.assertEqual(self.call("POST", "/api/theme", {"name": name, "accent": "#3b82f6"}, token=self.full)[0], 200)
+            file = self.export()
+            self.assertEqual(file["settings"]["theme"], {"name": name, "accent": "#3b82f6"})
+            self.settings.data["theme"] = {"name": "dark-stage", "accent": None}
+            st, out = self.send(file)
+            self.assertEqual(st, 200, out)
+            self.assertEqual(self.settings.data["theme"], {"name": name, "accent": "#3b82f6"})
+            self.assertEqual(self.api.theme_style(), "signal")
+        file = self.export()
+        # from a box with a look this one does not have: said, and the look stays as it is
+        file["settings"]["theme"] = {"name": "neon-from-a-later-version", "accent": None}
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["theme"]["name"], "signal-light")
+        self.assertIn("neon-from-a-later-version", json.dumps(out))
+        # the style itself is never taken from the file: a "style" key there is ignored
+        file["settings"]["theme"] = {"name": "dark-stage", "accent": None, "style": "signal"}
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["theme"], {"name": "dark-stage", "accent": None})
+        self.assertEqual(self.api.theme_style(), "default")
+
     def test_a_projector_edited_in_the_panel_goes_round(self):
         """After an Edit that moved it to another address a projector has labels and no details (they are read anew
         at the new address). That state must export and import like any other."""

@@ -1,0 +1,28 @@
+{
+  "id": "signal",
+  "name": "Signal",
+  "style": "signal",
+  "tokens": {
+    "bg": "#0b0b0d",
+    "cd": "#1a1a1f",
+    "fg": "#f5f5f0",
+    "ln": "#f5f5f0",
+    "mu": "#b8b8c0",
+    "ac": "#ffd60a",
+    "on": "#0b0b0d"
+  },
+  "areas": {
+    "room": "#ffd60a",
+    "shaders": "#ff4fa3",
+    "clips": "#3ddc97",
+    "mix": "#b78cff",
+    "system": "#7aa2ff"
+  },
+  "states": {
+    "off": "#3a3a42",
+    "setup": "#ffb020",
+    "active": "#00e0ff",
+    "problem": "#ff3b30",
+    "error": "#ff3b30"
+  }
+}

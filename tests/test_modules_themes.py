@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
 import os
+import re
 import tempfile
 import unittest
 
@@ -102,7 +103,7 @@ class RegistryTest(unittest.TestCase):
 class ThemeTest(unittest.TestCase):
     def test_builtin_themes_valid_and_readable(self):
         t = themes.load_themes()
-        self.assertEqual(set(t), {"dark-stage", "light", "night-red", "high-contrast"})
+        self.assertEqual(set(t), {"dark-stage", "light", "night-red", "high-contrast", "signal", "signal-light"})
         for theme in t.values():
             tk = theme["tokens"]
             self.assertGreaterEqual(themes.contrast(tk["fg"], tk["bg"]), 4.5, theme["id"])
@@ -137,6 +138,164 @@ class ThemeTest(unittest.TestCase):
         self.assertEqual(loaded["dark-stage"]["name"], "Dark stage")
         for missing in ("inject", "extra"):
             self.assertNotIn(missing, loaded)
+
+    def test_a_theme_names_a_style_from_a_fixed_set_and_never_carries_css(self):
+        t = themes.load_themes()
+        self.assertEqual({k: themes.style_of(v) for k, v in t.items()},
+                         {"dark-stage": "default", "light": "default", "night-red": "default", "high-contrast": "default",
+                          "signal": "signal", "signal-light": "signal"})
+        for theme in t.values():                                  # a built-in theme never names a style this version lacks
+            self.assertIn(theme.get("style", "default"), themes.STYLES, theme["id"])
+        base = {"id": "mine", "name": "Mine", "tokens": dict(t["light"]["tokens"])}
+        self.assertEqual(themes.validate(dict(base, style="signal")), [])
+        # a name this version does not know is not an error: the theme keeps its colours and gets the default look
+        self.assertEqual(themes.validate(dict(base, style="from-the-future")), [])
+        self.assertEqual(themes.style_of(dict(base, style="from-the-future")), "default")
+        self.assertEqual(themes.style_of(base), "default")
+        for bad in (5, None, ["signal"], "", "Signal", "signal;}body{display:none", "a b", "x" * 60, "signal\n", "\nsignal"):
+            self.assertIn("bad style", themes.validate(dict(base, style=bad)), repr(bad))
+            self.assertEqual(themes.style_of(dict(base, style=bad)), "default", repr(bad))
+        self.assertEqual(themes.style_of(None), "default")
+
+    def test_a_trailing_newline_is_not_part_of_a_colour_or_a_name(self):
+        """`$` in a pattern also matches before a newline at the end, so `match` let "#ffffff\\n" through and the
+        newline reached /theme.css (found by the review). Every check is a whole match now."""
+        t = themes.load_themes()
+        good = {"id": "mine", "name": "Mine", "tokens": dict(t["signal"]["tokens"])}
+        self.assertEqual(themes.validate(good), [])
+        for bad in ("#ffffff\n", "\n#ffffff", "#ffffff\r", "#ffffff\n;}"):
+            self.assertNotEqual(themes.validate(dict(good, tokens=dict(good["tokens"], bg=bad))), [], repr(bad))
+            self.assertNotEqual(themes.validate(dict(good, areas={"room": bad})), [], repr(bad))
+            self.assertNotEqual(themes.validate(dict(good, states={"off": bad})), [], repr(bad))
+            for theme in (t["dark-stage"], t["signal"]):
+                with self.assertRaises(themes.ThemeError):
+                    themes.css(theme, bad)
+        for bad in ("mine\n", "\nmine", "mine\r\n"):
+            self.assertIn("bad id", themes.validate(dict(good, id=bad)), repr(bad))
+            self.assertIn("bad style", themes.validate(dict(good, style=bad)), repr(bad))
+        for tid in t:
+            self.assertNotIn("\n", themes.css(t[tid]))
+
+    def test_area_and_state_colours_are_fixed_names_with_hex_values(self):
+        t = themes.load_themes()
+        base = {"id": "mine", "name": "Mine", "tokens": dict(t["signal"]["tokens"])}
+        self.assertEqual(themes.validate(dict(base, areas={"room": "#ffd60a"}, states={"off": "#333333"})), [])
+        for key, good in (("areas", "room"), ("states", "off")):
+            for bad in ({good: "red"}, {good: "#fff"}, {good: "#ffffff;}*{display:none"}, {good: 5}, {good: None},
+                        {"lobby": "#ffffff"}, {"room;}": "#ffffff"}, {5: "#ffffff"}, [], "x", 3):
+                self.assertNotEqual(themes.validate(dict(base, **{key: bad})), [], (key, bad))
+        css = themes.css(dict(base, areas={"room": "#FFD60A"}, states={"off": "#3A3A42", "error": "#ff3b30"}))
+        self.assertIn("--ar-room:#ffd60a;--ar-room-on:#0b0b0d;--ar-room-ink:#ffd60a", css)
+        self.assertIn("--st-off:#3a3a42;--st-off-on:#f5f5f0", css)
+        self.assertIn("--st-error:#ff3b30", css)
+        self.assertNotIn("--st-error-on", css)
+        self.assertNotIn("--ar-mix", css)                          # only what the theme gives
+        self.assertRegex(css, r"^:root\{[-a-z0-9:#;]+\}$")         # nothing but names and colours ever reaches the page
+        self.assertRegex(themes.css(t["dark-stage"]), r"^:root\{(--[a-z]{2}:#[0-9a-f]{6};?){7}\}$")   # the old themes: as before
+
+    def test_signal_is_readable_in_the_dark_and_in_the_light(self):
+        """Every pairing the Signal block of app.css draws, computed: text on the page and on a card, the text on each
+        area colour and on each state fill, an error line, and the colour used for thin lines and focus rings."""
+        t = themes.load_themes()
+        for tid in ("signal", "signal-light"):
+            theme = t[tid]
+            tk, css = theme["tokens"], themes.css(theme)
+            var = dict(pair.split(":") for pair in css[len(":root{"):-1].split(";"))
+            self.assertEqual(set(theme["areas"]), set(themes.AREAS), tid)
+            self.assertEqual(set(theme["states"]), set(themes.STATES), tid)
+            for ground in (tk["bg"], tk["cd"]):
+                for text in (tk["fg"], tk["mu"], var["--st-error"]):
+                    self.assertGreaterEqual(themes.contrast(text, ground), 4.5, (tid, text, ground))
+            for name in themes.AREAS:
+                self.assertGreaterEqual(themes.contrast(var["--ar-%s-on" % name], var["--ar-" + name]), 4.5, (tid, name))
+                for ground in (tk["bg"], tk["cd"]):
+                    self.assertGreaterEqual(themes.contrast(var["--ar-%s-ink" % name], ground), 4.5, (tid, name, ground))
+            for name in ("off", "setup", "active", "problem"):
+                self.assertGreaterEqual(themes.contrast(var["--st-%s-on" % name], var["--st-" + name]), 4.5, (tid, name))
+            # the switch: the chosen half is the text colour with the page colour on it, the other half is muted text
+            self.assertGreaterEqual(themes.contrast(tk["bg"], tk["fg"]), 4.5, tid)
+            # an accent chosen under Look never replaces the area colours, and never breaks the file
+            self.assertEqual(themes.css(theme, "#ff0000"), css)
+            with self.assertRaises(themes.ThemeError):
+                themes.css(theme, "red")
+        # the dark one keeps large light areas out: the page and the cards are near black
+        self.assertLess(themes.luminance(t["signal"]["tokens"]["bg"]), 0.01)
+        self.assertLess(themes.luminance(t["signal"]["tokens"]["cd"]), 0.02)
+        # a state is never confused with an area (D54): no state fill is an area's colour or close to one, and the
+        # four state fills differ from each other. "Close" is measured as distance in RGB. The nearest pair is Figma's
+        # own: Set up amber and Room yellow, 44 apart (written down in THEMES.md as a thing for the owner to look at),
+        # so the general limit sits just under that; Active, which was chosen here, must be at least 100 from
+        # every area and every other state.
+        def far(a, b):
+            return sum((int(a[i:i + 2], 16) - int(b[i:i + 2], 16)) ** 2 for i in (1, 3, 5)) ** 0.5
+        for tid in ("signal", "signal-light"):
+            states = {k: t[tid]["states"][k] for k in ("off", "setup", "active", "problem")}
+            self.assertEqual(len(set(states.values())), 4, tid)
+            for sname, sc in states.items():
+                self.assertNotEqual(sc.lower(), t[tid]["tokens"]["fg"].lower(), (tid, sname))      # Ready is the text colour
+                for aname, ac in t[tid]["areas"].items():
+                    self.assertGreater(far(sc, ac), 100 if sname == "active" else 40, (tid, sname, aname))
+            for a in states:
+                for b in states:
+                    if a < b:
+                        self.assertGreater(far(states[a], states[b]), 100, (tid, a, b))
+            self.assertEqual(t[tid]["states"]["active"], "#00e0ff")
+
+    def test_addon_theme_with_a_style_or_bad_extras(self):
+        addons = tempfile.mkdtemp()
+        os.makedirs(os.path.join(addons, "themes"))
+        tokens = dict(themes.load_themes()["signal"]["tokens"])
+        for name, extra in (("ok", {"style": "signal", "areas": {"room": "#00ff00"}}), ("later", {"style": "neon"}),
+                            ("badstyle", {"style": "x;}"}), ("badarea", {"areas": {"room": "url(x)"}})):
+            with open(os.path.join(addons, "themes", name + ".json"), "w") as f:
+                json.dump(dict({"id": "t-" + name, "name": name, "tokens": tokens}, **extra), f)
+        loaded = themes.load_themes(addons)
+        self.assertEqual(themes.style_of(loaded["t-ok"]), "signal")
+        self.assertEqual(themes.style_of(loaded["t-later"]), "default")
+        self.assertNotIn("t-badstyle", loaded)
+        self.assertNotIn("t-badarea", loaded)
+
+    def test_the_signal_block_of_the_stylesheet_only_ever_applies_under_its_style(self):
+        """The default look must not change: every rule after the marker in app.css is scoped to the style attribute
+        (the font files are only declared there, and a browser fetches a font only when a rule that applies uses it)."""
+        with open(os.path.join(os.path.dirname(themes.__file__), "web", "app.css")) as f:
+            css = f.read()
+        marker = "/* ==== STYLE: signal"
+        self.assertEqual(css.count(marker), 1)
+        before, block = css.split(marker)
+        self.assertNotIn("data-style", before)
+        self.assertNotIn("Archivo", before)
+        self.assertNotIn("fonts/", before)
+        block = re.sub(r"/\*.*?\*/", "", "/*" + block, flags=re.S)
+        scope = 'html[data-style="signal"]'
+        depth, selector, unscoped, faces, at_media = 0, "", [], 0, False
+        for ch in block:
+            if ch == "{":
+                sel = selector.strip()
+                if depth == 0 or (depth == 1 and at_media):
+                    if sel.startswith("@font-face"):
+                        faces += 1
+                    elif not sel.startswith("@media"):
+                        unscoped += [part.strip() for part in sel.split(",") if not part.strip().startswith(scope)]
+                if depth == 0:
+                    at_media = sel.startswith("@media")
+                depth += 1
+                selector = ""
+            elif ch == "}":
+                depth -= 1
+                selector = ""
+            elif ch == ";" and depth:
+                selector = ""
+            else:
+                selector += ch
+        self.assertEqual(depth, 0)
+        self.assertEqual(unscoped, [])
+        self.assertEqual(faces, 2)
+        fonts = os.path.join(os.path.dirname(themes.__file__), "web", "fonts")
+        self.assertEqual(sorted(os.listdir(fonts)), ["OFL-Archivo.txt", "OFL-JetBrainsMono.txt", "archivo-latin.06fa7831.woff2", "jetbrains-mono-500-latin.6c95bc2f.woff2"])
+        self.assertEqual(sorted(re.findall(r"url\(/fonts/([a-z0-9.-]+)\)", block)), ["archivo-latin.06fa7831.woff2", "jetbrains-mono-500-latin.6c95bc2f.woff2"])
+        self.assertLess(sum(os.path.getsize(os.path.join(fonts, n)) for n in os.listdir(fonts)), 300 * 1024)
+        self.assertNotRegex(block, r"https?:|//[a-z]")           # nothing from the network
 
 
 if __name__ == "__main__":

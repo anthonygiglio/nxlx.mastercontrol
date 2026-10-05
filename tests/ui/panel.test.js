@@ -55,6 +55,8 @@ function startServer() {
     const expected = /status of (400|401|403|409|502|503)/;
     page.on('console', (m) => { if (['error', 'warning'].includes(m.type()) && !expected.test(m.text())) problems.push(m.text()); });
     page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
+    const fontRequests = [];             // the default look must never ask for a font file; Signal asks the box itself
+    page.on('request', (r) => { if (/\.woff2?(\?|$)/.test(r.url())) fontRequests.push(r.url()); });
     const base = 'http://127.0.0.1:' + info.port;
     await page.goto(base + '/');
 
@@ -1778,6 +1780,10 @@ function startServer() {
     await wasSent(VALUES, V({ bang: true }), 'an event');
     // the three every shader has, above its own: Speed with Freeze, Colour turn, Brightness trim, each with Reset
     assert.deepStrictEqual(await page.$$eval('#shadercommon .ctl', (cs) => cs.map((x) => x.dataset.common)), ['speed', 'hue', 'brightness']);
+    // (a shader's control and a drawn controller's cell share the class ctl; the cell's box, centred small type and
+    // pointer once leaked onto every shader control)
+    assert.deepStrictEqual(await page.$eval('#shadercommon .ctl', (c) => { const cs = getComputedStyle(c); return [cs.borderLeftWidth, cs.borderRadius, cs.textAlign, cs.cursor, cs.overflow]; }),
+      ['0px', '0px', 'start', 'auto', 'visible'], 'a shader control is not drawn as a controller cell');
     assert(await page.evaluate(() => document.getElementById('shadercommon').compareDocumentPosition(document.getElementById('shadersliders')) & Node.DOCUMENT_POSITION_FOLLOWING), 'the common controls are above the shader\'s own');
     {
       const d = await get('/api/shaders'), limits = d.controls.speed, mine = d.shaders.find((x) => x.id === AID);
@@ -2382,6 +2388,261 @@ function startServer() {
     await page.click('nav >> text=Live');
     await page.waitForSelector('.pads');
     if (shots) await page.screenshot({ path: path.join(shots, '5-desktop.png') });
+
+    // ---- The look "Signal" (D54): chosen under System > Look, it restyles the whole panel; the default look, which
+    // every step above ran in, never loads its fonts. The layout checks run again with it on: nothing sticks out at
+    // 390 px, everything that can be tapped is 44 px at least (56 px on the Room screen), no text is under 13 px, every
+    // text reads at 4.5 to 1 on what is behind it, and the title, the open tab and the focus ring take the area's
+    // colour. This step comes last and puts the default look back.
+    {
+      assert.deepStrictEqual(fontRequests, [], 'the default look fetched a font file: ' + fontRequests.join(', '));
+      assert.strictEqual(await page.evaluate(() => document.documentElement.hasAttribute('data-style')), false, 'the default look has no style on the root element');
+      const AREA = { room: 'rgb(255, 214, 10)', shaders: 'rgb(255, 79, 163)', clips: 'rgb(61, 220, 151)', mix: 'rgb(183, 140, 255)', system: 'rgb(122, 162, 255)' };
+      await page.setViewportSize({ width: 390, height: 844 });
+      for (const id of ['room', 'shaders', 'control-midi', 'projector']) assert.strictEqual(await post('/api/modules/' + id, { enabled: true }), 200, 'module ' + id);
+      await post('/api/midi', { enabled: true });
+      try { fs.writeFileSync(path.join(info.midi_dir, 'plug'), ''); } catch (e) { /* the page is checked without a controller drawn */ }
+      await page.goto(base + '/');
+      await page.waitForSelector('nav.tabs');
+      await sys('Look');
+      await page.waitForSelector('#lookthemes');
+      assert((await page.locator('.swatch').count()) > 0, 'the default look offers accents');
+      await page.click('#lookthemes button[data-theme="signal"]');
+      await page.waitForSelector('html[data-style="signal"]');           // applies on tap, with no reload
+      await page.waitForSelector('#lookareas');
+      assert.strictEqual(await page.locator('.swatch').count(), 0, 'Signal has a colour per area, so no accent is offered');
+      assert.strictEqual(await page.getAttribute('#lookthemes button[data-theme="signal"]', 'aria-pressed'), 'true');
+      assert.deepStrictEqual((await get('/api/theme')).theme.name, 'signal', 'the box remembers the look');
+      // the fonts come from the box itself, with the right type
+      // (a face is fetched when something on the page first uses it; the page asks for both here, as a number would)
+      const faces = await page.evaluate(() => Promise.all([document.fonts.load('900 44px Archivo'), document.fonts.load('500 16px "JetBrains Mono"')]).then((r) => r.map((x) => x.length)));
+      assert.deepStrictEqual(faces, [1, 1], 'both typefaces load');
+      assert(await page.evaluate(() => document.fonts.check('900 44px Archivo') && document.fonts.check('500 16px "JetBrains Mono"')), 'both typefaces are ready');
+      const fontNames = fontRequests.map((u) => u.replace(base, '')).sort();
+      assert(fontNames.includes('/fonts/archivo-latin.06fa7831.woff2') && fontNames.includes('/fonts/jetbrains-mono-500-latin.6c95bc2f.woff2'), 'both fonts are fetched from the box: ' + fontNames.join(', '));
+      assert(fontRequests.every((u) => u.indexOf(base + '/fonts/') === 0), 'a font was asked for somewhere else: ' + fontRequests.join(', '));
+      for (const f of ['/fonts/archivo-latin.06fa7831.woff2', '/fonts/jetbrains-mono-500-latin.6c95bc2f.woff2']) {
+        const got = await page.evaluate((u) => fetch(u).then(async (r) => [r.status, r.headers.get('content-type'), (await r.arrayBuffer()).byteLength]), f);
+        assert(got[0] === 200 && got[1] === 'font/woff2' && got[2] > 4000, f + ' is served by the box as a font: ' + JSON.stringify(got));
+      }
+      assert(/^"?Archivo/.test(await page.evaluate(() => getComputedStyle(document.querySelector('#syspage h1')).fontFamily)), 'titles are set in Archivo');
+
+      // What one screen must hold in Signal.
+      const signalBad = [];              // every screen is looked at before the step fails, so one run names everything
+      const signalChecks = async (what, area, opts) => {
+        opts = opts || {};
+        await page.waitForTimeout(700);              // a page's own cards arrive after it opens
+        await page.waitForTimeout(300);              // the fill of a slider the box has just moved is set within a quarter of a second
+        await fitsOn(page, 'Signal, ' + what).catch((e) => signalBad.push(e.message.split('\n')[0]));
+        const found = await page.evaluate(([wantArea, minButton]) => {
+          const out = [];
+          const root = document.documentElement;
+          if (root.getAttribute('data-style') !== 'signal') out.push('the style is gone');
+          if (root.getAttribute('data-area') !== wantArea) out.push('area is ' + root.getAttribute('data-area') + ', not ' + wantArea);
+          const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+          const name = (el) => (el.id ? '#' + el.id + ' ' : '') + (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 28);
+          // touch targets
+          document.querySelectorAll('.shell button, .shell select, .shell summary, .shell input, .shell .xypad').forEach((el) => {
+            if (!shown(el)) return;
+            const r = el.getBoundingClientRect();
+            if (r.height < 43.5 || r.width < 43.5) out.push('small (' + Math.round(r.width) + 'x' + Math.round(r.height) + '): ' + name(el));
+            if (minButton && el.tagName === 'BUTTON' && el.closest('#roomscreen') && r.height < minButton - 0.5) out.push('under ' + minButton + ' px on Room: ' + name(el));
+          });
+          // text: size, and contrast against what is behind it
+          const lum = (c) => { const v = c.map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+          const rgb = (s) => { const m = /rgba?\(([^)]+)\)/.exec(s); if (!m) return null; const p = m[1].split(/[ ,/]+/).map(Number); return { c: p.slice(0, 3), a: p.length > 3 ? p[3] : 1 }; };
+          const behind = (el) => { for (let e = el; e; e = e.parentElement) { const b = rgb(getComputedStyle(e).backgroundColor); if (b && b.a > 0.99) return b.c; } return null; };
+          const walker = document.createTreeWalker(document.querySelector('.shell'), NodeFilter.SHOW_TEXT);
+          const seen = new Set();
+          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+            const el = n.parentElement;
+            if (!n.nodeValue.trim() || seen.has(el) || el.tagName === 'OPTION' || !shown(el)) continue;
+            seen.add(el);
+            const cs = getComputedStyle(el);
+            if (parseFloat(cs.fontSize) < 13) out.push('text of ' + cs.fontSize + ': ' + name(el));
+            let faded = false;
+            for (let e = el; e; e = e.parentElement) if (e.disabled || parseFloat(getComputedStyle(e).opacity) < 1) faded = true;
+            const fg = rgb(cs.color), bg = behind(el);
+            if (faded || !fg || !bg || fg.a < 0.99) continue;
+            const a = lum(fg.c), b = lum(bg);
+            const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+            if (ratio < 4.5) out.push('contrast ' + ratio.toFixed(2) + ' (' + cs.color + ' on rgb(' + bg.join(', ') + ')): ' + name(el));
+          }
+          // a button's words are whole: a word in capitals that does not fit is cut by the browser, which a width check does not see
+          document.querySelectorAll('.shell button.btn').forEach((el) => {
+            if (!shown(el) || el.children.length) return;
+            const longest = Math.max.apply(null, el.textContent.trim().split(/\s+/).map((w) => w.length));
+            const probe = document.createElement('span');
+            probe.textContent = el.textContent.trim().split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
+            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+            el.appendChild(probe);
+            const need = probe.getBoundingClientRect().width;
+            el.removeChild(probe);
+            const cs = getComputedStyle(el);
+            const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+            if (longest > 1 && need > room + 1) out.push('a word is cut (' + Math.round(need) + ' px in ' + Math.round(room) + '): ' + name(el));
+          });
+          // the same for what a cell of a drawn controller says it does
+          document.querySelectorAll('.shell .ctlgrid .ctl .ctlwhat').forEach((el) => {
+            if (!shown(el)) return;
+            const word = el.textContent.trim().split(/\s+/).sort((x, y) => y.length - x.length)[0] || '';
+            const probe = document.createElement('span');
+            probe.textContent = word;
+            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+            el.appendChild(probe);
+            const need = probe.getBoundingClientRect().width;
+            el.removeChild(probe);
+            if (word.length > 1 && need > el.clientWidth + 1) out.push('a word is cut in a controller cell (' + Math.round(need) + ' px in ' + Math.round(el.clientWidth) + '): ' + el.textContent);
+          });
+          // a state chip is never the area's colour (Active has a colour of its own), whatever area is open
+          const areaColour = getComputedStyle(root).getPropertyValue('--ac').trim();
+          const probeC = document.createElement('span');
+          probeC.style.cssText = 'position:absolute;visibility:hidden;background:' + areaColour;
+          document.body.appendChild(probeC);
+          const areaRgb = getComputedStyle(probeC).backgroundColor;
+          document.body.removeChild(probeC);
+          document.querySelectorAll('.shell .chip, .shell .badge').forEach((el) => {
+            if (shown(el) && getComputedStyle(el).backgroundColor === areaRgb) out.push('a state chip has the area colour: ' + name(el));
+          });
+          // a slider's fill is where its value is
+          document.querySelectorAll('.shell input[type=range]').forEach((el) => {
+            if (!shown(el)) return;
+            const min = el.min === '' ? 0 : parseFloat(el.min), max = el.max === '' ? 100 : parseFloat(el.max);
+            const want = max > min ? Math.round(1000 * (parseFloat(el.value) - min) / (max - min)) / 10 : 0;
+            const got = parseFloat(getComputedStyle(el).getPropertyValue('--fill'));
+            if (!(Math.abs(got - want) <= 0.2)) out.push('slider fill ' + got + '% for a value at ' + want + '%: ' + name(el));
+          });
+          // the title: whole, inside the window
+          const h1 = document.querySelector('.screen h1');
+          if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
+          return out;
+        }, [area, opts.room ? 56 : 0]);
+        if (found.length) signalBad.push('Signal, ' + what + ': ' + found.join('; '));
+        // the area's colour drives the title block and the open tab
+        const paint = await page.evaluate(() => {
+          const h1 = document.querySelector('.screen h1'), top = h1 && h1.closest('.top');
+          const tab = document.querySelector('nav.tabs .btn.on');
+          const bg = (el) => (el ? getComputedStyle(el).backgroundColor : '');
+          return { title: [bg(h1), bg(top)], tab: bg(tab), tabText: tab ? getComputedStyle(tab).color : '' };
+        });
+        if (!paint.title.includes(AREA[area]) || paint.tab !== AREA[area]) signalBad.push('Signal, ' + what + ': the title block and the open tab are not the area colour ' + AREA[area] + ': ' + JSON.stringify(paint));
+      };
+      // The Room screen as staff use it: two named groups made from the harness's two projectors, their inputs
+      // labelled, and a button pressed, so named group cards, source buttons and a result line are on the screen that
+      // is checked (the built-in "Everything" card alone is not what staff see).
+      const roomAsStaffSeeIt = async () => {
+        if (!((await get('/api/projectors')).projectors || []).length) {      // the steps above removed theirs: the harness's two again
+          await post('/api/projectors', { add: { name: 'Main projector', host: '127.0.0.1', port: info.projector_ports[0], password: 'secret1' } });
+          await post('/api/projectors', { add: { name: 'Side projector', host: '127.0.0.1', port: info.projector_ports[1], password: '' } });
+        }
+        await sys('Projectors');
+        await post('/api/projector', { id: 'all', action: 'identify' });          // (an edit of a projector's address drops what it said it is; read it again)
+        await page.waitForFunction(() => fetch('/api/projectors').then((r) => r.json()).then((d) => d.projectors.length > 0 && d.projectors.slice(0, 2).every((p) => p.inputs.length > 0)), null, { timeout: 25000, polling: 1000 }).catch(() => {});   // each projector has said which inputs it has
+        const ps = ((await get('/api/projectors')).projectors || []).slice(0, 2);
+        const have = (await get('/api/room')).groups || [];
+        for (let i = 0; i < ps.length; i++) {
+          const codes = (ps[i].inputs || []).map((x) => x.code).slice(0, 2);
+          for (let k = 0; k < codes.length; k++) await post('/api/projectors', { label: { id: ps[i].id, input: codes[k], label: ['Laptop', 'Console'][k] } });
+          const wall = ['Main wall', 'Painting wall'][i];
+          const old = have.filter((g) => g.name === wall)[0];      // a group an earlier step left is given this projector
+          await post('/api/room', { group: old ? { id: old.id, name: wall, projectors: [ps[i].id] } : { name: wall, projectors: [ps[i].id] } });
+        }
+        await page.goto(base + '/');
+        await page.waitForSelector('nav.tabs');
+        await page.click('nav >> text=Room');
+        await page.waitForSelector('#roomscreen');
+        try {
+          await page.waitForSelector('.room-group:has-text("Main wall")', { timeout: 8000 });
+          await page.locator('.room-group:has-text("Main wall") .btn').first().click({ timeout: 5000 });
+          await page.waitForSelector('.room-group:has-text("Main wall") .room-result', { timeout: 15000 });
+        } catch (e) { /* the screen is taken as it is; the test says below what was missing on it */ }
+      };
+      // the main screens on a phone
+      await roomAsStaffSeeIt();
+      const onRoom = await page.evaluate(() => ({ named: Array.prototype.filter.call(document.querySelectorAll('.room-group'), (g) => /wall/.test(g.textContent)).length,
+        sources: document.querySelectorAll('.room-source').length, results: document.querySelectorAll('.room-result').length,
+        labelled: Array.prototype.some.call(document.querySelectorAll('.room-source'), (b) => /Laptop|Console/.test(b.textContent)) }));
+      if (onRoom.named < 2 || !onRoom.sources || !onRoom.results || !onRoom.labelled) signalBad.push('Signal, Room: the screen that was checked did not have two named groups, labelled source buttons and a result line: ' + JSON.stringify(onRoom)
+        + ' projectors: ' + JSON.stringify(((await get('/api/projectors')).projectors || []).map((x) => [x.name, x.inputs.length, x.status && x.status.power]))
+        + ' groups: ' + JSON.stringify(((await get('/api/room')).groups || []).map((g) => [g.name, g.projectors.length, g.inputs && g.inputs.length, g.state])));
+      await signalChecks('Room', 'room', { room: true });
+      await page.keyboard.press('Tab');
+      const ring = await page.evaluate(() => { const cs = getComputedStyle(document.activeElement); return [document.activeElement.tagName, cs.outlineStyle, cs.outlineWidth, cs.outlineColor]; });
+      assert(ring[1] === 'solid' && ring[2] === '3px' && ring[3] === AREA.room, 'the focus ring on Room is the area colour, 3 px: ' + JSON.stringify(ring));
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('.pads');
+      await signalChecks('Live', 'clips');
+      const liveTitle = await page.evaluate(() => { const h1 = document.querySelector('.screen > .top h1'), b = getComputedStyle(h1, '::before');
+        return [b.content, b.fontSize, b.textTransform, h1.textContent, getComputedStyle(h1).fontSize]; });
+      assert.deepStrictEqual(liveTitle, ['"Live"', '44px', 'uppercase', 'nxlx.mastercontrol', '15px'], 'in Signal the Live screen is titled LIVE, with the panel\'s name small under it');
+      await page.click('nav >> text=Mix');
+      await page.waitForSelector('#fliph');
+      await signalChecks('Mix', 'mix');
+      const moved = await page.evaluate(() => { const r = document.querySelector('.shell input[type=range]:not(:disabled)'); if (!r) return null;
+        const min = r.min === '' ? 0 : parseFloat(r.min), max = r.max === '' ? 100 : parseFloat(r.max);
+        const was = r.value; r.value = String(min + (max - min) * 0.75); const v = parseFloat(r.value); r.dispatchEvent(new Event('input', { bubbles: true }));
+        const out = [Math.round(1000 * (v - min) / (max - min)) / 10, parseFloat(getComputedStyle(r).getPropertyValue('--fill'))];
+        r.value = was; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return out; });
+      assert(moved && Math.abs(moved[0] - moved[1]) <= 0.2, 'a slider that is moved is filled up to where it is, at once: ' + JSON.stringify(moved));
+      await page.click('nav >> text=Media');
+      await page.waitForSelector('#uploads', { state: 'attached' });
+      await signalChecks('Media', 'clips');
+      await sysIndex();
+      await page.waitForSelector('.navrow .chip-ready, .navrow .chip-active, .navrow .chip-off');
+      await signalChecks('System index', 'system');
+      const subTitle = await page.evaluate(() => getComputedStyle(document.querySelector('#sysindex .top h1'), '::after').content);
+      assert.strictEqual(subTitle, '"nxlx.mastercontrol"', 'the other screens carry the panel\'s name as the small line under the title');
+      const active = await page.evaluate(() => { const c = document.querySelector('.navrow .chip-active'); return c ? [getComputedStyle(c).backgroundColor, getComputedStyle(c).color, c.textContent] : null; });
+      if (active) assert.deepStrictEqual(active, ['rgb(0, 224, 255)', 'rgb(11, 11, 13)', 'Active'], 'Active is its own fixed colour, with the word');
+      const longNames = await page.$$eval('.navname', (ns) => ns.filter((x) => x.scrollWidth > x.clientWidth + 1).map((x) => x.textContent));
+      assert.deepStrictEqual(longNames, [], 'a row name is cut off in capitals');
+      // pages under System: the longest titles, the instrument, the controller, and the rest of the pages by name
+      for (const name of ['Projectors', 'People and codes', 'Projection mapping', 'MIDI controller', 'Network', 'Schedule', 'Backup and reset']) {
+        await sys(name);
+        await signalChecks(name + ' page', 'system');
+      }
+      await sys('Shaders and Vibes');
+      await page.waitForSelector('#shaderpage');
+      await signalChecks('Shaders and Vibes page', 'shaders');
+      // a reload: the server writes the style into the page, so it is there before any script runs
+      const html = await page.evaluate(() => fetch('/').then((r) => r.text()));
+      assert(/<html lang="en" data-style="signal">/.test(html), 'the page as served carries the style');
+      // a laptop
+      await page.setViewportSize({ width: 1366, height: 800 });
+      await signalChecks('Shaders and Vibes page at 1366', 'shaders');
+      for (const name of ['MIDI controller', 'People and codes', 'Projectors']) {
+        await sys(name);
+        await signalChecks(name + ' page at 1366', 'system');
+      }
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('.pads');
+      await signalChecks('Live at 1366', 'clips');
+      // the light room
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.strictEqual(await post('/api/theme', { name: 'signal-light', accent: null }), 200);
+      await page.goto(base + '/');
+      await page.waitForSelector('nav.tabs');
+      assert.strictEqual(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(242, 240, 234)', 'Signal light has the off-white page');
+      await page.click('nav >> text=Room');
+      await page.waitForSelector('#roomscreen');
+      await signalChecks('Room in the light', 'room', { room: true });
+      await page.keyboard.press('Tab');
+      const ringLight = await page.evaluate(() => getComputedStyle(document.activeElement).outlineColor);
+      assert.strictEqual(ringLight, 'rgb(11, 11, 13)', 'in the light the focus ring is the text colour (yellow on off-white would be lost)');
+      await sysIndex();
+      await signalChecks('System index in the light', 'system');
+      await sys('Shaders and Vibes');
+      await page.waitForSelector('#shaderpage');
+      await signalChecks('Shaders and Vibes page in the light', 'shaders');
+      assert.deepStrictEqual(signalBad, [], 'in Signal:\n' + signalBad.join('\n'));
+      // back to the default look, as the box was
+      await sys('Look');
+      await page.click('#lookthemes button[data-theme="dark-stage"]');
+      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-style'));
+      assert((await page.locator('.swatch').count()) > 0, 'the default look offers accents again');
+      assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
+      await page.setViewportSize({ width: 1280, height: 800 });
+    }
 
     const csp = problems.filter((t) => /Content Security Policy|Refused to/i.test(t));
     assert.deepStrictEqual(csp, [], 'CSP violations: ' + csp.join('; '));
