@@ -118,7 +118,7 @@ Looked at together on 2026-10-05 in pull request #86 (not merged when this was w
 | `tests.test_netd`, a refused caller: broken pipe | Cause shown and fixed in the three helper clients (#86). |
 | `tests.test_projector`, an input change as an edit lands: 'ERR3' != 'stopped' | Cause shown and fixed in `Monitor.set_input` (#86). |
 | MIDI: a button held when MIDI goes off (`tests.test_lights`, `test_m1_...`) | Cause shown and fixed in the hub (#86). |
-| "Cancelled" `test` jobs | It was the matrix's fail-fast after the other Python had failed; switched off (#86). |
+| "Cancelled" `test` jobs | Not a fault of the tests. A job's annotation says what ended it: the matrix's fail-fast after the other Python had failed (23 of 60 runs; switched off in #86), or a cancel by hand (every other one that was read; superseded runs are cancelled to free runners). |
 | Browser test, Shaders page: `#shadernow #detailhigh` not seen (once) | A lost update of the shader settings was found and fixed (#86). That it was the cause that one time is inferred from the request times. The step prints its state if it happens again. |
 | Browser test: a staff device not seeing the painting wall "Warming up" (once, 2026-10-04) | Not explained. The step's diagnostic and the report of every open page print the state. |
 | A `test` job that sat in the unit tests for 35 minutes (once, controller-lights) | Not explained and not seen again in 189 runs of that step. The step ends after 20 minutes with every thread's stack. |
