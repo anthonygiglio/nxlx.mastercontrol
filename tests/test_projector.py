@@ -1624,15 +1624,22 @@ class ApiTest(ServerBase):
         self.assertIsNone(self.projector()["status"]["pending_input"])
         self.assertEqual([r for r in other.received if "INPT" in r and "?" not in r], [])       # the new one got no input command
 
-    def test_an_input_change_refused_as_the_projector_is_removed_or_switched_off_gets_no_retry(self):
-        """Review of #86, finding 1. The projector is taken out of the settings (or the module is switched off) while
-        it is answering "unavailable", and its worker has not been stopped yet (the settings are saved before the
-        workers are matched to them). The refusal comes back as it is; nothing is kept to try again for a
-        projector that is no longer there."""
+    def refused_as_it_vanishes(self, vanishes, still_there):
+        """An input change is answered "unavailable" while the projector is taken out of the settings, and once more
+        while the module is switched off. `vanishes(pid, vanish)` runs between the projector's answer and the
+        handling of it: it calls vanish() and puts the worker where the test wants it at that instant, and returns
+        what lets the worker go on afterwards (or None). Either way the refusal comes back as it is, and the
+        projector, back again, has nothing waiting to be tried and was sent the command once."""
         self.fast()
+        mon, mine = self.api.projectors, threading.current_thread()
         pid = self.add()[1]["projectors"][0]["id"]
-        self.assertTrue(wait_for(lambda: self.projector()["status"].get("power") == "off"))
         real, saved = self.api._pjlink, list(self.settings.data["projectors"])
+
+        def ready():
+            return pid in mon._workers and self.projector()["status"].get("power") == "off"
+
+        def sent():
+            return len([r for r in self.fake.received if "INPT" in r and "?" not in r])
 
         def gone_from_the_settings():
             self.settings.data["projectors"] = []
@@ -1641,26 +1648,89 @@ class ApiTest(ServerBase):
             self.api.registry.set_enabled("projector", False)
         for vanish, back in ((gone_from_the_settings, lambda: self.settings.data.__setitem__("projectors", saved)),
                              (module_off, lambda: self.api.registry.set_enabled("projector", True))):
-            held = dict(saved[0])
+            name = vanish.__name__
+            self.assertTrue(wait_for(ready), name)
+            held, after, before = dict(saved[0]), [], sent()
 
             def link(entry):
                 lk = real(entry)
-                send = lk.set_input
+                if threading.current_thread() is mine:
+                    send = lk.set_input
 
-                def set_input(code):
-                    try:
-                        return send(code)                               # in standby: ERR3
-                    finally:
-                        vanish()                                        # and no apply(): the worker is still there
-                lk.set_input = set_input
+                    def set_input(code):
+                        try:
+                            return send(code)                           # in standby: ERR3
+                        finally:
+                            after.append(vanishes(pid, vanish))         # and no apply(), unless `vanishes` makes one
+                    lk.set_input = set_input
                 return lk
             with mock.patch.object(self.api, "_pjlink", link):
-                with self.assertRaises(projector.ProjectorError) as e:
-                    self.api.projectors.set_input(held, "31")
-            self.assertEqual(e.exception.code, "ERR3", vanish.__name__)
-            self.assertIsNotNone(self.api.projectors._workers.get(pid), "the worker was still there, as the finding says")
-            self.assertIsNone(self.api.projectors.status(pid)["pending_input"], vanish.__name__)
+                with self.assertRaises(projector.ProjectorError) as e:  # a retry kept would be {"pending": True}, not this
+                    mon.set_input(held, "31")
+            self.assertEqual(e.exception.code, "ERR3", name)
+            self.assertEqual(len(after), 1, name)                       # the projector vanished in the middle, once
+            w = mon._workers.get(pid)
+            self.assertEqual(w is not None, still_there, name)
+            if w is not None:
+                self.assertFalse(w.stop.is_set(), name)                 # there and not stopped: only the settings say "gone"
+                self.assertIsNone(w.pending, name)
+            self.assertIsNone(mon.status(pid)["pending_input"], name)
             back()
+            if after[0]:
+                after[0]()
+            mon.apply()
+            self.assertTrue(wait_for(ready), name)
+            self.assertIsNone(self.projector()["status"]["pending_input"], name)
+            self.assertEqual(sent(), before + 1, name)
+
+    def test_an_input_change_refused_as_the_projector_is_removed_or_switched_off_gets_no_retry(self):
+        """Review of #86, finding 1. The projector is taken out of the settings (or the module is switched off) while
+        it is answering "unavailable", and its worker has not been stopped yet (the settings are saved before the
+        workers are matched to them). The refusal comes back as it is; nothing is kept to try again for a
+        projector that is no longer there.
+        This test failed once in CI on its own set-up: "the worker was still there" was true only until the worker
+        woke (every 50 ms here), saw its entry gone and left by itself. Now the worker is held at the door: it has
+        seen the entry gone and is on its way out, and it cannot go before the refusal has been handled."""
+        mon = self.api.projectors
+        leave, gates = mon._after, []
+
+        def held_at_the_door(w):
+            at_the_door, let_go = gates[-1]
+            at_the_door.set()
+            let_go.wait(5)
+            return leave(w)
+
+        def vanishes(pid, vanish):
+            at_the_door, let_go = threading.Event(), threading.Event()
+            self.addCleanup(let_go.set)
+            gates.append((at_the_door, let_go))                         # before the entry goes: the worker may see it at once
+            vanish()
+            mon._workers[pid].wake.set()
+            self.assertTrue(at_the_door.wait(5), vanish.__name__)
+            return let_go.set
+        with mock.patch.object(mon, "_after", held_at_the_door):
+            self.refused_as_it_vanishes(vanishes, still_there=True)
+
+    def test_an_input_change_refused_after_the_worker_of_a_removed_projector_left_by_itself_gets_no_retry(self):
+        """The other order of the test above: the worker saw its entry gone and left before the refusal is handled.
+        No worker, so no retry: the refusal comes back as it is then too."""
+        mon = self.api.projectors
+
+        def vanishes(pid, vanish):
+            w = mon._workers[pid]
+            vanish()
+            w.wake.set()
+            self.assertTrue(wait_for(lambda: pid not in mon._workers), vanish.__name__)
+        self.refused_as_it_vanishes(vanishes, still_there=False)
+
+    def test_an_input_change_refused_after_apply_stopped_the_worker_of_a_removed_projector_gets_no_retry(self):
+        """And the order of the panel itself when all of it fits inside the projector's answer: the settings saved,
+        then apply(), which stops the worker, then the refusal is handled."""
+        def vanishes(pid, vanish):
+            vanish()
+            self.api.projectors.apply()
+            self.assertNotIn(pid, self.api.projectors._workers)
+        self.refused_as_it_vanishes(vanishes, still_there=False)
 
     def test_an_input_change_asked_before_an_edit_goes_nowhere_after_it(self):
         """Review finding 2. The input was chosen from the old projector's list. Queued behind the edit it is not
