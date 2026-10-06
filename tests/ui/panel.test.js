@@ -1634,6 +1634,52 @@ function startServer() {
     assert.strictEqual(await page.textContent('#vibesbtn'), 'Start Vibes');
     assert(/Light work/.test(await page.textContent('#shadercard [data-shader="nxlx-silk.fs"]')), 'a shader says how much work it is');
     await onPage('Shaders and Vibes');
+    // The module goes off under the open page. The box is "off" from the first moment of the switch's request, and
+    // it still answers GET /api/shaders then (200), with no shader and no set; the page asks that every few seconds.
+    // It drew the answer and read the time of a set that was not there: "Cannot read properties of null (reading
+    // 'dwell')", seen once in CI when the question's answer overtook the switch's. Both orders are forced here: the
+    // switch's own answer is held back until the page has asked again, and then the module is switched off from
+    // elsewhere. Either way the page must follow the box (the Off page with its one button), with no page error.
+    {
+      const followsOrBreaks = async (what) => {
+        let hear;
+        const broke = new Promise((res) => { hear = (e) => res(e.message); page.on('pageerror', hear); });
+        const how = await Promise.race([page.waitForSelector('#sysoff', { timeout: 15000 }).then(() => ''), broke]);
+        page.off('pageerror', hear);
+        assert.strictEqual(how, '', what + ': the Shaders page drew an answer that had no set: ' + how);
+        assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', what + ': the switch says Off');
+        assert.strictEqual(await page.locator('#shaderpage').count(), 0, what + ': none of the cards is left to tap');
+        assert.strictEqual(await page.textContent('#syspage h1'), 'Shaders and Vibes', what + ': still on its page');
+      };
+      const backOn = async () => {
+        await page.click('#sysswitchon');
+        await page.waitForSelector('#vibessettings');
+        assert(await moduleIsOn('shaders'), 'the shaders module is on again');
+      };
+      let letGo;
+      const held = new Promise((res) => { letGo = res; });
+      await page.route('**/api/modules/shaders', async (route) => {
+        const answer = await route.fetch();           // the box has switched it off; the panel does not know yet
+        await held;
+        await route.fulfill({ response: answer });
+      });
+      try {
+        await page.click('#sysswitch');               // nothing plays, so it asks nothing first
+        await followsOrBreaks('the answer to the switch held back');
+        assert.strictEqual(await moduleIsOn('shaders'), false, 'the box had switched it off');
+      } finally {
+        letGo();
+      }
+      await page.waitForFunction(() => /Switched off/.test(document.getElementById('msg').textContent));
+      await page.unroute('**/api/modules/shaders');
+      await page.waitForSelector('#sysoff');
+      await backOn();
+      assert.strictEqual(await post('/api/modules/shaders', { enabled: false }), 200);      // as another device would
+      await followsOrBreaks('switched off from elsewhere');
+      await backOn();
+      await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
+      assert.strictEqual(await page.textContent('#vibesbtn'), 'Start Vibes');
+    }
     // The Mix screen no longer has a shaders card
     await page.click('nav >> text=Mix');
     await page.waitForSelector('#mo');
