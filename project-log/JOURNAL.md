@@ -14,6 +14,20 @@ Pull request #91. **Not merged** (the brief said so). Nothing ran on hardware or
 - **Fix.** One question, `loaded(d)` in `shaders.js`, asked at every place an answer of `GET /api/shaders` is kept: the page (`draw`, and the set switch in the library), the strip on Live, the ambience control on Room (`room.js`). An answer that cannot be drawn clears the cards, says "Shaders and Vibes was switched off" and has the panel read the modules again (`moduleSaidOff` in `app.js`), so the page becomes the Off page. `countdown`, `toggleVibes`, `applyPreset` and the settings card no longer assume there is a state or a set; the System row's state line no longer assumes a list.
 - **The second message was separate.** Another process (`tests/ui/screenshots.js`, its own harness and browser). A presenter lands on Room; the step tapped the Room tab and waited for the first wall, which the screen already had, then opened the fold; the tap's redraw (`goTab`: `loadAll().then(render)`) closed it. The failed log shows it: the fold's `GET /api/access` came before the new screen's `GET /api/room`, and the QR picture was never asked for. `roomUp` now waits for a wall on the redrawn screen. This one was read from the log and not reproduced on demand.
 - **Open.** A person who taps a tab and opens a fold within the few tenths of a second before the redraw lands would see it close too. Not changed here.
+- **Master moved.** #90 merged while this was open; master was merged in, both sides of the two log files kept, this entry on top as the later one.
+
+## 2026-10-05 (a projector test whose set-up depended on timing)
+
+Pull request #90. **Not merged** (the brief said so). A test change only; the product code is as it was. Nothing ran on hardware and the test Pi was not touched.
+
+- **What failed.** `test_an_input_change_refused_as_the_projector_is_removed_or_switched_off_gets_no_retry` (added in #86) failed once in CI on a docs-only pull request (run 37383189733, test (3.12)), on its own set-up line: "the worker was still there, as the finding says".
+- **Cause.** The test takes the projector out of the settings (or switches the module off) with no `apply()` and then asserts the worker still exists. The worker wakes every 50 ms in that test, sees its entry gone and leaves by itself (`_loop` breaks, `_after` takes it out of `_workers`). The assertion was true only until that wake-up.
+- **Reproduced on demand.** With the worker woken right after the entry goes, and a wait until it has left, the old test failed with the CI message 20 times out of 20 (counted by exit code and by the message).
+- **Fix.** The worker is held in `_after` (it has seen the entry gone and is on its way out) until the refusal has been handled, and the test waits, with a deadline, until it is there. So "ERR3 arrives, the entry is gone, the worker is present and not stopped" is the state every time, for both variants. The test also asserts the command went out once and that the projector, back again, has nothing pending.
+- **The other order.** Two new tests: the worker left by itself before the refusal is handled, and `apply()` stopped it before then. `Monitor.set_input` raises the refusal in both; no gap in the product code.
+- **Does the test still prove it?** With `cur is None` taken out of `set_input`, the held test failed 20 times out of 20 ("ProjectorError not raised"); the two new ones passed 10 times out of 10, as they should (`w is None` covers them).
+- **Runs.** The three tests (both orders, both variants) 300 times in a loop on the dev Mac: 300 passed, none failed. CI is the judge for the rest.
+- **Master moved.** #89 (the hand-off) merged while this was open; master was merged in, both journal entries kept, this one on top as the later one.
 
 ## 2026-10-05, end of day: everything merged, the hand-off for a new machine
 
