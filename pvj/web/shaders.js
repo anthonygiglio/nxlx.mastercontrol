@@ -52,6 +52,15 @@
   function family(s) { return FAMILIES.filter(function (f) { return (s.categories || []).some(function (x) { return String(x).toLowerCase() === f.toLowerCase(); }); })[0] || ''; }
 
   function player(c) { return (c.state.status && c.state.status.player) || {}; }
+  // Can this answer of GET /api/shaders be drawn? Not while the module is off: the box still answers then (200), but
+  // with no shader and no set at all, and nearly everything here reads the set that is being edited. The answer can
+  // say "off" while the page still shows the module as on: it was switched off on another device, or this page's
+  // own switch is still on its way (the box is off from the first moment of that request, and answers a question
+  // asked meanwhile before it answers the switch). Whoever asked then shows nothing, instead of reading a set that
+  // is not there.
+  function loaded(d) {
+    return !!(d && d.enabled !== false && d.config && d.vibes && Array.isArray(d.shaders) && Array.isArray(d.sets) && d.sets.length);
+  }
   function words(pl) { return pl.vibes ? 'Vibes is playing' + (pl.shader ? ': ' + nice(pl.shader) : '') : 'Start Vibes'; }
   function sub(pl) { return pl.vibes ? 'Tap to stop' : 'Moving pictures, one after another'; }
   function activeSet(d) { return d.sets.filter(function (e) { return e.id === d.active; })[0] || d.sets[0] || null; }
@@ -437,8 +446,11 @@
     c.api('GET', '/api/shaders').then(function (r) {
       L.busy = false; L.at = Date.now(); L.shader = name;
       if (!r.ok || !box.isConnected) return;
-      L.data = r.data;
-      drawLive(c, r.data, box);
+      L.data = loaded(r.data) ? r.data : null;
+      if (L.data) return drawLive(c, r.data, box);
+      box.hidden = true;                    // the module is off: no strip, and nothing kept to draw it from
+      if (box.parentNode) box.parentNode.classList.remove('has-side');
+      L.shape = ''; L.ctls = [];
     });
   }
 
@@ -526,6 +538,7 @@
       countdown();
     }
     function countdown() {
+      if (!data) return;            // nothing drawn (not read yet, or the module is off): nothing to count down
       var line = document.getElementById('shaderline'), bar = document.getElementById('vibesbar');
       if (line) line.textContent = stateLine(data);
       var v = data.vibes || {};
@@ -544,12 +557,13 @@
     }
     function editing(d) { return (ui.editSet && setById(d, ui.editSet)) || activeSet(d); }
     function toggleVibes() {
+      if (!data) return;
       var running = !!(data.vibes && data.vibes.running);
       send('/api/vibes', vibesBody(data, !running), function () { soon(1200); }, 'shadernowmsg');
     }
     function step(dir) { send('/api/shaders/step', { dir: dir }, function () { soon(900); }, 'shadernowmsg'); }
     function applyPreset(name) {
-      if (!data.playing) return;
+      if (!data || !data.playing) return;
       ui.lastPreset = { id: data.playing.id, name: name };
       send('/api/shaders/preset', { id: data.playing.id, name: name }, function () { soon(500); }, 'presetmsg');
     }
@@ -920,6 +934,7 @@
           c.api('POST', '/api/shaders', { action: 'set', op: 'update', id: now.id, shaders: list }).then(function (r) {
             if (!r.ok) return fail(r, 'shaderlibmsg');
             c.say('');
+            if (!loaded(r.data)) return draw(r.data);
             sw.setAttribute('aria-checked', want ? 'true' : 'false');       // only this row and the cards that count change
             data = r.data; drawn.lib = libShape(data);
             draw(data);
@@ -967,8 +982,8 @@
     // With one set this is "Vibes settings" and says nothing about sets but the way to make a second one. With more,
     // each set is a row; one is being edited (its time, variation, order, name, and its shaders in the library).
     function settingsCard(d) {
-      if (!full) return null;
       var e = editing(d), many = d.sets.length > 1;
+      if (!full || !e) return null;
       function update(body, key, msg) {
         return send('/api/shaders', Object.assign({ action: 'set', op: 'update', id: e.id }, body), function () { if (key) { saved(key); var m = document.getElementById('saved-' + key); if (m) m.textContent = 'Saved'; } }, msg || 'setmsg');
       }
@@ -1141,10 +1156,25 @@
     }
 
     // Each card has its own shape; a card is drawn again only when its shape changed, and never under someone's hands.
+    // The box says the module is off (see loaded()). Every card goes, so nothing stale can be tapped, one line says
+    // why, and the panel reads the modules again: the page then becomes the "Off" page with its one button. The
+    // question is asked again every few seconds, so the cards come back by themselves if it is switched on.
+    function gone() {
+      data = null; drawn = {}; ctls = []; teachers = [];
+      tick.asked = false;
+      Object.keys(slots).forEach(function (k) { put(k, null); });
+      var first = document.getElementById('shaderloading');
+      if (first) first.parentNode.removeChild(first);
+      if (!document.getElementById('shadergone')) root.insertBefore(h('div', { class: 'card', id: 'shadergone' },
+        h('div', { class: 'hint', role: 'status', text: 'Shaders and Vibes was switched off. Nothing here can be changed until it is on again.' })), root.firstChild);
+      if (c.moduleSaidOff) c.moduleSaidOff('shaders');
+      watch();
+    }
     function draw(d) {
+      if (!loaded(d)) return gone();
       data = d;
       tick.asked = false;
-      var first = document.getElementById('shaderloading');
+      var first = document.getElementById('shaderloading') || document.getElementById('shadergone');
       if (first) first.parentNode.removeChild(first);
       if (ui.editSet && !setById(d, ui.editSet)) ui.editSet = null;
       if (ui.startSet && !setById(d, ui.startSet)) ui.startSet = null;
@@ -1212,7 +1242,7 @@
 
   // For the Room screen's ambience control (room.js): the same player state, set choice and request body as the
   // Vibes row on Live, so a set chosen on one screen is the set the other starts.
-  var lend = { player: player, activeSet: activeSet, startSet: startSet, body: vibesBody, choose: function (id) { ui.startSet = id; }, detailHigh: detailHigh };
+  var lend = { player: player, activeSet: activeSet, startSet: startSet, body: vibesBody, choose: function (id) { ui.startSet = id; }, detailHigh: detailHigh, loaded: loaded };
   // `kit` is what effects.js draws its controls with: the same controls, the same way of sending.
   window.pvjShaders = { liveRow: liveRow, liveStrip: liveStrip, patch: patch, page: page, nice: nice, vibes: lend,
     kit: { makeRig: makeRig, inputControl: inputControl, noteLine: noteLine, slider: slider, syncControls: syncControls, knobOf: knobOf, round: round } };

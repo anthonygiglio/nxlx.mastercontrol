@@ -98,7 +98,12 @@
         return { on: held ? held.on : on, name: on && !(held && !held.on) ? nice(pl.shader) : '' };
       }
       function sets() {
-        if (!pick || !data) return;
+        if (!pick) return;
+        if (!data) {              // not read yet, or the module was switched off meanwhile: no set to choose, no advice
+          pick.hidden = true;
+          if (detail) detail.hidden = true;
+          return;
+        }
         if (detail) {
           var high = V.detailHigh(data);
           detail.hidden = !high;
@@ -138,7 +143,7 @@
       }
       function read() {
         if (!pick) return;
-        c.api('GET', '/api/shaders').then(function (r) { if (r.ok && document.body.contains(card)) { data = r.data; sets(); } });
+        c.api('GET', '/api/shaders').then(function (r) { if (r.ok && document.body.contains(card)) { data = V.loaded(r.data) ? r.data : null; sets(); } });
       }
       follow = { draw: function () { if (document.body.contains(card)) draw(); else if (follow && follow.card === card) follow = null; }, read: read, card: card };
       draw();

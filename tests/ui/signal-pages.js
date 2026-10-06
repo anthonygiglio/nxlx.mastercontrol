@@ -197,9 +197,15 @@ function pages() {
   }, { done: closeOthers });
 
   // ---- Room ----
+  // A tap on a tab reads everything again and only then draws the screen anew (goTab: loadAll().then(render)). A
+  // presenter is on Room already when the page opens, so "the first wall is there" was true of the screen that was
+  // about to be replaced, and a fold opened on it was closed again by the redraw (seen once in CI: the fold's GET
+  // /api/access came before the new screen's GET /api/room, and its QR picture was never asked for). The screen
+  // that is there before the tap is marked, and the wait is for a wall on a screen without the mark.
   const roomUp = async (t, pg) => {
+    await pg.evaluate(() => { const old = document.getElementById('roomscreen'); if (old) old.setAttribute('data-before-tap', ''); });
     await tab(pg, 'Room');
-    await has(t, pg, '.room-group:has-text("' + WALLS[0] + '")');
+    await has(t, pg, '#roomscreen:not([data-before-tap]) .room-group:has-text("' + WALLS[0] + '")');
   };
   add('room', 'room', async (t) => {
     await post(t, '/api/vibes', { on: true });

@@ -4,6 +4,25 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-05, late: the Shaders page while its module goes off (#91), and a study of resizing
+
+- A page error seen once in CI, "Cannot read properties of null (reading 'dwell')", was a real fault in the panel. The box answers GET /api/shaders with 200 while the module is off, with no shader and no set; a page that still showed the module as on (it was switched off on another device, or its own switch was still on its way) then drew from a set that was not there. `loaded()` in `pvj/web/shaders.js` now decides whether an answer can be drawn; the Shaders page, the strip on Live and the ambience block on Room show nothing in that case, and the page reads the modules again and follows. A browser step switches the module off under an open page; it failed with that page error before the fix.
+- The agent that built it was cut off twice (a stall, then a sign-in error); the coordinator finished the logs. No independent review: panel code only, no route, upload or helper touched.
+- A read-only study of making the panel adapt to every window width from 320 to 2560 is published at https://claude.ai/artifact/SM8DS63b4R2KymXMS1zFad. Nothing in the repository changed for it. Its first step (repairs at 320, a sideways phone and 600 to 899, with a width sweep in the browser test) waits for the owner's yes.
+- The timing-dependent projector test from #86 was fixed in #90 (tests only).
+
+## 2026-10-05 (the Shaders page drew an answer that said the module was off)
+
+Pull request #91. **Not merged** (the brief said so). Nothing ran on hardware or on a phone; the browser steps ran in CI's Chromium only (the dev Mac has no mpv, so the harness does not start there). The test Pi was not touched.
+
+- **What was seen.** panel-ui failed once on #90 (run 37390838722, job 112035262763) with `pageerror: Cannot read properties of null (reading 'dwell')`, and in the same job the screenshot step said `signal: waited in vain for #roomletin #accesslive`.
+- **Cause of the page error.** Not `data.config.dwell` (the box always sends `config`). `GET /api/shaders` answers 200 while the module is off, with `sets: []` and `active: null`, and the box is off from the first moment of `POST /api/modules/shaders`, which then still has work to do before it answers. The open Shaders page asks every few seconds; an answer in that gap was drawn, the set being edited was null, and the settings card read `e.dwell`.
+- **Reproduction.** A step in `tests/ui/panel.test.js` holds the switch's answer back until the page has asked again, and then switches the module off from elsewhere. The first commit of the pull request is that step alone: panel-ui failed on it in both of its runs (jobs 112044201850 and 112044187529) with "the answer to the switch held back: the Shaders page drew an answer that had no set: Cannot read properties of null (reading 'dwell')".
+- **Fix.** One question, `loaded(d)` in `shaders.js`, asked at every place an answer of `GET /api/shaders` is kept: the page (`draw`, and the set switch in the library), the strip on Live, the ambience control on Room (`room.js`). An answer that cannot be drawn clears the cards, says "Shaders and Vibes was switched off" and has the panel read the modules again (`moduleSaidOff` in `app.js`), so the page becomes the Off page. `countdown`, `toggleVibes`, `applyPreset` and the settings card no longer assume there is a state or a set; the System row's state line no longer assumes a list.
+- **The second message was separate.** Another process (`tests/ui/screenshots.js`, its own harness and browser). A presenter lands on Room; the step tapped the Room tab and waited for the first wall, which the screen already had, then opened the fold; the tap's redraw (`goTab`: `loadAll().then(render)`) closed it. The failed log shows it: the fold's `GET /api/access` came before the new screen's `GET /api/room`, and the QR picture was never asked for. `roomUp` now waits for a wall on the redrawn screen. This one was read from the log and not reproduced on demand.
+- **Open.** A person who taps a tab and opens a fold within the few tenths of a second before the redraw lands would see it close too. Not changed here.
+- **Master moved.** #90 merged while this was open; master was merged in, both sides of the two log files kept, this entry on top as the later one.
+
 ## 2026-10-05 (a projector test whose set-up depended on timing)
 
 Pull request #90. **Not merged** (the brief said so). A test change only; the product code is as it was. Nothing ran on hardware and the test Pi was not touched.

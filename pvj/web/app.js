@@ -430,6 +430,15 @@
         S.sysFresh = false;
         return runSwitch([moduleStep(row.module)].concat(row.steps || []), on, row.offInner, null);
       },
+      // An answer of the box said this module is off while its page still shows it as on (switched off on another
+      // device, or the answer overtook this page's own switch): the modules are read again and the page follows.
+      moduleSaidOff: function () {
+        api('GET', '/api/modules').then(function (r) {
+          if (!r.ok) return;
+          S.modules = r.data.modules;
+          if (S.tab === 'system' && S.sys && pageSwitch.steps && pageOn(pageSwitch.steps) !== pageSwitch.on) redrawSystem();
+        });
+      },
       openShaders: function () { openSys('vibes', S.tab); },
       openMix: function () { goTab('mix'); } };
   }
@@ -1238,7 +1247,7 @@
       if (d.error) return st('problem', 'A shader was refused: ' + nice(d.error.id));
       if (d.vibes && d.vibes.running) return st('active', 'Vibes is playing' + (d.playing ? ': ' + nice(d.playing.name) : ''));
       if (d.playing) return st('active', 'One shader is playing: ' + nice(d.playing.name));
-      var n = d.shaders.filter(function (s) { return s.vibes && !s.error; }).length;
+      var n = (d.shaders || []).filter(function (s) { return s.vibes && !s.error; }).length;
       return n ? st('ready', plural(n, 'shader') + ' in the rotation') : st('setup', 'No shader is in the rotation');
     },
     access: function (d) {
