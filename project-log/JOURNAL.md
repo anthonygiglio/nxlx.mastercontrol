@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-05, late: the Shaders page while its module goes off (#91), and a study of resizing
+
+- A page error seen once in CI, "Cannot read properties of null (reading 'dwell')", was a real fault in the panel. The box answers GET /api/shaders with 200 while the module is off, with no shader and no set; a page that still showed the module as on (it was switched off on another device, or its own switch was still on its way) then drew from a set that was not there. `loaded()` in `pvj/web/shaders.js` now decides whether an answer can be drawn; the Shaders page, the strip on Live and the ambience block on Room show nothing in that case, and the page reads the modules again and follows. A browser step switches the module off under an open page; it failed with that page error before the fix.
+- The agent that built it was cut off twice (a stall, then a sign-in error); the coordinator finished the logs. No independent review: panel code only, no route, upload or helper touched.
+- A read-only study of making the panel adapt to every window width from 320 to 2560 is published at https://claude.ai/artifact/SM8DS63b4R2KymXMS1zFad. Nothing in the repository changed for it. Its first step (repairs at 320, a sideways phone and 600 to 899, with a width sweep in the browser test) waits for the owner's yes.
+- The timing-dependent projector test from #86 was fixed in #90 (tests only).
+
 ## 2026-10-05 (the Shaders page drew an answer that said the module was off)
 
 Pull request #91. **Not merged** (the brief said so). Nothing ran on hardware or on a phone; the browser steps ran in CI's Chromium only (the dev Mac has no mpv, so the harness does not start there). The test Pi was not touched.
