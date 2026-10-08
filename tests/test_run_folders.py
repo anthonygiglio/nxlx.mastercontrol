@@ -237,7 +237,9 @@ class UpdateRestartTest(unittest.TestCase):
         with mock.patch("os.path.isdir", lambda p: True):
             up._systemd_restart()
         # the NDI helper is there only on a box that opted in (D62); try-restart starts nothing where it is not
-        self.assertEqual(calls, [["systemctl", "try-restart", "pvj-netd.service", "pvj-ndi.service"],
+        # in a call of its own, so that the network helper's restart cannot depend on a unit most boxes do not have
+        self.assertEqual(calls, [["systemctl", "try-restart", "pvj-netd.service"],
+                                 ["systemctl", "try-restart", "pvj-ndi.service"],
                                  ["systemctl", "restart", "pvj-player.service", "pvj-web.service"]])
         flat = " ".join(sum(calls, []))
         self.assertNotIn("pvj-sysd", flat)           # it started this update

@@ -79,7 +79,7 @@ def opted_in(root=""):
 
 
 def check_prefix(prefix):
-    if not isinstance(prefix, str) or not _PREFIX.fullmatch(prefix) or ".." in prefix.split("/"):
+    if not isinstance(prefix, str) or not _PREFIX.fullmatch(prefix) or ".." in prefix.split("/") or "." in prefix.split("/"):
         raise SetupError("the install folder %r is not one the installer would have written" % (prefix,))
     return prefix
 
@@ -107,7 +107,8 @@ def _write(path, text):
     folder = os.path.dirname(path)
     os.makedirs(folder, mode=0o755, exist_ok=True)
     if os.path.islink(folder) or os.path.islink(path) or os.path.isdir(path):
-        raise SetupError("%s is not a plain file in a plain folder; nothing was written" % path)
+        raise SetupError("%s is not a plain file in a plain folder (a link or a folder is in its place); it was not written. "
+                         "Look at what is there and remove it by hand" % path)
     fd, tmp = tempfile.mkstemp(prefix=".pvj-ndi-", dir=folder)
     try:
         with os.fdopen(fd, "w") as f:
@@ -120,6 +121,18 @@ def _write(path, text):
         except OSError:
             pass
         raise
+
+
+def check_paths(root=""):
+    """Refuses, and changes nothing: each of the three files must be a plain file or not there, in a folder that is a
+    plain folder or not there. Asked before a setup changes anything, so that it does not stop half-way at one."""
+    for path in (UNIT_PATH, PLAYER_DROPIN, WEB_DROPIN):
+        full, folder = root + path, os.path.dirname(root + path)
+        if os.path.islink(folder) or (os.path.lexists(folder) and not os.path.isdir(folder)):
+            raise SetupError("%s is not a plain folder; nothing was changed. Look at what is there and remove it by hand" % folder)
+        if os.path.islink(full) or (os.path.lexists(full) and not os.path.isfile(full)):
+            raise SetupError("%s is a link or a folder, not the plain file the NDI setup writes; nothing was changed. "
+                             "Look at what is there and remove it by hand" % full)
 
 
 def write_units(root="", prefix=DEFAULT_PREFIX, template=None):
@@ -179,44 +192,73 @@ def _user(name):
 NO_LOGIN = ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false")
 
 
-def check_account(user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall):
-    """Refuses, and changes nothing. An account pvj-ndi that is already there must be what this setup would have made:
-    not root, a uid of its own, no login shell, pvj-ndi as its own group and no other group. Anything else is refused,
-    not repaired: the helper loads closed-source code that reads the network, and it must not be root, another
-    account under a second name, or in group pvj (the player's socket, the PIN, the settings) or any other. An
-    account that is not there yet is fine."""
+NOTHING_YET = "; nothing was set up"
+JUST_MADE = ("; it was made a moment ago by this command and is not what was asked for (the box's own rules for new accounts "
+             "changed it), so the setup stops here. Remove it before trying again: sudo deluser %s; sudo delgroup %s" % (ACCOUNT, GROUP))
+
+
+def check_account(user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall, tail=NOTHING_YET):
+    """Refuses, and changes nothing. A group or an account pvj-ndi that is already there must be what this setup
+    would have made. Anything else is refused, not repaired: the helper loads closed-source code that reads the
+    network, and whoever is in its group can enter its folder (the socket, the pipe).
+
+    The group, whether or not the account exists yet: not root's group (gid 0), a number no other group has (an
+    account made with `--gid pvj-ndi` into a number shared with group pvj would be in pvj), no members, and nobody
+    else's own group. Members are refused because the panel and the player are let in by their units
+    (SupplementaryGroups= in a drop-in), never by membership; a name in the list is an account that could read the
+    pipe and talk to the socket's folder without anyone having decided that.
+
+    The account: not root, a uid of its own, no login shell, pvj-ndi as its own group and no other group.
+    What is not there yet is fine. `tail` ends each refusal: before anything is made, or after (ensure_account)."""
+    g = group(GROUP)
+    if g is not None:
+        if g.gr_gid == 0:
+            raise SetupError("the group %s is root's group under another name%s" % (GROUP, tail))
+        same = sorted(x.gr_name for x in groups() if x.gr_gid == g.gr_gid and x.gr_name != GROUP)
+        if same:
+            raise SetupError("the group %s shares its number with %s%s" % (GROUP, ", ".join(same), tail))
+        members = sorted(m for m in g.gr_mem if m != ACCOUNT)
+        if members:
+            raise SetupError("the group %s has members (%s) and must have none: the panel and the player are let in by "
+                             "their units, not by membership%s" % (GROUP, ", ".join(members), tail))
+        theirs = sorted(o.pw_name for o in users() if o.pw_gid == g.gr_gid and o.pw_name != ACCOUNT)
+        if theirs:
+            raise SetupError("the group %s is the own group of %s%s" % (GROUP, ", ".join(theirs), tail))
     u = user(ACCOUNT)
     if u is None:
         return
     if u.pw_uid == 0:
-        raise SetupError("the account %s is root under another name; nothing was set up" % ACCOUNT)
+        raise SetupError("the account %s is root under another name%s" % (ACCOUNT, tail))
     shared = sorted(o.pw_name for o in users() if o.pw_uid == u.pw_uid and o.pw_name != ACCOUNT)
     if shared:
-        raise SetupError("the account %s shares its number with %s; nothing was set up" % (ACCOUNT, ", ".join(shared)))
+        raise SetupError("the account %s shares its number with %s%s" % (ACCOUNT, ", ".join(shared), tail))
     if u.pw_shell not in NO_LOGIN:
-        raise SetupError("the account %s has a login shell (%s); nothing was set up" % (ACCOUNT, u.pw_shell))
-    g = group(GROUP)
+        raise SetupError("the account %s has a login shell (%s)%s" % (ACCOUNT, u.pw_shell, tail))
     if g is None or u.pw_gid != g.gr_gid:
-        raise SetupError("the account %s is not in the group %s as its own group; nothing was set up" % (ACCOUNT, GROUP))
+        raise SetupError("the account %s is not in the group %s as its own group%s" % (ACCOUNT, GROUP, tail))
     others = sorted(x.gr_name for x in groups() if ACCOUNT in x.gr_mem and x.gr_name != GROUP)
     if others:
-        raise SetupError("the account %s is also in %s and must be in no other group; nothing was set up" % (ACCOUNT, ", ".join(others)))
+        raise SetupError("the account %s is also in %s and must be in no other group%s" % (ACCOUNT, ", ".join(others), tail))
 
 
 def ensure_account(run=_run, say=print, user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall):
     """The helper's group and account, made if they are missing: a system account without a home or a shell, whose
-    only group is pvj-ndi. One that is already there is checked (check_account) before anything is made and again
-    after."""
+    only group is pvj-ndi. What is already there is checked (check_account) before anything is made. What was made
+    is checked again, because a box's own rules for new accounts (extra groups, a shell) can change what useradd
+    makes; that refusal says that something was made, and how to remove it."""
     check_account(user, group, groups, users)
+    made = False
     if group(GROUP) is None:
         say("creating system group %s" % GROUP)
         if run(["groupadd", "--system", GROUP]) != 0 or group(GROUP) is None:
             raise SetupError("could not create the group %s" % GROUP)
+        made = True
     if user(ACCOUNT) is None:
         say("creating system user %s" % ACCOUNT)
         if run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--gid", GROUP, ACCOUNT]) != 0 or user(ACCOUNT) is None:
             raise SetupError("could not create the account %s" % ACCOUNT)
-    check_account(user, group, groups, users)
+        made = True
+    check_account(user, group, groups, users, tail=JUST_MADE if made else NOTHING_YET)
 
 
 def _systemd_runs():
@@ -240,8 +282,10 @@ OVERLAY_WARNING = ("the read-only root is active on this box (pvj-rootfs): every
 def check(root="", account=check_account):
     """Everything that can refuse a setup, looked at before anything on the box is changed (before the library is
     copied, a package installed or an account made): the install folder the installer wrote down and the unit's
-    template, and an account pvj-ndi that is already there. Raises SetupError or OSError."""
+    template, something that is not a plain file where the three files go, and a group or an account pvj-ndi that
+    is already there. Raises SetupError or OSError."""
     unit_text(read_prefix(root))
+    check_paths(root)
     account()
 
 
@@ -298,8 +342,8 @@ def enable(run=_run, say=print, systemd=_systemd_runs, account=ensure_account, w
                 say("could not install %s (no network?). NDI senders are not found until they are there: sudo apt-get install %s"
                     % (" ".join(need), " ".join(need)))
     account(run=run, say=say)
-    write_units(root, read_prefix(root))
     try:
+        write_units(root, read_prefix(root))               # inside: one that stops half-way is undone like the rest
         if not systemd():
             if run(["systemctl", "enable", UNIT]) != 0:
                 raise SetupError("could not enable %s" % UNIT)
@@ -311,7 +355,7 @@ def enable(run=_run, say=print, systemd=_systemd_runs, account=ensure_account, w
             raise SetupError("could not enable %s" % UNIT)
         if run(["systemctl", "restart", UNIT]) != 0:
             raise SetupError("could not start %s; see: journalctl -u pvj-ndi -n 30" % UNIT)
-    except SetupError:
+    except (SetupError, OSError):          # OSError: a file that could not be written (a full or read-only disk)
         if not was:                        # the box is put back to not set up: no mark, no unit, nothing enabled
             run(["systemctl", "disable", "--now", UNIT] if systemd() else ["systemctl", "disable", UNIT])
             for line in remove_units(root):

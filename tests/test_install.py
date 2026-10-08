@@ -370,7 +370,7 @@ class InstallTest(unittest.TestCase):
         self.assertIn("ExecStart=/srv/box/pvj/current/bin/pvj-web", self.read(self.p("etc/systemd/system/pvj-web.service")))
         ndisetup.check(self.stage, account=lambda: None)   # the setup would take this box
         stage2 = tempfile.mkdtemp()
-        for bad in ("/opt//pvj", "//opt/pvj", "/opt/pvj//x"):
+        for bad in ("/opt//pvj", "//opt/pvj", "/opt/pvj//x", "/opt/pvj/./", "/opt/./pvj", "/opt/pvj/."):      # the last three: second review, N4
             self.assertNotEqual(install(self.src, stage2, "--prefix", bad).returncode, 0, bad)
         self.assertEqual(os.listdir(stage2), [])
 
@@ -394,9 +394,52 @@ class InstallTest(unittest.TestCase):
         os.symlink("/etc/passwd", self.p(self.NDI_FILES[1]))
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertNotIn("NDI", r.stdout)
+        self.assertNotIn("this box has NDI set up", r.stdout)
         self.assertFalse(os.path.exists(self.p(self.NDI_FILES[0])))
-        self.assertEqual(os.readlink(self.p(self.NDI_FILES[1])), "/etc/passwd")      # the link itself is not the installer's to touch
+        # Second review, N2: systemd reads a drop-in through a link. The link is removed (rm takes the link, not what
+        # it points to) and that is said loudly.
+        self.assertFalse(os.path.lexists(self.p(self.NDI_FILES[1])))
+        self.assertTrue(os.path.exists("/etc/passwd"))
+        self.assertIn("WARNING:", r.stdout)
+        self.assertIn("is a link, which the NDI setup never makes", r.stdout)
+        self.assertIn("This box is NOT set up for NDI.", r.stdout)
+
+    def test_a_link_at_the_mark_with_a_unit_present_leaves_nothing_systemd_would_read(self):
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.opt_in()
+        target = os.path.join(tempfile.mkdtemp(), "kept.conf")
+        with open(target, "w") as f:
+            f.write("[Service]\nSupplementaryGroups=pvj-ndi\nEnvironment=PVJ_NDI_DIR=/run/pvj-ndi\n")
+        os.unlink(self.p(self.NDI_FILES[1]))
+        os.symlink(target, self.p(self.NDI_FILES[1]))                     # the mark is now a link to a file with the same words
+        wants = self.p("etc/systemd/system/multi-user.target.wants")
+        os.makedirs(wants)
+        os.symlink("/etc/systemd/system/pvj-ndi.service", os.path.join(wants, "pvj-ndi.service"))     # what "systemctl enable" left
+        r = install(self.src, self.stage)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("is a link, which the NDI setup never makes", r.stdout)
+        self.assertIn("removing an NDI helper that nobody set up on this box", r.stdout)
+        self.assertEqual(self.ndi_names(), ["usr/local/bin/pvj-ndi-runtime"])      # no unit, no drop-in, no link, and (N3) no link to start it
+        self.assertFalse(os.path.lexists(os.path.join(wants, "pvj-ndi.service")))
+        with open(target) as f:
+            self.assertIn("PVJ_NDI_DIR", f.read())                        # what the link pointed to was not touched
+
+    def test_a_folder_in_the_place_of_the_unit_does_not_stop_the_install(self):
+        # Second review, L1: "rm -f" on a folder fails, and under "set -e" that ended every install and update here.
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        os.makedirs(self.p(self.NDI_FILES[0] + "/inside"))
+        r = install(copy_source("9.9.2"), self.stage, "--no-start")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("WARNING: could not remove everything of that NDI helper", r.stdout)
+        self.assertIn("remove it by hand", r.stdout)
+        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.2")      # the install went on to its end
+        self.assertIn("installed. Check the device", r.stdout)
+        # the same with a folder where a drop-in goes, in the uninstall
+        os.makedirs(self.p(self.NDI_FILES[2] + "/inside"))
+        r = install(self.src, self.stage, "--uninstall")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("WARNING: could not remove everything of the NDI helper", r.stdout)
+        self.assertFalse(os.path.exists(self.p("opt/pvj")))
 
     def test_uninstall_takes_the_helper_and_leaves_the_owners_library_unless_purged(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)

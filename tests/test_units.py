@@ -649,12 +649,51 @@ class NdiUnitTest(unittest.TestCase):
         # Review L4: a unit without the mark (a setup cut short, or a box that ran this branch while the helper went
         # on every box) is disabled and removed by the next install; the mark decides, nothing else.
         block = self.sh[self.sh.index("NDI_OPTED_IN=0"):self.sh.index("# USB automount")]
-        orphan = block[block.index('elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ]; then'):]
+        orphan = block[block.index('elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ]; then'):]
         self.assertIn("systemctl disable --now pvj-ndi.service", orphan)
-        self.assertIn('run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN"', orphan)
         self.assertNotIn("userdel", orphan)
-        self.assertNotIn("NDI_OPTED_IN=1", orphan)
         self.assertLess(self.sh.index('elif [ -e "$NDI_UNIT" ]'), self.sh.index("\tsystemctl daemon-reload\n\tfix_run_folder"))
+        # Second review, L1: under "set -e" an rm that fails (a folder in the place of the unit) ended every install
+        # and every update from the panel half-way. It is said and the install goes on; so in the uninstall.
+        rm = [line.strip() for line in self.sh.splitlines() if line.strip().startswith("run rm -f") and "NDI_" in line]
+        self.assertEqual(len(rm), 3, rm)
+        for line in rm:
+            self.assertRegex(line, r' \|\| log "WARNING: could not remove', line)
+        self.assertIn('run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN" "$NDI_WANTS" || log', orphan)       # N3: the link "enable" made goes too
+        self.assertEqual(self.sh.count('NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi.service"'), 1)
+        # and the mark is asked for once more right before that rm: a setup that finished meanwhile is left alone
+        again = orphan.index("if ndi_mark; then")
+        self.assertLess(orphan.index("systemctl disable --now pvj-ndi.service"), again)
+        self.assertLess(again, orphan.index('run rm -f "$NDI_UNIT"'))
+        self.assertIn("else\n\t\t# Never the end of an install", orphan[again:])
+
+    def test_a_link_where_the_mark_goes_is_removed_and_said_loudly(self):
+        # Second review, N2: systemd reads a drop-in through a link, so a link at the mark gave the panel the group and
+        # the helper's folder on a box the installer treats as not set up. rm takes the link away, never its target.
+        block = self.sh[self.sh.index("NDI_OPTED_IN=0"):self.sh.index("if ndi_mark; then\n\tNDI_OPTED_IN=1")]
+        self.assertIn('if [ -L "$NDI_MARK" ]; then\n\tlog "WARNING: $NDI_MARK is a link', block)
+        self.assertIn("This box is NOT set up for NDI.", block)
+        self.assertIn('run rm -f "$NDI_MARK" || log "WARNING: could not remove the link', block)
+        self.assertNotIn("rm -rf", block)
+        self.assertNotIn("readlink", block)                # what it points to is never looked at or touched
+
+    def test_a_dot_is_not_a_folder_name(self):
+        # Second review, N4: "--prefix /opt/pvj/./" became "/opt/pvj/.".
+        self.assertIn('[[ "$path" =~ (^|/)\\.(/|$) ]] && die "paths may not contain . components"', self.sh)
+        for bad in ("/opt/pvj/.", "/opt/./pvj", "/./opt/pvj"):
+            with self.assertRaises(self.setup.SetupError, msg=bad):
+                self.setup.check_prefix(bad)
+        self.assertEqual(self.setup.check_prefix("/opt/pvj.2/x-1"), "/opt/pvj.2/x-1")      # a dot inside a name is fine
+
+    def test_a_helper_that_ends_is_started_again_as_written_and_why_that_was_left(self):
+        # Second review, N6. What ends the helper: (1) the module switched off with the library loaded, on purpose,
+        # exit 0, and it must come straight back clean (tests/test_ndi.py, OffMeansNoNdiCodeTest); (2) a crash inside
+        # the library. A library that is missing or does not load ends nothing: the helper stays up and says so
+        # (test_ndi_setup.HelperIdlesTest). So the 2 seconds stay; pinned, so that a change is a decision.
+        n = self.ndi
+        self.assertEqual((n["Restart"], n["RestartSec"], n["StartLimitIntervalSec"]), (["always"], ["2"], ["0"]))
+        for key in ("RestartPreventExitStatus", "RestartForceExitStatus", "SuccessExitStatus", "RestartSteps", "RestartMaxDelaySec"):
+            self.assertNotIn(key, n, key)
 
     def test_the_install_folder_is_written_one_way(self):
         # Review L1: "--prefix /opt/pvj/" went into install.json as written, and the NDI setup refuses that spelling.
@@ -692,15 +731,19 @@ class NdiUnitTest(unittest.TestCase):
                       "ndisetup", 'pvj-ndi-runtime" install', "pvj-ndi-runtime install \""):
             self.assertNotIn(never, commands, never)
         # every line of the installer that acts on the helper is inside the uninstall or behind the mark
-        self.assertEqual(self.sh.count("NDI_OPTED_IN=1"), 1)
-        mark = self.sh.index('if [ -f "$NDI_MARK" ] && [ ! -L "$NDI_MARK" ]; then\n\tNDI_OPTED_IN=1')
+        # the mark is a plain file and never a link; NDI_OPTED_IN is set only right after that was asked
+        self.assertIn('ndi_mark() { [ -f "$NDI_MARK" ] && [ ! -L "$NDI_MARK" ]; }', self.sh)
+        self.assertEqual(self.sh.count("NDI_OPTED_IN=1"), 2)
+        self.assertEqual(self.sh.count("if ndi_mark; then\n\tNDI_OPTED_IN=1") + self.sh.count("if ndi_mark; then\n\t\t# Looked at once more"), 2)
+        mark = self.sh.index("if ndi_mark; then\n\tNDI_OPTED_IN=1")
         self.assertLess(self.sh.index("NDI_OPTED_IN=0"), mark)
         install = self.sh[self.sh.index('if [ "$UNINSTALL" = 1 ]'):]
         acts = [line.strip() for line in install.splitlines()
                 if not line.lstrip().startswith("#") and re.search(r"systemctl [a-z-]+( --now)? pvj-ndi|pvj-ndi-runtime\" refresh", line)]
-        self.assertEqual(len(acts), 5, acts)               # the fifth is the removal of a helper without the mark (below)
+        self.assertEqual(len(acts), 6, acts)               # two more are in the removal of a helper without the mark (below)
         self.assertIn("systemctl disable --now pvj-ndi.service", acts[1])
-        del acts[1]
+        self.assertIn("systemctl enable --now pvj-ndi.service", acts[2])       # only where the mark turned up meanwhile
+        del acts[1:3]
         block = install[install.index("NDI_OPTED_IN=1"):]
         self.assertIn(acts[0], block[:block.index("\nfi\n")])
         self.assertIn('refresh --root "$ROOT" --prefix "$PREFIX"', acts[0])
@@ -724,7 +767,7 @@ class NdiUnitTest(unittest.TestCase):
 
     def test_uninstall_takes_the_helper_and_the_drop_ins_the_mark_first(self):
         body = self.sh[self.sh.index("uninstall() {"):self.sh.index('if [ "$UNINSTALL" = 1 ]')]
-        self.assertIn('run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_UNIT" "$BIN_LINKS/pvj-ndi-runtime"', body)
+        self.assertIn('run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log', body)
         self.assertIn("systemctl disable --now pvj-ndi.service", body)
         self.assertEqual(self.sh.count('NDI_MARK="$ROOT' + self.setup.WEB_DROPIN + '"'), 1)       # the installer and the opt-in agree on the three paths
         self.assertEqual(self.sh.count('NDI_PLAYER_DROPIN="$ROOT' + self.setup.PLAYER_DROPIN + '"'), 1)

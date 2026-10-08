@@ -281,6 +281,62 @@ class AccountTest(unittest.TestCase):
         for shell in ndisetup.NO_LOGIN:                    # every way of saying "no login" is taken
             Accounts(users={"pvj-ndi": (901, 900, shell)}, groups=groups).ensure()
 
+    def test_a_group_that_is_roots_shares_its_number_or_has_members_is_refused(self):
+        """Second review, M2: only the account's number was looked at. A group pvj-ndi with gid 0 was taken, and so
+        was one that shares its number with group pvj while no account exists yet: useradd --gid pvj-ndi then puts
+        the helper into pvj's number, which is what D62 forbids."""
+        ok = (901, 900, Accounts.NOLOGIN)
+        for users, groups, words in (
+                ({"pvj-ndi": (901, 0, Accounts.NOLOGIN)}, {"pvj-ndi": (0, [])}, "root's group under another name"),
+                ({}, {"pvj-ndi": (0, [])}, "root's group under another name"),
+                ({}, {"pvj-ndi": (800, []), "pvj": (800, [])}, "shares its number with pvj"),
+                ({"pvj-ndi": (901, 800, Accounts.NOLOGIN)}, {"pvj-ndi": (800, []), "pvj": (800, [])}, "shares its number with pvj"),
+                ({"pvj-ndi": ok}, {"pvj-ndi": (900, ["mallory"])}, "has members (mallory)"),
+                ({}, {"pvj-ndi": (900, ["pvj-web", "gigbox"])}, "has members (gigbox, pvj-web)"),
+                ({"pvj-ndi": ok, "guest": (1001, 900, "/bin/bash")}, {"pvj-ndi": (900, [])}, "is the own group of guest")):
+            a = Accounts(users=users, groups=groups)
+            with self.assertRaises(ndisetup.SetupError, msg=words) as e:
+                a.ensure()
+            self.assertIn(words, str(e.exception))
+            self.assertIn("nothing was set up", str(e.exception))
+            self.assertEqual(a.ran, [], words)             # no account is made into such a group
+            with self.assertRaises(ndisetup.SetupError):
+                a.check()
+        # the account named as a member of its own group is what some tools write, and is fine
+        Accounts(users={"pvj-ndi": ok}, groups={"pvj-ndi": (900, ["pvj-ndi"]), "pvj": (800, [])}).ensure()
+
+    def test_an_account_that_comes_out_of_useradd_wrong_is_refused_and_the_words_are_true(self):
+        """Second review, L2: the look after groupadd and useradd had no test, and its refusal said "nothing was set
+        up" about an account that had just been made."""
+        class Meddling(Accounts):                          # a box whose rules for new accounts add a group, or a shell
+            def __init__(self, how, **kw):
+                super().__init__(**kw)
+                self.how = how
+
+            def run(self, command):
+                code = super().run(command)
+                if command[0] == "useradd" and self.how == "group":
+                    self.groups["users"] = (100, ["pvj-ndi"])
+                if command[0] == "useradd" and self.how == "shell":
+                    uid, gid, _shell = self.users["pvj-ndi"]
+                    self.users["pvj-ndi"] = (uid, gid, "/bin/sh")
+                return code
+        for how, words in (("group", "is also in users"), ("shell", "has a login shell (/bin/sh)")):
+            a = Meddling(how, groups={"pvj": (800, [])})
+            with self.assertRaises(ndisetup.SetupError) as e:
+                a.ensure()
+            said = str(e.exception)
+            self.assertIn(words, said)
+            self.assertNotIn("nothing was set up", said)   # something was: the group and the account
+            self.assertIn("it was made a moment ago by this command", said)
+            self.assertIn("sudo deluser pvj-ndi; sudo delgroup pvj-ndi", said)
+            self.assertEqual([c.split()[0] for c in a.ran], ["groupadd", "useradd"])
+        # an account that was there before and is wrong is still said as "nothing was set up"
+        a = Accounts(users={"pvj-ndi": (901, 900, "/bin/sh")}, groups={"pvj-ndi": (900, [])})
+        with self.assertRaises(ndisetup.SetupError) as e:
+            a.ensure()
+        self.assertIn("nothing was set up", str(e.exception))
+
     def test_a_command_that_fails_stops_the_setup(self):
         for fail in ("groupadd", "useradd"):
             a = Accounts(fail=(fail,))
@@ -386,6 +442,75 @@ class EnableTest(Base):
             self.assertFalse(ndisetup.opted_in(self.root), fail)
             self.assertEqual(self.tree(), [], fail)
             self.assertIn("the setup failed and was undone: this box is not set up for NDI", " ".join(self.said))
+
+    def test_something_in_the_place_of_a_file_is_refused_before_anything_is_changed(self):
+        """Second review, M1, the first half: a folder or a link where one of the three files goes is found by the
+        check, before a package, an account or a file."""
+        for path, make in ((ndisetup.WEB_DROPIN, "folder"), (ndisetup.WEB_DROPIN, "link"), (ndisetup.UNIT_PATH, "folder"),
+                           (ndisetup.PLAYER_DROPIN, "link"), (os.path.dirname(ndisetup.PLAYER_DROPIN), "link"),
+                           (os.path.dirname(ndisetup.WEB_DROPIN), "file")):
+            self.root = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, self.root, True)
+            os.makedirs(os.path.dirname(self.p(path)))
+            if make == "folder":
+                os.makedirs(self.p(path))
+            elif make == "link":
+                os.symlink(self.p("/elsewhere"), self.p(path))
+            else:
+                open(self.p(path), "w").close()
+            before = self.tree()
+            run = Commands()
+            with self.assertRaises(ndisetup.SetupError, msg=(path, make)) as e:
+                self.enable(run, missing=["avahi-daemon"])
+            self.assertIn("nothing was changed", str(e.exception))
+            self.assertIn("remove it by hand", str(e.exception))
+            self.assertEqual((run.ran, self.tree()), ([], before), (path, make))
+            self.assertFalse(os.path.lexists(self.p("/elsewhere")))
+
+    def test_a_file_that_cannot_be_written_undoes_the_ones_that_were(self):
+        """Second review, M1: write_units was outside the part that is undone, and only SetupError was caught. With
+        a folder in the place of the mark (here past the check, as if it appeared in between) the unit and the
+        player's drop-in were written and stayed, under an error that said nothing had been written."""
+        os.makedirs(self.p(ndisetup.WEB_DROPIN))           # a folder where the mark goes; the box is not set up
+        run = Commands()
+        with self.assertRaises(ndisetup.SetupError) as e:
+            self.enable(run, check=lambda root: None)
+        self.assertNotIn("nothing was written", str(e.exception))
+        self.assertIn("it was not written", str(e.exception))
+        for path in (ndisetup.UNIT_PATH, ndisetup.PLAYER_DROPIN):
+            self.assertFalse(os.path.lexists(self.p(path)), path)
+        self.assertFalse(ndisetup.opted_in(self.root))
+        self.assertTrue(os.path.isdir(self.p(ndisetup.WEB_DROPIN)))            # not this command's to remove; it says so
+        said = " ".join(self.said)
+        self.assertIn("the setup failed and was undone: this box is not set up for NDI", said)
+        self.assertIn("50-pvj-ndi.conf could not be removed", said)
+        self.assertEqual(run.ran, ["ACCOUNT", "FILES /opt/pvj", "systemctl disable --now pvj-ndi.service", "systemctl daemon-reload"])
+
+    def test_a_disk_that_is_full_or_read_only_undoes_the_setup_too(self):
+        real = ndisetup._write
+        for failing in (ndisetup.PLAYER_DROPIN, ndisetup.WEB_DROPIN):
+            def write(path, text, failing=failing):
+                if path.endswith(failing):
+                    raise OSError(28, "No space left on device")
+                return real(path, text)
+            run = Commands()
+            self.said.clear()
+            with mock.patch.object(ndisetup, "_write", write):
+                with self.assertRaises(OSError):
+                    self.enable(run)
+            self.assertEqual(self.tree(), [], failing)
+            self.assertFalse(ndisetup.opted_in(self.root))
+            self.assertIn("the setup failed and was undone", " ".join(self.said))
+            self.assertNotIn("systemctl enable pvj-ndi.service", run.ran)
+        # and the command says it in words and ends with an error
+        out = io.StringIO()
+
+        class Setup(FakeSetup):
+            def enable(self, say):
+                raise OSError(30, "Read-only file system")
+        with mock.patch.object(ndi.os, "geteuid", lambda: 0), mock.patch.object(ndi, "install_runtime", lambda source: "/opt/pvj-ndi/libndi.so.6"):
+            self.assertEqual(ndi.runtime_main(["install", "/sdk"], out, setup=Setup()), 1)
+        self.assertIn("Read-only file system", out.getvalue())
 
     def test_a_step_that_fails_on_a_box_that_was_already_set_up_leaves_it_set_up(self):
         self.enable(Commands())
@@ -651,8 +776,9 @@ class RollbackTest(unittest.TestCase):
         real = os.path.isdir
         with mock.patch("os.path.isdir", lambda path: True if path == "/run/systemd/system" else real(path)):
             u._systemd_restart()
-        self.assertEqual(ran, [["systemctl", "try-restart", "pvj-netd.service", "pvj-ndi.service"],
+        self.assertEqual(ran, [["systemctl", "try-restart", "pvj-netd.service"], ["systemctl", "try-restart", "pvj-ndi.service"],
                                ["systemctl", "restart", "pvj-player.service", "pvj-web.service"]])
+        self.assertEqual([c for c in ran if "pvj-ndi.service" in c], [["systemctl", "try-restart", "pvj-ndi.service"]])      # alone in its call
         # try-restart, never restart or start: on a box that did not opt in there is no such unit, and nothing is started
         self.assertFalse([c for c in ran if "pvj-ndi.service" in c and c[1] != "try-restart"])
 
@@ -664,6 +790,35 @@ class RollbackTest(unittest.TestCase):
         self.assertIn("\nExecStart=@PVJ_DIR@/bin/pvj-ndi\n", service)
         self.assertIn("ConditionPathExists=/opt/pvj/current/bin/pvj-ndi\n", ndisetup.unit_text("/opt/pvj"))
         self.assertNotIn("AssertPathExists", text)         # an assertion that is not met is a failure; a condition is not
+
+
+class HelperIdlesTest(unittest.TestCase):
+    """Second review, N6: what the helper does when the library is missing or does not load decides how hard the
+    unit's "start again every 2 seconds, without a limit" can bite. It stays up and says what is wrong; it does not
+    end. (What does end it: the module switched off with the library loaded, on purpose; and a crash in the library.)"""
+
+    def test_a_library_that_does_not_load_leaves_the_helper_up_and_saying_so(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        tried, ended = [], []
+
+        def loader(path):
+            tried.append(path)
+            raise ndi.NdiError("the NDI runtime could not be loaded (wrong ELF class)")
+        s = ndi.Service(d, os.path.join(d, "libndi.so.6"), loader=loader, log=lambda *_: None, problem=lambda path: None)
+        self.addCleanup(s.close)
+        s.on_unload = lambda: ended.append(True)
+        for _ in range(3):
+            reply = s.handle({"cmd": "configure", "on": True, "addresses": []})
+            st = s.handle({"cmd": "status"})
+            self.assertIn("could not be loaded", json.dumps([reply, st]))
+        self.assertTrue(tried)
+        self.assertEqual(ended, [])                        # nothing asked the process to end
+        s.handle({"cmd": "configure", "on": False, "addresses": []})
+        self.assertEqual(ended, [])                        # off without a library loaded: no clean start is needed either
+        src = inspect.getsource(ndi.main)
+        self.assertEqual(src.count("os._exit"), 1)         # the one way out is the on_unload above
+        self.assertIn("service.on_unload = lambda: threading.Timer(0.5, os._exit, [0]).start()", src)
 
 
 class Untouchable:
