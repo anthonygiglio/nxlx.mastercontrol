@@ -231,12 +231,15 @@ class NetdFolderTest(unittest.TestCase):
 
 
 class UpdateRestartTest(unittest.TestCase):
-    def test_an_update_moves_a_running_network_helper_too_and_leaves_the_other_helpers_alone(self):
+    def test_an_update_moves_a_running_network_helper_and_ndi_helper_too_and_leaves_the_other_helpers_alone(self):
         calls = []
         up = Updater(root="/", run=lambda argv, **kw: calls.append(argv))
         with mock.patch("os.path.isdir", lambda p: True):
             up._systemd_restart()
+        # the NDI helper is there only on a box that opted in (D62); try-restart starts nothing where it is not
+        # in a call of its own, so that the network helper's restart cannot depend on a unit most boxes do not have
         self.assertEqual(calls, [["systemctl", "try-restart", "pvj-netd.service"],
+                                 ["systemctl", "try-restart", "pvj-ndi.service"],
                                  ["systemctl", "restart", "pvj-player.service", "pvj-web.service"]])
         flat = " ".join(sum(calls, []))
         self.assertNotIn("pvj-sysd", flat)           # it started this update

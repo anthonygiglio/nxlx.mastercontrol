@@ -137,7 +137,7 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 The System screen is a short list in three groups, with **Health** above them:
 
 - **Everyday**: Projectors, Schedule, Shaders and Vibes, People and codes, Sound.
-- **Show tools**: At power-up, Streams, Projection mapping, Boxes in step, MIDI controller, DMX lighting desk, OSC.
+- **Show tools**: At power-up, Streams, NDI® input, Projection mapping, Boxes in step, MIDI controller, DMX lighting desk, OSC.
 - **This box**: Network, Updates, Remote support, Backup and reset, Look, About and power.
 
 Tap a row to open its page. **‹ System** at the top of a page, or the phone's back gesture, returns to the list.
@@ -197,6 +197,7 @@ A presenter sees only Health, Projectors, Shaders and Vibes, People and codes (t
 | **Shaders and Vibes**: moving pictures made by the GPU, and one button that plays them endlessly | below, and [pvj/SHADERS.md](../pvj/SHADERS.md) |
 | **Projector control** over PJLink: on, off, input, picture and sound mute, live status, lamp hours and warnings. **No real projector has been tested yet** | [pvj/PROJECTORS.md](../pvj/PROJECTORS.md) |
 | **Streams**: SRT, RTSP, RTMP | [pvj/STREAMS.md](../pvj/STREAMS.md) |
+| **NDI® input**: the picture of Resolume, MadMapper, OBS and other NDI senders (see below) | [pvj/NDI.md](../pvj/NDI.md) |
 | **DMX over the network**: Art-Net and sACN | [pvj/DMX.md](../pvj/DMX.md) |
 | **MIDI controller** (USB) | [pvj/MIDI.md](../pvj/MIDI.md) |
 | **OSC**: TouchOSC, Resolume, QLab and others | [pvj/OSC.md](../pvj/OSC.md) |
@@ -228,6 +229,18 @@ Each projector is one row: its name, what it says it is (maker, model) and its a
 The Schedule page starts with the box's own time ("Box time now: Sat 3 Oct, 17:30 (PDT)") and what happens next ("Next: today 18:00, Start Vibes"). Entries are listed in time order, with their days in words ("Every day", "Mon to Fri", "Sat, Sun"). **+ Add an entry** asks for the time, the days (seven buttons, with **Every day**, **Weekdays** and **Weekend** above them), what happens (Play a clip, Start Vibes with a choice of set when there are several, Apply a Room scene, Projectors on, Projectors off, Screen to black, Screen back on, Stop playing; Old start script is under Advanced in that list) and a note for yourself. **Edit** and **Remove** are under **More** on each entry. A choice whose feature is switched off is marked ("Start Vibes (Vibes is off)"); choosing it says "Vibes is switched off, so this will do nothing." with a **Switch Vibes on** button that does it there. An entry runs only if the box is on at that minute; a missed entry is not caught up.
 
 Check the box time before relying on the schedule: a Pi has no battery clock, and until the network sets the time the clock is wrong. When the clock was not set from the network the page says so in red and, where the box can, offers **Set the box clock to this phone's time**.
+
+### NDI® input (beta; one short first run on a Pi 4, not yet watched on a screen)
+
+Shows the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) on the box's screen, like a clip. About NDI and its free tools: [ndi.video](https://ndi.video/) and [ndi.video/tools](https://ndi.video/tools/). NDI® is a registered trademark of Vizrt NDI AB.
+
+**Before anything else: NDI's licence may not cover a box like this one.** Its free licence is written for ordinary computers that their users can freely change, and it names small devices built for one job and running Linux among what it does not cover; those need an agreement with NDI. Whether a Raspberry Pi running this project is such a device is for the owner of the box to decide, by reading the licence that comes with the NDI SDK and asking NDI if in doubt. This manual cannot answer it and is not legal advice. Do not set NDI up on a box until that is settled for that box.
+
+1. **Once per box, with a keyboard or SSH: set NDI up.** A box has nothing of NDI on it until someone does this: no NDI service runs and nothing of NDI is on the network. NDI's own runtime is not part of the box. Get the NDI SDK for Linux from [ndi.video](https://ndi.video/) (it asks you to agree to NDI's licence), unpack it, and run this one command: `sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"`. It puts NDI's library in place, installs the NDI helper (its own service and account; `avahi-daemon` if the box does not have it) and restarts the panel and the player, so the screen goes dark for a moment. Until then the page says "NDI is not set up on this box" and shows this command. To take it off again: `sudo pvj-ndi-runtime remove`. Updates keep a box that was set up, set up.
+2. System > NDI input, switch it on. Senders on the same network appear in the list within a few seconds. Tap **Play**.
+3. If a sender never appears (some Wi-Fi networks and routers do not pass the announcements), add the sending computer's address under "Addresses to ask". Only private addresses are taken.
+
+What to know: the sound a source sends is played with its picture, through the box's own sound output, volume and mute; **Play a source's sound** on the same page switches it off. This is new and nobody has heard it on a box yet. NDI's reference level comes out 20 dB below full scale, so a test tone or a broadcast-style sender sounds quieter than a clip. If a source has more than two channels the first two are played. When a source starts or stops sending sound, the picture goes for a second or two once. If the sender changes its size or frame rate the picture goes for a second or two and comes back. A still picture (a test pattern, a paused output) is fine and is left alone. If the connection to the sender drops, the last frame stays and the page says it is waiting. The same name announced from another computer is a different source, and a sender whose address changes has to be chosen again. An interlaced sender is refused; set it to progressive. The page shows how many frames were shown and dropped. Anyone on the show network can announce a sender under any name, so keep that network private. A Pi 3 is not offered this input. How smooth it is on a Pi 4 has not been measured; the steps are in `tools/DEVICE-TESTING.md`. An NDI source, like the capture input and a stream, always plays at normal speed: the Mix screen's speed is kept for the next clip and says so while a live source plays.
 
 ### Running the room (beta)
 
@@ -371,6 +384,6 @@ Not tested on a real box yet (2026-10-03): the three cards were tested with the 
 
 ## 8. Not built yet
 
-Crossfade, updates from the network, a panel update button, NDI, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
+Crossfade, updates from the network, a panel update button, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
 
-**SMPTE ST 2110** is not supported directly and not planned: use a converter from 2110 to HDMI into the live input (USB capture), or from 2110 to NDI once NDI is built.
+**SMPTE ST 2110** is not supported directly and not planned: use a converter from 2110 to HDMI into the live input (USB capture), or from 2110 to NDI (see NDI input above; it has had one short first run on a Pi 4 on 2026-10-08, by SSH; nobody has watched it on a screen yet with a real sender).

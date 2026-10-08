@@ -455,6 +455,18 @@ def build(env=None, player=None):
     from . import capture as capture_mod
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
     api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
+    # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
+    # `pvj-ndi-runtime install` writes for the panel's unit (pvj/ndisetup.py). Without it this box has no helper, the
+    # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.
+    from . import ndi as ndi_mod
+    ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
+    api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
+                            ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log,
+                            pipe_owner=ndi_mod.helper_uid, setup=bool(env.get("PVJ_NDI_DIR")))
+    try:                                     # whatever the helper answers, the panel starts
+        api.ndi.sync()
+    except Exception as e:
+        print("pvj-web: NDI helper not told the settings: %s" % e, file=sys.stderr)
     from . import supportd as supportd_mod
     api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
     api.support.panel_port = int(env.get("PVJ_PORT", "8080"))
@@ -505,6 +517,15 @@ def main(argv=None):
     api.scheduler.start()
     api.autostart.start()
     api.pinscreen.start()
+    ndi_stop = threading.Event()
+
+    def ndi_watch():                         # a sender that changes size: the helper says so, the pipe is loaded again
+        while not ndi_stop.wait(1.0):
+            try:
+                api.ndi_tick()
+            except Exception as e:
+                print("pvj-web: NDI watch: %s" % e, file=sys.stderr)
+    threading.Thread(target=ndi_watch, name="ndi-watch", daemon=True).start()
     print("pvj-web: listening on %s:%d; pairing PIN %s (also in %s/pin)" % (host, port, auth.current_pin, rundir),
           flush=True)
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
@@ -519,6 +540,9 @@ def main(argv=None):
         api.pinscreen.stop()
         if api.capture:
             api.capture.stop()
+        ndi_stop.set()
+        if api.ndi:
+            api.ndi.stop()
         api.dmx.stop()
         api.midi.stop()
         api.room.stop()

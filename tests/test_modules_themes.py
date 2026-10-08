@@ -58,8 +58,16 @@ class RegistryTest(unittest.TestCase):
     def test_planned_modules_cannot_be_enabled_yet(self):
         reg, _ = registry()
         with self.assertRaises(modules.ModuleError):
-            reg.set_enabled("inputs-ndi", True)
-        self.assertFalse(reg.enabled("inputs-ndi"))
+            reg.set_enabled("inputs-audio-ip", True)
+        self.assertFalse(reg.enabled("inputs-audio-ip"))
+
+    def test_the_ndi_input_is_built_but_off_until_someone_switches_it_on(self):
+        reg, _ = registry()
+        m = next(m for m in reg.list() if m["id"] == "inputs-ndi")
+        self.assertEqual((m["status"], m["channel"], m["enabled"]), ("ready", "beta", False))
+        self.assertIn("registered trademark of Vizrt NDI AB", m["description"])     # NDI's terms: said where NDI is named
+        self.assertNotIn("fetches", m["description"])                              # the box never fetches the runtime
+        self.assertFalse(registry("pi3")[0].list() and next(x for x in registry("pi3")[0].list() if x["id"] == "inputs-ndi")["supported"])
 
     def test_board_support_and_dependencies_enforced(self):
         reg, _ = registry("pi3")

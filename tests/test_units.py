@@ -20,9 +20,14 @@ def parse(path):
     return keys
 
 
+NDI_UNITS = os.path.join(REPO, "pvj", "systemd")      # the NDI helper's unit travels with the program: it is written
+                                                      # only on a box that opted in (pvj/ndisetup.py), never by the installer
+
+
 def load_units(directory=None):
-    directory = directory or os.path.join(REPO, "install")
-    return {os.path.basename(p): parse(p) for p in glob.glob(os.path.join(directory, "*.service"))}
+    """Every unit of the project: the installer's (install/) and, when no folder is named, the opt-in NDI helper's."""
+    folders = [directory] if directory else [os.path.join(REPO, "install"), NDI_UNITS]
+    return {os.path.basename(p): parse(p) for d in folders for p in glob.glob(os.path.join(d, "*.service"))}
 
 
 def words(keys, *names):
@@ -217,7 +222,10 @@ class RuntimeFolderTest(unittest.TestCase):
             self.assertEqual(folders[d], {owner}, d)
             self.assertEqual(self.units[owner[0]]["Group"], ["pvj"], d)      # the panel reaches each through group pvj
         self.assertEqual({user for _u, user, _m, _k in folders["pvj-update"]}, {"root"})
-        self.assertEqual(set(folders), set(want) | {"pvj-update"})
+        # the NDI helper's folder is the one that is NOT reached through group pvj (D62)
+        self.assertEqual(folders["pvj-ndi"], {("pvj-ndi.service", "pvj-ndi", "0750", "no")})
+        self.assertEqual("/run/pvj-ndi", p.NDI_DIR)
+        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi"})
         self.assertEqual(["/run/" + d for d in want], [p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR])
         self.assertEqual("/run/pvj-update", p.UPDATE_DIR)
 
@@ -337,8 +345,8 @@ class RuntimeFolderTest(unittest.TestCase):
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
                  p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
-                 p.RUN + "/<name>"}
-        files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*"))
+                 p.RUN + "/<name>", p.NDI_DIR}
+        files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*")) + glob.glob(os.path.join(NDI_UNITS, "*"))
         seen = set()
         for path in files:
             if path.endswith(".md"):
@@ -529,3 +537,273 @@ class NetdUnitTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NdiUnitTest(unittest.TestCase):
+    """D62: the one process that loads a closed-source library reading the network. Every line of its sandbox is
+    pinned, and so is what it must never be given. It ran once on a Pi 4 with the real library (2026-10-08); the
+    lines were not tried one by one there."""
+
+    def setUp(self):
+        from pvj import ndisetup
+        self.setup = ndisetup
+        self.units = load_units()
+        self.ndi = self.units["pvj-ndi.service"]
+        with open(os.path.join(REPO, "install", "install.sh")) as f:
+            self.sh = f.read()
+        with open(os.path.join(REPO, "pvj", "ndisetup.py")) as f:
+            self.py = f.read()
+        self.dropins = {}
+        for name, text in (("pvj-web.service", ndisetup.WEB_TEXT), ("pvj-player.service", ndisetup.PLAYER_TEXT)):
+            keys = {}
+            for line in text.splitlines():
+                m = re.match(r"^([A-Za-z]+)=(.*)$", line.strip())
+                if m:
+                    keys.setdefault(m.group(1), []).append(m.group(2))
+            self.dropins[name] = keys
+
+    def test_its_own_account_and_group_and_never_the_groups_that_reach_the_player_the_screen_or_sound(self):
+        self.assertEqual((self.ndi["User"], self.ndi["Group"]), (["pvj-ndi"], ["pvj-ndi"]))
+        self.assertNotIn("SupplementaryGroups", self.ndi)
+        # the account is made by the opt-in command only (pvj/ndisetup.py), with these flags, and never by the installer
+        self.assertIn('["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--gid", GROUP, ACCOUNT]', self.py)
+        self.assertEqual((self.setup.ACCOUNT, self.setup.GROUP), ("pvj-ndi", "pvj-ndi"))
+        for line in self.sh.splitlines():                  # and nothing ever puts the account into another group
+            if "usermod" in line:
+                self.assertNotIn("pvj-ndi", line, line)
+        self.assertNotIn("usermod", self.py)
+        # no other unit runs as this account or in this group as its main group
+        for name, keys in self.units.items():
+            if name != "pvj-ndi.service":
+                self.assertNotEqual(keys.get("User"), ["pvj-ndi"], name)
+                self.assertNotEqual(keys.get("Group"), ["pvj-ndi"], name)
+
+    def test_only_the_panel_and_the_player_are_let_into_its_folder_and_only_by_the_opt_in_drop_ins(self):
+        # No unit as the installer writes it names the group: on a box that did not opt in the group does not exist,
+        # and systemd does not start a unit that names a group the system does not have.
+        self.assertEqual([n for n, k in self.units.items() if "pvj-ndi" in words(k, "SupplementaryGroups")], [])
+        for name in ("pvj-web.service", "pvj-player.service"):
+            with open(os.path.join(REPO, "install", name)) as f:
+                self.assertNotRegex(f.read(), r"pvj-ndi|NDI", name)
+        # The opt-in gives it to exactly these two, in drop-ins, where the setting adds to the unit's own list.
+        self.assertEqual(sorted(self.dropins), ["pvj-player.service", "pvj-web.service"])
+        self.assertEqual(self.dropins["pvj-player.service"], {"SupplementaryGroups": ["pvj-ndi"]})
+        self.assertEqual(self.dropins["pvj-web.service"], {"SupplementaryGroups": ["pvj-ndi"], "Environment": ["PVJ_NDI_DIR=/run/pvj-ndi"]})
+        for text in (self.setup.WEB_TEXT, self.setup.PLAYER_TEXT):
+            self.assertEqual([line for line in text.splitlines() if line.startswith("[")], ["[Service]"])
+        self.assertEqual(self.setup.WEB_DROPIN, "/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf")
+        self.assertEqual(self.setup.PLAYER_DROPIN, "/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf")
+        self.assertEqual(sorted(self.setup.RESTART), ["pvj-player.service", "pvj-web.service"])
+        self.assertEqual((self.ndi["RuntimeDirectory"], self.ndi["RuntimeDirectoryMode"], self.ndi["UMask"]), (["pvj-ndi"], ["0750"], ["0027"]))
+        from pvj import paths
+        env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
+        web = dict(w.split("=", 1) for w in words(self.dropins["pvj-web.service"], "Environment"))
+        self.assertNotIn("PVJ_NDI_DIR", " ".join(words(self.units["pvj-web.service"], "Environment")))     # the panel's own unit does not say it
+        self.assertEqual(env["PVJ_NDI_DIR"], paths.NDI_DIR)
+        self.assertEqual(paths.ndi_socket(web), paths.ndi_socket(env))
+        self.assertEqual(paths.ndi_fifo(web), paths.NDI_DIR + "/" + paths.NDI_FIFO)
+
+    def test_the_group_exists_before_any_unit_that_names_it_is_written_or_started(self):
+        # systemd refuses to start a unit whose extra group does not exist: the player would stay down. In the opt-in
+        # (enable) and in the installer's refresh of an opted-in box, the account comes before the files that name it.
+        for fn in ("def enable(", "def refresh("):
+            body = self.py[self.py.index(fn):]
+            body = body[:body.index("\ndef ", 1)]
+            self.assertLess(body.index("account(run=run, say=say)"), body.index("write_units("), fn)
+        # and in the installer the refresh comes before systemd is told to read the units again and before any restart
+        refresh = self.sh.index('"$RELEASE/bin/pvj-ndi-runtime" refresh')
+        self.assertLess(refresh, self.sh.index("\tsystemctl daemon-reload\n\tfix_run_folder"))
+        self.assertLess(refresh, self.sh.index("systemctl restart pvj-player.service"))
+        self.assertLess(self.sh.index('mv -T "$ROOT$PREFIX/current.tmp"'), refresh)      # the program it runs is the one just installed
+
+    def test_the_sandbox_is_exactly_this(self):
+        n = self.ndi
+        self.assertEqual(n["CapabilityBoundingSet"], [""])
+        self.assertNotIn("AmbientCapabilities", n)
+        for key, value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"), ("ProtectHome", "yes"),
+                           ("PrivateDevices", "yes"), ("ProtectKernelTunables", "yes"), ("ProtectKernelModules", "yes"),
+                           ("ProtectKernelLogs", "yes"), ("ProtectControlGroups", "yes"), ("ProtectClock", "yes"), ("ProtectHostname", "yes"),
+                           ("RestrictNamespaces", "yes"), ("RestrictRealtime", "yes"), ("RestrictSUIDSGID", "yes"),
+                           ("LockPersonality", "yes"), ("SystemCallArchitectures", "native")):
+            self.assertEqual(n[key], [value], key)
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi"])
+        self.assertEqual(sorted(words(n, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
+        self.assertEqual(words(n, "InaccessiblePaths"), ["-/var/lib/pvj", "-/etc/pvj", "-/run/pvj"])
+        for key in ("DeviceAllow", "BindPaths", "StateDirectory", "ExecStartPre", "ExecStartPost", "EnvironmentFile"):
+            self.assertNotIn(key, n, key)
+
+    def test_a_release_without_the_helpers_program_skips_the_unit_and_does_not_fail_it_for_ever(self):
+        # Review M2: Restart=always with no start limit, and a rollback to a release from before the NDI input,
+        # was a failure every two seconds into the kept journal. A condition that is not met is not a failure.
+        n = self.ndi
+        self.assertEqual((n["Restart"], n["RestartSec"], n["StartLimitIntervalSec"]), (["always"], ["2"], ["0"]))
+        self.assertEqual(n["ConditionPathExists"], ["@PVJ_DIR@/bin/pvj-ndi"])
+        self.assertEqual(n["ExecStart"], ["@PVJ_DIR@/bin/pvj-ndi"])
+        with open(os.path.join(NDI_UNITS, "pvj-ndi.service")) as f:
+            self.assertLess(f.read().index("ConditionPathExists="), self.read_service_at())
+
+    def read_service_at(self):
+        with open(os.path.join(NDI_UNITS, "pvj-ndi.service")) as f:
+            return f.read().index("[Service]")
+
+    def test_the_installer_removes_a_helper_that_nobody_set_up(self):
+        # Review L4: a unit without the mark (a setup cut short, or a box that ran this branch while the helper went
+        # on every box) is disabled and removed by the next install; the mark decides, nothing else.
+        block = self.sh[self.sh.index("NDI_OPTED_IN=0"):self.sh.index("# USB automount")]
+        orphan = block[block.index('elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ]; then'):]
+        self.assertIn("systemctl disable --now pvj-ndi.service", orphan)
+        self.assertNotIn("userdel", orphan)
+        self.assertLess(self.sh.index('elif [ -e "$NDI_UNIT" ]'), self.sh.index("\tsystemctl daemon-reload\n\tfix_run_folder"))
+        # Second review, L1: under "set -e" an rm that fails (a folder in the place of the unit) ended every install
+        # and every update from the panel half-way. It is said and the install goes on; so in the uninstall.
+        rm = [line.strip() for line in self.sh.splitlines() if line.strip().startswith("run rm -f") and "NDI_" in line]
+        self.assertEqual(len(rm), 3, rm)
+        for line in rm:
+            self.assertRegex(line, r' \|\| log "WARNING: could not remove', line)
+        self.assertIn('run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN" "$NDI_WANTS" || log', orphan)       # N3: the link "enable" made goes too
+        self.assertEqual(self.sh.count('NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi.service"'), 1)
+        # and the mark is asked for once more right before that rm: a setup that finished meanwhile is left alone
+        again = orphan.index("if ndi_mark; then")
+        self.assertLess(orphan.index("systemctl disable --now pvj-ndi.service"), again)
+        self.assertLess(again, orphan.index('run rm -f "$NDI_UNIT"'))
+        self.assertIn("else\n\t\t# Never the end of an install", orphan[again:])
+
+    def test_a_link_where_the_mark_goes_is_removed_and_said_loudly(self):
+        # Second review, N2: systemd reads a drop-in through a link, so a link at the mark gave the panel the group and
+        # the helper's folder on a box the installer treats as not set up. rm takes the link away, never its target.
+        block = self.sh[self.sh.index("NDI_OPTED_IN=0"):self.sh.index("if ndi_mark; then\n\tNDI_OPTED_IN=1")]
+        self.assertIn('if [ -L "$NDI_MARK" ]; then\n\tlog "WARNING: $NDI_MARK is a link', block)
+        self.assertIn("This box is NOT set up for NDI.", block)
+        self.assertIn('run rm -f "$NDI_MARK" || log "WARNING: could not remove the link', block)
+        self.assertNotIn("rm -rf", block)
+        self.assertNotIn("readlink", block)                # what it points to is never looked at or touched
+
+    def test_a_dot_is_not_a_folder_name(self):
+        # Second review, N4: "--prefix /opt/pvj/./" became "/opt/pvj/.".
+        self.assertIn('[[ "$path" =~ (^|/)\\.(/|$) ]] && die "paths may not contain . components"', self.sh)
+        for bad in ("/opt/pvj/.", "/opt/./pvj", "/./opt/pvj"):
+            with self.assertRaises(self.setup.SetupError, msg=bad):
+                self.setup.check_prefix(bad)
+        self.assertEqual(self.setup.check_prefix("/opt/pvj.2/x-1"), "/opt/pvj.2/x-1")      # a dot inside a name is fine
+
+    def test_a_helper_that_ends_is_started_again_as_written_and_why_that_was_left(self):
+        # Second review, N6. What ends the helper: (1) the module switched off with the library loaded, on purpose,
+        # exit 0, and it must come straight back clean (tests/test_ndi.py, OffMeansNoNdiCodeTest); (2) a crash inside
+        # the library. A library that is missing or does not load ends nothing: the helper stays up and says so
+        # (test_ndi_setup.HelperIdlesTest). So the 2 seconds stay; pinned, so that a change is a decision.
+        n = self.ndi
+        self.assertEqual((n["Restart"], n["RestartSec"], n["StartLimitIntervalSec"]), (["always"], ["2"], ["0"]))
+        for key in ("RestartPreventExitStatus", "RestartForceExitStatus", "SuccessExitStatus", "RestartSteps", "RestartMaxDelaySec"):
+            self.assertNotIn(key, n, key)
+
+    def test_the_install_folder_is_written_one_way(self):
+        # Review L1: "--prefix /opt/pvj/" went into install.json as written, and the NDI setup refuses that spelling.
+        self.assertIn('while [ "${#PREFIX}" -gt 1 ] && [ "${PREFIX%/}" != "$PREFIX" ]; do PREFIX="${PREFIX%/}"; done', self.sh)
+        self.assertIn('case "$PREFIX" in *//*) die "--prefix must not contain //" ;; esac', self.sh)
+        self.assertLess(self.sh.index('PREFIX="${PREFIX%/}"'), self.sh.index('ETC="$ROOT/etc/pvj"'))
+
+    def test_the_library_cannot_reach_the_internet_and_the_panel_takes_only_addresses_the_unit_allows(self):
+        import ipaddress
+        from pvj import ndi
+        self.assertEqual(self.ndi["IPAddressDeny"], ["any"])
+        allow = words(self.ndi, "IPAddressAllow")
+        self.assertEqual(allow, ["link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"])      # not localhost
+        nets = {ipaddress.ip_network(a) for a in allow if "/" in a} | {ipaddress.ip_network("169.254.0.0/16")}      # link-local
+        self.assertEqual(set(ndi.PRIVATE_NETS), nets)
+
+    def test_the_library_is_given_nowhere_to_write_that_lasts_and_comes_from_a_folder_that_is_roots(self):
+        from pvj import ndi
+        env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
+        self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/tmp", ndi.LIB_DIR))
+        self.assertFalse(ndi.LIB_DIR.startswith(("/usr/lib", "/lib", "/usr/local/lib", "/var", "/run", "/tmp")))   # not the system path, not writable state
+        self.assertNotIn("libndi", self.sh)                # the installer never fetches or copies the runtime
+        self.assertNotRegex(self.sh, r"ndi\.(video|tv)|downloads\.ndi")
+        self.assertNotRegex(self.py, r"libndi|ndi\.(video|tv)|downloads\.ndi|curl|wget|urllib|http")      # nor does the opt-in: it is handed the file
+
+    def test_a_plain_install_and_the_image_set_nothing_of_ndi_up(self):
+        """The owner's answer of 2026-10-08: the helper is opt-in. The installer may only act on NDI behind the mark
+        that the opt-in command leaves, and the image build never opts in."""
+        self.assertFalse(os.path.exists(os.path.join(REPO, "install", "pvj-ndi.service")))     # not among the units the installer writes
+        self.assertTrue(os.path.isfile(self.setup.TEMPLATE))
+        self.assertEqual(os.path.dirname(self.setup.TEMPLATE), NDI_UNITS)
+        # no package, account or group for NDI, and no unit written, anywhere in the installer's commands
+        commands = "\n".join(line for line in self.sh.splitlines() if not line.lstrip().startswith("#"))
+        for never in ("avahi", "groupadd --system pvj-ndi", "--gid pvj-ndi", '> "$NDI_UNIT"', '> "$NDI_MARK"', '> "$NDI_PLAYER_DROPIN"',
+                      "ndisetup", 'pvj-ndi-runtime" install', "pvj-ndi-runtime install \""):
+            self.assertNotIn(never, commands, never)
+        # every line of the installer that acts on the helper is inside the uninstall or behind the mark
+        # the mark is a plain file and never a link; NDI_OPTED_IN is set only right after that was asked
+        self.assertIn('ndi_mark() { [ -f "$NDI_MARK" ] && [ ! -L "$NDI_MARK" ]; }', self.sh)
+        self.assertEqual(self.sh.count("NDI_OPTED_IN=1"), 2)
+        self.assertEqual(self.sh.count("if ndi_mark; then\n\tNDI_OPTED_IN=1") + self.sh.count("if ndi_mark; then\n\t\t# Looked at once more"), 2)
+        mark = self.sh.index("if ndi_mark; then\n\tNDI_OPTED_IN=1")
+        self.assertLess(self.sh.index("NDI_OPTED_IN=0"), mark)
+        install = self.sh[self.sh.index('if [ "$UNINSTALL" = 1 ]'):]
+        acts = [line.strip() for line in install.splitlines()
+                if not line.lstrip().startswith("#") and re.search(r"systemctl [a-z-]+( --now)? pvj-ndi|pvj-ndi-runtime\" refresh", line)]
+        self.assertEqual(len(acts), 6, acts)               # two more are in the removal of a helper without the mark (below)
+        self.assertIn("systemctl disable --now pvj-ndi.service", acts[1])
+        self.assertIn("systemctl enable --now pvj-ndi.service", acts[2])       # only where the mark turned up meanwhile
+        del acts[1:3]
+        block = install[install.index("NDI_OPTED_IN=1"):]
+        self.assertIn(acts[0], block[:block.index("\nfi\n")])
+        self.assertIn('refresh --root "$ROOT" --prefix "$PREFIX"', acts[0])
+        guarded = install[install.index('if [ "$NDI_OPTED_IN" = 1 ] && [ -f "$NDI_UNIT" ]; then'):]
+        guarded = guarded[:guarded.index("\n\tfi\n")]
+        for line in acts[1:]:
+            self.assertIn(line, guarded)
+        # an opted-in box stays opted in and moves to the new program, also with --no-start
+        self.assertIn("systemctl enable pvj-ndi.service", guarded)
+        self.assertIn("systemctl restart pvj-ndi.service", guarded)
+        self.assertIn("systemctl try-restart pvj-ndi.service", guarded)
+        # the image: exactly the services it enabled before NDI, and no opt-in
+        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
+            image = f.read()
+        self.assertNotRegex(image, r"pvj-ndi|NDI")
+        self.assertIn("systemctl enable pvj-player.service pvj-web.service pvj-netd.service pvj-sysd.service pvj-supportd.service\n", image)
+        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
+            self.assertNotIn("avahi", f.read())
+        for name in ("pvj-ndi", "pvj-ndi-runtime"):
+            self.assertTrue(os.access(os.path.join(REPO, "bin", name), os.X_OK), name)
+
+    def test_uninstall_takes_the_helper_and_the_drop_ins_the_mark_first(self):
+        body = self.sh[self.sh.index("uninstall() {"):self.sh.index('if [ "$UNINSTALL" = 1 ]')]
+        self.assertIn('run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log', body)
+        self.assertIn("systemctl disable --now pvj-ndi.service", body)
+        self.assertEqual(self.sh.count('NDI_MARK="$ROOT' + self.setup.WEB_DROPIN + '"'), 1)       # the installer and the opt-in agree on the three paths
+        self.assertEqual(self.sh.count('NDI_PLAYER_DROPIN="$ROOT' + self.setup.PLAYER_DROPIN + '"'), 1)
+        self.assertEqual(self.sh.count('NDI_UNIT="$ROOT' + self.setup.UNIT_PATH + '"'), 1)
+
+    def test_no_ndi_file_is_in_the_repository(self):
+        for root, _dirs, files in os.walk(REPO):
+            if os.sep + "." in root[len(REPO):]:
+                continue
+            for n in files:
+                self.assertNotRegex(n, r"(?i)libndi|Processing\.NDI|\.so(\.[0-9]+)*$", os.path.join(root, n))
+
+    def test_what_it_can_write_and_use_is_bounded(self):
+        # Review finding 10. None of these figures has been tried on a device.
+        n = self.ndi
+        self.assertEqual((n["MemoryMax"], n["TasksMax"], n["CPUQuota"]), (["512M"], ["64"], ["300%"]))
+        self.assertNotIn("PrivateTmp", n)                  # its folders are on the card and have no bound
+        self.assertEqual(words(n, "TemporaryFileSystem"), ["/tmp:rw,nosuid,nodev,size=8M,mode=1777", "/var/tmp:rw,nosuid,nodev,size=8M,mode=1777"])
+        env = dict(w.split("=", 1) for w in words(n, "Environment"))
+        self.assertEqual(env["HOME"], "/tmp")              # a home in the bounded private /tmp, not in /run
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi"])
+        self.assertEqual(n["Restart"], ["always"])         # the helper ends itself when the module goes off, and comes back clean
+
+    def test_the_system_bus_stays_reachable_and_the_unit_says_why(self):
+        with open(os.path.join(NDI_UNITS, "pvj-ndi.service")) as f:
+            text = f.read()
+        self.assertIn("The system bus is NOT denied, and cannot be", text)
+        self.assertIn("libavahi-client", text)
+        for key in ("InaccessiblePaths", "TemporaryFileSystem", "BindReadOnlyPaths"):
+            self.assertFalse([w for w in words(self.ndi, key) if "dbus" in w], key)
+        self.assertIn("AF_UNIX", words(self.ndi, "RestrictAddressFamilies"))
+
+    def test_uninstall_says_what_stays_and_purge_takes_the_runtime(self):
+        body = self.sh[self.sh.index("uninstall() {"):self.sh.index('if [ "$UNINSTALL" = 1 ]')]
+        self.assertIn('if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi"; fi', body)
+        self.assertIn("/opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge", body)
+        self.assertIn("and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place", body)
+        self.assertNotIn("userdel", body)

@@ -46,7 +46,7 @@ async function home(t) {                                // the panel reads which
 const projectors = async (t) => (await get(t, '/api/projectors')).projectors || [];
 const powerOf = (p) => (p.status && p.status.ok ? p.status.power : p.status && p.status.ok === false ? 'no answer' : '');
 
-const MODULES = ['wall', 'projector', 'mapper', 'inputs-srt', 'scheduler', 'control-dmx', 'control-midi', 'network', 'shaders', 'room'];
+const MODULES = ['wall', 'projector', 'mapper', 'inputs-srt', 'inputs-ndi', 'scheduler', 'control-dmx', 'control-midi', 'network', 'shaders', 'room'];
 // name, which of the harness's fake projectors (-1: an address nothing listens on), password, the action that brings
 // it to the state the picture wants, and that state
 const PROJECTORS = [['Main projector', 0, 'secret1', null, 'on'], ['Side projector', 1, '', null, 'off'], ['Bar projector', 2, '', 'off', 'cooling down'],
@@ -178,7 +178,7 @@ function sysPages() {
   // the row's name, the picture's name, what shows that the page has its data
   return [['Health', 'health', '#healthpower'], ['Room', 'room-settings', '#roomsetup'], ['Schedule', 'schedule', '.sched-entry'],
     ['People and codes', 'people', '#devicelist'], ['Sound', 'sound', '#audioline, #audiomsg'], ['At power-up', 'power-up', '#autosave'],
-    ['Streams', 'streams', '.stream-entry'], ['Projection mapping', 'mapping', '#sysbody .card'], ['Boxes in step', 'boxes-in-step', '#syncline'],
+    ['Streams', 'streams', '.stream-entry'], ['NDI\u00ae input', 'ndi', '#ndiruntime'], ['Projection mapping', 'mapping', '#sysbody .card'], ['Boxes in step', 'boxes-in-step', '#syncline'],
     ['DMX lighting desk', 'dmx', '#dmxchannels'], ['OSC', 'osc', '#oscport'], ['Network', 'network', '#netiface'], ['Updates', 'updates', '#updateversion'],
     ['Remote support', 'support', '#supportline'], ['Backup and reset', 'backup', '#resetcard'], ['Look', 'look', '#lookthemes'], ['About and power', 'about', '#boxcard .kvv']];
 }

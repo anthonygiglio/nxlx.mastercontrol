@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+# NOT written by the installer. The NDI input is opt-in per box (D62): this unit reaches /etc/systemd/system only
+# when root runs "pvj-ndi-runtime install" at the box (pvj/ndisetup.py), and an install or update after that writes
+# it again. It lives beside the program, not in install/, so that the command finds it on a box that has no source.
+[Unit]
+Description=nxlx.mastercontrol NDI input helper (unprivileged, loads the owner's copy of the NDI runtime)
+# The NDI runtime finds senders through avahi-daemon. Without it the helper still runs and says what is missing.
+After=network.target avahi-daemon.service
+Wants=avahi-daemon.service
+# After a rollback to a release from before the NDI input this unit is still here and its program is not. Without
+# this line it would fail every two seconds for ever (Restart=always, no start limit) into the kept journal. A
+# condition that is not met is not a failure: the unit is skipped, once, and nothing is started again.
+ConditionPathExists=@PVJ_DIR@/bin/pvj-ndi
+StartLimitIntervalSec=0
+
+[Service]
+# This is the one process that loads the NDI runtime: closed-source code that reads packets from the network. So it
+# has an account and a group of its own (D62). It is NOT in group "pvj": that group reaches the player's control
+# socket (which can run programs), the PIN and the settings. The panel and the player are each given the extra
+# group "pvj-ndi" instead, which lets them into this folder: the panel to ask (the helper answers only the panel's
+# account), the player to read the picture from the pipe.
+User=pvj-ndi
+Group=pvj-ndi
+UMask=0027
+RuntimeDirectory=pvj-ndi
+RuntimeDirectoryMode=0750
+Environment=PVJ_NDI_DIR=/run/pvj-ndi
+# The runtime keeps its settings under $HOME/.ndi unless told otherwise. It is told a folder that is root's and
+# read-only here (where root also puts the library). Its home is the small private /tmp below, so anything it
+# writes there is bounded, is seen by nobody else and is gone at the next start.
+Environment=HOME=/tmp
+Environment=NDI_CONFIG_DIR=/opt/pvj-ndi
+ExecStart=@PVJ_DIR@/bin/pvj-ndi
+Restart=always
+RestartSec=2
+
+# Sandbox. Run once on a Pi 4 with the real runtime (2026-10-08: it loaded, found senders and received). Not each
+# line by itself, and not the memory bound, which could not be read there: still to be checked (tools/DEVICE-TESTING.md,
+# "NDI input"), because a line that is wrong empties the list of sources without an error.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+# A /tmp and /var/tmp of its own, in memory and 8 MB each, in place of PrivateTmp (whose folders are on the card
+# and have no bound). With ProtectSystem=strict these and /run/pvj-ndi are the only places it can write.
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,size=8M,mode=1777 /var/tmp:rw,nosuid,nodev,size=8M,mode=1777
+PrivateDevices=yes
+ReadWritePaths=/run/pvj-ndi
+# Bounds, so that a library gone wrong (or taken over) cannot starve the player. How they were chosen, none of
+# them measured on a device: memory, three buffers of the largest frame taken (3840 x 2160, 16.6 MB each) plus the
+# library's own decoding, with room, and what it writes to /run and its /tmp counts against the same figure;
+# tasks, the two threads here plus a library that starts a few per processor; processor, three of a Pi 4's four
+# cores at the very most, so the player always has one.
+MemoryMax=512M
+TasksMax=64
+CPUQuota=300%
+InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# The system bus is NOT denied, and cannot be: NDI's library finds senders through libavahi-client (NDI's
+# documentation names it), and that library talks to avahi-daemon over the system D-Bus socket and no other way.
+# What the bus offers an account with no privileges is what every such account on the box can already ask.
+# AF_UNIX: the panel's socket and the system D-Bus socket (the way to avahi-daemon). AF_NETLINK: the list of the
+# box's own network interfaces, which a network library asks for (see LESSONS on the Network card).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# The runtime may talk to private and link-local addresses and to multicast (mDNS), and to nothing else: not the
+# internet, whatever a sender or the runtime itself asks for. Addresses added in the panel are held to the same ranges.
+IPAddressDeny=any
+# Not localhost: nothing here listens on it for the helper (the panel is asked over a Unix socket, avahi over D-Bus).
+IPAddressAllow=link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# Not set, on purpose, until tried on a device: MemoryDenyWriteExecute (ctypes and an unknown library),
+# SystemCallFilter, and ProcSubset=pid (the runtime may read /proc/cpuinfo to choose its code).
+
+[Install]
+WantedBy=multi-user.target

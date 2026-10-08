@@ -161,6 +161,9 @@ button.linkish { background: none; border: 0; padding: 4px 0; color: inherit; fo
 
 /* System: an index of rows in groups, and one page per row */
 .hint { font-size: 13px; line-height: 1.4; color: var(--mu); margin: 0; overflow-wrap: anywhere; }
+/* a link in a hint (the NDI page's links to ndi.video) takes the hint's own colour, so it passes wherever the hint does */
+.hint a { color: inherit; text-decoration: underline; }
+#ndiruntime > div + div { margin-top: 6px; }
 .navgroup { padding: 4px 12px; gap: 0; }
 .syspage .grid2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
 @media (min-width: 900px) { .syspage .grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

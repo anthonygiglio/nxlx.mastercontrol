@@ -18,6 +18,8 @@ Program files are owned by root and not writable by the web user. `/var/lib/pvj`
 
 `--stage DIR` installs into a folder without touching users, apt or systemd; the tests and the future image build use it.
 
+**NDI is not installed by this script.** The NDI input is opt-in per box (D62): the installer adds no NDI service, account, group or avahi package, and the image does not either. One root command at the box sets it up, `sudo pvj-ndi-runtime install "<the NDI SDK folder>"` (see [../pvj/NDI.md](../pvj/NDI.md)), and `sudo pvj-ndi-runtime remove` takes it off. On a box that was set up, this script writes the helper's unit again at every install or update and keeps it enabled; `--uninstall` removes it and leaves `/opt/pvj-ndi` (the owner's copy of NDI's library) unless `--purge`.
+
 Verified: `tests/test_install.py` (stage mode) and one real-mode run in a throwaway container (user and group creation, links, uninstall). Not verified: apt installation on a real Pi, `systemctl` enable and start, and boot-time behaviour.
 
 Not included yet: the web panel, OSC and the read-only root option; updates from a signed USB stick or the network; automated rollback command.

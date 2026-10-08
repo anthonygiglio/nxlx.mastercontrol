@@ -322,15 +322,16 @@ function startServer() {
     await page.waitForSelector('h1:has-text("System")');
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
-      'At power-up', 'Streams', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
+      'At power-up', 'Streams', 'NDI\u00ae input', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
       'Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
-    assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (5)');
-    assert(!(await page.isVisible('#notbuilt >> text=NDI')), 'the list of what is not built starts folded');
+    assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (4)');
+    assert(!(await page.isVisible('#notbuilt >> text=AES67 and Dante audio')), 'the list of what is not built starts folded');
     await page.click('#notbuilt summary');
-    assert(await page.isVisible('#notbuilt >> text=NDI'), 'NDI is listed as not built yet');
-    assert(await page.isVisible('#notbuilt >> text=Receive NDI from Resolume'), 'with its description');
+    assert(await page.isVisible('#notbuilt >> text=AES67 and Dante audio'), 'AES67 and Dante audio is listed as not built yet');
+    assert(await page.isVisible('#notbuilt >> text=Dante devices interoperate through AES67 mode'), 'with its description');
+    assert.strictEqual(await page.locator('#notbuilt >> text=NDI').count(), 0, 'the NDI input is built: it has a row of its own');
     assert.strictEqual(await page.locator('#notbuilt button').count(), 0, 'what is not built has no switch');
     await page.click('#notbuilt summary');
     await page.waitForFunction(() => document.querySelector('#nav-health .navstate').textContent.length > 8, null, { timeout: 8000 });   // the box's name and "all well", or the worst problem
@@ -747,6 +748,64 @@ function startServer() {
     await onPage('Streams');
     await sysIndex();
     await chip('Streams', 'Set up');
+    // NDI input: off before; switched on in a harness that, like a box where nobody ran the opt-in command, has nothing of
+    // NDI set up: the page says so in plain words and names the one command, with the trademark sentence and the link NDI
+    // asks for, and its address form is on the same page:
+    // a public address is refused under the button, a private one is added, and Remove asks first.
+    // WRITTEN AND SYNTAX-CHECKED ONLY: this step had not been run when it was committed (no Playwright on the dev Mac).
+    const NDI = 'NDI® input';
+    await sysIndex();
+    await chip(NDI, 'Off');
+    await sys(NDI);
+    await switchOn(NDI);
+    await page.waitForSelector('#ndiruntime');
+    assert(/NDI is not set up on this box/.test(await page.textContent('#ndinotsetup')), 'a box that did not opt in says so in plain words');
+    assert(!/is not running/.test(await page.textContent('#ndiruntime')), 'and does not speak of a helper that stopped: there never was one');
+    assert.strictEqual(await page.textContent('#ndicommand'), 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"', 'the one command is named');
+    assert.strictEqual((await get('/api/ndi')).setup, false, 'the route says the same');
+    assert((await page.textContent('#ndimark')).includes('NDI® is a registered trademark of Vizrt NDI AB.'), 'the trademark sentence is beside the list of sources');
+    assert.deepStrictEqual(await page.$$eval('#ndimark a', (as) => as.map((a) => [a.getAttribute('href'), a.getAttribute('rel'), a.getAttribute('target')])),
+      [['https://ndi.video/', 'noopener noreferrer', '_blank'], ['https://ndi.video/tools/', 'noopener noreferrer', '_blank']], 'the links NDI asks for, opened apart from the panel');
+    assert.strictEqual(await page.locator('.ndi-entry').count(), 0, 'no source is listed without the helper');
+    assert(await page.isVisible('#ndiaddress'), 'the address form is on the same page, open while the list is empty');
+    assert.strictEqual(await page.textContent('label[for="ndiaddress"]'), 'Address');
+    await page.fill('#ndiaddress', '8.8.8.8');
+    await page.click('#ndiaddradd');
+    await page.waitForFunction(() => /private network/.test(document.getElementById('ndiaddrerr').textContent));
+    await page.fill('#ndiaddress', '192.168.1.20');
+    await page.click('#ndiaddradd');
+    await page.waitForSelector('.ndiaddr-entry:has-text("192.168.1.20")');
+    assert.deepStrictEqual((await get('/api/ndi')).addresses, ['192.168.1.20'], 'the address is saved');
+    await page.waitForTimeout(2300);                                             // the list of sources is asked again every 2 seconds
+    assert.strictEqual(await page.locator('.ndiaddr-entry').count(), 1, 'the refresh of the sources leaves the address list alone');
+    await onPage(NDI);
+    await page.click('.ndiaddr-entry .morebtn');
+    await page.click('.ndiaddr-entry .moreacts button:has-text("Remove")');
+    await page.waitForSelector('#confirmrow:has-text("Remove 192.168.1.20? The box stops asking it for sources.")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/ndi')).addresses.length, 1, '"Keep it" removes nothing');
+    await page.click('.ndiaddr-entry .moreacts button:has-text("Remove")');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => document.querySelectorAll('.ndiaddr-entry').length === 0);
+    assert.strictEqual(await post('/api/play', { ndi: 'RESOLUME (Output)' }), 409, 'a name is never played, only an id');
+    // Sound: one switch on the same page, on unless the owner says no; the line beside it says what is arriving.
+    // WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    await page.waitForSelector('#ndisound');
+    assert.strictEqual(await page.getAttribute('#ndisound', 'aria-checked'), 'true', 'sound is on until someone switches it off');
+    assert.strictEqual((await get('/api/ndi')).sound, true);
+    assert(/No source is on the screen/.test(await page.textContent('#ndisoundline')), 'with nothing playing the line says so');
+    await page.click('#ndisound');
+    await page.waitForFunction(() => /Sound is off: sources are shown without their sound/.test(document.getElementById('ndisoundline').textContent));
+    assert.strictEqual((await get('/api/ndi')).sound, false, 'the switch is saved');
+    await page.click('#ndisound');
+    await page.waitForFunction(() => /No source is on the screen/.test(document.getElementById('ndisoundline').textContent));
+    assert.strictEqual((await get('/api/ndi')).sound, true, 'and back on, as it is on a new box');
+    await onPage(NDI);
+    await sysIndex();
+    await chip(NDI, 'Set up');
+    await sys(NDI);
+    await switchOff(NDI);
+    assert(!(await moduleIsOn('inputs-ndi')), 'the NDI input is off again, as it is on a new box');
     // Schedule: switch the module on, add an entry, turn the schedule on and off, remove the entry
     await sys('Schedule');
     await switchOn('Schedule');

@@ -1,9 +1,9 @@
 {
   "id": "inputs-ndi",
-  "name": "NDI",
-  "version": "0.1.0",
+  "name": "NDI input",
+  "version": "0.3.0",
   "type": "optional",
-  "channel": "stable",
+  "channel": "beta",
   "requires": [
     "core"
   ],
@@ -12,7 +12,7 @@
     "pi5",
     "x86"
   ],
-  "status": "planned",
-  "default_enabled": true,
-  "description": "Receive NDI from Resolume, MadMapper and others. The NDI runtime is proprietary and free; the module fetches and updates it."
+  "status": "ready",
+  "default_enabled": false,
+  "description": "Show the picture of an NDI\u00ae sender (Resolume, MadMapper, OBS and others) like a clip, with its sound. The NDI runtime is proprietary and is not part of this box: its owner puts it in place (see pvj/NDI.md). NDI\u00ae is a registered trademark of Vizrt NDI AB."
 }

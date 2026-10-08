@@ -74,6 +74,11 @@ def number(body, key, lo, hi, integer=False):
     return int(v) if integer else float(v)
 
 
+# Seen on the Pi 4 on 2026-10-08: with a still NDI source the picture IS on the screen (a camera pointed at the
+# monitor showed it) and mpv still answers a snapshot with "error running command". Why is not known. So the words
+# say what is known: the snapshot failed, the screen is not in doubt.
+NDI_NO_SNAPSHOT = ("no snapshot of this NDI source could be made (the player could not copy its picture, which happens "
+                   "with a still source); the picture on the screen is not affected")
 PREVIEW_MIN_INTERVAL = 3.0    # seconds: a snapshot stalls playback for about a quarter second on a Pi 4, so viewers share one frame
 PREVIEW_MAX_BYTES = 8 * 1024 * 1024
 MAX_UPLOAD_BYTES = int(os.environ.get("PVJ_MAX_UPLOAD_MB", "8192")) * 1024 * 1024
@@ -157,6 +162,9 @@ class Api:
         self._media_lock = threading.Lock()   # rename, delete and publishing an upload never interleave
         self.mix = {"opacity": 100, "blackout": False, "size": 100, "position": 0, "position_y": 0, "rotate": 0,
                     "flip_h": False, "flip_v": False}
+        # True while a live source (NDI, the capture input, a stream) is what plays: the player is then held at speed 1
+        # whatever the Mix speed is, and the Mix speed (levels["speed"]) comes back with the next clip.
+        self._speed_held = False
         self.levels = {"volume": 100.0, "speed": 1.0}    # what was last set here (mpv's own start values until then); a
         self.fader = Fader(self._apply_opacity)          # MIDI fader reads them for pickup without asking the player
         self._preview_lock = threading.Lock()
@@ -170,6 +178,8 @@ class Api:
         self.controller_codes = controllercode_mod.ControllerCodes(self, log=lambda line: self.log(line))   # a code on the display from a MIDI controller (D61)
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
         self.capture = None       # Capture or None (live input from a USB capture device)
+        self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
+        self._ndi_loading = threading.local()     # .on while this thread loads the NDI pipe itself
         self._import = {}         # the USB copy running or last run
         self._import_lock = threading.Lock()
         self._care_busy = None    # "an import" or "a factory reset" while boxcare runs one (set and read under _import_lock)
@@ -271,7 +281,14 @@ class Api:
             names = []
         return names
 
+    PLAYER_LOADS = ("play", "play_pipe", "clear")
+
     def _player_call(self, fn, *args):
+        # Whatever loads or clears the player first makes a still-connecting NDI source worthless, and waits while
+        # an NDI play is in the middle of loading its pipe (ndi.Input.screen), so the later choice always stays.
+        if (self.ndi is not None and getattr(fn, "__self__", None) is self.player and getattr(fn, "__name__", "") in self.PLAYER_LOADS
+                and not getattr(self._ndi_loading, "on", False)):
+            self.ndi.cancel()
         try:
             return fn(*args)
         except PlayerError as e:
@@ -376,6 +393,11 @@ class Api:
                     # That is not a fault: say so in its own way, so the panel can say "nothing is on the screen".
                     if self._nothing_on_screen():
                         raise ApiError(409, "nothing is on the screen right now")
+                    # An NDI source of which mpv cannot make a snapshot (a still source: seen on a Pi 4, where this
+                    # was a 503 "mpv: error running command" while the picture was on the screen). Not "nothing on
+                    # the screen" and not a player that is down: said as what it is.
+                    if self._ndi_on_screen():
+                        raise ApiError(409, NDI_NO_SNAPSHOT)
                     raise
                 fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
                 try:
@@ -400,6 +422,15 @@ class Api:
             clean = clean and (not with_text or not self.access_on_screen())      # and none appeared while it was taken
             self._preview = (time.monotonic(), data, with_text, clean)
             return data
+
+    def _ndi_on_screen(self):
+        """True when what the player reads is the NDI helper's pipe (asked only after a snapshot failed)."""
+        if self.ndi is None or not self.ndi.current:
+            return False
+        try:
+            return self.player.status().get("path") == self.ndi.fifo
+        except Exception:
+            return False
 
     def _nothing_on_screen(self):
         """True when the player runs and plays nothing (asked only after a snapshot failed)."""
@@ -437,9 +468,14 @@ class Api:
         effect = self.effects.current()                   # an effect over the picture: its name, for the Live screen
         if effect is not None:
             status["effect"] = effect["id"][:-3]
+        if self._speed_held:                              # a live source: it plays at 1, and the Mix speed waits
+            status["speed_held"], status["speed_level"] = True, self.levels["speed"]
         if self.capture is not None and path == self.capture.fifo:
             cur = self.capture.status(devices=False)["current"] or {}
             status["path"], status["capture"] = None, cur or True
+            return status
+        if self.ndi is not None and path == self.ndi.fifo:
+            status["path"], status["ndi"] = None, (self.ndi.current or {}).get("name") or True
             return status
         for channel, url in getattr(self.player, "TEST_TONES", {}).items():
             if path == url:
@@ -836,6 +872,8 @@ class Api:
             return self.play_slideshow(body)
         if "capture" in body:
             return self.play_capture(body)
+        if "ndi" in body:
+            return self.play_ndi(body)
         if "usb_drive" in body:
             return self.play_usb_drive(body)
         if "pad" in body:
@@ -898,7 +936,7 @@ class Api:
         self.fader.cancel()
         self._player_call(self.player.play, [match[0]["url"]], False, None, False, self.spawn)
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
-        self._started_playing()
+        self._started_playing(live=True)
         return {"playing": match[0]["name"]}
 
     def get_streams(self, body, device, client):
@@ -943,7 +981,11 @@ class Api:
         if action == "seek":
             self._player_call(p.seek, number(body, "value", -3600, 3600))
         elif action == "speed":
-            self._player_call(p.speed, number(body, "value", 0.1, 4))
+            value = number(body, "value", 0.1, 4)
+            if self._speed_held:                   # a live source plays: the speed is kept for the next clip, not applied
+                self.levels["speed"] = float(value)
+                return {"ok": True, "speed_held": True}
+            self._player_call(p.speed, value)
             self.levels["speed"] = float(body["value"])
         elif action == "volume":
             self._player_call(p.volume, number(body, "value", 0, 130))
@@ -984,6 +1026,7 @@ class Api:
         elif action == "stop":
             self._player_call(p.clear)
             self._stop_capture()
+            self._stop_ndi()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
             if self.effects.on is not None:     # a Stop takes the effect off (the player did); its text goes too. Only
                 self.effects.sweep()            # then: a Stop with no effect on does nothing more than it did before
@@ -1271,6 +1314,7 @@ class Api:
         if not on:
             self._player_call(self.player.clear)
             self._stop_capture()
+            self._stop_ndi()
             return {"test_pattern": False}
         self.fader.cancel()
         self._player_call(self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
@@ -1293,6 +1337,7 @@ class Api:
         # The systemd unit (Restart=always) brings the player straight back.
         self._player_call(self.player.ipc.request, "quit")
         self._stop_capture()
+        self._stop_ndi()
         return {"ok": True}
 
     def get_modules(self, body, device, client):
@@ -1315,6 +1360,13 @@ class Api:
             self.sync.apply()
         if module_id == "projector":       # starts or stops the background status checks
             self.projectors.apply()
+        if module_id == "inputs-ndi" and self.ndi is not None:     # the helper looks for sources only while this is on
+            if not self.registry.enabled("inputs-ndi") and self._stop_ndi():
+                try:
+                    self._player_call(self.player.clear)      # the pipe has ended: do not leave its last frame up
+                except ApiError:
+                    pass
+            self.ndi.sync()
         if module_id == "room" and not self.registry.enabled("room"):     # off: what a scene had not sent yet is dropped
             self.room.stop()
         for mid, manager in (("control-dmx", self.dmx), ("control-midi", self.midi)):
@@ -1912,13 +1964,141 @@ class Api:
                     return want
         return "auto"
 
-    def _started_playing(self, capture=False):
+    def _started_playing(self, capture=False, ndi=False, live=False):
         """Something is about to be on screen: take any on-screen pairing PIN off it at once, and stop a live input
-        that is no longer shown (its helper must not keep the device busy)."""
+        that is no longer shown (its helper must not keep the device, or the NDI source, busy).
+
+        A live source (NDI, the capture input, a stream: `live`) plays at speed 1 whatever the Mix speed is. A source
+        that arrives in real time cannot be played faster than it comes: on a Pi 4 an NDI source at 1.86 made mpv
+        drop some 4800 frames in five minutes (2026-10-08). The Mix speed is kept, not changed, and is given back to
+        the player when the next thing that is not live is played."""
         if self.pinscreen is not None:
             self.pinscreen.clear()
         if not capture:
             self._stop_capture()
+        if not ndi:
+            self._stop_ndi()
+        live = bool(live or capture or ndi)
+        if live or self._speed_held:
+            self._speed_held = live
+            try:
+                self._player_call(self.player.speed, 1 if live else self.levels["speed"])
+            except ApiError:
+                pass                               # the player went away meanwhile: nothing to hold or give back
+
+    # ---- NDI input (pvj/ndi.py, D62) ----
+    def _need_ndi(self):
+        if self.ndi is None:
+            raise ApiError(404, "the NDI input is not available")
+        if not self.registry.enabled("inputs-ndi"):
+            raise ApiError(409, "turn on the NDI input in System first")
+
+    def _stop_ndi(self):
+        return self.ndi.stop() if self.ndi is not None else False
+
+    def play_ndi(self, body, again=None):
+        """{"ndi": "<id>"}: a source the helper found, by the id the helper gave it; never a name or an address.
+        `again` is the entry being shown when the helper asks for it to be loaded again (a sender changed size):
+        it is dropped if something else was played meanwhile."""
+        from . import ndi as ndi_mod
+        self._need_ndi()
+        sid = body.get("ndi")
+        with self.ndi.lock:                # open, load and note as one step: a double tap cannot cross two sources
+            if again is not None and self.ndi.current is not again:
+                return {"playing": None}
+            ticket = self.ndi.ticket()
+            try:
+                p = self.ndi.open(sid)
+            except ndi_mod.NdiError as e:
+                raise ApiError(409, str(e))
+            # Connecting takes seconds. If anything was played, cleared or stopped meanwhile (_player_call and
+            # stop() both cancel), that later choice stands: the source is let go and the screen is not touched.
+            # The check and the loading are one step under ndi.screen, so nothing can come between them.
+            failed = None
+            with self.ndi.screen:
+                good = self.ndi.still(ticket) and (again is None or self.ndi.current is again)
+                if good:
+                    try:
+                        self.ndi.check_pipe()
+                    except ndi_mod.NdiError as e:
+                        good, failed = None, ApiError(409, str(e))
+                if good:
+                    self.fader.cancel()
+                    self.ndi.current = {"id": p["id"], "name": p["name"]}
+                    self._ndi_loading.on = True
+                    try:
+                        self._player_call(self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"],
+                                          "matroska" if p.get("container") == "matroska" else "uyvy422")
+                    except ApiError as e:
+                        failed = e
+                    finally:
+                        self._ndi_loading.on = False
+            if failed is not None:
+                self.ndi.stop()
+                self.ndi.client_close()
+                raise failed
+            if not good:
+                self.ndi.client_close()
+                if again is not None:
+                    return {"playing": None}
+                raise ApiError(409, "something else was played while the source was connecting")
+        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._started_playing(ndi=True)
+        return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"],
+                "sound": p.get("container") == "matroska"}
+
+    def ndi_tick(self):
+        """About once a second (server.py): show the source again when the helper says it changed size or rate."""
+        if self.ndi is None or not self.ndi.current or not self.registry.enabled("inputs-ndi"):
+            return False
+        cur = self.ndi.current
+        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur))
+
+    def get_ndi(self, body, device, client):
+        self._need_ndi()
+        return self.ndi.status()
+
+    def set_ndi(self, body, device, client):
+        """Add or remove one address the helper also asks for sources (for networks where mDNS does not pass), or
+        switch a source's sound on or off: {"action": "sound", "on": true}. A source that is on the screen is opened
+        again by the helper's "changed", so the switch is heard (or not) within a second or two."""
+        from . import ndi as ndi_mod
+        self._need_ndi()
+        action = body.get("action")
+        if action not in ("add_address", "remove_address", "sound"):
+            raise bad("action must be add_address, remove_address or sound")
+        if action == "sound":
+            if not isinstance(body.get("on"), bool):
+                raise bad("on must be true or false")
+            with self.settings.lock:
+                section = self.settings.data.get("ndi")
+                self.settings.data["ndi"] = {"addresses": ndi_mod.saved_addresses(section)[0], "sound": body["on"]}
+                self.settings.save()
+            self.ndi._wanted()                     # read again, so that what is sent next is the new choice
+            self.ndi.sync()
+            return self.ndi.status()
+        with self.settings.lock:
+            before = self.settings.data.get("ndi")
+            keep = {"sound": before["sound"]} if isinstance(before, dict) and isinstance(before.get("sound"), bool) else {}
+            items = ndi_mod.saved_addresses(self.settings.data.get("ndi"))[0]      # a hand-edited section of the wrong kind counts as empty
+            try:
+                address = ndi_mod.clean_address(body.get("address"))
+                if action == "add_address":
+                    if address in items:
+                        raise bad("that address is already in the list")
+                    if len(items) >= ndi_mod.MAX_ADDRESSES:
+                        raise bad("at most %d addresses" % ndi_mod.MAX_ADDRESSES)
+                    items.append(address)
+                else:
+                    if address not in items:
+                        raise ApiError(404, "no such address")
+                    items.remove(address)
+            except ndi_mod.NdiError as e:
+                raise bad(str(e))
+            self.settings.data["ndi"] = dict({"addresses": items}, **keep)      # the choice about sound, if one was made, stays
+            self.settings.save()
+        self.ndi.sync()
+        return self.ndi.status()
 
     def play_capture(self, body):
         """{"capture": {"device": "video0", "mode": "720p30"}}: a live input, read by a separate helper process."""
@@ -2534,6 +2714,8 @@ class Api:
             ("POST", "/api/midi/learn"): ("full", self.midi_learn),
             ("POST", "/api/midi/map"): ("full", self.midi_map),
             ("POST", "/api/midi/lights"): ("full", self.midi_lights),
+            ("GET", "/api/ndi"): ("view", self.get_ndi),
+            ("POST", "/api/ndi"): ("full", self.set_ndi),
             ("GET", "/api/streams"): ("view", self.get_streams),
             ("POST", "/api/streams"): ("full", self.set_streams),
             ("GET", "/api/schedule"): ("view", self.get_schedule),

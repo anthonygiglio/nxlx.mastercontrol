@@ -10,6 +10,9 @@ On a box each service has a folder of its own that only it can write, under a pa
     /run/pvj/netd           root:pvj        0750   pvj-netd: netd.sock
     /run/pvj-sysd           root:pvj        0750   pvj-sysd: sysd.sock
     /run/pvj-supportd       root:pvj        0750   pvj-supportd: supportd.sock
+    /run/pvj-ndi            pvj-ndi:pvj-ndi 0750   pvj-ndi: ndi.sock, ndi.fifo (D62: its own group, never group pvj). Only on
+                                                   a box that was set up for NDI (pvj/ndisetup.py): there the panel and
+                                                   the player are each given the extra group pvj-ndi by a drop-in
     /run/pvj-update         root:root       0755   the update units: result.json
 
 A folder is a `RuntimeDirectory=` of exactly one unit, so systemd never hands it to another account. Before this
@@ -24,6 +27,8 @@ Environment:
   files are looked for in the process's own folder: one private folder for everything, which is what the tests
   and a player started by hand use.
 * `PVJ_SYSD_DIR`, `PVJ_SUPPORTD_DIR` and `PVJ_UPDATE_RESULT` are as before.
+* `PVJ_NDI_DIR` is the NDI helper's folder. It is set for the panel only on a box that was set up for NDI, and the
+  panel takes its absence to mean exactly that: no helper here (server.py).
 
 A process creates and checks only its own folder (`own_dir`). It never creates a peer's folder: a missing one
 means that the peer is not running.
@@ -37,6 +42,7 @@ WEB_DIR = RUN + "/web"
 NETD_DIR = RUN + "/netd"
 SYSD_DIR = "/run/pvj-sysd"
 SUPPORTD_DIR = "/run/pvj-supportd"
+NDI_DIR = "/run/pvj-ndi"
 UPDATE_DIR = "/run/pvj-update"
 UPDATE_RESULT = UPDATE_DIR + "/result.json"
 
@@ -46,6 +52,8 @@ PREVIEW = "preview.jpg"                       # written by mpv, so it lives in t
 NETD_SOCKET = "netd.sock"
 SYSD_SOCKET = "sysd.sock"
 SUPPORTD_SOCKET = "supportd.sock"
+NDI_SOCKET = "ndi.sock"
+NDI_FIFO = "ndi.fifo"
 PIN = "pin"
 CAPTURE_FIFO = "capture.fifo"
 OVERLAY = "overlay.bgra"
@@ -126,6 +134,19 @@ def sysd_socket(env=None):
 
 def supportd_socket(env=None):
     return os.path.join(supportd_dir(env), SUPPORTD_SOCKET)
+
+
+def ndi_dir(env=None):
+    """The NDI helper's folder: its socket for the panel and the pipe the player reads. Only the helper creates it."""
+    return _env(env).get("PVJ_NDI_DIR") or NDI_DIR
+
+
+def ndi_socket(env=None):
+    return os.path.join(ndi_dir(env), NDI_SOCKET)
+
+
+def ndi_fifo(env=None):
+    return os.path.join(ndi_dir(env), NDI_FIFO)
 
 
 def update_result(env=None):
