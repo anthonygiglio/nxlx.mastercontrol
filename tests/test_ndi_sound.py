@@ -6,6 +6,8 @@ this test's own; and, where mpv is installed (CI; not the dev Mac), the real mpv
 real pipe and what it decoded is looked at. NOBODY HAS HEARD ANY OF THIS: what a box plays, how late, and whether
 lips and voice agree are device step N10."""
 import array
+import base64
+import ctypes
 import inspect
 import math
 import os
@@ -16,11 +18,12 @@ import subprocess
 import tempfile
 import threading
 import time
+import types
 import unittest
 import zlib
 
 from pvj import ndi
-from pvj.player import Player
+from pvj.player import Player, PlayerError
 from tests.test_ndi import FakeClient, FakeLib, frame, wait
 from tests.test_server import ServerBase
 
@@ -64,7 +67,7 @@ class SoundLib(FakeLib):
             self.inside.clear()
             return None
         try:
-            return self.sounds.get(timeout=0.02)
+            return self.sounds.get(timeout=0.1)
         except queue.Empty:
             return None
 
@@ -450,7 +453,16 @@ class ReceiverSoundTest(Base):
         self.assertGreater(st["audio"]["counts"]["dropped"], 300)
         self.assertEqual(st["state"], "playing")
         self.stall.clear()
-        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] >= 1 + st["audio"]["counts"]["written"], 10))
+        # The player reads again, and sound that comes now is written. (This line used to wait for one more block
+        # of the flood to be written, which only happens if the pipe was full when the flood ended: true on the dev
+        # Mac, whose pipes hold 64 kB, and a matter of luck on Linux, whose pipes hold 1 MiB. It failed in one of the
+        # two unit test jobs of each CI run on 2026-10-08.)
+        self.assertTrue(wait(lambda: self.lib.sounds.qsize() == 0 and not r._queue, 10))
+        before = r.status()["audio"]["counts"]["written"]
+        self.now[0] += 5.0
+        self.lib.sounds.put(sound(4800, value=0.5))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] >= 1 + before, 10))
+        self.assertNotIn(r.status()["state"], ndi.ENDED)
 
     def test_a_flood_of_tiny_blocks_is_bounded_by_their_number_too(self):
         r = self.start_with_sound()
@@ -558,6 +570,247 @@ class ReceiverSoundTest(Base):
         self.assertTrue(wait(lambda: self.lib.closed == 1))
 
 
+class ReviewTest(Base):
+    """What the independent review of 2026-10-08 found in the sound's thread and its timing, each as the case that
+    showed it."""
+
+    # ---- H2 ----
+    def eager(self, answer):
+        class Eager(SoundLib):
+            calls = 0
+
+            def recv_audio(self, handle, timeout_ms):
+                self.calls += 1
+                return answer
+        self.lib = Eager()
+        r = self.receiver()
+        r.start()
+        time.sleep(0.6)
+        calls = self.lib.calls
+        started = time.monotonic()
+        r.close()
+        self.assertLess(time.monotonic() - started, 1.0)                                 # and a stop is still seen at once
+        return calls
+
+    def test_while_the_connection_is_down_the_sounds_thread_waits_and_does_not_spin(self):
+        """Measured by the reviewer on the code before: 3.1 million calls in half a second."""
+        calls = self.eager(ndi.AUDIO_LOST)
+        self.assertLessEqual(calls, 5, "asked %d times in 0.6 s while the connection was down" % calls)
+
+    def test_a_library_that_answers_at_once_with_nothing_is_not_asked_flat_out(self):
+        calls = self.eager(None)
+        self.assertLessEqual(calls, 8, "asked %d times in 0.6 s" % calls)
+
+    def test_the_library_saying_the_connection_is_down_is_told_apart_from_no_sound_in_time(self):
+        for kind, want in ((ndi.FRAME_ERROR, ndi.AUDIO_LOST), (ndi.FRAME_VIDEO, None), (0, None)):
+            c = ndi.CtypesLibrary.__new__(ndi.CtypesLibrary)
+            c.lib = types.SimpleNamespace(NDIlib_recv_capture_v3=lambda *a, kind=kind: kind)
+            self.assertIs(c.recv_audio((ctypes.c_void_p(1),), 250), want, kind)
+
+    # ---- M3 ----
+    def test_a_second_close_does_not_free_the_connection_under_a_sound_thread_still_in_the_library(self):
+        logged = []
+        self.lib.hold = threading.Event()
+        r = ndi.Receiver(self.lib, self.source, self.fifo, log=logged.append, join_wait=0.3, sound=True)
+        r.start()
+        self.assertTrue(self.lib.inside.wait(3))
+        r.close()
+        self.assertEqual(self.lib.closed, 0)
+        r.close()                                                                        # the Service: at the next status, at the next open
+        r.close()
+        self.assertEqual(self.lib.closed, 0, "a second close freed the connection under the thread still in the library")
+        self.assertEqual(len([m for m in logged if "left open, not freed under it" in m]), 1)
+        self.lib.hold.set()
+        self.assertTrue(wait(lambda: self.lib.closed == 1))
+        r.close()
+        self.assertEqual(self.lib.closed, 1)                                             # once
+
+    # ---- the timing: a clock stepped a thirtieth of a second at a time, a picture at every step ----
+    def play(self, block):
+        r = self.start_with_sound(n=int(round(block * 48000)))
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.frames_sent, self.blocks_sent, self.tick, self.held, self.late = 0, 0, 0, [], 0.0
+        return r
+
+    def settle(self, r):
+        """Every picture and every block of sound given so far has been taken and written (or left out)."""
+        def done():
+            c = r.audio_counts
+            return (r.counts["received"] >= self.frames_sent and r._pending is None and not r._queue
+                    and c["received"] + c["refused"] >= self.blocks_sent and c["written"] + c["dropped"] >= c["received"])
+        self.assertTrue(wait(done, 5), (r.counts, r.audio_counts, self.frames_sent, self.blocks_sent))
+
+    def give(self, r, n):
+        self.lib.sounds.put(sound(n, value=0.5))
+        self.blocks_sent += 1
+        self.settle(r)
+
+    def run_for(self, r, seconds, block, stalled=False):
+        """`seconds` of a sender with pictures at 30 a second and sound in blocks of `block` seconds, each block
+        given when its last sample exists (at the first step of the clock that is not before it). While `stalled`
+        the blocks are held back; they are all given at once at the first step that is not stalled."""
+        n = int(round(block * 48000))
+        for _ in range(int(round(seconds * 30))):
+            self.tick += 1
+            t = self.tick / 30.0
+            self.now[0] = r._t0 + t
+            while (len(self.held) + self.blocks_sent + 1) * block + self.late <= t + 1e-9 and stalled:
+                self.held.append(n)
+            if not stalled:
+                for held in self.held:
+                    self.give(r, held)
+                self.held = []
+                while (self.blocks_sent + 1) * block + self.late <= t + 1e-9:
+                    self.give(r, n)
+            self.lib.frames.put(frame(64, 16, fill=1 + self.tick % 200))
+            self.frames_sent += 1
+            self.settle(r)
+
+    def sound_written(self):
+        return [(b[1], b[1] + len(b[2]) / 8 / 48000.0, b[2]) for b in self.stream() if b[0] == 2]
+
+    def lead(self, r):
+        """How far the end of the sound in the pipe stands ahead of the helper's clock, in seconds."""
+        return self.sound_written()[-1][1] - (self.now[0] - r._t0)
+
+    def in_order(self):
+        written = self.sound_written()
+        for a, b in zip(written, written[1:]):
+            self.assertGreaterEqual(b[0] + 1e-4, a[1], "sound in the pipe steps back in time: %.4f after %.4f" % (b[0], a[1]))
+        return written
+
+    def test_after_a_hiccup_the_sound_comes_back_to_the_clock(self):
+        """M1. A stall of 0.4 s, then the held blocks at once: the code before left the sound 0.2 s late for good
+        (the silence written for the stall, and the late sound on top of it)."""
+        r = self.play(0.1)
+        self.run_for(r, 2.0, 0.1)
+        self.assertLess(abs(self.lead(r)), 0.05)
+        self.run_for(r, 0.4, 0.1, stalled=True)
+        self.run_for(r, 3.0, 0.1)                                                        # "within a few seconds"
+        self.assertLess(abs(self.lead(r)), 0.05, r.audio_counts)
+        self.run_for(r, 6.0, 0.1)
+        self.assertLess(abs(self.lead(r)), 0.05, r.audio_counts)
+        self.in_order()
+        self.assertGreaterEqual(r.audio_counts["adjusted"], 1)                           # it was brought back, and that was counted
+
+    def test_sound_a_little_behind_the_clock_for_a_whole_second_gets_that_much_silence_and_one_late_block_does_not(self):
+        r = self.play(0.1)
+        self.run_for(r, 2.0, 0.1)
+        base = dict(r.audio_counts)                                                      # two blocks late by 0.2 s, the next on time again
+        self.run_for(r, 0.2, 0.1, stalled=True)
+        self.run_for(r, 2.0, 0.1)
+        self.in_order()
+        self.assertLess(abs(self.lead(r)), 0.05, r.audio_counts)
+        self.assertEqual(r.audio_counts["adjusted"], base["adjusted"])                   # two late blocks changed nothing
+        self.late = 0.1                                                                  # from here on every block comes a tenth of a second later
+        self.run_for(r, 0.6, 0.1)
+        self.assertEqual(r.audio_counts["adjusted"], base["adjusted"], "silence was put in on the word of half a second")
+        self.run_for(r, 2.0, 0.1)
+        self.assertEqual(r.audio_counts["adjusted"], base["adjusted"] + 1, r.audio_counts)
+        written = self.in_order()
+        self.assertEqual(len([w for w in written if w[2] == bytes(len(w[2]))]), 1)       # one stretch of silence
+        self.assertLess(abs(self.lead(r)), 0.05, r.audio_counts)                         # and the count is at the clock again
+        self.assertEqual(r.audio_counts["written"], r.audio_counts["received"])          # silence is not counted as a block written
+
+    def test_blocks_of_every_length_a_sender_may_use_are_played_and_longer_ones_are_refused_in_words(self):
+        """M2. The reviewer's table on the code before, 12 s of picture at 30 a second: blocks of 0.1 s, 120 of 120
+        written; 0.4 s, 30 written and 0.2 s late; 0.6 s, 0 of 20 and 59 fills; 1.0 s, 0 of 12. Blocks of 0.6 s and
+        more were played as silence for ever without a word. Now: up to MAX_AUDIO_BLOCK every block is written and
+        stays at the clock; a longer block is refused, counted, and the page says why."""
+        for block in (0.0167, 0.1, 0.2, ndi.MAX_AUDIO_BLOCK):
+            with self.subTest(block=block):
+                self.setUp()
+                r = self.play(block)
+                self.run_for(r, 12.0, block)
+                c = r.audio_counts
+                n = int(round(block * 48000))
+                self.assertEqual(c["received"], self.blocks_sent, c)
+                self.assertGreater(c["written"], 0)
+                self.assertGreaterEqual(c["written"], self.blocks_sent - 1, c)
+                self.assertEqual((c["refused"], c["filled"]), (0, 0), c)
+                self.assertLessEqual(c["adjusted"] + c["dropped"], 1, c)
+                real = [w for w in self.in_order() if w[2] != bytes(len(w[2]))]
+                self.assertGreaterEqual(sum(len(w[2]) for w in real), (self.blocks_sent - 1) * n * 8)
+                lead = self.lead(r)
+                self.assertLess(lead, 0.05, (block, c))
+                self.assertGreater(lead, -(n / 48000.0) - 0.05, (block, c))              # never further back than the block that is on its way
+                r.close()
+        for block in (0.4, 0.6, 1.0):
+            with self.subTest(block=block):
+                self.setUp()
+                n = int(round(block * 48000))
+                r = self.receiver()
+                r.start()
+                self.lib.frames.put(frame(64, 16, fill=1))
+                self.lib.sounds.put(sound(n))
+                self.assertTrue(r.first.wait(3))
+                self.assertEqual(r.decide(), "raw")                                      # the pipe carries the picture alone
+                st = r.status()["audio"]
+                self.assertEqual(st["counts"]["refused"], 1)
+                self.assertIn("blocks of %.2f seconds" % block, st["problem"])
+                self.assertIn("longer than 0.25 are not played", st["problem"])
+                self.read()
+                self.assertTrue(wait(lambda: r.status()["state"] == "playing"))          # and the picture goes on
+                r.close()
+        with self.assertRaises(ndi.NdiError):
+            ndi.check_audio(sound(12001))                                                # one sample over a quarter of a second at 48 kHz
+        ndi.check_audio(sound(12000))
+
+    def test_silence_for_missing_sound_never_lies_over_a_block_queued_while_it_was_being_written(self):
+        """L7. The silence's place was worked out after the queue had been taken and the count was moved after the
+        silence was written, so a block queued in between was given a time inside the silence."""
+        r = self.play(0.1)
+        self.run_for(r, 0.1, 0.1)                                                        # one block: the count stands at 0.1
+        self.assertEqual(r.audio_counts["written"], 1)
+        real, injected = r._write, []
+
+        def write(fd, buf):
+            if not injected and len(buf) > 2000 and bytes(buf[-1000:]) == bytes(1000):   # the silence, about to be written
+                injected.append(True)
+                self.lib.sounds.put(sound(4800, value=0.5))
+                self.blocks_sent += 1
+                self.assertTrue(wait(lambda: r.audio_counts["received"] >= self.blocks_sent and (r._queue or r.audio_counts["dropped"])))
+            return real(fd, buf)
+        r._write = write
+        self.now[0] = r._t0 + 0.45                                                       # 0.35 s without sound, then a picture
+        self.lib.frames.put(frame(64, 16, fill=9))
+        self.frames_sent += 1
+        self.settle(r)
+        self.assertTrue(injected, "no silence was written")
+        self.assertGreaterEqual(r.audio_counts["filled"], 1)
+        written = self.in_order()
+        self.assertEqual(len([w for w in written if w[2] != bytes(len(w[2]))]), 2, r.audio_counts)       # both real blocks are there
+
+    # ---- L6 ----
+    def test_a_block_that_will_not_be_written_is_not_converted(self):
+        converted, real = [], ndi.audio_block
+
+        def counting(a, checked):
+            converted.append(checked[3])
+            return real(a, checked)
+        ndi.audio_block = counting
+        self.addCleanup(setattr, ndi, "audio_block", real)
+        r = self.receiver()
+        r.start()
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.lib.sounds.put(sound(4800))                                                 # before the screen has the pipe: looked at, not kept
+        self.assertTrue(r.first.wait(3))
+        self.assertEqual(r.decide(), "matroska")
+        self.assertEqual(converted, [])
+        self.read()
+        self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+        self.now[0] += 1.0
+        self.lib.sounds.put(sound(4800))
+        self.assertTrue(wait(lambda: r.audio_counts["written"] == 1))
+        self.assertEqual(converted, [4800])
+        with r._cond:
+            r._apts += 0.5                                                               # the count far ahead of the clock: the next block is all in the past
+        self.lib.sounds.put(sound(4800))
+        self.assertTrue(wait(lambda: r.audio_counts["dropped"] == 1))
+        self.assertEqual(converted, [4800])                                              # dropped unread
+        self.assertEqual(self.lib.freed_sound, 3)                                        # and every one given back to the library
+
+
 class ServiceSoundTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -567,9 +820,20 @@ class ServiceSoundTest(unittest.TestCase):
         self.addCleanup(self.s.close)
         self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
 
-    def test_sound_is_on_unless_the_panel_says_no_and_the_answer_says_what_the_pipe_carries(self):
+    def test_the_helper_plays_sound_only_when_the_panel_asks_for_it_in_so_many_words(self):
+        """The owner's default is on (SOUND_DEFAULT, kept by the panel, which sends the word every time). The helper
+        itself assumes nothing: a message without the word means no sound."""
         self.assertTrue(ndi.SOUND_DEFAULT)
-        st = self.s.handle({"cmd": "configure", "on": True, "addresses": []})
+        self.assertIs(self.s.handle({"cmd": "configure", "on": True, "addresses": []})["sound"], False)
+        self.lib.frames.put(frame(64, 16))
+        self.lib.sounds.put(sound(4800))
+        reply = self.s.handle({"cmd": "open", "id": self.rid})
+        self.assertEqual(reply["playing"]["container"], "raw")
+        self.assertNotIn("audio", reply["playing"])
+        self.s.close()
+
+    def test_sound_is_on_when_the_panel_says_so_and_the_answer_says_what_the_pipe_carries(self):
+        st = self.s.handle({"cmd": "configure", "on": True, "addresses": [], "sound": True})
         self.assertIs(st["sound"], True)
         self.lib.frames.put(frame(64, 16))
         self.lib.sounds.put(sound(4800))
@@ -597,7 +861,7 @@ class ServiceSoundTest(unittest.TestCase):
         self.assertEqual((r.state, r.message), ("changed", "sound was switched off"))
 
     def test_a_source_without_sound_is_opened_after_a_short_wait_and_no_longer(self):
-        self.s.handle({"cmd": "configure", "on": True, "addresses": []})
+        self.s.handle({"cmd": "configure", "on": True, "addresses": [], "sound": True})
         self.lib.frames.put(frame(64, 16))
         t = time.monotonic()
         reply = self.s.handle({"cmd": "open", "id": self.rid})
@@ -638,7 +902,7 @@ class SettingsSoundTest(unittest.TestCase):
 class PanelSoundTest(unittest.TestCase):
     def test_what_a_taken_over_helper_says_about_sound_is_checked_again(self):
         good = {"rate": 48000, "channels": 6, "played": 2, "arriving": True, "level_db": -20.04, "silent": False, "problem": "",
-                "counts": {"received": 10, "written": 9, "dropped": 1, "refused": 0, "silenced": 0, "filled": 2}}
+                "counts": {"received": 10, "written": 9, "dropped": 1, "refused": 0, "silenced": 0, "filled": 2, "adjusted": 1}}
         self.assertEqual(ndi._audio(good), dict(good, level_db=-20.0))
         self.assertIsNone(ndi._audio(None))
         self.assertIsNone(ndi._audio("loud"))
@@ -659,6 +923,26 @@ class PanelSoundTest(unittest.TestCase):
         for p in (dict(base, container="matroska"), dict(base, container="matroska", audio=dict(audio, rate=1)), dict(base, container="mkv", audio=audio),
                   dict(base, container=["matroska"], audio=audio), dict(base, audio=audio), dict(base, container="../../etc/passwd", audio=audio)):
             self.assertEqual(ndi._playing(p)["container"], "raw", p)
+
+    def test_with_sound_switched_off_the_pipe_is_read_as_bare_frames_whatever_the_helper_answers(self):
+        """H1. The helper decided, by its answer alone, whether the player would read its bytes as Matroska."""
+        rid = "0123456789ab"
+        answer = {"ok": True, "playing": {"id": rid, "name": "A", "state": "ready", "message": "", "width": 64, "height": 16, "fps": 30.0,
+                                          "counts": {}, "container": "matroska",
+                                          "audio": {"rate": 48000, "channels": 2, "played": 2, "arriving": True, "level_db": -20.0,
+                                                    "silent": False, "problem": "", "counts": {}}}}
+
+        class Lying:
+            def request(self, message, timeout=None):
+                return answer if message["cmd"] == "open" else {"ok": True}
+
+            def status(self):
+                return {"ok": False}
+        data = {"ndi": {"addresses": [], "sound": False}}
+        i = ndi.Input(Lying(), "/nonexistent/ndi.fifo", ndi.Wanted(lambda: True, lambda: data, log=lambda *_: None), log=lambda *_: None)
+        self.assertEqual(i.open(rid)["container"], "raw")
+        data["ndi"]["sound"] = True
+        self.assertEqual(i.open(rid)["container"], "matroska")
 
     def test_the_helper_is_told_whether_sound_is_wanted_and_told_again_when_that_changes(self):
         d = tempfile.mkdtemp()
@@ -713,6 +997,31 @@ class ApiSoundTest(ServerBase):
         self.assertEqual((st, body["sound"]), (200, False))
         self.assertIn(("play_pipe", self.service.fifo, 1920, 1080, 59.94, "uyvy422"), self.player.calls)
 
+    def test_a_helper_that_answers_matroska_while_sound_is_off_is_loaded_as_bare_frames(self):
+        """H1, at the last step before the player: even if the panel's handle let "matroska" through."""
+        self.assertEqual(self.call("POST", "/api/ndi", {"action": "sound", "on": False}, token=self.full)[0], 200)
+        self.lib.frames.put(frame(64, 16))
+        real = self.api.ndi.open
+
+        def lying(sid):
+            return dict(real(sid), container="matroska")
+        self.api.ndi.open = lying
+        st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
+        self.assertEqual(st, 200, body)
+        pipes = [c for c in self.player.calls if c[0] == "play_pipe"]
+        self.assertEqual([c[-1] for c in pipes], ["uyvy422"])
+
+    def test_an_ndi_source_is_played_at_speed_one_and_the_mix_speed_comes_back_with_the_next_clip(self):
+        """The real play, not a look at the source text (review, 2026-10-08)."""
+        self.call("POST", "/api/control", {"action": "speed", "value": 1.86}, token=self.full)
+        self.player.calls.clear()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.assertEqual([c[1] for c in self.player.calls if c[0] == "speed"], [1])
+        self.assertIs(self.api._speed_held, True)
+        self.api._started_playing()
+        self.assertEqual([c[1] for c in self.player.calls if c[0] == "speed"], [1, 1.86])
+
     def test_the_switch_is_saved_sent_to_the_helper_and_needs_full_access(self):
         self.assertNotIn("sound", self.settings.data["ndi"])                              # nothing is written until someone chooses
         st, body, _ = self.call("POST", "/api/ndi", {"action": "sound", "on": False}, token=self.full)
@@ -741,29 +1050,114 @@ class ApiSoundTest(ServerBase):
 
 
 class PlayerSoundTest(unittest.TestCase):
-    def test_the_stream_with_sound_is_loaded_with_mpvs_own_reader_named_and_no_cache(self):
-        self.assertIn("matroska", Player.PIPE_FORMATS)
-        src = inspect.getsource(Player._play_pipe)
-        self.assertIn('opts = {"demuxer": "mkv", "cache": "no", "demuxer-readahead-secs": 0, "demuxer-max-bytes": "32MiB"}', src)
+    def player(self, refuse=()):
         sent = []
 
         class Ipc:
             def request(self, *a):
                 sent.append(a)
+                if a[0] == "set_property" and a[1] in refuse:
+                    raise PlayerError("mpv: property not found")
+                if a[0] == "loadfile" and len(a) > 3 and "old" in refuse:
+                    raise PlayerError("mpv: invalid parameter")
                 return None
         p = Player.__new__(Player)
         p.ipc, p._lock, p._pipe_globals = Ipc(), threading.RLock(), None
         p.is_running = lambda: True
         p._end_source = lambda: None
+        return p, sent
+
+    def test_the_stream_with_sound_is_loaded_with_mpvs_own_reader_named_and_no_cache(self):
+        self.assertIn("matroska", Player.PIPE_FORMATS)
+        p, sent = self.player()
         p.play_pipe("/run/pvj-ndi/ndi.fifo", 1920, 1080, 29.97, "matroska")
         load = [a for a in sent if a[0] == "loadfile"][0]
-        self.assertEqual(load, ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace", -1, "demuxer=mkv,cache=no,demuxer-readahead-secs=0,demuxer-max-bytes=32MiB"))
+        self.assertEqual(load, ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace", -1,
+                                "demuxer=mkv,cache=no,demuxer-readahead-secs=0,demuxer-max-bytes=" + Player.pipe_queue(1920, 1080, 29.97)))
         self.assertNotIn("rawvideo", load[4])
         for word in ("aid", "mute", "volume", "audio-device", "af="):                     # sound is left to what the player already does
             self.assertNotIn(word, load[4])
 
+    def test_for_the_helpers_stream_the_player_decodes_uncompressed_video_and_float_pcm_and_nothing_else(self):
+        """H1 of the review of 2026-10-08. The helper is the part that could be taken over, and with sound the
+        player reads its bytes as Matroska, which can name any codec. So that one load is narrowed first."""
+        only = Player.MKV_ONLY
+        self.assertEqual((only["vd"], only["ad"]), ("rawvideo,-", "pcm_f32le,-"))          # a list that ends in "-": no other decoder
+        self.assertEqual((only["sid"], only["ordered-chapters"], only["cover-art-auto"], only["embeddedfonts"]), ("no", "no", "no", "no"))
+        p, sent = self.player()
+        p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
+        load = [i for i, a in enumerate(sent) if a[0] == "loadfile"][0]
+        before = [a[1:] for a in sent[:load] if a[0] == "set_property"]
+        for k, v in only.items():
+            self.assertIn((k, v), before, k)                                             # every one of them BEFORE the load
+        self.assertEqual(set(p._pipe_globals), set(only))
+        # bare frames are loaded as before: nothing of this is set for them
+        p2, sent2 = self.player()
+        p2.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "uyvy422")
+        self.assertFalse([a for a in sent2 if a[0] == "set_property" and a[1] in only])
+        self.assertIsNone(p2._pipe_globals)
 
-# ---- the real mpv, where there is one --------------------------------------------------------------------------------
+    def test_the_narrowing_is_taken_back_before_the_next_thing_is_loaded(self):
+        p, sent = self.player()
+        p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
+        sent.clear()
+        p.play_pipe("/run/pvj/capture.fifo", 1280, 720, 30)                               # the next thing: bare frames from the capture input
+        load = [i for i, a in enumerate(sent) if a[0] == "loadfile"][0]
+        undone = dict(a[1:] for a in sent[:load] if a[0] == "set_property")
+        for k in Player.MKV_ONLY:
+            self.assertEqual(undone.get(k), Player.PIPE_DEFAULTS[k], k)
+        self.assertEqual((Player.PIPE_DEFAULTS["vd"], Player.PIPE_DEFAULTS["ad"], Player.PIPE_DEFAULTS["sid"]), ("", "", "auto"))
+        self.assertIsNone(p._pipe_globals)
+        self.assertIn("self._undo_pipe_globals()", inspect.getsource(Player._play))        # and a clip does the same
+
+    def test_one_that_could_not_be_taken_back_is_tried_again(self):
+        p, sent = self.player()
+        p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
+        real = p.ipc.request
+
+        def flaky(*a):
+            if a[:2] == ("set_property", "vd"):
+                raise PlayerError("mpv: timed out")
+            return real(*a)
+        p.ipc.request = flaky
+        p._undo_pipe_globals()
+        self.assertEqual(p._pipe_globals, ["vd"])                                        # not forgotten
+        p.ipc.request = real
+        sent.clear()
+        p._undo_pipe_globals()
+        self.assertEqual([a for a in sent], [("set_property", "vd", "")])
+        self.assertIsNone(p._pipe_globals)
+
+    def test_a_player_that_will_not_be_narrowed_is_not_given_the_stream(self):
+        p, sent = self.player(refuse=("ad",))
+        with self.assertRaises(PlayerError):
+            p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
+        self.assertFalse([a for a in sent if a[0] == "loadfile"])                         # nothing was loaded
+        self.assertIn(("set_property", "vd", ""), sent)                                  # and what was already set was taken back
+
+    def test_on_an_old_mpv_the_pipes_options_and_the_narrowing_are_both_taken_back(self):
+        p, sent = self.player(refuse=("old",))
+        p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
+        self.assertEqual(set(p._pipe_globals), set(Player.MKV_ONLY) | {"demuxer", "cache", "demuxer-readahead-secs", "demuxer-max-bytes"})
+        self.assertEqual(sent[-2], ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace"))
+
+    def test_the_players_queue_is_sized_from_the_picture_and_the_longest_block_of_sound(self):
+        """M4. mpv's limit is one total for picture and sound; the sound trails the picture by a block's length."""
+        mib = lambda w, h, fps: int(Player.pipe_queue(w, h, fps)[:-3])
+        self.assertTrue(Player.pipe_queue(1920, 1080, 30).endswith("MiB"))
+        for w, h, fps in ((1280, 720, 30), (1920, 1080, 29.97), (1920, 1080, 60), (1764, 992, 30)):
+            frame_bytes = 2 * w * h
+            held = mib(w, h, fps) * 1024 * 1024 / float(frame_bytes) / fps               # seconds of picture the queue takes
+            if mib(w, h, fps) < 256:
+                self.assertGreaterEqual(held, 1.0, (w, h, fps))
+            self.assertGreaterEqual(held, 2 * ndi.MAX_AUDIO_BLOCK + 0.2 if mib(w, h, fps) < 256 else 1.0, (w, h, fps))
+        self.assertEqual(mib(64, 16, 30), 32)                                            # never under what bare frames get
+        self.assertEqual(mib(3840, 2160, 60), 256)                                       # never over this
+        self.assertEqual(mib(1920, 1080, 30), 119)
+        self.assertEqual(mib(1920, 1080, 60), 238)
+        self.assertLessEqual(ndi.MAX_AUDIO_BLOCK, 0.25)
+
+
 def png_pixel(path, x, y):
     """(r, g, b) of one pixel of an 8-bit RGB or RGBA PNG that is not interlaced, with nothing but zlib."""
     with open(path, "rb") as f:
@@ -844,6 +1238,36 @@ def red_frame(w, h):
     return frame(w, h, data=bytes((RED[1], RED[0], RED[2], RED[0])) * (w * h // 2))      # U Y V Y: the order "UYVY" means
 
 
+def mkv_only():
+    return ["--%s=%s" % kv for kv in Player.MKV_ONLY.items()]
+
+
+# A 64 x 16 JPEG, all red (made with ffmpeg; 230 bytes).
+RED_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgQEBMQExYWFhYWFhoYGhsbGxoaGhobGxsdHR0iIiIdHR0bGx0dICAiIiUmJSMjIiMmJigoKDAwLi44ODpF"
+    "RVP/xABNAAEBAAAAAAAAAAAAAAAAAAAABgEBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgAEABAAwEiAAIRAAMRAP/a"
+    "AAwDAQACEQMRAD8AiwEm38AAAAAB/9k=")
+
+
+def other_codecs_stream(frames=20):
+    """What a helper that was taken over could write in place of its own stream: Matroska of the same shape whose
+    picture track says Motion JPEG (and carries real JPEGs) and whose sound track says 32-bit integer PCM. Both are
+    things mpv decodes gladly when nothing stops it."""
+    e, u = ndi._ebml, ndi._ebml_uint
+    head = e("1A45DFA3", u("4286", 1) + u("42F7", 1) + u("42F2", 4) + u("42F3", 8) + e("4282", b"matroska") + u("4287", 2) + u("4285", 2))
+    info = e("1549A966", u("2AD7B1", ndi.MKV_TIME_UNIT) + e("4D80", b"x") + e("5741", b"x"))
+    video = e("AE", u("D7", 1) + u("73C5", 1) + u("83", 1) + u("9C", 0) + e("86", b"V_MJPEG") + u("23E383", int(1e9 / 30))
+              + e("E0", u("B0", 64) + u("BA", 16)))
+    audio = e("AE", u("D7", 2) + u("73C5", 2) + u("83", 2) + u("9C", 0) + e("86", b"A_PCM/INT/LIT")
+              + e("E1", e("B5", struct.pack(">d", 48000.0)) + u("9F", 2) + u("6264", 32)))
+    out = head + bytes.fromhex("18538067" + "01FFFFFFFFFFFFFF") + info + e("1654AE6B", video + audio)
+    pcm = struct.pack("<2i", 2 ** 28, -2 ** 28) * 1600                                   # a thirtieth of a second, loud enough to find
+    for k in range(frames):
+        out += ndi.mkv_block_head(1, k / 30.0, len(RED_JPEG)) + RED_JPEG
+        out += ndi.mkv_block_head(2, k / 30.0, len(pcm)) + pcm
+    return out
+
+
 @unittest.skipUnless(MPV, "mpv is not installed here (it is in CI); what mpv makes of the stream is not shown by this run")
 class RealMpvTest(Base):
     """The stream the helper writes, through a real pipe into the real mpv, with the options the player gives it.
@@ -865,9 +1289,10 @@ class RealMpvTest(Base):
         self.lib.sounds.put(sound(n, planes=[tone, tone]))
         self.assertTrue(r.first.wait(3))
         self.assertEqual(r.decide(), "matroska")
-        opts = ["--%s=%s" % kv for kv in (("demuxer", "mkv"), ("cache", "no"), ("demuxer-readahead-secs", "0"), ("demuxer-max-bytes", "32MiB"))]
-        self.assertIn('opts = {"demuxer": "mkv", "cache": "no", "demuxer-readahead-secs": 0, "demuxer-max-bytes": "32MiB"}',
-                      inspect.getsource(Player._play_pipe))                              # the same four the player gives
+        # the same the player gives: the four for the pipe, and the narrowing to the two decoders the stream may need
+        # (MKV_ONLY). mpv refuses an option it does not know or cannot read, so this run also shows it takes them.
+        opts = ["--%s=%s" % kv for kv in (("demuxer", "mkv"), ("cache", "no"), ("demuxer-readahead-secs", "0"),
+                                           ("demuxer-max-bytes", Player.pipe_queue(w, h, 30)))] + mkv_only()
         cmd = [MPV, "--no-config", "--no-terminal", "--idle=no", "--framedrop=no", "--untimed", "--log-file=" + log, "--msg-level=all=v",
                "--vo=image", "--vo-image-format=png", "--vo-image-outdir=" + out, "--ao=pcm", "--ao-pcm-file=" + wav] + opts + [self.fifo]
         mpv = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -930,6 +1355,110 @@ class RealMpvTest(Base):
         finally:
             if mpv.poll() is None:
                 mpv.kill()
+
+    def run_mpv_on_file(self, path, name, extra):
+        out = os.path.join(self.dir, name)
+        os.makedirs(out)
+        wav, log = os.path.join(self.dir, name + ".wav"), os.path.join(self.dir, name + ".log")
+        cmd = [MPV, "--no-config", "--no-terminal", "--idle=no", "--framedrop=no", "--untimed", "--log-file=" + log, "--msg-level=all=v",
+               "--vo=image", "--vo-image-format=png", "--vo-image-outdir=" + out, "--ao=pcm", "--ao-pcm-file=" + wav,
+               "--demuxer=mkv", "--cache=no"] + extra + [path]
+        mpv = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: mpv.poll() is None and mpv.kill())
+        try:
+            code = mpv.wait(60)
+        except subprocess.TimeoutExpired:
+            mpv.kill()
+            self.fail("mpv did not end")
+        said = open(log, errors="replace").read() if os.path.exists(log) else ""
+        sound_bytes = os.path.getsize(wav) if os.path.exists(wav) else 0
+        return code, sorted(os.listdir(out)), sound_bytes, said, out
+
+    def test_a_stream_that_names_other_codecs_is_not_decoded_once_the_player_is_narrowed(self):
+        """H1. The same file twice. Without the narrowing mpv decodes both tracks (so the file is one mpv can play,
+        and the second half of this test means something); with the options the player sets (MKV_ONLY) it decodes
+        neither."""
+        path = os.path.join(self.dir, "other.mkv")
+        with open(path, "wb") as f:
+            f.write(other_codecs_stream())
+        code, pictures, sound_bytes, said, out = self.run_mpv_on_file(path, "open", [])
+        tail = "\n".join(said.splitlines()[-60:])
+        self.assertGreater(len(pictures), 10, tail)                                      # Motion JPEG, decoded
+        red, green, blue = png_pixel(os.path.join(out, pictures[len(pictures) // 2]), 32, 8)
+        self.assertTrue(red > 180 and green < 80 and blue < 80, (red, green, blue))
+        self.assertRegex(said, r"(?i)mjpeg", tail)
+        self.assertGreater(sound_bytes, 10000, tail)                                     # integer PCM, decoded
+        self.assertNotIn("Failed to initialize a decoder", said)
+
+        code, pictures, sound_bytes, said, out = self.run_mpv_on_file(path, "narrow", mkv_only())
+        tail = "\n".join(said.splitlines()[-60:])
+        self.assertEqual(pictures, [], tail)                                             # not one picture
+        self.assertLess(sound_bytes, 200, tail)                                          # and no sound (a heading at most)
+        self.assertRegex(said, r"Failed to initialize a decoder for codec 'mjpeg'", tail)
+        self.assertRegex(said, r"Failed to initialize a decoder for codec 'pcm_s32le'", tail)
+
+    def paced(self, limit, seconds=4.0, w=1280, h=720, block=0.25):
+        """The helper's stream at a real size and in real time (a picture every thirtieth of a second, sound in the
+        longest blocks the helper takes) into mpv, which plays it at its own pace without a screen or a sound
+        device. Returns mpv's log and the helper's last status."""
+        n = int(block * 48000)
+        log = os.path.join(self.dir, "paced-%s.log" % limit)
+        picture = frame(w, h, fill=90)
+        r = self.receiver(audio_wait=1.0)
+        r._clock = time.monotonic
+        r.start()
+        self.lib.frames.put(picture)
+        self.lib.sounds.put(sound(n))
+        self.assertTrue(r.first.wait(3))
+        self.assertEqual(r.decide(), "matroska")
+        cmd = [MPV, "--no-config", "--no-terminal", "--idle=no", "--log-file=" + log, "--msg-level=all=v", "--vo=null", "--ao=null",
+               "--demuxer=mkv", "--cache=no", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=" + limit] + mkv_only() + [self.fifo]
+        mpv = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: mpv.poll() is None and mpv.kill())
+        try:
+            self.assertTrue(wait(lambda: r.status()["state"] == "playing", 15), "mpv did not open the pipe")
+            start = time.monotonic()
+            frames = blocks_sent = 0
+            while time.monotonic() - start < seconds:
+                t = time.monotonic() - start
+                if t >= (frames + 1) / 30.0:
+                    self.lib.frames.put(picture)
+                    frames += 1
+                if t >= (blocks_sent + 1) * block:
+                    self.lib.sounds.put(sound(n))
+                    blocks_sent += 1
+                time.sleep(0.004)
+            wait(lambda: self.lib.frames.qsize() == 0 and self.lib.sounds.qsize() == 0 and r._pending is None and not r._queue, 10)
+            time.sleep(0.3)
+            st = r.status()
+            r.close()
+            try:
+                mpv.wait(30)
+            except subprocess.TimeoutExpired:
+                self.fail("mpv did not end when the pipe did")
+        finally:
+            if mpv.poll() is None:
+                mpv.kill()
+        return (open(log, errors="replace").read() if os.path.exists(log) else ""), st
+
+    def test_at_a_real_size_and_in_real_time_the_players_queue_takes_picture_and_sound_together(self):
+        """M4. 1280 x 720 at 30 a second is 55 MB a second of picture, and the sound comes a quarter of a second
+        behind it. With the queue the player is given (pipe_queue) mpv must not say "Too many packets in the demuxer
+        packet queues". With a queue of 2 MiB (one picture) it must say so: that is what shows this run can see the
+        line at all, and that the limit is what was read in mpv's source (one total for picture and sound).
+        NOT shown: a Pi 4, 1080p, a real sound device, or anything heard."""
+        limit = Player.pipe_queue(1280, 720, 30)
+        said, st = self.paced(limit)
+        tail = "\n".join(said.splitlines()[-40:])
+        self.assertEqual(st["state"], "playing", st)
+        self.assertGreater(st["counts"]["shown"], 60, st)
+        self.assertGreater(st["audio"]["counts"]["written"], 8, st)
+        self.assertNotIn("Too many packets in the demuxer packet queues", said, tail)
+        self.assertNotIn("Failed to initialize a decoder", said, tail)
+        self.assertRegex(said, r"(?i)pcm_f32le", tail)
+        self.setUp()
+        said, st = self.paced("2MiB")
+        self.assertIn("Too many packets in the demuxer packet queues", said, "\n".join(said.splitlines()[-40:]))
 
     def test_mpv_plays_the_bare_frames_of_a_source_without_sound_as_before(self):
         """The same run without sound: the pipe carries bare UYVY frames and mpv is given the raw video options."""

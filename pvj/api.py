@@ -165,6 +165,8 @@ class Api:
         # True while a live source (NDI, the capture input, a stream) is what plays: the player is then held at speed 1
         # whatever the Mix speed is, and the Mix speed (levels["speed"]) comes back with the next clip.
         self._speed_held = False
+        self._speed_held_at = 0.0
+        self._speed_lock = threading.RLock()       # looking at the hold and setting the player's speed are one step
         self.levels = {"volume": 100.0, "speed": 1.0}    # what was last set here (mpv's own start values until then); a
         self.fader = Fader(self._apply_opacity)          # MIDI fader reads them for pickup without asking the player
         self._preview_lock = threading.Lock()
@@ -455,6 +457,13 @@ class Api:
         """Player status with stream passwords hidden and the saved stream's name added."""
         status = dict(self.player.status())
         path = status.get("path")
+        # A live source that ended by itself (a stream that ran out, a sender that went, a player that was started
+        # again) leaves no live source playing: the hold on the speed ends here, and the Mix speed is applied.
+        if (self._speed_held and status.get("running") and not self._live_path(path)
+                and time.monotonic() - self._speed_held_at >= self.SPEED_SETTLE):
+            self._hold_speed(False)
+            if not self._speed_held:
+                status["speed"] = self.levels["speed"]
         if path == getattr(self.player, "TEST_PATTERN", None):
             status["path"], status["test_pattern"] = None, True
             effect = self.effects.current()               # the colour bars are a picture too, and take an effect (seen on the Pi 4)
@@ -982,11 +991,12 @@ class Api:
             self._player_call(p.seek, number(body, "value", -3600, 3600))
         elif action == "speed":
             value = number(body, "value", 0.1, 4)
-            if self._speed_held:                   # a live source plays: the speed is kept for the next clip, not applied
-                self.levels["speed"] = float(value)
-                return {"ok": True, "speed_held": True}
-            self._player_call(p.speed, value)
-            self.levels["speed"] = float(body["value"])
+            with self._speed_lock:                 # one step with _hold_speed: a play cannot come between the look and the call
+                if self._speed_held:               # a live source plays: the speed is kept for the next clip, not applied
+                    self.levels["speed"] = float(value)
+                    return {"ok": True, "speed_held": True}
+                self._player_call(p.speed, value)
+                self.levels["speed"] = float(body["value"])
         elif action == "volume":
             self._player_call(p.volume, number(body, "value", 0, 130))
             self.levels["volume"] = float(body["value"])
@@ -1027,6 +1037,7 @@ class Api:
             self._player_call(p.clear)
             self._stop_capture()
             self._stop_ndi()
+            self._hold_speed(False)         # nothing live plays any more: the Mix speed is the player's again
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
             if self.effects.on is not None:     # a Stop takes the effect off (the player did); its text goes too. Only
                 self.effects.sweep()            # then: a Stop with no effect on does nothing more than it did before
@@ -1978,13 +1989,35 @@ class Api:
             self._stop_capture()
         if not ndi:
             self._stop_ndi()
-        live = bool(live or capture or ndi)
-        if live or self._speed_held:
-            self._speed_held = live
-            try:
-                self._player_call(self.player.speed, 1 if live else self.levels["speed"])
-            except ApiError:
-                pass                               # the player went away meanwhile: nothing to hold or give back
+        self._hold_speed(bool(live or capture or ndi))
+
+    SPEED_SETTLE = 3.0                             # seconds a hold must have lasted before "nothing live plays" is believed
+
+    def _hold_speed(self, live):
+        """Hold the player at speed 1 for a live source, or give the Mix speed back to it. The hold ends only when
+        the player has really taken the Mix speed: if it would not, the hold stays and is tried again (the status
+        tries, about once a second while a page is open)."""
+        with self._speed_lock:
+            if live:
+                self._speed_held, self._speed_held_at = True, time.monotonic()
+                try:
+                    self._player_call(self.player.speed, 1)
+                except ApiError:
+                    pass                           # no player: it starts at 1 anyway
+            elif self._speed_held:
+                try:
+                    self._player_call(self.player.speed, self.levels["speed"])
+                except ApiError:
+                    return
+                self._speed_held = False
+
+    def _live_path(self, path):
+        """Whether what the player says it plays is a live source (NDI, the capture input, a saved stream)."""
+        if not isinstance(path, str):
+            return False
+        if (self.capture is not None and path == self.capture.fifo) or (self.ndi is not None and path == self.ndi.fifo):
+            return True
+        return any(s.get("url") == path for s in self.settings.data.get("streams", []))
 
     # ---- NDI input (pvj/ndi.py, D62) ----
     def _need_ndi(self):
@@ -2027,8 +2060,11 @@ class Api:
                     self.ndi.current = {"id": p["id"], "name": p["name"]}
                     self._ndi_loading.on = True
                     try:
+                        # Matroska only when the owner wants sound AND the helper says the pipe carries it: what
+                        # the helper answers never widens, by itself, what the player will parse.
+                        with_sound = p.get("container") == "matroska" and self.ndi.sound_wanted()
                         self._player_call(self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"],
-                                          "matroska" if p.get("container") == "matroska" else "uyvy422")
+                                          "matroska" if with_sound else "uyvy422")
                     except ApiError as e:
                         failed = e
                     finally:
@@ -2045,7 +2081,7 @@ class Api:
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing(ndi=True)
         return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"],
-                "sound": p.get("container") == "matroska"}
+                "sound": bool(with_sound)}
 
     def ndi_tick(self):
         """About once a second (server.py): show the source again when the helper says it changed size or rate."""

@@ -60,7 +60,7 @@ class FakeLib:
 
     def recv_capture(self, handle, timeout_ms):
         try:
-            return self.frames.get(timeout=0.02)
+            return self.frames.get(timeout=0.1)
         except queue.Empty:
             return None
 
@@ -1810,8 +1810,38 @@ class LifetimeTest(unittest.TestCase):
         self.assertEqual(lib.closed, 0, "the connection was freed while the library was still using it")
         self.assertEqual(len([m for m in logged if "left open, not freed under it" in m]), 1)
         self.assertEqual(r.status()["state"], "stopped")
+        # Closed again while the library still has the thread (the Service does this: at every status of an ended
+        # receiver, and at the next open). The second close found no thread on its list and freed the connection
+        # under the one still inside (review, 2026-10-08).
+        r.close()
+        r.close()
+        self.assertEqual(lib.closed, 0, "a second close freed the connection under the thread still in the library")
+        self.assertEqual(len([m for m in logged if "left open, not freed under it" in m]), 1)       # and it is said once
         let_go.set()                                                     # it comes back after all: now it is given back, once
         self.assertTrue(wait(lambda: lib.closed == 1))
+        r.close()
+        self.assertEqual(lib.closed, 1)
+
+    def test_a_library_that_answers_at_once_with_nothing_is_not_asked_flat_out(self):
+        """The fake used to wait 20 ms whenever it had nothing, which hid this: a library that comes back at once
+        (the real one does while a connection is down) was asked again without a pause, a core's worth."""
+        class Eager(FakeLib):
+            calls = 0
+
+            def recv_capture(self, handle, timeout_ms):
+                self.calls += 1
+                return None
+        lib = Eager()
+        fifo = os.path.join(self.dir, "f2")
+        os.mkfifo(fifo)
+        r = ndi.Receiver(lib, ndi.clean_sources(lib.raw)[0][0], fifo, log=lambda *_: None)
+        r.start()
+        time.sleep(0.6)
+        calls = lib.calls
+        started = time.monotonic()
+        r.close()
+        self.assertLess(time.monotonic() - started, 1.0)                 # and a stop is still seen at once
+        self.assertLessEqual(calls, 8, "the library was asked %d times in 0.6 s" % calls)
         r.close()
         self.assertEqual(lib.closed, 1)
 

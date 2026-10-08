@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -894,15 +895,101 @@ class LiveSpeedTest(ServerBase):
         self.assertEqual(self.speeds(), [1, 1, 1])
         self.assertTrue(self.api._speed_held)
 
-    def test_the_three_live_sources_say_that_they_are(self):
-        from pvj.api import Api
-        self.assertIn("self._started_playing(ndi=True)", inspect.getsource(Api.play_ndi))
-        self.assertIn("self._started_playing(capture=True)", inspect.getsource(Api.play_capture))
-        self.assertIn("self._started_playing(live=True)", inspect.getsource(Api.play_stream))
+    def test_a_stream_is_played_at_speed_one_and_the_page_has_the_words(self):
+        """The real play of a stream, not a look at the source text (review, 2026-10-08). The same for NDI is in
+        test_ndi_sound.ApiSoundTest and for the capture input in test_capture.CaptureApiTest."""
+        self.control(1.86)
+        self.call("POST", "/api/modules/inputs-srt", {"enabled": True}, token=self.full)
+        sid = self.call("POST", "/api/streams", {"action": "add", "name": "Cam", "url": "srt://10.0.0.5:9000"}, token=self.full)[1]["streams"][0]["id"]
+        self.player.calls.clear()
+        self.assertEqual(self.call("POST", "/api/play", {"stream": sid}, token=self.full)[0], 200)
+        self.assertEqual(self.speeds(), [1])
+        self.assertIs(self.api._speed_held, True)
         with open(os.path.join(os.path.dirname(ndisetup.__file__), "web", "app.js")) as f:
             js = f.read()
         self.assertIn("pl.speed_held", js)
         self.assertIn("it plays at 1.00x. This speed is kept for the next clip.", js)
+
+    def test_a_speed_request_and_a_play_at_the_same_moment_cannot_leave_a_live_source_at_the_mix_speed(self):
+        """L1. The speed request had looked ("no live source") and was about to set the player when the play came,
+        held the speed at 1, and was then overwritten by the request's 1.86, with the hold still on."""
+        inside, let_go, order = threading.Event(), threading.Event(), []
+
+        def speed(value):
+            if value != 1 and not inside.is_set():
+                inside.set()
+                let_go.wait(5)                                                            # the request, in the player, slow
+            order.append(value)
+        self.player.speed = speed
+        request = threading.Thread(target=self.control, args=(1.86,), daemon=True)
+        request.start()
+        self.assertTrue(inside.wait(3))
+        play = threading.Thread(target=self.api._started_playing, kwargs={"ndi": True}, daemon=True)
+        play.start()
+        time.sleep(0.3)                                                                  # the play, given every chance to get in between
+        let_go.set()
+        request.join(5)
+        play.join(5)
+        self.assertIs(self.api._speed_held, True)
+        self.assertEqual(order[-1], 1, "the live source was left at %s with the hold on: %s" % (order[-1], order))
+        self.assertEqual(self.api.levels["speed"], 1.86)
+
+    def test_stop_ends_the_hold_and_the_mix_speed_is_the_players_again(self):
+        """L2. After Stop the Mix screen went on saying a live source was playing, and a speed was stored, not set."""
+        self.control(1.5)
+        self.api._started_playing(ndi=True)
+        self.player.calls.clear()
+        self.assertEqual(self.call("POST", "/api/control", {"action": "stop"}, token=self.full)[0], 200)
+        self.assertIs(self.api._speed_held, False)
+        self.assertEqual(self.speeds(), [1.5])
+        self.assertNotIn("speed_held", self.call("GET", "/api/status", token=self.full)[1]["player"])
+        self.assertEqual(self.control(0.75)[1], {"ok": True})                             # and a speed is set, not stored
+        self.assertEqual(self.speeds(), [1.5, 0.75])
+
+    def test_a_live_source_that_ended_by_itself_ends_the_hold_at_the_next_look(self):
+        """L2, the other half: a stream that ran out, a sender that went, a player that was started again. Nothing
+        tells the panel; the status (asked about once a second by an open page) sees that nothing live plays."""
+        self.control(1.5)
+        self.player.running = True                                                       # a player that is up and plays nothing
+        self.api._started_playing(live=True)
+        self.player.calls.clear()
+        player = self.call("GET", "/api/status", token=self.full)[1]["player"]
+        self.assertIs(player.get("speed_held"), True)                                    # too soon to tell: the source may still be loading
+        self.assertEqual(self.speeds(), [])
+        self.api.SPEED_SETTLE = 0.0
+        player = self.call("GET", "/api/status", token=self.full)[1]["player"]
+        self.assertNotIn("speed_held", player)
+        self.assertEqual((self.speeds(), player["speed"]), ([1.5], 1.5))
+        self.assertIs(self.api._speed_held, False)
+        # while the live source IS what plays, the hold stays however long it lasts
+        self.call("POST", "/api/modules/inputs-srt", {"enabled": True}, token=self.full)
+        url = "srt://10.0.0.5:9000"
+        sid = self.call("POST", "/api/streams", {"action": "add", "name": "Cam", "url": url}, token=self.full)[1]["streams"][0]["id"]
+        self.call("POST", "/api/play", {"stream": sid}, token=self.full)
+        self.player.status = lambda: {"running": True, "path": url}
+        self.player.calls.clear()
+        self.assertIs(self.call("GET", "/api/status", token=self.full)[1]["player"].get("speed_held"), True)
+        self.assertEqual(self.speeds(), [])
+
+    def test_a_mix_speed_the_player_did_not_take_keeps_the_hold_until_it_does(self):
+        """L3. The hold was cleared even when giving the Mix speed back failed."""
+        from pvj.api import ApiError
+        self.control(1.5)
+        self.api._started_playing(ndi=True)
+        real = self.api._player_call
+
+        def gone(fn, *a):
+            if a == (1.5,):
+                raise ApiError(503, "player service is not running")
+            return real(fn, *a)
+        self.api._player_call = gone
+        self.api._started_playing()                                                      # a clip, and the player would not take the speed
+        self.assertIs(self.api._speed_held, True)
+        self.api._player_call = real
+        self.player.calls.clear()
+        self.api._started_playing()                                                      # the next time it does
+        self.assertIs(self.api._speed_held, False)
+        self.assertEqual(self.speeds(), [1.5])
 
     def test_a_player_that_went_away_does_not_stop_the_play(self):
         from pvj.api import ApiError
