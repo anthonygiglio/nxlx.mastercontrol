@@ -4,6 +4,11 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08, the evening (CI's install retry met its first slow mirror, and lost)
+
+- On #102's second run the `effects-gpu` job for the Pi 4's kind of OpenGL failed in its install step with "ci-apt: gave up after 3 attempts": the lists came at once each time and the 48 MB of packages did not arrive in 90 seconds, three times, from `azure.archive.ubuntu.com`. So the retry of #101 failed sooner (under five minutes instead of ten) but cured nothing: the same runner asked the same slow mirror three times.
+- `tools/ci-apt.sh` now changes the mirror after a failed attempt: `azure.archive.ubuntu.com` becomes `archive.ubuntu.com` in the files apt reads its mirrors from. What an attempt downloaded stays in apt's cache, so the next one carries on. Not proven: no run has needed the second attempt since; the first slow mirror after this merges is its test. If Ubuntu's own archive is slow from that runner too, the step still fails, and a rerun is still the cure.
+
 ## 2026-10-08, the afternoon (CI's package installs retry)
 
 - The owner logged `gh` in again with the `workflow` scope (D63), so a workflow file could be changed. The first two tries left a token this session's shell could not read back from the keychain (`gh auth token` was empty and every call answered 401); a login with `--insecure-storage`, which keeps the token in `~/.config/gh/hosts.yml`, worked. The earlier working login of the night must have been stored the same way; nobody had written that down.
