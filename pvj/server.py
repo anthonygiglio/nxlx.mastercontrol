@@ -422,7 +422,15 @@ class PvjServer(ThreadingHTTPServer):
                 pass
             self.shutdown_request(request)
             return
-        super().process_request(request, client_address)
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            # The thread did not start (the system had no thread to give), so process_request_thread below will
+            # never run for this connection and never give its place back: give it back here. Without this every
+            # such failure took one of the places for good, and after max_connections of them the panel answered
+            # nothing but 503 until the service was started again. socketserver closes the connection and logs.
+            self._slots.release()
+            raise
 
     def process_request_thread(self, request, client_address):
         try:

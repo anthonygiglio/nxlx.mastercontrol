@@ -1145,3 +1145,25 @@ class ManyAtOnceTest(ServerBase):
         self.assertEqual(got.get("200", 0), 0, got)
         self.assertEqual(got["slow"], 0, got)
         self.assertEqual(sum(n for out, n in got.items() if out == "503" or out.startswith(("cut off", "no answer"))), 30, got)
+
+    def test_a_thread_that_cannot_start_gives_its_place_back(self):
+        # Older than D68, found by its review: the place at the cap is taken before the thread is started and was
+        # given back only by the thread. If the system has no thread to give (RuntimeError from Thread.start), the
+        # place was gone for good. With one place: the connection whose thread fails is closed unanswered, and the
+        # next one is served, where it used to get the cap's 503 for as long as the service ran.
+        from unittest import mock
+        self.serve(max_connections=1)
+        self.httpd.handle_error = lambda request, client_address: None      # socketserver would print the traceback
+        real, failed = threading.Thread, []
+
+        class NoThread(real):
+            def start(self):
+                if getattr(getattr(self, "_target", None), "__name__", "") == "process_request_thread" and not failed:
+                    failed.append(self)
+                    raise RuntimeError("can't start new thread")
+                return super().start()
+        with mock.patch.object(threading, "Thread", NoThread):
+            first = self.get("/api/hello")
+        self.assertEqual(len(failed), 1)
+        self.assertIn(first.split(" (")[0], ("cut off", "no answer"))
+        self.assertEqual([self.get("/api/hello") for _ in range(3)], ["200", "200", "200"])
