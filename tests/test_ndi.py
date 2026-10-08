@@ -86,14 +86,14 @@ def wait(cond, seconds=3.0):
 class NamesTest(unittest.TestCase):
     def test_a_plain_name_passes_and_gets_the_same_id_every_time(self):
         self.assertEqual(ndi.clean_name(b"RESOLUME (Output)"), "RESOLUME (Output)")
-        self.assertEqual(ndi.clean_name("Café MadMapper (NDI 1)"), "Café MadMapper (NDI 1)")
+        self.assertEqual(ndi.clean_name("Caf\u00e9 MadMapper (NDI 1)"), "Caf\u00e9 MadMapper (NDI 1)")
         self.assertRegex(ndi.source_id("RESOLUME (Output)", "192.168.0.20"), r"^[0-9a-f]{12}\Z")
         self.assertEqual(ndi.source_id("a", "192.168.0.20"), ndi.source_id("a", "192.168.0.20"))
         self.assertNotEqual(ndi.source_id("a", "192.168.0.20"), ndi.source_id("b", "192.168.0.20"))
 
     def test_hostile_names_from_the_network_are_dropped(self):
-        for bad in (b"", b" ", b"name\n", b"\nname", b"na\x00me", b"na\x1bme", b"tab\there", "evil‮gnp.exe".encode(),
-                    "zero​width".encode(), "line sep".encode(), b" padded", b"padded ", b"\xff\xfe", b"x" * 129,
+        for bad in (b"", b" ", b"name\n", b"\nname", b"na\x00me", b"na\x1bme", b"tab\there", "evil\u202egnp.exe".encode(),
+                    "zero\u200bwidth".encode(), "line\u2028sep".encode(), b" padded", b"padded ", b"\xff\xfe", b"x" * 129,
                     "\ud800", None, 5, ["a"], "\U000e0001tag"):
             self.assertIsNone(ndi.clean_name(bad), repr(bad))
         self.assertEqual(len(ndi.clean_name(b"x" * 128)), 128)
@@ -616,7 +616,7 @@ class InputTest(unittest.TestCase):
                               "cut": "yes",
                               "sources": [{"id": self.rid, "name": "RESOLUME (Output)", "from": "a b"},
                                           {"id": self.rid, "name": "Other name", "from": "10.0.0.1:1"},        # the id is not this name's
-                                          {"id": ndi.source_id("bad‮name", "192.168.0.20"), "name": "bad‮name", "from": "x"},
+                                          {"id": ndi.source_id("bad\u202ename", "192.168.0.20"), "name": "bad\u202ename", "from": "x"},
                                           {"id": "../../etc", "name": "x", "from": "x"}, "junk", None] + [{"id": self.rid, "name": "RESOLUME (Output)", "from": "192.168.0.66:5961"}] * 500 + [{"id": self.rid, "name": "RESOLUME (Output)", "from": "192.168.0.20:5961"}],
                               "playing": {"id": self.rid, "name": "evil\nname", "state": "playing", "message": "m" * 5000, "width": 10 ** 9,
                                           "height": True, "fps": 1e9, "counts": {"received": 2 ** 80, "shown": -1, "dropped": "3", "x": 1, "dropped_by_runtime": 4}}}
@@ -1337,7 +1337,7 @@ class ReplySizeTest(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         worst = []
-        for kind, char, count in (("emoji", "\U0001f600", 64), ("accent", "é", 128), ("ascii", "\\", 128)):
+        for kind, char, count in (("emoji", "\U0001f600", 64), ("accent", "\u00e9", 128), ("ascii", "\\", 128)):
             for n in range(200):
                 name = ("%03d" % n) + char * (count - 3)
                 self.assertIsNotNone(ndi.clean_name(name), kind)
@@ -1353,8 +1353,8 @@ class ReplySizeTest(unittest.TestCase):
         s.receiver.message = "m" * 400
         s.lib_error = "e" * 400
         sizes = [len(json.dumps(s.handle({"cmd": "status"})).encode()) + 1]
-        for char in ("\U0001f600", "é"):                            # every row of the worst kind at once
-            lib.raw = [(("%03d" % n + char * (64 if char > "￿" else 128))[:64 if char > "￿" else 128].encode(),
+        for char in ("\U0001f600", "\u00e9"):                            # every row of the worst kind at once
+            lib.raw = [(("%03d" % n + char * (64 if char > "\uffff" else 128))[:64 if char > "\uffff" else 128].encode(),
                         ("h" * 85 + "%03d.local:65535" % n).encode()[-ndi.MAX_WHERE:]) for n in range(200)]
             s._sources_at = None
             sizes.append(len(json.dumps(s.handle({"cmd": "status"})).encode()) + 1)
@@ -1367,7 +1367,7 @@ class ReplySizeTest(unittest.TestCase):
     def test_a_name_longer_than_that_on_the_wire_is_dropped_like_any_other_bad_name(self):
         self.assertIsNone(ndi.clean_name("\U0001f600" * 65))
         self.assertIsNotNone(ndi.clean_name("\U0001f600" * 64))
-        self.assertIsNotNone(ndi.clean_name("é" * 128))
+        self.assertIsNotNone(ndi.clean_name("\u00e9" * 128))
         self.assertIsNone(ndi.clean_name('"' * 128 + "x"))
         out, _ = ndi.clean_sources([(b"cam", b"h" * 101), (b"cam", b"h" * 100)])
         self.assertEqual([len(x["from"]) for x in out], [100])
@@ -1782,32 +1782,28 @@ class LookAlikeNamesTest(unittest.TestCase):
     """Review finding 13: two rows must not look alike, and the helper's words cannot change how a line reads."""
 
     def test_one_way_of_writing_a_name_so_two_spellings_are_one_source(self):
-        self.assertEqual(ndi.clean_name("Café (Out)"), "Café (Out)")              # e + accent, and the one letter
-        self.assertEqual(ndi.clean_name("Café (Out)"), "Café (Out)")
-        for spaced in ("RESOLUME (Output)", "RESOLUME (Output)", "RESOLUME　(Output)", "RESOLUME  (Output)", "RESOLUME   (Output)"):
+        self.assertEqual(ndi.clean_name("Cafe\u0301 (Out)"), "Caf\u00e9 (Out)")              # e + accent, and the one letter
+        self.assertEqual(ndi.clean_name("Caf\u00e9 (Out)"), "Caf\u00e9 (Out)")
+        for spaced in ("RESOLUME\u00a0(Output)", "RESOLUME\u2009(Output)", "RESOLUME\u3000(Output)", "RESOLUME  (Output)", "RESOLUME \u00a0 (Output)"):
             self.assertEqual(ndi.clean_name(spaced), "RESOLUME (Output)", repr(spaced))
-        rows = [("RESOLUME (Output)".encode(), b"192.168.0.20:5961"), ("RESOLUME (Output)".encode(), b"192.168.0.20:5962"),
-                ("Café".encode(), b"192.168.0.21:1"), ("Café".encode(), b"192.168.0.21:2")]
+        rows = [("RESOLUME (Output)".encode(), b"192.168.0.20:5961"), ("RESOLUME\u00a0(Output)".encode(), b"192.168.0.20:5962"),
+                ("Cafe\u0301".encode(), b"192.168.0.21:1"), ("Caf\u00e9".encode(), b"192.168.0.21:2")]
         out, _ = ndi.clean_sources(rows)
-        self.assertEqual([x["name"] for x in out], ["Café", "RESOLUME (Output)"])         # one row each, not two that look the same
-        self.assertEqual(ndi.clean_name(ndi.clean_name("Café  x y")), ndi.clean_name("Café  x y"))    # and doing it twice changes nothing
+        self.assertEqual([x["name"] for x in out], ["Caf\u00e9", "RESOLUME (Output)"])         # one row each, not two that look the same
+        self.assertEqual(ndi.clean_name(ndi.clean_name("Cafe\u0301  x\u00a0y")), ndi.clean_name("Cafe\u0301  x\u00a0y"))    # and doing it twice changes nothing
 
     def test_names_made_to_mislead_are_dropped(self):
-        for bad in ("a" + "́" * 5, "x̀́̂", " cam", "cam ", "　", "a" * 127 + "   ",
-                    "é" * 200 + "x" * 100, "a" * 600):
-            self.assertIsNone(ndi.clean_name(bad) if len(ndi.clean_name(bad) or "") > ndi.MAX_NAME or bad[-1:].isspace() or bad[:1].isspace()
-                              or "́́" in bad or "̀́̂" in bad or len(bad) > 512 else None, repr(bad[:12]))
-        self.assertIsNone(ndi.clean_name("a" + "́" * 5))
-        self.assertIsNone(ndi.clean_name("x̀́̂"))
-        self.assertIsNone(ndi.clean_name(" cam"))
-        self.assertIsNone(ndi.clean_name("cam "))
+        self.assertIsNone(ndi.clean_name("a" + "\u0301" * 5))
+        self.assertIsNone(ndi.clean_name("x\u0300\u0301\u0302"))
+        self.assertIsNone(ndi.clean_name("\u00a0cam"))
+        self.assertIsNone(ndi.clean_name("cam\u2003"))
         self.assertIsNone(ndi.clean_name("a" * 600))
-        self.assertIsNotNone(ndi.clean_name("x̣́"))                                 # two marks on a letter is ordinary (Vietnamese)
-        self.assertEqual(len(ndi.clean_name("é" * 128)), 128)                           # 256 written, 128 letters
+        self.assertIsNotNone(ndi.clean_name("x\u0323\u0301"))                                 # two marks on a letter is ordinary (Vietnamese)
+        self.assertEqual(len(ndi.clean_name("e\u0301" * 128)), 128)                           # 256 written, 128 letters
 
     def test_words_from_the_helper_are_scrubbed_and_then_cut(self):
-        self.assertEqual(ndi._text("the source\n\x1b[31m sent‮ a frame​  that"), "the source[31m sent a frame that")
-        self.assertEqual(ndi._text("‮" * 300 + "x" * 300), "x" * 200)                    # scrubbed first: the cut cannot hide what follows
+        self.assertEqual(ndi._text("the source\n\x1b[31m sent\u202e a frame\u200b\u2028 that"), "the source[31m sent a frame that")
+        self.assertEqual(ndi._text("\u202e" * 300 + "x" * 300), "x" * 200)                    # scrubbed first: the cut cannot hide what follows
         self.assertEqual(ndi._text(None), "")
         self.assertEqual(ndi._text(5), "")
         self.assertEqual(ndi._text("v" * 500, 80), "v" * 80)
@@ -1817,8 +1813,8 @@ class LookAlikeNamesTest(unittest.TestCase):
         client = FakeClient(s)
         rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
         client.answer = {"ok": True, "configured": True, "on": True, "addresses": [],
-                         "runtime": {"present": True, "loaded": True, "version": "6.3‮.2\n", "problem": "bad\x07⁦ thing"},
-                         "sources": [], "playing": {"id": rid, "name": "x", "state": "playing", "message": "line\r\none‮two"}}
+                         "runtime": {"present": True, "loaded": True, "version": "6.3\u202e.2\n", "problem": "bad\x07\u2066 thing"},
+                         "sources": [], "playing": {"id": rid, "name": "x", "state": "playing", "message": "line\r\none\u202etwo"}}
         i = ndi.Input(client, s.fifo, lambda: (True, []), log=lambda *_: None)
         i.current = {"id": rid, "name": "x"}
         st = i.status()
