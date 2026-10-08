@@ -748,8 +748,9 @@ function startServer() {
     await onPage('Streams');
     await sysIndex();
     await chip('Streams', 'Set up');
-    // NDI input: off before; switched on in a harness that has neither the helper nor NDI's runtime, the page says so in
-    // plain words with the trademark sentence and the link NDI asks for, and its address form is on the same page:
+    // NDI input: off before; switched on in a harness that, like a box where nobody ran the opt-in command, has nothing of
+    // NDI set up: the page says so in plain words and names the one command, with the trademark sentence and the link NDI
+    // asks for, and its address form is on the same page:
     // a public address is refused under the button, a private one is added, and Remove asks first.
     // WRITTEN AND SYNTAX-CHECKED ONLY: this step had not been run when it was committed (no Playwright on the dev Mac).
     const NDI = 'NDI® input';
@@ -758,7 +759,10 @@ function startServer() {
     await sys(NDI);
     await switchOn(NDI);
     await page.waitForSelector('#ndiruntime');
-    assert(/The NDI helper \(pvj-ndi\) is not running on this box/.test(await page.textContent('#ndiruntime')), 'without the helper the page says so in plain words');
+    assert(/NDI is not set up on this box/.test(await page.textContent('#ndinotsetup')), 'a box that did not opt in says so in plain words');
+    assert(!/is not running/.test(await page.textContent('#ndiruntime')), 'and does not speak of a helper that stopped: there never was one');
+    assert.strictEqual(await page.textContent('#ndicommand'), 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"', 'the one command is named');
+    assert.strictEqual((await get('/api/ndi')).setup, false, 'the route says the same');
     assert((await page.textContent('#ndimark')).includes('NDI® is a registered trademark of Vizrt NDI AB.'), 'the trademark sentence is beside the list of sources');
     assert.deepStrictEqual(await page.$$eval('#ndimark a', (as) => as.map((a) => [a.getAttribute('href'), a.getAttribute('rel'), a.getAttribute('target')])),
       [['https://ndi.video/', 'noopener noreferrer', '_blank'], ['https://ndi.video/tools/', 'noopener noreferrer', '_blank']], 'the links NDI asks for, opened apart from the panel');
@@ -785,7 +789,7 @@ function startServer() {
     await page.waitForFunction(() => document.querySelectorAll('.ndiaddr-entry').length === 0);
     assert.strictEqual(await post('/api/play', { ndi: 'RESOLUME (Output)' }), 409, 'a name is never played, only an id');
     await sysIndex();
-    await chip(NDI, 'Problem');
+    await chip(NDI, 'Set up');
     await sys(NDI);
     await switchOff(NDI);
     assert(!(await moduleIsOn('inputs-ndi')), 'the NDI input is off again, as it is on a new box');

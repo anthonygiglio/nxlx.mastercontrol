@@ -83,7 +83,11 @@ WEB_UNIT="$ROOT/etc/systemd/system/pvj-web.service"
 NET_UNIT="$ROOT/etc/systemd/system/pvj-netd.service"
 SYS_UNIT="$ROOT/etc/systemd/system/pvj-sysd.service"
 SUP_UNIT="$ROOT/etc/systemd/system/pvj-supportd.service"
+# The NDI input is opt-in per box (D62): none of these three files exists unless root ran "pvj-ndi-runtime install"
+# at the box (pvj/ndisetup.py). The panel's drop-in is the mark of that; this installer never writes it.
 NDI_UNIT="$ROOT/etc/systemd/system/pvj-ndi.service"
+NDI_MARK="$ROOT/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf"
+NDI_PLAYER_DROPIN="$ROOT/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf"
 JOURNAL_CONF="$ROOT/etc/systemd/journald.conf.d/50-pvj-persistent-log.conf"
 UPD_USB_UNIT="$ROOT/etc/systemd/system/pvj-update-usb@.service"
 UPD_INBOX_UNIT="$ROOT/etc/systemd/system/pvj-update-inbox@.service"
@@ -103,7 +107,9 @@ uninstall() {
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 		systemctl disable --now pvj-ndi.service 2>/dev/null || true
 	fi
-	run rm -f "$NDI_UNIT" "$BIN_LINKS/pvj-ndi-runtime"
+	# A box that was set up for NDI: the mark first, then the rest; the two folders only if nothing else is in them.
+	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_UNIT" "$BIN_LINKS/pvj-ndi-runtime"
+	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
 	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
 	run rm -rf "${ROOT}${PREFIX:?}"
@@ -112,7 +118,7 @@ uninstall() {
 	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi"; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
-	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime) unless --purge; the users (pvj-web, pvj-ndi, the player's) and the groups pvj and pvj-ndi are left in place (remove them with deluser and delgroup if you want them gone)."
+	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place (remove them with deluser and delgroup if you want them gone)."
 }
 
 if [ "$UNINSTALL" = 1 ]; then uninstall; exit 0; fi
@@ -149,19 +155,7 @@ if [ ${#optional[@]} -gt 0 ]; then
 	fi
 fi
 
-# Optional: the NDI input finds senders through avahi-daemon, and the NDI runtime (which the owner supplies, see
-# pvj/NDI.md; it is never fetched here) needs the avahi client library to load at all.
-ndi_needs=()
-[ -x /usr/sbin/avahi-daemon ] || ndi_needs+=(avahi-daemon)
-ls /usr/lib/*/libavahi-client.so.3 /usr/lib/libavahi-client.so.3 >/dev/null 2>&1 || ndi_needs+=(libavahi-client3)
-if [ ${#ndi_needs[@]} -gt 0 ]; then
-	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
-		log "the NDI input will be unavailable until these are installed: ${ndi_needs[*]}"
-	else
-		log "installing ${ndi_needs[*]} (for the NDI input)"
-		run apt-get install -y --no-install-recommends "${ndi_needs[@]}" || log "could not install ${ndi_needs[*]}; the NDI input stays unavailable"
-	fi
-fi
+# Nothing is installed for the NDI input here, not avahi either: that is opt-in per box (pvj/ndisetup.py, D62).
 
 # --- accounts -----------------------------------------------------------
 if [ -z "$PVJ_USER" ] && [ -f "$ETC/install.json" ]; then
@@ -197,14 +191,6 @@ if [ "$REAL" = 1 ]; then
 	if ! id pvj-web >/dev/null 2>&1; then
 		log "creating system user pvj-web"
 		run useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj pvj-web
-	fi
-	# The NDI helper loads a closed-source library that reads the network: an account and a group of its own, and
-	# never group pvj (D62). The group must exist before the player and the panel start: their units name it as an
-	# extra group, and systemd refuses to start a unit that names a group the system does not have.
-	getent group pvj-ndi >/dev/null || run groupadd --system pvj-ndi
-	if ! id pvj-ndi >/dev/null 2>&1; then
-		log "creating system user pvj-ndi"
-		run useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj-ndi pvj-ndi
 	fi
 fi
 
@@ -293,7 +279,6 @@ if [ "$DRY" = 0 ]; then
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-netd.service" > "$NET_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sysd.service" > "$SYS_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-supportd.service" > "$SUP_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-ndi.service" > "$NDI_UNIT"
 	# Updates from the panel: started on request by pvj-sysd, never enabled.
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-usb@.service" > "$UPD_USB_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-inbox@.service" > "$UPD_INBOX_UNIT"
@@ -393,6 +378,19 @@ fix_run_folder() {
 	fi
 }
 if [ "$REAL" = 0 ] && [ "$DRY" = 0 ]; then prepare_run_folder; fix_run_folder; fi
+
+# The NDI helper, ONLY on a box that opted in (the mark is there): its unit and the two drop-ins are written again
+# by the program just installed, which is their one writer (pvj/ndisetup.py; it also makes sure the account and the
+# group are there, because the player and the panel name the group in their drop-ins and systemd does not start a
+# unit that names a group the system does not have). A box without the mark gets nothing: no unit, no account, no
+# package. If this fails the install goes on: the files of the earlier install are still there and still right.
+NDI_OPTED_IN=0
+if [ -f "$NDI_MARK" ] && [ ! -L "$NDI_MARK" ]; then
+	NDI_OPTED_IN=1
+	log "this box has NDI set up: writing the NDI helper's unit again"
+	# --root is empty on a real box and the staged folder with --stage (where no account is touched).
+	run python3 -B "$RELEASE/bin/pvj-ndi-runtime" refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the NDI helper's unit again; it stays as it was. To repair: sudo pvj-ndi-runtime install <the NDI SDK folder>"
+fi
 # USB automount: udev starts pvj-usb@<partition>.service, which mounts by label.
 run mkdir -p "$(dirname "$USB_RULE")"
 if [ "$DRY" = 0 ]; then
@@ -417,10 +415,16 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	else
 		log "NetworkManager not found: network settings in the panel stay unavailable"
 	fi
-	# The NDI helper is idle until the panel says its module is on, and says what is missing when the runtime is not
-	# there. Like the network helper it moves to the new program even with --no-start; try-restart starts nothing.
-	systemctl enable pvj-ndi.service
-	if [ "$START" = 1 ]; then systemctl restart pvj-ndi.service; else systemctl try-restart pvj-ndi.service || true; fi
+	# The NDI helper, only where the box opted in: an opted-in box stays opted in. Like the network helper it moves
+	# to the new program even with --no-start; try-restart starts nothing. It is idle until its module is on.
+	if [ "$NDI_OPTED_IN" = 1 ] && [ -f "$NDI_UNIT" ]; then
+		systemctl enable pvj-ndi.service || log "could not enable the NDI helper"
+		if [ "$START" = 1 ]; then
+			systemctl restart pvj-ndi.service || log "the NDI helper did not start; see: journalctl -u pvj-ndi -n 30"
+		else
+			systemctl try-restart pvj-ndi.service || true
+		fi
+	fi
 	# With --no-start: what was stopped above for the runtime folder is started again, and nothing else.
 	if [ "$START" = 0 ] && [ ${#RUN_WAS_ACTIVE[@]} -gt 0 ]; then systemctl start "${RUN_WAS_ACTIVE[@]}" || true; fi
 fi

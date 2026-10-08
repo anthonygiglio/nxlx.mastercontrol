@@ -1279,6 +1279,7 @@
     },
     ndi: function (d) {
       var p = d.playing;
+      if (d.setup === false) return st('setup', 'NDI is not set up on this box');
       if (!d.helper) return st('problem', 'The NDI helper is not running');
       if (!d.runtime.present) return st('setup', 'The NDI runtime is not on this box yet');
       if (d.runtime.problem) return st('problem', ndiSentence(d.runtime.problem));
@@ -2448,18 +2449,27 @@
         '. Its free tools for a computer: ', ndiLink('https://ndi.video/tools/', 'ndi.video/tools'), '.'));
     var addrCard = h('div', { class: 'card', id: 'ndiaddrcard' }, h('h2', { text: 'Addresses to ask' }),
       h('div', { class: 'hint', text: 'Senders are found by themselves on most networks. Where they are not (some Wi-Fi, a sender on another part of the network), add the sending computer\'s address here.' }), addrBody);
+    var LICENCE = 'NDI\'s licence may not cover a box like this one. Its free licence is for ordinary computers, and it names small devices built for one job, running Linux, among what it does not cover. Whoever owns this box must read the licence that comes with the NDI SDK and decide, and ask NDI if in doubt. This is not legal advice.';
     function notice(d) {
+      // A box where nobody ran the one command: there is no helper and nothing of NDI runs here. Said as that, with the command.
+      if (d.setup === false) return h('div', { class: 'hint warn', id: 'ndiruntime' },
+        h('div', { id: 'ndinotsetup', text: 'NDI is not set up on this box, so no source can be found or shown. Nothing of NDI is installed or running here until someone sets it up.' }),
+        h('div', { id: 'ndilicence', text: 'Before anyone does: ' + LICENCE }),
+        h('div', { text: 'NDI\'s own program is not part of nxlx.mastercontrol and cannot be added from a phone. Someone with a keyboard or SSH on the box does this once:' }),
+        h('div', {}, '1. Get the NDI SDK for Linux from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the box or a USB stick.'),
+        h('div', { text: '2. On the box, run this one command. It puts NDI\'s library in place, installs the NDI helper and restarts the panel and the player (the screen goes dark for a moment):' }),
+        h('div', { class: 'addr', id: 'ndicommand', text: d.install.command }),
+        h('div', { text: 'Then this page lists the senders. The address list below can be filled in meanwhile.' }));
       if (!d.helper) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: 'The NDI helper (pvj-ndi) is not running on this box, so no source can be found or shown. Restarting the box usually brings it back.' }));
       if (d.runtime.loaded && !d.runtime.problem) return null;
       if (d.runtime.present) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: ndiSentence(d.runtime.problem || 'the NDI runtime is on the box but has not been loaded yet') }));
       return h('div', { class: 'hint warn', id: 'ndiruntime' },
         h('div', { text: 'The NDI runtime is not on this box yet, so no source can be found or shown.' }),
-        h('div', { id: 'ndilicence', text: 'Before anyone installs it: NDI\'s licence may not cover a box like this one. Its free licence is for ordinary computers, and it names small devices built for one job, running Linux, among what it does not cover. Whoever owns this box must read the licence that comes with the NDI SDK and decide, and ask NDI if in doubt. This is not legal advice.' }),
+        h('div', { id: 'ndilicence', text: 'Before anyone installs it: ' + LICENCE }),
         h('div', { text: 'It is NDI\'s own program, it is not part of nxlx.mastercontrol, and it cannot be added from a phone. Someone with a keyboard or SSH on the box does this once:' }),
         h('div', {}, '1. Get the NDI SDK for Linux from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the box or a USB stick.'),
         h('div', { text: '2. On the box, run:' }),
         h('div', { class: 'addr', id: 'ndicommand', text: d.install.command }),
-        h('div', { class: 'addr', text: 'sudo systemctl restart pvj-ndi' }),
         h('div', { text: 'Then this page lists the senders. The address list below can be filled in meanwhile.' }));
     }
     function playLine(p) {
@@ -2540,7 +2550,7 @@
         }
         // Senders come and go, so the list is asked for every 2 seconds, but it is drawn again only when what it
         // shows changed: a button replaced between a finger going down and coming up loses the tap (D59).
-        var now = JSON.stringify([r.data.helper, r.data.ended, r.data.cut, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
+        var now = JSON.stringify([r.data.setup, r.data.helper, r.data.ended, r.data.cut, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
         if (now !== drawn && !ndiBusy) { drawn = now; drawSources(r.data); }
         if (first) drawAddresses(r.data);
         first = false;

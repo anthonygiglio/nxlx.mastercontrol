@@ -455,11 +455,14 @@ def build(env=None, player=None):
     from . import capture as capture_mod
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
     api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
-    from . import ndi as ndi_mod             # the NDI helper's client; the helper is idle until told the module is on
+    # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
+    # `pvj-ndi-runtime install` writes for the panel's unit (pvj/ndisetup.py). Without it this box has no helper, the
+    # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.
+    from . import ndi as ndi_mod
     ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
     api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
                             ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log,
-                            pipe_owner=ndi_mod.helper_uid)
+                            pipe_owner=ndi_mod.helper_uid, setup=bool(env.get("PVJ_NDI_DIR")))
     try:                                     # whatever the helper answers, the panel starts
         api.ndi.sync()
     except Exception as e:

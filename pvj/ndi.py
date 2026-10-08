@@ -10,9 +10,10 @@ Three parts, in one file so the bounds live in one place:
 
 * `pvj-ndi` (Service, Receiver, CtypesLibrary): a small daemon under its own account and sandbox. It is the only
   process that loads the library, so a library taken over by a bad packet has that account's reach and no more: no
-  player socket, no PIN, no settings, no internet (install/pvj-ndi.service).
+  player socket, no PIN, no settings, no internet (pvj/systemd/pvj-ndi.service).
 * the panel's side (Client, Input): asks the daemon over a Unix socket and tells the player to read the pipe.
-* `pvj-ndi-runtime` (runtime_main): root's command that copies the library into place after checking what it is.
+* `pvj-ndi-runtime` (runtime_main): root's command that sets NDI up on a box: it copies the library into place after
+  checking what it is, then installs the helper (pvj/ndisetup.py). Until it is run a box has no helper at all.
 
 Everything that comes from the network, through a closed-source library, is hostile until checked: source names
 (clean_name), where a source is (clean_sources), and every number of a frame (check_frame), each against a fixed
@@ -67,6 +68,9 @@ PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0
 # "waiting" is only said when the library itself reports the connection dropped.
 STATES = ("connecting", "ready", "playing", "still", "waiting", "changed", "refused", "stopped")
 ENDED = ("changed", "refused", "stopped")
+# The one command, run by root at the box, that sets NDI up (the library and the helper; pvj/ndisetup.py has the same words).
+SETUP_COMMAND = 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"'
+NOT_SET_UP = "NDI is not set up on this box; someone with a keyboard or SSH on the box runs: " + SETUP_COMMAND
 
 _ID = re.compile(r"[0-9a-f]{12}")
 _WHERE = re.compile(r"[A-Za-z0-9._:\[\]-]{1,%d}" % MAX_WHERE)
@@ -1031,8 +1035,11 @@ class Input:
 
     RETRY_SECONDS, RETRY_MAX = 3.0, 60.0   # between tries to show a source again: 3 s, then twice as long each time, to a minute
 
-    def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic, pipe_owner=os.getuid):
+    def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic, pipe_owner=os.getuid, setup=True):
         self.client, self.fifo, self._wanted, self.log, self._clock = client, fifo, wanted, log, clock
+        # False on a box where nobody ran the opt-in command (server.py): there is no helper and never was, so its
+        # socket is not even tried, and the page says how to set NDI up in place of "the helper is not running".
+        self.setup = setup
         self._pipe_owner = pipe_owner      # the uid the helper's pipe must belong to (server.py: the pvj-ndi account)
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = threading.RLock()      # open, load in the player and note, as one step (like the capture input)
@@ -1062,6 +1069,8 @@ class Input:
 
     def sync(self):
         """Tell the helper whether the module is on and which addresses to ask. Returns its status, or {"ok": False}."""
+        if not self.setup:
+            return {"ok": False}
         try:
             on, addresses = self._wanted()
             reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses}, timeout=10)
@@ -1076,7 +1085,7 @@ class Input:
     def status(self):
         """What the page shows. Every string and number from the helper is checked again here."""
         on, addresses = self._wanted()
-        st = self.client.status()
+        st = self.client.status() if self.setup else {"ok": False}
         if st.get("ok") and (st.get("configured") is not True or st.get("on") is not on or st.get("addresses") != list(addresses)):
             st = self.sync()
         helper = st.get("ok") is True or st.get("answered") is True
@@ -1088,10 +1097,10 @@ class Input:
                 name, where = clean_name(s.get("name")), s.get("from")
                 if name and isinstance(where, str) and _WHERE.fullmatch(where) and source_id(name, host_of(where)) == s["id"]:
                     sources.append({"id": s["id"], "name": name, "from": where})
-        return {"helper": helper, "notice": "; ".join(notice),
+        return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice),
                 "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
                             "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
-                "install": {"command": "sudo pvj-ndi-runtime install \"/path/to/NDI SDK for Linux\"", "folder": LIB_DIR,
+                "install": {"command": SETUP_COMMAND, "folder": LIB_DIR,
                             "get": "https://ndi.video/"},
                 "sources": sources, "cut": st.get("cut") is True, "max_sources": MAX_SOURCES,
                 "addresses": list(addresses), "max_addresses": MAX_ADDRESSES,
@@ -1102,6 +1111,8 @@ class Input:
         """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps"} or NdiError."""
         if not isinstance(sid, str) or not _ID.fullmatch(sid):
             raise NdiError("no such source")
+        if not self.setup:
+            raise NdiError(NOT_SET_UP)
         reply = self.client.request({"cmd": "open", "id": sid}, timeout=FIRST_FRAME_SECONDS + 8)
         if reply.get("ok") is not True:
             raise NdiError(_text(reply.get("error")) or "the source could not be opened")
@@ -1247,34 +1258,56 @@ def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
                 pass
 
 
-def runtime_main(argv=None, out=sys.stdout):
+def runtime_main(argv=None, out=sys.stdout, setup=None):
+    """`pvj-ndi-runtime`: root's one command that opts a box in to NDI (the library, then the helper: pvj/ndisetup.py),
+    and the one that opts it out again."""
+    if setup is None:
+        from . import ndisetup as setup
     argv = sys.argv[1:] if argv is None else argv
     dest = os.path.join(LIB_DIR, LIB_NAME)
     usage = ("usage: pvj-ndi-runtime install <the unpacked NDI SDK folder, or libndi.so.6> | status | remove\n"
+             "install: sets NDI up on this box. It copies NDI's library into place, then installs and starts the NDI\n"
+             "  helper (the service pvj-ndi with an account of its own; avahi-daemon if it is missing) and restarts the\n"
+             "  panel and the player. Until it has been run, a box has nothing of NDI on it and nothing of it runs.\n"
+             "remove: takes the helper and the library off again.\n"
              "The NDI runtime is proprietary. Get the NDI SDK for Linux from https://ndi.video/ and read its licence\n"
              "BEFORE installing: NDI's free licence may not cover a box like this one (it names embedded devices\n"
              "running Linux among what it does not cover). The owner of the box decides. This is not legal advice.\n"
              "NDI(R) is a registered trademark of Vizrt NDI AB.")
+    if argv and argv[0] == "refresh":      # the installer's call for a box that opted in; never sets a box up
+        return setup.refresh_main(argv[1:], out)
     if len(argv) == 1 and argv[0] == "status":
         print(runtime_problem(dest) or "the NDI runtime is in place: %s" % dest, file=out)
+        print("NDI is set up on this box (the helper pvj-ndi is installed)" if setup.opted_in()
+              else "NDI is not set up on this box; to set it up: %s" % setup.COMMAND, file=out)
         return 0
     if os.geteuid() != 0 and argv and argv[0] in ("install", "remove"):
         print("pvj-ndi-runtime: run it with sudo", file=out)
         return 1
+    say = lambda m: print("pvj-ndi-runtime: %s" % m, file=out)      # noqa: E731
     if len(argv) == 2 and argv[0] == "install":
-        try:
-            print("installed %s; the NDI helper picks it up when it next starts (sudo systemctl restart pvj-ndi)"
-                  % install_runtime(argv[1]), file=out)
+        try:                               # the library first: a file that is refused leaves the box as it was
+            print("installed %s" % install_runtime(argv[1]), file=out)
+            setup.enable(say=say)
             return 0
-        except (NdiError, OSError) as e:
+        except (NdiError, setup.SetupError, OSError) as e:
             print("pvj-ndi-runtime: %s" % e, file=out)
             return 1
     if len(argv) == 1 and argv[0] == "remove":
         try:
-            os.unlink(dest)
-        except FileNotFoundError:
-            pass
-        print("removed; restart the helper to let go of a copy it has loaded (sudo systemctl restart pvj-ndi)", file=out)
+            setup.disable(say=say)
+            try:
+                os.unlink(dest)
+            except FileNotFoundError:
+                pass
+            try:
+                os.rmdir(LIB_DIR)          # only when nothing else is in it
+            except OSError:
+                pass
+        except (setup.SetupError, OSError) as e:
+            print("pvj-ndi-runtime: %s" % e, file=out)
+            return 1
+        print("removed NDI's library (%s)" % dest, file=out)
         return 0
     print(usage, file=out)
     return 2

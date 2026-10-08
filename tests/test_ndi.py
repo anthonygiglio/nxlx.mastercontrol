@@ -1832,7 +1832,8 @@ class SourceIsPlainTextTest(unittest.TestCase):
         # Escapes for a bidirectional override and a zero-width space once landed in this file as the characters.
         here = os.path.dirname(os.path.abspath(__file__))
         for path in (os.path.join(here, "test_ndi.py"), os.path.join(here, "..", "pvj", "ndi.py"),
-                     os.path.join(here, "..", "install", "pvj-ndi.service"), os.path.join(here, "..", "bin", "pvj-ndi-runtime")):
+                     os.path.join(here, "..", "pvj", "systemd", "pvj-ndi.service"), os.path.join(here, "..", "bin", "pvj-ndi-runtime"),
+                     os.path.join(here, "..", "pvj", "ndisetup.py"), os.path.join(here, "test_ndi_setup.py")):
             with open(path, encoding="utf-8") as f:
                 odd = sorted({"U+%04X" % ord(ch) for ch in f.read() if ord(ch) > 126 or (ord(ch) < 32 and ch not in "\n\t")})
             self.assertEqual(odd, [], path)

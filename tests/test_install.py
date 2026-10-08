@@ -277,6 +277,116 @@ class InstallTest(unittest.TestCase):
         install(self.src, self.stage, "--uninstall", "--purge")
         self.assertFalse(os.path.exists(self.p("etc/pvj")))
 
+    # ---- the NDI input is opt-in per box (D62, the owner's answer of 2026-10-08) ----
+    NDI_FILES = ("etc/systemd/system/pvj-ndi.service", "etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf",
+                 "etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf")
+
+    def ndi_names(self):
+        """Every name under the staged root that has to do with NDI, apart from the program's own files."""
+        found = []
+        for d, dirs, names in os.walk(self.stage):
+            for n in dirs + names:
+                path = os.path.relpath(os.path.join(d, n), self.stage)
+                if "ndi" in n.lower() and not path.startswith("opt/pvj/releases/"):
+                    found.append(path)
+        return sorted(found)
+
+    def opt_in(self):
+        """What root's `pvj-ndi-runtime install` leaves in /etc, written by the same code (pvj/ndisetup.py)."""
+        import sys
+        sys.path.insert(0, REPO)
+        from pvj import ndisetup
+        ndisetup.write_units(self.stage, "/opt/pvj")
+
+    def test_a_plain_install_leaves_nothing_of_ndi_but_the_program_and_its_command(self):
+        for extra in ((), ("--offline",), ("--no-start",)):
+            stage = self.stage = tempfile.mkdtemp()
+            r = install(self.src, stage, *extra)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            # the one command a person runs to opt in is there; nothing else is
+            self.assertEqual(self.ndi_names(), ["usr/local/bin/pvj-ndi-runtime"], extra)
+            self.assertEqual(os.readlink(self.p("usr/local/bin/pvj-ndi-runtime")), "/opt/pvj/current/bin/pvj-ndi-runtime")
+            for path in self.NDI_FILES:
+                self.assertFalse(os.path.lexists(self.p(path)), path)
+            for name in ("pvj-web.service", "pvj-player.service"):
+                unit = self.read(self.p("etc/systemd/system/" + name))
+                self.assertNotIn("pvj-ndi", unit, name)                   # a group that does not exist would keep the unit from starting
+                self.assertNotIn("PVJ_NDI", unit, name)
+            self.assertFalse(os.path.exists(self.p("opt/pvj-ndi")))
+            self.assertNotRegex(r.stdout + r.stderr, r"(?i)avahi|\bndi\b", extra)      # it asks for no package and says nothing of NDI
+        # a second run over it: still nothing
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.assertEqual(self.ndi_names(), ["usr/local/bin/pvj-ndi-runtime"])
+
+    def test_the_units_of_the_panel_and_the_player_are_what_they_are_without_ndi(self):
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.assertRegex(self.read(self.p("etc/systemd/system/pvj-web.service")), r"(?m)^SupplementaryGroups=audio video$")
+        self.assertRegex(self.read(self.p("etc/systemd/system/pvj-player.service")), r"(?m)^SupplementaryGroups=video render audio input$")
+
+    def test_a_box_that_opted_in_stays_opted_in_and_gets_the_unit_of_the_new_version(self):
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.opt_in()
+        with open(self.p(self.NDI_FILES[0]), "w") as f:
+            f.write("[Service]\nExecStart=/opt/pvj/current/bin/pvj-ndi --from-an-older-version\n")
+        os.unlink(self.p(self.NDI_FILES[2]))                              # and one of its files went missing
+        r = install(copy_source("9.9.2"), self.stage, "--no-start")       # an update, as the panel's update runs it
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("this box has NDI set up", r.stdout)
+        self.assertNotIn("could not write the NDI helper's unit", r.stdout)
+        unit = self.read(self.p(self.NDI_FILES[0]))
+        self.assertNotIn("--from-an-older-version", unit)
+        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-ndi\n", unit)
+        self.assertNotIn("@PVJ", unit)
+        self.assertIn("User=pvj-ndi\n", unit)
+        self.assertIn("IPAddressDeny=any\n", unit)
+        with open(os.path.join(REPO, "pvj", "systemd", "pvj-ndi.service")) as f:
+            self.assertEqual(unit, f.read().replace("@PVJ_DIR@", "/opt/pvj/current"))
+        self.assertIn("SupplementaryGroups=pvj-ndi\n", self.read(self.p(self.NDI_FILES[1])))
+        self.assertIn("Environment=PVJ_NDI_DIR=/run/pvj-ndi\n", self.read(self.p(self.NDI_FILES[1])))
+        self.assertIn("SupplementaryGroups=pvj-ndi\n", self.read(self.p(self.NDI_FILES[2])))
+        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.2")
+        self.assertFalse([n for n in os.listdir(self.p("opt/pvj/releases/9.9.2/pvj")) if n == "__pycache__"])     # root's run left no compiled files
+        # the installer's own units still do not name the group: only the drop-ins do
+        self.assertNotIn("pvj-ndi", self.read(self.p("etc/systemd/system/pvj-web.service")))
+
+    def test_another_install_folder_reaches_the_helpers_unit_too(self):
+        self.assertEqual(install(self.src, self.stage, "--prefix", "/srv/box/pvj").returncode, 0)
+        self.opt_in()
+        self.assertEqual(install(self.src, self.stage, "--prefix", "/srv/box/pvj").returncode, 0)
+        self.assertIn("ExecStart=/srv/box/pvj/current/bin/pvj-ndi\n", self.read(self.p(self.NDI_FILES[0])))
+
+    def test_a_mark_that_is_a_link_is_not_an_opt_in(self):
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        os.makedirs(self.p("etc/systemd/system/pvj-web.service.d"))
+        os.symlink("/etc/passwd", self.p(self.NDI_FILES[1]))
+        r = install(self.src, self.stage)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("NDI", r.stdout)
+        self.assertFalse(os.path.exists(self.p(self.NDI_FILES[0])))
+
+    def test_uninstall_takes_the_helper_and_leaves_the_owners_library_unless_purged(self):
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.opt_in()
+        os.makedirs(self.p("opt/pvj-ndi"))
+        with open(self.p("opt/pvj-ndi/libndi.so.6"), "w") as f:
+            f.write("the owner's copy")
+        other = self.p("etc/systemd/system/pvj-web.service.d/90-owner.conf")
+        with open(other, "w") as f:
+            f.write("[Service]\n")
+        r = install(self.src, self.stage, "--uninstall")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        for path in self.NDI_FILES + ("usr/local/bin/pvj-ndi-runtime", "etc/systemd/system/pvj-player.service.d"):
+            self.assertFalse(os.path.lexists(self.p(path)), path)
+        self.assertTrue(os.path.exists(other))                            # somebody else's drop-in and its folder stay
+        self.assertTrue(os.path.exists(self.p("opt/pvj-ndi/libndi.so.6")))
+        # installed again afterwards, the box has not opted in
+        os.unlink(other)
+        os.rmdir(os.path.dirname(other))
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.assertEqual(self.ndi_names(), ["opt/pvj-ndi", "opt/pvj-ndi/libndi.so.6", "usr/local/bin/pvj-ndi-runtime"])
+        self.assertEqual(install(self.src, self.stage, "--uninstall", "--purge").returncode, 0)
+        self.assertFalse(os.path.exists(self.p("opt/pvj-ndi")))
+
     def test_rejects_bad_input(self):
         for bad in (["--prefix", "relative"], ["--media", "/tmp/a b"], ["--prefix", "/opt/x;reboot"],
                     ["--web-user", "Bad User"], ["--bogus"],

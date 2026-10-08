@@ -1,5 +1,8 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
+# NOT written by the installer. The NDI input is opt-in per box (D62): this unit reaches /etc/systemd/system only
+# when root runs "pvj-ndi-runtime install" at the box (pvj/ndisetup.py), and an install or update after that writes
+# it again. It lives beside the program, not in install/, so that the command finds it on a box that has no source.
 [Unit]
 Description=nxlx.mastercontrol NDI input helper (unprivileged, loads the owner's copy of the NDI runtime)
 # The NDI runtime finds senders through avahi-daemon. Without it the helper still runs and says what is missing.

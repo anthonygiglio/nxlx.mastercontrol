@@ -13,9 +13,8 @@ StartLimitIntervalSec=0
 # The device policy below cannot tell a MIDI node from the other ALSA nodes (see D53).
 User=pvj-web
 Group=pvj
-# audio: USB MIDI controllers; video: live input from a USB capture device (read by a helper this service starts);
-# pvj-ndi: the NDI helper's socket (D62)
-SupplementaryGroups=audio video pvj-ndi
+# audio: USB MIDI controllers; video: live input from a USB capture device (read by a helper this service starts)
+SupplementaryGroups=audio video
 UMask=0007
 # Its own folder: the PIN, the live-input pipe, and the overlay, shader and mapping files it hands to the player
 # (which reads them through group "pvj" and cannot change them). No other unit may name this folder (D45).
@@ -28,7 +27,6 @@ RuntimeDirectoryPreserve=yes
 Environment=PVJ_RUNTIME_DIR=/run/pvj/web
 Environment=PVJ_PLAYER_DIR=/run/pvj/player
 Environment=PVJ_NETD_DIR=/run/pvj/netd
-Environment=PVJ_NDI_DIR=/run/pvj-ndi
 Environment=PVJ_STATE_DIR=/var/lib/pvj
 Environment=PVJ_BIND=0.0.0.0
 Environment=PVJ_PORT=80

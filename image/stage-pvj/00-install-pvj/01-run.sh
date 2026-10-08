@@ -10,7 +10,7 @@ cp -a files/pvj-src/. "${ROOTFS_DIR}/tmp/pvj-src/"
 
 on_chroot << 'CHROOT'
 /tmp/pvj-src/install/install.sh --offline --no-start
-systemctl enable pvj-player.service pvj-web.service pvj-netd.service pvj-sysd.service pvj-supportd.service pvj-ndi.service
+systemctl enable pvj-player.service pvj-web.service pvj-netd.service pvj-sysd.service pvj-supportd.service
 CHROOT
 
 rm -rf "${ROOTFS_DIR}/tmp/pvj-src"
