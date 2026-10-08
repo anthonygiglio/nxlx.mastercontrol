@@ -4038,8 +4038,7 @@
     return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
       confirmRow: confirmRow, switchFeature: shaderCtx().switchFeature, poll: poll,
       openShaders: function () { openSys('vibes', S.tab === 'system' ? null : S.tab); },
-      openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null,
-      openRoomSetup: can('full') ? function () { openSys('room', S.tab === 'system' ? null : S.tab); } : null };
+      openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
   }
   function stopTimers() {
     [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
