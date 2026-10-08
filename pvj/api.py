@@ -162,6 +162,7 @@ class Api:
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D61)
+        self._ndi_loading = threading.local()     # .on while this thread loads the NDI pipe itself
         self._import = {}         # the USB copy running or last run
         self._import_lock = threading.Lock()
         self._care_busy = None    # "an import" or "a factory reset" while boxcare runs one (set and read under _import_lock)
@@ -263,7 +264,13 @@ class Api:
             names = []
         return names
 
+    PLAYER_LOADS = ("play", "play_pipe", "clear")
+
     def _player_call(self, fn, *args):
+        # Whatever loads or clears the player first makes a still-connecting NDI source worthless, and waits while
+        # an NDI play is in the middle of loading its pipe (ndi.Input.screen), so the later choice always stays.
+        if self.ndi is not None and getattr(fn, "__name__", "") in self.PLAYER_LOADS and not getattr(self._ndi_loading, "on", False):
+            self.ndi.cancel()
         try:
             return fn(*args)
         except PlayerError as e:
@@ -1930,21 +1937,30 @@ class Api:
                 p = self.ndi.open(sid)
             except ndi_mod.NdiError as e:
                 raise ApiError(409, str(e))
-            # Connecting takes seconds. If anything was played or stopped meanwhile (every such path calls
-            # _stop_ndi), that later choice stands: the source is let go and the screen is not touched.
-            if not self.ndi.still(ticket) or (again is not None and self.ndi.current is not again):
+            # Connecting takes seconds. If anything was played, cleared or stopped meanwhile (_player_call and
+            # stop() both cancel), that later choice stands: the source is let go and the screen is not touched.
+            # The check and the loading are one step under ndi.screen, so nothing can come between them.
+            failed = None
+            with self.ndi.screen:
+                good = self.ndi.still(ticket) and (again is None or self.ndi.current is again)
+                if good:
+                    self.fader.cancel()
+                    self.ndi.current = {"id": p["id"], "name": p["name"]}
+                    self._ndi_loading.on = True
+                    try:
+                        self._player_call(self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"], "uyvy422")
+                    except ApiError as e:
+                        failed = e
+                    finally:
+                        self._ndi_loading.on = False
+            if failed is not None:
+                self.ndi.stop()
+                raise failed
+            if not good:
                 self.ndi.client_close()
                 if again is not None:
                     return {"playing": None}
                 raise ApiError(409, "something else was played while the source was connecting")
-            self.fader.cancel()
-            entry = {"id": p["id"], "name": p["name"]}
-            self.ndi.current = entry
-            try:
-                self._player_call(self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"], "uyvy422")
-            except ApiError:
-                self.ndi.stop()
-                raise
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing(ndi=True)
         return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"]}

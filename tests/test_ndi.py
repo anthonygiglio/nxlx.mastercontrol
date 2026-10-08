@@ -1403,5 +1403,69 @@ class LostConnectionTest(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.5)
 
 
+class LaterChoiceWinsTest(NdiApiTest):
+    """Review finding 8: between "nothing else was played" and loading the pipe there was a gap a clip could fall
+    into. The order is forced here: the pipe is being loaded when the clip is played."""
+
+    def test_a_clip_played_while_the_pipe_is_being_loaded_waits_and_then_has_the_screen(self):
+        self.enable()
+        order, loading, go = [], threading.Event(), threading.Event()
+
+        def play_pipe(*args):
+            order.append("pipe starts")
+            loading.set()
+            go.wait(5)
+            order.append("pipe loaded")
+        real_play = self.player.play
+
+        def play(paths, *a, **kw):
+            order.append("clip loaded")
+            return real_play(paths, *a, **kw)
+        play.__name__ = "play"
+        self.player.play_pipe, self.player.play = play_pipe, play
+        self.lib.frames.put(frame(64, 16))
+        out = []
+        ndi_play = threading.Thread(target=lambda: out.append(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)))
+        ndi_play.start()
+        self.assertTrue(loading.wait(5))
+        clip = threading.Thread(target=lambda: out.append(self.call("POST", "/api/play", {"file": "a.mp4"}, token=self.full)))
+        clip.start()
+        time.sleep(0.3)                                                  # the clip's request is in; it must be waiting
+        self.assertEqual(order, ["pipe starts"])
+        go.set()
+        ndi_play.join(5)
+        clip.join(5)
+        self.assertEqual(order, ["pipe starts", "pipe loaded", "clip loaded"])       # one after the other, the later one last
+        self.assertEqual(sorted(o[0] for o in out), [200, 200])
+        self.assertTrue(wait(lambda: self.api.ndi.current is None and self.service.receiver is None))
+        self.assertEqual(self.lib.closed, 1)                             # and the source was let go
+
+    def test_everything_that_loads_or_clears_the_player_cancels_a_source_still_connecting(self):
+        self.enable()
+        def clear():
+            return None
+
+        def play_pipe(*args):
+            return None
+        for fn, args in ((self.player.play, ([os.path.join(self.media, "a.mp4")],)), (clear, ()), (play_pipe, ("/x", 16, 16, 30))):
+            t = self.api.ndi.ticket()
+            self.api._player_call(fn, *args)
+            self.assertFalse(self.api.ndi.still(t), fn.__name__)
+        from pvj.player import Player
+        for name in self.api.PLAYER_LOADS:                               # the names are the real player's
+            self.assertEqual(getattr(Player, name).__name__, name)
+        t = self.api.ndi.ticket()
+        self.api._player_call(self.player.status)                        # a question is not a load
+        self.assertTrue(self.api.ndi.still(t))
+        self.assertEqual(self.api.PLAYER_LOADS, ("play", "play_pipe", "clear"))
+        t = self.api.ndi.ticket()
+        self.api.ndi.stop()                                              # and so does a stop, with nothing playing
+        self.assertFalse(self.api.ndi.still(t))
+
+
+for _name in [n for n in dir(NdiApiTest) if n.startswith("test_") and n not in LaterChoiceWinsTest.__dict__]:
+    setattr(LaterChoiceWinsTest, _name, None)                            # the set-up is shared, the tests are not run twice
+
+
 if __name__ == "__main__":
     unittest.main()

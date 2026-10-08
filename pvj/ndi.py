@@ -951,18 +951,27 @@ class Input:
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = threading.RLock()      # open, load in the player and note, as one step (like the capture input)
         self._retry_at = 0.0
-        self._ticket, self._ticket_lock = 0, threading.Lock()
+        self._ticket = 0
+        # Held by whoever is deciding what the screen shows next, for as long as the deciding and the loading take:
+        # the NDI play holds it from "is my ticket still good" to the end of loading the pipe, and everything else
+        # that loads or clears the player goes through cancel() first, which waits for it. So the two can only
+        # happen one after the other, and the later one is the one that stays on the screen.
+        self.screen = threading.RLock()
 
     def ticket(self):
         """Taken before a source is opened (which can take seconds). `still(ticket)` afterwards says whether
-        nothing else was played or stopped meanwhile: stop() makes every ticket taken before it worthless."""
-        with self._ticket_lock:
+        nothing else was played or stopped meanwhile: cancel() makes every ticket taken before it worthless."""
+        with self.screen:
             self._ticket += 1
             return self._ticket
 
     def still(self, ticket):
-        with self._ticket_lock:
+        with self.screen:
             return self._ticket == ticket
+
+    def cancel(self):
+        """Something else is about to be loaded or the screen cleared: a source still connecting is not wanted."""
+        self.ticket()
 
     def sync(self):
         """Tell the helper whether the module is on and which addresses to ask. Returns its status, or {"ok": False}."""
@@ -1023,8 +1032,8 @@ class Input:
     def stop(self):
         """Nothing of NDI is on the screen any more: have the helper let go of the source. `current` is cleared
         first and without the lock, so a source being shown again (tick) sees at once that it is no longer wanted."""
+        self.cancel()                      # a source still connecting for an earlier play is no longer wanted either
         had, self.current = self.current, None
-        self.ticket()                      # a source still connecting for an earlier play is no longer wanted either
         if had:
             self.client_close()
         return bool(had)
