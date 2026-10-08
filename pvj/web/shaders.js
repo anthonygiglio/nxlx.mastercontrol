@@ -383,6 +383,7 @@
   // The strip: Speed and the first four controls of the shader that is on, so a performer need not leave Live.
   function liveStrip(c) {
     if (!c.moduleOn('shaders') || !c.can('live')) return null;
+    L.shader = null; L.at = 0; L.shape = '';       // a new, empty strip (it is on Shape > Controls, the Vibes row on Play > Pads: either may be built without the other)
     return c.h('div', { class: 'card liveside', id: 'liveshader', hidden: true });
   }
   function drawLive(c, d, box) {
@@ -397,6 +398,7 @@
       pick.hidden = d.sets.length < 2;
       if (document.activeElement !== pick) pick.value = (d.vibes.running && d.vibes.set && d.vibes.set.id) || (startSet(d) || activeSet(d) || {}).id || '';
     }
+    if (!box) return;                      // the Vibes row alone (Play > Pads): the set chooser above is all there is to draw
     var s = d.playing && d.shaders.filter(function (x) { return x.id === d.playing.id; })[0];
     box.hidden = !s;
     if (box.parentNode) box.parentNode.classList.toggle('has-side', !!s);
@@ -427,27 +429,31 @@
   function patch(c, pl, np) {
     if (np && typeof pl.shader === 'string') np.textContent = (pl.vibes ? 'Vibes: ' : 'Shader: ') + (nice(pl.shader) || 'starting');
     var b = document.getElementById('vibes'), w = document.getElementById('vibeswords'), s = document.getElementById('vibessub');
-    if (!b || !w || !s) return;
-    w.textContent = words(pl);
-    s.textContent = sub(pl);
-    b.className = 'btn big vibesbig' + (pl.vibes ? ' on' : '');
-    b.setAttribute('aria-pressed', pl.vibes ? 'true' : 'false');
     var on = typeof pl.shader === 'string';
-    ['liveprev', 'vibesskip'].forEach(function (id) { var el = document.getElementById(id); if (el) el.hidden = !on; });
+    if (b && w && s) {
+      w.textContent = words(pl);
+      s.textContent = sub(pl);
+      b.className = 'btn big vibesbig' + (pl.vibes ? ' on' : '');
+      b.setAttribute('aria-pressed', pl.vibes ? 'true' : 'false');
+      ['liveprev', 'vibesskip'].forEach(function (id) { var el = document.getElementById(id); if (el) el.hidden = !on; });
+    }
+    // The strip (Shape > Controls) and the set chooser of the Vibes row (Play > Pads) are on two screens since the
+    // Workspace shell (D65): whichever is on the page is drawn.
     var box = document.getElementById('liveshader');
-    if (!box || L.busy) return;
+    if ((!box && !document.getElementById('liveset')) || L.busy) return;
     // The strip and the set chooser need the shader list: asked for when the shader changes, and every few seconds
     // while one is on (its values may be moved from elsewhere).
     var name = on ? pl.shader : null;
     // Live was drawn again (another bank, a tab and back): the strip comes back from what is known, without a gap
-    if (!L.shape && L.data && L.data.playing && L.data.playing.name === name) { drawLive(c, L.data, box); L.shader = name; }
+    if (box && !L.shape && L.data && L.data.playing && L.data.playing.name === name) { drawLive(c, L.data, box); L.shader = name; }
     if (name === L.shader && (Date.now() - L.at < (on ? 4000 : 20000))) return;
     L.busy = true;
     c.api('GET', '/api/shaders').then(function (r) {
       L.busy = false; L.at = Date.now(); L.shader = name;
-      if (!r.ok || !box.isConnected) return;
+      if (!r.ok || (box && !box.isConnected)) return;
       L.data = loaded(r.data) ? r.data : null;
       if (L.data) return drawLive(c, r.data, box);
+      if (!box) return;
       box.hidden = true;                    // the module is off: no strip, and nothing kept to draw it from
       if (box.parentNode) box.parentNode.classList.remove('has-side');
       L.shape = ''; L.ctls = [];

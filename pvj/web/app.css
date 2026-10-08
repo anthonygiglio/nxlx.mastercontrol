@@ -73,7 +73,8 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .picker { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: flex-end; justify-content: center; z-index: 20; }
 .picker .sheet { background: var(--bg); border: 1.5px solid var(--ln); border-radius: 12px 12px 0 0; width: 100%; max-width: 600px; max-height: 80dvh; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 
-@media (min-width: 900px) {
+@media (min-width: 900px) { .shell:not(.wsp) > .screen { padding: 24px 28px; } }      /* before pairing */
+@container ws (min-width: 900px) {
   .screen { padding: 24px 28px; }
   .pads { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
@@ -163,7 +164,7 @@ button.linkish { background: none; border: 0; padding: 4px 0; color: inherit; fo
 .hint { font-size: 13px; line-height: 1.4; color: var(--mu); margin: 0; overflow-wrap: anywhere; }
 .navgroup { padding: 4px 12px; gap: 0; }
 .syspage .grid2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
-@media (min-width: 900px) { .syspage .grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container ws (min-width: 900px) { .syspage .grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .card .navhead { font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); padding: 10px 0 6px; }
 .navrow {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; align-items: center; align-content: center;
@@ -213,16 +214,12 @@ details.fold { display: block; }
 #roomambnext, #roomambset { flex: 1 1 0; min-width: 0; min-height: 56px; }
 .room-amb .row .btn { min-height: 44px; }
 .liveside h2 { font-size: 20px; overflow-wrap: anywhere; min-width: 0; }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   .vibesbig { flex: 1 1 0; }
   #shaderslink, #vibesskip, #liveprev { flex: none; }
   #liveset { flex: 0 1 14rem; }
   #roomambnext { flex: none; }
   #roomambset { flex: 0 1 14rem; }
-  .shell:has(.livecols.has-side) { max-width: 1500px; }
-  .livecols.has-side { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
-  .livecols.has-side > * { grid-column: 1; }
-  .livecols.has-side > .liveside { grid-column: 2; grid-row: 1 / span 12; position: sticky; top: 12px; }
 }
 /* The Shaders page: an instrument. Three groups of cards: the stage (now, controls, presets), the library, and the
    side (Vibes and its sets, controllers). A phone stacks them in that order. */
@@ -315,8 +312,7 @@ div.ctl.compact { padding: 4px 0; }
 /* A laptop: the library is a column of its own that scrolls by itself, so what is playing and its controls stay in
    view. Two columns from 900 px (the library, and the stage with the side under it), three from 1200 px; the page may
    use the whole window. */
-@media (min-width: 900px) {
-  .shell:has(#shaderpage) { max-width: 1600px; }
+@container ws (min-width: 900px) {
   .syspage .shaderpage { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
   .col-lib { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 12px; }
   .col-stage { grid-column: 2; grid-row: 1; }
@@ -329,13 +325,13 @@ div.ctl.compact { padding: 4px 0; }
   .syspage[data-page="vibes"] #sysblurb, .syspage[data-page="vibes"] #sysstate { display: none !important; }
   .midirow .keyshint { flex: 1 1 12rem; }
 }
-@media (min-width: 1200px) {
+@container ws (min-width: 1100px) {
   .syspage .shaderpage { grid-template-columns: minmax(0, 4fr) minmax(0, 5fr) minmax(0, 4fr); }
   .col-lib { grid-row: 1; }
   .col-side { grid-column: 3; grid-row: 1; }
 }
 /* A presenter and a guest have no third column: the stage takes its room */
-@media (min-width: 1200px) {
+@container ws (min-width: 1100px) {
   .syspage .shaderpage:not(:has(.col-side > .shaderslot:not([hidden]))) { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); }
 }
 .msg.inmsg:empty { min-height: 0; }
@@ -365,7 +361,7 @@ div.ctl.compact { padding: 4px 0; }
 .fxrow .chip { margin-left: 8px; }
 .fxrow .fxdesc, .fxrow .msg { display: block; }
 .fxrow .btn { min-width: 5.5rem; }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   .fxgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
   .fxlib .list { max-height: 70vh; overflow-y: auto; padding-right: 6px; }
 }
@@ -394,7 +390,7 @@ div.ctl.compact { padding: 4px 0; }
 .room-result.err { color: var(--ac); font-weight: 600; }
 .room-state.state-on { background: var(--ac); border-color: var(--ac); color: var(--on); }
 .room-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   .room-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
   .room-scenes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
@@ -446,7 +442,7 @@ table.chan .lvl { width: 36%; }
 .split { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .split > * { min-width: 0; }
 .proj-below { padding-top: 4px; }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   .split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 28px; align-items: start; }
   .split.alone { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
   .split > .splitlist { max-height: calc(100dvh - 300px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
@@ -455,8 +451,8 @@ table.chan .lvl { width: 36%; }
 }
 .sched-entry.editing { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
 .split.even { }
-@media (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@container ws (min-width: 900px) {
   #devicelist, #midimaplist { max-height: calc(100dvh - 420px); min-height: 180px; overflow-y: auto; padding-right: 8px; }
   /* People and codes on a laptop, in every look: "Let someone in" and under it "A code from a controller" in the
      left column, the paired devices alone in the right one beside both. Without this the page's two-column grid
@@ -482,7 +478,7 @@ table.chan .lvl { width: 36%; }
 .lt-name { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 14px; font-weight: 600; }
 .lt-label { overflow-wrap: anywhere; min-width: 0; }
 .lt-mine, .lt-inuse { font-size: 13px; font-weight: 400; color: var(--mu); }
-@media (min-width: 900px) { #lookthemes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
+@container ws (min-width: 900px) { #lookthemes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
 
 /* ---- The resizing study, step 1 (D64): repairs to today's layout where the width sweep of the browser test
    (tests/ui/sweep.js) found it broken, at 320 px, in a short window and from 600 to 899 px. The smallest rule that
@@ -496,38 +492,93 @@ table.chan .lvl { width: 36%; }
    the row goes to a second line, where a word used to be cut in two ("Exponential" at 320 to 390 px and again in
    the laptop's narrow columns at 900 and 932; "Diagonals" at 1200, where the Shaders page has three columns). No
    fault was measured from 1366 px up, so nothing changes there. */
-@media (max-width: 1365px) { .seg .segbtn { flex: 1 1 auto; } }
-@media (max-width: 599px) {
+.seg .segbtn { flex: 1 1 auto; }      /* (at every width since the Workspace shell, D65: a column is narrower beside the side menu) */
+@container ws (max-width: 599px) {
   /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word (it was cut at 390) */
   .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .transport3 .btn { padding: 0 2px; }
-  /* The title and the pill beside it (the board, what plays): the pill goes under the title, and breaks, before it
-     pushes the page wider than the window */
   .top { flex-wrap: wrap; }
-  .top .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 }
-@media (max-width: 379px) {
-  /* Live, the four big buttons at the foot: two and two, where Blackout used to leave the window (at 320 and 360;
-     at 390 the four fit in a line, as before) */
-  .row:has(> #fade) { flex-wrap: wrap; }
-  .row:has(> #fade) > .btn { flex: 1 1 40%; }
+@container ws (max-width: 379px) {
   .transport3 { gap: 6px; }
   .transport3 .btn, .fxbuttons > .btn { padding: 0 2px; font-size: 14px; }
-  /* Five tabs (with Room): each as wide as its word plus an even share of what is left, never under 44 px, so
-     "System" is whole */
-  .tabs.many { padding-left: 4px; padding-right: 4px; }
-  .tabs.many .btn { flex: 1 1 auto; min-width: 44px; }
 }
-@media (min-width: 900px) and (max-width: 1365px) {
-  /* Live on a laptop with a shader on: the Vibes button keeps room for its words; the buttons beside it go to a
-     second line (it was squeezed to 40 to 63 px at 900 to 1200, its words outside it). No fault was measured from
-     1366 px up, so nothing changes there. */
-  .livecols.has-side .vibesbig { min-width: 10rem; }
+/* (Three repairs of D64 are gone with what they mended: Live's bottom row of four buttons and the tab bar with five
+   tabs are the transport strip and the area tabs of the Workspace shell now, and the playing shader's strip no
+   longer stands beside the pads. Their sizes are held by the same sweep.) */
+
+/* ---- The Workspace shell (D65): four areas (Play, Shape, Room, Setup), each with screens that have one job. A
+   title bar; under 600 px the area's screens in a row under it and the areas as tabs at the foot; from 600 px a
+   side menu that lists every area and its screens; and ONE transport strip at the foot of every screen at every
+   width. The size classes of the resizing study are asked of the panel itself, not of the window: the shell is
+   the container "app" (compact under 600, medium 600 to 899, expanded 900 to 1199, large 1200 to 1599, extra
+   large from 1600) and the workspace is the container "ws", which the cards ask how much room they have. A
+   window under 480 px high is short; that one is asked of the window, because a panel that scrolls with the page
+   has no height of its own. A browser that knows no container queries gets the phone's layout at every width.
+   Control heights are the tokens (44 and 56), never scaled. The page scrolls, as it always did; the strip and the
+   tabs stay at the foot, the side menu at the left. Measured in headless Chromium and Edge only. ---- */
+.shell.wsp { display: block; max-width: none; margin: 0; min-height: 0; container: app / inline-size; }
+.frame { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; grid-template-areas: "head" "sub" "main" "dock"; min-height: 100dvh; }
+.wshead { grid-area: head; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 12px 16px 6px; min-width: 0; }
+.wsheadmain { flex: 1 1 12rem; min-width: 0; }
+.wstitle { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.15; }
+.wsjob { margin: 2px 0 0; font-size: 14px; line-height: 1.35; color: var(--mu); overflow-wrap: anywhere; }
+.wsbrand { display: none; font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--mu); white-space: nowrap; }
+.wshead .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.wssub { grid-area: sub; padding: 6px 16px 0; min-width: 0; }
+.wssub .seg { flex-wrap: nowrap; }
+.wssub .segbtn { flex: 1 1 0; min-width: 44px; padding: 0 4px; }
+.wsside { display: none; }
+main.ws { grid-area: main; min-width: 0; container: ws / inline-size; }
+main.ws:focus { outline: none; }
+.ws > .screen { max-width: 1100px; width: 100%; margin: 0 auto; padding-bottom: 24px; }
+.ws > .screen:has(#shaderpage) { max-width: 1600px; }
+.part { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.libhead { justify-content: flex-end; }
+.wsdock { grid-area: dock; position: sticky; bottom: 0; z-index: 12; background: var(--bg); min-width: 0; }
+.wsdock .tabs { position: static; }
+/* The transport strip. A phone: what is playing and More on one line, then Previous, Next, Stop and Blackout;
+   More opens the place in the clip and the other five in place. */
+.tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 16px; border-top: 1.5px solid var(--ln); }
+.tpinfo { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px 10px; min-width: 0; }
+.tpinfo #np { flex: 1 1 0; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpinfo #time, .tpinfo #plpos { white-space: nowrap; }
+.tpscrub { grid-column: 1 / -1; display: flex; min-width: 0; }
+.tpscrub input.seek { margin: 0; height: 44px; }
+.tpgrp { display: contents; }
+.tp .tpb { min-width: 0; min-height: 56px; padding: 0 2px; overflow-wrap: anywhere; }
+.tp .tpmore { flex: none; min-width: 64px; }
+.tp:not(.open) .tpx { display: none; }
+.tp.open #black { grid-column: 2 / -1; }
+@container app (min-width: 600px) {
+  .frame { grid-template-columns: 168px minmax(0, 1fr); grid-template-rows: auto 1fr auto; grid-template-areas: "head head" "side main" "dock dock"; }
+  .wssub, .wsdock .wstabs { display: none; }
+  .wsbrand { display: block; }
+  .wshead { padding: 8px 16px; border-bottom: 1.5px solid var(--ln); }
+  .wsheadmain { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; }
+  .wsjob { margin: 0; }
+  .wsside { grid-area: side; display: flex; flex-direction: column; gap: 10px; align-self: start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; padding: 10px 8px 16px; border-right: 1.5px solid var(--ln); }
+  .wsgroup { display: flex; flex-direction: column; gap: 2px; }
+  .wsside button { display: block; width: 100%; min-height: 44px; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--fg); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+  .wsside .wsar { font-weight: 700; border-bottom: 1.5px solid var(--ln); border-radius: 0; }
+  .wsside .wsar.cur { border-bottom-color: var(--ac); }
+  .wsside .wsit { color: var(--mu); font-size: 15px; padding-left: 14px; }
+  .wsside .on { background: var(--ac); color: var(--on); font-weight: 600; }
+  .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .tpinfo { flex: 1 1 200px; }
+  .tpscrub, .tp:not(.open) .tpscrub { display: flex; flex: 2 1 200px; }
+  .tp:not(.open) button.tpx { display: inline-block; }
+  .tpgrp { display: flex; gap: 6px; }
+  .tp .tpb { min-height: 44px; padding: 0 10px; }
+  .tp .tpb.keep { min-height: 56px; }
+  .tp .tpmore { display: none; }
 }
-@media (min-width: 900px) and (max-height: 479px) {
-  /* ...and in a short window (a large phone held sideways) the playing shader's strip scrolls with the page: held in
-     place, the part of it below the window's edge could not be reached */
-  .livecols.has-side > .liveside { position: static; }
+@container app (min-width: 900px) { .frame { grid-template-columns: 200px minmax(0, 1fr); } }
+@container app (min-width: 1200px) { .frame { grid-template-columns: 224px minmax(0, 1fr); } }
+/* short: the title bar gives way, the controls keep their height */
+@media (max-height: 479px) {
+  .wshead { padding-top: 4px; padding-bottom: 4px; }
+  .tp { padding-top: 4px; padding-bottom: 4px; }
 }
 
 /* ==== STYLE: signal ==================================================================================================
@@ -579,17 +630,8 @@ html[data-style="signal"] button:focus-visible, html[data-style="signal"] input:
 
 /* -- the title block: the area's colour, full width, the screen's name in very large capitals -- */
 html[data-style="signal"] .screen { gap: 16px; }
-html[data-style="signal"] .screen > .top:first-child { margin: -16px -16px 0; padding: 20px 16px 16px; background: var(--ac); color: var(--on); flex-wrap: wrap; align-items: flex-end; }
-html[data-style="signal"] .screen > .top:first-child h1 { font-size: 44px; line-height: 1.05; min-width: 0; }
-/* the line under the title says whose panel this is. Live's heading is that name itself, so there the area's name
-   is put before it and the heading's own words become the small line. */
-html[data-style="signal"] .screen > .top:first-child h1::after { content: "nxlx.mastercontrol"; display: block; margin-top: 4px; font: 600 15px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
-html[data-style="signal"] .screen > .top:first-child:has(#pill) h1 { font: 600 15px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
-html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::before { content: "Live"; display: block; margin-bottom: 4px; font: var(--tk-tw, 900) 44px/1.05 var(--display); text-transform: var(--tk-case, uppercase); }
-html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::after { content: none; }
 html[data-style="signal"] .screen > h1 { font-size: 30px; margin: 0; }
-html[data-style="signal"] .top .pill { border: 0; border-radius: var(--tk-r, 0); padding: 4px 8px; background: var(--on); color: var(--ac); font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
-html[data-style="signal"] .screen > .top:first-child .btn { border-color: var(--on); color: var(--on); background: transparent; }
+html[data-style="signal"] .wshead .pill, html[data-style="signal"] .roomnote .pill { border: 0; border-radius: var(--tk-r, 0); padding: 4px 8px; background: var(--on); color: var(--ac); font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
 html[data-style="signal"] .syshead { align-items: stretch; gap: 10px; }
 html[data-style="signal"] .syshead h1 { font-size: 30px; line-height: 1.15; padding: 6px 14px; background: var(--ac); color: var(--on); flex: 1 1 12rem; }
 html[data-style="signal"] .switchwrap { align-self: center; }
@@ -647,8 +689,6 @@ html[data-style="signal"] .vibesbig { border-width: var(--rule); border-color: v
 html[data-style="signal"] .vibesbig.on { border-color: var(--ac); }
 html[data-style="signal"] .vibessub { font-weight: 600; text-transform: none; letter-spacing: 0; }
 html[data-style="signal"] .transport3 .btn { padding: 4px 4px; font-size: 14px; letter-spacing: 0; overflow-wrap: break-word; }
-/* Fade out, Freeze, Stop and Blackout: two by two on a phone, so no word is cut in capitals */
-html[data-style="signal"] .row:has(> #fade) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 html[data-style="signal"] #shaderslink, html[data-style="signal"] #vibesskip, html[data-style="signal"] #liveprev { padding: 4px 6px; }
 /* staff press these: 56 px at least */
 html[data-style="signal"] #roomscreen .btn, html[data-style="signal"] .room-amb .row .btn { min-height: var(--tk-chl, 56px); }
@@ -788,22 +828,14 @@ html[data-style="signal"] .ctlgrid .ctl.lit.haslight::after { border-color: var(
 html[data-style="signal"] .ctlgrid .ctl.lit .ctlname, html[data-style="signal"] .ctlgrid .ctl.lit .ctlwhat, html[data-style="signal"] .ctlgrid .ctl.lit .ctlval { color: var(--on); }
 
 /* -- a laptop: panels with a 3 px rule round them, the title block as a label at the top left -- */
-@media (min-width: 900px) {
-  html[data-style="signal"] .screen > .top:first-child { margin: 0; padding: 0; background: none; color: var(--fg); align-items: center; }
-  html[data-style="signal"] .screen > .top:first-child h1 { font-size: 30px; line-height: 1.35; padding: 4px 14px; background: var(--ac); color: var(--on); }
-  html[data-style="signal"] .screen > .top:first-child:has(#pill) h1 { display: flex; align-items: baseline; gap: 12px; padding: 4px 14px; background: var(--ac); color: var(--on); }
-  html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::before { margin: 0; font-size: 30px; line-height: 1.35; }
-  html[data-style="signal"] .screen > .top:first-child h1::after { display: inline; margin: 0 0 0 12px; }
-  html[data-style="signal"] .screen > .top:first-child .btn { border-color: var(--fg); color: var(--fg); }
-  html[data-style="signal"] .top .pill { background: var(--ac); color: var(--on); }
+@container ws (min-width: 900px) {
   html[data-style="signal"] .syshead h1 { flex: 0 1 auto; padding: 4px 14px; line-height: 1.35; }
   html[data-style="signal"] .card { border: var(--rule) solid var(--fg); padding: calc(16px * var(--tk-density, 1)); gap: calc(12px * var(--tk-density, 1)); }
   html[data-style="signal"] .navgroup { padding: calc(16px * var(--tk-density, 1)); }
   html[data-style="signal"] .card .card { border: 0; padding: 0; }
   html[data-style="signal"] .shaderstage .shadername { font-size: 48px; }
   html[data-style="signal"] .liveside h2 { font-size: 30px; }
-  html[data-style="signal"] .shell:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
-  html[data-style="signal"] .row:has(> #fade) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  html[data-style="signal"] .ws > .screen:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
 }
 
 /* ---- Signal everywhere (D57): every screen, page and state, looked at one by one in the pictures of
@@ -917,10 +949,8 @@ html[data-style="signal"] #roomsetup .room-row { gap: 8px; }
 html[data-style="signal"] #roomsetup .item .addr { font-size: 13px; }
 
 /* -- a laptop and a wall tablet: columns -- */
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   html[data-style="signal"] .syshead h1 { font-size: 30px; }
-  html[data-style="signal"] .screen > h1:first-child { margin: 0; padding: 4px 14px; align-self: flex-start; font-size: 30px; line-height: 1.35; }
-  html[data-style="signal"] .shell:has(.pin-row) .screen, html[data-style="signal"] .shell:has(#supportcode) .screen { max-width: 560px; width: 100%; margin: 0 auto; }
   html[data-style="signal"] .moreacts, html[data-style="signal"] #lookthemes, html[data-style="signal"] #roomgmembers { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
   html[data-style="signal"] #netmodes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
   html[data-style="signal"] details.card.fold { border: 0; padding: 0; }
@@ -934,20 +964,19 @@ html[data-style="signal"] #roomsetup .item .addr { font-size: 13px; }
   html[data-style="signal"] #roomscreen:not(:has(> .room-amb)) .room-scenes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   html[data-style="signal"] #roomscreen .room-group { padding: calc(16px * var(--tk-density, 1)); }
 }
-@media (min-width: 1200px) {
+@container ws (min-width: 1100px) {
   html[data-style="signal"] #roomscreen .room-groups:has(> .room-group:nth-child(3)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   html[data-style="signal"] #roomscreen .vibesbig { flex: 1 1 100%; }
 }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   /* a list beside its form: rows are taller here, so the page scrolls, not a short window inside the card */
   html[data-style="signal"] .split > .splitlist, html[data-style="signal"] #devicelist, html[data-style="signal"] #midimaplist { max-height: none; min-height: 0; overflow: visible; padding-right: 0; }
 }
 
 /* -- Live: what staff press is 56 px high at least, like Room -- */
 html[data-style="signal"] .livecols .btn, html[data-style="signal"] .livecols .btn.small, html[data-style="signal"] .livecols select, html[data-style="signal"] .banks .btn { min-height: var(--tk-chl, 56px); }
-html[data-style="signal"] .livecols .row.transport .btn { font-size: 14px; }
 
 /* -- the MIDI controller page: a switch says Off and On itself; a controller's name keeps its letters; the long
    note about a layout is a quiet paragraph, not a wall of bold -- */
@@ -993,21 +1022,24 @@ html[data-style="signal"] .seg .segbtn.on, html[data-style="signal"] .banks .btn
 html[data-style="signal"] .fxlib .seg { gap: 3px; }
 
 /* -- what an action did: a toast above the tab bar, where the thumb is; it goes by itself (an error stays longer) -- */
-html[data-style="signal"] #msg { position: fixed; left: 16px; right: 16px; bottom: calc(var(--tk-chl, 56px) + 16px + env(safe-area-inset-bottom)); z-index: 15; min-height: 0; padding: 12px 14px; background: var(--fg); color: var(--bg); font: 600 15px/1.35 var(--sans); animation: signal-toast 8s forwards; }
+html[data-style="signal"] #msg { position: fixed; left: 16px; right: 16px; bottom: calc(var(--dock, 180px) + 12px); z-index: 15; min-height: 0; padding: 12px 14px; background: var(--fg); color: var(--bg); font: 600 15px/1.35 var(--sans); animation: signal-toast 8s forwards; }
 html[data-style="signal"] #msg:empty { display: none; }
 html[data-style="signal"] #msg.err { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); animation-duration: 20s; }
 html[data-style="signal"] .screen:has(> h1:first-child) #msg { bottom: 16px; }
 @keyframes signal-toast { 0%, 94% { opacity: 1; visibility: visible; } 100% { opacity: 0; visibility: hidden; } }
 
 /* -- a phone: every section starts under a rule (a laptop has its panels) -- */
-@media (max-width: 899px) {
+@container ws (max-width: 899px) {
   html[data-style="signal"] .card { border-top: var(--rule) solid var(--fg); padding-top: 14px; }
   html[data-style="signal"] .card .card, html[data-style="signal"] .navgroup, html[data-style="signal"] .card.slider, html[data-style="signal"] details.card.fold, html[data-style="signal"] #sysoff { border-top: 0; padding-top: 0; }
   html[data-style="signal"] .card.slider:first-of-type { border-top: var(--rule) solid var(--fg); padding-top: 14px; }
 }
 @media (min-width: 900px) {
-  html[data-style="signal"] #msg { left: auto; right: 28px; bottom: calc(var(--tk-chl, 56px) + 28px); max-width: 420px; }
+  html[data-style="signal"] #msg { left: auto; right: 28px; bottom: calc(var(--dock, 120px) + 16px); max-width: 420px; }
   html[data-style="signal"] .screen:has(> h1:first-child) #msg { right: 28px; bottom: 28px; }
+  /* before pairing (the connect screen is not in the workspace, so it asks the window) */
+  html[data-style="signal"] .screen > h1:first-child { margin: 0; padding: 4px 14px; align-self: flex-start; font-size: 30px; line-height: 1.35; }
+  html[data-style="signal"] .shell:has(.pin-row) .screen, html[data-style="signal"] .shell:has(#supportcode) .screen { max-width: 560px; width: 100%; margin: 0 auto; }
 }
 html[data-style="signal"] #roomscreen .room-group .btn[data-action$="mute_picture"], html[data-style="signal"] #roomscreen .room-group .btn[data-action$="mute_sound"] { font: 600 15px/1.2 var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] .seg .segbtn { flex: 1 1 auto; min-width: min-content; }
@@ -1040,7 +1072,7 @@ html[data-style="signal"] .looktile.on { border-color: var(--ink); box-shadow: i
 html[data-style="signal"] .lt-name { font: 700 16px/1.25 var(--sans); }
 html[data-style="signal"] .lt-mine, html[data-style="signal"] .lt-inuse { font: 600 13px/1.35 var(--sans); color: var(--mu); }
 html[data-style="signal"] #themelist .lname { text-transform: none; }
-@media (min-width: 900px) { html[data-style="signal"] #lookthemes { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
+@container ws (min-width: 900px) { html[data-style="signal"] #lookthemes { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
 
 /* ---- The resizing study, step 1 (D64), in Signal: what the width sweep found in this look. The repairs both
    looks share are above the marker of this block. ---- */
@@ -1049,3 +1081,44 @@ html[data-style="signal"] #roomscreen .room-scene { font-size: clamp(16px, 5.2vw
 /* A choice with one figure on it (how many petals: 3, 4, 5, 6, 8) was 40 px wide at 320, where the row is full and
    no button grows. This look had taken the floor of 44 px away from a row of choices; it is back. */
 html[data-style="signal"] .seg .segbtn { min-width: 44px; }
+
+/* ---- The Workspace shell in Signal (D65). The title bar is the block of the area's colour that each screen's own
+   title used to be (the area's name in the display face, the screen's job under it); the open tab, the chosen
+   screen in the row and in the side menu are that colour too. The strip's buttons are 56 px on a phone (staff
+   press them), and from 600 px the four that are always there are 56 and the rest 44. ---- */
+html[data-style="signal"] .wshead { padding: 20px 16px 14px; background: var(--ac); color: var(--on); align-items: flex-end; }
+html[data-style="signal"] .wstitle { font: var(--tk-tw, 900) clamp(34px, 11cqw, 44px)/1.05 var(--display); text-transform: var(--tk-case, uppercase); overflow-wrap: anywhere; }
+html[data-style="signal"] .wsjob { margin-top: 4px; font: 600 15px/1.35 var(--sans); color: var(--on); }
+html[data-style="signal"] .wsbrand { font: 500 13px/1.35 var(--mono); color: var(--on); }
+html[data-style="signal"] .wssub { padding: 12px 16px 0; }
+html[data-style="signal"] .wssub .segbtn { min-height: var(--tk-ch, 44px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
+html[data-style="signal"] .part { gap: 16px; }
+html[data-style="signal"] .ws > .screen > .syshead:first-child, html[data-style="signal"] .ws > .screen > .row:first-child { margin-top: 0; }
+html[data-style="signal"] .wsdock { border-top: var(--rule) solid var(--fg); }
+html[data-style="signal"] .tp { border-top: 0; padding: 8px 12px; }
+html[data-style="signal"] .tp .tpb { min-height: var(--tk-chl, 56px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
+html[data-style="signal"] .tp .tpmore { min-height: var(--tk-ch, 44px); font-size: 14px; }
+html[data-style="signal"] .tpinfo #np { font: 600 16px/1.2 var(--sans); text-transform: none; }
+html[data-style="signal"] .tpinfo #time, html[data-style="signal"] .tpinfo #plpos { font-size: 14px; }
+html[data-style="signal"] .tp #black { border-color: var(--st-problem, var(--fg)); }
+html[data-style="signal"] .tp #black.solid { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+html[data-style="signal"] .tp #freeze.solid { background: var(--ac); border-color: var(--ac); color: var(--on); }
+@container app (min-width: 600px) {
+  html[data-style="signal"] .wshead { padding: 8px 16px; align-items: center; border-bottom: 0; }
+  html[data-style="signal"] .wstitle { font-size: 26px; line-height: 1.15; }
+  html[data-style="signal"] .wsjob { margin-top: 0; }
+  html[data-style="signal"] .wsside { border-right: var(--rule) solid var(--fg); gap: calc(14px * var(--tk-density, 1)); }
+  html[data-style="signal"] .wsside button { border-radius: var(--tk-r, 0); min-height: var(--tk-ch, 44px); font: 600 15px/1.2 var(--sans); }
+  html[data-style="signal"] .wsside .wsar { font: 900 14px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; border-bottom: var(--rule) solid var(--fg); }
+  html[data-style="signal"] .wsside .wsar.cur { border-bottom-color: var(--ink); }
+  html[data-style="signal"] .wsside .wsit { color: var(--fg); }
+  html[data-style="signal"] .wsside .on { background: var(--ac); color: var(--on); font-weight: 900; }
+  html[data-style="signal"] .tp { padding: 8px 16px; }
+  html[data-style="signal"] .tp .tpb { min-height: var(--tk-ch, 44px); padding: 4px 10px; }
+  html[data-style="signal"] .tp .tpb.keep { min-height: var(--tk-chl, 56px); }
+}
+@media (max-height: 479px) {
+  html[data-style="signal"] .wshead { padding-top: 4px; padding-bottom: 4px; }
+  html[data-style="signal"] .wstitle { font-size: 20px; }
+  html[data-style="signal"] .tp { padding-top: 4px; padding-bottom: 4px; }
+}

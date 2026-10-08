@@ -261,7 +261,7 @@
     card.head = card.det = card.ctl = card.pre = card.list = card.add = '';
     card.ctls = []; teachers = [];
     if (!c.moduleOn('shaders') || !kit()) {
-      box.appendChild(h('div', { class: 'hint', id: 'fxmsg', text: 'Off. Switch it on under System, Shaders and Vibes (beta).' }));
+      box.appendChild(h('div', { class: 'hint', id: 'fxmsg', text: 'Off. Switch it on under Setup, Shaders and Vibes (beta).' }));
       return box;
     }
     var stage = h('div', { class: 'fxstage' }, h('div', { id: 'fxhead' }), h('div', { id: 'fxdetail' }), h('div', { id: 'fxctl' }), h('div', { id: 'fxpre' }));

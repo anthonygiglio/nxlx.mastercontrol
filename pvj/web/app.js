@@ -8,8 +8,12 @@
   var S = {
     tab: 'live', device: null, status: null, banks: [], bank: 0, media: [], modules: [], theme: null,
     themes: [], devices: [], editing: false, sheet: null, msg: '', msgErr: false, token: null, failures: 0,
-    sys: null, sysData: {}, sysFresh: false,  // System: the page that is open (null: the index), what each row last answered
-    sysFrom: null                             // the tab a page was opened from, when not from the index ('live': the Shaders link)
+    sys: null, sysData: {}, sysFresh: false,  // Setup: the page that is open (null: the index), what each row last answered
+    sysFrom: null,                            // where a page was opened from, when Back should return there ('live': the Shaders link on Pads; 'index': the Setup index)
+    // The Workspace shell (D65). S.tab is still which builder is on the page (live: Pads, media: Library, mix: the
+    // three screens of Shape that are parts of one build, room: the Room screens, system: the Setup index and every
+    // page); S.part is which part of mix and of room is shown; S.last is the screen each area was left on.
+    part: { mix: 'controls', room: 'scenes' }, last: {}, menu: ''
   };
   var app = document.getElementById('app');
   var offlineBanner = document.getElementById('offline');
@@ -198,7 +202,7 @@
     });
     return h('div', { class: 'shell' }, h('div', { class: 'screen' },
       h('h1', { text: 'Remote support' }),
-      h('p', { text: 'You reached this box through its support tunnel. Ask the studio for the support code shown in their panel (System > Remote support) and type it here. It works only during their session.' }),
+      h('p', { text: 'You reached this box through its support tunnel. Ask the studio for the support code shown in their panel (Setup > Remote support) and type it here. It works only during their session.' }),
       h('label', { class: 'k', for: 'supportcode', text: 'Support code' }), code, go,
       h('div', { id: 'msg', class: 'msg', role: 'status' })));
   }
@@ -322,53 +326,63 @@
     return b;
   }
   function live() {
-    var st = S.status || {};
-    var pl = st.player || {};
     var bank = S.banks[S.bank];
     var pads = h('div', { class: 'pads', id: 'pads' });
     (bank ? bank.pads : []).forEach(function (p, i) { pads.appendChild(padButton(S.bank, i, p)); });
-    var canLive = can('live');
-    // On a laptop Live uses the width: the transport and the pads on the left, the playing shader's strip on the right
-    // (the strip is there only while a shader is on; on a phone it sits under the Vibes row).
-    return h('div', { class: 'screen' },
-      h('div', { class: 'top' }, h('h1', { text: 'nxlx.mastercontrol' }), h('div', { class: 'pill k', id: 'pill' })),
+    // Play > Pads (D65): the pads with their banks, the big Vibes button above them as it was on Live, and the
+    // snapshot. What Live also held is elsewhere now: the transport is the strip at the foot of every screen
+    // (transport()), the playing shader's strip and the effect strip are on Shape > Controls (shape()).
+    return h('div', { class: 'screen', id: 'padsscreen' },
       h('div', { class: 'livecols', id: 'livecols' },
-      h('div', { class: 'card' },
-        h('div', { class: 'k', text: 'Now playing' }),
-        h('div', { id: 'np', style: false, text: '' }),
-        seekBar(canLive),
-        h('div', { class: 'row between' }, h('div', { class: 'k', id: 'time' }), h('div', { class: 'k', id: 'plpos' })),
-        h('div', { class: 'row transport' },
-          h('button', { class: 'btn small grow', id: 'prev', text: '\u23ee Prev', 'aria-label': 'Previous clip', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'prev' }, poll); } }),
-          h('button', { class: 'btn small grow', id: 'back10', text: '\u2212 10 s', 'aria-label': 'Back 10 seconds', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'seek', value: -10 }, poll); } }),
-          h('button', { class: 'btn small grow', id: 'fwd10', text: '+ 10 s', 'aria-label': 'Forward 10 seconds', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'seek', value: 10 }, poll); } }),
-          h('button', { class: 'btn small grow', id: 'next', text: 'Next \u23ed', 'aria-label': 'Next clip', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'next' }, poll); } })),
-        h('div', { class: 'row transport' },
-          h('button', { class: 'btn small grow', id: 'fadein', text: 'Fade in', disabled: !canLive, onclick: function () { act('POST', '/api/fadein', { seconds: 2 }, poll); } }),
-          h('button', { class: 'btn small grow', id: 'testpattern', text: 'Test pattern', disabled: !canLive, onclick: function () {
-            var on = !(S.status && S.status.player && S.status.player.test_pattern);
-            act('POST', '/api/testpattern', { on: on }, poll);
-          } }))),
       window.pvjShaders ? window.pvjShaders.liveRow(shaderCtx()) : null,
-      window.pvjShaders ? window.pvjShaders.liveStrip(shaderCtx()) : null,
-      window.pvjEffects ? window.pvjEffects.liveStrip(shaderCtx()) : null,
-      previewBlock(),
       h('div', { class: 'banks' }, S.banks.map(function (b, i) {
         return h('button', { class: 'btn' + (i === S.bank ? ' on' : ''), text: b.name.replace('Bank ', 'Bank '), 'aria-pressed': i === S.bank ? 'true' : 'false',
           onclick: function () { S.bank = i; render(); } });
       })),
       pads,
       can('full') ? h('button', { class: 'btn small', text: S.editing ? 'Done editing' : 'Edit pads', onclick: function () { S.editing = !S.editing; render(); } }) : null,
-      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg })),
-      h('div', { class: 'grow' }),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn big grow', id: 'fade', text: 'Fade out', disabled: !canLive, onclick: function () { act('POST', '/api/fadeout', { seconds: 2 }); } }),
-        h('button', { class: 'btn big grow', id: 'freeze', text: 'Freeze', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'pause' }, poll); } }),
-        h('button', { class: 'btn big grow', id: 'stop', text: 'Stop', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'stop' }, poll); } }),
-        h('button', { class: 'btn big grow', id: 'black', text: 'Blackout', disabled: !canLive, onclick: function () {
+      previewBlock(),
+      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg })));
+  }
+  // The one transport strip (D65, the owner's choice of D63): what is playing, the place in it, and Previous, back
+  // 10 s, forward 10 s, Next, Fade in, Fade out, Freeze, Stop and Blackout, at the foot of every screen at every
+  // width. These are the controls Live had in its Now playing card and in its bottom row, with the ids they had;
+  // there is no second copy on any screen. Under 600 px the strip shows Previous, Next, Stop and Blackout, and More
+  // opens the rest in place. It is built once and kept across redraws (so a finger on the position slider is not
+  // cut off by a card that draws itself again), and built anew only when the device or its role changes.
+  var dock = null;
+  function transport() {
+    var canLive = can('live');
+    var key = (S.device ? S.device.role : '') + '|' + canLive;
+    if (dock && dock.key === key) return dock.el;
+    var b = function (id, text, label, cls, fn) { return h('button', { class: 'btn tpb ' + cls, id: id, text: text, 'aria-label': label || false, disabled: !canLive, onclick: fn }); };
+    var ctl = function (action, value) { return function () { act('POST', '/api/control', value === undefined ? { action: action } : { action: action, value: value }, poll); }; };
+    var more = h('button', { class: 'btn tpmore', id: 'wsmore', 'aria-expanded': 'false', 'aria-controls': 'wstp', text: 'More', onclick: function () {
+      var open = !el.classList.contains('open');
+      el.classList.toggle('open', open);
+      more.setAttribute('aria-expanded', open ? 'true' : 'false');
+      more.textContent = open ? 'Less' : 'More';
+    } });
+    var el = h('div', { class: 'tp', id: 'wstp', role: 'group', 'aria-label': 'Transport' },
+      h('div', { class: 'tpinfo' }, h('div', { id: 'np', style: false, text: '' }), h('div', { class: 'k', id: 'plpos' }), h('div', { class: 'k', id: 'time' }), more),
+      h('div', { class: 'tpscrub tpx' }, seekBar(canLive)),
+      h('div', { class: 'tpgrp' },
+        b('prev', '⏮ Prev', 'Previous clip', 'keep', ctl('prev')),
+        b('back10', '− 10 s', 'Back 10 seconds', 'tpx', ctl('seek', -10)),
+        b('fwd10', '+ 10 s', 'Forward 10 seconds', 'tpx', ctl('seek', 10)),
+        b('next', 'Next ⏭', 'Next clip', 'keep', ctl('next'))),
+      h('div', { class: 'tpgrp' },
+        b('fadein', 'Fade in', null, 'tpx', function () { act('POST', '/api/fadein', { seconds: 2 }, poll); }),
+        b('fade', 'Fade out', null, 'tpx', function () { act('POST', '/api/fadeout', { seconds: 2 }); }),
+        b('freeze', 'Freeze', null, 'tpx', ctl('pause'))),
+      h('div', { class: 'tpgrp' },
+        b('stop', 'Stop', null, 'keep', ctl('stop')),
+        b('black', 'Blackout', null, 'keep', function () {
           var on = !(S.status && S.status.mix && S.status.mix.blackout);
           act('POST', '/api/blackout', { on: on }, poll);
-        } })));
+        })));
+    dock = { key: key, el: el };
+    return el;
   }
   // ---- screen snapshot ----------------------------------------------------
   // One picture of what the box is showing, on request. Not a live view: on a Pi 4 each snapshot stalls playback
@@ -440,7 +454,7 @@
         });
       },
       openShaders: function () { openSys('vibes', S.tab); },
-      openMix: function () { goTab('mix'); } };
+      openMix: function () { go('shape/effect'); } };
   }
   function patchLive() {
     var st = S.status || {}, pl = st.player || {}, sys = st.system || {};
@@ -450,21 +464,23 @@
     var seekEl = document.getElementById('seek');
     var frac = pl.duration > 0 && pl.position >= 0 ? Math.min(1, pl.position / pl.duration) : 0;
     if (seekEl && !seeking) { seekEl.value = Math.round(frac * 1000); seekEl.disabled = !can('live') || !(pl.duration > 0); }
-    if (!seeking) document.getElementById('time').textContent = clock(pl.position) + ' / ' + clock(pl.duration);
+    var timeEl = document.getElementById('time');
+    if (timeEl && !seeking) timeEl.textContent = clock(pl.position) + ' / ' + clock(pl.duration);
     var plpos = document.getElementById('plpos');
     if (plpos) plpos.textContent = pl.playlist_count > 1 && pl.playlist_pos >= 0 ? 'Clip ' + (pl.playlist_pos + 1) + ' of ' + pl.playlist_count : '';
     ['prev', 'next'].forEach(function (id) { var el = document.getElementById(id); if (el) el.disabled = !can('live') || !(pl.playlist_count > 1); });
     var tp = document.getElementById('testpattern');
-    if (tp) { tp.textContent = pl.test_pattern ? 'Test pattern off' : 'Test pattern'; tp.className = 'btn small grow' + (pl.test_pattern ? ' on' : ''); }
+    if (tp) { tp.textContent = pl.test_pattern ? 'Test pattern off' : 'Test pattern'; tp.classList.toggle('on', !!pl.test_pattern); }
     if (pl.test_pattern) np.textContent = 'Test pattern (colour bars)';
     if (pl.test_tone) np.textContent = 'Test tone (' + pl.test_tone + ')';
     if (pl.capture) np.textContent = 'Live input' + (pl.capture.device ? ' (' + pl.capture.device + ', ' + pl.capture.mode + ')' : '');
     if (window.pvjShaders) window.pvjShaders.patch(shaderCtx(), pl, np);
     if (pl.effect && window.pvjEffects && pl.running && typeof pl.shader !== 'string') np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
-    document.getElementById('pill').textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
+    var pill = document.getElementById('pill');
+    if (pill) pill.textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
-    var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.className = 'btn big grow' + (on ? ' solid' : ''); b.textContent = on ? 'Show' : 'Blackout'; }
+    var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('solid', !!on); b.textContent = on ? 'Show' : 'Blackout'; }
     var pads = document.getElementById('pads');
     if (pads && S.banks[S.bank]) {
       S.banks[S.bank].pads.forEach(function (p, i) {
@@ -522,44 +538,67 @@
       Object.keys(patch).forEach(function (k) { next[k] = patch[k]; });
       act('POST', '/api/mix', next, function () { poll(); setTimeout(render, 150); });
     };
-    return h('div', { class: 'screen' },
-      h('div', { class: 'top' }, h('h1', { text: 'Mix' })),
-      h('div', { class: 'grid2' },
-        slider('mo', 'Opacity', 0, 100, 1, m.opacity === undefined ? 100 : m.opacity, function (v) { return v + '%'; }, ctl('opacity')),
-        slider('ms', 'Size', 1, 200, 1, m.size === undefined ? 100 : m.size, function (v) { return v + '%'; }, ctl('size')),
-        slider('mp', 'Position X', -100, 100, 1, m.position === undefined ? 0 : m.position, function (v) { return String(v); }, ctl('position')),
-        slider('mpy', 'Position Y', -100, 100, 1, m.position_y === undefined ? 0 : m.position_y, function (v) { return String(v); }, ctl('position_y')),
+    // Shape (D65): what the Mix tab held, in three screens that are parts of this one build (S.part.mix says which is
+    // shown; go() changes it without drawing anything again, so a typed name or an open question stays): Controls
+    // (the playing shader's strip and the effect strip, which were on Live, and Speed and Loop), Effect (the
+    // Effects card) and Picture (the rest, with Test pattern, which was on Live). Volume and Audio are on Shape >
+    // Sound with the Sound page's card (soundCards()); the mapping card is on Shape > Mapping, its one place.
+    var part = function (name) { return h('div', { class: 'part', 'data-part': name, hidden: S.part.mix !== name }, Array.prototype.slice.call(arguments, 1)); };
+    var looping = pl.loop_file && pl.loop_file !== 'no' || pl.loop_playlist && pl.loop_playlist !== 'no';
+    return h('div', { class: 'screen', id: 'shapescreen' },
+      part('controls',
+        window.pvjShaders ? window.pvjShaders.liveStrip(shaderCtx()) : null,
+        window.pvjEffects ? window.pvjEffects.liveStrip(shaderCtx()) : null,
         slider('mv', 'Speed', 25, 200, 5, Math.round((pl.speed || 1) * 100), function (v) { return (v / 100).toFixed(2) + 'x'; },
           function (v) { ctl('speed')(v / 100); }),
-        slider('mvol', 'Volume', 0, 130, 1, Math.round(pl.volume === undefined || pl.volume === null ? 100 : pl.volume), function (v) { return v + '%'; }, ctl('volume'))),
-      window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null,
-      h('div', { class: 'card' },
-        h('div', { class: 'k', text: 'Transition between clips' }),
-        choice([{ label: 'Cut', value: 'cut' }, { label: 'Dip to black', value: 'dip' }, { label: 'Crossfade (soon)', value: 'x', disabled: true }],
-          m.transition, function (v) { setMix({ transition: v }); }),
-        h('div', { class: 'k', text: 'Duration' }),
-        choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); })),
-      h('div', { class: 'card' },
-        h('div', { class: 'k sent', text: 'Mirror (for rear projection or a mirror rig; costs the box some work)' }),
         h('div', { class: 'row' },
-          h('button', { class: 'btn grow' + (m.flip_h ? ' on' : ''), id: 'fliph', text: 'Flip left-right', 'aria-pressed': m.flip_h ? 'true' : 'false', disabled: !can('live'),
-            onclick: function () { act('POST', '/api/control', { action: 'flip_h', value: !m.flip_h }, function () { poll(); setTimeout(render, 200); }); } }),
-          h('button', { class: 'btn grow' + (m.flip_v ? ' on' : ''), id: 'flipv', text: 'Flip upside down', 'aria-pressed': m.flip_v ? 'true' : 'false', disabled: !can('live'),
-            onclick: function () { act('POST', '/api/control', { action: 'flip_v', value: !m.flip_v }, function () { poll(); setTimeout(render, 200); }); } }))),
-      overlayCard(),
-      mapperCard(),
-      h('div', { class: 'card' },
-        h('div', { class: 'k', text: 'Rotate' }),
-        choice([0, 90, 180, 270].map(function (d) { return { label: d + '°', value: d }; }), m.rotate === undefined ? 0 : m.rotate,
-          function (v) { ctl('rotate')(v); setTimeout(function () { poll(); render(); }, 200); })),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn grow', text: 'Loop: ' + (pl.loop_file && pl.loop_file !== 'no' || pl.loop_playlist && pl.loop_playlist !== 'no' ? 'on' : 'off'), disabled: !can('live'),
-          onclick: function () { var on = !(pl.loop_file && pl.loop_file !== 'no' || pl.loop_playlist && pl.loop_playlist !== 'no'); act('POST', '/api/control', { action: 'loop', value: on }, function () { poll(); setTimeout(render, 200); }); } }),
-        h('button', { class: 'btn grow', text: 'Audio: ' + (pl.muted ? 'mute' : 'on'), disabled: !can('live'),
-          onclick: function () { act('POST', '/api/control', { action: 'mute', value: !pl.muted }, function () { poll(); setTimeout(render, 200); }); } }),
-        h('button', { class: 'btn grow', text: 'Reset mix', disabled: !can('live'),
-          onclick: function () { act('POST', '/api/control', { action: 'reset' }, function () { poll(); setTimeout(render, 200); }); } })),
+          h('button', { class: 'btn grow', text: 'Loop: ' + (looping ? 'on' : 'off'), disabled: !can('live'),
+            onclick: function () { act('POST', '/api/control', { action: 'loop', value: !looping }, function () { poll(); setTimeout(render, 200); }); } }))),
+      part('effect',
+        window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null),
+      part('picture',
+        h('div', { class: 'grid2' },
+          slider('mo', 'Opacity', 0, 100, 1, m.opacity === undefined ? 100 : m.opacity, function (v) { return v + '%'; }, ctl('opacity')),
+          slider('ms', 'Size', 1, 200, 1, m.size === undefined ? 100 : m.size, function (v) { return v + '%'; }, ctl('size')),
+          slider('mp', 'Position X', -100, 100, 1, m.position === undefined ? 0 : m.position, function (v) { return String(v); }, ctl('position')),
+          slider('mpy', 'Position Y', -100, 100, 1, m.position_y === undefined ? 0 : m.position_y, function (v) { return String(v); }, ctl('position_y'))),
+        h('div', { class: 'card' },
+          h('div', { class: 'k', text: 'Transition between clips' }),
+          choice([{ label: 'Cut', value: 'cut' }, { label: 'Dip to black', value: 'dip' }, { label: 'Crossfade (soon)', value: 'x', disabled: true }],
+            m.transition, function (v) { setMix({ transition: v }); }),
+          h('div', { class: 'k', text: 'Duration' }),
+          choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); })),
+        h('div', { class: 'card' },
+          h('div', { class: 'k sent', text: 'Mirror (for rear projection or a mirror rig; costs the box some work)' }),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn grow' + (m.flip_h ? ' on' : ''), id: 'fliph', text: 'Flip left-right', 'aria-pressed': m.flip_h ? 'true' : 'false', disabled: !can('live'),
+              onclick: function () { act('POST', '/api/control', { action: 'flip_h', value: !m.flip_h }, function () { poll(); setTimeout(render, 200); }); } }),
+            h('button', { class: 'btn grow' + (m.flip_v ? ' on' : ''), id: 'flipv', text: 'Flip upside down', 'aria-pressed': m.flip_v ? 'true' : 'false', disabled: !can('live'),
+              onclick: function () { act('POST', '/api/control', { action: 'flip_v', value: !m.flip_v }, function () { poll(); setTimeout(render, 200); }); } }))),
+        overlayCard(),
+        h('div', { class: 'card' },
+          h('div', { class: 'k', text: 'Rotate' }),
+          choice([0, 90, 180, 270].map(function (d) { return { label: d + '°', value: d }; }), m.rotate === undefined ? 0 : m.rotate,
+            function (v) { ctl('rotate')(v); setTimeout(function () { poll(); render(); }, 200); })),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn small grow', id: 'testpattern', text: 'Test pattern', disabled: !can('live'), onclick: function () {
+            var on = !(S.status && S.status.player && S.status.player.test_pattern);
+            act('POST', '/api/testpattern', { on: on }, poll);
+          } }),
+          h('button', { class: 'btn grow', text: 'Reset mix', disabled: !can('live'),
+            onclick: function () { act('POST', '/api/control', { action: 'reset' }, function () { poll(); setTimeout(render, 200); }); } }))),
       h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }));
+  }
+  // Shape > Sound: Volume and Audio, which were on Mix, above the Sound page's own card (where the sound comes out,
+  // the test tone). A guest, who has no Sound page, gets the two as they had them on Mix.
+  function soundCards() {
+    var pl = (S.status && S.status.player) || {};
+    return [
+      slider('mvol', 'Volume', 0, 130, 1, Math.round(pl.volume === undefined || pl.volume === null ? 100 : pl.volume), function (v) { return v + '%'; },
+        function (v) { act('POST', '/api/control', { action: 'volume', value: v }); }),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn grow', text: 'Audio: ' + (pl.muted ? 'mute' : 'on'), disabled: !can('live'),
+          onclick: function () { act('POST', '/api/control', { action: 'mute', value: !pl.muted }, function () { poll(); setTimeout(render, 200); }); } }))];
   }
 
   // A picture over the video: a PNG from the media folder (logo, watermark, mask), fitted to the screen.
@@ -568,7 +607,7 @@
     var card = h('div', { class: 'card', id: 'overlaycard' }, h('div', { class: 'k sent', text: 'Overlay picture (logo or mask over the video)' }), body);
     function draw(d) {
       body.textContent = '';
-      if (!d.choices.length) { body.appendChild(h('div', { class: 'k', id: 'overlaynone', text: 'Upload a PNG (transparent where the video should show) on the Media screen to use it here.' })); return; }
+      if (!d.choices.length) { body.appendChild(h('div', { class: 'k', id: 'overlaynone', text: 'Upload a PNG (transparent where the video should show) in the Library (under Play) to use it here.' })); return; }
       var sel = h('select', { class: 'text-input', id: 'overlayfile', 'aria-label': 'Overlay picture', disabled: !can('live') },
         d.choices.map(function (n) { return h('option', { value: n, text: n, selected: n === d.file }); }));
       body.appendChild(sel);
@@ -605,7 +644,7 @@
     var mod = S.modules.filter(function (m) { return m.id === 'mapper'; })[0];
     if (!mod || !mod.enabled) {
       body.textContent = '';
-      body.appendChild(h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under System, Projection mapping (beta).' }));
+      body.appendChild(h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under Setup, Projection mapping (beta).' }));
       return card;
     }
     var full = can('full'), d = null, canvas = null, drag = null, lastSend = 0, waiting = null;
@@ -1016,10 +1055,10 @@
             say('Slideshow: ' + d.images + ' pictures'); poll();
           });
         } }),
-        h('div', { class: 'k', text: 'Prev and Next on the Live screen step through the pictures.' }));
+        h('div', { class: 'k', text: 'Prev and Next on the strip at the foot of the screen step through the pictures.' }));
     }
-    return h('div', { class: 'screen' },
-      h('div', { class: 'top' }, h('h1', { text: 'Media' }), h('button', { class: 'btn small', text: 'Refresh', onclick: refreshMedia })),
+    return h('div', { class: 'screen', id: 'libraryscreen' },
+      h('div', { class: 'row libhead' }, h('button', { class: 'btn small', text: 'Refresh', onclick: refreshMedia })),
       quick,
       liveInputCard(),
       slideshow,
@@ -1062,18 +1101,35 @@
   function mod(id) { return S.modules.filter(function (x) { return x.id === id; })[0]; }
   function plural(n, word, many) { return n + ' ' + (n === 1 ? word : (many || word + 's')); }
   function st(chip, text) { return { chip: chip, text: text }; }
-  function goTab(tab) {
-    if (history.state && history.state.sys) history.replaceState(null, '');   // the page left behind is not one to come back to
-    S.tab = tab; S.msg = ''; S.sys = null; S.sysFresh = false; S.sysFrom = null;
-    loadAll().then(render);
+  // The names the panel had for its five tabs before the Workspace shell (D65), and the screen each now leads to: a
+  // link written for a tab, and anything that still says "live" or "mix", lands somewhere sensible.
+  var OLD_TABS = { live: 'play/pads', mix: 'shape/picture', media: 'play/library', system: 'setup/index', room: 'room/scenes' };
+  function goTab(tab) { go(OLD_TABS[tab] || tab); }
+  // The Room screen (room.js) builds all of its cards at once. Each belongs to one screen of the Room area, and the
+  // set-up card to Setup > Room: the cards are marked, and the ones of another screen are hidden, not left out, so
+  // room.js finds every one of them as before.
+  var ROOM_PARTS = { roomambience: 'scenes', roomamboff: 'scenes', roomscenes: 'scenes', roomgroups: 'walls', roomletin: 'guests', roomsetup: 'setup' };
+  function roomParts(el, part) {
+    Array.prototype.forEach.call(el.children, function (x) { if (ROOM_PARTS[x.id]) { x.setAttribute('data-part', ROOM_PARTS[x.id]); x.hidden = ROOM_PARTS[x.id] !== part; } });
+    return el;
   }
-  // The Room screen's own cards, on the Room page under its switch: the page never sends anyone to another screen.
-  // The screen's title and message line are the page's, so the copies are taken out.
+  function roomScreen() {
+    var el = window.pvjRoom.screen(roomCtx());
+    var top = el.querySelector('.top');           // the title is the shell's; a guest's "View only" stays
+    if (top && top.parentNode === el) {
+      var h1 = top.querySelector('h1');
+      if (h1) top.removeChild(h1);
+      if (top.children.length) top.className = 'row roomnote'; else el.removeChild(top);
+    }
+    return roomParts(el, S.part.room);
+  }
+  // Setup > Room: the module's switch and the card that sets the room up (groups and scenes). The title and message
+  // line are the page's, so the copies are taken out.
   function roomInPage() {
     var el = window.pvjRoom.screen(roomCtx());
     ['.top', '#msg'].forEach(function (sel) { var x = el.querySelector(sel); if (x && x.parentNode === el) el.removeChild(x); });
     el.className = 'roominpage';
-    return el;
+    return roomParts(el, 'setup');
   }
   function sysRows() {
     var full = can('full'), remote = !!(S.device && S.device.remote);
@@ -1085,8 +1141,9 @@
         blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. Not yet tried on a real projector.',
         confirmOff: function (ask) { ask('The box stops checking the projectors. They stay as they are.'); },
         body: function () { return [projectorsCard(full)]; } },
-      { id: 'room', group: 'everyday', name: 'Room', role: 'live', module: 'room', url: '/api/room',
-        blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off. It needs Projectors to be on. Not yet tried on a real projector.',
+      // (for the owner only since D65: what a presenter had on this page is the Room area's screens)
+      { id: 'room', group: 'everyday', name: 'Room', role: 'full', module: 'room', url: '/api/room',
+        blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off, on the Room screens. Here: the groups and the scenes. It needs Projectors to be on. Not yet tried on a real projector.',
         body: function () { return window.pvjRoom ? [roomInPage()] : []; } },
       { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'full', module: 'scheduler', url: '/api/schedule',
         blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
@@ -1105,8 +1162,9 @@
           'Let a guest watch from their own phone, with a code that stops working by itself.',
         body: accessCards },
       { id: 'sound', group: 'everyday', name: 'Sound', role: 'live', url: '/api/audio',
-        blurb: 'Where the sound comes out, and a test tone to check left and right.',
-        body: function () { return [audioCard(full)]; } },
+        blurb: 'How loud it is, where the sound comes out, and a test tone to check left and right.',
+        plain: soundCards,
+        body: function () { return soundCards().concat([audioCard(full)]); } },
       { id: 'autostart', group: 'show', name: 'At power-up', role: 'full', url: '/api/autostart',
         blurb: 'What the box plays by itself when it is powered up, with nobody at the panel.',
         body: function () { return [autostartCard(full)]; } },
@@ -1116,6 +1174,7 @@
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
+        plain: function () { return [mapperCard()]; },         // a presenter had the card on Mix, without the page
         body: function () { return [mapperCard()]; } },
       { id: 'sync', group: 'show', name: 'Boxes in step', role: 'live', module: 'wall', url: '/api/sync',
         blurb: 'Several boxes play together: one server leads and the clients follow its clip, position, pause and blackout. Each box can also show one tile of a video wall.',
@@ -1392,27 +1451,29 @@
     });
   }
   function pageStateSoon() {
-    if (S.tab !== 'system' || !S.sys) return;
+    if (S.tab !== 'system' || !S.sys || !document.getElementById('sysstate')) return;
     clearTimeout(pageStateTimer);
     pageStateTimer = setTimeout(pageState, 500);
   }
 
   // -- moving between the index and a page --
-  function redrawSystem() {         // only the System screen is rebuilt: the tabs and the rest stay as they are
-    var old = app.querySelector('.shell > .screen');
-    var roomTab = !!app.querySelector('nav.tabs.many');       // the Room module was just switched: the tabs change too
-    if (!old || !S.device || S.tab !== 'system' || roomTab !== (!!window.pvjRoom && moduleOn('room'))) return render();
+  function redrawSystem() {         // only the screen is rebuilt, and the menus marked anew: the strip and the rest stay as they are
+    var old = app.querySelector('main.ws > .screen');
+    // a module was just switched: a screen comes into the menu or leaves it, so everything is drawn
+    if (!old || !S.device || S.tab !== 'system' || menuKey() !== S.menu) return render();
     markArea();
     stopTimers();
     keepNetForm();
     keepSyncForm();
     old.parentNode.replaceChild(system(), old);
+    redrawChrome();
   }
   // from: the tab the page is opened from when that is not System (Back then returns there). replace: the page takes
   // the place of the one that is open, so Back does not stop at it.
   function openSys(id, from, replace) {
     var other = S.tab !== 'system';
     if (other) { S.sysFrom = from || null; S.tab = 'system'; }
+    else if (!S.sys) S.sysFrom = HOMES[id] ? 'index' : null;      // from the Setup index to a page that lives in another area: Back returns to the index
     S.sys = id; S.msg = '';
     if (replace && history.state && history.state.sys) history.replaceState({ sys: id }, '');
     else history.pushState({ sys: id }, '');
@@ -1421,7 +1482,8 @@
   }
   function leaveSysPage() {          // back at the index, or at the tab the page was opened from
     S.sys = null; S.msg = ''; S.sysFresh = false;
-    if (S.sysFrom) { S.tab = S.sysFrom; S.sysFrom = null; }
+    if (S.sysFrom && S.sysFrom !== 'index') S.tab = S.sysFrom;
+    S.sysFrom = null;
   }
   function sysBack() {
     if (history.state && history.state.sys) return history.back();     // the popstate listener draws what is behind
@@ -1430,8 +1492,16 @@
     window.scrollTo(0, 0);
   }
   function system() {
-    var row = S.sys && sysRows().filter(function (r) { return r.id === S.sys && rowShown(r); })[0];
-    if (row) return sysPage(row.id, row.name, row.blurb, row);
+    var row = S.sys && sysRows().filter(function (r) { return r.id === S.sys; })[0];
+    if (row && rowShown(row)) return sysPage(row.id, row.name, row.blurb, row);
+    // a screen that is a page for those who may use the page, and its cards alone for the others (Shape > Mapping
+    // for a presenter, Shape > Sound for a guest)
+    if (row && row.plain && (!row.module || moduleOn(row.module))) {
+      pageSwitch = { steps: null, on: true };
+      return h('div', { class: 'screen plainpage', id: 'plainpage', 'data-page': row.id },
+        h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
+        h('div', { class: 'grid2' }, row.plain()));
+    }
     S.sys = null;
     return sysIndex();
   }
@@ -1458,7 +1528,7 @@
     if (!S.sysFresh) { S.sysFresh = true; setTimeout(loadSysStates, 0); }
     clearTimeout(healthTimer);
     healthTimer = setTimeout(indexHealth, 5000);
-    return h('div', { class: 'screen', id: 'sysindex' }, h('div', { class: 'top' }, h('h1', { text: 'System' })),
+    return h('div', { class: 'screen', id: 'sysindex' },
       h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
       group('top', ''),
       SYS_GROUPS.map(function (g) { return group(g[0], g[1]); }),
@@ -1677,7 +1747,9 @@
         full ? h('div', { class: 'row' }, h('button', { class: 'btn on pri big grow', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } })) : null);
     setTimeout(pageState, 0);
     return h('div', { class: 'screen syspage', id: 'syspage', 'data-page': id },
-      h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: S.sysFrom === 'live' ? '‹ Live' : '‹ System', onclick: sysBack })),
+      // Back: to the Setup index from a page of Setup, and to where the page was opened from. A page that is a
+      // screen of another area (Shaders, Mapping, Sound) and was opened from the menu has nowhere to go back to.
+      HOMES[id] && !S.sysFrom ? null : h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: '‹ ' + (BACK_NAMES[S.sysFrom] || 'Setup'), onclick: sysBack })),
       head,
       h('p', { class: 'hint', id: 'sysblurb', text: blurb || '' }),
       h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
@@ -3129,7 +3201,7 @@
             if (!/^\d\d:\d\d/.test(f.time)) return sayAt(err, 'Choose a time.', true);
             var entry = { time: f.time.slice(0, 5), days: f.days.slice(), action: f.action, label: f.label };
             if (editing) entry.id = f.id;
-            if (f.action === 'play') { if (!f.file) return sayAt(err, 'There are no clips on the box yet. Upload one on the Media screen, or choose something else to happen.', true); entry.file = f.file; entry.loop = f.loop !== false; }
+            if (f.action === 'play') { if (!f.file) return sayAt(err, 'There are no clips on the box yet. Upload one in the Library (under Play), or choose something else to happen.', true); entry.file = f.file; entry.loop = f.loop !== false; }
             if (f.action === 'preset') { if (!f.preset) return sayAt(err, 'Type the start script name.', true); entry.preset = f.preset.trim(); }
             if (f.action === 'scene') { if (!f.scene) return sayAt(err, isOff('scene') ? 'Switch Room on first, with the button above.' : 'There is no scene yet. Make one on the Room screen, or choose something else to happen.', true); entry.scene = f.scene; }
             if (f.action === 'vibes' && f.set) entry.set = f.set;
@@ -3548,8 +3620,12 @@
       if (r.getAttribute('data-fill') !== fill) { r.setAttribute('data-fill', fill); r.style.setProperty('--fill', fill); }
     }
   }
+  // Which of the five colours of a look the open screen wears (D54, D65): Play is "clips", Shape "mix", Room "room",
+  // Setup "system", and the Shaders screen keeps its own, "shaders". A theme knows these five names and no others.
+  var AREA_COLOUR = { play: 'clips', shape: 'mix', room: 'room', setup: 'system' };
   function markArea() {
-    var area = !S.device ? null : S.tab === 'room' ? 'room' : S.tab === 'mix' ? 'mix' : S.tab === 'system' ? (S.sys === 'vibes' ? 'shaders' : 'system') : 'clips';
+    var key = S.device ? screenKey() : null;
+    var area = !key ? null : key === 'play/shaders' ? 'shaders' : AREA_COLOUR[key.split('/')[0]];
     if (area) document.documentElement.setAttribute('data-area', area); else document.documentElement.removeAttribute('data-area');
   }
   // A small picture of a look, drawn from its own tokens (the page, a surface, the colour of each part of the panel, a
@@ -3848,8 +3924,8 @@
         flip('owner', 'Let a controller show a full access code? Anyone who can hold a button on a controller plugged into the box can then pair a device with everything allowed.',
           'Allow full access codes', 'Full access codes from a controller are allowed.', 'Full access codes from a controller are off.'),
         'Pairs one device as ' + roleName('full') + ', like the PIN. Leave it off unless you need it. The MIDI action is "Show a one-time full access code".'));
-      if (c.enabled && !c.midi_on) body.appendChild(h('div', { class: 'hint', id: 'ctlcodemidi', text: 'MIDI controllers are switched off (System, MIDI controller), so no control can ask for a code yet.' }));
-      if (c.enabled) body.appendChild(h('div', { class: 'hint', id: 'ctlcodehow', text: 'Give a pad or button the action under System, MIDI controller: tap it on its controller\'s card, or use Learn. ' +
+      if (c.enabled && !c.midi_on) body.appendChild(h('div', { class: 'hint', id: 'ctlcodemidi', text: 'MIDI controllers are switched off (Setup, MIDI controller), so no control can ask for a code yet.' }));
+      if (c.enabled) body.appendChild(h('div', { class: 'hint', id: 'ctlcodehow', text: 'Give a pad or button the action under Setup, MIDI controller: tap it on its controller\'s card, or use Learn. ' +
         'On a Launchpad Mini the eighth pad of the top row shows a presenter code already. A second press takes the code off the display. At most ' + c.status.per_hour + ' codes an hour.' }));
       var s = c.status;
       if (s.active) {
@@ -3954,37 +4030,189 @@
     return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
       confirmRow: confirmRow, switchFeature: shaderCtx().switchFeature, poll: poll,
       openShaders: function () { openSys('vibes', S.tab === 'system' ? null : S.tab); },
-      openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
+      openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null,
+      openRoomSetup: can('full') ? function () { openSys('room', S.tab === 'system' ? null : S.tab); } : null };
   }
   function stopTimers() {
     [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
+  }
+  // ---- the Workspace shell (D65) ----------------------------------------
+  // Four areas, each with screens that have one job: Play (Pads, Library, Shaders), Shape (Controls, Effect,
+  // Picture, Mapping, Sound), Room (Scenes, Walls, Guests) and Setup (an index, and one page at a time). The areas
+  // are tabs at the foot under 600 px with the area's screens in a row under the title; from 600 px a side menu
+  // lists every area and its screens. The transport strip is at the foot of every screen. Every card is the one the
+  // panel had before, built by the function that built it; this part only decides where it is shown.
+  var AREAS = [['play', 'Play'], ['shape', 'Shape'], ['room', 'Room'], ['setup', 'Setup']];
+  // pages of the old System that are a screen of another area now (the Setup index still lists them, and opens them there)
+  var HOMES = { vibes: 'play/shaders', mapping: 'shape/mapping', sound: 'shape/sound' };
+  var BACK_NAMES = { live: 'Pads', media: 'Library', mix: 'Shape', room: 'Room', index: 'Setup' };
+  function screenKey() {            // the open screen, from what is built: 'area/screen'
+    if (S.tab === 'live') return 'play/pads';
+    if (S.tab === 'media') return 'play/library';
+    if (S.tab === 'mix') return 'shape/' + S.part.mix;
+    if (S.tab === 'room') return 'room/' + S.part.room;
+    if (!S.sys) return 'setup/index';
+    return HOMES[S.sys] || 'setup/' + S.sys;
+  }
+  // The screens this device has now, in the menu's order. A screen whose module is switched off is not among them
+  // (the owner switches it on from its row of the Setup index), nor is one that would be empty for this role.
+  function screenList() {
+    var rows = sysRows(), remote = !!(S.device && S.device.remote);
+    function row(id) { return rows.filter(function (r) { return r.id === id; })[0]; }
+    function has(id) { var r = row(id); return !!r && (!r.module || moduleOn(r.module)) && (rowShown(r) || !!r.plain); }
+    function scr(area, id, name, job, tab, more) {
+      var o = { key: area + '/' + id, area: area, id: id, name: name, job: job, tab: tab, sys: null, part: null };
+      Object.keys(more || {}).forEach(function (k) { o[k] = more[k]; });
+      return o;
+    }
+    var list = [
+      scr('play', 'pads', 'Pads', 'Start what sits on a pad.', 'live'),
+      scr('play', 'library', 'Library', 'Find a clip, a picture or a live input and play it; keep the files.', 'media')];
+    if (has('vibes')) list.push(scr('play', 'shaders', 'Shaders', 'Pick a shader, or let Vibes play a set.', 'system', { sys: 'vibes' }));
+    list.push(scr('shape', 'controls', 'Controls', 'Play what is on screen: its own controls.', 'mix', { part: 'controls' }));
+    if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put one effect over the picture and set how much.', 'mix', { part: 'effect' }));
+    list.push(scr('shape', 'picture', 'Picture', 'Set how the picture looks and where it sits.', 'mix', { part: 'picture' }));
+    if (has('mapping')) list.push(scr('shape', 'mapping', 'Mapping', 'Fit the picture to the wall.', 'system', { sys: 'mapping' }));
+    if (has('sound')) list.push(scr('shape', 'sound', 'Sound', 'Set how loud it is and where the sound comes out.', 'system', { sys: 'sound' }));
+    if (window.pvjRoom && moduleOn('room')) {
+      list.push(scr('room', 'scenes', 'Scenes', 'Set the whole room with one tap.', 'room', { part: 'scenes' }));
+      list.push(scr('room', 'walls', 'Walls', 'One wall at a time: power, source and mutes.', 'room', { part: 'walls' }));
+      if (can('live') && !remote) list.push(scr('room', 'guests', 'Guests', 'Let someone in, and end their code.', 'room', { part: 'guests' }));
+    }
+    list.push(scr('setup', 'index', 'Setup', 'Find a setting. Each row opens one page.', 'system'));
+    rows.forEach(function (r) {
+      if (HOMES[r.id] || !rowShown(r) || (r.module && !moduleOn(r.module))) return;
+      list.push(scr('setup', r.id, r.name, '', 'system', { sys: r.id }));
+    });
+    return list;
+  }
+  function menuKey() { return screenList().map(function (x) { return x.key; }).join(' '); }
+  function wsScrollTop() { window.scrollTo(0, 0); }
+  // Open a screen by its key. Another part of what is already built (Shape's three, Room's three) is shown without
+  // drawing anything again; anything else reads the box's state and draws, as a tap on a tab always did.
+  function go(key) {
+    var sc = screenList().filter(function (x) { return x.key === key; })[0];
+    if (!sc) return;
+    S.last[sc.area] = sc.key;
+    var built = app.querySelector('main.ws > .screen');
+    if (sc.part && sc.tab === S.tab && built) {
+      S.part[sc.tab] = sc.part; S.msg = ''; say('');
+      Array.prototype.forEach.call(built.querySelectorAll('[data-part]'), function (el) { el.hidden = el.getAttribute('data-part') !== sc.part; });
+      redrawChrome();
+      return wsScrollTop();
+    }
+    // a page of Setup is one to come back from (the phone's back gesture returns to the index)
+    if (sc.sys && !HOMES[sc.sys]) { if (history.state && history.state.sys) history.replaceState({ sys: sc.sys }, ''); else history.pushState({ sys: sc.sys }, ''); }
+    else if (history.state && history.state.sys) history.replaceState(null, '');
+    if (sc.part) S.part[sc.tab] = sc.part;
+    S.tab = sc.tab; S.msg = ''; S.sys = sc.sys; S.sysFresh = false; S.sysFrom = null;
+    return loadAll().then(render).then(wsScrollTop);
+  }
+  function goArea(area) {           // the area's tab: back to the screen it was left on (Setup: always its index)
+    var list = screenList().filter(function (x) { return x.area === area; });
+    var last = area !== 'setup' && area !== screenKey().split('/')[0] && list.filter(function (x) { return x.key === S.last[area]; })[0];
+    if (list.length) go((last || list[0]).key);
+  }
+  // The title bar, the row of the area's screens (a phone), the side menu (from 600 px) and the tabs (a phone). All
+  // four are in the page at every width; the stylesheet shows the ones for the panel's width (container "app").
+  // paged: the screen is a page with its own heading and sentence, so the bar's title is not a second heading.
+  function chrome(paged) {
+    var list = screenList(), key = screenKey(), area = key.split('/')[0];
+    var cur = list.filter(function (x) { return x.key === key; })[0];
+    var areas = AREAS.filter(function (a) { return list.some(function (x) { return x.area === a[0]; }); });
+    var areaName = AREAS.filter(function (a) { return a[0] === area; })[0][1];
+    var mine = list.filter(function (x) { return x.area === area; });
+    var job = cur && cur.job && !paged ? (mine.length > 1 ? cur.name + ': ' : '') + cur.job : '';
+    var item = function (x, cls, prefix, text) {
+      return h('button', { class: cls + (x.key === key ? ' on' : ''), id: prefix + x.key.replace('/', '-'), 'data-go': x.key, 'aria-current': x.key === key ? 'page' : false, text: text || x.name,
+        onclick: function () { go(x.key); } });
+    };
+    var head = h('header', { class: 'wshead', id: 'wshead' },
+      h('div', { class: 'wsheadmain' },
+        h(paged ? 'div' : 'h1', { class: 'wstitle', id: 'wstitle', text: areaName }),
+        h('p', { class: 'wsjob', id: 'wsjob', text: job, hidden: !job })),
+      h('span', { class: 'wsbrand', text: 'nxlx.mastercontrol' }),
+      h('div', { class: 'pill k', id: 'pill' }));
+    var sub = area !== 'setup' && mine.length > 1 ? h('nav', { class: 'wssub', id: 'wssub', 'aria-label': 'Screens of ' + areaName },
+      h('div', { class: 'seg' }, mine.map(function (x) { return item(x, 'btn segbtn', 'sub-'); }))) : h('div', { class: 'wssub', id: 'wssub', hidden: true });
+    var side = h('nav', { class: 'wsside', id: 'wsside', 'aria-label': 'Every screen' }, areas.map(function (a) {
+      var its = list.filter(function (x) { return x.area === a[0]; });
+      var first = a[0] === 'setup' ? item(its[0], 'wsar' + (a[0] === area ? ' cur' : ''), 'side-', a[1]) :
+        h('button', { class: 'wsar' + (a[0] === area ? ' cur' : ''), id: 'side-' + a[0], 'data-ar': a[0], text: a[1], onclick: function () { goArea(a[0]); } });
+      return h('div', { class: 'wsgroup', role: 'group', 'aria-label': a[1] }, first,
+        (a[0] === 'setup' ? its.slice(1) : its).map(function (x) { return item(x, 'wsit', 'side-'); }));
+    }));
+    var tabs = h('nav', { class: 'tabs wstabs', id: 'wstabs', 'aria-label': 'Areas' }, areas.map(function (a) {
+      return h('button', { class: 'btn' + (a[0] === area ? ' on' : ''), id: 'tab-' + a[0], 'data-ar': a[0], text: a[1], 'aria-current': a[0] === area ? 'page' : false,
+        onclick: function () { goArea(a[0]); } });
+    }));
+    return { head: head, sub: sub, side: side, tabs: tabs, key: key };
+  }
+  var NAV_ID = /^(side-|sub-|tab-)/;
+  // The menus are drawn again in place (a screen of the same build was chosen, or a page of Setup was opened): the
+  // item that was pressed is found again by its id and keeps the cursor; if it is not shown at this width any more,
+  // the screen itself takes it.
+  function redrawChrome() {
+    var focus = document.activeElement && document.activeElement.id;
+    var c = chrome(!!document.getElementById('syspage'));
+    ['wshead', 'wssub', 'wsside', 'wstabs'].forEach(function (id, i) {
+      var old = document.getElementById(id), now = [c.head, c.sub, c.side, c.tabs][i];
+      if (old) old.parentNode.replaceChild(now, old);
+    });
+    var main = document.getElementById('wsmain');
+    if (main) main.setAttribute('data-screen', c.key);
+    S.menu = menuKey();
+    markArea();
+    keepNavCursor(focus);
+    patchLive();
+  }
+  function keepNavCursor(focus) {
+    if (!focus || !NAV_ID.test(focus)) return;
+    var back = document.getElementById(focus), main = document.getElementById('wsmain');
+    if (back && back.offsetParent) back.focus({ preventScroll: true });
+    else if (main) main.focus({ preventScroll: true });
+  }
+  var dockWatch = null;
+  function dockHeight() {           // how tall the strip and the tabs are: what floats above them (a message) clears them
+    var d = document.getElementById('wsdock');
+    if (d) document.documentElement.style.setProperty('--dock', d.offsetHeight + 'px');
   }
   function render() {
     markArea();
     stopTimers();
     keepNetForm();
     keepSyncForm();
+    var focus = document.activeElement && document.activeElement.id;
     app.textContent = '';
-    if (!S.device) { S.landing = true; app.appendChild(connect()); return; }
-    var screens = { live: live, mix: mix, media: media, system: system };
-    var names = [['live', 'Live'], ['mix', 'Mix'], ['media', 'Media'], ['system', 'System']];
-    // The Room screen (room.js): one more tab while its module is on. A presenter or a guest starts on it when the
-    // page is first loaded or the device has just been paired; nobody already on another screen is ever moved.
+    if (!S.device) { S.landing = true; dock = null; app.appendChild(connect()); return; }
+    // The Room area (room.js) is there while its module is on. A presenter or a guest starts on it when the page is
+    // first loaded or the device has just been paired; nobody already on another screen is ever moved.
     var landing = S.landing !== false;
     if (S.modules.length) S.landing = false;      // decided once the modules are known, not by a render that came before them
-    if (window.pvjRoom && moduleOn('room')) {
-      screens.room = function () { return window.pvjRoom.screen(roomCtx()); };
-      names.unshift(['room', 'Room']);
-      if (landing && !can('full')) S.tab = 'room';
-    } else if (S.tab === 'room') S.tab = 'live';
-    markArea();        // again: the tab may just have been decided
-    var tabs =h('nav', { class: 'tabs' + (names.length > 4 ? ' many' : ''), 'aria-label': 'Sections' }, names.map(function (t) {
-      return h('button', { class: 'btn' + (S.tab === t[0] ? ' on' : ''), text: t[1], 'aria-current': S.tab === t[0] ? 'page' : false,
-        onclick: function () { goTab(t[0]); } });
-    }));
-    app.appendChild(h('div', { class: 'shell' }, supportBanner(), screens[S.tab](), tabs));
+    var room = !!window.pvjRoom && moduleOn('room');
+    if (room && landing && !can('full')) S.tab = 'room';
+    else if (S.tab === 'room' && !room) S.tab = 'live';
+    // a part that this device does not have (its module went off, the role has no such screen): the area's first
+    if ((S.tab === 'mix' || S.tab === 'room') && !screenList().some(function (x) { return x.key === screenKey(); })) S.part[S.tab] = S.tab === 'mix' ? 'controls' : 'scenes';
+    markArea();        // again: the screen may just have been decided
+    var screens = { live: live, mix: mix, media: media, system: system, room: roomScreen };
+    var screen = screens[S.tab]();
+    S.last[screenKey().split('/')[0]] = screenKey();
+    var c = chrome(screen.id === 'syspage');      // after the screen: a page that could not be opened has become the index by now
+    S.menu = menuKey();
+    markArea();
+    app.appendChild(h('div', { class: 'shell wsp', id: 'wsp' }, supportBanner(),
+      h('div', { class: 'frame' }, c.head, c.sub, c.side,
+        h('main', { class: 'ws', id: 'wsmain', 'data-screen': c.key, tabindex: -1 }, screen),
+        h('div', { class: 'wsdock', id: 'wsdock' }, transport(), c.tabs))));
     if (S.sheet) app.appendChild(sheet());
     patchLive();
+    dockHeight();
+    if (window.ResizeObserver) { if (dockWatch) dockWatch.disconnect(); dockWatch = new ResizeObserver(dockHeight); dockWatch.observe(document.getElementById('wsdock')); }
+    // the menu item or the strip's button that was pressed keeps the cursor across the redraw
+    var strip = focus && /^(wsmore|prev|next|back10|fwd10|fadein|fade|freeze|stop|black|seek)$/.test(focus) && document.getElementById(focus);
+    if (strip && strip.offsetParent && !strip.disabled) strip.focus({ preventScroll: true });
+    else keepNavCursor(focus);
   }
   function start() { loadAll().then(function () { if (S.device) render(); else render(); }); }
 
@@ -3998,7 +4226,7 @@
     window.addEventListener('popstate', function (e) {     // the phone's back gesture: from a System page to the index
       if (!S.device) return;
       var id = (e.state && e.state.sys) || null;
-      if (id) { S.tab = 'system'; S.sys = id; S.msg = ''; }
+      if (id) { S.tab = 'system'; S.sys = id; S.msg = ''; S.sysFrom = null; }       // (the ids are those of the old System pages)
       else leaveSysPage();
       render();
       window.scrollTo(0, 0);
