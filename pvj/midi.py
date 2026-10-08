@@ -826,10 +826,15 @@ class MidiMapper:
         too, for every control of the controller. Otherwise a press whose release was among the lost messages would
         stay "down", the next press would not count as one, and its release would be timed from nothing or, worse,
         from an older press."""
-        stores = (self._held, self._pressed) if pressed else (self._held,)
-        for store in stores:
-            for key in [k for k in store if source is None or k[1] == source]:
-                del store[key]
+        for key in [k for k in self._held if source is None or k[1] == source]:
+            del self._held[key]
+        if pressed:
+            # Only what sends notes (pads and buttons): a lost note-off leaves one "down" for good. A controller
+            # number is left as it is: a knob or fader mapped to a trigger rests at a value, and forgetting that it
+            # is up would fire the trigger again at its next step. (A cc button whose release was lost is still
+            # safe: its hold is forgotten above, so its next release asks for nothing.)
+            for key in [k for k in self._pressed if (source is None or k[1] == source) and k[2] == "note"]:
+                del self._pressed[key]
 
     def plan(self, source, msg, at=None):
         """What a message should do: a list of (path, body) calls. Nothing is called here, so a caller can release its
@@ -1000,6 +1005,14 @@ class MidiInput:
                             continue
                         self.messages += 1
                         self.on_message(self.source, msg)
+                elif self._lost and self._queue is not None:
+                    # Dropped, and nothing came after that could carry the marker: put it as soon as there is
+                    # room. Only this thread sets, reads and clears the flag, so a newer loss is never wiped out.
+                    try:
+                        self._queue.put_nowait((LOST, self._clock()))
+                        self._lost = False
+                    except queue.Full:
+                        pass
                 if self._stop.is_set():
                     break
                 if self._queue is None:
@@ -1022,9 +1035,6 @@ class MidiInput:
             try:
                 msg, at = self._queue.get(timeout=0.1)
             except queue.Empty:
-                if self._lost:                          # dropped, and nothing came after that could carry the marker:
-                    self._lost = False                  # everything older has been handed on, so this is its place
-                    self._hand(LOST, self._clock())
                 if not reader.is_alive() and self._queue.empty():
                     break                               # the device is gone and everything read from it was handed on
                 self._hand(None, self._clock())         # a tick: lets the hub flush held fader values
@@ -1038,7 +1048,9 @@ class MidiInput:
     def _hand(self, msg, at):
         """One message to the handler. Whatever it raises (a save that failed somewhere under the API, a bug) ends
         with that message: this thread goes on to the next one, or the controller would be deaf from then on. Said
-        in the log with the kind of error, at most once in ten seconds."""
+        in the log with the kind of error, at most once in ten seconds.
+        A real message that failed counts as a lost one: it may have been a release, half handled or not at all, so
+        the handler is told "lost" right after it (in a try of its own) and forgets what is held and down."""
         try:
             self.on_message(self.source, msg, at)
         except Exception as e:
@@ -1046,6 +1058,11 @@ class MidiInput:
             if now >= self._said_at:
                 self._said_at = now + 10.0
                 self.log("midi: %s: a message could not be handled (%s: %s); carrying on" % (self.path, type(e).__name__, e))
+            if msg is not None and msg != LOST:
+                try:
+                    self.on_message(self.source, LOST, at)
+                except Exception:
+                    pass
 
     def start(self):
         self._stop.clear()
@@ -1860,7 +1877,9 @@ class MidiHub:
                     gone.append((path, inp))
                     if not any(i.source == inp.source for i in self.inputs.values()):
                         self._retired.add(inp.source)
-            for path in sorted(paths - set(self.inputs)):
+            # A path whose input was halted just now is not given a new one in this pass: the old reader still has
+            # the device open until it is joined below. The next scan starts the new one.
+            for path in sorted(paths - set(self.inputs) - {p for p, _ in gone}):
                 source = self._namer(path)
                 inp = MidiInput(path, source, self.on_message, log=self.log, open_fn=self._open_fn, clock=self._clock, queue_max=self.queue_max)
                 if not any(i.source == source for i in self.inputs.values()):
