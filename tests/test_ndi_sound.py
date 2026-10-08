@@ -452,6 +452,22 @@ class ReceiverSoundTest(Base):
         self.stall.clear()
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] >= 1 + st["audio"]["counts"]["written"], 10))
 
+    def test_a_flood_of_tiny_blocks_is_bounded_by_their_number_too(self):
+        r = self.start_with_sound()
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.stall.set()
+        for _ in range(40):                                                              # fill the pipe so that the writer stands still
+            self.lib.frames.put(frame(64, 16, fill=3))
+        self.now[0] += 0.05
+        for k in range(3000):                                                            # 3000 blocks of one sample: 62 ms of sound
+            self.lib.sounds.put(sound(1))
+        self.assertTrue(wait(lambda: self.lib.sounds.qsize() == 0, 20))
+        time.sleep(0.2)
+        with r._cond:
+            self.assertLessEqual(len(r._queue), ndi.AUDIO_QUEUE_BLOCKS)
+            self.assertLessEqual(len(r._peaks), ndi.AUDIO_QUEUE_BLOCKS)
+        self.stall.clear()
+
     def test_sound_that_runs_ahead_of_the_clock_loses_a_block_and_sound_after_a_gap_starts_again_at_the_clock(self):
         r = self.start_with_sound()
         self.assertTrue(wait(lambda: len(self.stream()) >= 1))

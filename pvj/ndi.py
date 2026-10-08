@@ -87,6 +87,7 @@ AUDIO_GAIN = 10 ** (-AUDIO_HEADROOM_DB / 20.0)
 AUDIO_ABSURD = 1000.0                     # a sample 60 dB over reference is not sound: the block is played as silence
 AUDIO_WAIT = 0.5                          # after the first picture: how long sound may take to show that there is some
 AUDIO_QUEUE_SECONDS = 1.0                 # sound waiting for the player; beyond it the oldest is dropped, never kept
+AUDIO_QUEUE_BLOCKS = 256                  # and never more blocks than this, however short a sender makes them
 AUDIO_WINDOW = 0.3                        # how far the sound's place in time may stray from the helper's clock
 AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
 CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
@@ -755,7 +756,7 @@ class Receiver:
         self._audio_problem = ""                   # why the last block was refused, for the page
         self._queue = collections.deque()          # (seconds, bytes, length in seconds) waiting for the writer
         self._queued = 0.0
-        self._peaks = collections.deque()          # (clock, loudest sample) of the blocks of the last second
+        self._peaks = collections.deque(maxlen=AUDIO_QUEUE_BLOCKS)     # (clock, loudest sample) of the blocks of the last second
         self._t0 = None                            # the clock when the player took the pipe: the stream's time 0
         self._at = 0.0                             # the clock when the pending frame arrived
         self._apts = None                          # where the next block of sound belongs, by count
@@ -917,7 +918,8 @@ class Receiver:
                     self._queue.append((self._apts, data, length))
                     self._apts += length
                     self._queued += length
-                    while self._queued > AUDIO_QUEUE_SECONDS and self._queue:      # the player is not taking it: the oldest goes
+                    # the player is not taking it: the oldest goes
+                    while self._queue and (self._queued > AUDIO_QUEUE_SECONDS or len(self._queue) > AUDIO_QUEUE_BLOCKS):
                         self._queued -= self._queue.popleft()[2]
                         self.audio_counts["dropped"] += 1
                     self._cond.notify_all()
