@@ -16,6 +16,11 @@ Branch `product-leftovers`, a pull request to master, not merged: it touches the
 - **For the reviewer, the lines that carry the risk:** `shutil.rmtree(path)` in `sweep_scratch` (root deletes a tree: the checks before it are `islink(parent)`, the whole-name pattern, `lstat`, a real folder, owned by root); `os.makedirs(parent, mode=0o755, exist_ok=True)` in `check()` (root makes the install folder, also for the read-only `check` command from a terminal); `os.makedirs(os.path.dirname(path), ...)` in `take_lock` (root makes `/run/lock` where it is missing, mode 755 where Debian's is 1777); the `raise UpdateError` there (an update that used to run now does not: on a box where `/run/lock` cannot be used, which was not looked for on the test Pi); and `os.unlink(name, dir_fd=fd)` in `paths.remove_leftovers` (the panel's account removes files in `/var/lib/pvj`, by a pattern).
 - **Not done:** moving the lock out of the world-writable `/run/lock` (D70 says why); a sweep at boot; anything in the installer.
 
+## 2026-10-08, the evening (CI's install retry met its first slow mirror, and lost)
+
+- On #102's second run the `effects-gpu` job for the Pi 4's kind of OpenGL failed in its install step with "ci-apt: gave up after 3 attempts": the lists came at once each time and the 48 MB of packages did not arrive in 90 seconds, three times, from `azure.archive.ubuntu.com`. So the retry of #101 failed sooner (under five minutes instead of ten) but cured nothing: the same runner asked the same slow mirror three times.
+- `tools/ci-apt.sh` now changes the mirror after a failed attempt: `azure.archive.ubuntu.com` becomes `archive.ubuntu.com` in the files apt reads its mirrors from. What an attempt downloaded stays in apt's cache, so the next one carries on. Not proven: no run has needed the second attempt since; the first slow mirror after this merges is its test. If Ubuntu's own archive is slow from that runner too, the step still fails, and a rerun is still the cure.
+
 ## 2026-10-08 (the ISF parser: comments before the header, and an input called `time`)
 
 Branch `isf-leading-comments`, not merged. D66 has the decision. **Run on the dev Mac only, where there is no mpv: the translator's text was checked, nothing was drawn. The GPU tests added here run in CI. Nothing ran on a box.**
