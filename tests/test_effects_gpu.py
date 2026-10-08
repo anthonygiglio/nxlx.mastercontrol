@@ -931,6 +931,11 @@ if ONLY != "gles":
 
 
 if __name__ == "__main__":
+    if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SOAK")) and os.environ.get("GITHUB_EVENT_NAME") == "push":
+        # TEMPORARY (the hunt for "no reply from mpv"): on a push, while tests/SOAK is there, this job loops the
+        # tests that lost a reply instead. The pull request's run of the same commit runs the tests as usual.
+        from tests import soak_gpu
+        sys.exit(soak_gpu.main())
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]))
     ran = result.testsRun - len(result.skipped)
     print("effect GPU tests: %d run, %d skipped" % (ran, len(result.skipped)))

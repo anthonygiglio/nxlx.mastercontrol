@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+# TEMPORARY: while this file is here, a push makes the effects-gpu jobs loop the GPU tests that lost a reply
+# (tests/soak_gpu.py) in place of their usual run. Removed again before the branch is finished.
