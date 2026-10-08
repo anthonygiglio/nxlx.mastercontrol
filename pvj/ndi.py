@@ -878,6 +878,15 @@ def main(argv=None):
 
 
 # ---- the panel's side --------------------------------------------------------------------------------------------------
+def helper_uid():
+    """The uid of the helper's account, whose pipe the player may be told to read; our own where there is none (a desk)."""
+    import pwd
+    try:
+        return pwd.getpwnam("pvj-ndi").pw_uid
+    except KeyError:
+        return os.getuid()
+
+
 class Client:
     """One request, one reply. A status question never holds the panel up: a short wait, and a reply kept a second."""
 
@@ -959,8 +968,9 @@ class Input:
 
     RETRY_SECONDS, RETRY_MAX = 3.0, 60.0   # between tries to show a source again: 3 s, then twice as long each time, to a minute
 
-    def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic):
+    def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic, pipe_owner=os.getuid):
         self.client, self.fifo, self._wanted, self.log, self._clock = client, fifo, wanted, log, clock
+        self._pipe_owner = pipe_owner      # the uid the helper's pipe must belong to (server.py: the pvj-ndi account)
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = threading.RLock()      # open, load in the player and note, as one step (like the capture input)
         self._retry_at, self._retry_wait, self._retry_said = 0.0, self.RETRY_SECONDS, ""
@@ -1037,6 +1047,18 @@ class Input:
             raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
         self.ended = None
         return p
+
+    def check_pipe(self):
+        """Before the player is told to read it: the path is a pipe, not a link or a file, and the helper's own.
+        The helper could swap it a moment after this look (the player opens it later, by name), so this is a
+        tripwire for a mistake or a crude swap, not a guarantee; the guarantee is that the player reads whatever
+        is there as raw video only (the demuxer is forced) and that the helper cannot write anywhere else."""
+        try:
+            st = os.lstat(self.fifo)
+        except OSError:
+            raise NdiError("the NDI helper's pipe is not there; not loading it")
+        if not stat.S_ISFIFO(st.st_mode) or st.st_uid != self._pipe_owner():
+            raise NdiError("the NDI helper's pipe is not what it should be; not loading it")
 
     def client_close(self):
         """Longer than the helper may hold its lock while it waits for a first frame: a close must not be lost."""

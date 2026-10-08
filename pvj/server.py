@@ -458,7 +458,8 @@ def build(env=None, player=None):
     from . import ndi as ndi_mod             # the NDI helper's client; the helper is idle until told the module is on
     ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
     api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
-                            ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log)
+                            ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log,
+                            pipe_owner=ndi_mod.helper_uid)
     try:                                     # whatever the helper answers, the panel starts
         api.ndi.sync()
     except Exception as e:

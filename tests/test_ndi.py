@@ -1616,5 +1616,73 @@ class OffMeansNoNdiCodeTest(unittest.TestCase):
         self.assertIsNotNone(made["service"].on_unload)
 
 
+class PipeCheckTest(NdiApiTest):
+    """Review finding 11: the player is only told to read a pipe that is a pipe and the helper's own."""
+
+    def swap(self, how):
+        real = self.client.request
+
+        def request(message, timeout=None):
+            reply = real(message, timeout)
+            if message.get("cmd") == "open" and reply.get("ok"):
+                how()
+            return reply
+        self.client.request = request
+
+    def refused(self, why):
+        self.lib.frames.put(frame(64, 16))
+        st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
+        self.assertEqual((st, body["error"]), (409, why))
+        self.assertFalse([c for c in self.player.calls if c[0] == "play_pipe"])
+        self.assertEqual((self.api.ndi.current, self.service.receiver), (None, None))
+
+    def test_a_file_in_the_pipes_place_is_not_loaded(self):
+        self.enable()
+
+        def to_file():
+            os.unlink(self.service.fifo)
+            with open(self.service.fifo, "w") as f:
+                f.write("not video")
+        self.swap(to_file)
+        self.refused("the NDI helper's pipe is not what it should be; not loading it")
+
+    def test_a_link_in_the_pipes_place_is_not_loaded_even_to_another_pipe(self):
+        self.enable()
+        other = os.path.join(self.ndidir, "other.fifo")
+        os.mkfifo(other)
+
+        def to_link():
+            os.unlink(self.service.fifo)
+            os.symlink(other, self.service.fifo)
+        self.swap(to_link)
+        self.refused("the NDI helper's pipe is not what it should be; not loading it")
+
+    def test_a_pipe_that_is_somebody_elses_or_gone_is_not_loaded(self):
+        self.enable()
+        self.api.ndi._pipe_owner = lambda: os.getuid() + 1
+        self.refused("the NDI helper's pipe is not what it should be; not loading it")
+        self.api.ndi._pipe_owner = os.getuid
+        self.swap(lambda: os.unlink(self.service.fifo))
+        self.refused("the NDI helper's pipe is not there; not loading it")
+
+    def test_the_panel_as_started_expects_the_helpers_account(self):
+        import inspect
+        from unittest import mock
+        import pwd
+        from pvj import server
+        self.assertIn("pipe_owner=ndi_mod.helper_uid", inspect.getsource(server.build))
+        with mock.patch.object(pwd, "getpwnam", lambda name: mock.Mock(pw_uid=777) if name == "pvj-ndi" else None):
+            self.assertEqual(ndi.helper_uid(), 777)
+
+        def none(name):
+            raise KeyError(name)
+        with mock.patch.object(pwd, "getpwnam", none):
+            self.assertEqual(ndi.helper_uid(), os.getuid())
+
+
+for _name in [n for n in dir(NdiApiTest) if n.startswith("test_") and n not in PipeCheckTest.__dict__]:
+    setattr(PipeCheckTest, _name, None)
+
+
 if __name__ == "__main__":
     unittest.main()

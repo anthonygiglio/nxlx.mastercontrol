@@ -1944,6 +1944,11 @@ class Api:
             with self.ndi.screen:
                 good = self.ndi.still(ticket) and (again is None or self.ndi.current is again)
                 if good:
+                    try:
+                        self.ndi.check_pipe()
+                    except ndi_mod.NdiError as e:
+                        good, failed = None, ApiError(409, str(e))
+                if good:
                     self.fader.cancel()
                     self.ndi.current = {"id": p["id"], "name": p["name"]}
                     self._ndi_loading.on = True
@@ -1955,6 +1960,7 @@ class Api:
                         self._ndi_loading.on = False
             if failed is not None:
                 self.ndi.stop()
+                self.ndi.client_close()
                 raise failed
             if not good:
                 self.ndi.client_close()
