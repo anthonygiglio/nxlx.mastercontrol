@@ -1217,13 +1217,14 @@ def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
         src = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     except OSError as e:
         raise NdiError("%s cannot be read as a file (%s)" % (path, "it is a link" if e.errno in (errno.ELOOP, errno.EMLINK) else e.strerror or "error"))
-    tmp = None
+    tmp, made, placed = None, False, False
     try:
         st = os.fstat(src)
         if not stat.S_ISREG(st.st_mode):
             raise NdiError("%s is not a file" % path)
         if st.st_size > LIB_MAX_BYTES:
             raise NdiError("%s is too large to be the NDI runtime" % path)
+        made = not os.path.lexists(dest_dir)                             # a refused file leaves no folder behind either
         os.makedirs(dest_dir, mode=0o755, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".libndi-")       # 0600: nobody loads it before every check has passed
         with os.fdopen(fd, "wb") as out:
@@ -1248,12 +1249,18 @@ def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
         os.chmod(tmp, 0o644)                                             # readable by the helper only now
         dest = os.path.join(dest_dir, LIB_NAME)
         os.replace(tmp, dest)
+        placed = True
         return dest
     finally:
         os.close(src)
         if tmp is not None:
             try:
                 os.unlink(tmp)
+            except OSError:
+                pass
+        if made and not placed:            # the folder this call made, and only if nothing is in it
+            try:
+                os.rmdir(dest_dir)
             except OSError:
                 pass
 
@@ -1286,16 +1293,22 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
         return 1
     say = lambda m: print("pvj-ndi-runtime: %s" % m, file=out)      # noqa: E731
     if len(argv) == 2 and argv[0] == "install":
-        try:                               # the library first: a file that is refused leaves the box as it was
+        try:
+            setup.check()                  # whatever can refuse the setup, before anything on the box is changed
+            # then the library: a file that is refused leaves the box as it was
             print("installed %s" % install_runtime(argv[1]), file=out)
-            setup.enable(say=say)
-            return 0
+            return 1 if setup.enable(say=say) is False else 0      # False: set up, and the helper did not stay up
         except (NdiError, setup.SetupError, OSError) as e:
             print("pvj-ndi-runtime: %s" % e, file=out)
             return 1
     if len(argv) == 1 and argv[0] == "remove":
+        code = 0
         try:
             setup.disable(say=say)
+        except (setup.SetupError, OSError) as e:      # said, and the library still goes
+            print("pvj-ndi-runtime: %s" % e, file=out)
+            code = 1
+        try:
             try:
                 os.unlink(dest)
             except FileNotFoundError:
@@ -1304,10 +1317,10 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
                 os.rmdir(LIB_DIR)          # only when nothing else is in it
             except OSError:
                 pass
-        except (setup.SetupError, OSError) as e:
-            print("pvj-ndi-runtime: %s" % e, file=out)
-            return 1
-        print("removed NDI's library (%s)" % dest, file=out)
-        return 0
+            print("removed NDI's library (%s)" % dest, file=out)
+        except OSError as e:
+            print("pvj-ndi-runtime: %s could not be removed (%s)" % (dest, e.strerror or "error"), file=out)
+            code = 1
+        return code
     print(usage, file=out)
     return 2

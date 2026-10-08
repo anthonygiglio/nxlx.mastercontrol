@@ -631,6 +631,37 @@ class NdiUnitTest(unittest.TestCase):
         for key in ("DeviceAllow", "BindPaths", "StateDirectory", "ExecStartPre", "ExecStartPost", "EnvironmentFile"):
             self.assertNotIn(key, n, key)
 
+    def test_a_release_without_the_helpers_program_skips_the_unit_and_does_not_fail_it_for_ever(self):
+        # Review M2: Restart=always with no start limit, and a rollback to a release from before the NDI input,
+        # was a failure every two seconds into the kept journal. A condition that is not met is not a failure.
+        n = self.ndi
+        self.assertEqual((n["Restart"], n["RestartSec"], n["StartLimitIntervalSec"]), (["always"], ["2"], ["0"]))
+        self.assertEqual(n["ConditionPathExists"], ["@PVJ_DIR@/bin/pvj-ndi"])
+        self.assertEqual(n["ExecStart"], ["@PVJ_DIR@/bin/pvj-ndi"])
+        with open(os.path.join(NDI_UNITS, "pvj-ndi.service")) as f:
+            self.assertLess(f.read().index("ConditionPathExists="), self.read_service_at())
+
+    def read_service_at(self):
+        with open(os.path.join(NDI_UNITS, "pvj-ndi.service")) as f:
+            return f.read().index("[Service]")
+
+    def test_the_installer_removes_a_helper_that_nobody_set_up(self):
+        # Review L4: a unit without the mark (a setup cut short, or a box that ran this branch while the helper went
+        # on every box) is disabled and removed by the next install; the mark decides, nothing else.
+        block = self.sh[self.sh.index("NDI_OPTED_IN=0"):self.sh.index("# USB automount")]
+        orphan = block[block.index('elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ]; then'):]
+        self.assertIn("systemctl disable --now pvj-ndi.service", orphan)
+        self.assertIn('run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN"', orphan)
+        self.assertNotIn("userdel", orphan)
+        self.assertNotIn("NDI_OPTED_IN=1", orphan)
+        self.assertLess(self.sh.index('elif [ -e "$NDI_UNIT" ]'), self.sh.index("\tsystemctl daemon-reload\n\tfix_run_folder"))
+
+    def test_the_install_folder_is_written_one_way(self):
+        # Review L1: "--prefix /opt/pvj/" went into install.json as written, and the NDI setup refuses that spelling.
+        self.assertIn('while [ "${#PREFIX}" -gt 1 ] && [ "${PREFIX%/}" != "$PREFIX" ]; do PREFIX="${PREFIX%/}"; done', self.sh)
+        self.assertIn('case "$PREFIX" in *//*) die "--prefix must not contain //" ;; esac', self.sh)
+        self.assertLess(self.sh.index('PREFIX="${PREFIX%/}"'), self.sh.index('ETC="$ROOT/etc/pvj"'))
+
     def test_the_library_cannot_reach_the_internet_and_the_panel_takes_only_addresses_the_unit_allows(self):
         import ipaddress
         from pvj import ndi
@@ -666,8 +697,10 @@ class NdiUnitTest(unittest.TestCase):
         self.assertLess(self.sh.index("NDI_OPTED_IN=0"), mark)
         install = self.sh[self.sh.index('if [ "$UNINSTALL" = 1 ]'):]
         acts = [line.strip() for line in install.splitlines()
-                if not line.lstrip().startswith("#") and re.search(r"systemctl [a-z-]+ pvj-ndi|pvj-ndi-runtime\" refresh", line)]
-        self.assertEqual(len(acts), 4, acts)
+                if not line.lstrip().startswith("#") and re.search(r"systemctl [a-z-]+( --now)? pvj-ndi|pvj-ndi-runtime\" refresh", line)]
+        self.assertEqual(len(acts), 5, acts)               # the fifth is the removal of a helper without the mark (below)
+        self.assertIn("systemctl disable --now pvj-ndi.service", acts[1])
+        del acts[1]
         block = install[install.index("NDI_OPTED_IN=1"):]
         self.assertIn(acts[0], block[:block.index("\nfi\n")])
         self.assertIn('refresh --root "$ROOT" --prefix "$PREFIX"', acts[0])

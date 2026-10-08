@@ -464,7 +464,9 @@ class Updater:
             # The network helper too, only if it is running (try-restart starts nothing): its socket's place is
             # part of a release (pvj/paths.py), and the panel must find the helper that matches it. Not pvj-sysd
             # (it started this update) and not pvj-supportd (a support session may be the one updating).
-            self.run(["systemctl", "try-restart", "pvj-netd.service"], capture_output=True)
+            # The NDI helper likewise, which exists only on a box that opted in (pvj/ndisetup.py): after a switch to
+            # another release it must run that release's code, like the panel that asks it.
+            self.run(["systemctl", "try-restart", "pvj-netd.service", "pvj-ndi.service"], capture_output=True)
             self.run(["systemctl", "restart", "pvj-player.service", "pvj-web.service"], capture_output=True)
 
     def configured_port(self):

@@ -357,6 +357,37 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(install(self.src, self.stage, "--prefix", "/srv/box/pvj").returncode, 0)
         self.assertIn("ExecStart=/srv/box/pvj/current/bin/pvj-ndi\n", self.read(self.p(self.NDI_FILES[0])))
 
+    def test_a_slash_at_the_end_of_the_install_folder_is_dropped_and_a_doubled_one_refused(self):
+        # Review L1: the folder went into install.json as it was typed, and the NDI setup takes it only one way.
+        import sys
+        sys.path.insert(0, REPO)
+        from pvj import ndisetup
+        r = install(self.src, self.stage, "--prefix", "/srv/box/pvj///")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(json.loads(self.read(self.p("etc/pvj/install.json")))["prefix"], "/srv/box/pvj")
+        self.assertEqual(ndisetup.read_prefix(self.stage), "/srv/box/pvj")
+        self.assertEqual(os.readlink(self.p("srv/box/pvj/current")), "/srv/box/pvj/releases/9.9.1")
+        self.assertIn("ExecStart=/srv/box/pvj/current/bin/pvj-web", self.read(self.p("etc/systemd/system/pvj-web.service")))
+        ndisetup.check(self.stage, account=lambda: None)   # the setup would take this box
+        stage2 = tempfile.mkdtemp()
+        for bad in ("/opt//pvj", "//opt/pvj", "/opt/pvj//x"):
+            self.assertNotEqual(install(self.src, stage2, "--prefix", bad).returncode, 0, bad)
+        self.assertEqual(os.listdir(stage2), [])
+
+    def test_a_helper_without_the_mark_is_removed_by_the_next_install(self):
+        # Review L4: a setup that was cut short, or a box that ran this branch while the helper went on every box.
+        self.assertEqual(install(self.src, self.stage).returncode, 0)
+        self.opt_in()
+        os.unlink(self.p(self.NDI_FILES[1]))                              # the mark is gone; the unit and the player's drop-in are not
+        os.rmdir(os.path.dirname(self.p(self.NDI_FILES[1])))
+        r = install(self.src, self.stage)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("removing an NDI helper that nobody set up on this box", r.stdout)
+        self.assertNotIn("this box has NDI set up", r.stdout)
+        self.assertEqual(self.ndi_names(), ["usr/local/bin/pvj-ndi-runtime"])
+        r = install(self.src, self.stage)                                 # and the run after that says nothing of NDI
+        self.assertNotRegex(r.stdout + r.stderr, r"(?i)avahi|\bndi\b")
+
     def test_a_mark_that_is_a_link_is_not_an_opt_in(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)
         os.makedirs(self.p("etc/systemd/system/pvj-web.service.d"))
@@ -365,6 +396,7 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("NDI", r.stdout)
         self.assertFalse(os.path.exists(self.p(self.NDI_FILES[0])))
+        self.assertEqual(os.readlink(self.p(self.NDI_FILES[1])), "/etc/passwd")      # the link itself is not the installer's to touch
 
     def test_uninstall_takes_the_helper_and_leaves_the_owners_library_unless_purged(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)

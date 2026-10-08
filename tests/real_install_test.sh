@@ -225,6 +225,9 @@ services_and_their_files
 # fetched), so what is checked is root's part: that a plain install leaves nothing of NDI, what the opt-in changes
 # under a real systemd (the group must exist before the panel and the player start with it), that a later plain
 # install keeps and refreshes it, and that opting out takes it off again. Not a test that NDI works.
+# What is NOT run here, and cannot be: the real command succeeding ("pvj-ndi-runtime install <the NDI SDK>"). It
+# needs NDI's library, which only a person with the SDK has. Here the command is run only with a file it refuses,
+# and the setup it would go on to is called directly (ndi_setup enable). The whole command is device step N2.
 NDI_WEB_DROPIN=/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf
 NDI_PLAYER_DROPIN=/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf
 ndi_setup() {      # ndi_setup enable|disable: root's code as `pvj-ndi-runtime install|remove` runs it, without a library
@@ -249,7 +252,7 @@ avahi_state() { if dpkg -s avahi-daemon >/dev/null 2>&1; then echo installed; el
 nothing_of_ndi() {
 	local path
 	for path in /etc/systemd/system/pvj-ndi.service /etc/systemd/system/pvj-web.service.d /etc/systemd/system/pvj-player.service.d \
-		/etc/systemd/system/multi-user.target.wants/pvj-ndi.service /run/pvj-ndi; do
+		/etc/systemd/system/multi-user.target.wants/pvj-ndi.service /run/pvj-ndi /opt/pvj-ndi; do
 		if [ -e "$path" ] || [ -L "$path" ]; then fail "a box that did not opt in has $path"; fi
 	done
 	if systemctl is-active --quiet pvj-ndi.service; then fail "pvj-ndi runs on a box that did not opt in"; fi
@@ -278,7 +281,7 @@ step "the real command with a file that is not NDI's library: refused, and nothi
 if /usr/local/bin/pvj-ndi-runtime install /etc/hostname; then fail "a file that is not the library was accepted"; fi
 nothing_of_ndi
 if getent passwd pvj-ndi >/dev/null || getent group pvj-ndi >/dev/null; then fail "a refused library still made the account or the group"; fi
-if [ -e /opt/pvj-ndi/libndi.so.6 ]; then fail "a refused file was put in place"; fi
+if [ -e /opt/pvj-ndi ] || [ -L /opt/pvj-ndi ]; then fail "a refused file left /opt/pvj-ndi behind"; fi
 if [ "$(avahi_state)" != "$AVAHI_BEFORE" ]; then fail "a refused library still changed avahi-daemon"; fi
 
 step "opt in (root's part of 'pvj-ndi-runtime install', without a library): the helper, its account, the two drop-ins"
@@ -320,6 +323,21 @@ refused pvj-ndi cat /var/lib/pvj/settings.json
 refused "$A" touch /run/pvj-ndi/x
 refused pvj-web touch /run/pvj-ndi/x
 
+step "a release without the helper's program (a rollback to one from before NDI): the unit is skipped, not failed for ever"
+mv /opt/pvj/current/bin/pvj-ndi /opt/pvj/current/bin/pvj-ndi.away
+systemctl restart pvj-ndi.service || true
+RESTARTS="$(systemctl show -p NRestarts --value pvj-ndi.service)"
+sleep 7            # the unit starts a failed helper again every 2 seconds, without a limit
+systemctl status pvj-ndi.service --no-pager -l || true
+[ "$(systemctl show -p NRestarts --value pvj-ndi.service)" = "$RESTARTS" ] || fail "without its program the helper was started again and again: NRestarts went from $RESTARTS to $(systemctl show -p NRestarts --value pvj-ndi.service)"
+if systemctl is-active --quiet pvj-ndi.service; then fail "pvj-ndi counts as running without its program"; fi
+if systemctl is-failed --quiet pvj-ndi.service; then fail "pvj-ndi counts as failed without its program; a condition that is not met must not be a failure"; fi
+[ "$(systemctl show -p ConditionResult --value pvj-ndi.service)" = no ] || fail "the unit's condition was not what stopped it"
+mv /opt/pvj/current/bin/pvj-ndi.away /opt/pvj/current/bin/pvj-ndi
+systemctl restart pvj-ndi.service
+wait_for 40 systemctl is-active --quiet pvj-ndi.service || fail "pvj-ndi did not come back with its program"
+wait_for 40 test -S /run/pvj-ndi/ndi.sock || fail "pvj-ndi made no socket after its program came back"
+
 step "a later plain install keeps an opted-in box opted in and writes its unit again"
 echo "# a line from an older version" >> /etc/systemd/system/pvj-ndi.service
 rm "$NDI_PLAYER_DROPIN"
@@ -354,7 +372,31 @@ if grep -q "this box has NDI set up" "$OUT"; then fail "a plain install after op
 nothing_of_ndi
 services_and_their_files
 
+step "a helper's unit without the mark (a setup cut short, or a box from when the helper went on every box) is removed by the next install"
+sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/pvj/systemd/pvj-ndi.service" > /etc/systemd/system/pvj-ndi.service
+systemctl daemon-reload
+systemctl enable --now pvj-ndi.service
+wait_for 40 systemctl is-active --quiet pvj-ndi.service || fail "the helper without a mark did not start (the test's own set-up)"
+installer
+grep -q "removing an NDI helper that nobody set up" "$OUT" || fail "the installer left a helper that nobody set up"
+nothing_of_ndi
+services_and_their_files
+
 step "final listing"
 listing
+
+step "uninstall on a box that opted in: the helper and the drop-ins go with the rest"
+ndi_setup enable
+wait_for 40 systemctl is-active --quiet pvj-ndi.service || fail "pvj-ndi is not active before the uninstall"
+"$SRC/install/install.sh" --uninstall 2>&1 | tee "$OUT"
+for path in /etc/systemd/system/pvj-ndi.service /etc/systemd/system/pvj-web.service.d /etc/systemd/system/pvj-player.service.d \
+	/etc/systemd/system/multi-user.target.wants/pvj-ndi.service /usr/local/bin/pvj-ndi-runtime /run/pvj-ndi /opt/pvj; do
+	if [ -e "$path" ] || [ -L "$path" ]; then fail "after the uninstall there is still $path"; fi
+done
+if systemctl is-active --quiet pvj-ndi.service; then fail "pvj-ndi still runs after the uninstall"; fi
+if systemctl is-enabled --quiet pvj-ndi.service 2>/dev/null; then fail "pvj-ndi is still enabled after the uninstall"; fi
+getent passwd pvj-ndi >/dev/null || fail "the uninstall removed the account, which it says it leaves"
+grep -q "pvj-ndi on a box that was set up for NDI" "$OUT" || fail "the uninstall does not say what it leaves of NDI"
+
 echo
 echo "PASS (player folder checked: $PLAYER_SEEN). This ran on $(systemctl --version | head -n 1), not on a Raspberry Pi."

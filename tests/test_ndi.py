@@ -785,11 +785,24 @@ class RuntimeFileTest(unittest.TestCase):
         with self.assertRaises(ndi.NdiError) as e:
             ndi.install_runtime(wrong, dest, machine=183, chown=False)
         self.assertIn("is for x86_64, this box is aarch64", str(e.exception))
-        self.assertEqual(os.listdir(dest), [])
+        self.assertFalse(os.path.lexists(dest))            # review M1: not even the folder it made is left by a refused file
         for source in (self.put("script.sh", b"#!/bin/sh\n" + b" " * 40), os.path.join(self.dir, "missing"), self.dir):
             with self.assertRaises(ndi.NdiError, msg=source):
                 ndi.install_runtime(source, dest, machine=183, chown=False)
+        self.assertFalse(os.path.lexists(dest))
+        # a folder that was there before stays, with what was in it; so does a library put there earlier
+        os.makedirs(dest)
+        with self.assertRaises(ndi.NdiError):
+            ndi.install_runtime(wrong, dest, machine=183, chown=False)
         self.assertEqual(os.listdir(dest), [])
+        good = self.put("good/libndi.so.6", elf(183) + b"arm64")
+        ndi.install_runtime(good, dest, machine=183, chown=False)
+        with self.assertRaises(ndi.NdiError):
+            ndi.install_runtime(wrong, dest, machine=183, chown=False)
+        self.assertEqual(os.listdir(dest), [ndi.LIB_NAME])
+        import shutil as _shutil
+        _shutil.rmtree(dest)
+        self.assertEqual(ndi.install_runtime(good, dest, machine=183, chown=False), os.path.join(dest, ndi.LIB_NAME))     # and a good file still makes it
         # a link in the SDK folder that points outside it is not followed
         self.put("sdk2/lib/aarch64-rpi4-linux-gnueabi/readme", b"x")
         os.symlink(wrong, os.path.join(self.dir, "sdk2/lib/aarch64-rpi4-linux-gnueabi/libndi.so.6"))
@@ -1311,7 +1324,7 @@ class RuntimeInstallHardeningTest(unittest.TestCase):
                 ndi.install_runtime(self.good, self.dest, machine=183, chown=False)
         self.assertIn("too large", str(e.exception))
         self.assertLessEqual(sum(fed), 1024 + 1)                         # never more than the bound and one byte is read
-        self.assertEqual(os.listdir(self.dest), [])
+        self.assertFalse(os.path.exists(self.dest) and os.listdir(self.dest))
 
     def test_the_copy_is_private_until_every_check_has_passed(self):
         from unittest import mock

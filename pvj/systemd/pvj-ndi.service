@@ -8,6 +8,10 @@ Description=nxlx.mastercontrol NDI input helper (unprivileged, loads the owner's
 # The NDI runtime finds senders through avahi-daemon. Without it the helper still runs and says what is missing.
 After=network.target avahi-daemon.service
 Wants=avahi-daemon.service
+# After a rollback to a release from before the NDI input this unit is still here and its program is not. Without
+# this line it would fail every two seconds for ever (Restart=always, no start limit) into the kept journal. A
+# condition that is not met is not a failure: the unit is skipped, once, and nothing is started again.
+ConditionPathExists=@PVJ_DIR@/bin/pvj-ndi
 StartLimitIntervalSec=0
 
 [Service]

@@ -55,6 +55,10 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+# One way of writing a folder: no slash at the end and no doubled one. The prefix goes into install.json and from
+# there into units (the NDI helper's, pvj/ndisetup.py), which take it only as this script would have written it.
+while [ "${#PREFIX}" -gt 1 ] && [ "${PREFIX%/}" != "$PREFIX" ]; do PREFIX="${PREFIX%/}"; done
+case "$PREFIX" in *//*) die "--prefix must not contain //" ;; esac
 case "$PREFIX" in /*) ;; *) die "--prefix must be an absolute path" ;; esac
 case "$MEDIA" in /*) ;; *) die "--media must be an absolute path" ;; esac
 for name in "$PVJ_USER" "$WEB_USER"; do
@@ -390,6 +394,15 @@ if [ -f "$NDI_MARK" ] && [ ! -L "$NDI_MARK" ]; then
 	log "this box has NDI set up: writing the NDI helper's unit again"
 	# --root is empty on a real box and the staged folder with --stage (where no account is touched).
 	run python3 -B "$RELEASE/bin/pvj-ndi-runtime" refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the NDI helper's unit again; it stays as it was. To repair: sudo pvj-ndi-runtime install <the NDI SDK folder>"
+elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ]; then
+	# A helper's unit without the mark: a setup that was cut short, or a box that ran this branch while it still put
+	# the helper on every box. Nobody opted this box in, so the unit goes (the account pvj-ndi, if any, stays).
+	log "removing an NDI helper that nobody set up on this box (to set NDI up: sudo pvj-ndi-runtime install <the NDI SDK folder>)"
+	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
+		systemctl disable --now pvj-ndi.service 2>/dev/null || true
+	fi
+	run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN"
+	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
 fi
 # USB automount: udev starts pvj-usb@<partition>.service, which mounts by label.
 run mkdir -p "$(dirname "$USB_RULE")"
