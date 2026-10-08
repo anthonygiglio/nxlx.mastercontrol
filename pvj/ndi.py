@@ -1059,18 +1059,33 @@ def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
     path = find_in_sdk(source, machine) if os.path.isdir(source) else source
     if path is None:
         raise NdiError("no libndi.so for this box (%s) under %s/lib" % (ELF_MACHINES.get(machine, "unknown processor"), source))
-    if not os.path.isfile(path):
-        raise NdiError("%s is not a file" % path)
-    if os.path.getsize(path) > LIB_MAX_BYTES:
-        raise NdiError("%s is too large to be the NDI runtime" % path)
-    os.makedirs(dest_dir, mode=0o755, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".libndi-")
+    # Root reads a name somebody else may control (a USB stick, a download folder). So: never through a link in
+    # the last part of the name, never waiting on a pipe, and what is judged is the open file itself, not the name.
     try:
-        with os.fdopen(fd, "wb") as out, open(path, "rb") as src:
-            shutil.copyfileobj(src, out)
+        src = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    except OSError as e:
+        raise NdiError("%s cannot be read as a file (%s)" % (path, "it is a link" if e.errno in (errno.ELOOP, errno.EMLINK) else e.strerror or "error"))
+    tmp = None
+    try:
+        st = os.fstat(src)
+        if not stat.S_ISREG(st.st_mode):
+            raise NdiError("%s is not a file" % path)
+        if st.st_size > LIB_MAX_BYTES:
+            raise NdiError("%s is too large to be the NDI runtime" % path)
+        os.makedirs(dest_dir, mode=0o755, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".libndi-")       # 0600: nobody loads it before every check has passed
+        with os.fdopen(fd, "wb") as out:
+            copied = 0
+            while True:
+                chunk = os.read(src, min(1024 * 1024, LIB_MAX_BYTES + 1 - copied))
+                if not chunk:
+                    break
+                copied += len(chunk)
+                if copied > LIB_MAX_BYTES:                               # it grew while it was read
+                    raise NdiError("%s is too large to be the NDI runtime" % path)
+                out.write(chunk)
             out.flush()
             os.fsync(out.fileno())
-        os.chmod(tmp, 0o644)
         if chown:
             os.chown(tmp, 0, 0)
             os.chown(dest_dir, 0, 0)
@@ -1078,14 +1093,17 @@ def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
         problem = runtime_problem(tmp, owner_uids=(0,) if chown else (os.getuid(),), machine=machine)
         if problem:
             raise NdiError(problem.replace("install it again with pvj-ndi-runtime", "not installed"))
+        os.chmod(tmp, 0o644)                                             # readable by the helper only now
         dest = os.path.join(dest_dir, LIB_NAME)
         os.replace(tmp, dest)
         return dest
     finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        os.close(src)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def runtime_main(argv=None, out=sys.stdout):

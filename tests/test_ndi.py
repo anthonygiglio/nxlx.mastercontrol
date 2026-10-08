@@ -1263,5 +1263,69 @@ class SourceListServiceTest(unittest.TestCase):
         self.assertEqual(len(self.lib.opened), 1)
 
 
+class RuntimeInstallHardeningTest(unittest.TestCase):
+    """Review finding 5: root's copy of the library, from a name somebody else may control."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.dest = os.path.join(self.dir, "opt")
+        self.good = os.path.join(self.dir, "real.so")
+        with open(self.good, "wb") as f:
+            f.write(elf(183) + b"payload")
+
+    def test_a_link_given_as_the_file_is_not_followed(self):
+        link = os.path.join(self.dir, "libndi.so.6")
+        os.symlink(self.good, link)
+        with self.assertRaises(ndi.NdiError) as e:
+            ndi.install_runtime(link, self.dest, machine=183, chown=False)
+        self.assertIn("cannot be read as a file", str(e.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.dest, ndi.LIB_NAME)))
+
+    def test_a_pipe_given_as_the_file_is_refused_at_once(self):
+        pipe = os.path.join(self.dir, "pipe")
+        os.mkfifo(pipe)
+        done = []
+        t = threading.Thread(target=lambda: done.append(self.assertRaises(ndi.NdiError, ndi.install_runtime, pipe, self.dest, 183, False)), daemon=True)
+        t.start()
+        t.join(3)
+        self.assertFalse(t.is_alive(), "root would have waited for ever for somebody to write to the pipe")
+        self.assertEqual(len(done), 1)
+        self.assertFalse(os.path.exists(self.dest) and os.listdir(self.dest))
+
+    def test_a_file_that_grows_while_it_is_read_is_cut_off_at_the_bound(self):
+        from unittest import mock
+        real = os.read
+        fed = []
+
+        def endless(fd, n):
+            chunk = real(fd, n)
+            if not chunk and sum(fed) < 3 * 1024:                        # somebody appends as fast as root reads
+                chunk = b"x" * min(n, 512)
+            fed.append(len(chunk))
+            return chunk
+        with mock.patch.object(ndi, "LIB_MAX_BYTES", 1024), mock.patch("os.read", endless):
+            with self.assertRaises(ndi.NdiError) as e:
+                ndi.install_runtime(self.good, self.dest, machine=183, chown=False)
+        self.assertIn("too large", str(e.exception))
+        self.assertLessEqual(sum(fed), 1024 + 1)                         # never more than the bound and one byte is read
+        self.assertEqual(os.listdir(self.dest), [])
+
+    def test_the_copy_is_private_until_every_check_has_passed(self):
+        from unittest import mock
+        seen = []
+        real = ndi.runtime_problem
+
+        def spy(path, *a, **kw):
+            seen.append(os.stat(path).st_mode & 0o777)
+            return real(path, *a, **kw)
+        with mock.patch.object(ndi, "runtime_problem", spy):
+            path = ndi.install_runtime(self.good, self.dest, machine=183, chown=False)
+        self.assertEqual(seen, [0o600])
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
+        with open(path, "rb") as f:
+            self.assertTrue(f.read().endswith(b"payload"))
+
+
 if __name__ == "__main__":
     unittest.main()
