@@ -284,7 +284,8 @@ class WatchedIpc(Ipc):
         pid, sock = self.pid(), rec["sock"]
         lines = ["=" * 100,
                  "%s: %s" % (error, self.where()),
-                 "the request: %s, number %d; waited %.3f s (the client waits %.1f s)" % (json.dumps(list(command))[:300], rid, waited, self.timeout),
+                 "the request: %s, number %d; waited %.3f s (the client waits %.1f s, and %.1f s right after it started the player)"
+                 % (json.dumps(list(command))[:300], rid, waited, self.timeout, max(self.timeout, player_module.START_WAIT)),
                  "this player first answered %s ago; load %s" % ("%.2f s" % (now - self.born) if self.born else "never", load()),
                  "the requests before it, oldest first: " + ("; ".join("%s %.0f ms%s, %.2f s ago" % (k, t * 1000, " (%s)" % e if e else "", now - at)
                                                                for k, t, e, at in self.recent) or "none"),
@@ -407,7 +408,7 @@ def summary():
     if not rows:
         return []
     head = "%-62s %6s %5s %8s  %s" % ("request", "count", "fail", "longest", "  ".join("<%g" % b for b in BUCKETS) + "  2+ s")
-    lines = ["what the player's answers took (tests/mpv_watch.py); the client waits 2 s", head]
+    lines = ["what the player's answers took (tests/mpv_watch.py); the client waits 2 s, longer only right after it started the player", head]
     for kind, (n, bad, longest, buckets) in rows:
         if longest >= 0.1 or bad or kind.startswith("screenshot"):
             lines.append("%-62s %6d %5d %7.3fs  %s" % (kind[:62], n, bad, longest, "  ".join("%d" % c for c in buckets)))
@@ -420,10 +421,6 @@ def _at_exit():
     lines = summary()
     if lines:
         print("\n".join("MPV-WATCH  " + line for line in lines))
-    path = os.environ.get("PVJ_MPV_WATCH_OUT")
-    if path and STATS:
-        with open(path, "a") as f:
-            f.write(json.dumps({"stats": STATS, "slowest": SLOWEST, "reports": len(REPORTS)}) + "\n")
 
 
 atexit.register(_at_exit)

@@ -84,14 +84,14 @@ def detach_socket_opener(path, mode=0o660):
 
 
 # A player that this process has just started is deaf for a while: mpv answers nothing while it makes its window and
-# its GPU output, and the first time on a machine that means reading the GPU's libraries from the disk. Measured on
-# CI's runners (Mesa's software GPU under xvfb, 2026-10-08, runs 37750527948 and 37752093365): the first answer of
-# the first player came 0.93, 0.95, 1.15, 1.27, 2.81 and 3.31 seconds after the request, with the player's threads
-# asleep and the machine idle (waiting for the disk, not working); every later start answered within half a second
-# and every other request within a quarter. The deaf moment can also come after the first answer (seen once: the
-# first question answered, the next request lost). So for START_GRACE seconds after a start a request waits up to
-# START_WAIT for its answer. Only then: at any other time a player that says nothing for `timeout` is a fault, and
-# the caller hears of it as soon as before. Nothing here says what a real board needs; this was a software GPU.
+# its GPU output. Measured on CI's runners (Mesa's software GPU under xvfb, 2026-10-08, pull request #96; the runs
+# are in the journal): at the first start of a player on a fresh machine, the first answer came 0.2 to 5.0 seconds
+# after the request (19 machines: 6 of them over 2 seconds, the longest 5.04), with the player's threads asleep and
+# the machine idle; every later start answered within half a second and every other request within a second. The
+# deaf moment can also begin after the first answer (seen once, 2026-10-05: the first question answered, the next
+# request lost, a test failed). So for START_GRACE seconds after a start a request waits up to START_WAIT for its
+# answer. Only then: at any other time a player that says nothing for `timeout` is a fault, and the caller hears of
+# it as soon as before. Nothing here says what a real board needs; this was a software GPU.
 START_WAIT = 10.0
 START_GRACE = 15.0
 
