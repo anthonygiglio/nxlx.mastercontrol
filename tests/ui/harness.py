@@ -31,7 +31,10 @@ for name in ("intro.mkv", "tunnel.mkv"):
 rundir = os.path.join(tmp, "run")
 os.makedirs(rundir, mode=0o700)
 os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
-player = Player(extra_args=["--vo=null", "--ao=null"], rundir=rundir)
+# PVJ_HARNESS_NO_PLAYER=1: a box whose player is not there (the panel says "Player not running"). The control
+# inventory (tests/ui/inventory.js) is taken that way, as its fixture was made on a machine without mpv.
+_mpv = os.path.join(tmp, "no-such-mpv") if os.environ.get("PVJ_HARNESS_NO_PLAYER") else "mpv"
+player = Player(mpv_bin=_mpv, extra_args=["--vo=null", "--ao=null"], rundir=rundir)
 api, auth, _ = server.build(os.environ, player=player)
 from tests.test_netd import FakeNm, make_sysfs  # noqa: E402
 from pvj.netd import NetService  # noqa: E402
