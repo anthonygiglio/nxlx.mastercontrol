@@ -4,6 +4,29 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08, the night (the fourth CI run of the shell: nine controls "lost" that were not)
+
+Pull request #102, branch `workspace-shell`. Master was merged in first (b13b858, #104's change of mirror; the journal keeps both sides).
+
+**The failure (2230d59, job `panel-ui`).** The slider step passed and the test reached the control inventory for the first time anywhere under Playwright. It reported nine controls of the owner as lost: `#dmxproto`, `#dmxuni`, `#dmxstart`, `#dmxallow`, `#dmxsave`, `#oscport`, `#oscallow`, `#oscsave` and the button "Remove local". The same line listed as new `#sysswitchon` and "Remove inventory", and that was the clue.
+
+**The cause: the check's own set-up, not the shell. Nothing was unreachable.**
+- *DMX and OSC (8 keys).* The inventory starts a second box of the harness (no player) beside the first, which by then listens for DMX on UDP 6454 and for OSC on its port. `signal.setUp` asks the second box to switch both on; the box cannot open the ports, puts its settings back and answers 409 ("cannot listen on UDP 6454: Address already in use"). `post` in `tests/ui/signal-pages.js` does not look at the answer. A Setup page whose flag is off shows "Switch on ..." (`#sysswitchon`) in place of its card, so the cards' fields were "not in the page". In CI's log the last `POST /api/dmx` and `POST /api/osc` of the run are the only two that answered 409. The fixture was made with one box running.
+- *"Remove local" (1 key).* The scratch driver that made the fixture paired the owner's device as "local"; the browser test paired it as "inventory". The same row of People and codes under another name.
+- It is not a matter of Linux. **Reproduced on the dev Mac** without a browser: two `tests/ui/harness.py` side by side, each paired over HTTP; the first answered 200 to both, the second 409 to both with the words above, and `GET` gave `enabled: false`. With DMX and OSC switched off on the first, the second answered 200 and listened; after the second was stopped the first took them back (200, listening).
+
+**What changed (tests only; `pvj/` is untouched).**
+- `tests/ui/panel.test.js`, the inventory step: DMX and OSC are switched off on the first box if they are on, for the time of the inventory, and put back when the second box has exited. The owner pairs with `inventory.OWNER`.
+- `tests/ui/inventory.js`: `OWNER` ("local") and `LISTENERS`; `prepare()` asks for MIDI, DMX and OSC once more after `setUp`, reads each back, and throws with the box's own reason if one is not on, and likewise if the owner's device is not called `OWNER`. So this fault says "DMX is not on (cannot listen on UDP 6454 ...)" at the start and not "controls lost" three minutes later. The state both lists are taken in is written out in the file's head.
+- `tests/ui/shell.js` `inventory()`: the three roles are all compared before it fails. The presenter's and the guest's lists have never been compared in CI (the owner's failed first), so one run now names everything.
+- The assertion and the fixture are as they were; no key was excused.
+
+**Run here.** `node --check` on the three files. The two-box sequence above against the real harness (`TMPDIR=/tmp/ws102`, removed after). No unit test module was touched, none was run.
+
+**Not run here, so not known.** The browser test itself: the Mac has no Playwright and no mpv. Whether the inventory now passes in CI for the owner is expected and not seen; the presenter's and guest's comparisons under Playwright are a first run and may name differences of their own (they held in Edge on the Mac, 237 of 238 and 68 of 68, the one being `#nav-room`, which is excused with its reason).
+
+**On the way.** The repository's volume (a disk image on the external drive) was unmounted for some minutes in the middle of this and came back intact; the merge commit was already made. Each step after that was pushed as soon as it was committed.
+
 ## 2026-10-08, the evening (CI's install retry met its first slow mirror, and lost)
 
 - On #102's second run the `effects-gpu` job for the Pi 4's kind of OpenGL failed in its install step with "ci-apt: gave up after 3 attempts": the lists came at once each time and the 48 MB of packages did not arrive in 90 seconds, three times, from `azure.archive.ubuntu.com`. So the retry of #101 failed sooner (under five minutes instead of ten) but cured nothing: the same runner asked the same slow mirror three times.
