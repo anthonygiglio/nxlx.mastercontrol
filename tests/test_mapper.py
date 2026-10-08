@@ -4,6 +4,7 @@ import math
 import os
 import re
 import struct
+import shutil
 import tempfile
 import threading
 import time
@@ -250,7 +251,9 @@ class EngineTest(unittest.TestCase):
 
     def setUp(self):
         self.rundir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.rundir, True)
         self.settings = Settings(os.path.join(tempfile.mkdtemp(), "settings.json"))
+        self.addCleanup(shutil.rmtree, os.path.dirname(self.settings.path), True)
         self.settings.load()
 
         class Api:

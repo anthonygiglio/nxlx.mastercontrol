@@ -4,6 +4,7 @@ import http.client
 import json
 import os
 import struct
+import shutil
 import tempfile
 import threading
 import time
@@ -57,6 +58,7 @@ class FakePlayer:
 class ServerBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)      # last of the cleanups, so after the server stopped (D69)
         self.media = os.path.join(self.tmp, "video")
         os.makedirs(self.media)
         for n in ("a.mp4", "b.mov", ".hidden.mp4", "notes.txt"):
