@@ -492,10 +492,11 @@ table.chan .lvl { width: 36%; }
 .daychips { display: grid; grid-template-columns: repeat(auto-fit, minmax(clamp(44px, (332px - 100%) * 999, 25% - 3px), 1fr)); }
 /* Brightness of a controller's lights: a button is as wide as its word ("Medium" was cut in two) */
 .ctlbright .segbtn { flex: 1 1 auto; }
-/* A row of choices (the shape of a shader's wave, an effect's): below the widest windows a button is as wide as its
-   word and the row goes to a second line, where "Exponential" used to be cut in two (it was at 320 to 390 px, and
-   again in the laptop's narrow columns at 900 and 932) */
-@media (max-width: 1199px) { .seg .segbtn { flex: 1 1 auto; } }
+/* A row of choices (the shape of a shader's wave, an effect's): below 1366 px a button is as wide as its word and
+   the row goes to a second line, where a word used to be cut in two ("Exponential" at 320 to 390 px and again in
+   the laptop's narrow columns at 900 and 932; "Diagonals" at 1200, where the Shaders page has three columns). No
+   fault was measured from 1366 px up, so nothing changes there. */
+@media (max-width: 1365px) { .seg .segbtn { flex: 1 1 auto; } }
 @media (max-width: 599px) {
   /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word (it was cut at 390) */
   .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
