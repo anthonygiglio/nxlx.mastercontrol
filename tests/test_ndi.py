@@ -87,9 +87,9 @@ class NamesTest(unittest.TestCase):
     def test_a_plain_name_passes_and_gets_the_same_id_every_time(self):
         self.assertEqual(ndi.clean_name(b"RESOLUME (Output)"), "RESOLUME (Output)")
         self.assertEqual(ndi.clean_name("Café MadMapper (NDI 1)"), "Café MadMapper (NDI 1)")
-        self.assertRegex(ndi.source_id("RESOLUME (Output)"), r"^[0-9a-f]{12}\Z")
-        self.assertEqual(ndi.source_id("a"), ndi.source_id("a"))
-        self.assertNotEqual(ndi.source_id("a"), ndi.source_id("b"))
+        self.assertRegex(ndi.source_id("RESOLUME (Output)", "192.168.0.20"), r"^[0-9a-f]{12}\Z")
+        self.assertEqual(ndi.source_id("a", "192.168.0.20"), ndi.source_id("a", "192.168.0.20"))
+        self.assertNotEqual(ndi.source_id("a", "192.168.0.20"), ndi.source_id("b", "192.168.0.20"))
 
     def test_hostile_names_from_the_network_are_dropped(self):
         for bad in (b"", b" ", b"name\n", b"\nname", b"na\x00me", b"na\x1bme", b"tab\there", "evil‮gnp.exe".encode(),
@@ -98,16 +98,45 @@ class NamesTest(unittest.TestCase):
             self.assertIsNone(ndi.clean_name(bad), repr(bad))
         self.assertEqual(len(ndi.clean_name(b"x" * 128)), 128)
 
-    def test_the_list_is_bounded_deduplicated_and_sorted_and_bad_addresses_drop_the_source(self):
-        raw = [(b"b cam", b"10.0.0.2:5961"), (b"A cam", b"10.0.0.1:5961"), (b"b cam", b"10.9.9.9:5961"),
-               (b"newline", b"10.0.0.3:5961\n"), (b"space", b"10.0.0.3 5961"), (b"utf", "10.0.0.٣:1".encode()),
+    def test_bad_names_and_addresses_drop_the_source_and_the_list_is_sorted(self):
+        raw = [(b"b cam", b"10.0.0.2:5961"), (b"A cam", b"10.0.0.1:5961"),
+               (b"newline", b"10.0.0.3:5961\n"), (b"space", b"10.0.0.3 5961"), (b"utf", "10.0.0.\u0663:1".encode()),
                (b"empty", b""), (b"bad\x07name", b"10.0.0.4:1"), ("text", "10.0.0.5:1"), b"junk", (b"one",), None]
-        out = ndi.clean_sources(raw)
-        self.assertEqual([(s["name"], s["from"]) for s in out], [("A cam", "10.0.0.1:5961"), ("b cam", "10.0.0.2:5961")])
-        self.assertEqual(out[1]["raw"], (b"b cam", b"10.0.0.2:5961"))         # the first of two with one name
-        flood = [(b"cam %d" % n, b"10.0.0.1:%d" % n) for n in range(5000)]
-        self.assertEqual(len(ndi.clean_sources(flood)), ndi.MAX_SOURCES)
-        self.assertEqual(len(ndi.clean_sources([(b"\x00", b"x")] * 5000 + [(b"late", b"10.0.0.1:1")])), 0)   # the scan is bounded too
+        out, cut = ndi.clean_sources(raw)
+        self.assertEqual(([(s["name"], s["from"]) for s in out], cut), ([("A cam", "10.0.0.1:5961"), ("b cam", "10.0.0.2:5961")], False))
+        self.assertEqual(out[1]["raw"], (b"b cam", b"10.0.0.2:5961"))
+        self.assertEqual(ndi.clean_sources([(b"\x00", b"x")] * 5000 + [(b"late", b"10.0.0.1:1")]), ([], True))   # the scan is bounded too
+
+    def test_the_same_name_from_two_machines_is_two_sources_and_from_one_machine_one(self):
+        # Review finding 4: an announcer of "RESOLUME (Output)" on another machine must not stand in for the real one.
+        real, fake = (b"RESOLUME (Output)", b"192.168.0.20:5961"), (b"RESOLUME (Output)", b"192.168.0.66:5961")
+        for order in ([real, fake], [fake, real]):
+            out, _ = ndi.clean_sources(order)
+            self.assertEqual([s["from"] for s in out], ["192.168.0.20:5961", "192.168.0.66:5961"])
+            self.assertEqual(len({s["id"] for s in out}), 2)
+            self.assertEqual(out[0]["id"], ndi.source_id("RESOLUME (Output)", "192.168.0.20"))
+        again = (b"RESOLUME (Output)", b"192.168.0.20:5999")              # the sender restarted on another port: the same source
+        self.assertEqual(ndi.clean_sources([again])[0][0]["id"], ndi.clean_sources([real])[0][0]["id"])
+        for order in ([real, again], [again, real]):                     # both at once: one row, and always the same one
+            self.assertEqual([s["from"] for s in ndi.clean_sources(order)[0]], ["192.168.0.20:5961"])
+        self.assertEqual([ndi.host_of(w) for w in ("192.168.0.20:5961", "192.168.0.20", "CAM.local:5961", "[fe80::1]:5961", "[fe80::1]")],
+                         ["192.168.0.20", "192.168.0.20", "cam.local", "fe80::1", "fe80::1"])
+
+    def test_a_flood_of_announcers_cannot_push_out_the_chosen_source_or_an_address_the_owner_added(self):
+        flood = [(b"!!! cam %04d" % n, b"10.9.%d.%d:5961" % (n // 250, n % 250 + 1)) for n in range(1000)]     # names that sort first
+        mine, added = (b"RESOLUME (Output)", b"192.168.0.20:5961"), (b"zz MadMapper (Out)", b"192.168.0.21:5961")
+        chosen = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
+        for raw in (flood + [mine, added], [mine, added] + flood, flood[:500] + [added, mine] + flood[500:]):
+            out, cut = ndi.clean_sources(raw, prefer_hosts=["192.168.0.21"], keep_id=chosen)
+            names = [s["name"] for s in out]
+            self.assertEqual((len(out), cut), (ndi.MAX_SOURCES, True))
+            self.assertIn("RESOLUME (Output)", names)                    # the one on the screen
+            self.assertIn("zz MadMapper (Out)", names)                   # the address the owner typed
+            self.assertEqual(names[:62], ["!!! cam %04d" % n for n in range(62)])     # the rest by name, whatever the order they came in
+        out, cut = ndi.clean_sources(flood + [mine, added])
+        self.assertNotIn("RESOLUME (Output)", [s["name"] for s in out])  # without either, a flood does hide it: the page says "cut"
+        self.assertTrue(cut)
+        self.assertEqual(ndi.clean_sources(flood[:64]), (ndi.clean_sources(list(reversed(flood[:64])))[0], False))
 
 
 class AddressTest(unittest.TestCase):
@@ -231,7 +260,7 @@ class ReceiverTest(unittest.TestCase):
         self.fifo = os.path.join(self.dir, "ndi.fifo")
         os.mkfifo(self.fifo, 0o640)
         self.lib = FakeLib()
-        self.source = ndi.clean_sources(self.lib.raw)[0]
+        self.source = ndi.clean_sources(self.lib.raw)[0][0]
         self.now = [0.0]
         self.r = ndi.Receiver(self.lib, self.source, self.fifo, log=lambda *_: None, clock=lambda: self.now[0], pipe_wait=1e9)
         self.addCleanup(self.r.close)
@@ -438,7 +467,7 @@ class ServiceTest(unittest.TestCase):
         self.s = ndi.Service(self.dir, "/opt/pvj-ndi/libndi.so.6", loader=loader, log=lambda *_: None, first_frame=0.3,
                              problem=lambda path: "the NDI runtime is not on this box yet" if self.missing else None)
         self.addCleanup(self.s.close)
-        self.rid = ndi.source_id("RESOLUME (Output)")
+        self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
 
     def test_it_does_nothing_until_it_is_told_the_module_is_on(self):
         st = self.s.handle({"cmd": "status"})
@@ -524,7 +553,7 @@ class ServiceTest(unittest.TestCase):
         self.lib.frames.put(frame(64, 16))
         self.assertTrue(self.s.handle({"cmd": "open", "id": self.rid})["ok"])
         threading.Timer(0.1, self.lib.frames.put, [frame(64, 16)]).start()      # after the first receiver has been let go
-        self.assertTrue(self.s.handle({"cmd": "open", "id": ndi.source_id("MAD (Out)")})["ok"])
+        self.assertTrue(self.s.handle({"cmd": "open", "id": ndi.source_id("MAD (Out)", "192.168.0.21")})["ok"])
         self.assertEqual((len(self.lib.opened), self.lib.closed), (2, 1))
         st = self.s.handle({"cmd": "configure", "on": False, "addresses": []})
         self.assertEqual((st["on"], st["sources"], st["playing"], self.lib.closed, self.lib.closed_finders), (False, [], None, 2, 1))
@@ -552,7 +581,7 @@ class InputTest(unittest.TestCase):
         self.wanted = [True, ["10.0.0.5"]]
         self.now = [100.0]
         self.i = ndi.Input(self.client, self.s.fifo, lambda: (self.wanted[0], list(self.wanted[1])), log=lambda *_: None, clock=lambda: self.now[0])
-        self.rid = ndi.source_id("RESOLUME (Output)")
+        self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
 
     def test_the_first_status_tells_the_helper_what_is_wanted_and_a_change_is_sent_on(self):
         st = self.i.status()
@@ -583,21 +612,23 @@ class InputTest(unittest.TestCase):
         self.i.current = {"id": self.rid, "name": "x"}
         self.client.answer = {"ok": True, "configured": True, "on": True, "addresses": ["10.0.0.5"],
                               "runtime": {"present": "yes", "loaded": 1, "version": "v" * 500, "problem": ["x"]},
+                              "cut": "yes",
                               "sources": [{"id": self.rid, "name": "RESOLUME (Output)", "from": "a b"},
                                           {"id": self.rid, "name": "Other name", "from": "10.0.0.1:1"},        # the id is not this name's
-                                          {"id": ndi.source_id("bad‮name"), "name": "bad‮name", "from": "x"},
-                                          {"id": "../../etc", "name": "x", "from": "x"}, "junk", None] + [{"id": self.rid, "name": "RESOLUME (Output)", "from": "h"}] * 500,
+                                          {"id": ndi.source_id("bad‮name", "192.168.0.20"), "name": "bad‮name", "from": "x"},
+                                          {"id": "../../etc", "name": "x", "from": "x"}, "junk", None] + [{"id": self.rid, "name": "RESOLUME (Output)", "from": "192.168.0.66:5961"}] * 500 + [{"id": self.rid, "name": "RESOLUME (Output)", "from": "192.168.0.20:5961"}],
                               "playing": {"id": self.rid, "name": "evil\nname", "state": "playing", "message": "m" * 5000, "width": 10 ** 9,
                                           "height": True, "fps": 1e9, "counts": {"received": 2 ** 80, "shown": -1, "dropped": "3", "x": 1, "dropped_by_runtime": 4}}}
         st = self.i.status()
         self.assertEqual(st["runtime"], {"present": False, "loaded": False, "version": "v" * 80, "problem": ""})
-        self.assertLessEqual(len(st["sources"]), ndi.MAX_SOURCES)
-        self.assertEqual(st["sources"][0], {"id": self.rid, "name": "RESOLUME (Output)", "from": ""})
-        self.assertEqual({s["name"] for s in st["sources"]}, {"RESOLUME (Output)"})
+        self.assertEqual(st["sources"], [])                               # rows past the bound are not looked at, and an id that
+        self.assertIs(st["cut"], False)                                  # is not its name and machine's own is not shown
+        self.client.answer["sources"] = self.client.answer["sources"][-3:]
+        self.assertEqual(self.i.status()["sources"], [{"id": self.rid, "name": "RESOLUME (Output)", "from": "192.168.0.20:5961"}])
         self.assertEqual(st["playing"], {"id": self.rid, "name": "NDI source", "state": "playing", "message": "m" * 200,
                                          "counts": {"dropped_by_runtime": 4}})
         for answer in ({"ok": True, "playing": {"id": self.rid, "state": "ready", "width": 64, "height": 16}},          # no rate
-                       {"ok": True, "playing": {"id": ndi.source_id("b"), "state": "ready", "width": 64, "height": 16, "fps": 30}},
+                       {"ok": True, "playing": {"id": ndi.source_id("b", "192.168.0.20"), "state": "ready", "width": 64, "height": 16, "fps": 30}},
                        {"ok": True, "playing": "x"}, {"ok": True}, {"ok": "yes"}):
             self.client.answer = answer
             with self.assertRaises(ndi.NdiError, msg=answer):
@@ -797,7 +828,7 @@ class NdiApiTest(ServerBase):
         reg, st = self.api.registry, self.settings
         self.api.ndi = ndi.Input(self.client, self.service.fifo, lambda: (reg.enabled("inputs-ndi"), list(st.data["ndi"]["addresses"])),
                                  log=lambda *_: None)
-        self.rid = ndi.source_id("RESOLUME (Output)")
+        self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
 
     def invite(self, role):
         return self.call("POST", "/api/devices/invite", {"name": "g", "role": role}, token=self.full)[1]["token"]
@@ -1194,6 +1225,42 @@ class SavedSettingsTest(unittest.TestCase):
         client.down = True
         client.request = real
         self.assertEqual((i.status()["helper"], i.status()["notice"]), (False, ""))
+
+
+class SourceListServiceTest(unittest.TestCase):
+    """Review finding 4, through the helper: the list says when it was cut, and a play stays with its machine."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.lib = FakeLib([(b"RESOLUME (Output)", b"192.168.0.20:5961")])
+        self.s = ndi.Service(self.dir, "x", loader=lambda path: self.lib, problem=lambda path: None, log=lambda *_: None, first_frame=0.3)
+        self.addCleanup(self.s.close)
+        self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
+
+    def test_the_status_says_when_the_list_was_cut_and_keeps_the_added_address_and_the_playing_source(self):
+        self.s.handle({"cmd": "configure", "on": True, "addresses": ["192.168.0.21"]})
+        self.assertIs(self.s.handle({"cmd": "status"})["cut"], False)
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": self.rid})["ok"])
+        self.lib.raw = [(b"!!! %04d" % n, b"10.9.9.%d:1" % (n % 250 + 1)) for n in range(300)] + self.lib.raw + [(b"zz Mad", b"192.168.0.21:5961")]
+        self.s._sources_at = None
+        st = self.s.handle({"cmd": "status"})
+        names = [x["name"] for x in st["sources"]]
+        self.assertEqual((len(names), st["cut"]), (ndi.MAX_SOURCES, True))
+        self.assertIn("RESOLUME (Output)", names)
+        self.assertIn("zz Mad", names)
+
+    def test_another_machine_announcing_the_chosen_name_is_not_what_gets_opened(self):
+        self.s.handle({"cmd": "configure", "on": True, "addresses": []})
+        self.lib.raw = [(b"RESOLUME (Output)", b"192.168.0.66:5961")] + self.lib.raw      # the impostor is listed first
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": self.rid})["ok"])
+        self.assertEqual(self.lib.opened, [(b"RESOLUME (Output)", b"192.168.0.20:5961")])
+        self.lib.raw = [(b"RESOLUME (Output)", b"192.168.0.66:5961")]                     # the real one quit; the impostor stays
+        reply = self.s.handle({"cmd": "open", "id": self.rid})                            # a replay, or a saved choice
+        self.assertEqual((reply["ok"], reply["error"]), (False, "that source is not on the network now"))
+        self.assertEqual(len(self.lib.opened), 1)
 
 
 if __name__ == "__main__":

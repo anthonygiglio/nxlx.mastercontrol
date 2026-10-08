@@ -43,6 +43,7 @@ LIB_DIR = "/opt/pvj-ndi"                  # the application's own folder, root's
 LIB_NAME = "libndi.so.6"
 LIB_MAX_BYTES = 96 * 1024 * 1024
 MAX_SOURCES = 64
+SCAN_ROWS = 2048                          # rows of the library's list that are looked at, whatever it says it has
 MAX_NAME = 128
 MAX_ADDRESSES = 16
 MIN_SIDE, MAX_WIDTH, MAX_HEIGHT = 16, 3840, 2160
@@ -89,17 +90,31 @@ def clean_name(raw):
     return raw
 
 
-def source_id(name):
-    """What the panel plays by: made here from the checked name, the same after a restart."""
-    return hashlib.sha256(b"ndi:" + name.encode("utf-8")).hexdigest()[:12]
+def host_of(where):
+    """The machine in a source's address, without its port: "192.168.0.20:5961" gives "192.168.0.20"."""
+    m = re.fullmatch(r"\[([0-9A-Fa-f:.]+)\](?::[0-9]{1,5})?|([^:]+)(?::[0-9]{1,5})?", where)
+    return (m.group(1) or m.group(2)).lower() if m else where.lower()
 
 
-def clean_sources(raw):
-    """[{"id", "name", "from", "raw": (name bytes, address bytes)}] from the library's (name, address) pairs: only
-    sources whose name and address pass, the first of two with one name, at most MAX_SOURCES, by name."""
-    out, seen = [], set()
+def source_id(name, host):
+    """What the panel plays by: made here from the checked name AND the machine it is announced from, so a second
+    machine announcing the same name is another source and can never stand in for the one that was chosen. The
+    same after a restart. The port is left out (it changes when the sender restarts). A sender whose address
+    changes (DHCP) becomes a new row and has to be chosen again: staying with the machine was preferred to
+    following the name."""
+    return hashlib.sha256(b"ndi:" + name.encode("utf-8") + b"\0" + host.encode("utf-8")).hexdigest()[:12]
+
+
+def clean_sources(raw, prefer_hosts=(), keep_id=None):
+    """([{"id", "name", "from", "raw": (name bytes, address bytes)}], was the list cut) from the library's (name,
+    address) pairs. Only sources whose name and address pass; at most SCAN_ROWS rows are looked at and MAX_SOURCES
+    kept. Which ones are kept does not depend on the order the library gives them in (anyone on the network can
+    announce senders): the source being shown (`keep_id`) first, then senders at an address the owner added
+    (`prefer_hosts`), then the rest, each group by name and address. So neither can be pushed out of the list."""
+    prefer = {str(h).lower() for h in prefer_hosts}
+    found = {}
     for n, pair in enumerate(raw):
-        if n >= MAX_SOURCES * 4 or len(out) >= MAX_SOURCES:
+        if n >= SCAN_ROWS:
             break
         if not isinstance(pair, tuple) or len(pair) != 2 or not all(isinstance(x, bytes) for x in pair):
             continue
@@ -110,12 +125,14 @@ def clean_sources(raw):
             continue
         if name is None or not _WHERE.fullmatch(where):
             continue
-        sid = source_id(name)
-        if sid in seen:
-            continue
-        seen.add(sid)
-        out.append({"id": sid, "name": name, "from": where, "raw": pair})
-    return sorted(out, key=lambda s: s["name"].lower())
+        host = host_of(where)
+        s = {"id": source_id(name, host), "name": name, "from": where, "raw": pair}
+        old = found.get(s["id"])
+        if old is None or (where, pair) < (old["from"], old["raw"]):      # one name twice on one machine: one row, always the same one
+            found[s["id"]] = s
+    rows = sorted(found.values(), key=lambda s: (s["id"] != keep_id, host_of(s["from"]) not in prefer, s["name"].lower(), s["name"], s["from"]))
+    kept = sorted(rows[:MAX_SOURCES], key=lambda s: (s["name"].lower(), s["name"], s["from"]))
+    return kept, len(rows) > MAX_SOURCES or len(raw) > SCAN_ROWS
 
 
 def clean_address(text):
@@ -401,7 +418,7 @@ class CtypesLibrary:
             return []
         rows = ctypes.cast(first, ctypes.POINTER(_Source))
         out = []
-        for n in range(min(count.value, MAX_SOURCES * 4)):
+        for n in range(min(count.value, SCAN_ROWS + 1)):      # one more than is used, so the caller knows it was cut
             name, url = _cstr(rows[n].name), _cstr(rows[n].url)
             if name is not None and url is not None:
                 out.append((name, url))
@@ -670,7 +687,7 @@ class Service:
         self._find_lock = threading.Lock()         # the finder: asked by status, replaced by configure
         self.lib, self.lib_error, self.version = None, "", ""
         self.configured, self.on, self.addresses = False, False, []
-        self._finder, self._sources, self._sources_at = None, [], None
+        self._finder, self._sources, self._sources_at, self._cut = None, [], None, False
         self.receiver = None
 
     def _load(self):
@@ -685,7 +702,7 @@ class Service:
 
     def _close_finder(self):
         with self._find_lock:
-            finder, self._finder, self._sources, self._sources_at = self._finder, None, [], None
+            finder, self._finder, self._sources, self._sources_at, self._cut = self._finder, None, [], None, False
             if finder is not None:
                 self.lib.find_close(finder)
 
@@ -717,11 +734,13 @@ class Service:
                 return []
             now = self._clock()
             if self._sources_at is None or now - self._sources_at >= SOURCES_CACHE:
+                r = self.receiver
                 try:
-                    self._sources = clean_sources(self.lib.find_sources(self._finder))
+                    self._sources, self._cut = clean_sources(self.lib.find_sources(self._finder), self.addresses,
+                                                             r.source["id"] if r is not None else None)
                 except Exception as e:
                     self.log("pvj-ndi: reading the sources: %s" % e)
-                    self._sources = []
+                    self._sources, self._cut = [], False
                 self._sources_at = now
             return list(self._sources)
 
@@ -739,7 +758,7 @@ class Service:
             finally:
                 self.lock.release()
         return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "runtime": self.runtime(),
-                "sources": [{"id": s["id"], "name": s["name"], "from": s["from"]} for s in self.sources()],
+                "sources": [{"id": s["id"], "name": s["name"], "from": s["from"]} for s in self.sources()], "cut": self._cut,
                 "playing": r.status() if r is not None else None}
 
     def _close_receiver(self):
@@ -952,14 +971,15 @@ class Input:
         for s in (st.get("sources") if isinstance(st.get("sources"), list) else [])[:MAX_SOURCES]:
             if isinstance(s, dict) and isinstance(s.get("id"), str) and _ID.fullmatch(s["id"]):
                 name, where = clean_name(s.get("name")), s.get("from")
-                if name and source_id(name) == s["id"]:
-                    sources.append({"id": s["id"], "name": name, "from": where if isinstance(where, str) and _WHERE.fullmatch(where) else ""})
+                if name and isinstance(where, str) and _WHERE.fullmatch(where) and source_id(name, host_of(where)) == s["id"]:
+                    sources.append({"id": s["id"], "name": name, "from": where})
         return {"helper": helper, "notice": "; ".join(notice),
                 "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
                             "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
                 "install": {"command": "sudo pvj-ndi-runtime install \"/path/to/NDI SDK for Linux\"", "folder": LIB_DIR,
                             "get": "https://ndi.video/"},
-                "sources": sources, "addresses": list(addresses), "max_addresses": MAX_ADDRESSES,
+                "sources": sources, "cut": st.get("cut") is True, "max_sources": MAX_SOURCES,
+                "addresses": list(addresses), "max_addresses": MAX_ADDRESSES,
                 "playing": _playing(st.get("playing")) if self.current else None}
 
     def open(self, sid):

@@ -2469,6 +2469,8 @@
       srcBody.textContent = '';
       var n = notice(d), playing = d.playing;
       if (n) srcBody.appendChild(n);
+      if (d.cut) srcBody.appendChild(h('div', { class: 'hint warn', id: 'ndicut', text: 'More senders are announced on this network than this page lists (' + d.max_sources +
+        '). If yours is missing, add its computer\'s address below: senders at those addresses are always listed.' }));
       if (d.notice) srcBody.appendChild(h('div', { class: 'hint warn', id: 'ndinotice', text: ndiSentence(d.notice) }));
       if (playing && (playing.state === 'refused' || playing.state === 'stopped') && playing.message)
         srcBody.appendChild(h('div', { class: 'hint warn problem', id: 'ndiproblem', text: playing.name + ': ' + ndiSentence(playing.message) }));
@@ -2533,7 +2535,7 @@
         }
         // Senders come and go, so the list is asked for every 2 seconds, but it is drawn again only when what it
         // shows changed: a button replaced between a finger going down and coming up loses the tap (D59).
-        var now = JSON.stringify([r.data.helper, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
+        var now = JSON.stringify([r.data.helper, r.data.cut, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
         if (now !== drawn && !ndiBusy) { drawn = now; drawSources(r.data); }
         if (first) drawAddresses(r.data);
         first = false;
