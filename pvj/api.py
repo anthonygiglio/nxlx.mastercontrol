@@ -316,11 +316,29 @@ class Api:
         (no picture yet) is remembered for a few seconds too, so requests cannot queue up behind a slow player.
         A player that runs and plays nothing answers 409 "nothing is on the screen right now", not an error.
         While the PIN or join codes are on the display, a device without full access gets the video only (no
-        on-screen text or QR codes): otherwise a guest could read the full PIN or a presenter code off a snapshot."""
-        with_text = not self.access_on_screen() or Auth.allows(device, "full")
+        on-screen text or QR codes): otherwise a guest could read the full PIN or a presenter code off a snapshot.
+        That is decided under the lock and looked at again after the picture is taken: a code drawn between the
+        look and the screenshot (a hold on a controller can do that at any moment) would otherwise be in a picture
+        served to a guest, and kept for the next ones. Such a picture is thrown away and taken again without text.
+        A kept picture with text is given to a device without full access only if nothing secret was on the display
+        both before and after it was taken."""
+        full = Auth.allows(device, "full")
         with self._preview_lock:
+            with_text = full or not self.access_on_screen()
+            data = self._preview_take(with_text, full)
+            if with_text and not full and not self._preview[3]:         # something secret appeared while it was taken
+                self._preview = None
+                data = self._preview_take(False, full)
+            return data
+
+    def _preview_take(self, with_text, full):
+        """One picture (or the kept one). Call with `_preview_lock` held. What is kept: (when, the picture or the
+        error, with text or not, and whether nothing secret was on the display before and after it was taken)."""
+        if True:
             now = time.monotonic()
             cached = self._preview if self._preview and self._preview[2] == with_text else None
+            if cached and with_text and not full and not (len(cached) > 3 and cached[3]):
+                cached = None                     # taken while a PIN or code was up (for a full-access device): not for this one
             if cached and now - cached[0] < PREVIEW_MIN_INTERVAL:
                 if isinstance(cached[1], ApiError):
                     raise ApiError(cached[1].status, cached[1].message)
@@ -328,6 +346,9 @@ class Api:
             # mpv writes the picture, so it is in the player's own folder, where nobody else can leave a link.
             path = getattr(self.player, "preview_path", None) or os.path.join(self.player.rundir, paths.PREVIEW)
             ours = os.path.dirname(os.path.abspath(path)) == os.path.abspath(self.player.rundir)
+            # nothing secret can be in it, as far as is known before (a device without full access is only here
+            # with text when the caller has just looked)
+            clean = not with_text or not full or not self.access_on_screen()
             try:
                 before = None
                 if ours:                          # one folder for everything (a desk, the tests): start clean
@@ -363,13 +384,14 @@ class Api:
                 if not data.startswith(b"\xff\xd8") or len(data) > PREVIEW_MAX_BYTES:
                     raise ApiError(503, "the player did not produce a picture")
             except ApiError as e:
-                self._preview = (time.monotonic(), e, with_text)
+                self._preview = (time.monotonic(), e, with_text, True)
                 raise
             except OSError as e:
                 err = ApiError(503, "no picture to show: %s" % (e.strerror or e))
-                self._preview = (time.monotonic(), err, with_text)
+                self._preview = (time.monotonic(), err, with_text, True)
                 raise err
-            self._preview = (time.monotonic(), data, with_text)
+            clean = clean and (not with_text or not self.access_on_screen())      # and none appeared while it was taken
+            self._preview = (time.monotonic(), data, with_text, clean)
             return data
 
     def _nothing_on_screen(self):
