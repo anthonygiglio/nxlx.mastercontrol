@@ -264,6 +264,90 @@ class ScratchSweep(UpdaterBase):
         self.assertEqual(self.names(self.prefix), [".update-link0000"])
         self.assertEqual(self.names(outside), ["precious"])
 
+    # Second review of #108, findings 1 and 5: the folder was looked at through the opened install and then removed
+    # by its path, which is resolved again, through every folder above it. It is now opened, looked at and emptied
+    # through descriptors, so what is removed is what was looked at, wherever its name points a moment later.
+
+    def test_a_link_inside_a_work_folder_goes_as_a_link_and_what_it_points_to_stays(self):
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, True)
+        self.put("folder", "precious", folder=outside)
+        self.put("file", folder=outside)
+        inside = self.plant()
+        tree = os.path.join(self.prefix, inside, "tree")
+        os.symlink(os.path.join(outside, "folder"), os.path.join(tree, "to-a-folder"))
+        os.symlink(os.path.join(outside, "file"), os.path.join(tree, "pvj", "to-a-file"))
+        os.symlink(os.path.join(outside, "nothing"), os.path.join(tree, "to-nothing"))
+        os.mkfifo(os.path.join(tree, "a-pipe"))
+        os.chmod(self.put("opt/pvj", inside, "tree", "read-only"), 0o400)
+        self.assertEqual(self.u.sweep_scratch(owner=self.me), [inside])
+        self.assertEqual(self.names(self.prefix), [])
+        self.assertEqual(self.names(outside), ["file", "folder"])
+        self.assertEqual(self.names(os.path.join(outside, "folder")), ["precious"])
+
+    def test_a_work_folder_swapped_for_a_link_after_the_listing_is_not_followed(self):
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, True)
+        self.put("precious", folder=outside)
+        name = self.plant()
+        real = os.listdir
+
+        def listdir(where):
+            names = real(where)
+            if isinstance(where, int) and name in names and not os.path.islink(os.path.join(self.prefix, name)):
+                os.rename(os.path.join(self.prefix, name), os.path.join(self.dir, "moved-away"))
+                os.symlink(outside, os.path.join(self.prefix, name))
+            return names
+
+        with mock.patch("os.listdir", listdir):
+            self.assertEqual(self.u.sweep_scratch(owner=self.me), [])
+        self.assertTrue(os.path.islink(os.path.join(self.prefix, name)))
+        self.assertEqual(self.names(outside), ["precious"])
+
+    def test_an_install_whose_path_leads_elsewhere_after_the_look_is_emptied_where_it_was_looked_at(self):
+        # The install is <dir>/a/opt/pvj. Between the look at the work folder and its removal, somebody who can
+        # write above the install moves `a` away and puts a tree of their own choosing at the same path. The
+        # moment is made by hand: once, at whichever comes first of the old re-check and the new walk.
+        u = Updater(root=os.path.join(self.dir, "a"))
+        prefix = os.path.join(self.dir, "a", "opt", "pvj")
+        self.put("a", "opt", "pvj", ".update-abcd1234", "tree", "x")
+        done = []
+
+        def swap():
+            if not done:
+                done.append(True)
+                os.rename(os.path.join(self.dir, "a"), os.path.join(self.dir, "b"))
+                self.put("a", "opt", "pvj", ".update-abcd1234", "precious")
+
+        def after(real):
+            def wrapped(*a, **k):
+                result = real(*a, **k)
+                swap()
+                return result
+            return wrapped
+
+        def before(real):
+            def wrapped(*a, **k):
+                swap()
+                return real(*a, **k)
+            return wrapped
+
+        with mock.patch("os.path.samestat", after(os.path.samestat)), mock.patch("os.fwalk", before(os.fwalk)):
+            gone = u.sweep_scratch(owner=self.me)
+        self.assertTrue(done)
+        self.assertEqual(self.names(os.path.join(prefix, ".update-abcd1234")), ["precious"], "not the one looked at")
+        self.assertEqual(gone, [".update-abcd1234"])
+        self.assertEqual(self.names(os.path.join(self.dir, "b", "opt", "pvj")), [])
+
+    def test_a_work_folder_that_cannot_be_emptied_is_left_and_is_no_error(self):
+        name = self.plant()
+        with mock.patch("os.unlink", side_effect=PermissionError(13, "no")):
+            self.assertEqual(self.u.sweep_scratch(owner=self.me), [])
+        with mock.patch("os.fwalk", side_effect=OSError(5, "io")):
+            self.assertEqual(self.u.sweep_scratch(owner=self.me), [])
+        self.assertEqual(self.names(self.prefix), [name])
+        self.assertEqual(self.u.sweep_scratch(owner=self.me), [name])
+
     # Review of #108, finding 5: a linked install was swept by nobody, while check() made its work folder through
     # the link all the same. The sweep now goes where the link goes, and looks at the folder it arrives in: a real
     # folder of the owner's (root's on a box) that neither its group nor anybody else can write. A folder that is
@@ -313,7 +397,7 @@ class ScratchSweep(UpdaterBase):
     def test_no_install_and_a_folder_that_cannot_be_removed_are_no_error(self):
         self.assertEqual(self.u.sweep_scratch(owner=self.me), [])
         self.plant()
-        with mock.patch("shutil.rmtree", side_effect=PermissionError(13, "no")):
+        with mock.patch("os.rmdir", side_effect=PermissionError(13, "no")):
             self.assertEqual(self.u.sweep_scratch(owner=self.me), [])
 
 
