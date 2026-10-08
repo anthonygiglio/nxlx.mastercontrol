@@ -27,6 +27,8 @@ import sys
 import stat as stat_mod
 import threading
 
+from . import paths
+
 TOKENS = ("bg", "cd", "fg", "ln", "mu", "ac", "on")
 STYLES = ("default", "signal")          # the looks app.css has a block for; "default" is the look with no block
 AREAS = ("room", "shaders", "clips", "mix", "system")
@@ -40,6 +42,7 @@ _HEX = re.compile(r"#[0-9a-fA-F]{6}")
 _ID = re.compile(r"[a-z][a-z0-9-]{1,40}")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}")
 _FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,60}\.json")
+ADDING_TEMP = r"\.adding-\d+-\d+"             # add() writes here first: .adding-<process>-<thread>
 BUILTIN_DIR = os.path.join(os.path.dirname(__file__), "themes.d")
 FALLBACK = "dark-stage"                 # the look the box comes with
 
@@ -368,6 +371,8 @@ class Store:
     def __init__(self, addons_dir=None):
         self.addons = addons_dir
         self.dir = os.path.join(addons_dir, "themes") if addons_dir else None
+        if self._folder_ok():           # what an add cut off by a power cut left (D70); nothing is being added yet
+            paths.remove_leftovers(self.dir, ADDING_TEMP)
         self.lock = threading.Lock()
         self.files = {}                 # id -> every file name in the folder that holds that id (the first is the one used)
         self.skipped = []               # [{"file", "why"}]: files in the folder that load() did not use

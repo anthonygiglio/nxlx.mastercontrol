@@ -135,6 +135,9 @@ class CommandLineTest(unittest.TestCase):
         cleared = []
 
         class Fake:
+            def sweep_scratch(self):
+                return []
+
             def open_inbox(self):
                 return os.open(tempfile.mkdtemp(), os.O_RDONLY)
 
@@ -195,6 +198,9 @@ class CommandLineTest(unittest.TestCase):
             json.dump({"state": "done", "message": "updated to 2.0.0", "version": "2.0.0", "at": 1}, f)
 
         class Fake:
+            def sweep_scratch(self):
+                return []
+
             def rollback(self):
                 return "1.0.0"
 

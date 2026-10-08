@@ -39,6 +39,10 @@ DEFAULT_RESULT = paths.UPDATE_RESULT     # what the panel's Updates card reads (
 _VERSION = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 
 
+SCRATCH_PREFIX = ".update-"
+SCRATCH_NAME = re.compile(r"\.update-[a-z0-9_]{8}")     # what tempfile.mkdtemp(prefix=SCRATCH_PREFIX) makes
+
+
 class UpdateError(Exception):
     pass
 
@@ -299,8 +303,15 @@ class Updater:
                 if side is not None:
                     with side:
                         sha256 = side.read(4096).decode("ascii", "replace")
+            # The scratch folder is inside the install, never in the system temp folder: on a box /tmp is small
+            # or in memory, and the free space measured below has to be that of the disk the release goes to
+            # (D70). Where nothing is installed yet the folder is made, as the installer would a moment later.
             parent = self.real(self.prefix)
-            scratch = tempfile.mkdtemp(prefix=".update-", dir=parent if os.path.isdir(parent) else None)  # mode 0700
+            try:
+                os.makedirs(parent, mode=0o755, exist_ok=True)
+                scratch = tempfile.mkdtemp(prefix=SCRATCH_PREFIX, dir=parent)  # mode 0700
+            except OSError as e:
+                raise UpdateError("cannot make a work folder in %s: %s" % (self.prefix, e.strerror or e))
             if shutil.disk_usage(scratch).free < 4 * size:
                 raise UpdateError("not enough free disk space")
             mine = os.path.join(scratch, "bundle.tar.gz")
@@ -333,6 +344,31 @@ class Updater:
             raise
         finally:
             src.close()
+
+    def sweep_scratch(self, owner=0):
+        """Remove the work folders that an update cut off by a power cut left in the install (the bundle and its
+        unpacked tree, up to hundreds of megabytes each, and nothing else ever removed them). Call it only while
+        holding the update lock: then no update is running and every such folder is a leftover. Only a real folder
+        (never a link) directly in the install, named as check() names them and owned by `owner` (root on a box)
+        is removed; rmtree does not follow links inside. Returns the names removed; never raises (D70)."""
+        gone = []
+        parent = self.real(self.prefix)
+        try:
+            if os.path.islink(parent):
+                return gone
+            names = [n for n in os.listdir(parent) if SCRATCH_NAME.fullmatch(n)]
+        except OSError:
+            return gone
+        for name in names:
+            path = os.path.join(parent, name)
+            try:
+                st = os.lstat(path)
+                if stat.S_ISDIR(st.st_mode) and st.st_uid == owner:
+                    shutil.rmtree(path)
+                    gone.append(name)
+            except OSError:
+                pass
+        return sorted(gone)
 
     def _previous_file(self):
         return self.real(self.prefix + "/previous")
@@ -551,10 +587,19 @@ def main(argv=None):
         return 0
     lock = None
     if args.cmd in ("apply", "usb", "inbox", "rollback"):
-        lock = take_lock()
+        try:
+            lock = take_lock()
+        except UpdateError as e:          # without the lock nobody knows whether an update is running: do nothing
+            print("pvj-update: %s" % e, file=sys.stderr)
+            return 1
         if lock is None:
             print("pvj-update: another update is running", file=sys.stderr)
             return 1                      # the result file belongs to the update that is running
+        try:                              # we hold the lock: whatever work folder is there, no update is using it
+            for name in u.sweep_scratch():
+                print("pvj-update: removed %s, left by an update that was cut off" % name, flush=True)
+        except Exception as e:            # tidying must never be the reason an update does not happen
+            print("pvj-update: could not look for old work folders: %r" % e, file=sys.stderr)
     try:
         if args.cmd == "status":
             print(json.dumps(u.status(), indent=2))
@@ -604,15 +649,26 @@ def main(argv=None):
     return 0
 
 
+DEFAULT_LOCK = "/run/lock/pvj-update.lock"
+
+
 def take_lock(path=None):
     """One update at a time, whoever started it (the panel, a terminal). Returns the open lock file, or None
-    when another update holds it."""
+    when another update holds it. Raises UpdateError when the lock file cannot be used at all."""
     import fcntl
-    path = path or os.environ.get("PVJ_UPDATE_LOCK", "/run/lock/pvj-update.lock")
+    path = path or os.environ.get("PVJ_UPDATE_LOCK", DEFAULT_LOCK)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    except OSError:
-        fd = os.open(os.path.join(tempfile.gettempdir(), "pvj-update.lock"), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            fd = os.open(path, flags, 0o600)
+        except FileNotFoundError:
+            os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)      # /run/lock is not on every system
+            fd = os.open(path, flags, 0o600)
+    except OSError as e:
+        # There is one lock file and everybody uses it. This used to fall back to a file in the caller's own temp
+        # folder, and two updaters that fell back differently, or only one of them, both ran (D70). Whoever
+        # cannot use the lock does not update; on a desk, name another file in PVJ_UPDATE_LOCK.
+        raise UpdateError("cannot use the update lock %s: %s" % (path, e.strerror or e))
     f = os.fdopen(fd, "r+")
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
