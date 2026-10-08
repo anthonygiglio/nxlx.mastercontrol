@@ -14,7 +14,7 @@ from unittest import mock
 from pvj import sysd, update
 from pvj.update import UpdateError
 from tests.test_server import ServerBase
-from tests.test_update import make_bundle
+from tests.test_update import make_bundle, root_for_main
 
 REPO = os.path.join(os.path.dirname(__file__), "..")
 HAVE_SSH = shutil.which("ssh-keygen") is not None
@@ -123,7 +123,7 @@ class CommandLineTest(unittest.TestCase):
         self.result = os.path.join(tempfile.mkdtemp(), "result.json")
         os.environ["PVJ_UPDATE_LOCK"] = os.path.join(tempfile.mkdtemp(), "lock")
         self.addCleanup(os.environ.pop, "PVJ_UPDATE_LOCK", None)
-        self.root = mock.patch("os.geteuid", return_value=0)
+        self.root = root_for_main()
         self.root.start()
         self.addCleanup(self.root.stop)
 

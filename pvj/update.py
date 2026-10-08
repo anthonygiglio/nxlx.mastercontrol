@@ -741,8 +741,11 @@ def take_lock(path=None, old=None):
             os.chmod(folder, 0o755)                             # as the units make it, whatever the umask
         # Whoever can make a name in the folder can put a file of their own where the lock goes, or take the
         # lock's name away, and then two updaters hold different files and both run.
-        if stat.S_IMODE(os.stat(folder).st_mode) & 0o022:
+        at = os.stat(folder)
+        if stat.S_IMODE(at.st_mode) & 0o022:
             raise UpdateError("cannot use the update lock %s: others can write in its folder" % path)
+        if at.st_uid != os.geteuid():
+            raise UpdateError("cannot use the update lock %s: its folder is somebody else's" % path)
         fd = os.open(path, flags, 0o600)
     except OSError as e:
         # There is one lock file and everybody uses it. This used to fall back to a file in the caller's own temp
@@ -753,6 +756,9 @@ def take_lock(path=None, old=None):
     if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
         os.close(fd)
         raise UpdateError("cannot use the update lock %s: it is not a plain file with one name" % path)
+    if st.st_uid != os.geteuid():
+        os.close(fd)
+        raise UpdateError("cannot use the update lock %s: it is somebody else's file" % path)
     f = os.fdopen(fd, "r+")
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)

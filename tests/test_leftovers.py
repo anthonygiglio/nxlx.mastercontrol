@@ -21,6 +21,7 @@ from pvj import paths, themes, update
 from pvj.settings import Settings, TEMP_NAME, TEMP_STALE
 from pvj.update import UpdateError, Updater
 from tests.test_server import ServerBase
+from tests.test_update import root_for_main
 
 ROOT = os.geteuid() == 0
 
@@ -454,17 +455,60 @@ class Lock(Folder):
             opened.append(path)
             return real(path, *a, **k)
 
-        target = self.put("precious")
-        cases = {"a folder": self.dir, "a link": os.path.join(self.dir, "link"),
+        # In a folder of its own. The lock's folder is looked at before the lock is opened, and this test used
+        # self.dir itself as "a folder": its folder is the temp folder, which everybody can write on Linux, so
+        # there it was refused for that and the open was never reached (second review of #108, finding 4).
+        sub = os.path.join(self.dir, "sub")
+        os.mkdir(sub)
+        os.chmod(sub, 0o755)
+        target = self.put("sub", "precious")
+        cases = {"a folder": os.path.join(sub, "folder"), "a link": os.path.join(sub, "link"),
                  "in a file": os.path.join(target, "lock")}
+        os.mkdir(cases["a folder"])
         os.symlink(target, cases["a link"])
         for what, path in cases.items():
             del opened[:]
             with mock.patch("os.open", spy), self.assertRaises(UpdateError, msg=what) as e:
                 update.take_lock(path)
             self.assertIn(path, str(e.exception), what)
-            self.assertLessEqual(set(opened), {path}, "%s: only the lock itself was tried" % what)
+            # the lock itself was tried and nothing else; where its folder is a file there is nothing to try
+            self.assertEqual(set(opened), set() if what == "in a file" else {path}, what)
         self.assertEqual(self.read(target), "x")
+        self.assertEqual(self.names(sub), ["folder", "link", "precious"])
+
+    # Second review of #108, finding 3: the mode of the lock's folder was looked at, but not whose it is, nor whose
+    # the lock is. Somebody else's file or folder needs root to make, so here stat is made to say so for the one
+    # folder or file; that the check compares with the effective user is all these two can show.
+
+    def theirs(self, real, path):
+        mine = os.stat(path)
+
+        def look(*a, **k):
+            st = real(*a, **k)
+            if (st.st_dev, st.st_ino) != (mine.st_dev, mine.st_ino):
+                return st
+            fields = list(st)
+            fields[stat.ST_UID] = st.st_uid + 1
+            return os.stat_result(fields)
+        return look
+
+    def test_a_lock_in_somebody_elses_folder_is_refused(self):
+        folder = os.path.join(self.dir, "theirs")
+        os.mkdir(folder)
+        os.chmod(folder, 0o755)
+        path = os.path.join(folder, "lock")
+        with mock.patch("os.stat", self.theirs(os.stat, folder)), self.assertRaises(UpdateError) as e:
+            update.take_lock(path)
+        self.assertIn("somebody else", str(e.exception))
+        self.assertEqual(self.names(folder), [], "and nothing was made there")
+        update.take_lock(path).close()
+
+    def test_a_lock_that_is_somebody_elses_file_is_refused(self):
+        path = self.put("lock")
+        with mock.patch("os.fstat", self.theirs(os.fstat, path)), self.assertRaises(UpdateError) as e:
+            update.take_lock(path)
+        self.assertIn("somebody else", str(e.exception))
+        update.take_lock(path).close()
 
     def test_a_missing_lock_folder_is_made_and_the_lock_still_excludes(self):
         path = os.path.join(self.dir, "lock", "pvj-update.lock")
@@ -564,11 +608,12 @@ class Lock(Folder):
 
     def test_an_old_name_that_is_somebody_elses_file_is_passed_over_even_when_it_is_held(self):
         # With fs.protected_regular off, any account can put its own file at the old name and hold it for ever.
-        # Root is not available here, so "somebody else's" is made by saying that we are somebody else.
+        # Root is not available here, so fstat is made to say that this one file is somebody else's.
         new, old = os.path.join(self.dir, "new.lock"), os.path.join(self.dir, "old.lock")
         theirs = update.take_lock(old)
         self.addCleanup(theirs.close)
-        with mock.patch("os.geteuid", return_value=os.geteuid() + 1):
+        self.assertIsNone(update.take_lock(new, old=old))
+        with mock.patch("os.fstat", self.theirs(os.fstat, old)):
             f = update.take_lock(new, old=old)
         self.assertIsNotNone(f)
         f.close()
@@ -624,7 +669,7 @@ class CommandLine(Folder):
                                          "PVJ_UPDATE_RESULT": os.path.join(self.dir, "result.json")})
         p.start()
         self.addCleanup(p.stop)
-        p = mock.patch("os.geteuid", return_value=0)
+        p = root_for_main()
         p.start()
         self.addCleanup(p.stop)
         self.calls = calls = []
@@ -735,8 +780,8 @@ class EndToEnd(UpdaterBase):
     the owner it has there (root), which no other test here passes (review of #108, finding 7).
 
     Without root, a folder that is root's cannot be made. So one test shows that what is not root's is left by the
-    real command, and the other is told by lstat and fstat that everything is root's, which is what they say on a
-    box; as root it needs no telling. Only a run as root removes a folder that really is root's."""
+    real command, and the other is told that it is root and that everything is root's (geteuid, stat, lstat and fstat),
+    which is what they say on a box; as root it needs no telling. Only a run as root removes a folder that really is root's."""
 
     def setUp(self):
         super().setUp()
@@ -753,7 +798,7 @@ class EndToEnd(UpdaterBase):
                                  health=lambda: True)
         for p in (mock.patch.dict(os.environ, {"PVJ_UPDATE_LOCK": os.path.join(self.dir, "lock"),
                                                "PVJ_UPDATE_RESULT": self.result}),
-                  mock.patch("os.geteuid", return_value=0),      # main() asks for root before anything else
+                  root_for_main(),                               # main() asks for root before anything else
                   mock.patch.object(update, "Updater", real)):
             p.start()
             self.addCleanup(p.stop)
@@ -781,7 +826,8 @@ class EndToEnd(UpdaterBase):
                 return os.stat_result(st)
             return look
 
-        with mock.patch("os.lstat", as_root(os.lstat)), mock.patch("os.fstat", as_root(os.fstat)):
+        with mock.patch("os.geteuid", return_value=0), mock.patch("os.stat", as_root(os.stat)), \
+                mock.patch("os.lstat", as_root(os.lstat)), mock.patch("os.fstat", as_root(os.fstat)):
             out = self.rollback()
         self.assertIn("removed .update-abcd1234, left by an update that was cut off", out)
         self.assertEqual(self.names(self.prefix), ["current", "previous", "releases"])
