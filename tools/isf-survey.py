@@ -41,9 +41,20 @@ _IMG_CALL = re.compile(r"\bIMG_(?:NORM_PIXEL|PIXEL|THIS_NORM_PIXEL|THIS_PIXEL)\b
 _BIG = re.compile(r"(?<![\w.])(\d{5,}(?:\.\d*)?)(?![\w.])")
 
 
+def header_start(text):
+    """Where the header comment starts: where the translator finds it (after comments and blank space at the top, so
+    a credit comment is not taken for the header), else the first comment of any kind, else -1."""
+    try:
+        return S.find_header(text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")), True
+    except S.ShaderError:
+        return text.find("/*"), False
+
+
 def header(text):
     """The JSON header read leniently (the survey must describe files the translator would refuse)."""
-    a = text.find("/*")
+    a, found = header_start(text)
+    if found:
+        text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
     b = text.find("*/", a + 2)
     if a < 0 or b < 0:
         return {}, text
@@ -56,7 +67,9 @@ def header(text):
 
 def header_problem(text):
     """What the translator's strict reading of the JSON header refuses (a key twice, NaN, text it cannot read)."""
-    a = text.find("/*")
+    a, found = header_start(text)
+    if found:
+        text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
     b = text.find("*/", a + 2)
     if a < 0 or b < 0:
         return "not an ISF file: no JSON header comment"

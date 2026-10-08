@@ -83,6 +83,27 @@ class SurveyTest(unittest.TestCase):
         self.assertIn("12 .fs files, 2 translate today, 10 are refused", text)
         self.assertIn("filter      alone:   1   together with other features:   3", text)
 
+    def test_a_credit_comment_before_the_header_is_not_taken_for_the_header(self):
+        """The survey reads the header where the translator finds it: after the comments at the top of the file."""
+        lead = "// Flat Probe, by Ana Example (a made-up credit)\n/* [not] the {header} */\n\n"
+        files = {"credited.fs": lead + isf({"CREDIT": "Ana Example", "INPUTS": [{"NAME": "time", "TYPE": "float"}]}),
+                 "credited-filter.fs": lead + isf({"INPUTS": [{"NAME": "inputImage", "TYPE": "image"}]}, READS),
+                 "credited-sound.fs": (lead + isf({"INPUTS": [{"NAME": "fft", "TYPE": "audioFFT"}]})).replace("\n", "\r\n"),
+                 "credited-twice.fs": lead + '/*{"CREDIT": "a", "CREDIT": "b"}*/' + MAIN,
+                 "no-header.fs": "/* only a credit */" + MAIN}
+        with tempfile.TemporaryDirectory() as folder:
+            for name, text in files.items():
+                with open(os.path.join(folder, name), "w", newline="") as f:
+                    f.write(text)
+            rows = {r["file"]: r for r in survey.survey(folder)}
+        self.assertEqual({n: r["needs"] for n, r in rows.items()}, {
+            "credited.fs": [], "credited-filter.fs": ["filter"], "credited-sound.fs": ["audio"], "credited-twice.fs": ["checks"],
+            "no-header.fs": ["checks"]})
+        self.assertEqual((rows["credited.fs"]["translates"], rows["credited.fs"]["credit"]), (True, "Ana Example"))
+        self.assertTrue(rows["credited-filter.fs"]["as_effect"])
+        self.assertIn("twice", rows["credited-twice.fs"]["checks"])
+        self.assertIn("not an ISF file", rows["no-header.fs"]["refused"])
+
     def test_the_bundled_pack_translates_whole(self):
         rows = survey.survey(os.path.join(REPO, "pvj", "shaders.d", "isf-files"))
         self.assertEqual(len(rows), 7)
