@@ -129,7 +129,7 @@ Releases are signed bundles, installed by `sudo pvj-update`. Nothing is fetched 
 
 **Making a release.** Set the version in `pvj/__init__.py`, commit, then `tools/make-release.sh 4.0.1 --key ~/.ssh/pvj-release`. It writes `dist/pvj-4.0.1.tar.gz`, `.sha256` and `.sig`. The archive is reproducible (same commit, same bytes) and contains only `pvj/`, `bin/` and `install/`, never the legacy code.
 
-**Installing.** Put the three files in a `pvj-update/` folder on a USB stick, plug it in and run `sudo pvj-update usb`; or `sudo pvj-update apply pvj-4.0.1.tar.gz`. `pvj-update check FILE` verifies without installing; `pvj-update status` shows the current and previous release.
+**Installing.** Put the three files in a `pvj-update/` folder on a USB stick, plug it in and run `sudo pvj-update usb`; or `sudo pvj-update apply pvj-4.0.1.tar.gz`. `pvj-update check FILE` verifies without installing (it unpacks the bundle in the install, so it takes the update lock and is refused while an update runs); `pvj-update status` shows the current and previous release.
 
 **What it checks before touching anything:** SHA-256, the OpenSSH Ed25519 signature against your key, safe unpacking (no absolute or `..` paths, no links or device files, no setuid bits, size limits), enough disk space, a newer version, and that the settings format is not being downgraded (`--force` overrides the last two). It then backs up `settings.json`, installs into a new folder under `/opt/pvj/releases`, switches `/opt/pvj/current` atomically, restarts the services and waits for the panel to answer. **If it does not answer, the previous release and your settings are put back automatically.**
 

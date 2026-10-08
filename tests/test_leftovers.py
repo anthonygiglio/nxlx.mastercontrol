@@ -120,7 +120,7 @@ class SettingsLeftovers(Folder):
         again.load()
         self.assertFalse(os.path.exists(old))
         self.assertFalse(os.path.exists(ahead))
-        self.assertTrue(os.path.exists(fresh), "another service may be saving at this moment")
+        self.assertTrue(os.path.exists(fresh), "a second panel started by hand may be saving at this moment")
         self.assertEqual({n: self.read(os.path.join(self.dir, n)) for n in before}, before)
         self.assertEqual(again.data, s.data)
 

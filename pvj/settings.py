@@ -177,7 +177,8 @@ class Settings:
 
     def load(self):
         # A power cut between making the temp file of a save and renaming it leaves `.settings-XXXXXXXX` behind
-        # (D70). Only old ones go: another service may be in the middle of a save in the same folder right now.
+        # (D70). Only old ones go. Only the panel loads this folder (pvj/server.py), so nothing should be saving
+        # while it starts; the hour is caution, for a second panel started by hand, and costs nothing.
         paths.remove_leftovers(os.path.dirname(self.path) or ".", TEMP_NAME, older_than=TEMP_STALE)
         if not os.path.exists(self.path) and not os.path.exists(self.path + ".bak"):
             self.data = default_settings()
