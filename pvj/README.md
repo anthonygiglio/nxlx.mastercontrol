@@ -113,7 +113,7 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 
 **Also built (all beta or off by default):** [autostart](AUTOSTART.md), [weekly schedule](SCHEDULE.md), [streams](STREAMS.md), [NDI input](NDI.md) (one short first run on a Pi 4 on 2026-10-08, by SSH; nobody has watched it on a screen yet; needs NDI's runtime from the owner), [projectors](PROJECTORS.md), [projection mapping](MAPPER.md), [shaders and Vibes](SHADERS.md), [remote support](../docs/REMOTE-SUPPORT.md), [DMX](DMX.md) and [MIDI](MIDI.md), each with its own safety notes and a list of what was not verified.
 
-**Not built yet:** crossfade (needs a second player; "Dip to black" and "Cut" work), the desktop screens (Presenter, Wall), NDI sound and AES67/Dante (ST 2110 only through a gateway, see D30), Wi-Fi and hotspot, updates from the network, a panel update button, and shutdown and reboot buttons. The old PHP panel still exists for the legacy Pi 3 line.
+**Not built yet:** crossfade (needs a second player; "Dip to black" and "Cut" work), the desktop screens (Presenter, Wall), AES67/Dante (ST 2110 only through a gateway, see D30), Wi-Fi and hotspot, updates from the network, a panel update button, and shutdown and reboot buttons. The old PHP panel still exists for the legacy Pi 3 line.
 
 **Tested:** unit tests for settings, auth, modules and themes; HTTP tests for authentication, CSRF, roles, path confinement and validation; an end-to-end test through HTTP into a real headless mpv; and a real-browser test (Playwright) that pairs, assigns and plays a pad, drags a slider, switches theme, opens a guest link and fails on any CSP violation. Not tested on a real Pi, on real touch hardware, or with a real display.
 

@@ -240,7 +240,7 @@ Shows the picture of an NDI sender on the network (Resolume, MadMapper, OBS and 
 2. System > NDI input, switch it on. Senders on the same network appear in the list within a few seconds. Tap **Play**.
 3. If a sender never appears (some Wi-Fi networks and routers do not pass the announcements), add the sending computer's address under "Addresses to ask". Only private addresses are taken.
 
-What to know: picture only, no sound yet. If the sender changes its size or frame rate the picture goes for a second or two and comes back. A still picture (a test pattern, a paused output) is fine and is left alone. If the connection to the sender drops, the last frame stays and the page says it is waiting. The same name announced from another computer is a different source, and a sender whose address changes has to be chosen again. An interlaced sender is refused; set it to progressive. The page shows how many frames were shown and dropped. Anyone on the show network can announce a sender under any name, so keep that network private. A Pi 3 is not offered this input. How smooth it is on a Pi 4 has not been measured; the steps are in `tools/DEVICE-TESTING.md`.
+What to know: the sound a source sends is played with its picture, through the box's own sound output, volume and mute; **Play a source's sound** on the same page switches it off. This is new and nobody has heard it on a box yet. NDI's reference level comes out 20 dB below full scale, so a test tone or a broadcast-style sender sounds quieter than a clip. If a source has more than two channels the first two are played. When a source starts or stops sending sound, the picture goes for a second or two once. If the sender changes its size or frame rate the picture goes for a second or two and comes back. A still picture (a test pattern, a paused output) is fine and is left alone. If the connection to the sender drops, the last frame stays and the page says it is waiting. The same name announced from another computer is a different source, and a sender whose address changes has to be chosen again. An interlaced sender is refused; set it to progressive. The page shows how many frames were shown and dropped. Anyone on the show network can announce a sender under any name, so keep that network private. A Pi 3 is not offered this input. How smooth it is on a Pi 4 has not been measured; the steps are in `tools/DEVICE-TESTING.md`.
 
 ### Running the room (beta)
 
@@ -384,6 +384,6 @@ Not tested on a real box yet (2026-10-03): the three cards were tested with the 
 
 ## 8. Not built yet
 
-Crossfade, updates from the network, a panel update button, NDI sound, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
+Crossfade, updates from the network, a panel update button, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
 
 **SMPTE ST 2110** is not supported directly and not planned: use a converter from 2110 to HDMI into the live input (USB capture), or from 2110 to NDI (see NDI input above; it has had one short first run on a Pi 4 on 2026-10-08, by SSH; nobody has watched it on a screen yet with a real sender).
