@@ -401,8 +401,10 @@ class PvjServer(ThreadingHTTPServer):
     not the 5 that socketserver asks for. A browser opens six connections at once for the files of the page, and
     every request here is its own connection (HTTP/1.0), so two or three people opening the panel in the same
     second ask for more than five before the loop below has taken the first. What the kernel does with the one too
-    many differs: macOS resets it (a script of the page then never arrives, measured 2026-10-08), Linux leaves the
-    client to ask again a second later. 128 is the largest value every kernel in use here grants (the kernel lowers
+    many differs: macOS resets it (a script of the page then never arrives, measured 2026-10-08). Linux, as
+    documented, drops the handshake and leaves the client to ask again about a second later; that was measured on
+    CI's Linux only (Ubuntu 24.04, 2026-10-08: with a queue of 5 and nobody taking connections, 34 of 40 had not
+    connected after half a second) and not on the Pi. 128 is the largest value every kernel in use here grants (the kernel lowers
     a larger one to its own limit, net.core.somaxconn or kern.ipc.somaxconn). A waiting connection costs the
     kernel a little memory and this process nothing: no thread and no file descriptor until it is taken, and then
     the cap below decides. So the bound on threads and descriptors is still max_connections."""

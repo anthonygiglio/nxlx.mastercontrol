@@ -1023,8 +1023,16 @@ class HostileClientTest(ServerBase):
 class ManyAtOnceTest(ServerBase):
     """Several browsers opening the panel in the same second: every file arrives (D68). A browser opens six
     connections at once and every request is its own connection, so three browsers ask for eighteen while the
-    kernel, asked for socketserver's queue of five, kept about five waiting: macOS reset the rest, Linux makes
-    them ask again a second later."""
+    kernel, asked for socketserver's queue of five, kept about five waiting: macOS reset the rest; Linux, as
+    documented, drops their handshake and they ask again about a second later.
+
+    What each test proves, measured with the queue put back to 5 (2026-10-08). On the dev Mac all four failed (the
+    one about the cap in two runs of three). On CI's Linux (Ubuntu 24.04, Python 3.12; a throwaway branch, the test
+    of the two numbers skipped) one of the three that test behaviour failed: the forty waiting connections, 34 of
+    which had not connected after half a second. The six browsers passed there, in 7.3 s where the same test takes
+    1.3 s with the queue at 128, which fits handshakes dropped and sent again but proves nothing by itself; the
+    test of the cap passed, as it must, since it is about the cap and not the queue. So on Linux the queue is held
+    by the forty connections alone, and on the Pi by nothing: none of this was run there."""
 
     PATHS = ("/", "/app.js", "/api/hello")
 
@@ -1073,11 +1081,17 @@ class ManyAtOnceTest(ServerBase):
         return bad or self.answer(c, path)
 
     def test_the_queue_is_longer_than_a_room_of_browsers_and_the_cap_is_as_it_was(self):
+        # Two numbers held so that changing either is a deliberate act. This proves no behaviour: what a short queue
+        # does is in the three tests below.
         import inspect
         self.assertEqual(server.PvjServer.request_queue_size, 128)
         self.assertEqual(inspect.signature(server.PvjServer.__init__).parameters["max_connections"].default, 64)
 
     def test_six_browsers_at_once_all_get_every_file(self):
+        # Tells a queue of 5 from 128 on macOS, where the connection that does not fit is reset (measured: 196 of
+        # 810 answered). On CI's Linux it passed at 5 as well, only slower (7.3 s against 1.3 s, one run each): a
+        # dropped handshake is sent again within the 5 s each connection is given here. It is not made stricter by
+        # a limit on time, which a slow runner would trip; on Linux the next test is the one that tells.
         self.serve()
         got, lock = {}, threading.Lock()
 
@@ -1104,8 +1118,11 @@ class ManyAtOnceTest(ServerBase):
 
     def test_forty_connections_wait_their_turn_while_the_server_is_busy(self):
         # The server is not taking connections yet (as when its loop is busy with the one before): forty arrive.
-        # With a queue of five Linux leaves the seventh to ask again after a second, which the half second here
-        # does not wait for. Then the server starts, and each of them is answered.
+        # With a queue of five a Linux kernel finishes six handshakes and drops the rest, to be sent again after
+        # about a second (as documented), which the half second here does not wait for. Measured on CI's Linux
+        # with the queue at 5 (Ubuntu 24.04, Python 3.12, 2026-10-08): this test failed, 34 of the 40 "no connection
+        # (TimeoutError)"; on the Mac five to twelve of the forty were reset. Not measured on the Pi. Then the server
+        # starts, and each of them is answered.
         self.serve(start=False)
         conns = [None] * 40
 
@@ -1127,6 +1144,8 @@ class ManyAtOnceTest(ServerBase):
     def test_a_longer_queue_lets_nobody_past_the_cap(self):
         # Three connections that say nothing hold the three places; thirty more arrive at once. None of them is
         # served and none is left waiting: each is refused at once (a 503, or the connection is closed on it).
+        # This is about the cap, which the longer queue must not loosen. It does not tell a queue of 5 from 128 on
+        # Linux (it passed there at 5), and on the Mac it failed at 5 in two runs of three.
         self.serve(max_connections=3)
         idle = [self.connect()[0] for _ in range(3)]
         self.addCleanup(lambda: [c.close() for c in idle])
