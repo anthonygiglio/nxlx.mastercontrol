@@ -1101,10 +1101,9 @@
   function mod(id) { return S.modules.filter(function (x) { return x.id === id; })[0]; }
   function plural(n, word, many) { return n + ' ' + (n === 1 ? word : (many || word + 's')); }
   function st(chip, text) { return { chip: chip, text: text }; }
-  // The names the panel had for its five tabs before the Workspace shell (D65), and the screen each now leads to: a
-  // link written for a tab, and anything that still says "live" or "mix", lands somewhere sensible.
+  // The names the panel had for its five tabs before the Workspace shell (D65), and the screen each now leads to:
+  // go() takes them too, so anything that still says "live" or "mix" lands somewhere sensible.
   var OLD_TABS = { live: 'play/pads', mix: 'shape/picture', media: 'play/library', system: 'setup/index', room: 'room/scenes' };
-  function goTab(tab) { go(OLD_TABS[tab] || tab); }
   // The Room screen (room.js) builds all of its cards at once. Each belongs to one screen of the Room area, and the
   // set-up card to Setup > Room: the cards are marked, and the ones of another screen are hidden, not left out, so
   // room.js finds every one of them as before.
@@ -4098,6 +4097,7 @@
   // Open a screen by its key. Another part of what is already built (Shape's three, Room's three) is shown without
   // drawing anything again; anything else reads the box's state and draws, as a tap on a tab always did.
   function go(key) {
+    key = OLD_TABS[key] || key;
     var sc = screenList().filter(function (x) { return x.key === key; })[0];
     if (!sc) return;
     S.last[sc.area] = sc.key;
