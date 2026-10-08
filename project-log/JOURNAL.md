@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08, the night (after the Mac's restart: HANDOFF corrected, #104 merged, the project copied to the external drive)
+
+- **HANDOFF said two things that were no longer true**: that the test Pi has master at `2bfaabb`, and that #94 waits for the owner's answer on the NDI licence. The Pi has run the NDI test build `22d3263` with settings at schema 15 since the NDI test, and the owner accepted the licence himself for his own test Pi only. Both are corrected, with what must be undone on the box before master goes back (the schema 14 settings copy, the temporary device `claude-ndi-test`). Nothing was run on the Pi in this session; the lines repeat what the `ndi-input` branch's journal and the coordinator's notes record.
+- **#104 merged** (28 checks passed). It conflicted #107 and #105 in this journal only; master was merged into both on the dev Mac, keeping every entry, and those two merge commits were not pushed in this session (the permission check refused the push). The three failed checks on #105 at `d4c325e` were all the install step ("ci-apt: gave up after 3 attempts" on the slow mirror), which is what #104 answers; none of them reached a test.
+- **#102's `panel-ui` failure is a real one**, not read before: on CI's Linux the control inventory finds nine controls an owner could reach before the Workspace shell and cannot now (five of the DMX lighting desk, three of OSC, and "Remove local" under People and codes). Not fixed in this session.
+- **The project on the external drive.** The owner asked for the project to live on his external drive. The repository with its worktrees was copied into an APFS sparse bundle there (`01_Projects/Active/nxlx.mastercontrol.sparsebundle`, volume `nxlx-mastercontrol`) and compared by checksum, `git fsck` and refs: equal apart from three `.DS_Store` files. The swap (the internal folder renamed aside, a link in its place) was refused by the session's permission check and is the owner's to do or allow; until then the internal folder is the working one and the copy must be refreshed before the swap.
+
 ## 2026-10-08, the evening (CI's install retry met its first slow mirror, and lost)
 
 - On #102's second run the `effects-gpu` job for the Pi 4's kind of OpenGL failed in its install step with "ci-apt: gave up after 3 attempts": the lists came at once each time and the 48 MB of packages did not arrive in 90 seconds, three times, from `azure.archive.ubuntu.com`. So the retry of #101 failed sooner (under five minutes instead of ten) but cured nothing: the same runner asked the same slow mirror three times.
