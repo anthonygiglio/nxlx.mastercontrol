@@ -107,6 +107,34 @@ class SurveyTest(unittest.TestCase):
         self.assertIn("twice", rows["credited-twice.fs"]["checks"])
         self.assertIn("not an ISF file", rows["no-header.fs"]["refused"])
 
+    def test_a_file_whose_header_is_not_where_it_must_be_is_described_with_the_translators_own_words(self):
+        """Where the translator will not look for the header, the survey says so in its words, and never takes a
+        comment of another kind for the header."""
+        sound = isf({"INPUTS": [{"NAME": "fft", "TYPE": "audioFFT"}]})
+        files = {"code-first.fs": "float early = 1.0;\n" + isf({"INPUTS": [{"NAME": "speed", "TYPE": "float"}]}),
+                 "long-credit.fs": "/* " + "c" * 5000 + " */\n" + sound,              # a 5 KB credit is not the header
+                 "open-credit.fs": "/* never closed\n" + MAIN,
+                 "euro.fs": "/*{\"DESCRIPTION\": \"" + "€" * 2800 + "\"}*/" + MAIN,   # 8.4 KB of header in 2,800 characters
+                 "ascii.fs": isf({"DESCRIPTION": "d" * 8000})}
+        with tempfile.TemporaryDirectory() as folder:
+            for name, text in files.items():
+                with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
+                    f.write(text)
+            rows = {r["file"]: r for r in survey.survey(folder)}
+        self.assertEqual([n for n, r in rows.items() if r["translates"]], ["ascii.fs"])
+        self.assertEqual(rows["code-first.fs"]["needs"], ["checks"])
+        self.assertIn("it must start with", rows["code-first.fs"]["checks"])
+        self.assertEqual(rows["code-first.fs"]["checks"], rows["code-first.fs"]["refused"])
+        self.assertEqual(survey.header(files["code-first.fs"])[0]["INPUTS"][0]["NAME"], "speed")      # still described
+        self.assertEqual(rows["long-credit.fs"]["needs"], ["audio", "checks"])                        # read past the credit
+        self.assertIn("stand before the JSON header", rows["long-credit.fs"]["checks"])
+        self.assertIn("never closed", rows["open-credit.fs"]["checks"])
+        self.assertEqual(survey.header(files["open-credit.fs"])[0], {})
+        self.assertEqual((rows["euro.fs"]["needs"], rows["ascii.fs"]["needs"]), (["limits"], []))
+        self.assertEqual(survey.header_bytes(files["euro.fs"]), len(files["euro.fs"].split("*/")[0].encode("utf-8")))
+        self.assertGreater(survey.header_bytes(files["euro.fs"]), survey.S.MAX_HEADER)
+        self.assertLess(len(files["euro.fs"]), survey.S.MAX_HEADER)                                   # in characters it would fit
+
     def test_the_bundled_pack_translates_whole(self):
         rows = survey.survey(os.path.join(REPO, "pvj", "shaders.d", "isf-files"))
         self.assertEqual(len(rows), 7)
