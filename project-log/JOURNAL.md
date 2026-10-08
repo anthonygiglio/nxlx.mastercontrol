@@ -28,9 +28,25 @@ Pull request #100, branch `resize-step1`, not merged. The owner said yes to step
 
 **Not fixed, on purpose.** The transport's "Prev" and "– 10 s" go to two lines at 320 in the default look (between words, so no word is cut). The left and right safe areas of a notched phone held sideways are not padded; a headless browser has none to measure.
 
-**Pictures.** Which of CI's pictures changed is in the pull request, from a comparison of the last run's set with master's. No rule here is meant to change anything at 1366.
+**The second run in CI** (commit `e41bec1`, the repairs for all ten in): the browser test passed with the sweep in it. The sweep's own line: 90 screens at 13 sizes, 48.6 s of resizing and measuring, 56.3 s for the default look's round. The step took 7 min 0 s, against 5 min 39 s to 6 min 2 s on three runs of master: 60 to 80 seconds more. The unit tests on Python 3.9: 1565 run, OK, 70 skipped. Two jobs of that push ended in their install step after ten minutes (the Ubuntu mirror again: `test (3.12)` of the push's run, `effects-gpu (OpenGL ES)` of the pull request's), which is not this branch's doing.
+
+**Pictures.** That run's 160 pictures were compared, pixel by pixel, with those of three runs of master. 70 of the 160 differ between two runs of master by themselves (codes, ports, times, which shader is on). Beyond that:
+
+- `live`, `live-night-red`, `screen-phone-live` (the default look's Live at 390): 64 px taller. The four big buttons at the foot had wrapped, Blackout on a line of its own. No fault had been measured at 390, so the wrap now starts under 380 and these three should be as on master again.
+- `shaders-instrument` (the Shaders page in the default look at 390): 16 px shorter. Faults 7 and 8: Previous, the middle button and Next are even columns, and a row of choices wraps by the word.
+- `signal-live-shader-laptop` (Signal at 1366): the playing shader's strip sat about 180 px lower in the picture; every other pixel as on master. The strip is held in place beside the pads, so in a picture of the whole screen it sits where the scroll was when the picture was taken. On the Mac, with a strip put in by hand, every box of Live at 1366 by 768 measured the same on master and on this branch, to the pixel. Why the scroll was elsewhere at that moment was not found. `tests/ui/screenshots.js` now takes these pictures from the top of the page, so the strip is at its place at the top; that picture differs from master's for that reason and no longer depends on the step before.
+- Nothing else. In particular no other `signal-` picture, and no picture at 1366, moved beyond what master's own runs do.
+
+A third push followed with those two changes and the merge of master (#98). What its run says is in the pull request.
 
 **Tests.** The unit tests on the Mac: 1565 run, 15 failures and 15 errors, all in `test_install`, `test_update`, `test_release` and `test_netd` for the Mac's own reasons (the hand-off notes list them), after one of this branch's own was found and fixed (LESSONS). The browser test and the unit tests on Linux: the pull request's checks.
+## 2026-10-08, the morning (the box brought to master; the owner's answers read)
+
+- **Deploy.** The owner said "deploy to the Pi". The test Pi 4 was brought from the merge of #91 to master at `2bfaabb` (#92, #93, #96 and the documents of #95 and #97) at about 14:13 UTC by the usual route (`git archive`, `install.sh --offline` through `pvj-dev`). Four files compared equal by hash; the five services were active; the panel answered 200 on the box; `pvj-selftest` had no failed check; settings went from schema 13 to 14 with the controller code off. The panel and the player restarted. The player's log has "pw.conf: can't load config client.conf" twice after the restart; the same line is there 32 times between 2026-10-05 and the deploy, so it is not new. Nobody looked at the monitor, and nothing of #92, #93 or #96 has been tried by hand on the box.
+- **The answers.** He answered all fourteen questions on the page; D63 has them. His taps saved, which was the one part of that page nobody had tried.
+- **Started from them:** step 1 of the resizing study (branch `resize-step1`), 540 lines for edge glow and corner colour tint (`auto-540-two`), and the NDI helper as an opt-in (onto #94). The layout C shell starts when step 1 has merged, because both change `app.css` and the browser test.
+- **Waiting for him:** to run the NDI SDK installer himself (`~/ndi-sdk-linux`), and to add the `workflow` scope (`gh auth refresh -h github.com -s workflow`).
+- **Found while reading for the NDI test:** master refuses a settings file from a newer schema, so a test of #94 on the box (schema 15) needs the settings file copied aside first and put back before the box returns to master. Written into HANDOFF.
 
 ## 2026-10-08, the end of the night session (what changed after the night's entry was written)
 
