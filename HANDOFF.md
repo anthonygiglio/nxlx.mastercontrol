@@ -24,7 +24,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 
 ## State and what is next (2026-10-08)
 
-**Where things are.** Master is at the merge of #93 (`07b2a45`). The test Pi 4 (192.168.0.169; on the wired network with Wi-Fi not joined, as of 2026-10-04) is at the merge of #91, so it is behind master by #92 and #93. It was reachable in the night of 2026-10-07 and 08 once the Mac was on the home Wi-Fi. After #92 merged, a deploy over SSH was refused by the session's permission check and was not worked around; nothing was restarted on the box. Its five services (`pvj-player`, `pvj-web`, `pvj-netd`, `pvj-sysd`, `pvj-supportd`) were all active at the deploy of #88 (`fe6b7fd`) on 2026-10-05, which was done through the `pvj-dev` account and confirmed by file hash. How the box came to #91, and whether that was checked the same way, is not written down.
+**Where things are.** Master is at the merge of #96 (`8bced2e`). The test Pi 4 (192.168.0.169; on the wired network with Wi-Fi not joined, as of 2026-10-04) is at the merge of #91, so it is behind master by #92, #93 and #96 (#95 was documents only). It was reachable in the night of 2026-10-07 and 08 once the Mac was on the home Wi-Fi. After #92 merged, a deploy over SSH was refused by the session's permission check and was not worked around; nothing was restarted on the box. Its five services (`pvj-player`, `pvj-web`, `pvj-netd`, `pvj-sysd`, `pvj-supportd`) were all active at the deploy of #88 (`fe6b7fd`) on 2026-10-05, which was done through the `pvj-dev` account and confirmed by file hash. How the box came to #91, and whether that was checked the same way, is not written down.
 
 **Merged since 2026-10-05.**
 
@@ -32,6 +32,9 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - #91: the Shaders page while its module goes off (panel only).
 - #92: six known small faults read again; four fixed (a fade takes the seconds asked for, a generator's value change leaves `fbo-format` alone, a panel's Next and effect button say so with nothing playing, a refused generator names the right line on GLSL 1.40), two were already fixed. Tested with a fake player and in CI; not run on hardware, and not on the box yet.
 - #93: a pairing code on the display from a MIDI controller (D61), off by default. Three independent read-only reviews, nothing high, every finding fixed. See "A pairing code from a MIDI controller" below. Never on hardware, and not on the box yet.
+
+- #95: these notes rewritten as one current document, the night's journal entry and three lessons (documents only).
+- #96: "no reply from mpv" in the GPU tests was two failures. The one at a player's first start is shown and fixed (a request waits longer only in the 15 seconds after this process itself starts a player; on a box systemd starts the player, so nothing changes there). The lost screenshot was not reproduced and stays open. CI's software GPU only; nothing here ran on a Pi.
 
 The journal has an entry for each, and one for the night of 2026-10-07 and 08 as a whole.
 
@@ -77,7 +80,7 @@ Further out, unchanged: live coding with a last-good fallback and projectM as an
 
 **Checks still owed on the box.**
 
-- First, a deploy of master (see "Working on the test Pi"): the box is behind by #92 and #93. It restarts the panel and the player, and it takes the box's settings from schema 13 to 14 (D61); after it, never put older code on that box.
+- First, a deploy of master (see "Working on the test Pi"): the box is behind by #92, #93 and #96. It restarts the panel and the player, and it takes the box's settings from schema 13 to 14 (D61); after it, never put older code on that box.
 - From #92, none run on hardware: whether a fade now takes the seconds asked for; whether a generator's value change is now smoother on the Pi 4; a panel's Next with nothing playing.
 - From #93: C1 to C10 in `tools/DEVICE-TESTING.md`. No real controller has made a code.
 - Wi-Fi (D41), from the wired port or a keyboard, never over the only link: set the Wi-Fi country, switch Network on, Find networks, join a known network, confirm, a hotspot from a phone, Wi-Fi off and back. The owner wants the box on Wi-Fi with the wired port for a projector (the wired port 192.168.10.1/24 with no router, the projector 192.168.10.2).
@@ -90,7 +93,7 @@ Further out, unchanged: live coding with a last-good fallback and projectM as an
 
 **Known and open.**
 
-- "no reply from mpv" in the GPU tests was two different things (#96, a draft; see "Test failures that come and go"): a player's first start, shown and fixed; and one screenshot on 2026-10-05, not explained and not reproduced. The GPU tests now time every request to the player and print a report when one gets no reply (`tests/mpv_watch.py`).
+- "no reply from mpv" in the GPU tests was two different things (#96, merged; see "Test failures that come and go"): a player's first start, shown and fixed; and one screenshot on 2026-10-05, not explained and not reproduced. The GPU tests now time every request to the player and print a report when one gets no reply (`tests/mpv_watch.py`).
 - GitHub sometimes never gives a job a runner ("The job was not acquired by Runner of type hosted"); rerun the failed jobs.
 - An effect put on a paused clip is not drawn until the next frame; the projection mapping alone is heavy on a Pi 4 (see "Effects and Effect detail").
 - Never run on hardware: a real projector, the Wi-Fi feature, any controller control pressed by a person, a Pi 3, a Pi 5, x86, NDI on Linux.

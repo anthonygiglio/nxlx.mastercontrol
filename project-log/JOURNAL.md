@@ -4,6 +4,15 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08, the end of the night session (what changed after the night's entry was written)
+
+- #95 (the hand-off notes as one document, the night's entry, three lessons) and #96 (the entry below) are merged; master is at `8bced2e`. The entry below says "a draft, not merged": it was read by the coordinator, the 20 lines in `pvj/player.py` checked against where a player is started (on a box systemd starts it, so the longer wait never applies there), all 28 checks green, then merged.
+- The night's entry lists the "no reply from mpv" failure as queued. It is done as far as it could be: the first-start failure is fixed, the lost screenshot is open with a watch in place.
+- #94 (NDI, a draft) has master as of #93 merged in, is settings schema 15 and D62, and has all 28 checks green on `953f191`. It waits for the owner's answer on the NDI licence. It does not yet hold #95 and #96.
+- The test Pi was not deployed to: it is at #91, behind by #92, #93 and #96.
+- Still not started, for the owner to say: the real layout C shell, step 1 of the resizing study, and a factory reset that also removes the root-only update backups.
+- For whoever opens the next session: the owner's answers are on the page https://claude.ai/artifact/KiNYctjMGB55E8iGsM8e8A (its database, collection `questions`).
+
 ## 2026-10-08 ("no reply from mpv" in the GPU tests: two different failures, one shown and fixed, one not explained)
 
 Pull request #96, a draft, not merged. The task: stop rerunning the "no reply from mpv" that came now and then in CI's GPU jobs, add a diagnostic, make it happen, fix the cause where it lives. Everything here is CI's software GPU (Mesa under xvfb on GitHub's runners, mpv 0.37). Nothing ran on a Pi and nothing here says what a board does.
