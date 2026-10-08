@@ -2824,18 +2824,36 @@ function startServer() {
       const signalBad = [];              // every screen is looked at before the step fails, so one run names everything
       const st = { page, browser, base, info, width: 390, scale: 1, notes: [], contexts: [] };
       await signal.setUp(st);
-      const signalRound = async (label, light) => {
+      // The width sweep (D64, tests/ui/sweep.js): each of those screens, while it is open, is also resized through
+      // every size class of the resizing study (320 to 1600 px wide, and three phones held sideways) and held to
+      // the rules that keep a layout whole: no sideways scroll, nothing wider than the window or out of its card,
+      // touch targets, no clipped or broken words on a button, the tabs and the transport within reach. In Signal
+      // it rides on the first round below; the default look has a round of its own once that look is back. Every
+      // fault of every screen is collected, so one run names them all. What it costs is printed at the end.
+      const sweep = require('./sweep');
+      const sweepBad = [];
+      const sweepCost = { screens: 0, measuring: 0, plainRound: 0 };
+      const sweepHere = async (on, name, look) => {
+        const began = Date.now();
+        try { sweep.lines(await sweep.sweep(on, { signal: look === 'Signal' })).forEach((f) => sweepBad.push(look + ', ' + name + ': ' + f)); }
+        catch (e) { sweepBad.push(look + ', ' + name + ' could not be swept: ' + e.message.split('\n')[0]); }
+        await on.setViewportSize({ width: st.width, height: 844 }).catch(() => {});
+        sweepCost.screens += 1;
+        sweepCost.measuring += Date.now() - began;
+      };
+      const signalRound = async (label, light, swept) => {
         for (const p of signal.pages()) {
           try {
             const on = (await p.open(st)) || page;
             if (!p.quick) await on.waitForTimeout(1000);          // a page's own cards arrive after it opens; a slider's fill is set within a quarter of a second
             const found = await signal.check(on, { area: p.area, light });
             if (found.length) signalBad.push('Signal, ' + p.name + label + ': ' + found.join('; '));
+            if (swept) await sweepHere(on, p.name, 'Signal');
           } catch (e) { signalBad.push('Signal, ' + p.name + label + ' could not be looked at: ' + e.message.split('\n')[0]); }
           if (p.done) await p.done(st).catch((e) => signalBad.push('Signal, ' + p.name + label + ', putting back: ' + e.message.split('\n')[0]));
         }
       };
-      await signalRound('', false);
+      await signalRound('', false, true);
       // The Room screen as staff use it: named group cards, source buttons with their labels and a result line were
       // on the screen that was checked (the built-in "Everything" card alone is not what staff see).
       await page.click('nav >> text=Room');
@@ -2913,12 +2931,34 @@ function startServer() {
       assert.strictEqual(ringLight, 'rgb(11, 11, 13)', 'in the light the focus ring is the text colour (yellow on off-white would be lost)');
       await signal.closeOthers(st);
       if (st.notes.length) console.log('Signal, while setting screens up:\n  ' + st.notes.join('\n  '));
+      if (signalBad.length && sweepBad.length) console.log('the width sweep, in Signal (the step fails on the rules of the look first):\n' + sweepBad.join('\n'));
       assert.deepStrictEqual(signalBad, [], 'in Signal:\n' + signalBad.join('\n'));
       // back to the default look, as the box was
       await sys('Look');
       await page.click('#lookthemes button[data-theme="dark-stage"]');
       await page.waitForFunction(() => !document.documentElement.hasAttribute('data-style'));
       assert((await page.locator('.swatch').count()) > 0, 'the default look offers accents again');
+      // The width sweep in the default look, the one a box comes with: the same screens, opened once more. (Its
+      // words are in the system's typeface, so widths here are those of the machine the test runs on.)
+      {
+        const began = Date.now(), notesBefore = st.notes.length;
+        st.plain = true;
+        for (const p of signal.pages()) {
+          try {
+            const on = (await p.open(st)) || page;
+            if (!p.quick) await on.waitForTimeout(500);
+            await sweepHere(on, p.name, 'the default look');
+          } catch (e) { sweepBad.push('the default look, ' + p.name + ' could not be opened: ' + e.message.split('\n')[0]); }
+          if (p.done) await p.done(st).catch((e) => sweepBad.push('the default look, ' + p.name + ', putting back: ' + e.message.split('\n')[0]));
+        }
+        await signal.closeOthers(st);
+        st.plain = false;
+        sweepCost.plainRound = Date.now() - began;
+        if (st.notes.length > notesBefore) console.log('the default look, while setting screens up:\n  ' + st.notes.slice(notesBefore).join('\n  '));
+      }
+      console.log('width sweep: ' + sweepCost.screens + ' screens at ' + sweep.SIZES.length + ' sizes each; resizing and measuring took ' + (sweepCost.measuring / 1000).toFixed(1)
+        + ' s, and the round in the default look ' + (sweepCost.plainRound / 1000).toFixed(1) + ' s in all (opening its screens included)');
+      assert.deepStrictEqual(sweepBad, [], 'the width sweep (' + sweepBad.length + '):\n' + sweepBad.join('\n'));
       assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
       await page.setViewportSize({ width: 1280, height: 800 });
     }
