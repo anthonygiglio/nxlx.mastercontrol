@@ -25,6 +25,7 @@ import zlib
 from pvj import effects as E, shaders as S, vibes as V
 from pvj.api import ApiError
 from pvj.player import Player, PlayerError
+from tests import mpv_watch
 from tests.test_server import ServerBase
 from tests.test_shaders_gpu import GPU, GpuCase, H, W, png_rows
 
@@ -190,9 +191,11 @@ class FxCase(GpuCase):
         as it does on a Raspberry Pi 4 (pvj/hardware.py): with that cheap scaling the black picture did not come."""
         super(GpuCase, self).setUp()
         self.api.board = dict(self.api.board, kind="pi4")       # and the panel takes the box for one: 8-bit buffers under an effect
+        log, log_path = mpv_watch.log_args(self.tmp)
         self.real = Player(extra_args=["--vo=gpu", "--gpu-context=x11egl", "--opengl-es=" + self.ES, "--ao=null", "--geometry=%dx%d" % (W, H),
-                                       "--no-border", "--profile=fast"], rundir=self.rundir)
+                                       "--no-border", "--profile=fast"] + log, rundir=self.rundir)
         self.addCleanup(self.real.stop)
+        mpv_watch.watch(self, self.real, log_path)          # times every request; a missing reply prints a report
         self.api.player = self.real
         self.play(CLIP)
         deadline = time.monotonic() + 10
