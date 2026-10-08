@@ -181,6 +181,24 @@ L; ls /run/pvj
 
 Send back the output of `L` at every step, R0, and the output of R10. If any line differs from the table, stop and send it: do not "fix" an owner by hand.
 
+### NDI input (D61): never run, everything here is still to do
+
+Nothing of the NDI input has run on a device or received a frame. Do these in order; stop at the first that fails and send the journal lines (`journalctl -u pvj-ndi -b`). You need the NDI SDK for Linux (from ndi.video, with its licence read and accepted by the owner) and a sender on the same wired network: Resolume's NDI output, or NDI Tools "Test Patterns" and "Screen Capture" on a laptop.
+
+N0. After the installer: `id pvj-ndi` shows the account in group `pvj-ndi` only; `systemctl is-active pvj-player pvj-web pvj-ndi` says active three times (the player and the panel now name the extra group `pvj-ndi`; a unit naming a group that does not exist does not start); `ls -ld /run/pvj-ndi` is `pvj-ndi pvj-ndi drwxr-x---`. Do this once as an update over the running older version too, not only on a fresh image.
+N1. Without the runtime: System > NDI input, switch on. The page says "The NDI runtime is not on this box yet" with the steps. `sudo pvj-ndi-runtime status` says the same.
+N2. `sudo pvj-ndi-runtime install "<the SDK folder>"`. It must name the file it took. Try the x86_64 file on the Pi on purpose: it must refuse with "is for x86_64, this box is aarch64". Then `sudo systemctl restart pvj-ndi` and read `journalctl -u pvj-ndi -n 20`: "loaded the NDI runtime (...)" once the page has been opened with the module on.
+N3. **The sandbox, line by line.** If the runtime does not load or finds nothing, find the line: `sudo systemd-run --pty -p User=pvj-ndi -p Group=pvj-ndi -p ProtectSystem=strict ... python3 -c 'import ctypes; ctypes.CDLL("/opt/pvj-ndi/libndi.so.6")'`, adding the unit's lines one at a time. The ones most likely to matter: `IPAddressDeny=any` with its allow list (does discovery still work? does video arrive?), `PrivateDevices`, `RestrictAddressFamilies`, `ProtectHome` (the runtime's settings folder is pointed at `/opt/pvj-ndi`), and whether `libavahi-client.so.3` is installed and `avahi-daemon` runs. Then try adding `MemoryDenyWriteExecute=yes` and `SystemCallFilter=@system-service`; if both hold through N4 to N8, add them to the unit and to `tests/test_units.py`.
+N4. Discovery: the sender appears in the list within about 5 seconds, with its real name. Stop the sender: it leaves the list. Unplug mDNS (put the sender behind a router, or block UDP 5353): add its address under "Addresses to ask" and it appears.
+N5. Play at 720p30 from Test Patterns. The picture is right: colours (the bars are in the right order, so the byte order `uyvy422` is right), no green or purple cast, no shear (the line stride), right way up. "Now playing" says NDI and the name.
+N6. **Smooth or not: measure, do not guess.** For each of 720p30, 720p60, 1080p30, 1080p60 (full NDI from Resolume or Test Patterns), and once NDI HX if a sender has it, play for 5 minutes and write down: the page's "shown" and "dropped" at the start and the end; mpv's own drops (`echo '{"command":["get_property","frame-drop-count"]}' | sudo socat - /run/pvj/player/player.sock`, and `decoder-frame-drop-count`); `top -H -p $(pidof -s python3)` for the two `ndi-` threads and the runtime's own threads, and mpv's share; the temperature. Alternate with a plain 1080p clip for the same time as the control (LESSONS: an A/B run, and trust the person watching over a counter). Watch a moving pattern for stutter.
+N7. Latency: a running clock or frame counter on the sender's own screen and on the box's screen, both in one phone photo, at 720p30 and 1080p60; three photos each, write down the difference.
+N8. A sender that changes: change the sender's resolution while it plays (the picture should go for a second or two and come back in the new size); change 30 to 60; quit the sender (the last frame stays, the page says "Waiting for the source") and start it again (the picture returns by itself); pull the network cable for 10 seconds; switch the module off while it plays (the screen clears); play a clip while NDI is on (`journalctl -u pvj-ndi` must show no error, and `ls /run/pvj-ndi` no leftover pipe).
+N9. From the box, as the helper's account, the internet must be out of reach: `sudo systemd-run --pty -p User=pvj-ndi -p IPAddressDeny=any -p "IPAddressAllow=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16" curl -m 5 https://example.com` fails, and the same to the sender's address answers.
+N10. Sound: none is expected. Note whether the room misses it.
+
+Send back the table from N6 and N7, and anything in N3 that had to change. Only then may any document say what the NDI input manages on a Pi 4.
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

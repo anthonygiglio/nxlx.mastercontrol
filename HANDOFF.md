@@ -16,7 +16,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - New code is Apache-2.0 (SPDX headers, `REUSE.toml`). Legacy code stays under the upstream `LICENSE.md`. `LICENSE.md` and `AUTHORS.md` are never edited. Copyright holder in headers: "NXLX.Systems and contributors".
 - One long-lived mpv controlled over JSON IPC, supervised by systemd (`pvj-player.service`). The panel (`pvj-web.service`) is unprivileged; anything needing root goes through small helpers (`pvj-netd`, `pvj-sysd`, `pvj-supportd`) that answer only pvj-web over a socket.
 - Token auth (PIN pairing, roles view/live/full), CSRF header, strict CSP. Signed updates with rollback.
-- NDI and AES67/Dante are separate optional modules, not built yet. ST 2110 is not planned natively; it comes in through a gateway (D30). SRT/RTSP/RTMP streams, DMX, MIDI, the schedule and autostart are built, off by default.
+- NDI and AES67/Dante are separate optional modules. NDI receive is built as of 2026-10-07 (D61, `pvj/NDI.md`), video only, never run against a real sender; AES67/Dante is not built. ST 2110 is not planned natively; it comes in through a gateway (D30). SRT/RTSP/RTMP streams, DMX, MIDI, the schedule and autostart are built, off by default.
 - Naming: the `pvj` package, `pvj-*` services and commands and install paths keep their names.
 - Style: no em dashes in written text (commas, semicolons, new sentences). Default document font Inter.
 
@@ -207,6 +207,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | Shaders and Vibes: ISF generator shaders (40 of the project's own in an Ambient and a Performance family, and a pack of 7 from Vidvox's ISF-Files, D44), Vibes, an endless rotation from one tap, with sets; the engine (D46: live values of every input type, speed, presets, a guard for heavy shaders) and the Shaders page as an instrument (D47); the API, autostart, the schedule, OSC, MIDI and DMX | `pvj/SHADERS.md` | off (beta) |
 | Multi-box sync and video wall | `pvj/SYNC.md` | off (beta) |
 | Streams and live input (SRT, RTSP, RTMP, USB capture) | `pvj/STREAMS.md` | off (beta) |
+| NDI input (video only; its own helper `pvj-ndi`; needs NDI's runtime, which the owner puts on the box). Never run against a real sender, on any machine | `pvj/NDI.md` | off (beta) |
 | DMX (Art-Net, sACN), MIDI controllers, with built-in layouts for the nanoKONTROL2, MIDI Mix and Launchpad Mini (D49), and their lights (D53, pull request #82, not merged, not tried on hardware) | `pvj/DMX.md`, `pvj/MIDI.md` | off (beta) |
 | Guest codes that a presenter can make, show on the room screen and end (D48) | `docs/MANUAL.md` | on |
 | A runtime folder per service under a root-owned `/run/pvj` (D45) | `pvj/paths.py`, `tools/DEVICE-TESTING.md` | on |
@@ -228,7 +229,7 @@ One test Raspberry Pi 4 (Model B Rev 1.5, Debian 13 trixie, wired Ethernet, a 25
 - The read-only root (`pvj-rootfs`), the Network module and its Wi-Fi control (test with a keyboard and monitor on the box, never over SSH or Wi-Fi on the only link), TouchOSC.
 - Pi 3, Pi 5 and x86.
 
-Not built: crossfade (needs a second player), display mode, company (802.1X) Wi-Fi and setting the Wi-Fi country, updates from the network, NDI, AES67/Dante, presenter, importing old mapper files, controller lights (feedback), a chain of effects and ISF transitions (one effect at a time is in #81), PJLink Phase 2, custom DMX layouts.
+Not built: crossfade (needs a second player), display mode, company (802.1X) Wi-Fi and setting the Wi-Fi country, updates from the network, NDI sound, AES67/Dante, presenter, importing old mapper files, controller lights (feedback), a chain of effects and ISF transitions (one effect at a time is in #81), PJLink Phase 2, custom DMX layouts.
 
 Known limits: the panel cannot restart a wedged mpv (unprivileged by design). Merged branches on GitHub are not deleted (ask the owner). GitHub ruleset "Protect master" requires 9 checks and pull requests; do not change it without asking.
 

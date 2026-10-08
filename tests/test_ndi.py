@@ -377,6 +377,7 @@ class ReceiverTest(unittest.TestCase):
         self.lib.frames.put(frame(64, 16, fill=2))
         self.lib.frames.put(frame(64, 16, fill=3))
         self.assertTrue(wait(lambda: self.r.status()["state"] == "stopped"))
+        self.assertTrue(wait(lambda: self.lib.closed == 1))             # the source is let go at once, with nobody asking
         started = time.monotonic()
         self.r.close()
         self.assertLess(time.monotonic() - started, 1.5)
@@ -535,8 +536,9 @@ class ServiceTest(unittest.TestCase):
         self.assertTrue(self.s.handle({"cmd": "open", "id": self.rid})["ok"])
         self.lib.frames.put(frame(128, 16))
         self.assertTrue(wait(lambda: self.s.receiver.state == "changed"))
+        self.assertTrue(wait(lambda: self.lib.closed == 1))
         st = self.s.handle({"cmd": "status"})
-        self.assertEqual((st["playing"]["state"], self.lib.closed), ("changed", 1))
+        self.assertEqual((st["playing"]["state"], self.lib.closed, os.path.exists(self.s.fifo)), ("changed", 1, False))
 
 
 class InputTest(unittest.TestCase):

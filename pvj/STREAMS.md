@@ -16,4 +16,4 @@ Save network stream addresses and play them like clips. Switch it on under Syste
 
 - Tested with a fake player: address checks, hiding of logins, roles and the API. **Never played a real stream**, on any board. Whether a given mpv build has SRT and RTMP support (it needs ffmpeg with those protocols) is unchecked; Raspberry Pi OS builds should, but test it.
 - Latency, reconnect after a dropped stream and behaviour when the source is down are not handled yet: a stream that cannot open leaves the player idle.
-- Not built: NDI and AES67/Dante (separate modules; ST 2110 only through a gateway), streams as pads, and scheduling a stream.
+- Not built: AES67/Dante (a separate module; ST 2110 only through a gateway), streams as pads, and scheduling a stream. NDI is its own input, see [NDI.md](NDI.md).

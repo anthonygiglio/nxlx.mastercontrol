@@ -424,7 +424,19 @@ class Receiver:
         self._pending, self._free = None, []
         self._last = clock()
         self._handle = None
+        self._handle_lock = threading.Lock()       # the connection is used by the capture thread and asked about by status
         self._threads = []
+
+    def _release(self):
+        """Give the connection back to the library, once. The capture thread does this itself the moment it ends,
+        so a source nobody watches any more is let go without waiting for anyone to ask."""
+        with self._handle_lock:
+            handle, self._handle = self._handle, None
+            if handle is not None:
+                try:
+                    self.lib.recv_close(handle)
+                except Exception as e:
+                    self.log("pvj-ndi: closing the source: %s" % e)
 
     def start(self):
         self._handle = self.lib.recv_open(self.source["raw"])
@@ -476,6 +488,8 @@ class Receiver:
                 self.first.set()
         except Exception as e:                             # a fault here must end as a state, never as a silent thread
             self._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
+        finally:
+            self._release()
 
     def _open_pipe(self):
         """The pipe, opened for writing once the player reads it; None when stopped or nobody came."""
@@ -559,11 +573,12 @@ class Receiver:
                    "counts": dict(self.counts)}
             if self.format:
                 out.update(width=self.format[0], height=self.format[1], fps=self.format[2])
-        if self._handle is not None and state in ("playing", "waiting"):
-            try:
-                out["counts"]["dropped_by_runtime"] = self.lib.recv_dropped(self._handle)
-            except Exception:
-                pass
+        with self._handle_lock:
+            if self._handle is not None and state in ("playing", "waiting"):
+                try:
+                    out["counts"]["dropped_by_runtime"] = self.lib.recv_dropped(self._handle)
+                except Exception:
+                    pass
         return out
 
     def close(self):
@@ -573,12 +588,7 @@ class Receiver:
         for t in self._threads:
             t.join(timeout=3)
         self._threads = []
-        handle, self._handle = self._handle, None
-        if handle is not None:
-            try:
-                self.lib.recv_close(handle)
-            except Exception as e:
-                self.log("pvj-ndi: closing the source: %s" % e)
+        self._release()
         try:
             os.unlink(self.fifo)
         except OSError:

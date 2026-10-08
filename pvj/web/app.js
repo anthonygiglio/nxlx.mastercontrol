@@ -459,6 +459,7 @@
     if (pl.test_pattern) np.textContent = 'Test pattern (colour bars)';
     if (pl.test_tone) np.textContent = 'Test tone (' + pl.test_tone + ')';
     if (pl.capture) np.textContent = 'Live input' + (pl.capture.device ? ' (' + pl.capture.device + ', ' + pl.capture.mode + ')' : '');
+    if (pl.ndi) np.textContent = 'NDI' + (typeof pl.ndi === 'string' ? ': ' + pl.ndi : ' input');
     if (window.pvjShaders) window.pvjShaders.patch(shaderCtx(), pl, np);
     if (pl.effect && window.pvjEffects && pl.running && typeof pl.shader !== 'string') np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
@@ -1113,6 +1114,10 @@
       { id: 'streams', group: 'show', name: 'Streams', role: 'live', module: 'inputs-srt', url: '/api/streams',
         blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
         body: function () { return [streamsCard(full)]; } },
+      { id: 'ndi', group: 'show', name: 'NDI\u00ae input', role: 'live', module: 'inputs-ndi', url: '/api/ndi',
+        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Picture only, no sound yet. New: not yet tried with a real sender.',
+        confirmOff: function (ask) { ask(((S.status && S.status.player) || {}).ndi ? 'The NDI picture comes off the screen now.' : null); },
+        body: function () { return ndiCards(full); } },
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
@@ -1271,6 +1276,16 @@
       if (!d.streams.length) return st('setup', 'No streams saved yet');
       if (pl.stream) return st('active', 'Playing: ' + pl.stream);
       return st('ready', d.streams.length + ' saved');
+    },
+    ndi: function (d) {
+      var p = d.playing;
+      if (!d.helper) return st('problem', 'The NDI helper is not running');
+      if (!d.runtime.present) return st('setup', 'The NDI runtime is not on this box yet');
+      if (d.runtime.problem) return st('problem', ndiSentence(d.runtime.problem));
+      if (p && (p.state === 'refused' || p.state === 'stopped') && p.message) return st('problem', ndiSentence(p.message));
+      if (p && p.state === 'waiting') return st('check', 'Waiting for ' + p.name);
+      if (p) return st('active', 'Showing: ' + p.name);
+      return st('ready', d.sources.length ? plural(d.sources.length, 'source') + ' found' : 'No sources found yet');
     },
     mapping: function (d) {
       var state = (d.status || {}).state;
@@ -1633,7 +1648,7 @@
         });
       } })));
   }
-  function playingNow() { var pl = (S.status && S.status.player) || {}; return !!(pl.running && (pl.path || pl.vibes || pl.stream)); }
+  function playingNow() { var pl = (S.status && S.status.player) || {}; return !!(pl.running && (pl.path || pl.vibes || pl.stream || pl.ndi)); }
   // A result said beside the control that caused it, as well as in the page's message line.
   function sayAt(el, text, isErr) {
     if (el) { el.textContent = text || ''; el.className = 'msg inmsg' + (isErr ? ' err' : ''); }
@@ -1780,6 +1795,7 @@
       body.appendChild(kv('Box time', boxTime ? boxTime.toLocaleString() : '?'));
       body.appendChild(h('div', { class: c.clock_from_network === false ? 'hint warn' : 'hint', id: 'boxclockline',
         text: c.clock_from_network === true ? 'Set from the network.' : c.clock_from_network === false ? 'Not set from the network, so it may be wrong. The schedule uses this clock.' : '' }));
+      if (mod('inputs-ndi')) body.appendChild(h('div', { class: 'hint', id: 'boxmarks', text: NDI_MARK }));     // NDI's terms: said on the About page
       if (!can('full') || !d.system_actions) return;
       if (c.clock_from_network === false) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'setclock', text: 'Set the box clock to this phone\'s time', onclick: function () {
         act('POST', '/api/system/clock', { epoch: Math.round(Date.now() / 1000) }, function () { say('Box clock set.'); render(); });
@@ -2412,6 +2428,113 @@
       draw(r.data);
     });
     return card;
+  }
+  // ---- NDI input (pvj/ndi.py, D61). NDI's terms: the mark with its sign on first use, the trademark sentence and a
+  // link to ndi.video beside the place a source is chosen. The runtime is not part of the box; when it is missing
+  // the page says so and how to get it, with the list and the address form still here.
+  var NDI_MARK = 'NDI® is a registered trademark of Vizrt NDI AB.';
+  var ndiForm = { address: '' }, ndiTimer = null;
+  function ndiLink(url, text) { return h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: text }); }
+  function ndiSentence(text) { return text ? text.charAt(0).toUpperCase() + text.slice(1) + (/[.!?]$/.test(text) ? '' : '.') : ''; }
+  function ndiCards(full) {
+    var srcBody = h('div', { class: 'list sp', id: 'ndibody' }, h('div', { class: 'hint', text: 'Looking...' }));
+    var addrBody = h('div', { class: 'list sp', id: 'ndiaddrbody' });
+    var srcCard = h('div', { class: 'card', id: 'ndicard' }, h('h2', { text: 'Sources on the network' }), srcBody,
+      h('div', { class: 'hint', id: 'ndimark' }, NDI_MARK + ' About NDI: ', ndiLink('https://ndi.video/', 'ndi.video'),
+        '. Its free tools for a computer: ', ndiLink('https://ndi.video/tools/', 'ndi.video/tools'), '.'));
+    var addrCard = h('div', { class: 'card', id: 'ndiaddrcard' }, h('h2', { text: 'Addresses to ask' }),
+      h('div', { class: 'hint', text: 'Senders are found by themselves on most networks. Where they are not (some Wi-Fi, a sender on another part of the network), add the sending computer\'s address here.' }), addrBody);
+    function notice(d) {
+      if (!d.helper) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: 'The NDI helper (pvj-ndi) is not running on this box, so no source can be found or shown. Restarting the box usually brings it back.' }));
+      if (d.runtime.loaded && !d.runtime.problem) return null;
+      if (d.runtime.present) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: ndiSentence(d.runtime.problem || 'the NDI runtime is on the box but has not been loaded yet') }));
+      return h('div', { class: 'hint warn', id: 'ndiruntime' },
+        h('div', { text: 'The NDI runtime is not on this box yet, so no source can be found or shown.' }),
+        h('div', { text: 'It is NDI\'s own program, it is not part of nxlx.mastercontrol, and it cannot be added from a phone. Someone with a keyboard or SSH on the box does this once:' }),
+        h('div', {}, '1. Get the NDI SDK for Linux from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the box or a USB stick.'),
+        h('div', { text: '2. On the box, run:' }),
+        h('div', { class: 'addr', id: 'ndicommand', text: d.install.command }),
+        h('div', { class: 'addr', text: 'sudo systemctl restart pvj-ndi' }),
+        h('div', { text: 'Then this page lists the senders. The address list below can be filled in meanwhile.' }));
+    }
+    function playLine(p) {
+      if (!p) return '';
+      var size = p.width ? p.width + ' x ' + p.height + ' at ' + p.fps + ' frames a second' : '';
+      var c = p.counts || {};
+      var counts = typeof c.shown === 'number' ? 'shown ' + c.shown + ', dropped ' + ((c.dropped || 0) + (c.dropped_by_runtime || 0)) : '';
+      var word = ({ playing: 'On the screen', ready: 'Starting', connecting: 'Connecting', waiting: 'Waiting for the source', changed: 'The source changed size; loading it again' })[p.state] || '';
+      return [word, size, counts].filter(Boolean).join(' · ');
+    }
+    function drawSources(d) {
+      srcBody.textContent = '';
+      var n = notice(d), playing = d.playing;
+      if (n) srcBody.appendChild(n);
+      if (playing && (playing.state === 'refused' || playing.state === 'stopped') && playing.message)
+        srcBody.appendChild(h('div', { class: 'hint warn problem', id: 'ndiproblem', text: playing.name + ': ' + ndiSentence(playing.message) }));
+      if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: 'No NDI sources found yet. Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this box. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
+      d.sources.forEach(function (s) {
+        var mine = playing && playing.id === s.id && playing.state !== 'refused' && playing.state !== 'stopped';
+        srcBody.appendChild(listRow({ cls: 'ndi-entry', data: s.id, name: s.name, sub: s.from, key: 'ndi-' + s.id, redraw: function () { drawSources(d); },
+          state: mine ? playLine(playing) : '',
+          primary: can('live') ? h('button', { class: 'btn on pri', text: 'Play', 'aria-label': 'Play ' + s.name, onclick: function (e) {
+            var btn = e.currentTarget;
+            btn.disabled = true;
+            say('Connecting to ' + s.name + '...');
+            api('POST', '/api/play', { ndi: s.id }).then(function (r) {
+              btn.disabled = false;
+              if (!r.ok) return say(ndiSentence(r.data.error || 'the source could not be shown'), true);
+              say('Showing ' + s.name);
+              poll(); refresh();
+            });
+          } }) : null }));
+      });
+    }
+    function drawAddresses(d) {
+      addrBody.textContent = '';
+      d.addresses.forEach(function (a) {
+        addrBody.appendChild(listRow({ cls: 'ndiaddr-entry', data: a, name: a, key: 'ndiaddr-' + a, redraw: function () { drawAddresses(d); },
+          more: full ? [h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + a, onclick: function (e) {
+            confirmRow('Remove ' + a + '? The box stops asking it for sources.', 'Remove', 'Keep it', function () {
+              act('POST', '/api/ndi', { action: 'remove_address', address: a }, function (data) { moreOpen = null; drawAddresses(data); drawSources(data); say(a + ' is removed.'); });
+            }, e.currentTarget);
+          } })] : null }));
+      });
+      if (!full) { if (!d.addresses.length) addrBody.appendChild(h('div', { class: 'empty', id: 'ndiaddrempty', text: 'No addresses added.' })); return; }
+      if (d.addresses.length >= d.max_addresses) return;
+      addrBody.appendChild(addBlock('ndiaddr', 'an address', !d.addresses.length, function (cancel) {
+        var address = h('input', { class: 'text-input mono', id: 'ndiaddress', placeholder: '192.168.1.20', maxlength: 15, inputmode: 'decimal', autocomplete: 'off', value: ndiForm.address });
+        var err = h('div', { class: 'msg inmsg', id: 'ndiaddrerr', role: 'alert' });
+        address.addEventListener('input', function () { ndiForm.address = address.value; });
+        return h('div', { class: 'addform', id: 'ndiaddrform' }, h('div', { class: 'field', text: 'Add an address' }),
+          labelled('Address', address, 'The address of the computer that sends, four numbers with dots. Only private networks are taken.'),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn on pri grow', id: 'ndiaddradd', text: 'Add', onclick: function () {
+              api('POST', '/api/ndi', { action: 'add_address', address: ndiForm.address.trim() }).then(function (r) {
+                if (!r.ok) return sayAt(err, ndiSentence(r.data.error || 'could not add the address'), true);
+                ndiForm.address = ''; addOpen.ndiaddr = false; drawAddresses(r.data); drawSources(r.data); say('Address added.');
+              });
+            } }),
+            cancel ? h('button', { class: 'btn grow', id: 'ndiaddrcancel', text: 'Cancel', onclick: cancel }) : null),
+          err);
+      }, function () { drawAddresses(d); }));
+    }
+    var first = true;
+    function refresh() {
+      clearTimeout(ndiTimer);
+      api('GET', '/api/ndi').then(function (r) {
+        if (!document.getElementById('ndicard')) return;
+        ndiTimer = setTimeout(refresh, 2000);          // senders come and go; only the list is drawn again, never the form
+        if (!r.ok) {
+          if (first) { srcBody.textContent = ''; srcBody.appendChild(h('div', { class: 'hint', id: 'ndimsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); }
+          return;
+        }
+        if (!document.getElementById('confirmrow')) drawSources(r.data);
+        if (first) drawAddresses(r.data);
+        first = false;
+      });
+    }
+    refresh();
+    return [srcCard, addrCard];
   }
   // ---- updates (signed bundles, installed by pvj-update as root; D33) ----
   var updateTimer = null;

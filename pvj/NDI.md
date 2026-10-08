@@ -111,10 +111,11 @@ What follows for this project:
 
 - **Everything that touches the real library**: that `libndi.so.6` loads under this sandbox, that the structure layouts match (a test pins sizes and offsets for 64-bit, read from the headers, but only a real call proves them), that discovery works through `avahi-daemon` from inside the unit, that "fastest" gives UYVY on a Pi.
 - **Everything that touches mpv**: the raw pipe in `uyvy422` (the capture input's `yuyv422` path is proven on the Pi 4; this byte order is not), a fractional frame rate (59.94), and the reload on a size change.
-- **Every sandbox line** in `pvj-ndi.service`, above all `IPAddressDeny`/`IPAddressAllow`, `PrivateDevices`, and the absence of `AF_NETLINK`'s friends the library may want. LESSONS has two entries where a sandbox line emptied a feature silently on the Pi.
+- **Every sandbox line** in `pvj-ndi.service`, above all `IPAddressDeny`/`IPAddressAllow` (it needs the kernel's cgroup network filter), `PrivateDevices` and `RestrictAddressFamilies`. LESSONS has two entries where a sandbox line emptied a feature silently on the Pi. Also unverified: that the player and the panel start with the extra group `pvj-ndi` after an update over a running older install.
 - **Speed.** Full NDI is decoded in software by the library; 1080p30 UYVY is 124 MB a second through the pipe (the capture input managed that on a Pi 4), 1080p60 is twice that and has never been tried. NDI HX is H.264 or HEVC decoded by the library in software and may be heavier still. Latency is unmeasured.
 - A Pi 3 is not offered (the module lists Pi 4, Pi 5 and x86).
-- The browser test step for the page was written and syntax-checked, not run (the dev Mac has no Playwright).
+- The browser test step for the page was written and syntax-checked, not run (the dev Mac has no Playwright). Neither was the installer: its tests cannot run on macOS, so the new account, group and unit have only static checks (`tests/test_units.py`).
+- Health does not list the NDI helper; the NDI page and its row on System say when it is not running.
 
 ## Open design questions
 
@@ -125,7 +126,7 @@ What follows for this project:
 
 ## Alternatives that were rejected
 
-- **mpv or ffmpeg with NDI built in.** Debian's and Raspberry Pi OS's ffmpeg have no NDI (ffmpeg removed its `libndi_newtek` device in 2019 over a licence violation by a distributor), so it would mean shipping our own ffmpeg and mpv linked against a proprietary library.
+- **mpv or ffmpeg with NDI built in.** Debian's and Raspberry Pi OS's ffmpeg have no NDI (as far as is remembered, ffmpeg removed its NDI device in 2019 after a licence dispute; this was not looked up for this work), so it would mean shipping our own ffmpeg and mpv linked against a proprietary library.
 - **The library inside the player or the panel.** A crash would take the screen down (the reason the capture input has a helper), and a takeover would have the PIN, the settings and the stream passwords (panel) or the screen and the control socket (player).
 - **The helper as a child of the panel**, like the capture helper. It would inherit the panel's account and its access to the settings.
 - **A compiled helper** (C, with or without GStreamer's NDI plugin). Faster to a known-good result, but it breaks "standard library only" and adds a build per board. If the Pi 4 measurement shows Python's copy is the bottleneck, this is the next thing to weigh, and it is the owner's call.
