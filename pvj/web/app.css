@@ -492,9 +492,16 @@ table.chan .lvl { width: 36%; }
 .daychips { display: grid; grid-template-columns: repeat(auto-fit, minmax(clamp(44px, (332px - 100%) * 999, 25% - 3px), 1fr)); }
 /* Brightness of a controller's lights: a button is as wide as its word ("Medium" was cut in two) */
 .ctlbright .segbtn { flex: 1 1 auto; }
+/* A row of choices (the shape of a shader's wave, an effect's): below the widest windows a button is as wide as its
+   word and the row goes to a second line, where "Exponential" used to be cut in two (it was at 320 to 390 px, and
+   again in the laptop's narrow columns at 900 and 932) */
+@media (max-width: 1199px) { .seg .segbtn { flex: 1 1 auto; } }
 @media (max-width: 599px) {
   /* Live, the four big buttons at the foot: they go to a second line before Blackout leaves the window */
   .row:has(> #fade) { flex-wrap: wrap; }
+  /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word (it was cut at 390) */
+  .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .transport3 .btn { padding: 0 2px; }
   /* The title and the pill beside it (the board, what plays): the pill goes under the title, and breaks, before it
      pushes the page wider than the window */
   .top { flex-wrap: wrap; }
@@ -502,9 +509,22 @@ table.chan .lvl { width: 36%; }
 }
 @media (max-width: 379px) {
   .row:has(> #fade) > .btn { flex: 1 1 40%; }                     /* two and two */
-  /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word */
-  .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .transport3 { gap: 6px; }
   .transport3 .btn, .fxbuttons > .btn { padding: 0 2px; font-size: 14px; }
+  /* Five tabs (with Room): each as wide as its word plus an even share of what is left, never under 44 px, so
+     "System" is whole */
+  .tabs.many { padding-left: 4px; padding-right: 4px; }
+  .tabs.many .btn { flex: 1 1 auto; min-width: 44px; }
+}
+@media (min-width: 900px) {
+  /* Live on a laptop with a shader on: the Vibes button keeps room for its words; the buttons beside it go to a
+     second line (it was squeezed to 40 to 63 px at 900 to 1200, its words outside it) */
+  .livecols.has-side .vibesbig { min-width: 10rem; }
+}
+@media (min-width: 900px) and (max-height: 479px) {
+  /* ...and in a short window (a large phone held sideways) the playing shader's strip scrolls with the page: held in
+     place, the part of it below the window's edge could not be reached */
+  .livecols.has-side > .liveside { position: static; }
 }
 
 /* ==== STYLE: signal ==================================================================================================

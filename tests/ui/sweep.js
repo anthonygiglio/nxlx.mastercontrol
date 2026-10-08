@@ -133,7 +133,8 @@ function measure(o) {
     if (r.height <= vh && (r.bottom > vh + 1 || r.top < -1)) return add('cannot be brought into view', el, px(r.top) + ' to ' + px(r.bottom) + ' in a window ' + vh + ' px high');
     const x = Math.min(vw - 1, Math.max(0, r.left + r.width / 2)), y = Math.min(vh - 1, Math.max(0, r.top + r.height / 2));
     const hit = document.elementFromPoint(x, y);
-    if (hit && !(el.contains(hit) || hit.contains(el) || (hit.closest('label') && hit.closest('label').contains(el)))) add('covered, cannot be pressed', el, 'by ' + name(hit));
+    // (the message line of Signal lies over the page for some seconds and goes by itself: it is not a cover)
+    if (hit && !(el.contains(hit) || hit.contains(el) || hit.closest('#msg') || (hit.closest('label') && hit.closest('label').contains(el)))) add('covered, cannot be pressed', el, 'by ' + name(hit));
   };
   const must = short ? controls : controls.filter((el) => el.closest('nav.tabs, .row.transport'));
   if (!document.querySelector('.picker')) must.forEach(reach);
