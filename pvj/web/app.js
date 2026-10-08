@@ -3617,8 +3617,10 @@
   // A style that draws a slider itself needs to know how full it is: --fill on each slider, from its value. Set
   // through the script (the policy allows that, not a style attribute) in the same turn as the value: on every
   // input, where the poll writes the position in the clip (patchLive), and whenever a part of the page is drawn
-  // again (boot's observer), so that a slider is never painted with the fill of a moment ago. The clock four times
-  // a second is only a net under these. The default look does nothing.
+  // again (boot's observer), so that a slider is never painted with the fill of a moment ago. The cards that move
+  // a slider in place when the box says so (effects.js, shaders.js: apply and reset) write the number beside it in
+  // the same turn, and the observer sees that; a slider written in place with nothing else drawn must call this
+  // itself, as patchLive does. The clock four times a second is only a net under these. The default look does nothing.
   function fillRanges() {
     if (!document.documentElement.hasAttribute('data-style')) return;
     var rs = document.querySelectorAll('input[type=range]');
