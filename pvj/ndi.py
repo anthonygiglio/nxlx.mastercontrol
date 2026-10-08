@@ -496,8 +496,9 @@ class Receiver:
     into a buffer of its own and gives the library's frame straight back; one writes the newest whole frame to the
     pipe. Three buffers go round between them, so neither waits for the other and a frame is never written in part."""
 
-    def __init__(self, lib, source, fifo, log=print, clock=time.monotonic, pipe_wait=PIPE_OPEN_SECONDS):
+    def __init__(self, lib, source, fifo, log=print, clock=time.monotonic, pipe_wait=PIPE_OPEN_SECONDS, join_wait=3.0):
         self.lib, self.source, self.fifo, self.log, self._clock, self._pipe_wait = lib, source, fifo, log, clock, pipe_wait
+        self._join_wait = join_wait
         self.state, self.message, self.format = "connecting", "", None
         self.counts = {"received": 0, "shown": 0, "dropped": 0}
         self.first = threading.Event()             # a first good frame, or the end
@@ -685,17 +686,22 @@ class Receiver:
         return out
 
     def close(self):
-        """Stop both threads, give the connection back and take the pipe away. Never called from those threads, and
-        never with a lock they need (LESSONS: do not join a thread while holding its lock)."""
+        """Stop both threads and give the connection back. Never called from those threads, and never with a lock
+        they need (LESSONS: do not join a thread while holding its lock). The pipe is not this object's to remove:
+        the Service made it and the Service takes it away.
+
+        The connection is never given back while the capture thread may still be inside the library with it. That
+        thread gives it back itself when it ends; if it will not end, the connection is left open (and said in the
+        log) rather than freed under the library's feet. The helper is restarted by systemd if that ever matters."""
         self._end("stopped", "")
-        for t in self._threads:
-            t.join(timeout=3)
-        self._threads = []
-        self._release()
-        try:
-            os.unlink(self.fifo)
-        except OSError:
-            pass
+        threads, self._threads = self._threads, []
+        for t in threads:
+            t.join(timeout=self._join_wait)
+        stuck = [t.name for t in threads if t.is_alive()]
+        if "ndi-capture" in stuck:
+            self.log("pvj-ndi: the NDI runtime did not come back from %s; its connection is left open, not freed under it" % self.source["name"])
+        else:
+            self._release()
 
 
 # ---- the daemon ------------------------------------------------------------------------------------------------------
@@ -710,6 +716,7 @@ class Service:
         self.on_unload = None                      # called when the module is switched off with the library loaded (main: exit)
         self.fifo = os.path.join(rundir, paths.NDI_FIFO)
         self.lock = threading.RLock()              # configure, open and close, one at a time
+        self._recv_lock = threading.Lock()         # self.receiver: set and read under it, never held while anything waits
         self._find_lock = threading.Lock()         # the finder: asked by status, replaced by configure
         self.lib, self.lib_error, self.version = None, "", ""
         self.configured, self.on, self.addresses = False, False, []
@@ -765,7 +772,8 @@ class Service:
                 return []
             now = self._clock()
             if self._sources_at is None or now - self._sources_at >= SOURCES_CACHE:
-                r = self.receiver
+                with self._recv_lock:
+                    r = self.receiver
                 try:
                     self._sources, self._cut = clean_sources(self.lib.find_sources(self._finder), self.addresses,
                                                              r.source["id"] if r is not None else None)
@@ -781,11 +789,29 @@ class Service:
         problem = self._problem(self.lib_path)
         return {"present": problem is None, "loaded": False, "version": "", "problem": problem or self.lib_error}
 
+    def _remove_pipe(self):
+        """Only here is the pipe taken away. A reader still waiting on it (an old player blocked in opening it,
+        a player waiting for a first byte) is woken first: a writer that opens and closes gives it the end."""
+        try:
+            wake = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+            os.close(wake)
+        except OSError:
+            pass
+        try:
+            os.unlink(self.fifo)
+        except OSError:
+            pass
+
     def status(self):
-        r = self.receiver
+        with self._recv_lock:
+            r = self.receiver
         if r is not None and r.state in ENDED and self.lock.acquire(blocking=False):
             try:                                   # an ended receiver lets go of its source; what it said stays
-                r.close()
+                with self._recv_lock:
+                    mine = self.receiver is r
+                if mine:
+                    r.close()
+                    self._remove_pipe()
             finally:
                 self.lock.release()
         return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "runtime": self.runtime(),
@@ -793,9 +819,11 @@ class Service:
                 "playing": r.status() if r is not None else None}
 
     def _close_receiver(self):
-        r, self.receiver = self.receiver, None
+        with self._recv_lock:
+            r, self.receiver = self.receiver, None
         if r is not None:
             r.close()
+        self._remove_pipe()
 
     def open(self, message):
         sid = message.get("id")
@@ -811,17 +839,19 @@ class Service:
                 return {"ok": False, "error": "that source is not on the network now"}
             self._close_receiver()
             try:
-                os.unlink(self.fifo)
-            except OSError:
-                pass
-            os.mkfifo(self.fifo, 0o640)            # the helper writes; the player reads through the helper's group
+                os.mkfifo(self.fifo, 0o640)        # the helper writes; the player reads through the helper's group
+            except OSError as e:
+                self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
+                return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
             r = self._receiver(self.lib, match[0], self.fifo, log=self.log)
             try:
                 r.start()
             except NdiError as e:
                 r.close()
+                self._remove_pipe()
                 return {"ok": False, "error": str(e)}
-            self.receiver = r
+            with self._recv_lock:
+                self.receiver = r
             r.first.wait(self._first_frame)
             st = r.status()
             if st["state"] in ENDED or not r.format:

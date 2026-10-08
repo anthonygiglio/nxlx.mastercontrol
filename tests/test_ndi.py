@@ -412,7 +412,7 @@ class ReceiverTest(unittest.TestCase):
         self.r.close()
         self.assertLess(time.monotonic() - started, 1.5)
         self.assertFalse([t for t in threading.enumerate() if t.name.startswith("ndi-")])
-        self.assertFalse(os.path.exists(self.fifo))
+        self.assertTrue(os.path.exists(self.fifo))                      # the pipe is the Service's to remove, not the receiver's
         self.assertEqual(self.lib.closed, 1)
         self.r.close()                                                  # twice is safe
         self.assertEqual(self.lib.closed, 1)
@@ -1682,6 +1682,100 @@ class PipeCheckTest(NdiApiTest):
 
 for _name in [n for n in dir(NdiApiTest) if n.startswith("test_") and n not in PipeCheckTest.__dict__]:
     setattr(PipeCheckTest, _name, None)
+
+
+class LifetimeTest(unittest.TestCase):
+    """Review finding 12: who removes the pipe, and never freeing a connection the library is still inside."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def test_a_capture_that_will_not_come_back_leaves_its_connection_open_and_says_so(self):
+        inside, let_go = threading.Event(), threading.Event()
+
+        class Stuck(FakeLib):
+            def recv_capture(self, handle, timeout_ms):
+                inside.set()
+                let_go.wait(10)                                          # the library, not returning
+                return None
+        lib, logged = Stuck(), []
+        fifo = os.path.join(self.dir, "f")
+        os.mkfifo(fifo)
+        r = ndi.Receiver(lib, ndi.clean_sources(lib.raw)[0][0], fifo, log=logged.append, join_wait=0.3)
+        r.start()
+        self.assertTrue(inside.wait(3))
+        started = time.monotonic()
+        r.close()
+        self.assertLess(time.monotonic() - started, 2.0)                 # it does not wait for ever either
+        self.assertEqual(lib.closed, 0, "the connection was freed while the library was still using it")
+        self.assertEqual(len([m for m in logged if "left open, not freed under it" in m]), 1)
+        self.assertEqual(r.status()["state"], "stopped")
+        let_go.set()                                                     # it comes back after all: now it is given back, once
+        self.assertTrue(wait(lambda: lib.closed == 1))
+        r.close()
+        self.assertEqual(lib.closed, 1)
+
+    def test_only_the_service_removes_the_pipe_and_it_wakes_a_reader_that_was_waiting(self):
+        lib = FakeLib()
+        s = ndi.Service(self.dir, "x", loader=lambda path: lib, problem=lambda path: None, log=lambda *_: None, first_frame=0.3)
+        self.addCleanup(s.close)
+        s.handle({"cmd": "configure", "on": True, "addresses": []})
+        lib.frames.put(frame(64, 16))
+        self.assertTrue(s.handle({"cmd": "open", "id": s.handle({"cmd": "status"})["sources"][0]["id"]})["ok"])
+        got = []
+
+        def reader():                                                    # a player that opened the pipe and waits for a first byte
+            fd = os.open(s.fifo, os.O_RDONLY)
+            try:
+                got.append(os.read(fd, 16))
+            finally:
+                os.close(fd)
+        s.receiver._end("stopped", "test")                               # the receiver ended before it wrote anything
+        self.assertTrue(wait(lambda: lib.closed == 1))
+        t = threading.Thread(target=reader, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        self.assertTrue(os.path.exists(s.fifo))                          # the receiver ending did not remove it
+        self.assertEqual(s.handle({"cmd": "close"}), {"ok": True})
+        t.join(3)
+        self.assertFalse(t.is_alive(), "the reader was left waiting on a pipe nobody will write")
+        self.assertFalse(os.path.exists(s.fifo))
+
+    def test_a_pipe_that_cannot_be_made_is_an_answer_with_the_reason(self):
+        lib, logged = FakeLib(), []
+        s = ndi.Service(os.path.join(self.dir, "gone"), "x", loader=lambda path: lib, problem=lambda path: None, log=logged.append)
+        s.handle({"cmd": "configure", "on": True, "addresses": []})
+        reply = s.handle({"cmd": "open", "id": s.handle({"cmd": "status"})["sources"][0]["id"]})
+        self.assertEqual(reply["ok"], False)
+        self.assertIn("could not make its pipe", reply["error"])
+        self.assertEqual((lib.opened, s.receiver), ([], None))
+        self.assertEqual(len([m for m in logged if "could not make the pipe" in m]), 1)
+        os.makedirs(os.path.join(self.dir, "gone"))
+        os.mkfifo(s.fifo)                                                # one is in the way: also an answer, never an exception
+        with open(os.path.join(self.dir, "gone", "x"), "w"):
+            pass
+        os.unlink(s.fifo)
+        os.mkdir(s.fifo)
+        self.assertEqual(s.handle({"cmd": "open", "id": s.handle({"cmd": "status"})["sources"][0]["id"]})["ok"], False)
+
+    def test_status_reads_the_receiver_under_its_lock_and_never_waits_behind_an_open(self):
+        import inspect
+        src = inspect.getsource(ndi.Service.status)
+        self.assertIn("with self._recv_lock:\n            r = self.receiver", src)
+        lib = FakeLib()
+        s = ndi.Service(self.dir, "x", loader=lambda path: lib, problem=lambda path: None, log=lambda *_: None, first_frame=1.5)
+        self.addCleanup(s.close)
+        s.handle({"cmd": "configure", "on": True, "addresses": []})
+        sid = s.handle({"cmd": "status"})["sources"][0]["id"]
+        t = threading.Thread(target=s.handle, args=({"cmd": "open", "id": sid},), daemon=True)     # no frame comes: it waits 1.5 s
+        t.start()
+        time.sleep(0.2)
+        started = time.monotonic()
+        for _ in range(20):
+            self.assertEqual(s.handle({"cmd": "status"})["ok"], True)
+        self.assertLess(time.monotonic() - started, 0.5)
+        t.join(5)
 
 
 if __name__ == "__main__":
