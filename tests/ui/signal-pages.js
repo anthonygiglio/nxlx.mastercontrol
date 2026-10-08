@@ -13,7 +13,7 @@
 //               seconds: nothing may wait before it is looked at).
 //
 // t: { page (paired as the owner), browser, base, info (the harness's line), width, scale, notes (what went wrong
-// while setting up or opening: the caller reports it) }. Loopback only, like everything in the harness.
+// while setting up or opening: the caller reports it), plain (true while the box is in the default look) }. Loopback only, like everything in the harness.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -41,7 +41,7 @@ async function sys(pg, name) {
 }
 async function home(t) {                                // the panel reads which modules are on when it loads
   await t.page.goto(t.base + '/');
-  await t.page.waitForSelector('html[data-style="signal"] nav.tabs');
+  await t.page.waitForSelector((t.plain ? '' : 'html[data-style="signal"] ') + 'nav.tabs');      // t.plain: the caller is in the default look (the width sweep)
 }
 const projectors = async (t) => (await get(t, '/api/projectors')).projectors || [];
 const powerOf = (p) => (p.status && p.status.ok ? p.status.power : p.status && p.status.ok === false ? 'no answer' : '');
