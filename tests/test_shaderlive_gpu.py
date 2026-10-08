@@ -16,7 +16,7 @@ import unittest
 
 from pvj import shaderlive as L, shaders as S
 from tests.test_server import ServerBase
-from tests.test_shaders_gpu import GPU, GpuCase, H, W
+from tests.test_shaders_gpu import BROKEN, GPU, PROBE, GpuCase, H, W
 
 TYPES = """/*{"INPUTS": [
  {"NAME": "level", "TYPE": "float", "MIN": 0.0, "MAX": 1.0, "DEFAULT": 0.25},
@@ -243,6 +243,16 @@ class LiveCase(GpuCase):
         self.assertEqual(len(self.shaders_in_player()), 1)
         print("100 values in %.1f s: %d compiles, %d screenshots all lit, %d frames dropped meanwhile"
               % (took, applied, shots, (self.real.ipc.request("get_property", "frame-drop-count") or 0) - drops))
+
+    def test_a_refused_shader_names_the_line_of_its_file_on_every_way_of_drawing(self):
+        """Also on GLSL 1.40 (this file's third run in CI, the context of a Raspberry Pi 4), where "#line n" makes
+        the next line n + 1 and the line named was one too high."""
+        self.engine.upload("probe.fs", PROBE)
+        self.engine.upload("broken.fs", BROKEN)
+        self.show("probe.fs")
+        r = self.engine.show("broken.fs")
+        self.assertEqual((r["ok"], r["showing"]), (False, "probe.fs"))
+        self.assertIn("line 6:", r["error"])
 
     def test_this_mpv_has_no_live_parameters_for_a_user_shader(self):
         """`//!PARAM` (and `glsl-shader-opts`, which sets one) belong to mpv's other output, gpu-next. With --vo=gpu a
