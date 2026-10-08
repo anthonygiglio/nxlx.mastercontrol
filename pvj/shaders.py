@@ -37,6 +37,10 @@ from .player import PlayerError
 
 MAX_SOURCE = 32 * 1024        # bytes of one ISF file (it must also fit a JSON request)
 MAX_HEADER = 8 * 1024
+# What may stand before the JSON header: blank space and comments (the credit lines of a real file), this much of them.
+# Credits run to a few hundred bytes and a whole licence text to one or two KB; with the header's 8 KB this still
+# leaves 20 KB of the 32 for the code, and the search for the header never reads further than this.
+MAX_LEADING = 4 * 1024
 MAX_INPUTS = 24
 MAX_UPLOADS = 64
 MAX_TEXT = 200                # description, credit
@@ -117,6 +121,11 @@ _OWN = re.compile(r"\b(?:pvj_\w*|hook|hooked\w*|texture\d+|texcoord\d+|texture_(
 # (which a file cannot write itself), so the player's own `out_color` and `color` are never touched by a file.
 _RENAMED = "out_color"                  # in the code, spelled exactly so; any other letter case stays refused
 _INPUT_RENAMED = ("color",)             # as an input's name, in any letter case
+# The words of RESERVED that are the player's and this translator's own (not GLSL's, not ISF's). As an input's name
+# they are refused in any letter case, `color` apart (above). Every other reserved word is the language's or ISF's
+# and means something in its exact spelling only: see renamed().
+_PLAYER_WORDS = frozenset("main hook frame random input_size target_size tex_offset pixel_size color".split())
+_BLANK = " \t\n\x0b\x0c"                # what may stand between the comments before the header (line ends are \n by then)
 
 
 HIDDEN = ("Cc", "Cf", "Zl", "Zp", "Cs")      # Unicode categories no name or label may hold
@@ -177,10 +186,12 @@ def _input(spec, seen, kind=GENERATOR):
     name = spec.get("NAME")
     if not isinstance(name, str) or not INPUT_NAME.fullmatch(name):
         raise ShaderError("an input name must be 1 to 32 letters, digits or _ and start with a letter")
-    if name.lower() in _INPUT_RENAMED:
-        pass                                # written into the shader under another name, see ident()
-    elif (name.lower() in RESERVED_LOWER or name.lower().startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name
-            or _OWN.fullmatch(name)):
+    low = name.lower()
+    # One rule for a name that is a reserved word in some letter case: renamed() says whether it is written into the
+    # shader under a pvj_in_ name (see there) or refused. The prefixes, a double underscore and the player's own
+    # patterns are refused whatever renamed() says.
+    if (low.startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name or _OWN.fullmatch(name)
+            or (low in RESERVED_LOWER and not renamed(name))):
         raise ShaderError("the input name %s is taken by the shader language or the player" % name)
     if name in seen:
         raise ShaderError("two inputs are called %s" % name)
@@ -209,9 +220,11 @@ def _input(spec, seen, kind=GENERATOR):
             raise ShaderError("input %s has MIN above MAX" % name)
         out.update(min=lo, max=hi, default=min(hi, max(lo, _num(spec.get("DEFAULT", (lo + hi) / 2.0), "DEFAULT of " + name))))
     elif kind == "bool":
+        # true and false, and the numbers 0 and 1 (0.0 and 1.0 are the same numbers), as real files write a switch.
+        # Nothing else: no other number, and no text ("1" and "true" in quotes are text, not a switch).
         d = spec.get("DEFAULT", False)
-        if not isinstance(d, bool) and d not in (0, 1):
-            raise ShaderError("DEFAULT of %s must be true or false" % name)
+        if not isinstance(d, bool) and not (isinstance(d, (int, float)) and d in (0, 1)):
+            raise ShaderError("DEFAULT of %s must be true or false (or the number 0 or 1)" % name)
         out["default"] = bool(d)
     elif kind == "long":
         values = spec.get("VALUES")
@@ -269,9 +282,22 @@ def _input(spec, seen, kind=GENERATOR):
     return out
 
 
+def renamed(name):
+    """Whether an input of this name is written into the shader under a pvj_in_ name instead of its own. One rule:
+    the name is a reserved word in another letter case than the one the word is reserved in, and the word is the
+    language's or ISF's (`time` beside ISF's TIME, `Date`, `Float`, `Mix`). GLSL tells letter cases apart, so such a
+    name clashes with nothing; it was refused only because the list is compared in lower case. It is renamed all
+    the same, so that no near-spelling of a built-in word is ever an input's name in the text the GPU gets.
+    A name that IS a reserved word, letter for letter (TIME, float, sin, frame), cannot be renamed, since the code's
+    own uses of the word would be renamed with it, and stays refused; so do the player's own words in any letter
+    case. The one exception is older than the rule: `color`, in any letter case (_INPUT_RENAMED)."""
+    low = name.lower()
+    return low in _INPUT_RENAMED or (low in RESERVED_LOWER and name not in RESERVED and low not in _PLAYER_WORDS)
+
+
 def ident(name):
-    """The name an input has inside the generated shader: its own, or a pvj_ name where the player owns the word."""
-    return "pvj_in_" + name if name.lower() in _INPUT_RENAMED else name
+    """The name an input has inside the generated shader: its own, or a pvj_in_ name (see renamed)."""
+    return "pvj_in_" + name if renamed(name) else name
 
 
 def _no_constant(word):
@@ -324,6 +350,46 @@ def _read_calls(text, keep=True):
     return text
 
 
+def find_header(source):
+    """Where the JSON header comment starts in a file's text (line ends already \\n): the index of its "/*".
+    Before it only blank space, // comments and /* */ comments may stand, at most MAX_LEADING bytes of them.
+    The header is the first /* comment whose first character after blank space is {. That comment is the header
+    whatever else it holds: if its JSON cannot be read the file is refused, and no later comment is tried. A comment
+    that begins with anything else is a plain comment and is passed over. A // comment ends at its line break and
+    whatever it holds is comment text, a "/*{" too. Comments do not nest: a "/*{" inside a /* comment is part of
+    that comment, which ends at the first "*/". Raises ShaderError.
+    One pass with str.find and no pattern, and it stops at MAX_LEADING: the time is linear in what it reads."""
+    i, n, passed = 0, len(source), False
+    while i <= MAX_LEADING:
+        while i < n and source[i] in _BLANK:
+            i += 1
+        if source.startswith("//", i):
+            j = source.find("\n", i)
+            i = n if j < 0 else j + 1
+        elif source.startswith("/*", i):
+            k = i + 2
+            while k < n and source[k] in _BLANK:
+                k += 1
+            if source.startswith("{", k):
+                if len(source[:i].encode("utf-8", "replace")) > MAX_LEADING:
+                    break
+                return i
+            j = source.find("*/", i + 2)
+            if j < 0:
+                raise ShaderError("a /* comment before the JSON header is never closed")
+            i, passed = j + 2, True
+        elif i > MAX_LEADING:
+            break
+        elif passed:
+            # a header that lost its { must not read as "this is no ISF file at all"
+            raise ShaderError("not an ISF file: no /*{ ... }*/ comment with the JSON header stands before the code (a /* comment at the "
+                              "top does not begin with {, so it was read as a plain comment)")
+        else:
+            raise ShaderError("not an ISF file: it must start with a /*{ ... }*/ comment that holds the JSON header (only blank space "
+                              "and comments may stand before it)")
+    raise ShaderError("more than %d KB of blank space and comments stand before the JSON header" % (MAX_LEADING // 1024))
+
+
 def parse(source, kind=GENERATOR):
     """An ISF file from untrusted text: {"description", "credit", "cost", "inputs", "body", "line", "kind"}. `body` is
     the shader code after the JSON comment and `line` the line of the file it starts on. `kind` is what the caller
@@ -345,9 +411,10 @@ def parse(source, kind=GENERATOR):
     source = source.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
     if "//!" in source:
         raise ShaderError("the text //! is not allowed anywhere in the file (the player reads it as a command)")
-    start = len(source) - len(source.lstrip())
-    if not source.startswith("/*", start):
-        raise ShaderError("not an ISF file: it must start with a /*{ ... }*/ comment that holds the JSON header")
+    # The comments before the header (credits, as a rule) are passed over here and go nowhere: `body` starts after
+    # the header, so they never reach the player, and `line` below counts their lines, so the compiler's line numbers
+    # stay those of the file. The stored file is the upload's own bytes (Engine.upload), comments and all.
+    start = find_header(source)
     end = source.find("*/", start + 2)
     if end < 0 or end - start > MAX_HEADER:
         raise ShaderError("the JSON header comment is not closed, or is larger than %d KB" % (MAX_HEADER // 1024))
