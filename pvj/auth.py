@@ -415,14 +415,14 @@ class Auth:
         """Is there a place for one more device of `role`? Guests and presenters share MAX_DEVICES - FULL_RESERVED
         places; the rest can only be taken by full-access devices, so the PIN always pairs while fewer than
         FULL_RESERVED full-access devices exist, however many guests there are. Nothing is ever evicted to make room.
-        A full-access device paired with a code from a controller (`via` "controller") never takes one of the
-        reserved places: those are for the PIN, so codes from a controller cannot keep the PIN from pairing."""
+        A full-access device paired with a code from a controller (`via` "controller") is counted with the guests
+        and presenters, when it is added and ever after: the reserved places are for the PIN (and what else a
+        full-access device at the box makes), and they hold in whatever order devices were paired."""
         devices = self.settings.data["devices"]
-        if role == "full" and via == "controller":
-            return len(devices) < MAX_DEVICES - FULL_RESERVED
-        if role == "full":
+        if role == "full" and via != "controller":
             return len(devices) < MAX_DEVICES
-        return sum(1 for d in devices if d["role"] != "full") < MAX_DEVICES - FULL_RESERVED
+        shared = sum(1 for d in devices if d["role"] != "full" or d.get("via") == "controller")
+        return shared < MAX_DEVICES - FULL_RESERVED
 
     @staticmethod
     def _expires(device):
