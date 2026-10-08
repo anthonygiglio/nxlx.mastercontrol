@@ -30,6 +30,12 @@ Branch `isf-leading-comments`, not merged. D66 has the decision. **Run on the de
 
 **Open.** Whether a switch's DEFAULT may be the text `"0"` or `"1"` (the owner). The GPU test's first run in CI. Nothing here was seen on a display.
 
+## 2026-10-08, the afternoon (CI's package installs retry)
+
+- The owner logged `gh` in again with the `workflow` scope (D63), so a workflow file could be changed. The first two tries left a token this session's shell could not read back from the keychain (`gh auth token` was empty and every call answered 401); a login with `--insecure-storage`, which keeps the token in `~/.config/gh/hosts.yml`, worked. The earlier working login of the night must have been stored the same way; nobody had written that down.
+- `tools/ci-apt.sh`: every `apt-get` of `pvj.yml` goes through it. Each attempt gives `apt-get update` 90 seconds and the install 90 seconds, apt itself gives up on a silent connection after 20 seconds, and there are three attempts, which fits the step's ten minutes. Before, one slow mirror used the whole ten minutes and cost a rerun of about half an hour: about ten times between 2026-10-05 and 2026-10-08, never with a test having run. Whether three attempts on one runner get a better mirror than one attempt did is not known; a runner whose mirror stays slow still fails, only sooner and saying so.
+- HANDOFF: the hardware section still said the Pi was at #91; it is at `2bfaabb` (found by the agent that updated the job board).
+
 ## 2026-10-08 (the resizing study, step 1: a width sweep, and the twelve faults it found)
 
 Pull request #100, branch `resize-step1`, not merged. The owner said yes to step 1 the same day. D64 has the decision; this is what was measured. **Measured in headless Chromium (CI, Linux) and in headless Edge on the dev Mac against the harness with no player. Nothing was seen on a real phone, and nothing ran on a box.**
