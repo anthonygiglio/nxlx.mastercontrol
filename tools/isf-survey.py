@@ -41,10 +41,31 @@ _IMG_CALL = re.compile(r"\bIMG_(?:NORM_PIXEL|PIXEL|THIS_NORM_PIXEL|THIS_PIXEL)\b
 _BIG = re.compile(r"(?<![\w.])(\d{5,}(?:\.\d*)?)(?![\w.])")
 
 
+def locate(text):
+    """(text, start, end, problem) of the header comment, in the text as the translator reads it (no byte order mark,
+    \\n line ends). Where the translator finds the header, `problem` is "". Where it refuses to (code before the
+    header, more than the limit of comments before it, a comment that is never closed), `problem` is its own words,
+    and the header is looked for leniently so that the file can still be described: the first comment anywhere that
+    begins with {, never a comment of another kind (a credit is not a header). An index is -1 for what is not there."""
+    text = text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    problem = ""
+    try:
+        a = S.find_header(text)
+    except S.ShaderError as e:
+        problem, a = str(e), text.find("/*")
+        while a >= 0:
+            k = a + 2
+            while k < len(text) and text[k] in " \t\n":
+                k += 1
+            if text.startswith("{", k):
+                break
+            a = text.find("/*", max(k, a + 2))
+    return text, a, (text.find("*/", a + 2) if a >= 0 else -1), problem
+
+
 def header(text):
     """The JSON header read leniently (the survey must describe files the translator would refuse)."""
-    a = text.find("/*")
-    b = text.find("*/", a + 2)
+    text, a, b, _ = locate(text)
     if a < 0 or b < 0:
         return {}, text
     try:
@@ -54,13 +75,21 @@ def header(text):
     return (head if isinstance(head, dict) else {}), text[b + 2:]
 
 
+def header_bytes(text):
+    """The size of the header comment in bytes, as the translator's limit counts it."""
+    text, a, b, _ = locate(text)
+    return 0 if a < 0 or b < 0 else len(text[a:b].encode("utf-8", "replace"))
+
+
 def header_problem(text):
-    """What the translator's strict reading of the JSON header refuses (a key twice, NaN, text it cannot read)."""
-    a = text.find("/*")
-    b = text.find("*/", a + 2)
+    """What the translator refuses about the header: that it is not where a header must be (its own words), or what
+    its strict reading of the JSON refuses (a key twice, NaN, text it cannot read)."""
+    text, a, b, problem = locate(text)
+    if problem:
+        return problem
     if a < 0 or b < 0:
         return "not an ISF file: no JSON header comment"
-    if b - a > S.MAX_HEADER:
+    if header_bytes(text) > S.MAX_HEADER:
         return ""                           # counted under limits
     try:
         json.loads(text[a + 2:b], parse_constant=S._no_constant, object_pairs_hook=S._no_repeats)
@@ -71,8 +100,11 @@ def header_problem(text):
     return ""
 
 
-def needs(head, body, path, size):
-    """The engine features a file needs, from its header and code."""
+def needs(head, body, path, size, head_size=None):
+    """The engine features a file needs, from its header and code. `head_size` is the header comment's own size
+    (header_bytes); without it, everything that is not the code is counted as header."""
+    if head_size is None:
+        head_size = size - len(body.encode("utf-8", "replace"))
     out = set()
     inputs = [i for i in head.get("INPUTS") or [] if isinstance(i, dict)]
     images = [i.get("NAME") for i in inputs if i.get("TYPE") in ("image", "cube")]
@@ -91,7 +123,7 @@ def needs(head, body, path, size):
         out.add("imported")
     if os.path.exists(path[:-3] + ".vs"):
         out.add("vertex")
-    if size > S.MAX_SOURCE or len(inputs) > S.MAX_INPUTS or size - len(body.encode("utf-8", "replace")) > S.MAX_HEADER:
+    if size > S.MAX_SOURCE or len(inputs) > S.MAX_INPUTS or head_size > S.MAX_HEADER:
         out.add("limits")
     return out
 
@@ -165,7 +197,7 @@ def survey(folder):
             data = f.read()
         text = data.decode("utf-8", "replace")
         head, body = header(text)
-        need = needs(head, body, path, len(data))
+        need = needs(head, body, path, len(data), header_bytes(text))
         try:
             S.translate(S.parse(data), (1280, 720))
             verdict = ""
