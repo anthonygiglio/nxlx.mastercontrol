@@ -1235,7 +1235,9 @@ def runtime_main(argv=None, out=sys.stdout):
     argv = sys.argv[1:] if argv is None else argv
     dest = os.path.join(LIB_DIR, LIB_NAME)
     usage = ("usage: pvj-ndi-runtime install <the unpacked NDI SDK folder, or libndi.so.6> | status | remove\n"
-             "The NDI runtime is proprietary. Get the NDI SDK for Linux from https://ndi.video/ and read its licence.\n"
+             "The NDI runtime is proprietary. Get the NDI SDK for Linux from https://ndi.video/ and read its licence\n"
+             "BEFORE installing: NDI's free licence may not cover a box like this one (it names embedded devices\n"
+             "running Linux among what it does not cover). The owner of the box decides. This is not legal advice.\n"
              "NDI(R) is a registered trademark of Vizrt NDI AB.")
     if len(argv) == 1 and argv[0] == "status":
         print(runtime_problem(dest) or "the NDI runtime is in place: %s" % dest, file=out)

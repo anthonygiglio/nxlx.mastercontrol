@@ -2450,6 +2450,7 @@
       if (d.runtime.present) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: ndiSentence(d.runtime.problem || 'the NDI runtime is on the box but has not been loaded yet') }));
       return h('div', { class: 'hint warn', id: 'ndiruntime' },
         h('div', { text: 'The NDI runtime is not on this box yet, so no source can be found or shown.' }),
+        h('div', { id: 'ndilicence', text: 'Before anyone installs it: NDI\'s licence may not cover a box like this one. Its free licence is for ordinary computers, and it names small devices built for one job, running Linux, among what it does not cover. Whoever owns this box must read the licence that comes with the NDI SDK and decide, and ask NDI if in doubt. This is not legal advice.' }),
         h('div', { text: 'It is NDI\'s own program, it is not part of nxlx.mastercontrol, and it cannot be added from a phone. Someone with a keyboard or SSH on the box does this once:' }),
         h('div', {}, '1. Get the NDI SDK for Linux from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the box or a USB stick.'),
         h('div', { text: '2. On the box, run:' }),

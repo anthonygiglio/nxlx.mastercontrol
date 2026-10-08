@@ -1821,5 +1821,16 @@ class LookAlikeNamesTest(unittest.TestCase):
         self.assertEqual((st["runtime"]["version"], st["runtime"]["problem"], st["playing"]["message"]), ("6.3.2", "bad thing", "lineonetwo"))
 
 
+class SourceIsPlainTextTest(unittest.TestCase):
+    def test_the_ndi_sources_hold_no_character_a_reviewer_cannot_see(self):
+        # Escapes for a bidirectional override and a zero-width space once landed in this file as the characters.
+        here = os.path.dirname(os.path.abspath(__file__))
+        for path in (os.path.join(here, "test_ndi.py"), os.path.join(here, "..", "pvj", "ndi.py"),
+                     os.path.join(here, "..", "install", "pvj-ndi.service"), os.path.join(here, "..", "bin", "pvj-ndi-runtime")):
+            with open(path, encoding="utf-8") as f:
+                odd = sorted({"U+%04X" % ord(ch) for ch in f.read() if ord(ch) > 126 or (ord(ch) < 32 and ch not in "\n\t")})
+            self.assertEqual(odd, [], path)
+
+
 if __name__ == "__main__":
     unittest.main()
