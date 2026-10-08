@@ -586,7 +586,7 @@ def main(argv=None):
             pass
         return 0
     lock = None
-    if args.cmd in ("apply", "usb", "inbox", "rollback"):
+    if args.cmd in ("check", "apply", "usb", "inbox", "rollback"):      # check too: it makes a work folder (D70)
         try:
             lock = take_lock()
         except UpdateError as e:          # without the lock nobody knows whether an update is running: do nothing

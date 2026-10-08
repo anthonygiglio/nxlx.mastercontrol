@@ -376,6 +376,11 @@ class CommandLine(Folder):
             def rollback(self):
                 calls.append("rollback")
                 return "1.0.0"
+
+            def check(self, *a):
+                calls.append("check")
+                folder = tempfile.mkdtemp()
+                return {"version": "1.0.0", "schema": 1}, folder, folder
         p = mock.patch.object(update, "Updater", Fake)
         p.start()
         self.addCleanup(p.stop)
@@ -395,6 +400,18 @@ class CommandLine(Folder):
         held = update.take_lock()
         self.addCleanup(held.close)
         code, out, err = self.main("rollback")
+        self.assertEqual((code, self.calls), (1, []))
+        self.assertIn("another update is running", err)
+
+    def test_a_check_takes_the_lock_too_because_it_makes_a_work_folder(self):
+        # Review of #108, finding 1: `check` made its `.update-XXXXXXXX` without the lock, so an update started
+        # meanwhile swept it, and "holding the lock proves that no such folder is in use" was not true.
+        code, out, err = self.main("check", "pvj-1.0.0.tar.gz")
+        self.assertEqual((code, self.calls), (0, ["sweep", "check"]), err)
+        del self.calls[:]
+        held = update.take_lock()
+        self.addCleanup(held.close)
+        code, out, err = self.main("check", "pvj-1.0.0.tar.gz")
         self.assertEqual((code, self.calls), (1, []))
         self.assertIn("another update is running", err)
 
