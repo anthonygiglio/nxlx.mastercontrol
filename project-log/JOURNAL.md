@@ -4,7 +4,7 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
-## 2026-10-08 (the resizing study, step 1: a width sweep, and the eleven faults it found)
+## 2026-10-08 (the resizing study, step 1: a width sweep, and the twelve faults it found)
 
 Pull request #100, branch `resize-step1`, not merged. The owner said yes to step 1 the same day. D64 has the decision; this is what was measured. **Measured in headless Chromium (CI, Linux) and in headless Edge on the dev Mac against the harness with no player. Nothing was seen on a real phone, and nothing ran on a box.**
 
@@ -23,6 +23,7 @@ Pull request #100, branch `resize-step1`, not merged. The owner said yes to step
 9. Live with a shader on, the laptop's columns, both looks: the Vibes button had no floor. Signal: 63 px wide at 1200 with its words outside it, 40x126 at 932x430; the default look: a word cut at 900. From 900 to 1365 it keeps 10rem now and the buttons beside it go to a second line. The sweep found no fault there at 1366 or 1600, so the rule stops at 1365 and those sizes are as they were.
 10. The same screen at 932x430, both looks: the lower controls of the shader's strip could not be brought into view, or lay under the tab bar. The strip is held in place beside the pads and is taller than that window. In a window under 480 px high it now scrolls with the page.
 11. Projectors, the form for a new one, Signal at 932x430: the port field lay under the message line. Not mended: the line goes by itself, and the sweep no longer counts it as a cover.
+12. The Shaders page in Signal at 320, found by the third push's run and only by one of its two: a choice with one figure on it (the petals of `nxlx-prism`: 3, 4, 5, 6, 8) was 40 px wide. Signal had replaced the 44 px floor of a row of choices with `min-content`; the floor is back. Nine of the bundled shaders and effects have such a row.
 
 **What the sweep did not find.** Nothing at 600, 768 or 899, and nothing at 667x375 or 844x390. The medium widths show a phone's column stretched wide; a short window shows Signal's title block (106 px) and the tab bar (57 px) around 212 px of page. Both are whole by the sweep's rules. Nothing was changed there, apart from rule 7's, which also applies at those widths.
 
@@ -37,7 +38,9 @@ Pull request #100, branch `resize-step1`, not merged. The owner said yes to step
 - `signal-live-shader-laptop` (Signal at 1366): the playing shader's strip sat about 180 px lower in the picture; every other pixel as on master. The strip is held in place beside the pads, so in a picture of the whole screen it sits where the scroll was when the picture was taken. On the Mac, with a strip put in by hand, every box of Live at 1366 by 768 measured the same on master and on this branch, to the pixel. Why the scroll was elsewhere at that moment was not found. `tests/ui/screenshots.js` now takes these pictures from the top of the page, so the strip is at its place at the top; that picture differs from master's for that reason and no longer depends on the step before.
 - Nothing else. In particular no other `signal-` picture, and no picture at 1366, moved beyond what master's own runs do.
 
-A third push followed with those two changes and the merge of master (#98). What its run says is in the pull request.
+**The third push** (`96a7336`: those two changes and the merge of master, #98) was run twice by CI, as every push is. The pull request's run: all eight jobs passed. The browser test: `panel browser test: OK`, the sweep's line 42.3 s of measuring and 52.0 s for the default look's round, the step 7 min 9 s. The unit tests: 1565 run, OK, 70 skipped, on Python 3.9 and on 3.12. Its pictures against master's: `live`, `live-night-red` and `screen-phone-live` are as on master again; `shaders-instrument` is 16 px shorter (faults 7 and 8); `signal-live-shader-laptop` has the strip at the top of its column, where the picture is now taken from; nothing else beyond what master's own runs differ by.
+
+The push's run of the same commit failed in the sweep, with fault 12. **The same commit, two answers:** the Shaders page shows the controls of whichever shader Vibes has picked, and Vibes picks at random, so one run met `nxlx-prism` and the other did not. That is a fault found, not a test that comes and goes, but it will look like one: see LESSONS. (`test (3.9)` of that run ended in "Install mpv" after ten minutes, the mirror again.) A fourth push has the repair of fault 12; what its run says is in the pull request.
 
 **Tests.** The unit tests on the Mac: 1565 run, 15 failures and 15 errors, all in `test_install`, `test_update`, `test_release` and `test_netd` for the Mac's own reasons (the hand-off notes list them), after one of this branch's own was found and fixed (LESSONS). The browser test and the unit tests on Linux: the pull request's checks.
 ## 2026-10-08, the morning (the box brought to master; the owner's answers read)

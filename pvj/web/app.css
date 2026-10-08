@@ -1045,3 +1045,6 @@ html[data-style="signal"] #themelist .lname { text-transform: none; }
    looks share are above the marker of this block. ---- */
 /* Room in Signal: a scene's name in the display face shrinks with a narrow phone ("WORKSHOP" broke at 320) */
 html[data-style="signal"] #roomscreen .room-scene { font-size: clamp(16px, 5.2vw, 20px); }
+/* A choice with one figure on it (how many petals: 3, 4, 5, 6, 8) was 40 px wide at 320, where the row is full and
+   no button grows. This look had taken the floor of 44 px away from a row of choices; it is back. */
+html[data-style="signal"] .seg .segbtn { min-width: 44px; }
