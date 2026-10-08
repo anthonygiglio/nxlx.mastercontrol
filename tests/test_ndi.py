@@ -328,8 +328,9 @@ class ReceiverTest(unittest.TestCase):
         self.assertTrue(wait(lambda: len(self.got) == 2048))
         self.assertEqual(self.r.status()["state"], "playing")
         self.now[0] += ndi.QUIET_SECONDS + 0.5
-        self.assertEqual(self.r.status()["state"], "waiting")
+        self.assertEqual(self.r.status()["state"], "still")             # no new frame is not a lost sender
         self.lib.frames.put(ndi.Frame("lost"))                          # the library says the connection dropped
+        self.assertTrue(wait(lambda: self.r.status()["state"] == "waiting"))
         self.lib.frames.put(frame(64, 16, fill=2))
         self.assertTrue(wait(lambda: len(self.got) == 4096))
         self.assertEqual(self.r.status()["state"], "playing")
@@ -704,10 +705,11 @@ class InputTest(unittest.TestCase):
         self.lib.frames.put(frame(64, 16, fields=3))
         self.assertTrue(wait(lambda: self.s.receiver.state == "refused"))
         self.assertFalse(self.i.tick(lambda sid: self.fail("no replay")))
-        self.assertEqual(self.i.status()["playing"]["state"], "refused")
-        self.assertTrue(self.i.stop())
+        st = self.i.status()                                           # it is no longer what plays, and the page keeps the reason
+        self.assertEqual((st["playing"], st["ended"]["name"]), (None, "x"))
+        self.assertIn("interlaced", st["ended"]["message"])
         self.assertIsNone(self.i.current)
-        self.assertEqual(self.client.sent[-1], {"cmd": "close"})
+        self.assertFalse(self.i.stop())
         sent = len(self.client.sent)
         self.assertFalse(self.i.tick(lambda sid: self.fail("no replay")))
         self.assertFalse(self.i.stop())
@@ -1465,6 +1467,100 @@ class LaterChoiceWinsTest(NdiApiTest):
 
 for _name in [n for n in dir(NdiApiTest) if n.startswith("test_") and n not in LaterChoiceWinsTest.__dict__]:
     setattr(LaterChoiceWinsTest, _name, None)                            # the set-up is shared, the tests are not run twice
+
+
+class WatchTest(unittest.TestCase):
+    """Review finding 9, and the still source the real library showed: what the once-a-second watch does."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.lib = FakeLib()
+        self.now = [1000.0]
+        self.s = ndi.Service(self.dir, "x", loader=lambda path: self.lib, problem=lambda path: None, log=lambda *_: None, first_frame=0.3)
+        self.addCleanup(self.s.close)
+        self.logged = []
+        self.i = ndi.Input(FakeClient(self.s), self.s.fifo, lambda: (True, []), log=self.logged.append, clock=lambda: self.now[0])
+        self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
+        self.i.status()
+
+    def test_a_source_that_sends_one_frame_and_then_nothing_for_an_hour_is_left_alone(self):
+        # NDI Tools' Test Patterns, against the real library: one picture, then only its tone.
+        clock = [0.0]
+        self.s._receiver = lambda lib, source, fifo, log: ndi.Receiver(lib, source, fifo, log=log, clock=lambda: clock[0])
+        self.lib.frames.put(frame(1920, 1080))
+        self.i.open(self.rid)
+        self.i.current = {"id": self.rid, "name": "RESOLUME (Output)"}
+        fd = os.open(self.s.fifo, os.O_RDONLY)
+        self.addCleanup(os.close, fd)
+        self.assertTrue(wait(lambda: self.s.receiver.status()["state"] == "playing"))
+        opened = len(self.lib.opened)
+        for seconds in (1, 3, 60, 3600):
+            clock[0] = seconds
+            self.now[0] += seconds
+            self.assertFalse(self.i.tick(lambda sid: self.fail("a still picture was loaded again")), seconds)
+            st = self.i.status()["playing"]
+            self.assertEqual(st["state"], "playing" if seconds < ndi.QUIET_SECONDS else "still", seconds)
+        self.assertEqual((len(self.lib.opened), self.lib.closed, self.i.current["id"]), (opened, 0, self.rid))
+        self.assertIsNone(self.i.status()["ended"])
+        self.assertEqual(self.logged, [])
+        self.assertIn("still", ndi.STATES)
+
+    def test_a_source_that_is_gone_is_tried_less_and_less_often_and_logged_once(self):
+        self.i.current = {"id": self.rid, "name": "RESOLUME (Output)"}     # the helper has nothing open and the sender is off
+        tries = []
+
+        def replay(sid):
+            tries.append(self.now[0])
+            raise ndi.NdiError("that source is not on the network now")
+        start = self.now[0]
+        for _ in range(24 * 3600):                                       # a day of ticks, one a second
+            self.now[0] += 1.0
+            self.i.tick(replay)
+        gaps = [round(b - a) for a, b in zip(tries, tries[1:])]
+        self.assertEqual(gaps[:6], [3, 6, 12, 24, 48, 60])
+        self.assertEqual(set(gaps[5:]), {60})
+        self.assertLess(len(tries), 1500)                                # it was 28,800 a day
+        self.assertEqual(self.logged, ["pvj-web: NDI source RESOLUME (Output) not shown again yet: that source is not on the network now"])
+        self.assertEqual(self.i.current["id"], self.rid)                 # still wanted: it comes back when the sender does
+
+        def other(sid):
+            raise ndi.NdiError("the NDI helper (pvj-ndi) is not running")
+        self.now[0] += 61
+        self.i.tick(other)
+        self.assertEqual(len(self.logged), 2)                            # a new reason is a new line
+        self.assertGreater(self.now[0] - start, 0)
+
+    def test_after_it_is_back_the_next_trouble_starts_from_three_seconds_again(self):
+        self.i.current = {"id": self.rid, "name": "RESOLUME (Output)"}
+        fails = [3]
+
+        def replay(sid):
+            if fails[0]:
+                fails[0] -= 1
+                raise ndi.NdiError("that source is not on the network now")
+            self.lib.frames.put(frame(64, 16))
+            self.i.open(sid)
+        for _ in range(40):
+            self.now[0] += 1.0
+            self.i.tick(replay)
+        self.assertEqual((self.i._retry_wait, self.i._retry_said), (ndi.Input.RETRY_SECONDS, ""))
+        self.assertEqual(self.s.receiver.status()["state"], "ready")
+
+    def test_a_source_that_ended_by_itself_is_no_longer_what_plays_and_the_page_keeps_why(self):
+        self.lib.frames.put(frame(64, 16))
+        self.i.open(self.rid)
+        self.i.current = {"id": self.rid, "name": "RESOLUME (Output)"}
+        self.lib.frames.put(frame(64, 16, fourcc=0x41524742))
+        self.assertTrue(wait(lambda: self.s.receiver.state == "refused"))
+        self.now[0] += 5
+        self.assertFalse(self.i.tick(lambda sid: self.fail("no replay")))
+        st = self.i.status()
+        self.assertEqual((self.i.current, st["playing"], st["ended"]["name"]), (None, None, "RESOLUME (Output)"))
+        self.assertIn("BGRA", st["ended"]["message"])
+        self.lib.frames.put(frame(64, 16))
+        self.i.open(self.rid)                                            # played again: the old reason goes
+        self.assertIsNone(self.i.ended)
 
 
 if __name__ == "__main__":

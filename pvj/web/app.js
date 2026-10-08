@@ -1282,7 +1282,7 @@
       if (!d.helper) return st('problem', 'The NDI helper is not running');
       if (!d.runtime.present) return st('setup', 'The NDI runtime is not on this box yet');
       if (d.runtime.problem) return st('problem', ndiSentence(d.runtime.problem));
-      if (p && (p.state === 'refused' || p.state === 'stopped') && p.message) return st('problem', ndiSentence(p.message));
+      if (d.ended) return st('problem', d.ended.name + ' stopped: ' + ndiSentence(d.ended.message));
       if (p && p.state === 'waiting') return st('check', 'Waiting for ' + p.name);
       if (p) return st('active', 'Showing: ' + p.name);
       return st('ready', d.sources.length ? plural(d.sources.length, 'source') + ' found' : 'No sources found yet');
@@ -2462,7 +2462,8 @@
       var size = p.width ? p.width + ' x ' + p.height + ' at ' + p.fps + ' frames a second' : '';
       var c = p.counts || {};
       var counts = typeof c.shown === 'number' ? 'shown ' + c.shown + ', dropped ' + ((c.dropped || 0) + (c.dropped_by_runtime || 0)) : '';
-      var word = ({ playing: 'On the screen', ready: 'Starting', connecting: 'Connecting', waiting: 'Waiting for the source', changed: 'The source changed size; loading it again' })[p.state] || '';
+      var word = ({ playing: 'On the screen', still: 'On the screen, a still picture (the sender has sent nothing new)', ready: 'Starting', connecting: 'Connecting',
+        waiting: 'The connection to the sender dropped; waiting for it', changed: 'The source changed size; loading it again' })[p.state] || '';
       return [word, size, counts].filter(Boolean).join(' · ');
     }
     function drawSources(d) {
@@ -2472,8 +2473,7 @@
       if (d.cut) srcBody.appendChild(h('div', { class: 'hint warn', id: 'ndicut', text: 'More senders are announced on this network than this page lists (' + d.max_sources +
         '). If yours is missing, add its computer\'s address below: senders at those addresses are always listed.' }));
       if (d.notice) srcBody.appendChild(h('div', { class: 'hint warn', id: 'ndinotice', text: ndiSentence(d.notice) }));
-      if (playing && (playing.state === 'refused' || playing.state === 'stopped') && playing.message)
-        srcBody.appendChild(h('div', { class: 'hint warn problem', id: 'ndiproblem', text: playing.name + ': ' + ndiSentence(playing.message) }));
+      if (d.ended) srcBody.appendChild(h('div', { class: 'hint warn problem', id: 'ndiproblem', text: d.ended.name + ' stopped: ' + ndiSentence(d.ended.message) }));
       if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: 'No NDI sources found yet. Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this box. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
       d.sources.forEach(function (s) {
         var mine = playing && playing.id === s.id && playing.state !== 'refused' && playing.state !== 'stopped';
@@ -2535,7 +2535,7 @@
         }
         // Senders come and go, so the list is asked for every 2 seconds, but it is drawn again only when what it
         // shows changed: a button replaced between a finger going down and coming up loses the tap (D59).
-        var now = JSON.stringify([r.data.helper, r.data.cut, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
+        var now = JSON.stringify([r.data.helper, r.data.ended, r.data.cut, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
         if (now !== drawn && !ndiBusy) { drawn = now; drawSources(r.data); }
         if (first) drawAddresses(r.data);
         first = false;

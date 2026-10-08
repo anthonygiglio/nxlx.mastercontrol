@@ -57,11 +57,14 @@ FOURCC_UYVA = 0x41565955                  # "UYVA": a UYVY plane and then an alp
 PROGRESSIVE, INTERLACED = 1, (0, 2, 3)      # the frame format values: 0 two fields in one frame, 2 and 3 single fields
 FIRST_FRAME_SECONDS = 6.0
 PIPE_OPEN_SECONDS = 10.0
-QUIET_SECONDS = 2.0                       # no frame for this long: "waiting for the source"
+QUIET_SECONDS = 2.0                       # no frame for this long: "still" (or "waiting", if the connection dropped)
 PLAYER_LEFT = "the player stopped reading the input"      # something else was played: an end, not a fault
 SOURCES_CACHE = 1.0
 PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"))
-STATES = ("connecting", "ready", "playing", "waiting", "changed", "refused", "stopped")
+# "still": on the screen and connected, but no new frame for a while. That is normal (a test pattern, a paused
+# output, a slide): the real library sent ONE frame of NDI Tools' Test Patterns and then none (measured 2026-10-07).
+# "waiting" is only said when the library itself reports the connection dropped.
+STATES = ("connecting", "ready", "playing", "still", "waiting", "changed", "refused", "stopped")
 ENDED = ("changed", "refused", "stopped")
 
 _ID = re.compile(r"[0-9a-f]{12}")
@@ -502,6 +505,7 @@ class Receiver:
         self._cond = threading.Condition()
         self._pending, self._free = None, []
         self._last = clock()
+        self._lost = False                         # the library said the connection dropped, and no frame has come since
         self._handle = None
         self._handle_lock = threading.Lock()       # the connection is used by the capture thread and asked about by status
         self._threads = []
@@ -541,14 +545,14 @@ class Receiver:
                     # The library says the connection dropped, and says so again at once for as long as it is down:
                     # wait as long as a capture would have, and write it down once, not at every turn.
                     if not lost:
-                        lost = True
+                        lost = self._lost = True
                         self.log("pvj-ndi: the connection to %s dropped; waiting for it" % self.source["name"])
                     self._stop.wait(0.25)
                     continue
                 if f is None:
                     continue
                 if lost:
-                    lost = False
+                    lost = self._lost = False
                     self.log("pvj-ndi: %s is back" % self.source["name"])
                 try:
                     fmt, stride = check_frame(f)
@@ -664,14 +668,16 @@ class Receiver:
     def status(self):
         with self._cond:
             state = self.state
-            if state == "playing" and self._clock() - self._last > QUIET_SECONDS:
+            if state == "playing" and self._lost:
                 state = "waiting"
+            elif state == "playing" and self._clock() - self._last > QUIET_SECONDS:
+                state = "still"
             out = {"id": self.source["id"], "name": self.source["name"], "state": state, "message": self.message,
                    "counts": dict(self.counts)}
             if self.format:
                 out.update(width=self.format[0], height=self.format[1], fps=self.format[2])
         with self._handle_lock:
-            if self._handle is not None and state in ("playing", "waiting"):
+            if self._handle is not None and state in ("playing", "still", "waiting"):
                 try:
                     out["counts"]["dropped_by_runtime"] = self.lib.recv_dropped(self._handle)
                 except Exception:
@@ -944,13 +950,14 @@ class Input:
     """The panel's handle on the NDI helper: keeps it told of the switch and the saved addresses, opens a source for
     the player, and notices when the helper says the picture changed size."""
 
-    RETRY_SECONDS = 3.0
+    RETRY_SECONDS, RETRY_MAX = 3.0, 60.0   # between tries to show a source again: 3 s, then twice as long each time, to a minute
 
     def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic):
         self.client, self.fifo, self._wanted, self.log, self._clock = client, fifo, wanted, log, clock
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = threading.RLock()      # open, load in the player and note, as one step (like the capture input)
-        self._retry_at = 0.0
+        self._retry_at, self._retry_wait, self._retry_said = 0.0, self.RETRY_SECONDS, ""
+        self.ended = None                  # {"name", "message"}: why the last source ended by itself, for the page
         self._ticket = 0
         # Held by whoever is deciding what the screen shows next, for as long as the deciding and the loading take:
         # the NDI play holds it from "is my ticket still good" to the end of loading the pipe, and everything else
@@ -1008,7 +1015,8 @@ class Input:
                             "get": "https://ndi.video/"},
                 "sources": sources, "cut": st.get("cut") is True, "max_sources": MAX_SOURCES,
                 "addresses": list(addresses), "max_addresses": MAX_ADDRESSES,
-                "playing": _playing(st.get("playing")) if self.current else None}
+                "playing": _playing(st.get("playing")) if self.current else None,
+                "ended": dict(self.ended) if self.ended and not self.current else None}
 
     def open(self, sid):
         """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps"} or NdiError."""
@@ -1020,6 +1028,7 @@ class Input:
         p = _playing(reply.get("playing"))
         if p is None or p["id"] != sid or not all(k in p for k in ("width", "height", "fps")):
             raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
+        self.ended = None
         return p
 
     def client_close(self):
@@ -1050,17 +1059,29 @@ class Input:
         if st.get("configured") is not True:       # the helper started again and knows nothing yet
             self.sync()
         p = _playing(st.get("playing"))
-        if p is not None and p["id"] == cur["id"] and p["state"] == "stopped" and p["message"] == PLAYER_LEFT:
-            if self.current is cur:                # the player went on to something else without a word to us
+        if p is not None and p["id"] == cur["id"] and p["state"] in ("refused", "stopped"):
+            # It ended for a reason no retry cures (a format this input does not show), or the player went on to
+            # something else without a word to us. Either way it is no longer what plays; the reason stays for the page.
+            if self.current is cur:
                 self.current = None
+                self.ended = None if p["message"] in ("", PLAYER_LEFT) else {"name": cur["name"], "message": p["message"]}
+            self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
             return False
         if p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):
-            return False                           # playing, waiting, or ended for a reason a retry would not cure
-        self._retry_at = self._clock() + self.RETRY_SECONDS
+            self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
+            return False                           # on the screen: playing, a still picture, or waiting for the sender
+        # Try again later and later (a sender switched off for the night must not be asked every 3 seconds for
+        # ever), and write the reason down when it changes, not at every try: the journal is kept on the card.
+        self._retry_at = self._clock() + self._retry_wait
+        self._retry_wait = min(self._retry_wait * 2, self.RETRY_MAX)
         try:
             replay(cur["id"])
-        except Exception as e:                     # the source may be gone for now; the next tick tries again
-            self.log("pvj-web: NDI source not shown again yet: %s" % e)
+            self._retry_at, self._retry_wait, self._retry_said = self._clock() + self.RETRY_SECONDS, self.RETRY_SECONDS, ""
+        except Exception as e:                     # the source may be gone for now; a later tick tries again
+            said = str(e)[:200]
+            if said != self._retry_said:
+                self._retry_said = said
+                self.log("pvj-web: NDI source %s not shown again yet: %s" % (cur["name"], said))
         return True
 
 
