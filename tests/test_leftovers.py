@@ -326,7 +326,7 @@ class Lock(Folder):
             with mock.patch("os.open", spy), self.assertRaises(UpdateError, msg=what) as e:
                 update.take_lock(path)
             self.assertIn(path, str(e.exception), what)
-            self.assertEqual(set(opened), {path}, "%s: only the lock itself was tried" % what)
+            self.assertLessEqual(set(opened), {path}, "%s: only the lock itself was tried" % what)
         self.assertEqual(self.read(target), "x")
 
     def test_it_is_the_same_for_root_and_for_anybody_else(self):
@@ -346,11 +346,126 @@ class Lock(Folder):
         second.close()
 
     def test_the_default_is_one_fixed_file_and_the_environment_may_name_another(self):
-        self.assertEqual(update.DEFAULT_LOCK, "/run/lock/pvj-update.lock")
         with mock.patch.dict(os.environ, {"PVJ_UPDATE_LOCK": os.path.join(self.dir, "mine.lock")}):
             f = update.take_lock()
             f.close()
         self.assertEqual(self.names(), ["mine.lock"])
+
+    # Review of #108, findings 2 and 6. The lock was `/run/lock/pvj-update.lock`, in a folder where every account
+    # may make a name, and it was used whatever was found there. Now it is in the update units' own folder, which
+    # only root can write, and what is opened is looked at. The old name is still taken, best effort, so that an
+    # updater from before the move and one from after never run together.
+
+    def test_the_lock_is_in_the_update_units_folder_which_they_make_for_root_alone(self):
+        self.assertEqual(os.path.dirname(update.DEFAULT_LOCK), paths.UPDATE_DIR)
+        self.assertEqual(update.OLD_LOCK, "/run/lock/pvj-update.lock")
+        for unit in ("pvj-update-usb@.service", "pvj-update-inbox@.service"):
+            text = self.read(os.path.join(os.path.dirname(__file__), "..", "install", unit))
+            for line in ("User=root", "RuntimeDirectory=" + os.path.basename(paths.UPDATE_DIR),
+                         "RuntimeDirectoryMode=0755", "RuntimeDirectoryPreserve=yes"):
+                self.assertIn(line + "\n", text, unit)
+
+    def test_only_a_plain_file_with_one_name_is_a_lock(self):
+        pipe = os.path.join(self.dir, "pipe")
+        os.mkfifo(pipe)
+        twice = self.put("twice")
+        os.link(twice, os.path.join(self.dir, "its-other-name"))
+        for what, path in (("a pipe", pipe), ("a file with two names", twice)):
+            with self.assertRaises(UpdateError, msg=what) as e:
+                update.take_lock(path)
+            self.assertIn(path, str(e.exception), what)
+
+    def test_a_lock_in_a_folder_that_others_may_write_is_refused(self):
+        folder = os.path.join(self.dir, "shared")
+        os.mkdir(folder)
+        for mode in (0o1777, 0o775, 0o757):
+            os.chmod(folder, mode)
+            with self.assertRaises(UpdateError, msg=oct(mode)) as e:
+                update.take_lock(os.path.join(folder, "lock"))
+            self.assertIn("others can write", str(e.exception))
+            self.assertEqual(self.names(folder), [], "and nothing was made there")
+        os.chmod(folder, 0o755)
+        update.take_lock(os.path.join(folder, "lock")).close()
+
+    def test_a_missing_lock_folder_is_made_as_the_units_make_it_whatever_the_umask(self):
+        for umask in (0o077, 0o002):
+            path = os.path.join(self.dir, "made-%o" % umask, "lock")
+            before = os.umask(umask)
+            try:
+                update.take_lock(path).close()
+            finally:
+                os.umask(before)
+            self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(path)).st_mode), 0o755)
+
+    def test_an_updater_from_before_the_move_and_one_from_after_exclude_each_other(self):
+        new, old = os.path.join(self.dir, "new.lock"), os.path.join(self.dir, "old.lock")
+        earlier = update.take_lock(old)                          # what an updater from before the move holds
+        self.assertIsNone(update.take_lock(new, old=old))
+        earlier.close()
+        mine = update.take_lock(new, old=old)                    # and it did not keep the new lock when it gave up
+        self.assertIsNotNone(mine)
+        self.addCleanup(mine.close)
+        self.assertIsNone(update.take_lock(old), "the old name is held too")
+        self.assertIsNone(update.take_lock(new, old=old))
+        mine.close()                                             # one close lets go of both
+        update.take_lock(old).close()
+        update.take_lock(new, old=old).close()
+        self.assertEqual(stat.S_IMODE(os.stat(old).st_mode), 0o600)
+
+    def test_an_old_name_that_cannot_be_trusted_is_passed_over_and_never_stops_an_update(self):
+        new = os.path.join(self.dir, "new.lock")
+        target = self.put("precious")
+        pipe = os.path.join(self.dir, "pipe")
+        os.mkfifo(pipe)
+        twice = self.put("twice")
+        os.link(twice, os.path.join(self.dir, "its-other-name"))
+        os.symlink(target, os.path.join(self.dir, "link"))
+        before = self.names()
+        for what, old in (("a folder", self.dir), ("a link", os.path.join(self.dir, "link")), ("a pipe", pipe),
+                          ("a file with two names", twice), ("in a file", os.path.join(target, "lock")),
+                          ("no such folder", os.path.join(self.dir, "missing", "pvj-update.lock"))):
+            f = update.take_lock(new, old=old)
+            self.assertIsNotNone(f, what)
+            f.close()
+        self.assertEqual(self.names(), sorted(before + ["new.lock"]), "the old name's folder is never made")
+        self.assertEqual(self.read(target), "x")
+
+    def test_an_old_name_that_is_somebody_elses_file_is_passed_over_even_when_it_is_held(self):
+        # With fs.protected_regular off, any account can put its own file at the old name and hold it for ever.
+        # Root is not available here, so "somebody else's" is made by saying that we are somebody else.
+        new, old = os.path.join(self.dir, "new.lock"), os.path.join(self.dir, "old.lock")
+        theirs = update.take_lock(old)
+        self.addCleanup(theirs.close)
+        with mock.patch("os.geteuid", return_value=os.geteuid() + 1):
+            f = update.take_lock(new, old=old)
+        self.assertIsNotNone(f)
+        f.close()
+
+    def test_the_old_name_is_only_touched_where_the_lock_is_the_default_one(self):
+        opened = []
+        real = os.open
+
+        def spy(path, *a, **k):
+            opened.append(path)
+            return real(path, *a, **k)
+
+        mine = os.path.join(self.dir, "mine.lock")
+        with mock.patch("os.open", spy):
+            update.take_lock(mine).close()
+            with mock.patch.dict(os.environ, {"PVJ_UPDATE_LOCK": mine}):
+                update.take_lock().close()
+        self.assertEqual(set(opened), {mine})
+        del opened[:]
+
+        def nowhere(path, *a, **k):                              # the default, without touching this machine's /run
+            opened.append(path)
+            raise PermissionError(13, "Permission denied")
+
+        env = {k: v for k, v in os.environ.items() if k != "PVJ_UPDATE_LOCK"}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch("os.open", nowhere), \
+                mock.patch("os.stat", return_value=os.stat(self.dir)), self.assertRaises(UpdateError):
+            update.take_lock()
+        self.assertEqual(opened, [update.DEFAULT_LOCK])
 
 
 class CommandLine(Folder):

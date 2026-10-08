@@ -10,7 +10,7 @@ On a box each service has a folder of its own that only it can write, under a pa
     /run/pvj/netd           root:pvj        0750   pvj-netd: netd.sock
     /run/pvj-sysd           root:pvj        0750   pvj-sysd: sysd.sock
     /run/pvj-supportd       root:pvj        0750   pvj-supportd: supportd.sock
-    /run/pvj-update         root:root       0755   the update units: result.json
+    /run/pvj-update         root:root       0755   the update units: result.json, update.lock
 
 A folder is a `RuntimeDirectory=` of exactly one unit, so systemd never hands it to another account. Before this
 the player, the panel and the network helper shared `RuntimeDirectory=pvj`, and systemd gave the whole folder,

@@ -649,26 +649,36 @@ def main(argv=None):
     return 0
 
 
-DEFAULT_LOCK = "/run/lock/pvj-update.lock"
+DEFAULT_LOCK = paths.UPDATE_DIR + "/update.lock"     # the update units' folder: root's, and only root can write it
+OLD_LOCK = "/run/lock/pvj-update.lock"               # where it was before; any account can make a name there
 
 
-def take_lock(path=None):
-    """One update at a time, whoever started it (the panel, a terminal). Returns the open lock file, or None
-    when another update holds it. Raises UpdateError when the lock file cannot be used at all."""
+class _Held:
+    """The lock files an updater holds; one close lets go of all of them."""
+
+    def __init__(self, *files):
+        self.files = files
+
+    def close(self):
+        for f in self.files:
+            f.close()
+
+
+def _old_lock(path):
+    """The lock under its old name, so that an updater from before the lock moved and one from after exclude each
+    other, also during the update that replaces the one by the other. Best effort: the folder is one where every
+    account can make a name, so only a plain file of ours with one name counts, and anything else there (a link, a
+    folder, somebody else's file, no folder at all) is passed over and never stops an update. Returns the open
+    file, False when there is nothing usable to hold, or None when another updater holds it (D70)."""
     import fcntl
-    path = path or os.environ.get("PVJ_UPDATE_LOCK", DEFAULT_LOCK)
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     try:
-        try:
-            fd = os.open(path, flags, 0o600)
-        except FileNotFoundError:
-            os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)      # /run/lock is not on every system
-            fd = os.open(path, flags, 0o600)
-    except OSError as e:
-        # There is one lock file and everybody uses it. This used to fall back to a file in the caller's own temp
-        # folder, and two updaters that fell back differently, or only one of them, both ran (D70). Whoever
-        # cannot use the lock does not update; on a desk, name another file in PVJ_UPDATE_LOCK.
-        raise UpdateError("cannot use the update lock %s: %s" % (path, e.strerror or e))
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
+    except OSError:
+        return False
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_nlink != 1:
+        os.close(fd)
+        return False
     f = os.fdopen(fd, "r+")
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -676,3 +686,47 @@ def take_lock(path=None):
         f.close()
         return None
     return f
+
+
+def take_lock(path=None, old=None):
+    """One update at a time, whoever started it (the panel, a terminal). Returns what is held (close it to let
+    go), or None when another update holds it. Raises UpdateError when the lock file cannot be used at all.
+    `old` is the lock's earlier name, taken as well where the lock is the default one (see _old_lock)."""
+    import fcntl
+    named = path or os.environ.get("PVJ_UPDATE_LOCK")
+    path = named or DEFAULT_LOCK
+    if old is None and not named:
+        old = OLD_LOCK
+    folder = os.path.dirname(path) or "."
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        if not os.path.isdir(folder):
+            os.makedirs(folder, mode=0o755, exist_ok=True)      # a terminal before any update unit ever ran
+            os.chmod(folder, 0o755)                             # as the units make it, whatever the umask
+        # Whoever can make a name in the folder can put a file of their own where the lock goes, or take the
+        # lock's name away, and then two updaters hold different files and both run.
+        if stat.S_IMODE(os.stat(folder).st_mode) & 0o022:
+            raise UpdateError("cannot use the update lock %s: others can write in its folder" % path)
+        fd = os.open(path, flags, 0o600)
+    except OSError as e:
+        # There is one lock file and everybody uses it. This used to fall back to a file in the caller's own temp
+        # folder, and two updaters that fell back differently, or only one of them, both ran (D70). Whoever
+        # cannot use the lock does not update; on a desk, name another file in PVJ_UPDATE_LOCK.
+        raise UpdateError("cannot use the update lock %s: %s" % (path, e.strerror or e))
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        os.close(fd)
+        raise UpdateError("cannot use the update lock %s: it is not a plain file with one name" % path)
+    f = os.fdopen(fd, "r+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    if not old:
+        return _Held(f)
+    other = _old_lock(old)
+    if other is None:
+        f.close()
+        return None
+    return _Held(f, other) if other else _Held(f)
