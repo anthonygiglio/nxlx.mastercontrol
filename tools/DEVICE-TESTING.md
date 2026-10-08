@@ -93,6 +93,23 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 | L12 | With lights on on every controller: `sudo systemctl stop pvj-web`, look, then `sudo systemctl start pvj-web` | Every light on every controller goes dark within about two seconds of the stop, and comes back after the start | The panel is away meanwhile |
 | L13 | `journalctl -u pvj-web -b \| grep -i -e light -e midi` | | No permission errors, no line that repeats |
 
+### A pairing code from a controller (D61)
+
+**Never run on a box or with a real controller.** Before: MIDI is on, a Launchpad Mini is plugged in (or give "Show a one-time presenter code" to a button of another controller on its card), a screen is on the box, one phone is paired with full access and a second phone is not paired.
+
+| # | Do | See on the box's display | See on the paired phone (System > People and codes) |
+| --- | --- | --- | --- |
+| C1 | With "A code from a controller" off: hold the eighth pad of the top row for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
+| C2 | Switch "Presenter codes from a controller" on (answer the question). Tap the pad | Nothing | The second switch appears |
+| C3 | Hold the pad for 4 seconds, let go | The address, "One-time presenter code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time presenter code is on the box's display now", and End this code. No digits |
+| C4 | On the second phone open the address, type the code | The code leaves the display within a second or two | "The last one: a presenter code, just now, used by the device ..." and the phone is in Paired devices as Presenter |
+| C5 | Hold again, then press the pad once | The code appears, then goes at the press | "hidden at the controller" |
+| C6 | Hold again, wait 2 minutes | The code goes by itself | "ran out unused" |
+| C7 | Hold the pad for 15 seconds, let go. Then lay something on the pad for a minute | Nothing either time | |
+| C8 | Hold again, then press End this code on the phone | The code goes | "ended from the panel" |
+| C9 | `journalctl -u pvj-web -b \| grep "controller code"` on the Pi | | A line for each code shown and each refusal, and no line with 6 digits in it |
+| C10 | Other controllers: give the action to a button on the card, repeat C3. On a nanoKONTROL2 say whether the button needs holding or two presses | | |
+
 ### Runtime folders: who owns what in /run (D45)
 
 **Not run on any box yet.** The change that gives each service its own runtime folder ran in CI only: the unit tests, and one job that runs the installer for real as root under the runner's systemd (`tests/real_install_test.sh`: no display, not a Pi, not the box's systemd). This list is the proof for a box; until someone has run it, nothing may be claimed about how the folders behave on hardware.

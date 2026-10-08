@@ -99,7 +99,7 @@ The **original** Launchpad Mini, not the MK3 (which sends other numbers and has 
 | Grid rows 1 and 2, columns 1 to 6 | Notes 0 to 5, 16 to 21 | Bank A, pads 1 to 6 and 7 to 12 |
 | Grid rows 3 and 4, columns 1 to 6 | Notes 32 to 37, 48 to 53 | Bank B, pads 1 to 12 |
 | Grid rows 5 and 6, columns 1 to 6 | Notes 64 to 69, 80 to 85 | Bank C, pads 1 to 12 |
-| Grid row 1, columns 7 and 8 | Notes 6, 7 | Effect on / off; spare |
+| Grid row 1, columns 7 and 8 | Notes 6, 7 | Effect on / off; show a one-time presenter code (hold 3 seconds and let go; does nothing until switched on, see "A pairing code on the display") |
 | Grid row 2, columns 7 and 8 | Notes 22, 23 | Previous effect, next effect |
 | Grid rows 3 to 6, columns 7 and 8 | Notes 38, 39, 54, 55, 70, 71, 86, 87 | Effect control 1 to 8, as a press (as in row 8 for a shader) |
 | Grid row 7 | Notes 96 to 103 | Shader preset 1 to 8 |
@@ -231,7 +231,7 @@ A light follows **what its control does now**: if you put another action on a co
 | Fade in | (marks the button) | | a fade in is running |
 | Room scene 1 to 8, a scene by id | the scene exists (and Room is on) | | it is being applied |
 | Controllers' bank: before, next | | a place mark: the left button on bank A, both on B, the right one on C | |
-| Nothing, a spare control, a level | | | |
+| Nothing, a spare control, a level, a pairing code on the display | | | |
 
 "Which clip is playing" is decided by the file's name. Two pads with the same clip both show it.
 
@@ -332,6 +332,7 @@ A mapping belongs to one controller (by its ALSA card id, such as `nanoKONTROL2`
 | Effect control 1 to 8 (`effect_control_1` ...) | follows the control | The n-th input of the effect that is on, exactly as a shader control does for a shader |
 | Effect on / off (`effect_toggle`) | trigger | Takes the effect off; with none on, puts the one that was on last back (the first of the list if there was none) |
 | Previous effect, Next effect (`effect_prev`, `effect_next`) | trigger | The neighbour in the list of effects, put on in place of the one that is on (the first or the last when none is) |
+| Show a one-time presenter code, Show a one-time full access code (`code_join`, `code_owner`) | hold | Held for 3 to 10 seconds and let go: the box draws a pairing code on its own display for 2 minutes. Off until switched on under People and codes. See "A pairing code on the display" |
 | Nothing (`none`) | trigger | Does nothing: switches one control of a standard layout off |
 
 A fourth kind of action, **Apply a Room scene** (`scene`, a trigger that carries the scene's id), is assigned from the Room screen: under "Set up the room" each scene has a MIDI button that starts the same Learn. The mapping is then listed here like the others (as "scene"), and removed here. It needs the Room module; a scene removed later leaves a mapping that does nothing, and the log says so. See [ROOM.md](ROOM.md).
@@ -342,6 +343,39 @@ The **effect** actions are the same in every way: they need the Shaders and Vibe
 
 A trigger fires once per press (a note-on, or a CC that goes from below 64 to 64 or more), not on release or repeat, and a button cannot fire again within a quarter of a second, so contact bounce cannot repeat it. Right after Learn captures a control, that control is ignored for about half a second so a fader you are still moving does not run its old mapping. A fader sweep is thinned to 20 changes a second and the last position always lands.
 
+## A pairing code on the display
+
+For when you stand at the box with a controller and no phone or laptop that is paired. **Hold** the control that has the action for **3 to 10 seconds and let go**: the box draws a one-time code on its own display, with its address, for 2 minutes. On the new phone open the address, type the code in the "6 digit code" field of the pairing page (or scan the QR code), and it is paired.
+
+**It is off until a full-access device switches it on**: System > People and codes > "A code from a controller". There are two switches, because there are two actions:
+
+| Action | Pairs one device as | Switch |
+| --- | --- | --- |
+| Show a one-time presenter code (`code_join`) | Presenter (can play and mix) | "Presenter codes from a controller" |
+| Show a one-time full access code (`code_owner`) | Owner (everything), like the PIN | "Full access codes too", which is only there while the first is on |
+
+Anyone who can reach a controller plugged into the box can do this once it is on, so decide with the room in mind. A presenter code gives a stranger at the controller little they did not have (the controller already plays and mixes), except that the paired phone keeps working after they walk away, until you remove it from Paired devices. A full access code gives everything.
+
+**The rules.**
+
+- **A hold that ends, not a press.** Nothing happens when the control goes down. The code is asked for when it comes up again, and only if it was down for 3 to 10 seconds. So a tap does nothing, a stuck note does nothing (it never ends), something left lying on a pad does nothing (it ends too late or never), and a control held down does not repeat. There is no sign on the display or the controller that 3 seconds have passed: count to four and let go. The hold is timed by when the box read the press and the release from the controller, not by when it got round to them: one part of the box only reads and notes the time, another acts, so a tap stays a tap even while the box waits seconds for the player on another pad. A hold is also forgotten, with no code, when Learn starts or ends, when a mapping is saved or a switch on the MIDI page changes, and when MIDI is switched off: let go and hold again.
+- **A button, not a fader.** A control that sends a note is held as said. A control that sends a controller number (the nanoKONTROL2's buttons) must send 127 when it goes down and 0 when it comes up, with nothing between; any other value ends the hold with no code. That is what a button set to Momentary sends, and what no fader or knob can send, so a fader given the action by Learn does nothing. A nanoKONTROL2 button with other On and Off values (changed in Korg's editor) does not work for this.
+- **Once, 2 minutes.** The code pairs one device and is gone. Unused, it stops working after 2 minutes and leaves the display by itself.
+- **Press again to hide it.** Any press of a control with one of the two actions takes a showing code off the display and ends it, at once and without a hold. That press starts no new code; hold again for a new one.
+- **6 an hour**, both kinds together, counted whether or not they were used. After that the display says "No more codes from a controller for now" with the minutes to wait, for a few seconds.
+- **Wrong guesses count like wrong PINs**: five from one phone, or twenty in all, and the box takes no PIN and no code for a while. A paired full-access device can lift that (Unblock joining); from the controller you cannot. **So someone on the network who types twenty wrong codes can keep your code from working**: after twenty wrong guesses nobody pairs for 5 minutes, which is longer than a code lasts. The box does not weaken that lock for the controller. It tells you instead: while pairing is locked, a hold shows "Pairing is locked for 5 minutes after wrong guesses. No code was made." and makes none (and counts none); if the lock is shorter than a code's 2 minutes the code is shown with that line under it; and a code that is already showing gets the line when a lock begins. Wait it out, or lift it from a paired device.
+- **Devices paired this way.** A presenter paired with a code from a controller is forgotten once it has not opened the panel for 7 days, like a guest (anyone at the controller can make such a device, so they must not pile up; a presenter paired with a code you made on the panel stays, as before). A full-access device paired this way stays until you remove it, and it never takes one of the 20 places kept for the PIN: it is counted with the guests and presenters among the other 180, in whatever order devices were paired, so when those 180 are taken no code of either kind is made, no guest or presenter joins, and the PIN still pairs. The code is used up only once its device is in the list; if the list filled up that instant, the code is still good.
+- **On the display only.** The digits are never in an answer of the API (a full-access device sees that a code is showing, which kind, since when and for how long, never the code), never in the log, never sent to a controller: a control with one of these actions has no light, and nothing about a code goes out over MIDI, OSC, DMX or to another box. While the code shows, the preview picture a guest or presenter gets has no on-screen text. The presenter kind is drawn with a QR code; the full access kind is text only, like the PIN.
+- **Only from a controller plugged into the box by USB.** These two actions are not calls into the API, so nothing that reaches the box through the API can ask for a code: not OSC, not DMX, not the schedule, not a Room scene, not a paired device, not remote support. The box also checks that the controller's sound card has a USB id; a MIDI port with none (a virtual or network port) is refused and the log says so. **The USB id proves a USB MIDI interface, not a person.** A DIN to USB interface (with any MIDI cable behind it), a wireless MIDI dongle, and a computer that presents itself as a USB MIDI device all have one and all count. Whatever is plugged into the box's USB ports can ask, once the switch is on. (The press that hides a code is taken from any MIDI port and with the switch off too: it can only end a code.)
+- **A full-access device sees it and can end it.** The card on People and codes says "A one-time presenter code is on the box's display now", with **End this code**, and afterwards what became of the last one (used, and by which device; ran out; hidden at the controller; ended from the panel). Switching either switch off ends a code that switch allowed. Neither the switches nor End work through remote support.
+- **Not in a settings file.** The two switches are never exported or imported, and a factory reset switches both off.
+
+**Giving a control the action.** On a controller's card (System > MIDI controller) tap a pad or a button and choose the action, or use Learn. A fader, a knob and a program change cannot have it (a fader given it through Learn does nothing, see "A button, not a fader"). **On a Launchpad Mini the eighth pad of the top row (note 7), the one pad that was spare, shows a presenter code**; while the switch is off it does nothing. No layout has the full access code: put it on a control yourself if you want it. The nanoKONTROL2 has no spare button (its one spare control is fader 8). The MIDI Mix's one spare button is Solo, which is held down while playing to reach the Solo+Mute row, so a hold on it would show a code by accident; it stays spare. On those two, give the action to a button you can do without.
+
+If nothing happens: is MIDI on, is the switch on (People and codes), did you hold for at least 3 seconds and then let go, and is the player running (the code is drawn by the player; if it cannot draw, no code is made). `journalctl -u pvj-web | grep "controller code"` says why a request was refused.
+
+**None of this has run on the Pi or met a real controller.** It ran in unit tests with a fake clock, a fake player and messages handed to the hub.
+
 ## Built-in map
 
 On unless you turn it off (System > MIDI controller > Built-in map). It exists so a plain pad controller works with no setup: notes 36 to 71 (and program changes 0 to 35) play pads 1 to 36 (A is 1 to 12, B 13 to 24, C 25 to 36); notes 72 to 76 are stop, pause, blackout, fade out and reset; CC 20 to 24 are opacity, size, position, speed and volume; CC 25 is blackout while up. Real controllers rarely use these numbers (a Novation Launchpad Mini sends notes 0 to 120 and CC 104 to 111), so a controller without a profile is taught with Learn. The built-in map is not used for a controller whose standard layout is on.
@@ -350,6 +384,7 @@ On unless you turn it off (System > MIDI controller > Built-in map). It exists s
 
 - Only paths of the form `/dev/snd/midiC<n>D<n>` are ever opened, and only if they are character devices (no links).
 - Only the actions in the table are reachable: nothing shuts down, reboots or changes settings (the one setting a controller can change is the Vibes dwell time, between 15 seconds and an hour).
+- One action hands out access: the pairing code on the display. It is off until a full-access device switches it on, needs a hold, and has its own rules ("A pairing code on the display").
 - At most 50 commands a second reach the player, whatever the controllers send, and a pad or button can fire at most four times a second (a single "play" is many round trips to the player, so the second limit is the one that matters for pads).
 - The web service reaches the device through systemd: it needs the `audio` group and access to ALSA devices, and the unit has both (`DeviceAllow=char-alsa rw`: read for the controls, write for the lights; D53).
 - Writing: only to a controller that matched a profile with a `lights` section, only the fixed messages of that section, at most 200 a second per controller. See "Lights > How it works".
@@ -362,6 +397,8 @@ On unless you turn it off (System > MIDI controller > Built-in map). It exists s
 - Mapping to pads by name, banks that follow the controller's own bank buttons, and relative (endless) encoders.
 
 ## Verified, and not
+
+**A pairing code on the display (2026-10-07): not tried on the Pi and not on any real controller.** The hold, the two switches, the limits, the display's text and the refusals ran in unit tests only (`tests/test_controller_code.py`). Not known from hardware: whether each controller's buttons send a release the box sees as one (a nanoKONTROL2 button set to Toggle in Korg's editor sends its "off" only at the next press, so its gesture is press, wait, press), whether `/proc/asound/card<n>/usbid` is there for each controller on the Pi's kernel (without it the request is refused), and how the text reads on a projector.
 
 Verified on a real Raspberry Pi 4 (2026-09-30): the module reads a controller through the systemd sandbox and handled 112 messages in a few seconds from a Launchpad Mini. Three controllers (Korg nanoKONTROL2, Akai MIDI Mix, Novation Launchpad Mini) enumerate. **Learn, the multi-controller hub and the new map have only run against pipes standing in for controllers and the browser test, not yet against the real hardware.** The Vibes and shader actions have run only in unit tests with a fake player and a fake clock: no real controller has sent them.
 

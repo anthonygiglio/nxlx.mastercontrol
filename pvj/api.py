@@ -166,6 +166,8 @@ class Api:
         self.scheduler = None     # Scheduler or None
         self.autostart = None     # Autostart or None
         self.pinscreen = None     # PinScreen or None
+        from . import controllercode as controllercode_mod
+        self.controller_codes = controllercode_mod.ControllerCodes(self, log=lambda line: self.log(line))   # a code on the display from a MIDI controller (D61)
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
         self.capture = None       # Capture or None (live input from a USB capture device)
         self._import = {}         # the USB copy running or last run
@@ -287,6 +289,7 @@ class Api:
             raise ApiError(409, str(e))
         except AuthError as e:
             raise ApiError(429 if e.retry_after else 403, str(e), e.retry_after)
+        self.controller_codes.used()       # if it was the code shown from a controller, it leaves the display now
         return {"device": dev, "token": token}
 
     def session(self, body, device, client):
@@ -309,7 +312,8 @@ class Api:
         if ps is None:
             return False
         try:
-            return bool(ps.status()["showing"]) or ps.auto_wanted()
+            shown = getattr(ps, "controller_up", None)        # a code asked for from a MIDI controller (D61)
+            return bool(ps.status()["showing"]) or bool(shown and shown()) or ps.auto_wanted()
         except Exception:
             return True                           # when unsure, treat it as shown: a snapshot then leaves the text out
 
@@ -319,11 +323,29 @@ class Api:
         (no picture yet) is remembered for a few seconds too, so requests cannot queue up behind a slow player.
         A player that runs and plays nothing answers 409 "nothing is on the screen right now", not an error.
         While the PIN or join codes are on the display, a device without full access gets the video only (no
-        on-screen text or QR codes): otherwise a guest could read the full PIN or a presenter code off a snapshot."""
-        with_text = not self.access_on_screen() or Auth.allows(device, "full")
+        on-screen text or QR codes): otherwise a guest could read the full PIN or a presenter code off a snapshot.
+        That is decided under the lock and looked at again after the picture is taken: a code drawn between the
+        look and the screenshot (a hold on a controller can do that at any moment) would otherwise be in a picture
+        served to a guest, and kept for the next ones. Such a picture is thrown away and taken again without text.
+        A kept picture with text is given to a device without full access only if nothing secret was on the display
+        both before and after it was taken."""
+        full = Auth.allows(device, "full")
         with self._preview_lock:
+            with_text = full or not self.access_on_screen()
+            data = self._preview_take(with_text, full)
+            if with_text and not full and not self._preview[3]:         # something secret appeared while it was taken
+                self._preview = None
+                data = self._preview_take(False, full)
+            return data
+
+    def _preview_take(self, with_text, full):
+        """One picture (or the kept one). Call with `_preview_lock` held. What is kept: (when, the picture or the
+        error, with text or not, and whether nothing secret was on the display before and after it was taken)."""
+        if True:
             now = time.monotonic()
             cached = self._preview if self._preview and self._preview[2] == with_text else None
+            if cached and with_text and not full and not (len(cached) > 3 and cached[3]):
+                cached = None                     # taken while a PIN or code was up (for a full-access device): not for this one
             if cached and now - cached[0] < PREVIEW_MIN_INTERVAL:
                 if isinstance(cached[1], ApiError):
                     raise ApiError(cached[1].status, cached[1].message)
@@ -331,6 +353,9 @@ class Api:
             # mpv writes the picture, so it is in the player's own folder, where nobody else can leave a link.
             path = getattr(self.player, "preview_path", None) or os.path.join(self.player.rundir, paths.PREVIEW)
             ours = os.path.dirname(os.path.abspath(path)) == os.path.abspath(self.player.rundir)
+            # nothing secret can be in it, as far as is known before (a device without full access is only here
+            # with text when the caller has just looked)
+            clean = not with_text or not full or not self.access_on_screen()
             try:
                 before = None
                 if ours:                          # one folder for everything (a desk, the tests): start clean
@@ -366,13 +391,14 @@ class Api:
                 if not data.startswith(b"\xff\xd8") or len(data) > PREVIEW_MAX_BYTES:
                     raise ApiError(503, "the player did not produce a picture")
             except ApiError as e:
-                self._preview = (time.monotonic(), e, with_text)
+                self._preview = (time.monotonic(), e, with_text, True)
                 raise
             except OSError as e:
                 err = ApiError(503, "no picture to show: %s" % (e.strerror or e))
-                self._preview = (time.monotonic(), err, with_text)
+                self._preview = (time.monotonic(), err, with_text, True)
                 raise err
-            self._preview = (time.monotonic(), data, with_text)
+            clean = clean and (not with_text or not self.access_on_screen())      # and none appeared while it was taken
+            self._preview = (time.monotonic(), data, with_text, clean)
             return data
 
     def _nothing_on_screen(self):
@@ -2018,7 +2044,43 @@ class Api:
             mine = [i for i in screen["items"] if i in self.PRESENTER_ITEMS]
             screen = {"showing": bool(mine), "items": mine, "seconds_left": screen["seconds_left"] if mine else 0,
                       "other": any(i not in self.PRESENTER_ITEMS and i != "address" for i in screen["items"])}
-        return {"codes": codes, "screen": screen, "screen_available": self.pinscreen is not None}
+        out = {"codes": codes, "screen": screen, "screen_available": self.pinscreen is not None}
+        if Auth.allows(device, "full"):       # the code a MIDI controller can put on the display (D61): never its digits
+            out["controller"] = self.controller_codes.state()
+        return out
+
+    def set_controller_code(self, body, device, client):
+        """Full access only, and (like every /api/access route) never through the support tunnel.
+        {"enabled"?: bool, "owner"?: bool}: may a hold on a MIDI controller put a one-time presenter code on the
+        display, and may it put a full-access code there. {"cancel": true}: end the code that is on the display.
+        There is no way to MAKE such a code here: only a controller on the box does that (controllercode.py)."""
+        from . import controllercode as controllercode_mod
+        if body.get("cancel") is True and len(body) == 1:
+            if not self.controller_codes.cancel():
+                raise ApiError(409, "no code from a controller is on the display")   # not 404: a page that asks a moment late is not looking for a missing thing
+            self.log("pvj-web: controller code: ended by device %s (from %s)" % (device.get("id"), client))
+            return self._access_state(device)
+        if not body or any(k not in ("enabled", "owner") for k in body):
+            raise bad("send enabled and/or owner (true or false), or cancel: true")
+        with self.settings.lock:
+            current = self.settings.data.get("controller_code")
+            current = dict(current) if isinstance(current, dict) else {}
+            try:
+                new = controllercode_mod.validate(body, current)
+            except controllercode_mod.ControllerCodeError as e:
+                raise bad(str(e))
+            if not self._still_paired(device):
+                raise ApiError(401, "this device is no longer paired")
+            self.settings.data["controller_code"] = new
+            try:
+                self.settings.save()
+            except OSError as e:
+                self.settings.data["controller_code"] = current      # memory and disk must not disagree
+                raise ApiError(500, "could not save: %s" % (e.strerror or e))
+        self.controller_codes.switched()         # outside the settings lock: a code the new setting does not allow goes
+        self.log("pvj-web: controller code: set to %s%s by device %s (from %s)"
+                 % ("on" if new["enabled"] else "off", ", full access codes allowed" if new["owner"] else "", device.get("id"), client))
+        return self._access_state(device)
 
     def get_access(self, body, device, client):
         return self._access_state(device)
@@ -2422,6 +2484,7 @@ class Api:
             ("POST", "/api/access/code"): ("live", self.make_join_code),
             ("POST", "/api/access/cancel"): ("live", self.cancel_join_code),
             ("POST", "/api/access/screen"): ("live", self.show_access),
+            ("POST", "/api/access/controller"): ("full", self.set_controller_code),      # the switches and Cancel only (D61)
             ("GET", "/api/inputs"): ("view", self.get_inputs),
             ("GET", "/api/overlay"): ("view", self.get_overlay),
             ("POST", "/api/overlay"): ("live", self.set_overlay),

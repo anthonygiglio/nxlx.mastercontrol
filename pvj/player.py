@@ -432,7 +432,17 @@ class Player:
         self.ipc.request("overlay-add", oid, int(x), int(y), path, 0, "bgra", int(width), int(height), int(width) * 4)
 
     def overlay_remove(self, oid):
-        self.ipc.request("overlay-remove", oid)
+        """Take an overlay off, and remove the file overlay() wrote for it: for a QR code those pixels are an access
+        code, which must not lie in the runtime folder after it ended. The file goes even if the player does not
+        answer (it has read the pixels already or never will)."""
+        try:
+            self.ipc.request("overlay-remove", oid)
+        finally:
+            if isinstance(oid, int) and 0 <= oid < 64:
+                try:
+                    os.unlink(os.path.join(self.rundir, "overlay-%d.bgra" % oid))
+                except OSError:
+                    pass
 
     def overlay_file(self, oid, path, width, height):
         """Draw a ready raw BGRA file (width x height, at 0, 0) over the picture until overlay_remove(oid)."""

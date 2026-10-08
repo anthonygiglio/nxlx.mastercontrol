@@ -4,6 +4,60 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08 (a third, narrow read of the fixes, and the first run of the browser test on `controller-code`)
+
+Four small things in the two-thread reader and the device count, each with a test written first and seen to fail (`tests/test_midi_threads.py`: `ThirdPass`, `AfterALoss`, `Reserve`).
+
+1. **Medium: an error swallowed on a release left the hold armed**, so a later tap could make a code. A real message that fails is now followed by "lost", and the hub forgets what is held and which pads are down.
+2. **Low to medium: the worker's test-then-clear of the lost flag could wipe out a newer loss.** Only the reader touches the flag now; when nothing else comes it puts the marker itself as soon as there is room.
+3. **Low: a full access code could pair device 201.** A device paired from a controller also needs the list as a whole to have room.
+4. **Low: a scan could open a device again before the old reader had closed it.** A path whose input was halted in a pass gets its new one in the next pass.
+
+A side effect of the second pass is undone: on "lost" the hub forgets which controls are down only for what sends notes. A knob or fader mapped to a trigger rests at a value, and forgetting that fired the trigger again at its next step.
+
+**The browser test ran in CI for the first time with this branch and failed**, rightly: on a laptop People and codes is a grid of two columns, and the new card pushed the devices card under the first one. The page now puts "Let someone in" and "A code from a controller" in the left column and the devices beside both (one rule, for every look; a phone keeps the order access, controller code, devices). The test's own assertion is unchanged and has new ones beside it. Not run here: only `node --check`.
+
+**Seen and left.** Guests and presenters can pass 200 devices in all: their rule counts only the 180 shared places, not the total, so 160 of them beside 40 PIN devices still admit one more. That is so on master with this feature off, and changing it is a decision of its own.
+
+- The second run of the browser test passed the layout step and failed at its last check, "console problems": the new step asks the box to end a code when none is showing, the box answered 404, and a browser writes every 404 to its console, which the test watches for missing files. Ending a code that is no longer there now answers 409, as the API does elsewhere when the state has moved on; the 404 watch is as it was. (The coordinator, from the CI log.)
+
+## 2026-10-07, later still (a second review, of the fixes: two medium, three low, all fixed on `controller-code`)
+
+The two-thread reader from the first review brought faults of its own. The tests are in `tests/test_midi_threads.py` and run the real threads on a pipe; each was written first and seen to fail before its fix.
+
+1. **Medium, every box with MIDI on: a worker that died left the controller deaf.** An exception from a handler (the API catches only its own errors, so a failed save can come through) ended the worker; the reader lived on, `alive` looked only at the reader, and the scan never replaced the input. Now one bad message ends only itself (`MidiInput._hand`, one log line in ten seconds with the kind of error), and `alive` needs both threads. Tests: `WorkerTest`, `HubAndWorker`.
+2. **Medium, with the feature on: "messages were lost" was handled before the older messages still queued**, so a tap after an overflow could be timed from an old press and make a code. The marker now travels in the queue, at the place of the loss, and on it the hub forgets which controls are down as well as what is held. Test: `LostInOrder`, with a queue of four that really fills; before the fix it made a code.
+3. **Low: the PIN's 20 places could be taken in one order** (20 full access codes first, then 180 guests). A full-access device paired from a controller now counts with the guests and presenters for all three. Tests: `Reserve`, both orders.
+4. **Low: a slow fader flush on a tick forgot a real hold.** Ticks from an input that stamps carry a time, and count as stamped. Tests: `TickFlush`.
+5. **Low: stopping waited up to 6 seconds a controller, one after another.** All inputs are told first, then waited for against one deadline (`stop_inputs`, 3 seconds in all). Test: `StopTest`.
+
+Also from the reviewer's list: a fast sweep of 1500 messages arrives whole and in order through the two threads, and stop, unplug and start again leave no thread behind (`OrderTest`). Not run: the browser test, the Pi, a real controller.
+
+## 2026-10-07, later (the independent review of the controller code: two medium, eight low, all fixed on `controller-code`)
+
+Nothing high. Each finding and what was done; the tests are in `tests/test_controller_code_review.py`, one class per finding. They were written with the fixes, from the reviewer's sequences; they were not each run against the code before its fix.
+
+1. **Medium: a tap could count as a hold when the thread that handles MIDI was waiting for the player.** `MidiInput` now has a thread that only reads and stamps each message with the clock, and a second that hands them on; the hold is timed from the stamps (`plan(..., at)`). For a caller with no stamps, calls slower than half a second end what is held. A full queue ends it too. Tests: `ReadTime`.
+2. **Medium/low: the full access switch could come back by itself** from a hand-edited `{"enabled": false, "owner": true}`. One function, `auth.controller_setting`, now says what the section means; `validate`, the diagnostics file and the start of the box (which rewrites the section) all use it. Tests: `OwnerSwitch`.
+3. **Low: the look at the display and the screenshot were two steps.** Decided under the preview lock now, looked at again after the picture, retaken without text for a lesser device if something appeared; and a kept picture with text is not given to a lesser device unless nothing secret was up around it. Tests: `Snapshot`.
+4. **Low: a release swallowed by Learn left the control held.** What is held is forgotten when Learn starts, ends or captures, when the map is saved, and when a MIDI switch changes. Tests: `LearnAndTheMap`.
+5. **Low: the lockout denies the code to the person at the box.** The lockout is untouched. The display says "Pairing is locked for N minutes after wrong guesses": instead of a code when the lock outlasts one, under the code otherwise. In `pvj/MIDI.md`. Tests: `Lockout`.
+6. **Low: the press that hides a code runs before the USB check and without the setting.** Left so, and said in the docstring of `MidiHub._local`; `pvj/MIDI.md` now says that a USB id proves a USB MIDI interface, not a person.
+7. **Low: a fader could carry the action through a personal mapping.** A controller number counts only as 127 down and 0 up with nothing between. Not "notes only": that would shut out every button of a nanoKONTROL2. Tests: `OnlyAButton`.
+8. **Low: devices paired this way were never pruned.** A presenter paired so goes after 7 unused days (a presenter from a join code does not expire, so there was nothing to match; the guest rule was used). A full-access device paired so cannot take the PIN's 20 places. Tests: `Devices`.
+9. **Low: the code was used up before its device was added.** Now after. A failed save no longer leaves a device in memory only. Tests: `Devices` (a race of two requests, a list that filled, a device that slipped in, a full disk).
+10. **Low leftovers.** `Player.overlay_remove` removes the QR code's file, also when the player is silent; `clear_qr` remembers a failure and each tick tries again; the diagnostics file's scrub list has the active code. Tests: `Leftovers`, `Diagnostics`.
+
+Also added from the reviewer's list: MIDI switched off in the middle of a hold, two controllers holding at once (one code at a time, the later replaces the earlier, both counted), the QR code drawn again after 15 seconds for a restarted player, and the `with_text` a lesser device's screenshot is really taken with. One word changed on the display: the comma in "Scan the QR code, or type it" is gone, since a comma is not in the display's set of characters. Still not run: the browser test, anything on the Pi, any real controller.
+
+## 2026-10-07 (a pairing code on the display from a MIDI controller, D61; branch `controller-code`, not pushed, not merged)
+
+- The owner asked for "a way to pull up a join code or owner code from a controller if i dont have a paired device with me". Built: two MIDI actions (`code_join`, `code_owner`) that make the box draw a one-time code on its own display for 2 minutes; a box setting with two switches, off by default, on System > People and codes ("A code from a controller"), where a paired owner also sees that a code is showing and can end it. D61 has every choice and its cost; `pvj/MIDI.md` ("A pairing code on the display") has the rules as a person meets them.
+- The gesture is a hold of 3 to 10 seconds that ends with letting go. A stuck note, a tap and something left on a pad ask for nothing. The Launchpad Mini's one spare pad has the presenter code; the other two layouts had no button to give.
+- Where the code is: one slot in `pvj/auth.py`, apart from the join codes; `pvj/controllercode.py` holds the rules; `pvj/pinscreen.py` draws it while `auth` says it is active; `pvj/midi.py` has the hold and hands the request to the manager without the API (`MidiHub._local`). Settings schema 14.
+- Tests: `tests/test_controller_code.py`, 44 tests on a fake clock with a fake player. The unit tests were run on a Mac: 1491 tests, 15 failures, 15 errors, 89 skipped. One failure is this branch's and is open: `tests/test_effects.py`, `test_the_three_shipped_layouts_have_effect_controls_on_what_was_spare`, asserts that every layout still has a spare control, and the Launchpad Mini now has none (its last spare pad shows the presenter code). The other 29 are the Mac's (`mv -T`, `tar --sort=name`, no `SO_PEERCRED`) in `test_update`, `test_install`, `test_release` and `test_netd`, files this branch does not touch. **Not run: the browser test** (no Playwright here); a step for the new card was added to `tests/ui/panel.test.js` and one line to `tests/ui/signal-pages.js`, both only syntax-checked. **Nothing ran on the Pi or with a real controller**; `tools/DEVICE-TESTING.md` has a list, C1 to C10.
+- Open: an independent review before merging, since this is a new way to get access (files: `pvj/auth.py`, `pvj/controllercode.py`, `pvj/pinscreen.py`, `pvj/midi.py` from `HOLD_MIN` to `MidiHub._local`, `pvj/api.py` `set_controller_code` and `_access_state`, `pvj/boxcare.py` `NEVER`, the tests). The state "a code is on the display" of the new card is in no picture, because only a controller can make it. Seen in passing and left alone: `Auth._new_pin` replaces the whole `auth` section of the settings (LESSONS).
+
 ## 2026-10-07: six known small faults read again; four fixed, two were already fixed (#92)
 
 Pull request #92, branch `small-faults`. **Not merged** (the brief said so). **Nothing here ran on hardware**, in a browser or on a GPU: this Mac has no mpv, so every test of these changes is with a fake player, and the two GPU checks ran only in CI. Each fault was confirmed from the code before it was touched.
