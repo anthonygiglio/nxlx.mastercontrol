@@ -42,6 +42,11 @@ Branch `panel-file-not-delivered`, D68. The question came from the shell's branc
 - **The Mac's disk** was full twice during this session (see the lesson); nothing of another session was removed.
 - **To check on the Pi**, by whoever is next there: `ss -ltn` shows the panel's listener with a queue of 128 after the deploy (the second number of the Send-Q column); `nstat -az TcpExtListenOverflows TcpExtListenDrops` before and after a few phones open the panel together, on the old build and the new (on the old build the counters should move and the page should take a second longer; on the new they should stay); and one phone on the venue's Wi-Fi, to see that the page starts no later with `load.js` in its head.
 
+## 2026-10-08, the evening (CI's install retry met its first slow mirror, and lost)
+
+- On #102's second run the `effects-gpu` job for the Pi 4's kind of OpenGL failed in its install step with "ci-apt: gave up after 3 attempts": the lists came at once each time and the 48 MB of packages did not arrive in 90 seconds, three times, from `azure.archive.ubuntu.com`. So the retry of #101 failed sooner (under five minutes instead of ten) but cured nothing: the same runner asked the same slow mirror three times.
+- `tools/ci-apt.sh` now changes the mirror after a failed attempt: `azure.archive.ubuntu.com` becomes `archive.ubuntu.com` in the files apt reads its mirrors from. What an attempt downloaded stays in apt's cache, so the next one carries on. Not proven: no run has needed the second attempt since; the first slow mirror after this merges is its test. If Ubuntu's own archive is slow from that runner too, the step still fails, and a rerun is still the cure.
+
 ## 2026-10-08 (the ISF parser: comments before the header, and an input called `time`)
 
 Branch `isf-leading-comments`, not merged. D66 has the decision. **Run on the dev Mac only, where there is no mpv: the translator's text was checked, nothing was drawn. The GPU tests added here run in CI. Nothing ran on a box.**
