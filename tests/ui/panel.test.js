@@ -3032,7 +3032,7 @@ function startServer(env) {          // env: more for the harness's environment 
         try {
           await page.setViewportSize({ width: 390, height: 844 });
           await page.goto(base + '/');
-          await ws.roles({ owner: page, presenter: await person('Shell presenter', 'live'), guest: await person('Shell guest', 'view') }, call);
+          await ws.roles({ owner: page, presenter: await person('Shell presenter', 'live'), guest: await person('Shell guest', 'view') }, call, (line) => console.log(line));
         } finally { for (const c of people) await c.close().catch(() => {}); }
         console.log('the Workspace shell: ' + taps + ' screens opened by a press and ' + keys + ' with the keyboard, at 390, 768 and 1366 px; the Tab key alone came to every menu item and the strip (' + JSON.stringify(walked) + ' stops); menus, strip and roles held (' + ((Date.now() - began) / 1000).toFixed(1) + ' s)');
         await page.goto(base + '/');
