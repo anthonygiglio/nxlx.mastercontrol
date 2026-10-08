@@ -131,7 +131,7 @@ class Health:
         except Exception:
             st = {}
         if not st.get("running"):
-            return {"state": "bad", "text": "The player is not running; it restarts by itself within seconds. If not: System > About and power > Restart player now."}
+            return {"state": "bad", "text": "The player is not running; it restarts by itself within seconds. If not: Setup > About and power > Restart player now."}
         out = {"state": "ok", "playing": bool(st.get("path"))}
         try:
             ipc = self.api.player.ipc

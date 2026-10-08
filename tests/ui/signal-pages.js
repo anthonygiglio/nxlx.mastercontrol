@@ -28,12 +28,55 @@ const first = (e) => e.message.split('\n')[0];
 
 async function soft(t, what, promise) { try { return await promise; } catch (e) { t.notes.push(what + ': ' + first(e)); return null; } }
 async function has(t, pg, sel, ms) { return soft(t, 'waited in vain for ' + sel, pg.waitForSelector(sel, { timeout: ms || 8000 })); }
-async function tab(pg, name) { await pg.click('nav.tabs button:text-is("' + name + '")'); }
+// ---- moving about in the Workspace shell (D65) ----
+// A screen has a key, 'area/screen': play/pads, play/library, play/shaders, shape/controls, shape/effect,
+// shape/picture, shape/mapping, shape/sound, room/scenes, room/walls, room/guests, setup/index and setup/<the id of
+// a page>. The open one is on the workspace as data-screen. go() presses what a person would at this width: the
+// item of the side menu from 600 px; under 600 px the area's tab, then the screen in the row under the title (in
+// Setup: the row of the index). It waits until the screen has been drawn: a press reads the box's state and only
+// then draws (so "the screen is there" can be true of the one that is about to be replaced), except between the
+// screens that are parts of one build (Shape's Controls, Effect and Picture; Room's three), which only change
+// what is shown. Only plain selectors, and click, isVisible, evaluate and waitForFunction, are used.
+// What the five tabs of the panel before D65 are now: Live is play/pads (its transport is the strip on every
+// screen, its shader and effect strips are on shape/controls), Media is play/library, Mix is shape/picture (with
+// shape/controls, shape/effect, shape/mapping and shape/sound), System is setup/index, Room is room/scenes and
+// room/walls.
+const at = (pg) => pg.evaluate(() => { const m = document.querySelector('main.ws'); return m ? m.getAttribute('data-screen') : null; });
+const ONE_BUILD = [['shape/controls', 'shape/effect', 'shape/picture'], ['room/scenes', 'room/walls', 'room/guests']];
+async function go(pg, key) {
+  await pg.waitForFunction(() => !!document.querySelector('main.ws'), null, { timeout: 15000 });
+  const press = async (sel, want) => {                    // want: the key to arrive at, or an area ('room/': any of its screens)
+    const from = await at(pg);
+    const kept = !!from && ONE_BUILD.some((g) => g.indexOf(from) >= 0 && (g.indexOf(want) >= 0 || (want.slice(-1) === '/' && from.indexOf(want) === 0)));
+    if (!kept) await pg.evaluate(() => { const old = document.querySelector('main.ws > .screen'); if (old) old.setAttribute('data-before-go', ''); });      // (the screen is what is replaced, not the workspace)
+    await pg.click(sel);
+    await pg.waitForFunction(([k, fresh]) => {
+      const m = document.querySelector('main.ws'), now = m && m.getAttribute('data-screen');
+      return !!now && (k.slice(-1) === '/' ? now.indexOf(k) === 0 : now === k) && !(fresh && m.querySelector(':scope > .screen[data-before-go]'));
+    }, [want, !kept], { timeout: 15000 });
+  };
+  const side = '#wsside [data-go="' + key + '"]';
+  if (await pg.isVisible(side)) return press(side, key);
+  const area = key.split('/')[0], id = key.split('/')[1];
+  if (area === 'setup') {
+    if (key === 'setup/index' || (await at(pg)) !== 'setup/index') await press('#tab-setup', 'setup/index');     // the tab of Setup is always its index
+    if (key !== 'setup/index') await press('#nav-' + id, key);
+    return;
+  }
+  if (((await at(pg)) || '').split('/')[0] !== area) await press('#tab-' + area, area + '/');      // the area comes back on the screen it was left on
+  if ((await at(pg)) !== key || !ONE_BUILD.some((g) => g.indexOf(key) >= 0)) await press('#sub-' + area + '-' + id, key);
+}
+// The strip shows four of its buttons on a phone: More opens the rest (the place in the clip, back and forward 10
+// seconds, Fade in, Fade out, Freeze). It stays open across screens, so a step that needs them opens it once.
+async function stripOpen(pg) {
+  if (await pg.isVisible('#wsmore') && (await pg.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded'))) !== 'true') await pg.click('#wsmore');
+}
 async function sysIndex(pg) {
-  if (await pg.locator('#sysback').count()) await pg.click('#sysback');          // (from the Shaders page this may lead to Live)
-  if (!(await pg.locator('#sysindex').count())) await tab(pg, 'System');
+  if ((await at(pg)) !== 'setup/index') await go(pg, 'setup/index');
   await pg.waitForSelector('#sysindex');
 }
+// A page by the name of its row of the Setup index, as the owner finds it there. (Shaders and Vibes, Projection
+// mapping and Sound open as screens of Play and Shape, with a Back to the index; the others are pages of Setup.)
 async function sys(pg, name) {
   await sysIndex(pg);
   await pg.click('.navrow:has(.navname:text-is("' + name + '"))');
@@ -41,7 +84,7 @@ async function sys(pg, name) {
 }
 async function home(t) {                                // the panel reads which modules are on when it loads
   await t.page.goto(t.base + '/');
-  await t.page.waitForSelector((t.plain ? '' : 'html[data-style="signal"] ') + 'nav.tabs');      // t.plain: the caller is in the default look (the width sweep)
+  await t.page.waitForSelector((t.plain ? '' : 'html[data-style="signal"] ') + 'main.ws');      // t.plain: the caller is in the default look (the width sweep)
 }
 const projectors = async (t) => (await get(t, '/api/projectors')).projectors || [];
 const powerOf = (p) => (p.status && p.status.ok ? p.status.power : p.status && p.status.ok === false ? 'no answer' : '');
@@ -378,7 +421,7 @@ function pages() {
   return list;
 }
 
-module.exports = { setUp, pages, closeOthers, sys, sysIndex, WALLS };
+module.exports = { setUp, pages, closeOthers, sys, sysIndex, go, at, stripOpen, WALLS };
 
 // What one screen must hold in Signal (the rules are in pvj/THEMES.md). Returns what is wrong, as sentences; an
 // empty list is a pass. o: { area (null before pairing), light (Signal light) }.

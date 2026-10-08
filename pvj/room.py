@@ -802,7 +802,7 @@ class Room:
                 place = at[0] if at else len(items) - 1
                 if key == "group" and isinstance(item.get("projectors"), list) and not all(
                         isinstance(p, str) and p in entries for p in item["projectors"]):
-                    raise bad("a group can only have projectors from the list under System > Projectors")
+                    raise bad("a group can only have projectors from the list under Setup > Projectors")
             elif "remove_group" in body:
                 if not any(g["id"] == body["remove_group"] for g in cfg["groups"]):
                     raise ApiError(404, "no such group")

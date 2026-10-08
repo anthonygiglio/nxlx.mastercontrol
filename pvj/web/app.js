@@ -4149,11 +4149,23 @@
     return { head: head, sub: sub, side: side, tabs: tabs, key: key };
   }
   var NAV_ID = /^(side-|sub-|tab-)/;
+  // The side menu is longer than a laptop's window (Setup has a page per row) and scrolls by itself: it stays where
+  // it was across a redraw, and the open screen's item is brought into it when it is outside.
+  function sideAt() { var el = document.getElementById('wsside'); return el ? el.scrollTop : 0; }
+  function sideKeep(at) {
+    var el = document.getElementById('wsside'), cur = el && el.querySelector('[aria-current="page"]');
+    if (!el) return;
+    el.scrollTop = at;
+    if (!cur || !el.clientHeight) return;
+    var top = cur.offsetTop, bottom = top + cur.offsetHeight;      // (the menu stays put, so it is what its items are measured from)
+    if (top < el.scrollTop) el.scrollTop = Math.max(0, top - 8);
+    else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight + 8;
+  }
   // The menus are drawn again in place (a screen of the same build was chosen, or a page of Setup was opened): the
   // item that was pressed is found again by its id and keeps the cursor; if it is not shown at this width any more,
   // the screen itself takes it.
   function redrawChrome() {
-    var focus = document.activeElement && document.activeElement.id;
+    var focus = document.activeElement && document.activeElement.id, at = sideAt();
     var c = chrome(!!document.getElementById('syspage'));
     ['wshead', 'wssub', 'wsside', 'wstabs'].forEach(function (id, i) {
       var old = document.getElementById(id), now = [c.head, c.sub, c.side, c.tabs][i];
@@ -4163,6 +4175,7 @@
     if (main) main.setAttribute('data-screen', c.key);
     S.menu = menuKey();
     markArea();
+    sideKeep(at);
     keepNavCursor(focus);
     patchLive();
   }
@@ -4182,7 +4195,7 @@
     stopTimers();
     keepNetForm();
     keepSyncForm();
-    var focus = document.activeElement && document.activeElement.id;
+    var focus = document.activeElement && document.activeElement.id, at = sideAt();
     app.textContent = '';
     if (!S.device) { S.landing = true; dock = null; app.appendChild(connect()); return; }
     // The Room area (room.js) is there while its module is on. A presenter or a guest starts on it when the page is
@@ -4208,6 +4221,7 @@
     if (S.sheet) app.appendChild(sheet());
     patchLive();
     dockHeight();
+    sideKeep(at);
     if (window.ResizeObserver) { if (dockWatch) dockWatch.disconnect(); dockWatch = new ResizeObserver(dockHeight); dockWatch.observe(document.getElementById('wsdock')); }
     // the menu item or the strip's button that was pressed keeps the cursor across the redraw
     var strip = focus && /^(wsmore|prev|next|back10|fwd10|fadein|fade|freeze|stop|black|seek)$/.test(focus) && document.getElementById(focus);

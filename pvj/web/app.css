@@ -526,8 +526,9 @@ table.chan .lvl { width: 36%; }
 .wsbrand { display: none; font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--mu); white-space: nowrap; }
 .wshead .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .wssub { grid-area: sub; padding: 6px 16px 0; min-width: 0; }
-.wssub .seg { flex-wrap: nowrap; }
-.wssub .segbtn { flex: 1 1 0; min-width: 44px; padding: 0 4px; }
+/* (a screen's name is never cut: five of them go to a second line on a narrow phone) */
+.wssub .seg { flex-wrap: wrap; row-gap: 4px; }
+.wssub .segbtn { flex: 1 1 auto; min-width: min-content; padding: 0 10px; overflow-wrap: normal; }
 .wsside { display: none; }
 main.ws { grid-area: main; min-width: 0; container: ws / inline-size; }
 main.ws:focus { outline: none; }
@@ -546,10 +547,12 @@ main.ws:focus { outline: none; }
 .tpscrub { grid-column: 1 / -1; display: flex; min-width: 0; }
 .tpscrub input.seek { margin: 0; height: 44px; }
 .tpgrp { display: contents; }
-.tp .tpb { min-width: 0; min-height: 56px; padding: 0 2px; overflow-wrap: anywhere; }
+.tp .tpb { min-width: 0; min-height: 56px; padding: 0; font-size: 14px; }
 .tp .tpmore { flex: none; min-width: 64px; }
 .tp:not(.open) .tpx { display: none; }
 .tp.open #black { grid-column: 2 / -1; }
+/* (a 320 px phone: "Blackout" needs 69 px in the widest of the faces this look is drawn in, and gets 75) */
+@container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } }
 @container app (min-width: 600px) {
   .frame { grid-template-columns: 168px minmax(0, 1fr); grid-template-rows: auto 1fr auto; grid-template-areas: "head head" "side main" "dock dock"; }
   .wssub, .wsdock .wstabs { display: none; }
@@ -569,7 +572,7 @@ main.ws:focus { outline: none; }
   .tpscrub, .tp:not(.open) .tpscrub { display: flex; flex: 2 1 200px; }
   .tp:not(.open) button.tpx { display: inline-block; }
   .tpgrp { display: flex; gap: 6px; }
-  .tp .tpb { min-height: 44px; padding: 0 10px; }
+  .tp .tpb { min-height: 44px; padding: 0 10px; font-size: inherit; }
   .tp .tpb.keep { min-height: 56px; }
   .tp .tpmore { display: none; }
 }
