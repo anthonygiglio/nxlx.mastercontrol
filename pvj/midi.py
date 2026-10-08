@@ -34,6 +34,7 @@ import fcntl
 import glob
 import json
 import os
+import queue
 import re
 import select
 import stat
@@ -103,6 +104,7 @@ for _n in range(1, SHADER_SLOTS + 1):
 # field is the kind of code asked for (controllercode.KINDS). These two are not API calls: see MidiHub._local.
 ACTIONS.update({"code_join": ("hold", "join", None), "code_owner": ("hold", "owner", None)})
 HOLD_MIN, HOLD_MAX = 3.0, 10.0
+SLOW_CALLS = 0.5            # calls that took longer than this, for a message with no read time: what is held is forgotten
 LOCAL_CODE = "code"         # a planned call with this in the place of a path goes to the hub's own _local, never to the API
 BANKS = 3
 # Soft takeover ("pickup"): on a recognised controller these levels do nothing until the fader or knob reaches the
@@ -816,9 +818,19 @@ class MidiMapper:
             return [("/api/shaders/values", {"controls": {a[7:]: round(lo + (hi - lo) * value / 127.0, 2)}})]
         return [("/api/control", {"action": a, "value": round(lo + (hi - lo) * value / 127.0, 2)})]
 
-    def plan(self, source, msg):
+    def forget_held(self, source=None):
+        """Forget every hold that is under way (of one controller, or of all). For when a release may have been
+        missed: Learn started or ended, the map or a layout changed, messages were lost. The control still counts as
+        down until its release is seen, so the press that is under way cannot start a hold again."""
+        for key in [k for k in self._held if source is None or k[1] == source]:
+            del self._held[key]
+
+    def plan(self, source, msg, at=None):
         """What a message should do: a list of (path, body) calls. Nothing is called here, so a caller can release its
-        lock before making the (slow) calls into the player."""
+        lock before making the (slow) calls into the player. `at`: when the message was READ from the device, on
+        this mapper's clock. A hold is timed by that, never by when the message was handled: the thread that
+        handles messages also waits for the player, so a release that was read a tenth of a second after its press
+        can be handled seconds after it."""
         kind, channel, d1, d2 = msg
         if kind == "off":
             kind, d2 = "note", 0                       # a note-off is the release of the same control
@@ -838,15 +850,25 @@ class MidiMapper:
                 # A control that never comes up asks for nothing, and one that is down already cannot go down again.
                 if kind == "program":
                     continue
-                down = d2 >= 64 if kind == "cc" else d2 > 0
+                read = now if at is None else at
                 was = self._pressed.get(key, False)
+                if kind == "cc":
+                    # A button sends 127 when it goes down and 0 when it comes up, and nothing between. A fader or
+                    # a knob mapped by hand passes through other values: any of those ends the hold with no request.
+                    if was and d2 not in (0, 127):
+                        self._pressed[key] = False
+                        self._held.pop(key, None)
+                        continue
+                    down = d2 == 127
+                else:
+                    down = d2 > 0
                 self._pressed[key] = down
                 if down and not was:
-                    self._held[key] = now
-                    calls.append((LOCAL_CODE, {"press": now}))
+                    self._held[key] = read
+                    calls.append((LOCAL_CODE, {"press": read}))
                 elif was and not down:
                     since = self._held.pop(key, None)
-                    if since is not None and HOLD_MIN <= now - since <= HOLD_MAX:
+                    if since is not None and HOLD_MIN <= read - since <= HOLD_MAX:
                         calls.append((LOCAL_CODE, {"kind": ACTIONS[e["action"]][1], "since": since}))
                 continue
             if kind_of == "trigger":
@@ -901,12 +923,25 @@ class MidiMapper:
         return sum(int(bool(self.do(path, body))) for path, body in self.flush_calls())
 
 
-class MidiInput:
-    """Reads one device file on its own thread and hands parsed messages to `on_message(source, msg)`."""
+LOST = "lost"               # handed to a stamped on_message in the place of a message: some were dropped (the queue was full)
+QUEUE_MAX = 2048
 
-    def __init__(self, path, source, on_message, log=print, open_fn=None):
+
+class MidiInput:
+    """Reads one device file on its own thread and hands parsed messages to `on_message(source, msg)`.
+
+    With a `clock` (the hub gives one) there are two threads: one only reads, stamps each message with the clock
+    at the moment it was read and queues it; the other hands them on as `on_message(source, msg, at)`. The thread
+    that hands on can wait seconds for the player; the one that reads never waits, so `at` is when the control
+    was really touched (D61: a hold is timed by it)."""
+
+    def __init__(self, path, source, on_message, log=print, open_fn=None, clock=None):
         self.path, self.source, self.on_message, self.log = path, source, on_message, log
         self._open = open_fn or self._open_device
+        self._clock = clock
+        self._queue = queue.Queue(QUEUE_MAX) if clock is not None else None
+        self._lost = False
+        self._worker = None
         self._stop = threading.Event()
         self._thread = None
         self.connected = False
@@ -938,14 +973,22 @@ class MidiInput:
                     chunk = os.read(fd, 256)
                     if not chunk:
                         break                           # end of stream: the device is gone
+                    at = self._clock() if self._queue is not None else None
                     for msg in parser.feed(chunk):
                         if self._stop.is_set():         # told to stop: what was still in the pipe is not acted on
                             break
+                        if self._queue is not None:     # stamped and queued; the other thread hands it on
+                            try:
+                                self._queue.put_nowait((msg, at))
+                            except queue.Full:
+                                self._lost = True
+                            continue
                         self.messages += 1
                         self.on_message(self.source, msg)
                 if self._stop.is_set():
                     break
-                self.on_message(self.source, None)      # a tick: lets the hub flush held fader values
+                if self._queue is None:
+                    self.on_message(self.source, None)  # a tick: lets the hub flush held fader values
         except OSError:
             pass                                        # unplugged mid-read
         except Exception as e:
@@ -957,10 +1000,35 @@ class MidiInput:
             except OSError:
                 pass
 
+    def _work(self):
+        """Hand the queued messages on, in order, each with the time it was read; a tick whenever nothing waits."""
+        reader = self._thread
+        try:
+            while not self._stop.is_set():
+                if self._lost:
+                    self._lost = False
+                    self.on_message(self.source, LOST, self._clock())
+                try:
+                    msg, at = self._queue.get(timeout=0.1)
+                except queue.Empty:
+                    if not reader.is_alive() and self._queue.empty():
+                        break                           # the device is gone and everything read from it was handed on
+                    self.on_message(self.source, None)  # a tick: lets the hub flush held fader values
+                    continue
+                self.messages += 1
+                self.on_message(self.source, msg, at)
+                if self._queue.empty():
+                    self.on_message(self.source, None)
+        except Exception as e:
+            self.log("midi: %s: internal error: %r" % (self.path, e))
+
     def start(self):
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name="midi")
         self._thread.start()
+        if self._queue is not None:
+            self._worker = threading.Thread(target=self._work, daemon=True, name="midi-work")
+            self._worker.start()
 
     @property
     def alive(self):
@@ -975,6 +1043,9 @@ class MidiInput:
         if self._thread:
             self._thread.join(timeout=3)
             self._thread = None
+        if self._worker:
+            self._worker.join(timeout=3)
+            self._worker = None
 
 
 # --- lights: the writer ------------------------------------------------------
@@ -1619,9 +1690,14 @@ class MidiHub:
         """A pairing code on the box's display (D61): the one thing a controller can ask for that is not an API
         call, so nothing that reaches the box through the API (OSC, DMX, the schedule, a Room scene, a device
         through the support tunnel) can ask for it. Only this hub calls it, for a message it read from a MIDI
-        device file. A press takes a showing code off; a finished hold asks for one, and only from a controller
-        that is on USB: its card has a USB id. A device the box cannot place (no id: a virtual or a network MIDI
-        port, or the card list unreadable) is refused."""
+        device file. A finished hold asks for a code, and only from a controller that is on USB: its card has a
+        USB id. A device the box cannot place (no id: a virtual or a network MIDI port, or the card list
+        unreadable) is refused.
+        A PRESS is handled before both checks, on purpose: it only takes a showing code off the display and ends
+        it, from any MIDI device the hub reads and whatever the setting says. Ending a code is the safe
+        direction, and with the setting off there is no code to end, so the press does nothing.
+        The USB id says the port is a USB MIDI interface. It does not say a person is at it: a DIN to USB
+        interface, a wireless MIDI dongle, or a computer that presents itself as a USB MIDI device all have one."""
         codes = getattr(self.api, "controller_codes", None)
         if codes is None or not isinstance(source, str):
             return False
@@ -1638,8 +1714,20 @@ class MidiHub:
             return False
         return codes.request(body.get("kind"), body.get("since"), source)
 
-    def _run_calls(self, calls, source=None):
-        """Make the calls a message planned. Called WITHOUT the hub lock: a play is many round trips to the player."""
+    def _run_calls(self, calls, source=None, stamped=False):
+        """Make the calls a message planned. Called WITHOUT the hub lock: a play is many round trips to the player.
+        `stamped`: the message came with the time it was read, so however long these calls take, a hold is still
+        timed rightly. Without that (a caller that reads and handles on one thread), calls that took longer than
+        SLOW_CALLS mean the next message's time cannot be trusted, and what is held for this controller is forgotten."""
+        began = self._clock()
+        try:
+            self._make_calls(calls, source)
+        finally:
+            if calls and not stamped and self._clock() - began > SLOW_CALLS:
+                with self._lock:
+                    self.mapper.forget_held(source)
+
+    def _make_calls(self, calls, source):
         for path, body in calls:
             if path == LOCAL_CODE:
                 self._local(source, body)
@@ -1652,10 +1740,15 @@ class MidiHub:
         if calls and self.lights:
             self._light_wake.set()                  # the lights follow a press at once (on their own thread)
 
-    def on_message(self, source, msg):
+    def on_message(self, source, msg, at=None):
+        # `at`: when the message was read from the device (MidiInput stamps it); None from a caller that has no such time.
         # MIDI switched off, or this controller unplugged: a message still on its way is dropped. Without this a late
         # CC 20 from a nanoKONTROL2 (knob 5) would be read by the built-in map as opacity.
         if self._stop.is_set() or source in self._retired:
+            return
+        if msg == LOST:                             # the reader's queue was full: a release may be among what was dropped
+            with self._lock:
+                self.mapper.forget_held(source)
             return
         if msg is None:
             with self._lock:
@@ -1675,26 +1768,33 @@ class MidiHub:
                     self.captured = {"source": source, "kind": "note" if kind == "on" else kind, "channel": channel + 1, "number": d1}
                     self._quiet = (source, "note" if kind in ("on", "off") else kind, d1, now + LEARN_QUIET)
                     self.learn_until = 0.0
+                    self.mapper.forget_held()                              # a release may have been swallowed meanwhile
                 return                                                     # nothing is executed while learning
             if self.learn_until and now >= self.learn_until:
                 self.learn_until = 0.0
+                self.mapper.forget_held()
             q = self._quiet                                                # the control just learned is still moving: let it settle
             if q and now < q[3] and q[:3] == (source, "note" if kind in ("on", "off") else kind, d1):
                 return
             self.mapper.entries = self.entries(source)
             self.mapper.mix = self.api.mix
-            calls = self.mapper.plan(source, msg)
-        self._run_calls(calls, source)
+            calls = self.mapper.plan(source, msg, at)
+        self._run_calls(calls, source, stamped=at is not None)
 
     # --- learn ----------------------------------------------------------------
+    # While Learn listens nothing is executed, so a release can go unseen; and a map that changes under a held
+    # control changes what that control is. In each case what is held is forgotten (D61): a hold must be seen whole.
     def start_learn(self):
         with self._lock:
             self.captured = None
             self.learn_until = self._clock() + LEARN_SECONDS
+            self.mapper.forget_held()
 
     def cancel_learn(self):
+        """Also called after every change of the map (api.midi_map)."""
         with self._lock:
             self.learn_until, self.captured = 0.0, None
+            self.mapper.forget_held()
 
     # --- devices -------------------------------------------------------------
     def scan(self):
@@ -1717,7 +1817,7 @@ class MidiHub:
                         self._retired.add(inp.source)
             for path in sorted(paths - set(self.inputs)):
                 source = self._namer(path)
-                inp = MidiInput(path, source, self.on_message, log=self.log, open_fn=self._open_fn)
+                inp = MidiInput(path, source, self.on_message, log=self.log, open_fn=self._open_fn, clock=self._clock)
                 if not any(i.source == source for i in self.inputs.values()):
                     self.mapper.forget(source)          # nothing of it was heard until now: no button of it is held
                 self.inputs[path] = inp
@@ -1753,6 +1853,7 @@ class MidiHub:
             return
         with self._lock:
             self._stop.clear()
+            self.mapper.forget_held()                   # a switch or a layout choice changed: no hold runs across that
         self.scan()                                     # not under the lock: it may have to wait for a reader to end
         with self._lock:
             if self._stop.is_set():
