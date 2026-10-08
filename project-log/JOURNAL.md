@@ -4,6 +4,11 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08, the evening (CI's install retry met its first slow mirror, and lost)
+
+- On #102's second run the `effects-gpu` job for the Pi 4's kind of OpenGL failed in its install step with "ci-apt: gave up after 3 attempts": the lists came at once each time and the 48 MB of packages did not arrive in 90 seconds, three times, from `azure.archive.ubuntu.com`. So the retry of #101 failed sooner (under five minutes instead of ten) but cured nothing: the same runner asked the same slow mirror three times.
+- `tools/ci-apt.sh` now changes the mirror after a failed attempt: `azure.archive.ubuntu.com` becomes `archive.ubuntu.com` in the files apt reads its mirrors from. What an attempt downloaded stays in apt's cache, so the next one carries on. Not proven: no run has needed the second attempt since; the first slow mirror after this merges is its test. If Ubuntu's own archive is slow from that runner too, the step still fails, and a rerun is still the cure.
+
 ## 2026-10-08 (the Workspace shell: four areas, a side menu, one transport strip)
 
 Branch `workspace-shell`, made from `origin/resize-step1` (afba416, pull request #100), which merges first. D65 has the decision and the full map; this is what was done and measured. **Measured in headless Edge 153 on the dev Mac against the harness with no player (real presses and keys over the DevTools protocol). The Mac has no Playwright: the browser test's own run is CI's, and had not happened when this was written. Nothing was seen on a phone, in Safari or on a box.**
