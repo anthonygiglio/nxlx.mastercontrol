@@ -3059,9 +3059,20 @@ function startServer(env) {          // env: more for the harness's environment 
       // can reach on every screen, against the list taken from the panel before the shell
       // (tests/ui/fixtures/controls-before.json). That list was made on a machine with no player, so this runs on a
       // second box of the harness that has none; it holds the layout, the steps above hold what plays.
+      // Two boxes on one machine cannot both listen for DMX and OSC (the same UDP ports): the first one is switched
+      // off for the time of the inventory and put back as it was. Without that the second box refuses to switch them
+      // on, and its pages show "Switch on" in place of their cards (inventory.prepare says so if it happens).
       {
         const ws = require('./shell');
+        const inv = require('./inventory');
         const began = Date.now();
+        const flag = (url, body) => page.evaluate(([u, b]) => fetch(u, b ? { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b) } : { credentials: 'same-origin' }).then((r) => r.json().then((d) => [r.status, d.enabled])), [url, body]);
+        const held = [];
+        for (const url of ['/api/dmx', '/api/osc']) {
+          if ((await flag(url))[1] !== true) continue;
+          assert.deepStrictEqual(await flag(url, { enabled: false }), [200, false], 'the first box lets go of ' + url + ' for the inventory');
+          held.push(url);
+        }
         const bare = await startServer({ PVJ_HARNESS_NO_PLAYER: '1' });
         const base2 = 'http://127.0.0.1:' + bare.info.port, mine = [];
         try {
@@ -3069,7 +3080,7 @@ function startServer(env) {          // env: more for the harness's environment 
           const owner = await fresh();
           await owner.goto(base2 + '/');
           await owner.waitForSelector('.pin');
-          const paired = await owner.evaluate((pin) => fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ pin, name: 'inventory' }) }).then((r) => r.status), bare.info.pin);
+          const paired = await owner.evaluate(([pin, name]) => fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ pin, name }) }).then((r) => r.status), [bare.info.pin, inv.OWNER]);
           assert.strictEqual(paired, 200, 'pairing with the box that has no player');
           await owner.goto(base2 + '/');
           await owner.waitForSelector('main.ws');
@@ -3080,6 +3091,8 @@ function startServer(env) {          // env: more for the harness's environment 
         } finally {
           for (const c of mine) await c.close().catch(() => {});
           bare.p.kill();
+          await new Promise((done) => { if (bare.p.exitCode !== null || bare.p.signalCode !== null) done(); else bare.p.once('exit', done); });      // its ports are free again
+          for (const url of held) await flag(url, { enabled: true }).catch(() => {});
         }
         console.log('the control inventory took ' + ((Date.now() - began) / 1000).toFixed(1) + ' s');
       }

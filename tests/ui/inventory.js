@@ -22,6 +22,15 @@
 // on the player. So the inventory holds the panel's layout, not what appears only while a clip or a shader plays;
 // the steps of tests/ui/panel.test.js that play something hold those.
 //
+// Two more things belong to that state, and prepare() refuses to go on without them (it throws, and says what the
+// box answered), because a card that is not drawn reads as "controls lost in the move":
+//   - MIDI, DMX and OSC are switched on. A page of Setup whose flag is off shows "Switch on ..." in place of its
+//     card. DMX and OSC each listen on a UDP port of the machine (6454 or 5568, and the OSC port of the settings),
+//     so a second box of the harness cannot switch them on while a first one is listening: the box answers 409 and
+//     stays off. Whoever starts the inventory's box beside another one frees those ports first.
+//   - the owner's own device is called OWNER, the name it had when the fixture was made: its row on People and
+//     codes has a button "Remove <name>", which is a key like any other.
+//
 // pg: a Playwright page, or anything with evaluate(fn, arg), goto(url) and waitForFunction(fn, arg, { timeout }).
 'use strict';
 
@@ -42,6 +51,9 @@ function collect() {
 // How many controls are in the page and how many requests the page has made: gather() waits for both to stand still.
 function pulse() { return document.querySelectorAll('button, select, input, summary, canvas').length + ':' + performance.getEntriesByType('resource').length; }
 /* eslint-enable no-undef */
+
+const OWNER = 'local';
+const LISTENERS = [['MIDI', '/api/midi'], ['DMX', '/api/dmx'], ['OSC', '/api/osc']];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function settle(pg, least) {
@@ -89,6 +101,16 @@ async function prepare(t) {
     }
   }, ['intro.mkv', 'tunnel.mkv']);
   await signal.setUp(t);
+  // what setUp asked for is looked at, not assumed (a refused request is silent there)
+  const off = [];
+  for (const [name, url] of LISTENERS) {
+    const asked = await call(url, { enabled: true });
+    const now = await t.page.evaluate((u) => fetch(u, { credentials: 'same-origin' }).then((r) => r.json()).catch(() => ({})), url);
+    if (now.enabled !== true || now.error) off.push(name + ' is not on (' + (asked.error || now.error || 'the box gave no reason') + ')');
+  }
+  if (off.length) throw new Error('the inventory cannot be taken, the box is not in the state the list was made in: ' + off.join('; ') + '. Its page would show "Switch on" in place of its card. If another box of the harness is running, switch DMX and OSC off there first: they listen on the same UDP ports.');
+  const me = ((await t.page.evaluate(() => fetch('/api/status', { credentials: 'same-origin' }).then((r) => r.json()).catch(() => ({})))).device || {}).name;
+  if (me !== OWNER) throw new Error('the inventory cannot be taken: the owner\'s device is called "' + me + '" and the list was made with one called "' + OWNER + '" (pair with inventory.OWNER); its row on People and codes would read as a control lost.');
   await call('/api/vibes', { on: false });
   await call('/api/effects', { off: true });
   await call('/api/control', { action: 'stop' });
@@ -164,4 +186,4 @@ function compare(before, after, moved) {
   return lost;
 }
 
-module.exports = { collect, gather, prepare, walk, walkBefore, compare };
+module.exports = { collect, gather, prepare, walk, walkBefore, compare, OWNER, LISTENERS };

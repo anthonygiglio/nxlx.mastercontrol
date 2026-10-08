@@ -256,7 +256,7 @@ const MOVED = {
 async function inventory(o) {
   const before = require('./fixtures/controls-before.json');
   const tokens = await inv.prepare(o.t);
-  const out = {};
+  const out = {}, failed = [];
   for (const [role, token] of [['owner', null], ['presenter', tokens.presenter], ['guest', tokens.guest]]) {
     const pg = await o.open(token);
     await pg.setViewportSize({ width: 1366, height: 900 });
@@ -271,8 +271,10 @@ async function inventory(o) {
     const fresh = Object.keys(after).filter((k) => !before.roles[role][k]);
     out[role] = { before: Object.keys(before.roles[role]).length, after: Object.keys(after).length, lost, fresh };
     if (o.log) o.log('controls of the ' + role + ': ' + out[role].before + ' before the shell, ' + out[role].after + ' now' + (fresh.length ? '; new: ' + fresh.join(', ') : ''));
-    assert.deepStrictEqual(lost, [], 'controls a ' + role + ' could reach before the Workspace shell and cannot now (' + before.made_from + '):\n  ' + lost.join('\n  ') + '\n');
+    if (lost.length) failed.push('controls ' + (role === 'owner' ? 'an ' : 'a ') + role + ' could reach before the Workspace shell and cannot now:\n  ' + lost.join('\n  '));
   }
+  // all three roles are compared before the check fails, so one run names everything that is missing
+  assert.deepStrictEqual(failed, [], failed.join('\n') + '\n(the list before: ' + before.made_from + ')\n');
   return out;
 }
 
