@@ -1048,7 +1048,8 @@ class EngineTest(Base):
         self.assertEqual((self.player.path, self.generated()), (None, []))
 
     def test_settings_need_no_migration_and_are_checked(self):
-        self.assertEqual(SCHEMA, 14)                                  # 14 is the controller code (D61), nothing of shaders
+        from pvj.settings import MIGRATIONS
+        self.assertFalse([m for m in MIGRATIONS.values() if "shader" in (m.__doc__ or "").lower()])     # no settings migration for shaders
         self.assertNotIn("shaders", self.settings.data)               # nothing is written until something changes
         self.assertEqual(self.engine.state()["config"], {"dwell": 180, "vary": True, "height": 720, "guard": True, "clock": "carrier", "faster": False})
         r = self.engine.api_set({"action": "config", "dwell": 45, "vary": False, "height": 540}, None, "t")

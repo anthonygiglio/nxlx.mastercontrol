@@ -235,7 +235,8 @@ class BoardTest(Live):
         self.assertEqual((saved["v"], [e["name"] for e in saved["sets"]], saved["sets"][0]["dwell"], saved["sets"][0]["vary"]), (2, ["Ambient", "Show"], 50, False))
         self.assertEqual([r["id"] for r in saved["sets"][0]["shaders"]], ids)
         self.assertEqual(self.engine.vibes_ids(), ids)
-        self.assertEqual(SCHEMA, 14)                                  # no settings migration (14 is the controller code, D61)
+        from pvj.settings import MIGRATIONS
+        self.assertFalse([m for m in MIGRATIONS.values() if "shader" in (m.__doc__ or "").lower()])     # no settings migration for shaders
 
     def test_a_pack_shader_has_everything_the_projects_own_have(self):
         """Weight, presets, sets, the guard's note and live values work for a third-party pack's shader too; it stays
