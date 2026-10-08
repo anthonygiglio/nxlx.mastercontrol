@@ -4,6 +4,32 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08 (the ISF parser: comments before the header, and an input called `time`)
+
+Branch `isf-leading-comments`, not merged. D66 has the decision. **Run on the dev Mac only, where there is no mpv: the translator's text was checked, nothing was drawn. The GPU tests added here run in CI. Nothing ran on a box.**
+
+**Why.** ISF generators as people publish them often begin with credit lines in comments, and the parser wanted the JSON comment first, so such a file was refused at its first line. The owner asked for three leniencies. Nothing from anybody's files is in the repository: the test files are written here, with a made-up credit.
+
+**What changed in `pvj/shaders.py`.**
+
+- `find_header`: blank space, `//` comments and `/* */` comments may stand before the header, at most 4 KB (`MAX_LEADING`). The header is the first `/*` comment that begins with `{`; no later comment is tried. One pass with `str.find`, no pattern. The comments are in no text the player gets; the line the code starts on counts them, so `#line` is still the file's line. The stored upload is the upload's bytes.
+- `renamed`: one rule for an input whose name is a reserved word in some letter case. GLSL's and ISF's words in another letter case (`time`, `Date`, `Float`) are taken and written as `pvj_in_<name>`. Letter for letter they are refused, and the player's own words are refused in any letter case, both as before. `color` as before.
+- A `bool` DEFAULT: the check is spelled out (true, false, the number 0 or 1) and its message says so. Its behaviour did not change: see the first surprise below.
+- `tools/isf-survey.py` reads the header where the translator finds it, and counts the header's size as the header comment's own.
+
+**Two things the brief had wrong, found by looking** (both in LESSONS):
+
+- The numbers 0 and 1 were already taken as a switch's DEFAULT. What published files do, and what is refused, is the text `"1"` and `"0"`, in quotes. The brief said to take exactly 0 and 1 and refuse everything else, so text stays refused, the tests pin both sides, and the question goes back to the owner (one line to change).
+- `time` clashed with nothing. It was refused because the reserved list is compared in lower case and ISF's `TIME` is on it. The cause is fixed for the language's and ISF's words; the player's own words keep the lower-case comparison.
+
+**Counted against real files.** The change was counted before and after over a folder of published generators outside the repository (read only, never executed, nothing copied); the counts went to the owner with the report of this work and are not kept here. What still refuses such files after this: a switch whose DEFAULT is text in quotes, and code that declares its own `uniform` (which stays refused). "Loads" there means the translator took the file; nothing was drawn.
+
+**What a reviewer should look at first:** `find_header` (the loop's exits and its two limits, in characters while scanning and in bytes at the header); `renamed` and its use in `_input` (the order of the refusals around it); the test that walks every reserved word in four spellings and holds that each is refused or renamed. Two refusals changed their words and stayed refusals: `/* not json */` and `/*[1, 2]*/` before code are now "no header" (read as a plain comment), where they were "cannot be read" and "must be an object". Two names changed sides: `Time` and `rendersize` are taken (renamed). A no-break space before the header is refused now.
+
+**Tests.** `tests/test_shaders.py`: `LenientTest` (10 tests) and `LenientUploadTest` (1). Against the parser of `origin/master` 10 of the 11 fail (the one for the switch passes there, as it must). Worst cases for the header search at 32 KB (54 texts, 20 parses each) run in well under the 1 s the test allows; measured singly, 0.06 to 1.5 ms a parse. `tests/test_isf_survey.py`: one test. `tests/test_shaders_gpu.py`: one test, **not run here**. `python3 -m unittest discover -s tests` on the Mac: 1579 tests, 14 failures and 15 errors, all in `test_install`, `test_update`, `test_release` and `test_netd` (the four files that need Linux, as was expected of a Mac; not compared with a run of master here), 93 skipped (no mpv, no GPU).
+
+**Open.** Whether a switch's DEFAULT may be the text `"0"` or `"1"` (the owner). The GPU test's first run in CI. Nothing here was seen on a display.
+
 ## 2026-10-08 (the resizing study, step 1: a width sweep, and the twelve faults it found)
 
 Pull request #100, branch `resize-step1`, not merged. The owner said yes to step 1 the same day. D64 has the decision; this is what was measured. **Measured in headless Chromium (CI, Linux) and in headless Edge on the dev Mac against the harness with no player. Nothing was seen on a real phone, and nothing ran on a box.**

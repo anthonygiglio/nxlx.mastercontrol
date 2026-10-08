@@ -256,7 +256,7 @@ How these seven were chosen: see "The survey of ISF-Files" below.
 
 ### Adding more ISF files to a box
 
-Mix > Shaders and Vibes > **Upload an ISF shader** (full access), one `.fs` file at a time, at most 32 KB and 24 inputs; an upload is in the library and can be played at once, and joins Vibes only when its switch puts it into the active set. Generators from ISF-Files, from https://editor.isf.video or from VDMX go in this way as long as they draw from nothing in one pass (see the table below for what is refused, and why). A file that is refused says why and is not stored. Take care of the licence yourself: many ISF files on the web are ports of shaders published under terms that forbid commercial use.
+Mix > Shaders and Vibes > **Upload an ISF shader** (full access), one `.fs` file at a time, at most 32 KB and 24 inputs; an upload is in the library and can be played at once, and joins Vibes only when its switch puts it into the active set. Generators from ISF-Files, from https://editor.isf.video or from VDMX go in this way as long as they draw from nothing in one pass (see the table below for what is refused, and why). A file may have comments before its JSON header, such as credit lines ([what a file may start with](#what-a-file-may-start-with)); they are kept in the stored file. A file that is refused says why and is not stored. Take care of the licence yourself: many ISF files on the web are ports of shaders published under terms that forbid commercial use.
 
 A **filter** (a file with a picture input called `inputImage`) goes in on Mix, in the Effects card: **+ Add an effect file (.fs)**, under the same limits, and is refused with its reason if it needs more than the playing picture ([Effects](#effects)).
 
@@ -278,7 +278,34 @@ An ISF file is a GLSL fragment shader with a JSON comment at the top (see isf.vi
 | `gl_FragColor` | the result; alpha is laid over black |
 | `PASSINDEX` | 0 |
 | a variable called `out_color`, an input called `color` (common in real ISF files; the player owns both words) | renamed inside the generated shader (`pvj_u_out_color`, `pvj_in_color`); the panel and the API keep the file's own input name |
-| comments | cut out before anything is checked and never passed on, so they may hold any text (dashes, arrows, accents) |
+| an input whose name is a word of GLSL or of ISF in another letter case: `time` beside `TIME`, `Date`, `Float`, `Mix` | taken, and written into the generated shader as `pvj_in_<name>` (`pvj_in_time`), every use in the code with it; `TIME` stays the clock. The panel, the API, presets and every MIDI, OSC and DMX mapping keep the file's own name. See [the rule](#which-input-names-are-renamed) |
+| a `bool` whose `DEFAULT` is the number `0` or `1` (`0.0`, `1.0`) | false or true, as `false` and `true` are. No other number and no text: `"1"` and `"true"` in quotes are refused |
+| comments in the code | cut out before anything is checked and never passed on, so they may hold any text (dashes, arrows, accents) |
+| comments and blank space before the JSON header (credit lines) | passed over: see [what a file may start with](#what-a-file-may-start-with). They stay in the stored file, byte for byte, and never reach the player |
+
+### What a file may start with
+
+The JSON header is a `/* ... */` comment whose first character after blank space is `{`. Before it a file may have blank space (spaces, tabs, line breaks, a byte order mark at the very start), `//` comments and `/* ... */` comments, **at most 4 KB of them**; many real files have their credit there. Anything else before the header (code, a `#` line, any other character) is refused. This holds for generators and for filters, which are read by the same code.
+
+- **Which comment is the header.** The first `/* */` comment that begins with `{`. It is the header whatever else it holds: if its JSON cannot be read, or it asks for something that is not supported, the file is refused, and no later comment is tried in its place. A comment that begins with anything else is a plain comment and is passed over, so a first comment such as `/* by me {2026} */` is a credit, and `/* [1, 2] */` is one too.
+- **A `/*{` inside a `//` line is comment text.** A `//` comment ends at its line break and nothing in it is read; the header is the one that follows. (A `//` line ends at its line break whatever its last character is: a backslash there continues nothing.)
+- **Comments do not nest.** A `/*{ ... }*/` written inside a `/* ... */` comment is part of that comment, which ends at the first `*/`; what follows is then code with no header before it, and the file is refused.
+- **A second `/*{ ... }*/` after the header** is a comment in the code, as it always was: it is cut out with the other comments and changes nothing.
+- **A comment that is never closed** is refused ("a /* comment before the JSON header is never closed"). When code follows a plain `/* */` comment and no header was found, the message says that the comment at the top does not begin with `{`, so a header that lost its brace is not mistaken for a file of another kind.
+- **The limits.** 4 KB for what stands before the header, counted in bytes as the file's 32 KB is; the header's 8 KB is counted from where the header starts. Credits are a few hundred bytes and a whole licence text one or two KB, and with both limits used up 20 KB of the 32 remain for the code. The header is looked for in one pass that stops at the limit.
+- **Where they go.** Nowhere: the code that is checked and sent to the player starts after the header, so the lines before it are never part of it. They are counted, though, so that a mistake the GPU reports is still named by its line in the file (the header's own lines always were). The file that is stored is the upload itself.
+- `//!` is refused in these comments as everywhere else in the file.
+
+### Which input names are renamed
+
+One rule decides what happens to an input whose name is a reserved word (the list is `RESERVED` in `pvj/shaders.py`: GLSL's words, on desktop OpenGL and OpenGL ES, ISF's, mpv's and this translator's own):
+
+- **Renamed:** the name is one of GLSL's or ISF's words in *another* letter case than the word's own (`time`, `Time`, `date`, `rendersize`, `Float`, `SIN`). GLSL tells letter cases apart, so such a name clashes with nothing: it was refused until 2026-10-08 only because the list is compared in lower case, which is how `time` came to be refused beside ISF's `TIME`. It is taken now, and renamed to `pvj_in_<name>` all the same, so that no near-spelling of a built-in word is ever an input's name in the text the GPU gets (a `pvj_` name is one no file can write itself).
+- **Refused, as before:** the name is a reserved word letter for letter (`TIME`, `DATE`, `float`, `sin`, `mix`, `length`, `filter`, `input`, `frame`, `random`, `main`). It cannot be renamed: the code's own uses of the word (the clock, the function) would be renamed with it.
+- **Refused, as before, in any letter case:** the player's and the translator's own words (`main`, `hook`, `frame`, `random`, `input_size`, `target_size`, `tex_offset`, `pixel_size`, `out_color`, mpv's `texture0` and its companions), and every name that starts with `gl_`, `pvj_`, `isf_` or `hooked` or holds `__`.
+- **The one exception, older than the rule:** `color`, which the player owns and real files use; it is renamed in any letter case.
+
+A `#define` or `#undef` of any of these names stays refused in any letter case, renamed or not.
 
 Refused, with a message that names the reason:
 
@@ -851,7 +878,8 @@ With a player that has no GPU output (the tests' `--vo=null`), nothing can be ch
 ## Safety
 
 - An uploaded file is at most 32 KB of text, its JSON header at most 8 KB, with at most 24 inputs; at most 64 uploads.
-- Input names are checked with a full match (a letter, then letters, digits or `_`, 32 at most) and may not be a word of the shader language or a name the player uses; numbers must be finite (JSON's `NaN` and `Infinity` are refused); labels and descriptions are cut and stripped of control characters and only ever shown as text.
+- Before the JSON header only blank space and comments may stand, at most 4 KB of them, and the first comment that begins with `{` is the header with no second try ([what a file may start with](#what-a-file-may-start-with)). Those comments are never sent to the player; the header is found in one pass with no pattern matching, bounded by the 4 KB.
+- Input names are checked with a full match (a letter, then letters, digits or `_`, 32 at most) and may not be a word of the shader language or a name the player uses (a word of GLSL or ISF in another letter case, such as `time`, is taken under a `pvj_in_` name instead: [the rule](#which-input-names-are-renamed)); numbers must be finite (JSON's `NaN` and `Infinity` are refused); labels and descriptions are cut and stripped of control characters and only ever shown as text.
 - The text `//!` is refused anywhere in the file, comments and JSON included: mpv reads such lines as commands wherever they stand, and a file could otherwise add its own hook on the OUTPUT stage (over the mapping), a texture or a second pass.
 - The code is checked as the compiler will read it: comments are taken out first (and are not passed on), and a backslash in what remains is refused (inside a comment it is allowed, like any other text there; a `//` comment ends at its line break whatever its last character is, so the line after it is always read as code), so nothing can hide behind `/**/` or a continued line. Preprocessor lines other than `#define`, `#undef` and the `#if` family are refused (no `#include`, `#version`, `#extension`, `#pragma`, `#line`), and `#define` or `#undef` of a name that belongs to the shader language, to ISF or to the player. `uniform`, `varying`, `layout` and `attribute` are refused anywhere, and `in` or `out` as a declaration of their own (they stay allowed for function parameters). The player's own names, as any name in the code, not only as an input or a `#define` (`hook`, `HOOKED...`, `pvj_...`, mpv's `texture0` and its companions) are refused in any letter case. The code, once its comments are cut out, must be plain ASCII and have exactly one `void main()`. `##` (joining two pieces into one name) is refused, because a joined name is one the checks never saw whole. Two of the player's words are renamed instead of refused, since many real ISF files use them: `out_color` in the code (spelled exactly so) and an input called `color`; both become `pvj_` names, which a file cannot write itself, and a `#define` of either stays refused.
 - The JSON header may not name a key twice (the last one would win over the one that was checked), and `NaN` and `Infinity` are refused. A file that trips the checks in a way nobody foresaw is listed as broken and skipped; it cannot take the list or Vibes down.
