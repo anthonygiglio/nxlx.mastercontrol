@@ -3,6 +3,7 @@
 """Settings export and import, the diagnostics file and factory reset (pvj/boxcare.py)."""
 import copy
 import json
+import re
 import os
 import stat
 import subprocess
@@ -125,6 +126,10 @@ class StreamAddressTest(unittest.TestCase):
 
 class ExportTest(Base):
     def test_default_export_holds_no_secret(self):
+        # A PIN of the test's own choosing: a random one is four digits, and "0002" once stood in this file's own
+        # projector id "aaaa0002" (2026-10-08, CI), so the test failed about once in a few thousand runs for nothing.
+        self.auth.set_pin(PIN)
+        self.pin = PIN
         self.h("POST", "/api/access/code", {"role": "view"}, self.full_dev)
         file = self.export()
         text = json.dumps(file)
@@ -137,7 +142,10 @@ class ExportTest(Base):
         secrets += [d["token_hash"] for d in self.settings.data["devices"]]
         secrets += [j["code"] for j in self.auth.list_joins()]
         for secret in secrets:
-            self.assertNotIn(secret, text)
+            if secret.isdigit():        # a join code is digits too: look for it standing by itself, not inside a longer number or word
+                self.assertIsNone(re.search(r"(?<![0-9A-Za-z])%s(?![0-9A-Za-z])" % secret, text), secret)
+            else:
+                self.assertNotIn(secret, text)
         self.assertNotIn("token", text)
         self.assertEqual([p["password"] for p in file["settings"]["projectors"]], ["", ""])
         self.assertEqual([s["url"] for s in file["settings"]["streams"]],
