@@ -12,7 +12,9 @@ permissions:
 # Every job has an end, and every step that downloads has an earlier one. On 2026-10-05 a panel-ui job spent more
 # than twenty minutes in "Install mpv and a browser" (usually 45 seconds): that runner got its packages at about
 # 50 kB a second. With no limit of its own a job may go on for six hours. A step that runs out of time fails with
-# what it had printed, and a rerun lands on another runner.
+# what it had printed, and a rerun lands on another runner. Since 2026-10-08 the package installs go through
+# tools/ci-apt.sh, which gives a slow mirror 90 seconds a step and tries three times, because the ten minutes ran out
+# about ten times in three days.
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -32,13 +34,13 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
+        run: tools/ci-apt.sh mpv
       - name: Unit tests (real mpv, headless)
         # About nine minutes. After twenty, SIGABRT: faulthandler prints every thread's stack and the step fails.
         run: timeout -s ABRT 1200 python -X faulthandler -m unittest discover -s tests -t . -v
       - name: Shaders on a real mpv with a software GPU (xvfb, Mesa; a skip here is a failure)
         run: |
-          sudo apt-get install -y --no-install-recommends xvfb xauth libegl1 libgles2 libgl1-mesa-dri
+          tools/ci-apt.sh xvfb xauth libegl1 libgles2 libgl1-mesa-dri
           PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaders_gpu
       - name: Performing with shaders on the real mpv (values, speed, presets, no black frame; a skip is a failure)
         run: PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
@@ -69,7 +71,7 @@ jobs:
           python-version: '3.12'
       - name: Install mpv, a virtual display and Mesa
         timeout-minutes: 10
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
+        run: tools/ci-apt.sh mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
       - name: Effects on the real mpv (a skip here is a failure)
         run: env ${{ matrix.env }} PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_effects_gpu
 
@@ -91,7 +93,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
+        run: tools/ci-apt.sh mpv
       - name: Real install as root and the owners of the runtime folders
         run: sudo PVJ_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
 
@@ -109,7 +111,7 @@ jobs:
       - name: Install mpv and a browser
         timeout-minutes: 10
         run: |
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
+          tools/ci-apt.sh mpv
           mkdir /tmp/pw && cd /tmp/pw && npm init -y >/dev/null && npm install playwright@1.56.1 pngjs@7.0.0 ag-psd@31.0.2
           npx playwright install --with-deps chromium
       - name: Drive the real panel in a browser (CSP violations fail the test)
