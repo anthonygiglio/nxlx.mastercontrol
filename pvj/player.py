@@ -294,11 +294,12 @@ class Player:
                     pass
             self._pipe_globals = None
 
-    PIPE_FORMATS = ("yuyv422", "uyvy422")
+    PIPE_FORMATS = ("yuyv422", "uyvy422", "matroska")
 
     def play_pipe(self, path, width, height, fps, fmt="yuyv422"):
         """Play raw frames from a pipe (a live input read by a separate helper): YUYV from a capture device
-        (pvj/capture.py), UYVY from the NDI helper (pvj/ndi.py), whose rate may be a fraction such as 59.94."""
+        (pvj/capture.py), UYVY from the NDI helper (pvj/ndi.py), whose rate may be a fraction such as 59.94; or,
+        with fmt "matroska", the NDI helper's stream of frames and sound (the size and rate are then the stream's)."""
         if fmt not in self.PIPE_FORMATS:
             raise PlayerError("unknown pipe format")
         with self._lock:
@@ -311,6 +312,11 @@ class Player:
         opts = {"demuxer": "rawvideo", "demuxer-rawvideo-w": int(width), "demuxer-rawvideo-h": int(height),
                 "demuxer-rawvideo-mp-format": fmt, "demuxer-rawvideo-fps": int(fps) if fps == int(fps) else round(float(fps), 3), "cache": "no",
                 "demuxer-readahead-secs": 0, "demuxer-max-bytes": "32MiB"}
+        if fmt == "matroska":
+            # The NDI helper's stream with sound (pvj/ndi.py): Matroska that says its own size, rate and times, read
+            # by mpv's own reader, named so that mpv does not spend time guessing. Sound goes the way every clip's
+            # does: this player's device, volume and mute.
+            opts = {"demuxer": "mkv", "cache": "no", "demuxer-readahead-secs": 0, "demuxer-max-bytes": "32MiB"}
         self.ipc.request("set_property", "keep-open", "no")
         self.ipc.request("set_property", "loop-file", "no")
         self.ipc.request("set_property", "loop-playlist", "no")

@@ -788,6 +788,19 @@ function startServer() {
     await page.click('#confirmyes');
     await page.waitForFunction(() => document.querySelectorAll('.ndiaddr-entry').length === 0);
     assert.strictEqual(await post('/api/play', { ndi: 'RESOLUME (Output)' }), 409, 'a name is never played, only an id');
+    // Sound: one switch on the same page, on unless the owner says no; the line beside it says what is arriving.
+    // WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    await page.waitForSelector('#ndisound');
+    assert.strictEqual(await page.getAttribute('#ndisound', 'aria-checked'), 'true', 'sound is on until someone switches it off');
+    assert.strictEqual((await get('/api/ndi')).sound, true);
+    assert(/No source is on the screen/.test(await page.textContent('#ndisoundline')), 'with nothing playing the line says so');
+    await page.click('#ndisound');
+    await page.waitForFunction(() => /Sound is off: sources are shown without their sound/.test(document.getElementById('ndisoundline').textContent));
+    assert.strictEqual((await get('/api/ndi')).sound, false, 'the switch is saved');
+    await page.click('#ndisound');
+    await page.waitForFunction(() => /No source is on the screen/.test(document.getElementById('ndisoundline').textContent));
+    assert.strictEqual((await get('/api/ndi')).sound, true, 'and back on, as it is on a new box');
+    await onPage(NDI);
     await sysIndex();
     await chip(NDI, 'Set up');
     await sys(NDI);

@@ -1119,7 +1119,7 @@
         blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
         body: function () { return [streamsCard(full)]; } },
       { id: 'ndi', group: 'show', name: 'NDI\u00ae input', role: 'live', module: 'inputs-ndi', url: '/api/ndi',
-        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Picture only, no sound yet. New: tried once, briefly, and not yet watched on a screen.',
+        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Picture, and its sound through the sound output of the box. New: the picture was tried once, briefly; nobody has heard the sound yet.',
         confirmOff: function (ask) { ask(((S.status && S.status.player) || {}).ndi ? 'The NDI picture comes off the screen now.' : null); },
         body: function () { return ndiCards(full); } },
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',
@@ -2451,6 +2451,35 @@
     var srcCard = h('div', { class: 'card', id: 'ndicard' }, h('h2', { text: 'Sources on the network' }), srcBody,
       h('div', { class: 'hint', id: 'ndimark' }, NDI_MARK + ' About NDI: ', ndiLink('https://ndi.video/', 'ndi.video'),
         '. Its free tools for a computer: ', ndiLink('https://ndi.video/tools/', 'ndi.video/tools'), '.'));
+    // Sound: one switch, and a line that says what is arriving (never drawn again as a whole: only its words change).
+    var soundBody = h('div', { class: 'list sp', id: 'ndisoundbody' });
+    var soundLine = h('div', { class: 'hint', id: 'ndisoundline', role: 'status', text: '' });
+    var soundCard = h('div', { class: 'card', id: 'ndisoundcard' }, h('h2', { text: 'Sound' }), soundBody, soundLine);
+    function soundWords(d) {
+      if (!d.sound) return 'Sound is off: sources are shown without their sound.';
+      var p = d.playing, a = p && p.audio;
+      if (!p) return 'No source is on the screen.';
+      if (!a || !a.rate) return 'This source sends no sound' + (a && a.problem ? ' that the box can play (' + a.problem + ')' : '') + '.';
+      var c = a.counts || {};
+      var what = !a.arriving ? 'No sound has arrived in the last second' : a.silent ? 'Sound is arriving, and it is silent'
+        : 'Sound is arriving, loudest at ' + a.level_db + ' dB (0 is as loud as it goes)';
+      var shape = a.channels + (a.channels === 1 ? ' channel' : ' channels') + (a.channels > a.played ? ' (the first ' + a.played + ' are played)' : '') + ' at ' + a.rate + ' samples a second';
+      var lost = 'dropped ' + (c.dropped || 0) + (c.refused ? ', could not be read ' + c.refused : '') + (c.silenced ? ', played as silence ' + c.silenced : '');
+      return [what, shape, lost].join(' \u00b7 ') + (a.problem ? ' \u00b7 ' + ndiSentence(a.problem) : '');
+    }
+    function drawSound(d) {
+      soundBody.textContent = '';
+      var hint = 'The sound a source sends is played with its picture through the box\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
+        d.headroom_db + ' dB below full scale, so a sender at that level sounds quieter than a clip. Off: picture only.';
+      if (!full) { soundBody.appendChild(h('div', { class: 'hint', id: 'ndisoundstate', text: (d.sound ? 'Sound is on. ' : 'Sound is off. ') + hint })); return; }
+      soundBody.appendChild(toggle('ndisound', 'Play a source\'s sound', d.sound, function (v, sw) {
+        api('POST', '/api/ndi', { action: 'sound', on: v }).then(function (r) {
+          if (!r.ok) { sw.setAttribute('aria-checked', v ? 'false' : 'true'); return say(ndiSentence(r.data.error || 'could not change it'), true); }
+          say(v ? 'Sound is on.' : 'Sound is off.');
+          soundLine.textContent = soundWords(r.data);
+        });
+      }, hint));
+    }
     var addrCard = h('div', { class: 'card', id: 'ndiaddrcard' }, h('h2', { text: 'Addresses to ask' }),
       h('div', { class: 'hint', text: 'Senders are found by themselves on most networks. Where they are not (some Wi-Fi, a sender on another part of the network), add the sending computer\'s address here.' }), addrBody);
     var LICENCE = 'NDI\'s licence may not cover a box like this one. Its free licence is for ordinary computers, and it names small devices built for one job, running Linux, among what it does not cover. Whoever owns this box must read the licence that comes with the NDI SDK and decide, and ask NDI if in doubt. This is not legal advice.';
@@ -2556,12 +2585,13 @@
         // shows changed: a button replaced between a finger going down and coming up loses the tap (D59).
         var now = JSON.stringify([r.data.setup, r.data.helper, r.data.ended, r.data.cut, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
         if (now !== drawn && !ndiBusy) { drawn = now; drawSources(r.data); }
-        if (first) drawAddresses(r.data);
+        soundLine.textContent = soundWords(r.data);
+        if (first) { drawAddresses(r.data); drawSound(r.data); }
         first = false;
       });
     }
     refresh();
-    return [srcCard, addrCard];
+    return [srcCard, soundCard, addrCard];
   }
   // ---- updates (signed bundles, installed by pvj-update as root; D33) ----
   var updateTimer = null;

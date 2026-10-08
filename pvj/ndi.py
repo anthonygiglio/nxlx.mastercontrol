@@ -22,12 +22,15 @@ everything above the seam with a fake. Run once against the real library, a real
 (2026-10-08, one short run by SSH, nobody at the monitor: pvj/NDI.md); what was changed after it has not been.
 """
 
+import array
+import collections
 import ctypes
 import errno
 import fcntl
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import select
@@ -67,6 +70,26 @@ QUIET_SECONDS = 2.0                       # no frame for this long: "still" (or 
 # NOT tried), shows a frame only once it also holds the one after it, to know how long the first lasts. If that is
 # right the repeat puts a still picture on the screen; if it is wrong the repeat costs one frame. Device step N12.
 REPEAT_AFTER = 0.3
+
+# ---- sound (D62, 2026-10-08). Every figure of a block of sound is the sender's and is held to these.
+AUDIO_FLTP = 0x70544C46                   # "FLTp": 32-bit floats, one plane a channel; the only form the library hands out
+AUDIO_RATES = (32000, 44100, 48000, 88200, 96000)
+MAX_AUDIO_CHANNELS = 64                   # what a sender may say it has; only the first AUDIO_PLANES are ever read
+AUDIO_PLANES = 2                          # the first two channels are played (one, for a mono source); NDI says no layout
+MAX_AUDIO_SAMPLES = 48000                 # in one block, for each channel, and never more than one second of it
+# NDI's sound is floating point in which 1.0 is a professional reference level (+4 dBu), not full scale: a sender
+# may go well above 1.0. NDI's own helpers for 16-bit sound are told a "reference level" in dB for this, and its
+# header advises 20 for receiving: full scale is then 20 dB above reference. The same here, in one place. Measured
+# on 2026-10-08 against NDI Tools' Test Patterns (a 1 kHz tone at SMPTE alignment level): the floats peak at
+# exactly 1.0, so what the box plays peaks at -20 dBFS, which is where that tone belongs.
+AUDIO_HEADROOM_DB = 20
+AUDIO_GAIN = 10 ** (-AUDIO_HEADROOM_DB / 20.0)
+AUDIO_ABSURD = 1000.0                     # a sample 60 dB over reference is not sound: the block is played as silence
+AUDIO_WAIT = 0.5                          # after the first picture: how long sound may take to show that there is some
+AUDIO_QUEUE_SECONDS = 1.0                 # sound waiting for the player; beyond it the oldest is dropped, never kept
+AUDIO_WINDOW = 0.3                        # how far the sound's place in time may stray from the helper's clock
+AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
+CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
 PLAYER_LEFT = "the player stopped reading the input"      # something else was played: an end, not a fault
 SOURCES_CACHE = 1.0
 PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"))
@@ -184,9 +207,12 @@ def clean_address(text):
 
 
 def validate_saved(cfg):
-    """The stored part of the settings (a user-editable file, and a settings import): {"addresses": [...]}."""
-    if not isinstance(cfg, dict) or set(cfg) - {"addresses"}:
-        raise NdiError("ndi must be an object with addresses")
+    """The stored part of the settings (a user-editable file, and a settings import): {"addresses": [...]} and,
+    since sound, "sound": true or false (left out of what is returned when it was left out: it then means true)."""
+    if not isinstance(cfg, dict) or set(cfg) - {"addresses", "sound"}:
+        raise NdiError("ndi must be an object with addresses and sound")
+    if "sound" in cfg and not isinstance(cfg["sound"], bool):
+        raise NdiError("ndi.sound must be true or false")
     items = cfg.get("addresses", [])
     if not isinstance(items, list) or len(items) > MAX_ADDRESSES:
         raise NdiError("at most %d NDI addresses" % MAX_ADDRESSES)
@@ -195,7 +221,17 @@ def validate_saved(cfg):
         if clean_address(a) != a or a in out:
             raise NdiError("bad or repeated NDI address")
         out.append(a)
-    return {"addresses": out}
+    return dict({"addresses": out}, **({"sound": cfg["sound"]} if "sound" in cfg else {}))
+
+
+SOUND_DEFAULT = True                      # a source's sound is played with its picture unless the owner says no (D62)
+
+
+def saved_sound(section):
+    """Whether sound is wanted, from a stored `ndi` section a person may have edited: anything but a plain true
+    or false is the default."""
+    value = section.get("sound") if isinstance(section, dict) else None
+    return value if isinstance(value, bool) else SOUND_DEFAULT
 
 
 def saved_addresses(section):
@@ -224,14 +260,18 @@ class Wanted:
 
     def __init__(self, enabled, data, log=print):
         self._enabled, self._data, self.log, self.problem = enabled, data, log, ""
+        self.sound = SOUND_DEFAULT                 # read with the rest at each call
 
     def __call__(self):
         try:
             data = self._data()
-            addresses, problem = saved_addresses(data.get("ndi") if isinstance(data, dict) else None)
+            section = data.get("ndi") if isinstance(data, dict) else None
+            addresses, problem = saved_addresses(section)
+            self.sound = saved_sound(section)
             on = bool(self._enabled())
         except Exception as e:
             on, addresses, problem = False, [], "the NDI settings could not be read (%s)" % type(e).__name__
+            self.sound = SOUND_DEFAULT
         if problem != self.problem:
             self.problem = problem
             if problem:
@@ -290,13 +330,140 @@ def copy_frame(f, fmt, stride, out):
         dst[y * row:(y + 1) * row] = src[y * stride:y * stride + row]
 
 
-class Frame:
-    """One captured frame as the seam hands it up: plain numbers, and `view(n)` for n bytes of its memory."""
-    __slots__ = ("kind", "width", "height", "fourcc", "stride", "fps_n", "fps_d", "fields", "address", "view", "token")
+def check_audio(a):
+    """(rate, the sender's channels, the channels read, samples a channel, bytes from one plane to the next) of a
+    block of sound, or NdiError in words. Nothing of the block's memory is touched before this has passed, and
+    what is read afterwards is computed from these checked numbers only."""
+    rate, channels, n, stride = a.rate, a.channels, a.samples, a.stride
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (rate, channels, n, stride, a.fourcc)):
+        raise NdiError("the source sent sound that could not be read")
+    if a.fourcc != AUDIO_FLTP:
+        raise NdiError("the source sends a sound format this input does not read (%s)" % _fourcc_text(a.fourcc))
+    if rate not in AUDIO_RATES:
+        raise NdiError("the source's sound is at %d samples a second, which this input does not play" % max(-1, min(rate, 10 ** 9)))
+    if not 1 <= channels <= MAX_AUDIO_CHANNELS:
+        raise NdiError("the source sent sound that could not be read")
+    if not 1 <= n <= min(MAX_AUDIO_SAMPLES, rate):
+        raise NdiError("the source sent sound that could not be read")
+    if not 4 * n <= stride <= 4 * n + MAX_STRIDE_PAD or not a.address:
+        raise NdiError("the source sent sound that could not be read")
+    return rate, channels, min(channels, AUDIO_PLANES), n, stride
 
-    def __init__(self, kind, width=0, height=0, fourcc=0, stride=0, fps_n=0, fps_d=0, fields=1, address=0, view=None, token=None):
+
+def audio_block(a, checked):
+    """(the block as the pipe carries it: 32-bit floats, little-endian, channel after channel for each sample,
+    brought down by AUDIO_GAIN and held to full scale; its loudest sample after the gain, 0.0 to 1.0; whether it
+    was replaced by silence). A block with a sample that is not a number, is infinite, or is absurdly large is
+    not played: it becomes silence of the same length, so that time goes on.
+
+    The checks run at the speed of C (sum, max, min over an array); only the gain is a Python loop, 96000
+    multiplications a second for stereo at 48 kHz."""
+    _rate, _channels, planes, n, stride = checked
+    cols, peak = [], 0.0
+    for c in range(planes):
+        col = array.array("f")
+        col.frombytes(a.view(c * stride, 4 * n))
+        if len(col) != n:
+            raise NdiError("the source sent sound that could not be read")
+        if sys.byteorder != "little":
+            col.byteswap()                        # the library's floats are the machine's own; said for completeness
+        if not math.isfinite(sum(col)):           # one NaN or infinity anywhere makes the sum one
+            return bytes(4 * n * planes), 0.0, True
+        top = max(max(col), -min(col))
+        if top > AUDIO_ABSURD:
+            return bytes(4 * n * planes), 0.0, True
+        peak = max(peak, top)
+        cols.append(col)
+    g = AUDIO_GAIN
+    if peak * g > 1.0:                            # louder than full scale after the gain: held there, here, not by whatever plays it
+        cols = [array.array("f", [1.0 if x * g > 1.0 else -1.0 if x * g < -1.0 else x * g for x in col]) for col in cols]
+    else:
+        cols = [array.array("f", [x * g for x in col]) for col in cols]
+    if planes == 1:
+        out = cols[0]
+    else:
+        out = array.array("f", bytes(4 * n * planes))
+        for c, col in enumerate(cols):
+            out[c::planes] = col
+    if sys.byteorder != "little":
+        out.byteswap()
+    return out.tobytes(), min(1.0, peak * g), False
+
+
+# ---- the container: Matroska, written here ----------------------------------------------------------------------------
+# With sound the pipe cannot carry bare frames: a player that counts raw frames and raw samples to tell the time
+# is put out of step for good by every frame this helper drops or writes twice. So the helper says when each frame
+# and each block of sound belongs, in the smallest container that mpv reads itself from a pipe without seeking:
+# Matroska with uncompressed video ("V_UNCOMPRESSED" and the FourCC UYVY) and float PCM ("A_PCM/FLOAT/IEEE").
+# mpv's own reader (demux/demux_mkv.c, read for this at v0.35.0, v0.37.0 and v0.40.0) takes both, and takes a
+# segment and clusters of unknown length "for streaming". Only what that reader needs is written.
+MKV_TIME_UNIT = 1000                      # nanoseconds in one unit of time in the stream (so: microseconds)
+
+
+def _ebml_size(n):
+    """A length as EBML writes it, in the fewest bytes (never the all-ones pattern, which means "unknown")."""
+    for width in range(1, 9):
+        if n < (1 << (7 * width)) - 1:
+            return ((1 << (7 * width)) | n).to_bytes(width, "big")
+    raise NdiError("too large for the stream")
+
+
+def _ebml(ident, payload):
+    return bytes.fromhex(ident) + _ebml_size(len(payload)) + payload
+
+
+def _ebml_uint(ident, n):
+    return _ebml(ident, n.to_bytes(max(1, (n.bit_length() + 7) // 8), "big"))
+
+
+def mkv_header(width, height, fps, audio=None):
+    """The start of the stream: what it is, and its tracks. Track 1 is the picture (UYVY, as the frames come);
+    track 2, if `audio` is (rate, channels), the sound. The segment has no length: it ends when the pipe does."""
+    head = _ebml("1A45DFA3", _ebml_uint("4286", 1) + _ebml_uint("42F7", 1) + _ebml_uint("42F2", 4) + _ebml_uint("42F3", 8)
+                 + _ebml("4282", b"matroska") + _ebml_uint("4287", 2) + _ebml_uint("4285", 2))
+    info = _ebml("1549A966", _ebml_uint("2AD7B1", MKV_TIME_UNIT) + _ebml("4D80", b"nxlx.mastercontrol") + _ebml("5741", b"nxlx.mastercontrol"))
+    video = _ebml("AE", _ebml_uint("D7", 1) + _ebml_uint("73C5", 1) + _ebml_uint("83", 1) + _ebml_uint("9C", 0)
+                  + _ebml("86", b"V_UNCOMPRESSED") + _ebml_uint("23E383", int(round(1e9 / fps)))
+                  + _ebml("E0", _ebml_uint("B0", width) + _ebml_uint("BA", height) + _ebml("2EB524", b"UYVY")))
+    tracks = video
+    if audio is not None:
+        rate, channels = audio
+        tracks += _ebml("AE", _ebml_uint("D7", 2) + _ebml_uint("73C5", 2) + _ebml_uint("83", 2) + _ebml_uint("9C", 0)
+                        + _ebml("86", b"A_PCM/FLOAT/IEEE")
+                        + _ebml("E1", _ebml("B5", struct.pack(">d", float(rate))) + _ebml_uint("9F", channels) + _ebml_uint("6264", 32)))
+    return head + bytes.fromhex("18538067" + "01FFFFFFFFFFFFFF") + info + _ebml("1654AE6B", tracks)
+
+
+def mkv_block_head(track, seconds, size):
+    """What goes in front of `size` bytes of one frame, or one block of sound, that belongs at `seconds`: a cluster
+    of its own with its time and one block. The bytes themselves follow, written from where they are (a frame is
+    never copied to be joined to this)."""
+    block = bytes((0x80 | track, 0, 0, 0x80))     # the track, a time of 0 inside its cluster, "a whole picture by itself"
+    when = _ebml_uint("E7", max(0, int(round(seconds * 1e9 / MKV_TIME_UNIT))))
+    inner = when + bytes.fromhex("A3") + _ebml_size(len(block) + size) + block
+    return bytes.fromhex("1F43B675") + _ebml_size(len(inner) + size) + inner
+
+
+class Frame:
+    """One captured frame as the seam hands it up: plain numbers, and `view(n)` for n bytes of its memory.
+    `timestamp` is the sender's own clock in units of 100 ns, or None where the library gave none."""
+    __slots__ = ("kind", "width", "height", "fourcc", "stride", "fps_n", "fps_d", "fields", "address", "view", "token", "timestamp")
+
+    def __init__(self, kind, width=0, height=0, fourcc=0, stride=0, fps_n=0, fps_d=0, fields=1, address=0, view=None, token=None,
+                 timestamp=None):
         self.kind, self.width, self.height, self.fourcc, self.stride = kind, width, height, fourcc, stride
         self.fps_n, self.fps_d, self.fields, self.address, self.view, self.token = fps_n, fps_d, fields, address, view, token
+        self.timestamp = timestamp
+
+
+class AudioFrame:
+    """One captured block of sound as the seam hands it up: plain numbers, and `view(offset, n)` for n bytes of its
+    memory from `offset`. Every number is the sender's and is checked (check_audio) before a byte is read."""
+    __slots__ = ("rate", "channels", "samples", "fourcc", "stride", "address", "view", "token", "timestamp")
+
+    def __init__(self, rate=0, channels=0, samples=0, fourcc=0, stride=0, address=0, view=None, token=None, timestamp=None):
+        self.rate, self.channels, self.samples, self.fourcc, self.stride = rate, channels, samples, fourcc, stride
+        self.address, self.view, self.token, self.timestamp = address, view, token, timestamp
 
 
 # ---- the library, behind a seam ------------------------------------------------------------------------------------
@@ -319,13 +486,20 @@ class _Video(ctypes.Structure):
                 ("data", ctypes.c_void_p), ("stride", ctypes.c_int), ("metadata", ctypes.c_void_p), ("timestamp", ctypes.c_int64)]
 
 
+class _Audio(ctypes.Structure):
+    _fields_ = [("rate", ctypes.c_int), ("channels", ctypes.c_int), ("samples", ctypes.c_int), ("timecode", ctypes.c_int64),
+                ("fourcc", ctypes.c_uint32), ("data", ctypes.c_void_p), ("stride", ctypes.c_int), ("metadata", ctypes.c_void_p),
+                ("timestamp", ctypes.c_int64)]
+
+
 class _Perf(ctypes.Structure):
     _fields_ = [("video", ctypes.c_int64), ("audio", ctypes.c_int64), ("metadata", ctypes.c_int64)]
 
 
 COLOR_FASTEST, BANDWIDTH_HIGHEST = 100, 100
 ALLOW_FIELDS = True                       # what "fastest" implies whatever is asked; said outright, and pinned by a test
-FRAME_VIDEO, FRAME_ERROR = 1, 4
+FRAME_VIDEO, FRAME_AUDIO, FRAME_ERROR = 1, 2, 4
+TIMESTAMP_UNDEFINED = 2 ** 63 - 1           # what the library writes where it has no time for a frame
 _CSTR_MAX = 512
 
 
@@ -433,6 +607,16 @@ class CtypesLibrary:
                 ("NDIlib_recv_get_performance", None, [p, ctypes.POINTER(_Perf), ctypes.POINTER(_Perf)])):
             fn = getattr(lib, name)
             fn.restype, fn.argtypes = res, args
+        # Sound: two more calls. A library without them still gives the picture (has_audio says which).
+        try:
+            for name, res, args in (
+                    ("NDIlib_recv_capture_v3", i, [p, ctypes.POINTER(_Video), ctypes.POINTER(_Audio), p, u32]),
+                    ("NDIlib_recv_free_audio_v3", None, [p, ctypes.POINTER(_Audio)])):
+                fn = getattr(lib, name)
+                fn.restype, fn.argtypes = res, args
+            lib._pvj_audio = True
+        except AttributeError:
+            lib._pvj_audio = False
 
     def version(self):
         raw = _cstr(self.lib.NDIlib_version(), 80) or b""
@@ -492,7 +676,30 @@ class CtypesLibrary:
         def view(n):
             return _memory(address, n)
         return Frame("video", video.xres, video.yres, video.fourcc, video.stride, video.fps_n, video.fps_d, video.format,
-                     address, view, video)
+                     address, view, video, None if video.timestamp == TIMESTAMP_UNDEFINED else video.timestamp)
+
+    @property
+    def has_audio(self):
+        return bool(getattr(self.lib, "_pvj_audio", False))
+
+    def recv_audio(self, handle, timeout_ms):
+        """None when no sound came in time (or the connection is down: the picture's thread is the one that says
+        so); else an AudioFrame, to be given back with recv_free_audio. The library documents that the picture and
+        the sound of one connection may be taken on two threads at once; this is the sound's call."""
+        audio = _Audio()
+        kind = self.lib.NDIlib_recv_capture_v3(handle[0], None, ctypes.byref(audio), None, int(timeout_ms))
+        if kind != FRAME_AUDIO:
+            return None
+        address = audio.data or 0
+
+        def view(offset, n):
+            return _memory(address + offset, n)
+        return AudioFrame(audio.rate, audio.channels, audio.samples, audio.fourcc, audio.stride, address, view, audio,
+                          None if audio.timestamp == TIMESTAMP_UNDEFINED else audio.timestamp)
+
+    def recv_free_audio(self, handle, frame):
+        if frame.token is not None:
+            self.lib.NDIlib_recv_free_audio_v3(handle[0], ctypes.byref(frame.token))
 
     def recv_free(self, handle, frame):
         if frame.token is not None:
@@ -518,11 +725,41 @@ def load_library(path):
 class Receiver:
     """Receives one source and writes whole frames into the pipe. Two threads: one takes frames from the library
     into a buffer of its own and gives the library's frame straight back; one writes the newest whole frame to the
-    pipe. Three buffers go round between them, so neither waits for the other and a frame is never written in part."""
+    pipe. Three buffers go round between them, so neither waits for the other and a frame is never written in part.
 
-    def __init__(self, lib, source, fifo, log=print, clock=time.monotonic, pipe_wait=PIPE_OPEN_SECONDS, join_wait=3.0):
+    With `sound` a third thread takes the source's sound from the library (the library documents that picture and
+    sound of one connection may be taken on two threads at once), checks and converts each block, and queues it for
+    the same writer. What the pipe then carries is decided once, after the first picture (decide): if sound came
+    within AUDIO_WAIT it is Matroska, with a time on every frame and block; if none came it is bare frames, exactly
+    as without sound. Sound that turns up later, or changes its rate or channels, ends this receiver as "changed",
+    and the panel opens the source again, as it does when a picture changes size.
+
+    Time in the stream is this helper's own clock, never the sender's. Measured against real senders (2026-10-08):
+    the library's time on a block of sound is when it was sent, jittering by tens of milliseconds around blocks of
+    exactly 100, and a still picture carried a time more than two hours older than its sound. So a frame belongs
+    where it arrived, and sound is placed by counting its samples, held within AUDIO_WINDOW of the clock: when it
+    falls behind (a gap) the count starts again at the clock, and when it runs ahead a block is dropped."""
+
+    def __init__(self, lib, source, fifo, log=print, clock=time.monotonic, pipe_wait=PIPE_OPEN_SECONDS, join_wait=3.0,
+                 sound=False, audio_wait=AUDIO_WAIT):
         self.lib, self.source, self.fifo, self.log, self._clock, self._pipe_wait = lib, source, fifo, log, clock, pipe_wait
         self._join_wait = join_wait
+        self.sound = bool(sound) and bool(getattr(lib, "has_audio", False))
+        self._audio_wait = audio_wait
+        # "raw" or "matroska". Without sound it is bare frames from the start. With sound it is decided once, after
+        # the first picture (decide), and the writer waits for that.
+        self.container = None if self.sound else "raw"
+        self.audio = None                          # {"rate", "channels" (the sender's), "played"} once a good block came
+        self.audio_counts = {"received": 0, "written": 0, "dropped": 0, "refused": 0, "silenced": 0, "filled": 0}
+        self._audio_seen = threading.Event()
+        self._audio_problem = ""                   # why the last block was refused, for the page
+        self._queue = collections.deque()          # (seconds, bytes, length in seconds) waiting for the writer
+        self._queued = 0.0
+        self._peaks = collections.deque()          # (clock, loudest sample) of the blocks of the last second
+        self._t0 = None                            # the clock when the player took the pipe: the stream's time 0
+        self._at = 0.0                             # the clock when the pending frame arrived
+        self._apts = None                          # where the next block of sound belongs, by count
+        self._users = 0                            # threads that may be inside the library with the connection
         self.state, self.message, self.format = "connecting", "", None
         self.counts = {"received": 0, "shown": 0, "dropped": 0, "repeated": 0}
         self.first = threading.Event()             # a first good frame, or the end
@@ -536,8 +773,7 @@ class Receiver:
         self._threads = []
 
     def _release(self):
-        """Give the connection back to the library, once. The capture thread does this itself the moment it ends,
-        so a source nobody watches any more is let go without waiting for anyone to ask."""
+        """Give the connection back to the library, once."""
         with self._handle_lock:
             handle, self._handle = self._handle, None
             if handle is not None:
@@ -546,12 +782,36 @@ class Receiver:
                 except Exception as e:
                     self.log("pvj-ndi: closing the source: %s" % e)
 
+    def _leave(self):
+        """A thread that used the connection is out of the library for good. The last one out gives the connection
+        back at once, so a source nobody watches any more is let go without waiting for anyone to ask; never an
+        earlier one, which would free it under the thread still inside (the picture's and the sound's threads end
+        at different moments)."""
+        with self._cond:
+            self._users -= 1
+            last = self._users <= 0
+        if last:
+            self._release()
+
     def start(self):
         self._handle = self.lib.recv_open(self.source["raw"])
         self._threads = [threading.Thread(target=self._capture, name="ndi-capture", daemon=True),
                          threading.Thread(target=self._writer, name="ndi-writer", daemon=True)]
+        if self.sound:
+            self._threads.append(threading.Thread(target=self._capture_audio, name="ndi-audio", daemon=True))
+        self._users = len(self._threads) - 1       # every thread but the writer, which never touches the library
         for t in self._threads:
             t.start()
+
+    def decide(self):
+        """Called once after the first picture: wait a moment for sound, then fix what the pipe carries. Returns it."""
+        if self.sound and self.format is not None and not self._stop.is_set():
+            self._audio_seen.wait(self._audio_wait)
+        with self._cond:
+            if self.container is None:
+                self.container = "matroska" if self.audio is not None else "raw"
+            self._cond.notify_all()
+            return self.container
 
     def _end(self, state, message):
         with self._cond:
@@ -560,6 +820,7 @@ class Receiver:
             self._stop.set()
             self._cond.notify_all()
         self.first.set()
+        self._audio_seen.set()
 
     def _capture(self):
         spare, lost = None, False
@@ -595,7 +856,7 @@ class Receiver:
                 with self._cond:
                     counting = self.state == "playing"     # frames from before the screen took the pipe are not counted
                     self.counts["received"] += counting
-                    self._last = self._clock()
+                    self._last = self._at = self._clock()
                     if self._pending is not None:          # the screen has not taken the last one: the newest wins
                         self.counts["dropped"] += counting
                         spare, self._pending = self._pending, spare
@@ -608,14 +869,69 @@ class Receiver:
         except Exception as e:                             # a fault here must end as a state, never as a silent thread
             self._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
         finally:
-            self._release()
+            self._leave()
+
+    def _capture_audio(self):
+        """The sound's thread. A block that cannot be read is counted and left out; it never ends the picture."""
+        try:
+            while not self._stop.is_set():
+                a = self.lib.recv_audio(self._handle, 250)
+                if a is None:
+                    continue
+                try:
+                    try:
+                        checked = check_audio(a)
+                        data, peak, silenced = audio_block(a, checked)
+                    except NdiError as e:
+                        with self._cond:
+                            self.audio_counts["refused"] += 1
+                            self._audio_problem = str(e)
+                        continue
+                finally:
+                    self.lib.recv_free_audio(self._handle, a)
+                rate, channels, planes, n = checked[0], checked[1], checked[2], checked[3]
+                with self._cond:
+                    if self.audio is None:
+                        if self.container is not None:     # the pipe already carries bare frames: start again, with sound
+                            return self._end("changed", "the source started to send sound")
+                        self.audio = {"rate": rate, "channels": channels, "played": planes}
+                        self._audio_seen.set()
+                    elif (rate, channels) != (self.audio["rate"], self.audio["channels"]):
+                        return self._end("changed", "the source's sound changed to %d channels at %d samples a second" % (channels, rate))
+                    self._audio_problem = ""
+                    if self.state != "playing" or self._t0 is None or self.container != "matroska":
+                        continue                           # sound from before the screen took the pipe is not kept
+                    now, length = self._clock(), n / float(rate)
+                    self.audio_counts["received"] += 1
+                    self.audio_counts["silenced"] += silenced
+                    self._peaks.append((now, peak))
+                    while self._peaks and now - self._peaks[0][0] > 1.0:
+                        self._peaks.popleft()
+                    # A block is sent when its last sample exists, so it belongs one block's length before it came.
+                    here = max(0.0, now - self._t0 - length)
+                    if self._apts is None or here - self._apts > AUDIO_WINDOW:
+                        self._apts = max(here, self._apts or 0.0)       # the first block, or after a gap: from the clock
+                    elif self._apts - here > AUDIO_WINDOW:
+                        self.audio_counts["dropped"] += 1               # the count ran ahead of the clock: this one is left out
+                        continue
+                    self._queue.append((self._apts, data, length))
+                    self._apts += length
+                    self._queued += length
+                    while self._queued > AUDIO_QUEUE_SECONDS and self._queue:      # the player is not taking it: the oldest goes
+                        self._queued -= self._queue.popleft()[2]
+                        self.audio_counts["dropped"] += 1
+                    self._cond.notify_all()
+        except Exception as e:
+            self._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
+        finally:
+            self._leave()
 
     def _open_pipe(self):
         """The pipe, opened for writing once the player reads it; None when stopped or nobody came."""
         deadline = None
         while not self._stop.is_set():
-            if self.format is None:
-                self.first.wait(0.25)
+            if self.format is None or self.container is None:
+                self.first.wait(0.05 if self.format is not None else 0.25)
                 continue
             deadline = deadline or self._clock() + self._pipe_wait
             try:
@@ -663,41 +979,88 @@ class Receiver:
                 return False
         return True
 
+    def _write_frame(self, fd, buf, seconds):
+        """One whole picture. In the container its few bytes of heading go first and the frame follows from the
+        buffer it is in: a frame is never copied to be joined to its heading."""
+        if self.container == "matroska":
+            return self._write(fd, mkv_block_head(1, seconds, len(buf))) and self._write(fd, buf)
+        return self._write(fd, buf)
+
+    def _write_sound(self, fd, blocks, upto):
+        """The queued blocks of sound, then silence for any stretch the sound has left open before the picture at
+        `upto`: a player that waits for sound it will not get would hold the picture back with it. Returns False
+        when the pipe has gone."""
+        rate, planes = self.audio["rate"], self.audio["played"]
+        for seconds, data, length in blocks:
+            if not self._write(fd, mkv_block_head(2, seconds, len(data)) + data):
+                return False
+            self._sound_end = max(self._sound_end, seconds + length)
+            with self._cond:
+                self.audio_counts["written"] += 1
+        if upto - self._sound_end > AUDIO_WINDOW:
+            start = max(self._sound_end, upto - AUDIO_QUEUE_SECONDS)
+            n = int((upto - 0.1 - start) * rate)
+            if n > 0:
+                if not self._write(fd, mkv_block_head(2, start, 4 * n * planes) + bytes(4 * n * planes)):
+                    return False
+                self._sound_end = start + n / float(rate)
+                with self._cond:
+                    self.audio_counts["filled"] += 1
+                    if self._apts is None or self._apts < self._sound_end:
+                        self._apts = self._sound_end       # real sound, when it comes, goes after the silence
+        return True
+
     def _writer(self):
         fd = None
         try:
             fd = self._open_pipe()
             if fd is None:
                 return
+            mkv = self.container == "matroska"
+            if mkv and not self._write(fd, mkv_header(self.format[0], self.format[1], self.format[2],
+                                                      (self.audio["rate"], self.audio["played"]))):
+                return
             with self._cond:
+                self._t0 = self._clock()
                 if self.state == "ready":
                     self.state = "playing"
+            self._sound_end = 0.0
             # `last` is the frame written most recently. It is kept (not given back) until the next one is taken, so
             # that it can be written once more if nothing follows it (REPEAT_AFTER). The writer so never holds more
             # than one buffer at a time, which is what the capture thread's three buffers allow for.
-            last, wrote_at, repeated = None, 0.0, True
+            last, wrote_at, repeated, shown_at = None, 0.0, True, -1.0
             while not self._stop.is_set():
-                again = False
+                again, blocks, buf, at = False, (), None, 0.0
                 with self._cond:
-                    while self._pending is None and not self._stop.is_set():
+                    while self._pending is None and not self._queue and not self._stop.is_set():
                         if last is not None and not repeated and self._clock() - wrote_at >= REPEAT_AFTER:
                             again = True
                             break
                         self._cond.wait(0.05 if last is not None and not repeated else 0.25)
-                    if not again:
-                        buf, self._pending = self._pending, None
-                        if buf is not None and last is not None:
+                    if self._queue:
+                        blocks, self._queued = tuple(self._queue), 0.0
+                        self._queue.clear()
+                    if not again and self._pending is not None:
+                        buf, self._pending, at = self._pending, None, self._at
+                        if last is not None:
                             self._free.append(last)
                             last = None
+                if self._stop.is_set() and buf is None and not blocks:
+                    break
+                now = self._clock() - self._t0
+                if mkv and (blocks or buf is not None or again) and not self._write_sound(fd, blocks, now):
+                    break
                 if again:
                     repeated = True                        # once: a still picture is not written over and over
-                    if self._write(fd, last):
+                    shown_at = max(shown_at + 0.001, now)
+                    if self._write_frame(fd, last, shown_at):
                         with self._cond:
                             self.counts["repeated"] += 1
                     continue
                 if buf is None:
-                    break
-                ok = self._write(fd, buf)
+                    continue
+                shown_at = max(shown_at + 0.001, at - self._t0)        # where it arrived; never before the one before it
+                ok = self._write_frame(fd, buf, shown_at)
                 last, wrote_at, repeated = buf, self._clock(), not ok
                 with self._cond:
                     if ok:
@@ -716,9 +1079,19 @@ class Receiver:
             elif state == "playing" and self._clock() - self._last > QUIET_SECONDS:
                 state = "still"
             out = {"id": self.source["id"], "name": self.source["name"], "state": state, "message": self.message,
-                   "counts": dict(self.counts)}
+                   "counts": dict(self.counts), "container": self.container or "raw"}
             if self.format:
                 out.update(width=self.format[0], height=self.format[1], fps=self.format[2])
+            if self.sound:
+                now = self._clock()
+                peaks = [pk for when, pk in self._peaks if now - when <= 1.0]
+                top = max(peaks) if peaks else 0.0
+                level = round(20 * math.log10(top), 1) if top > 0 else None
+                out["audio"] = {"rate": self.audio["rate"] if self.audio else 0, "channels": self.audio["channels"] if self.audio else 0,
+                                "played": self.audio["played"] if self.audio else 0,
+                                "arriving": bool(peaks), "level_db": level,
+                                "silent": level is None or level < AUDIO_SILENT_DB,
+                                "problem": self._audio_problem, "counts": dict(self.audio_counts)}
         with self._handle_lock:
             if self._handle is not None and state in ("playing", "still", "waiting"):
                 try:
@@ -728,19 +1101,20 @@ class Receiver:
         return out
 
     def close(self):
-        """Stop both threads and give the connection back. Never called from those threads, and never with a lock
+        """Stop the threads and give the connection back. Never called from those threads, and never with a lock
         they need (LESSONS: do not join a thread while holding its lock). The pipe is not this object's to remove:
         the Service made it and the Service takes it away.
 
-        The connection is never given back while the capture thread may still be inside the library with it. That
-        thread gives it back itself when it ends; if it will not end, the connection is left open (and said in the
-        log) rather than freed under the library's feet. The helper is restarted by systemd if that ever matters."""
+        The connection is never given back while a thread may still be inside the library with it (the picture's or
+        the sound's). The last of them out gives it back itself; if one will not come out, the connection is left
+        open (and said in the log) rather than freed under the library's feet. The helper is restarted by systemd
+        if that ever matters."""
         self._end("stopped", "")
         threads, self._threads = self._threads, []
         for t in threads:
             t.join(timeout=self._join_wait)
         stuck = [t.name for t in threads if t.is_alive()]
-        if "ndi-capture" in stuck:
+        if "ndi-capture" in stuck or "ndi-audio" in stuck:
             self.log("pvj-ndi: the NDI runtime did not come back from %s; its connection is left open, not freed under it" % self.source["name"])
         else:
             self._release()
@@ -762,6 +1136,7 @@ class Service:
         self._find_lock = threading.Lock()         # the finder: asked by status, replaced by configure
         self.lib, self.lib_error, self.version = None, "", ""
         self.configured, self.on, self.addresses = False, False, []
+        self.sound = True                          # play a source's sound with its picture (the panel says; D62)
         self._finder, self._sources, self._sources_at, self._cut = None, [], None, False
         self.receiver = None
 
@@ -782,9 +1157,9 @@ class Service:
                 self.lib.find_close(finder)
 
     def configure(self, message):
-        on, addresses = message.get("on"), message.get("addresses")
-        if not isinstance(on, bool):
-            return {"ok": False, "error": "on must be true or false"}
+        on, addresses, sound = message.get("on"), message.get("addresses"), message.get("sound", True)
+        if not isinstance(on, bool) or not isinstance(sound, bool):
+            return {"ok": False, "error": "on and sound must be true or false"}
         try:
             addresses = validate_saved({"addresses": addresses})["addresses"]
         except NdiError as e:
@@ -805,7 +1180,12 @@ class Service:
                         self._finder = self.lib.find_open(",".join(addresses))
                 except NdiError as e:
                     self.lib_error = str(e)
-            self.configured, self.on, self.addresses = True, on, addresses
+            if on and sound != self.sound:         # a source that is open goes on in its old form until it is opened again
+                with self._recv_lock:
+                    r = self.receiver
+                if r is not None and r.state not in ENDED:
+                    r._end("changed", "sound was switched %s" % ("on" if sound else "off"))
+            self.configured, self.on, self.addresses, self.sound = True, on, addresses, sound
         return self.status()
 
     def sources(self):
@@ -856,7 +1236,8 @@ class Service:
                     self._remove_pipe()
             finally:
                 self.lock.release()
-        return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "runtime": self.runtime(),
+        return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "sound": self.sound,
+                "runtime": self.runtime(),
                 "sources": [{"id": s["id"], "name": s["name"], "from": s["from"]} for s in self.sources()], "cut": self._cut,
                 "playing": r.status() if r is not None else None}
 
@@ -885,7 +1266,7 @@ class Service:
             except OSError as e:
                 self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
                 return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
-            r = self._receiver(self.lib, match[0], self.fifo, log=self.log)
+            r = self._receiver(self.lib, match[0], self.fifo, log=self.log, sound=self.sound)
             try:
                 r.start()
             except NdiError as e:
@@ -895,6 +1276,8 @@ class Service:
             with self._recv_lock:
                 self.receiver = r
             r.first.wait(self._first_frame)
+            if r.format:
+                r.decide()                         # a moment for sound to show itself; then the pipe's form is fixed
             st = r.status()
             if st["state"] in ENDED or not r.format:
                 self._close_receiver()
@@ -1051,7 +1434,30 @@ def _playing(p):
     counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
     out["counts"] = {k: counts[k] for k in ("received", "shown", "dropped", "dropped_by_runtime", "repeated")
                      if isinstance(counts.get(k), int) and not isinstance(counts.get(k), bool) and 0 <= counts[k] < 2 ** 53}
+    out["container"] = p["container"] if p.get("container") in CONTAINERS else "raw"
+    out["audio"] = _audio(p.get("audio"))
+    if out["container"] == "matroska" and (out["audio"] is None or not out["audio"]["rate"]):
+        out["container"] = "raw"           # a stream with sound must say what its sound is; otherwise it is read as bare frames
     return out
+
+
+def _audio(a):
+    """The helper's account of a source's sound, re-checked field by field; None when it gave none (sound is off)."""
+    if not isinstance(a, dict):
+        return None
+
+    def whole(v, low, high):
+        return v if isinstance(v, int) and not isinstance(v, bool) and low <= v <= high else 0
+    rate = a.get("rate") if a.get("rate") in AUDIO_RATES else 0
+    level = a.get("level_db")
+    level = round(float(level), 1) if isinstance(level, (int, float)) and not isinstance(level, bool) and math.isfinite(level) and -200 <= level <= 0 else None
+    counts = a.get("counts") if isinstance(a.get("counts"), dict) else {}
+    return {"rate": rate, "channels": whole(a.get("channels"), 1, MAX_AUDIO_CHANNELS) if rate else 0,
+            "played": whole(a.get("played"), 1, AUDIO_PLANES) if rate else 0,
+            "arriving": a.get("arriving") is True, "level_db": level, "silent": a.get("silent") is not False,
+            "problem": _text(a.get("problem")),
+            "counts": {k: counts[k] for k in ("received", "written", "dropped", "refused", "silenced", "filled")
+                       if isinstance(counts.get(k), int) and not isinstance(counts.get(k), bool) and 0 <= counts[k] < 2 ** 53}}
 
 
 class Input:
@@ -1092,13 +1498,19 @@ class Input:
         """Something else is about to be loaded or the screen cleared: a source still connecting is not wanted."""
         self.ticket()
 
+    def sound_wanted(self):
+        """Whether the owner wants a source's sound played (read by the last call of what is wanted; else the default)."""
+        v = getattr(self._wanted, "sound", SOUND_DEFAULT)
+        return v if isinstance(v, bool) else SOUND_DEFAULT
+
     def sync(self):
-        """Tell the helper whether the module is on and which addresses to ask. Returns its status, or {"ok": False}."""
+        """Tell the helper whether the module is on, which addresses to ask, and whether sound is wanted. Returns its
+        status, or {"ok": False}."""
         if not self.setup:
             return {"ok": False}
         try:
             on, addresses = self._wanted()
-            reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses}, timeout=10)
+            reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses, "sound": self.sound_wanted()}, timeout=10)
         except Exception as e:             # never out of here: this runs while the panel starts
             if not isinstance(e, NdiError):
                 self.log("pvj-web: the NDI helper was not told the settings: %s" % type(e).__name__)
@@ -1111,7 +1523,9 @@ class Input:
         """What the page shows. Every string and number from the helper is checked again here."""
         on, addresses = self._wanted()
         st = self.client.status() if self.setup else {"ok": False}
-        if st.get("ok") and (st.get("configured") is not True or st.get("on") is not on or st.get("addresses") != list(addresses)):
+        sound = self.sound_wanted()
+        if st.get("ok") and (st.get("configured") is not True or st.get("on") is not on or st.get("addresses") != list(addresses)
+                             or ("sound" in st and st.get("sound") is not sound)):
             st = self.sync()
         helper = st.get("ok") is True or st.get("answered") is True
         notice = [x for x in (getattr(self._wanted, "problem", ""), _text(st.get("error")) if st.get("answered") is True else "") if x]
@@ -1122,7 +1536,7 @@ class Input:
                 name, where = clean_name(s.get("name")), s.get("from")
                 if name and isinstance(where, str) and _WHERE.fullmatch(where) and source_id(name, host_of(where)) == s["id"]:
                     sources.append({"id": s["id"], "name": name, "from": where})
-        return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice),
+        return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice), "sound": sound, "headroom_db": AUDIO_HEADROOM_DB,
                 "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
                             "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
                 "install": {"command": SETUP_COMMAND, "folder": LIB_DIR,
@@ -1133,7 +1547,8 @@ class Input:
                 "ended": dict(self.ended) if self.ended and not self.current else None}
 
     def open(self, sid):
-        """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps"} or NdiError."""
+        """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps", "container",
+        "audio"} or NdiError. "container" says what the pipe will carry: "raw" frames, or "matroska" with sound."""
         if not isinstance(sid, str) or not _ID.fullmatch(sid):
             raise NdiError("no such source")
         if not self.setup:

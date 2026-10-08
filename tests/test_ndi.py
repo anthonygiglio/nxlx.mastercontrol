@@ -674,7 +674,7 @@ class InputTest(unittest.TestCase):
         self.client.answer["sources"] = self.client.answer["sources"][-3:]
         self.assertEqual(self.i.status()["sources"], [{"id": self.rid, "name": "RESOLUME (Output)", "from": "192.168.0.20:5961"}])
         self.assertEqual(st["playing"], {"id": self.rid, "name": "NDI source", "state": "playing", "message": "m" * 200,
-                                         "counts": {"dropped_by_runtime": 4}})
+                                         "counts": {"dropped_by_runtime": 4}, "container": "raw", "audio": None})
         for answer in ({"ok": True, "playing": {"id": self.rid, "state": "ready", "width": 64, "height": 16}},          # no rate
                        {"ok": True, "playing": {"id": ndi.source_id("b", "192.168.0.20"), "state": "ready", "width": 64, "height": 16, "fps": 30}},
                        {"ok": True, "playing": "x"}, {"ok": True}, {"ok": "yes"}):
@@ -936,7 +936,7 @@ class NdiApiTest(ServerBase):
         self.enable()
         self.lib.frames.put(frame(1920, 1080, fps=(60000, 1001)))
         st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.invite("live"))
-        self.assertEqual((st, body), (200, {"playing": "ndi", "name": "RESOLUME (Output)", "width": 1920, "height": 1080, "fps": 59.94}))
+        self.assertEqual((st, body), (200, {"playing": "ndi", "name": "RESOLUME (Output)", "width": 1920, "height": 1080, "fps": 59.94, "sound": False}))
         self.assertIn(("play_pipe", self.service.fifo, 1920, 1080, 59.94, "uyvy422"), self.player.calls)
         self.assertEqual(self.api.ndi.current, {"id": self.rid, "name": "RESOLUME (Output)"})
         page = self.call("GET", "/api/ndi", token=self.full)[1]
@@ -1618,7 +1618,7 @@ class WatchTest(unittest.TestCase):
     def test_a_source_that_sends_one_frame_and_then_nothing_for_an_hour_is_left_alone(self):
         # NDI Tools' Test Patterns, against the real library: one picture, then only its tone.
         clock = [0.0]
-        self.s._receiver = lambda lib, source, fifo, log: ndi.Receiver(lib, source, fifo, log=log, clock=lambda: clock[0])
+        self.s._receiver = lambda lib, source, fifo, log, sound=False: ndi.Receiver(lib, source, fifo, log=log, clock=lambda: clock[0], sound=sound)
         self.lib.frames.put(frame(1920, 1080))
         self.i.open(self.rid)
         self.i.current = {"id": self.rid, "name": "RESOLUME (Output)"}

@@ -2004,7 +2004,8 @@ class Api:
                     self.ndi.current = {"id": p["id"], "name": p["name"]}
                     self._ndi_loading.on = True
                     try:
-                        self._player_call(self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"], "uyvy422")
+                        self._player_call(self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"],
+                                          "matroska" if p.get("container") == "matroska" else "uyvy422")
                     except ApiError as e:
                         failed = e
                     finally:
@@ -2020,7 +2021,8 @@ class Api:
                 raise ApiError(409, "something else was played while the source was connecting")
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing(ndi=True)
-        return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"]}
+        return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"],
+                "sound": p.get("container") == "matroska"}
 
     def ndi_tick(self):
         """About once a second (server.py): show the source again when the helper says it changed size or rate."""
@@ -2034,13 +2036,27 @@ class Api:
         return self.ndi.status()
 
     def set_ndi(self, body, device, client):
-        """Add or remove one address the helper also asks for sources (for networks where mDNS does not pass)."""
+        """Add or remove one address the helper also asks for sources (for networks where mDNS does not pass), or
+        switch a source's sound on or off: {"action": "sound", "on": true}. A source that is on the screen is opened
+        again by the helper's "changed", so the switch is heard (or not) within a second or two."""
         from . import ndi as ndi_mod
         self._need_ndi()
         action = body.get("action")
-        if action not in ("add_address", "remove_address"):
-            raise bad("action must be add_address or remove_address")
+        if action not in ("add_address", "remove_address", "sound"):
+            raise bad("action must be add_address, remove_address or sound")
+        if action == "sound":
+            if not isinstance(body.get("on"), bool):
+                raise bad("on must be true or false")
+            with self.settings.lock:
+                section = self.settings.data.get("ndi")
+                self.settings.data["ndi"] = {"addresses": ndi_mod.saved_addresses(section)[0], "sound": body["on"]}
+                self.settings.save()
+            self.ndi._wanted()                     # read again, so that what is sent next is the new choice
+            self.ndi.sync()
+            return self.ndi.status()
         with self.settings.lock:
+            before = self.settings.data.get("ndi")
+            keep = {"sound": before["sound"]} if isinstance(before, dict) and isinstance(before.get("sound"), bool) else {}
             items = ndi_mod.saved_addresses(self.settings.data.get("ndi"))[0]      # a hand-edited section of the wrong kind counts as empty
             try:
                 address = ndi_mod.clean_address(body.get("address"))
@@ -2056,7 +2072,7 @@ class Api:
                     items.remove(address)
             except ndi_mod.NdiError as e:
                 raise bad(str(e))
-            self.settings.data["ndi"] = {"addresses": items}
+            self.settings.data["ndi"] = dict({"addresses": items}, **keep)      # the choice about sound, if one was made, stays
             self.settings.save()
         self.ndi.sync()
         return self.ndi.status()
