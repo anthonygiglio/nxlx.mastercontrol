@@ -497,8 +497,6 @@ table.chan .lvl { width: 36%; }
    again in the laptop's narrow columns at 900 and 932) */
 @media (max-width: 1199px) { .seg .segbtn { flex: 1 1 auto; } }
 @media (max-width: 599px) {
-  /* Live, the four big buttons at the foot: they go to a second line before Blackout leaves the window */
-  .row:has(> #fade) { flex-wrap: wrap; }
   /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word (it was cut at 390) */
   .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .transport3 .btn { padding: 0 2px; }
@@ -508,7 +506,10 @@ table.chan .lvl { width: 36%; }
   .top .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 }
 @media (max-width: 379px) {
-  .row:has(> #fade) > .btn { flex: 1 1 40%; }                     /* two and two */
+  /* Live, the four big buttons at the foot: two and two, where Blackout used to leave the window (at 320 and 360;
+     at 390 the four fit in a line, as before) */
+  .row:has(> #fade) { flex-wrap: wrap; }
+  .row:has(> #fade) > .btn { flex: 1 1 40%; }
   .transport3 { gap: 6px; }
   .transport3 .btn, .fxbuttons > .btn { padding: 0 2px; font-size: 14px; }
   /* Five tabs (with Room): each as wide as its word plus an even share of what is left, never under 44 px, so
