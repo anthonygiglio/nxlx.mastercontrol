@@ -146,6 +146,47 @@ def validate_saved(cfg):
     return {"addresses": out}
 
 
+def saved_addresses(section):
+    """(the addresses of a stored `ndi` section that can be used, what was wrong with it in words or ""). The
+    settings are a file a person may have edited: a section of the wrong kind gives no addresses, and a bad entry
+    in a good list is left out, never an error that reaches the caller."""
+    if section is None:
+        return [], ""
+    items = section.get("addresses", []) if isinstance(section, dict) else None
+    if not isinstance(items, list):
+        return [], "the saved NDI addresses could not be read and are not used"
+    good = []
+    for a in items[:MAX_ADDRESSES * 4]:
+        try:
+            if clean_address(a) == a and a not in good and len(good) < MAX_ADDRESSES:
+                good.append(a)
+        except NdiError:
+            pass
+    return good, ("" if len(good) == len(items) else "%d saved NDI address%s could not be used and %s left out"
+                  % (len(items) - len(good), "" if len(items) - len(good) == 1 else "es", "was" if len(items) - len(good) == 1 else "were"))
+
+
+class Wanted:
+    """What the panel wants of the helper, read from the settings each time: (module on, addresses). Never raises;
+    what is wrong with the stored section is kept in `problem` for the page and logged once when it changes."""
+
+    def __init__(self, enabled, data, log=print):
+        self._enabled, self._data, self.log, self.problem = enabled, data, log, ""
+
+    def __call__(self):
+        try:
+            data = self._data()
+            addresses, problem = saved_addresses(data.get("ndi") if isinstance(data, dict) else None)
+            on = bool(self._enabled())
+        except Exception as e:
+            on, addresses, problem = False, [], "the NDI settings could not be read (%s)" % type(e).__name__
+        if problem != self.problem:
+            self.problem = problem
+            if problem:
+                self.log("pvj-web: %s" % problem)
+        return on, addresses
+
+
 def _fourcc_text(n):
     raw = struct.pack("<I", n & 0xFFFFFFFF)
     return raw.decode("ascii") if all(0x20 < b < 0x7f for b in raw) else "0x%08x" % (n & 0xFFFFFFFF)
@@ -889,11 +930,14 @@ class Input:
         """Tell the helper whether the module is on and which addresses to ask. Returns its status, or {"ok": False}."""
         try:
             on, addresses = self._wanted()
-            return self.client.request({"cmd": "configure", "on": on, "addresses": addresses}, timeout=10)
+            reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses}, timeout=10)
         except Exception as e:             # never out of here: this runs while the panel starts
             if not isinstance(e, NdiError):
                 self.log("pvj-web: the NDI helper was not told the settings: %s" % type(e).__name__)
             return {"ok": False}
+        if reply.get("ok") is not True:    # it answered, and refused: that is not "not running", and the page says which
+            return {"ok": False, "answered": True, "error": _text(reply.get("error")) or "the NDI helper refused the settings"}
+        return reply
 
     def status(self):
         """What the page shows. Every string and number from the helper is checked again here."""
@@ -901,7 +945,8 @@ class Input:
         st = self.client.status()
         if st.get("ok") and (st.get("configured") is not True or st.get("on") is not on or st.get("addresses") != list(addresses)):
             st = self.sync()
-        helper = st.get("ok") is True
+        helper = st.get("ok") is True or st.get("answered") is True
+        notice = [x for x in (getattr(self._wanted, "problem", ""), _text(st.get("error")) if st.get("answered") is True else "") if x]
         rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
         sources = []
         for s in (st.get("sources") if isinstance(st.get("sources"), list) else [])[:MAX_SOURCES]:
@@ -909,7 +954,7 @@ class Input:
                 name, where = clean_name(s.get("name")), s.get("from")
                 if name and source_id(name) == s["id"]:
                     sources.append({"id": s["id"], "name": name, "from": where if isinstance(where, str) and _WHERE.fullmatch(where) else ""})
-        return {"helper": helper,
+        return {"helper": helper, "notice": "; ".join(notice),
                 "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
                             "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
                 "install": {"command": "sudo pvj-ndi-runtime install \"/path/to/NDI SDK for Linux\"", "folder": LIB_DIR,

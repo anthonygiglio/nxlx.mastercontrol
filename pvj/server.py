@@ -456,9 +456,9 @@ def build(env=None, player=None):
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
     api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
     from . import ndi as ndi_mod             # the NDI helper's client; the helper is idle until told the module is on
+    ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
     api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
-                            lambda: (registry.enabled("inputs-ndi"), list(settings.data.get("ndi", {}).get("addresses", []))),
-                            log=lambda m: print(m, file=sys.stderr))
+                            ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log)
     try:                                     # whatever the helper answers, the panel starts
         api.ndi.sync()
     except Exception as e:

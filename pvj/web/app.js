@@ -2469,6 +2469,7 @@
       srcBody.textContent = '';
       var n = notice(d), playing = d.playing;
       if (n) srcBody.appendChild(n);
+      if (d.notice) srcBody.appendChild(h('div', { class: 'hint warn', id: 'ndinotice', text: ndiSentence(d.notice) }));
       if (playing && (playing.state === 'refused' || playing.state === 'stopped') && playing.message)
         srcBody.appendChild(h('div', { class: 'hint warn problem', id: 'ndiproblem', text: playing.name + ': ' + ndiSentence(playing.message) }));
       if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: 'No NDI sources found yet. Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this box. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
@@ -2532,7 +2533,7 @@
         }
         // Senders come and go, so the list is asked for every 2 seconds, but it is drawn again only when what it
         // shows changed: a button replaced between a finger going down and coming up loses the tap (D59).
-        var now = JSON.stringify([r.data.helper, r.data.runtime, r.data.sources, r.data.playing]);
+        var now = JSON.stringify([r.data.helper, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
         if (now !== drawn && !ndiBusy) { drawn = now; drawSources(r.data); }
         if (first) drawAddresses(r.data);
         first = false;

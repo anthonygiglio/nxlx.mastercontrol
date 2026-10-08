@@ -1132,5 +1132,69 @@ class InterlacedTest(unittest.TestCase):
         self.assertEqual(len(keep), 3)                                   # the strings outlive the call that made them
 
 
+class SavedSettingsTest(unittest.TestCase):
+    """Review finding 3: a settings file edited by hand must not stop the panel, and a refusal is not "not running"."""
+
+    def test_a_section_of_the_wrong_kind_gives_no_addresses_and_one_log_line(self):
+        logged = []
+        data = {"ndi": []}
+        w = ndi.Wanted(lambda: True, lambda: data, log=logged.append)
+        for bad in ([], "10.0.0.1", 5, {"addresses": "10.0.0.1"}, {"addresses": None}, True):
+            data["ndi"] = bad
+            self.assertEqual(w(), (True, []), bad)
+            self.assertEqual(w.problem, "the saved NDI addresses could not be read and are not used")
+        self.assertEqual(len(logged), 1)                                 # said once, not at every poll
+        del data["ndi"]                                                  # a file from before schema 14, mid-migration
+        self.assertEqual((w(), w.problem), ((True, []), ""))
+        w = ndi.Wanted(lambda: 1 / 0, lambda: data, log=logged.append)
+        self.assertEqual(w(), (False, []))
+        w = ndi.Wanted(lambda: True, lambda: None, log=logged.append)
+        self.assertEqual(w(), (True, []))
+
+    def test_a_bad_entry_in_a_good_list_is_left_out_and_said(self):
+        self.assertEqual(ndi.saved_addresses({"addresses": ["10.0.0.1", "8.8.8.8", "10.0.0.1", "10.0.0.2\n", 7, "192.168.1.20"]}),
+                         (["10.0.0.1", "192.168.1.20"], "4 saved NDI addresses could not be used and were left out"))
+        self.assertEqual(ndi.saved_addresses({"addresses": ["10.0.0.1", "x"]})[1], "1 saved NDI address could not be used and was left out")
+        self.assertEqual(ndi.saved_addresses({"addresses": ["10.0.0.%d" % n for n in range(1, 30)]})[0], ["10.0.0.%d" % n for n in range(1, 17)])
+        self.assertEqual(ndi.saved_addresses({"addresses": ["10.0.0.1"]}), (["10.0.0.1"], ""))
+
+    def page(self, section, lib=None):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        lib = lib or FakeLib()
+        s = ndi.Service(d, "x", loader=lambda path: lib, problem=lambda path: None, log=lambda *_: None)
+        self.addCleanup(s.close)
+        client = FakeClient(s)
+        i = ndi.Input(client, s.fifo, ndi.Wanted(lambda: True, lambda: {"ndi": section}, log=lambda *_: None), log=lambda *_: None)
+        return i, client, lib
+
+    def test_the_page_works_with_a_wrong_section_and_says_what_was_left_out(self):
+        i, client, lib = self.page("oops")
+        st = i.status()
+        self.assertEqual((st["helper"], st["addresses"], st["notice"]), (True, [], "the saved NDI addresses could not be read and are not used"))
+        i, client, lib = self.page({"addresses": ["192.168.1.20", "8.8.8.8"]})
+        st = i.status()
+        self.assertEqual((st["helper"], st["addresses"], lib.finders), (True, ["192.168.1.20"], ["192.168.1.20"]))
+        self.assertIn("1 saved NDI address could not be used", st["notice"])
+        self.assertEqual(len(st["sources"]), 1)                          # and the sources are still found
+
+    def test_a_helper_that_refuses_the_settings_is_running_and_its_reason_is_on_the_page(self):
+        i, client, lib = self.page({"addresses": []})
+        client.answer = {"ok": False, "error": "bad or repeated NDI address"}
+        st = i.status()                                                  # status says not ok; so does the configure
+        self.assertEqual(i.sync(), {"ok": False, "answered": True, "error": "bad or repeated NDI address"})
+        client.answer = None
+        real = client.request
+
+        def refuse(message, timeout=None):
+            return {"ok": False, "error": "bad or repeated NDI address"} if message["cmd"] == "configure" else real(message, timeout)
+        client.request = refuse
+        st = i.status()
+        self.assertEqual((st["helper"], st["notice"]), (True, "bad or repeated NDI address"))
+        client.down = True
+        client.request = real
+        self.assertEqual((i.status()["helper"], i.status()["notice"]), (False, ""))
+
+
 if __name__ == "__main__":
     unittest.main()

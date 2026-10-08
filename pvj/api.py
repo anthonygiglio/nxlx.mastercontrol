@@ -1968,7 +1968,7 @@ class Api:
         if action not in ("add_address", "remove_address"):
             raise bad("action must be add_address or remove_address")
         with self.settings.lock:
-            items = list(self.settings.data.get("ndi", {}).get("addresses", []))
+            items = ndi_mod.saved_addresses(self.settings.data.get("ndi"))[0]      # a hand-edited section of the wrong kind counts as empty
             try:
                 address = ndi_mod.clean_address(body.get("address"))
                 if action == "add_address":
