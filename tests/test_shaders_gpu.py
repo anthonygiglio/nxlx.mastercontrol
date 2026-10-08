@@ -24,6 +24,7 @@ import zlib
 from pvj import shaders as S, vibes as V
 from pvj.api import ApiError
 from pvj.player import Player
+from tests import mpv_watch
 from tests.test_server import ServerBase
 from tests.test_shaders import AMBIENT, BUNDLED, PERFORMANCE
 
@@ -84,9 +85,13 @@ class GpuCase:
 
     def setUp(self):
         super().setUp()
+        log, log_path = mpv_watch.log_args(self.tmp)
         self.real = Player(extra_args=["--vo=gpu", "--gpu-context=x11egl", "--opengl-es=" + self.ES, "--ao=null",
-                                       "--geometry=%dx%d" % (W, H), "--no-border"], rundir=self.rundir)
+                                       "--geometry=%dx%d" % (W, H), "--no-border"] + log, rundir=self.rundir)
         self.addCleanup(self.real.stop)
+        # Every request to this player is timed, and one that gets no reply prints what the player was doing
+        # (tests/mpv_watch.py). It fails as before: the watch only looks.
+        mpv_watch.watch(self, self.real, log_path)
         self.api.player = self.real
         self.real.play([CLIP], windowed=True)
         deadline = time.monotonic() + 10
