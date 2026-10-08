@@ -534,16 +534,30 @@ class WorkingSizeTest(unittest.TestCase):
             self.assertEqual(E.auto_lines(board), row["other"])
         self.assertFalse(E.AUTO["pi3"]["measured"])                                    # the careful value, should effects ever run there
         # The Pi 4's row is made from what the board measured, by the rule: the largest cap at which the filter held a
-        # 1080 line clip (fewer than half a dropped frame a second), the heavier ones one step down.
+        # 1080 line clip (fewer than half a dropped frame a second), the heavier ones one step down. Two that held at
+        # 720 lines with the GPU nearly full are stepped down too, by the owner's choice of 2026-10-08: PI4_HEADROOM.
         self.assertTrue(E.AUTO["pi4"]["measured"])
         self.assertEqual(sorted(E.PI4_720), sorted(E.PI4))
         for sid, (ms, dropped) in E.PI4_720.items():
             full, half = E.PI4[sid][1]
             self.assertTrue(half[0] < ms < full[0] and half[1] <= dropped <= full[1], sid)     # between the 540 line and the full size numbers
-            want = 720 if dropped < E.HOLDS else 540
+            want = 720 if dropped < E.HOLDS and sid not in E.PI4_HEADROOM else 540
             self.assertEqual(E.auto_lines("pi4", sid), want, sid)
             self.assertLess((E.PI4_720[sid][1] if want == 720 else half[1]), E.HOLDS, sid)    # and at what Automatic gives it, it held
-        self.assertEqual(E.AUTO["pi4"], {"lines": 720, "lower": {"isf-edge-blowout.fs": 540}, "other": 540, "measured": True})
+        self.assertEqual(E.PI4_HEADROOM, {"fx-edge-glow.fs", "isf-corner-color-tint.fs"})
+        for sid in sorted(E.PI4_HEADROOM):
+            self.assertIn(sid, E.PI4_720, sid)                                         # only a filter that was measured,
+            self.assertLess(E.PI4_720[sid][1], E.HOLDS, sid)                           # and that held at 720: one that did not is the rule's
+            # what the owner chose for the box is not overridden, and the choice is a Pi 4's only
+            self.assertEqual((E.cap_lines("auto", "pi4", sid), E.cap_lines(540, "pi4", sid), E.cap_lines(720, "pi4", sid), E.cap_lines("full", "pi4", sid)),
+                             (540, 540, 720, None), sid)
+            self.assertEqual((E.auto_lines("pi3", sid), E.auto_lines("pi5", sid)), (540, None), sid)
+        self.assertEqual((E.PI4_720["fx-edge-glow.fs"], E.PI4_720["isf-corner-color-tint.fs"]), ((9.9, 0.0), (9.2, 0.0)))     # the measured numbers stay
+        self.assertEqual([E.auto_lines("pi4", sid) for sid in ("fx-edge-glow.fs", "isf-corner-color-tint.fs", "isf-edge-blowout.fs", "fx-grade.fs")],
+                         [540, 540, 540, 720])
+        self.assertEqual(len([sid for sid in E.PI4_720 if E.auto_lines("pi4", sid) == 720]), 34)
+        self.assertEqual(E.AUTO["pi4"], {"lines": 720, "lower": {"fx-edge-glow.fs": 540, "isf-corner-color-tint.fs": 540, "isf-edge-blowout.fs": 540},
+                                         "other": 540, "measured": True})
         self.assertLessEqual(E.AUTO["pi3"]["lines"], E.AUTO["pi4"]["lines"])
         self.assertEqual(E.AUTO["pi3"]["lines"], 540)
         for detail, want in (("full", None), (540, 540), (720, 720)):

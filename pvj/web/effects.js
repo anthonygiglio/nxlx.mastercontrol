@@ -18,7 +18,7 @@
   var UPPER = { rgb: 'RGB', lgg: 'LGG', eq: 'EQ', h: 'H', v: 'V' };
   var WORK = { light: 'Light work', medium: 'Medium work', heavy: 'Heavy work' };
   // How much work an effect is: for a bundled one what a Raspberry Pi 4 measured (the largest clip it held 30 frames
-  // a second over at full size, and the lines it has to work at to hold a 1080p clip), for an upload the count from
+  // a second over at full size, and the lines Automatic lets it work at under a 1080p clip), for an upload the count from
   // its text.
   function work(s) {
     var words = WORK[s.weight] || '', m = s.measured;

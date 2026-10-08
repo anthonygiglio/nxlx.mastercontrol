@@ -4,6 +4,15 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08 (Automatic on a Pi 4: edge glow and corner colour tint step down to 540 lines)
+
+Branch `auto-540-two`. The owner answered the open question of D58: yes, `fx-edge-glow.fs` and `isf-corner-color-tint.fs` work at 540 lines in Automatic on a Pi 4.
+
+- **Why.** The run of 2026-10-05 (below, "effect detail on the Pi 4"): at 720 lines both dropped nothing but kept the GPU 94 to 96 percent busy, so the mapping on top would tip them; at 540 lines they dropped nothing with the GPU 77 to 78 percent busy, and are softer.
+- **How.** `PI4_720` in `pvj/effects.py` is untouched: it is what the board measured, and it says both held. A new set beside it, `PI4_HEADROOM`, names the filters that held at 720 and are stepped down for room, with the reason, the dates and that it is the owner's choice; `_pi4_lines` reads it, so `AUTO["pi4"]["lower"]` now holds three filters. Only Automatic reads it: 720 lines or Full chosen for the box are what the effect works at. A Pi 3's row and the boards that are not measured are as they were.
+- **Tests.** `tests/test_effects.py`: the two and isf-edge-blowout get 540 on a Pi 4 in Automatic, fx-grade 720, 34 filters stay at 720; a chosen 720 or Full is not overridden; every name in the set is in `PI4_720` and held there; the two measured rows are what they were.
+- **Text.** `pvj/SHADERS.md` (the Effect detail paragraph, the findings of the run, the example of the state), HANDOFF.md (the question is off the owner's list; the Effect detail notes), a dated paragraph under D58. The panel's line "540 for the heaviest effects and for ones you add" stays: the three at 540 are the three with the dearest pass at 720 lines. `tools/DEVICE-TESTING.md` does not name the filters and was not changed.
+- **Not run on hardware.** Nothing here was run on the Pi. That the two hold at 540 lines rests on the measurements of 2026-10-05; all 37 at Automatic have not been run again with the new table.
 ## 2026-10-08, the morning (the box brought to master; the owner's answers read)
 
 - **Deploy.** The owner said "deploy to the Pi". The test Pi 4 was brought from the merge of #91 to master at `2bfaabb` (#92, #93, #96 and the documents of #95 and #97) at about 14:13 UTC by the usual route (`git archive`, `install.sh --offline` through `pvj-dev`). Four files compared equal by hash; the five services were active; the panel answered 200 on the box; `pvj-selftest` had no failed check; settings went from schema 13 to 14 with the controller code off. The panel and the player restarted. The player's log has "pw.conf: can't load config client.conf" twice after the restart; the same line is there 32 times between 2026-10-05 and the deploy, so it is not new. Nobody looked at the monitor, and nothing of #92, #93 or #96 has been tried by hand on the box.
