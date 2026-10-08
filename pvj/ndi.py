@@ -781,13 +781,35 @@ class Client:
         self.path, self.timeout, self._clock = path, timeout, clock
         self._status = None
 
-    def request(self, message, timeout=None):
-        import json
+    MAX_NESTING = 64                       # a real answer nests five deep
+
+    def _exchange(self, message, timeout):
         from .netd import exchange
+        return exchange(self.path, message, timeout)
+
+    def request(self, message, timeout=None):
+        """The helper's answer as a dict, or NdiError: nothing else ever comes out of here, whatever the helper
+        sends (it is the part that could be taken over). A reply of brackets nested thousands deep makes the JSON
+        reader of Python 3.9 to 3.12 raise RecursionError, which is not a ValueError; such a reply is refused
+        before it is read, and the error is caught as well."""
+        import json
         try:
-            reply = json.loads(exchange(self.path, message, timeout or self.timeout))
+            raw = self._exchange(message, timeout or self.timeout)
         except (OSError, ValueError):
             raise NdiError("the NDI helper (pvj-ndi) is not running")
+        depth = deepest = 0
+        for byte in raw:
+            if byte in b"[{":
+                depth += 1
+                deepest = max(deepest, depth)
+            elif byte in b"]}":
+                depth -= 1
+        try:
+            if deepest > self.MAX_NESTING:
+                raise ValueError("nested too deep")
+            reply = json.loads(raw)
+        except (ValueError, RecursionError, MemoryError):
+            raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
         if not isinstance(reply, dict):
             raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
         self._status = None
@@ -853,10 +875,12 @@ class Input:
 
     def sync(self):
         """Tell the helper whether the module is on and which addresses to ask. Returns its status, or {"ok": False}."""
-        on, addresses = self._wanted()
         try:
+            on, addresses = self._wanted()
             return self.client.request({"cmd": "configure", "on": on, "addresses": addresses}, timeout=10)
-        except NdiError:
+        except Exception as e:             # never out of here: this runs while the panel starts
+            if not isinstance(e, NdiError):
+                self.log("pvj-web: the NDI helper was not told the settings: %s" % type(e).__name__)
             return {"ok": False}
 
     def status(self):

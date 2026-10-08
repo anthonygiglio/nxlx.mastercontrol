@@ -459,7 +459,10 @@ def build(env=None, player=None):
     api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
                             lambda: (registry.enabled("inputs-ndi"), list(settings.data.get("ndi", {}).get("addresses", []))),
                             log=lambda m: print(m, file=sys.stderr))
-    api.ndi.sync()
+    try:                                     # whatever the helper answers, the panel starts
+        api.ndi.sync()
+    except Exception as e:
+        print("pvj-web: NDI helper not told the settings: %s" % e, file=sys.stderr)
     from . import supportd as supportd_mod
     api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
     api.support.panel_port = int(env.get("PVJ_PORT", "8080"))

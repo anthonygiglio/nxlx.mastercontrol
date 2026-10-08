@@ -994,5 +994,102 @@ class PlayerPipeFormatTest(unittest.TestCase):
                 p.play_pipe("/x", 16, 16, 30, bad)
 
 
+class HelperCannotHoldThePanelTest(unittest.TestCase):
+    """Review finding 1: the helper is the part that could be taken over, and the panel asks it while it starts."""
+
+    def serve(self, behave):
+        import socket
+        d = tempfile.mkdtemp(dir="/tmp")                # a short path: a Unix socket name is limited
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "s")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(path)
+        srv.listen(1)
+        self.addCleanup(srv.close)
+
+        def run():
+            try:
+                conn, _ = srv.accept()
+                with conn:
+                    behave(conn)
+            except OSError:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+        return path
+
+    def test_a_reply_that_trickles_in_cannot_outlast_the_callers_timeout(self):
+        import socket
+        from pvj.netd import exchange
+
+        def trickle(conn):
+            conn.recv(65536)
+            for _ in range(200):                        # one byte at a time, each well inside the timeout
+                conn.sendall(b" ")
+                time.sleep(0.05)
+        path = self.serve(trickle)
+        started = time.monotonic()
+        with self.assertRaises(socket.timeout):
+            exchange(path, {"cmd": "status"}, 0.4)
+        self.assertLess(time.monotonic() - started, 1.2)                # it was 0.4 s times the number of bytes
+        c = ndi.Client(self.serve(trickle), timeout=0.4)
+        started = time.monotonic()
+        self.assertEqual(c.status(), {"ok": False})
+        self.assertLess(time.monotonic() - started, 1.2)
+
+    def test_the_other_helpers_clients_still_get_a_whole_answer_and_a_refusal(self):
+        from pvj.netd import exchange
+
+        def answer(conn):
+            conn.recv(65536)
+            conn.sendall(b'{"ok": true, ')
+            time.sleep(0.1)
+            conn.sendall(b'"n": 1}\n')
+        self.assertEqual(json.loads(exchange(self.serve(answer), {"cmd": "status"}, 2)), {"ok": True, "n": 1})
+        refuse = lambda conn: conn.sendall(b'{"ok": false, "error": "not allowed"}\n')      # answers and closes, unread
+        self.assertEqual(json.loads(exchange(self.serve(refuse), {"cmd": "status"}, 2))["error"], "not allowed")
+        with self.assertRaises(OSError):
+            exchange(os.path.join(tempfile.gettempdir(), "no-such-socket"), {"cmd": "status"}, 1)
+
+    def test_a_reply_nested_thousands_deep_is_a_bad_answer_and_never_an_error_of_another_kind(self):
+        from unittest import mock
+        c = ndi.Client("unused")
+        c._exchange = lambda message, timeout: b"[" * 60000 + b"\n"
+        # Python 3.9 to 3.12 raise RecursionError reading this; a newer one may not. Either way it must never be
+        # read: the reader is made to fail the way the old ones do, and must not even be reached.
+        with mock.patch("json.loads", side_effect=RecursionError("maximum recursion depth exceeded")) as loads:
+            with self.assertRaises(ndi.NdiError):
+                c.request({"cmd": "status"})
+            self.assertEqual(loads.call_count, 0)
+            self.assertEqual(c.status(), {"ok": False})
+            c._exchange = lambda message, timeout: b'{"ok": true}\n'      # and should the reader fail on a plain reply
+            with self.assertRaises(ndi.NdiError):
+                c.request({"cmd": "status"})
+        for raw in (b'{"a": ' * 65 + b"1" + b"}" * 65, b"]" * 9 + b"[" * 70, b"", b"\xff\xfe", b"[]", b'"x"', b"nul"):
+            c._exchange = lambda message, timeout, raw=raw: raw
+            with self.assertRaises(ndi.NdiError, msg=raw[:20]):
+                c.request({"cmd": "status"})
+        c._exchange = lambda message, timeout: json.dumps({"ok": True, "a": {"b": {"c": [[1]]}}}).encode()
+        self.assertEqual(c.request({"cmd": "status"})["a"], {"b": {"c": [[1]]}})
+
+    def test_no_answer_and_no_fault_stops_the_panel_starting(self):
+        import inspect
+        from pvj import server
+
+        class Bad:
+            def request(self, message, timeout=None):
+                raise RecursionError("from a reply")
+
+            def status(self):
+                return {"ok": False}
+        logged = []
+        i = ndi.Input(Bad(), "x", lambda: (True, []), log=logged.append)
+        self.assertEqual(i.sync(), {"ok": False})
+        self.assertEqual(len(logged), 1)
+        i = ndi.Input(Bad(), "x", lambda: [].get("ndi"), log=logged.append)          # the settings themselves are odd
+        self.assertEqual(i.sync(), {"ok": False})
+        src = inspect.getsource(server.build)
+        self.assertRegex(src, r"try:[^\n]*\n\s+api\.ndi\.sync\(\)\n\s+except Exception")
+
+
 if __name__ == "__main__":
     unittest.main()
