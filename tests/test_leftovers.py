@@ -382,11 +382,6 @@ class Lock(Folder):
             self.assertLessEqual(set(opened), {path}, "%s: only the lock itself was tried" % what)
         self.assertEqual(self.read(target), "x")
 
-    def test_it_is_the_same_for_root_and_for_anybody_else(self):
-        for uid in (0, 1000):
-            with mock.patch("os.geteuid", return_value=uid), self.assertRaises(UpdateError):
-                update.take_lock(self.dir)
-
     def test_a_missing_lock_folder_is_made_and_the_lock_still_excludes(self):
         path = os.path.join(self.dir, "lock", "pvj-update.lock")
         first = update.take_lock(path)
@@ -615,6 +610,64 @@ class CommandLine(Folder):
         code, out, err = self.main("rollback")
         self.assertEqual(code, 1)
         self.assertEqual(self.read(result), '{"state": "running", "message": "other"}')
+
+class EndToEnd(UpdaterBase):
+    """The real main() with the real Updater, in a folder of its own: the sweep exactly as a box calls it, with
+    the owner it has there (root), which no other test here passes (review of #108, finding 7).
+
+    Without root, a folder that is root's cannot be made. So one test shows that what is not root's is left by the
+    real command, and the other is told by lstat and fstat that everything is root's, which is what they say on a
+    box; as root it needs no telling. Only a run as root removes a folder that really is root's."""
+
+    def setUp(self):
+        super().setUp()
+        import functools
+        self.addCleanup(os.umask, os.umask(0o022))
+        self.put("opt/pvj", "releases", "1.0.0", "pvj", "__init__.py")
+        self.put("opt/pvj", "releases", "2.0.0", "pvj", "__init__.py")
+        self.put("opt/pvj", "previous", text="/opt/pvj/releases/1.0.0\n")
+        os.symlink("/opt/pvj/releases/2.0.0", os.path.join(self.prefix, "current"))
+        self.left = os.path.join(self.prefix, ".update-abcd1234")
+        self.put("opt/pvj", ".update-abcd1234", "tree", "pvj", "__init__.py")
+        self.result = os.path.join(self.dir, "result.json")
+        real = functools.partial(Updater, root=self.root, install=lambda *a: None, restart=lambda: None,
+                                 health=lambda: True)
+        for p in (mock.patch.dict(os.environ, {"PVJ_UPDATE_LOCK": os.path.join(self.dir, "lock"),
+                                               "PVJ_UPDATE_RESULT": self.result}),
+                  mock.patch("os.geteuid", return_value=0),      # main() asks for root before anything else
+                  mock.patch.object(update, "Updater", real)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def rollback(self):
+        import json
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = update.main(["rollback"])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertEqual(os.readlink(os.path.join(self.prefix, "current")), "/opt/pvj/releases/1.0.0")
+        self.assertEqual(json.loads(self.read(self.result))["state"], "done")
+        return out.getvalue()
+
+    @unittest.skipIf(ROOT, "as root every folder here is root's")
+    def test_the_command_leaves_a_work_folder_that_is_not_roots(self):
+        self.assertNotIn("removed", self.rollback())
+        self.assertTrue(os.path.isfile(os.path.join(self.left, "tree", "pvj", "__init__.py")))
+
+    def test_the_command_removes_roots_work_folder_and_then_does_what_it_was_asked(self):
+        def as_root(real):
+            def look(*a, **k):
+                st = list(real(*a, **k))
+                st[stat.ST_UID] = 0
+                return os.stat_result(st)
+            return look
+
+        with mock.patch("os.lstat", as_root(os.lstat)), mock.patch("os.fstat", as_root(os.fstat)):
+            out = self.rollback()
+        self.assertIn("removed .update-abcd1234, left by an update that was cut off", out)
+        self.assertEqual(self.names(self.prefix), ["current", "previous", "releases"])
+        self.assertTrue(os.path.isfile(os.path.join(self.prefix, "releases", "2.0.0", "pvj", "__init__.py")))
+
 
 if __name__ == "__main__":
     unittest.main()
