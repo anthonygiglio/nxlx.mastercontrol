@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-07, later still (a second review, of the fixes: two medium, three low, all fixed on `controller-code`)
+
+The two-thread reader from the first review brought faults of its own. The tests are in `tests/test_midi_threads.py` and run the real threads on a pipe; each was written first and seen to fail before its fix.
+
+1. **Medium, every box with MIDI on: a worker that died left the controller deaf.** An exception from a handler (the API catches only its own errors, so a failed save can come through) ended the worker; the reader lived on, `alive` looked only at the reader, and the scan never replaced the input. Now one bad message ends only itself (`MidiInput._hand`, one log line in ten seconds with the kind of error), and `alive` needs both threads. Tests: `WorkerTest`, `HubAndWorker`.
+2. **Medium, with the feature on: "messages were lost" was handled before the older messages still queued**, so a tap after an overflow could be timed from an old press and make a code. The marker now travels in the queue, at the place of the loss, and on it the hub forgets which controls are down as well as what is held. Test: `LostInOrder`, with a queue of four that really fills; before the fix it made a code.
+3. **Low: the PIN's 20 places could be taken in one order** (20 full access codes first, then 180 guests). A full-access device paired from a controller now counts with the guests and presenters for all three. Tests: `Reserve`, both orders.
+4. **Low: a slow fader flush on a tick forgot a real hold.** Ticks from an input that stamps carry a time, and count as stamped. Tests: `TickFlush`.
+5. **Low: stopping waited up to 6 seconds a controller, one after another.** All inputs are told first, then waited for against one deadline (`stop_inputs`, 3 seconds in all). Test: `StopTest`.
+
+Also from the reviewer's list: a fast sweep of 1500 messages arrives whole and in order through the two threads, and stop, unplug and start again leave no thread behind (`OrderTest`). Not run: the browser test, the Pi, a real controller.
+
 ## 2026-10-07, later (the independent review of the controller code: two medium, eight low, all fixed on `controller-code`)
 
 Nothing high. Each finding and what was done; the tests are in `tests/test_controller_code_review.py`, one class per finding. They were written with the fixes, from the reviewer's sequences; they were not each run against the code before its fix.

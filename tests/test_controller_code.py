@@ -356,7 +356,7 @@ class BoxBase(ServerBase):
         self.view = self.auth.invite("guest", "view")[1]
 
     def plug(self, path, source):
-        self.hub.inputs[path] = types.SimpleNamespace(source=source, connected=True, messages=0, alive=True, halt=lambda: None, stop=lambda: None)
+        self.hub.inputs[path] = types.SimpleNamespace(source=source, connected=True, messages=0, alive=True, halt=lambda: None, stop=lambda *a: None)
 
     def hold(self, note=NOTE_JOIN, seconds=3.5, source="Mini"):
         self.hub.on_message(source, ("on", 0, note, 127))
