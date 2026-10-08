@@ -42,6 +42,10 @@ Branch `panel-file-not-delivered`, D68. The question came from the shell's branc
 - **The Mac's disk** was full twice during this session (see the lesson); nothing of another session was removed.
 - **To check on the Pi**, by whoever is next there: `ss -ltn` shows the panel's listener with a queue of 128 after the deploy (the second number of the Send-Q column); `nstat -az TcpExtListenOverflows TcpExtListenDrops` before and after a few phones open the panel together, on the old build and the new (on the old build the counters should move and the page should take a second longer; on the new they should stay); and one phone on the venue's Wi-Fi, to see that the page starts no later with `load.js` in its head.
 
+## 2026-10-08, the evening (a unit test that failed by chance)
+
+- `tests.test_boxcare.ExportTest.test_default_export_holds_no_secret` failed once in CI on #102: it looks for the box's PIN anywhere in the text of a settings export, the PIN is four random digits, and that run's PIN was "0002", which stands in the test's own projector id "aaaa0002". Nothing leaked. The test now sets a PIN of its own choosing that is nowhere in its fixtures, and looks for a secret made of digits (the PIN, a join code) standing by itself, not inside a longer number or word. A real leak of either would be the value by itself.
+
 ## 2026-10-08, the evening (CI's install retry met its first slow mirror, and lost)
 
 - On #102's second run the `effects-gpu` job for the Pi 4's kind of OpenGL failed in its install step with "ci-apt: gave up after 3 attempts": the lists came at once each time and the 48 MB of packages did not arrive in 90 seconds, three times, from `azure.archive.ubuntu.com`. So the retry of #101 failed sooner (under five minutes instead of ten) but cured nothing: the same runner asked the same slow mirror three times.
