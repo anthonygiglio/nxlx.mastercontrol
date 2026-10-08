@@ -463,7 +463,7 @@
     np.textContent = pl.running && pl.path ? (pl.stream || base(pl.path)) : (pl.running ? 'Player idle' : 'Player not running');
     var seekEl = document.getElementById('seek');
     var frac = pl.duration > 0 && pl.position >= 0 ? Math.min(1, pl.position / pl.duration) : 0;
-    if (seekEl && !seeking) { seekEl.value = Math.round(frac * 1000); seekEl.disabled = !can('live') || !(pl.duration > 0); }
+    if (seekEl && !seeking) { seekEl.value = Math.round(frac * 1000); seekEl.disabled = !can('live') || !(pl.duration > 0); fillRanges(); }
     var timeEl = document.getElementById('time');
     if (timeEl && !seeking) timeEl.textContent = clock(pl.position) + ' / ' + clock(pl.duration);
     var plpos = document.getElementById('plpos');
@@ -3615,8 +3615,10 @@
     if (style) root.setAttribute('data-style', style); else root.removeAttribute('data-style');
   }
   // A style that draws a slider itself needs to know how full it is: --fill on each slider, from its value. Set
-  // through the script (the policy allows that, not a style attribute), on every input and four times a second,
-  // because most sliders here are also moved by the box (a poll, a controller). The default look does nothing.
+  // through the script (the policy allows that, not a style attribute) in the same turn as the value: on every
+  // input, where the poll writes the position in the clip (patchLive), and whenever a part of the page is drawn
+  // again (boot's observer), so that a slider is never painted with the fill of a moment ago. The clock four times
+  // a second is only a net under these. The default look does nothing.
   function fillRanges() {
     if (!document.documentElement.hasAttribute('data-style')) return;
     var rs = document.querySelectorAll('input[type=range]');
@@ -4261,6 +4263,9 @@
     });
     setInterval(poll, 1000);
     document.addEventListener('input', function (e) { if (e.target && e.target.type === 'range') fillRanges(); }, true);
+    // a slider that was just built, or put back, is filled before it is painted (the observer runs at the end of the
+    // turn that changed the page)
+    if (window.MutationObserver) new MutationObserver(fillRanges).observe(app, { childList: true, subtree: true });
     setInterval(fillRanges, 250);
   }
   boot();

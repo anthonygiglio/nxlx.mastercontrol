@@ -555,19 +555,17 @@ async function check(pg, o) {
       const line = ['Top', 'Right', 'Bottom', 'Left'].some((s) => parseFloat(cs['border' + s + 'Width']) > 0 && cs['border' + s + 'Style'] !== 'none' && cs['border' + s + 'Color'] === areaRgb);
       if (line || (cs.boxShadow !== 'none' && cs.boxShadow.indexOf(areaRgb) >= 0) || (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 && cs.outlineColor === areaRgb)) out.push('a thin line in the area colour, in the light: ' + name(el));
     });
-    // a slider's fill is where its value is. The panel sets it on every input and four times a second (the box moves
-    // sliders too: the position in a clip jumps once a second), so one that is off is looked at again 300 ms later.
+    // a slider's fill is where its value is, at any moment: the panel writes the fill in the same turn as the value
+    // (the box moves sliders too: the position in a clip jumps once a second, on every screen), so there is no
+    // second look. A second look 300 ms later once hid a fill that trailed its value by up to 250 ms, until the
+    // value moved again between the two looks (LESSONS).
     const fillOff = (el) => {
       const min = el.min === '' ? 0 : parseFloat(el.min), max = el.max === '' ? 100 : parseFloat(el.max);
       const want = max > min ? Math.round(1000 * (parseFloat(el.value) - min) / (max - min)) / 10 : 0;
       const got = parseFloat(getComputedStyle(el).getPropertyValue('--fill'));
       return Math.abs(got - want) <= 0.2 ? '' : 'slider fill ' + got + '% for a value at ' + want + '%: ' + name(el);
     };
-    const late = Array.prototype.filter.call(shell.querySelectorAll('input[type=range]'), (el) => shown(el) && fillOff(el));
-    if (late.length) {
-      await new Promise((done) => setTimeout(done, 300));
-      late.forEach((el) => { const still = fillOff(el); if (still) out.push(still); });
-    }
+    Array.prototype.forEach.call(shell.querySelectorAll('input[type=range]'), (el) => { const off = shown(el) && fillOff(el); if (off) out.push(off); });
     // the title: whole, inside the window, in the area's colour. Before pairing it is the screen's own heading; in
     // the Workspace shell (D65) it is the title bar, and the open screen's item (the area's tab under 600 px, the
     // side menu's item from 600 px) is that colour too. Exactly one heading of the first rank is shown, and the
@@ -594,3 +592,22 @@ async function check(pg, o) {
   }, [o.area, !!o.light]);
 }
 module.exports.check = check;
+
+// The place in the clip, on the transport strip, while the box moves it: 30 looks over three seconds (three polls
+// or more), and at every one the fill is where the value is. Returns { shown, values (how many places were seen),
+// bad (sentences) }. A clip must be playing for this to prove anything: `values` under 2 means the place stood still.
+async function seekFill(pg) {
+  return pg.evaluate(async () => {
+    const el = document.getElementById('seek');
+    if (!el) return { shown: false, values: 0, bad: ['there is no place in the clip on the strip'] };
+    const r = el.getBoundingClientRect(), seen = {}, bad = {};
+    for (let i = 0; i < 30; i++) {
+      const want = Math.round(1000 * parseFloat(el.value) / parseFloat(el.max)) / 10, got = parseFloat(getComputedStyle(el).getPropertyValue('--fill'));
+      seen[el.value] = 1;
+      if (!(Math.abs(got - want) <= 0.2)) bad['slider fill ' + got + '% for a value at ' + want + '%: #seek Position in the clip'] = 1;
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    return { shown: r.width > 0 && r.height > 0, values: Object.keys(seen).length, bad: Object.keys(bad) };
+  });
+}
+module.exports.seekFill = seekFill;

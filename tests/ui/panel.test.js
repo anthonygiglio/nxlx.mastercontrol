@@ -2885,7 +2885,7 @@ function startServer(env) {          // env: more for the harness's environment 
         for (const p of signal.pages()) {
           try {
             const on = (await p.open(st)) || page;
-            if (!p.quick) await on.waitForTimeout(1000);          // a page's own cards arrive after it opens; a slider's fill is set within a quarter of a second
+            if (!p.quick) await on.waitForTimeout(1000);          // a page's own cards arrive after it opens
             const found = await signal.check(on, { area: p.area, light });
             if (found.length) signalBad.push('Signal, ' + p.name + label + ': ' + found.join('; '));
             if (swept) await sweepHere(on, p.name, 'Signal');
@@ -2956,6 +2956,23 @@ function startServer(env) {          // env: more for the harness's environment 
       st.width = 1366;
       await page.setViewportSize({ width: 1366, height: 800 });
       await signalRound(' at 1366', false);
+      // The place in the clip is on the strip of every screen, and the box moves it once a second: its fill follows
+      // it at every moment, at each width where it shows (from 600 px always; under that with More open).
+      // A clip has to be playing for this to try anything: one is started if none is, and a frozen one is let go.
+      await signal.go(page, 'play/pads');
+      await page.waitForSelector('.pads');
+      const nowPl = (await get('/api/status')).player || {};
+      if (!(nowPl.duration > 0)) { assert.strictEqual(await post('/api/play', { file: 'tunnel.mkv' }), 200); await page.waitForTimeout(2500); }
+      else if (nowPl.paused) { assert.strictEqual(await post('/api/control', { action: 'pause' }), 200); await page.waitForTimeout(1500); }
+      for (const [w, more] of [[1366, false], [768, false], [390, true]]) {
+        await page.setViewportSize({ width: w, height: 800 });
+        if (more) await signal.stripOpen(page);
+        const f = await signal.seekFill(page);
+        if (!f.shown) signalBad.push('Signal, the strip at ' + w + ': the place in the clip is not shown');
+        f.bad.forEach((b) => signalBad.push('Signal, the strip at ' + w + ' while the clip plays: ' + b));
+        if (f.values < 2) signalBad.push('Signal, the strip at ' + w + ': the place in the clip stood still for three seconds, so its fill was not tried');
+        if (more) await page.click('#wsmore');
+      }
       // the light room
       st.width = 390;
       await page.setViewportSize({ width: 390, height: 844 });
