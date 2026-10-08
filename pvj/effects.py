@@ -144,7 +144,8 @@ def measured(sid):
     dropped a second by the clip's lines, at full size and at half size, which for the 1080 line clip is a cap of
     540 lines ("1080", "1080_half", "720", "720_half"), and for the 1080 line clip under a cap of 720 lines
     ("1080_at_720"), the largest of the two clips it held 30 frames a second over, at full size and at half, and the
-    lines Automatic lets it work at on that board ("works_at": where it held the 1080 line clip)."""
+    lines Automatic lets it work at on that board ("works_at": where it held the 1080 line clip, or one cap lower
+    for the two filters of PI4_HEADROOM)."""
     if sid not in PI4:
         return None
     _, large, small = PI4[sid]
@@ -176,6 +177,8 @@ HALF_LINES = 540                # what the superseded control "half": true means
 #        filter drops frames over a 1080 line clip; at 720 lines every one holds but isf-edge-blowout (1.6 dropped a
 #        second), which holds at 540 lines; at 540 lines all hold with nothing dropped. So 720, with that one filter
 #        at 540. An upload works at 540: nobody measured it, and the count from its text did not predict a cost.
+#        Two more are in "lower" at 540 by the owner's choice and not by the rule: they held at 720 lines with the
+#        GPU nearly full (PI4_HEADROOM below).
 #   pi3: NOT MEASURED, and effects are not offered on a Pi 3 today (pvj/modules.d/shaders.json). The careful value,
 #        should they ever be: its GPU is the weaker one.
 # Every bundled filter over the 1080 line clip of PI4's run with a cap of 720 lines (so drawn at 1280 x 720), on the same
@@ -221,10 +224,21 @@ PI4_720 = {
     "isf-white-point-adjust.fs": (3.8, 0.0),
     "isf-zoom.fs": (5.1, 0.0),
 }
+# Filters that HELD at 720 lines (PI4_720 above says so and stays as measured) and that Automatic steps down to 540
+# lines on a Pi 4 all the same, for room. A choice, not a measurement: the owner's, 2026-10-08 (D58). The reason is in
+# the run of 2026-10-05: at 720 lines these two dropped nothing but kept the GPU 94 to 96 percent busy, so anything
+# more on the GPU (the mapping costs 17 ms a frame by itself on that screen) would tip them; at 540 lines they are
+# softer and held with the GPU 77 to 78 percent busy. Only "auto" reads this: 720 lines or Full, chosen for the box,
+# stay what was chosen. Every name here must be in PI4_720 and must hold there (a filter that does not hold at 720 is
+# stepped down by the rule, and does not belong here).
+PI4_HEADROOM = frozenset(("fx-edge-glow.fs", "isf-corner-color-tint.fs"))
 
 
 def _pi4_lines(sid):
-    """The largest of the two caps at which a Pi 4 held the 1080 line clip under this bundled filter."""
+    """What Automatic gives this bundled filter on a Pi 4: the largest of the two caps at which the board held the
+    1080 line clip under it, and 540 lines for the filters that held at 720 with too little room (PI4_HEADROOM)."""
+    if sid in PI4_HEADROOM:
+        return 540
     return 720 if PI4_720[sid][1] < HOLDS else 540
 
 
