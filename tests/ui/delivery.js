@@ -47,7 +47,7 @@ function place() {
     const q = b.getBoundingClientRect(), hit = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2);
     return { id: b.id, inside: q.left >= 0 && q.right <= innerWidth && q.top >= 0 && q.bottom <= innerHeight, tall: q.height >= 44, free: hit === b };
   });
-  return { position: st.position, role: note.getAttribute('role'), left: r.left, top: r.top, width: r.width, low: r.bottom <= innerHeight * 0.6 + 1,
+  return { position: st.position, role: note.getAttribute('role'), left: r.left, top: r.top, across: r.width === document.documentElement.clientWidth, window: innerWidth, low: r.bottom <= innerHeight * 0.6 + 1,
     sideways: document.documentElement.scrollWidth > innerWidth, scrolled: scrollY > 0, cursorInIt: note.contains(document.activeElement), buttons };
 }
 const isWhole = () => !!window.pvjLoad && !document.querySelector('#loadnote') && !!document.querySelector('#app > *') && !!window.pvjShaders && !!window.pvjEffects && !!window.pvjApp && !!window.pvjRoom &&
@@ -121,7 +121,7 @@ async function check(o) {
     await pg.setViewportSize({ width, height });
     await pg.evaluate(() => { document.body.style.minHeight = '3000px'; window.scrollTo(0, 1800); });   // eslint-disable-line no-undef
     const at = await pg.evaluate(place);
-    assert.deepStrictEqual(at, { position: 'fixed', role: 'alert', left: 0, top: 0, width, low: true, sideways: false, scrolled: true, cursorInIt: false,
+    assert.deepStrictEqual(at, { position: 'fixed', role: 'alert', left: 0, top: 0, across: true, window: width, low: true, sideways: false, scrolled: true, cursorInIt: false,
       buttons: ['loadagain', 'loadhide'].map((id) => ({ id, inside: true, tall: true, free: true })) }, 'the notice at ' + width + ' px: ' + JSON.stringify(at));
     await pg.evaluate(() => { document.body.style.minHeight = ''; window.scrollTo(0, 0); });   // eslint-disable-line no-undef
   }
@@ -178,7 +178,12 @@ async function check(o) {
   assert.deepStrictEqual(await pg.evaluate(() => [document.querySelector('input.pin').value, !!document.querySelector('#app > [data-was]')]), ['7', true], 'the connect screen is left alone');   // eslint-disable-line no-undef
 
   // On a paired page the panel draws again with the part that came late (app.js, the listener for "pvjfile").
+  // (The page is loaded afresh first: it comes from whatever the checks before this one did, and here nothing but
+  // the late part may be the reason for a new drawing.)
   const late = o.page;
+  await late.goto(base + '/');
+  await late.waitForFunction(() => !!window.pvjApp && !!document.querySelector('#app > *') && !document.querySelector('#app .pin'), null, { timeout: 15000 });   // eslint-disable-line no-undef
+  await pause(1500);
   assert.strictEqual(await late.evaluate(() => { if (document.activeElement) document.activeElement.blur(); document.querySelector('#app > *').setAttribute('data-was', '1'); document.dispatchEvent(new Event('pvjfile')); return !!document.querySelector('#app > [data-was]'); }), false,   // eslint-disable-line no-undef
     'the panel draws again when a part arrives late');
   // But not under somebody typing: drawing again empties the page, and what was typed would be gone. (The field is
