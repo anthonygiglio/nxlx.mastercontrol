@@ -3067,7 +3067,7 @@ function startServer(env) {          // env: more for the harness's environment 
         const inv = require('./inventory');
         const began = Date.now();
         const flag = (url, body) => page.evaluate(([u, b]) => fetch(u, b ? { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b) } : { credentials: 'same-origin' }).then((r) => r.json().then((d) => [r.status, d.enabled])), [url, body]);
-        const held = [];
+        const held = [], back = [];
         for (const url of ['/api/dmx', '/api/osc']) {
           if ((await flag(url))[1] !== true) continue;
           assert.deepStrictEqual(await flag(url, { enabled: false }), [200, false], 'the first box lets go of ' + url + ' for the inventory');
@@ -3092,8 +3092,9 @@ function startServer(env) {          // env: more for the harness's environment 
           for (const c of mine) await c.close().catch(() => {});
           bare.p.kill();
           await new Promise((done) => { if (bare.p.exitCode !== null || bare.p.signalCode !== null) done(); else bare.p.once('exit', done); });      // its ports are free again
-          for (const url of held) await flag(url, { enabled: true }).catch(() => {});
+          for (const url of held) back.push([url].concat(await flag(url, { enabled: true }).catch((e) => [String(e.message).split('\n')[0]])));
         }
+        assert.deepStrictEqual(back, held.map((url) => [url, 200, true]), 'the first box listens again after the inventory');
         console.log('the control inventory took ' + ((Date.now() - began) / 1000).toFixed(1) + ' s');
       }
       assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
