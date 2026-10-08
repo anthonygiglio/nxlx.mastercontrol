@@ -1490,7 +1490,7 @@ function startServer() {
     await page.waitForFunction(() => { const s = document.getElementById('ctlcode-owner'); return s && s.getAttribute('aria-checked') === 'true'; });
     assert.strictEqual((await get('/api/access')).controller.owner, true, 'the full access kind is allowed');
     assert.strictEqual(await post('/api/access/controller', { kind: 'owner' }), 400, 'no request makes a code');
-    assert.strictEqual(await post('/api/access/controller', { cancel: true }), 404, 'and there is none to end');
+    assert.strictEqual(await post('/api/access/controller', { cancel: true }), 409, 'and there is none to end');
     assert(!/[0-9]{6}/.test(await page.textContent('#ctlcodecard')), 'no digits on the card');
     await page.click('#ctlcode-on');                                  // off: at once, no question
     await page.waitForFunction(() => !document.getElementById('ctlcode-owner') && document.getElementById('ctlcode-on').getAttribute('aria-checked') === 'false');

@@ -533,7 +533,7 @@ class BoxTest(BoxBase):
         self.assertEqual((st, out["controller"]["status"]["active"], out["controller"]["status"]["last"]["how"]), (200, False, "cancelled"))
         self.assertEqual(self.player.ipc.shown[-1], ("show-text", "", 1))
         self.assertEqual(self.call("POST", "/api/pair", {"pin": code, "name": "x"})[0], 403)
-        self.assertEqual(self.api.handle("POST", "/api/access/controller", {"cancel": True}, self.full, "10.0.0.5")[0], 404)
+        self.assertEqual(self.api.handle("POST", "/api/access/controller", {"cancel": True}, self.full, "10.0.0.5")[0], 409)
 
     def test_only_a_full_access_device_changes_the_setting(self):
         for device, want in ((self.live, 403), (self.view, 403), (None, 401)):

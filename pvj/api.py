@@ -2057,7 +2057,7 @@ class Api:
         from . import controllercode as controllercode_mod
         if body.get("cancel") is True and len(body) == 1:
             if not self.controller_codes.cancel():
-                raise ApiError(404, "no code from a controller is on the display")
+                raise ApiError(409, "no code from a controller is on the display")   # not 404: a page that asks a moment late is not looking for a missing thing
             self.log("pvj-web: controller code: ended by device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
         if not body or any(k not in ("enabled", "owner") for k in body):

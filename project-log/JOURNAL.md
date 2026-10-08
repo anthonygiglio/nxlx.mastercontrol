@@ -19,6 +19,8 @@ A side effect of the second pass is undone: on "lost" the hub forgets which cont
 
 **Seen and left.** Guests and presenters can pass 200 devices in all: their rule counts only the 180 shared places, not the total, so 160 of them beside 40 PIN devices still admit one more. That is so on master with this feature off, and changing it is a decision of its own.
 
+- The second run of the browser test passed the layout step and failed at its last check, "console problems": the new step asks the box to end a code when none is showing, the box answered 404, and a browser writes every 404 to its console, which the test watches for missing files. Ending a code that is no longer there now answers 409, as the API does elsewhere when the state has moved on; the 404 watch is as it was. (The coordinator, from the CI log.)
+
 ## 2026-10-07, later still (a second review, of the fixes: two medium, three low, all fixed on `controller-code`)
 
 The two-thread reader from the first review brought faults of its own. The tests are in `tests/test_midi_threads.py` and run the real threads on a pipe; each was written first and seen to fail before its fix.
