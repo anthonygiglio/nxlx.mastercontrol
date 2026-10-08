@@ -662,7 +662,7 @@ class CommandLine(Folder):
         self.addCleanup(held.close)
         code, out, err = self.main("rollback")
         self.assertEqual((code, self.calls), (1, []))
-        self.assertIn("another update is running", err)
+        self.assertIn("another update or check is running", err)
 
     def test_a_check_takes_the_lock_too_because_it_makes_a_work_folder(self):
         # Review of #108, finding 1: `check` made its `.update-XXXXXXXX` without the lock, so an update started
@@ -674,7 +674,7 @@ class CommandLine(Folder):
         self.addCleanup(held.close)
         code, out, err = self.main("check", "pvj-1.0.0.tar.gz")
         self.assertEqual((code, self.calls), (1, []))
-        self.assertIn("another update is running", err)
+        self.assertIn("another update or check is running", err)
 
     def test_commands_that_take_no_lock_do_not_sweep(self):
         with mock.patch.object(update.Updater, "status", lambda self: {}, create=True):
@@ -708,6 +708,27 @@ class CommandLine(Folder):
         code, out, err = self.main("rollback")
         self.assertEqual(code, 1)
         self.assertEqual(self.read(result), '{"state": "running", "message": "other"}')
+
+    def test_with_the_lock_held_by_something_that_writes_no_result_the_panel_is_told_why(self):
+        # Second review of #108, finding 2: a `check` from a terminal holds the lock and writes no result, so an
+        # update the panel started meanwhile ended without a word and the card went on showing the last one.
+        import json
+        held = update.take_lock()
+        self.addCleanup(held.close)
+        result = os.path.join(self.dir, "result.json")
+        for before in (None, '{"state": "done", "message": "updated to 1.0.0"}', '{"state": "failed"}', "not json"):
+            if before is None:
+                self.assertFalse(os.path.exists(result))
+            else:
+                self.put("result.json", text=before)
+            code, out, err = self.main("rollback")
+            self.assertEqual((code, self.calls), (1, []), before)
+            said = json.loads(self.read(result))
+            self.assertEqual((said["state"], said["message"]), ("failed", "another update or check is running"), before)
+            self.assertIn("another update or check is running", err)
+        os.unlink(result)
+        self.main("check", "pvj-1.0.0.tar.gz")                   # a refused check has no result file to write
+        self.assertFalse(os.path.exists(result))
 
 class EndToEnd(UpdaterBase):
     """The real main() with the real Updater, in a folder of its own: the sweep exactly as a box calls it, with

@@ -622,8 +622,15 @@ def main(argv=None):
             report("failed", str(e))                          # answered "started")
             return 1
         if lock is None:
-            print("pvj-update: another update is running", file=sys.stderr)
-            return 1                      # the result file belongs to the update that is running
+            print("pvj-update: another update or check is running", file=sys.stderr)
+            try:                          # a result that says "running" belongs to the update that is running;
+                with open(result) as f:   # anything else is old, or the lock is held by something that writes
+                    running = json.load(f).get("state") == "running"     # none (a check from a terminal)
+            except (OSError, ValueError, TypeError, AttributeError):
+                running = False
+            if not running:
+                report("failed", "another update or check is running")
+            return 1
         try:                              # we hold the lock: whatever work folder is there, no update is using it
             for name in u.sweep_scratch():
                 print("pvj-update: removed %s, left by an update that was cut off" % name, flush=True)
