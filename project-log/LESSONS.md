@@ -225,3 +225,8 @@ The Updates card called `refresh()` while it was being built, and `refresh()` do
 - **Time every request, not only the one that fails (2026-10-08).** The table of what each kind of request took, printed by every ordinary run, gave nineteen samples of the first start and 34,000 of a screenshot without an extra runner-minute, and it is what showed that a screenshot is never near the limit. A diagnostic that only speaks at a failure would have had two samples.
 - **To see a late answer, keep the connection (2026-10-08).** Asking again after a missing reply times another request. The watch keeps the original connection open after the client has given up and reads on: "the answer came 3.3 s after the request" is what told slow from stuck.
 - **A workflow that is not on the default branch cannot be started by hand, and this login cannot push a workflow file at all (2026-10-08).** A loop for a hunt can run inside an existing job through the test file that job runs, behind a marker file, on a push only. Say so in the pull request, and take it out again.
+
+## A `gh` login that this shell cannot read: the keychain (2026-10-08)
+
+After `gh auth refresh` and then `gh auth login`, `gh auth status` in the session said "The token in default is invalid" although the owner had just logged in and the keychain held a fresh entry. `gh auth token` printed nothing: the session's shell cannot read that keychain item, the same wall that makes plain `git push` fail here. `gh auth login -h github.com -s workflow --insecure-storage` keeps the token in `~/.config/gh/hosts.yml` instead, and everything worked again. Check with `gh auth token | wc -c` before suspecting the token itself. The cost is a token in a file in the owner's home; it is his choice.
+
