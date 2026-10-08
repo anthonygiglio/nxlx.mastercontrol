@@ -516,9 +516,10 @@ table.chan .lvl { width: 36%; }
   .tabs.many { padding-left: 4px; padding-right: 4px; }
   .tabs.many .btn { flex: 1 1 auto; min-width: 44px; }
 }
-@media (min-width: 900px) {
+@media (min-width: 900px) and (max-width: 1365px) {
   /* Live on a laptop with a shader on: the Vibes button keeps room for its words; the buttons beside it go to a
-     second line (it was squeezed to 40 to 63 px at 900 to 1200, its words outside it) */
+     second line (it was squeezed to 40 to 63 px at 900 to 1200, its words outside it). No fault was measured from
+     1366 px up, so nothing changes there. */
   .livecols.has-side .vibesbig { min-width: 10rem; }
 }
 @media (min-width: 900px) and (max-height: 479px) {

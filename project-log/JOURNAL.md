@@ -8,9 +8,9 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
 Pull request #100, branch `resize-step1`, not merged. The owner said yes to step 1 the same day. D64 has the decision; this is what was measured. **Measured in headless Chromium (CI, Linux) and in headless Edge on the dev Mac against the harness with no player. Nothing was seen on a real phone, and nothing ran on a box.**
 
-**The sweep.** `tests/ui/sweep.js`, called from `tests/ui/panel.test.js`: the 45 screens and states of `tests/ui/signal-pages.js`, in Signal and in the default look, each at 13 windows (320, 360, 390, 600, 768, 899, 900, 1200, 1366, 1600 px wide; 667x375, 844x390, 932x430). The first run in CI: 90 screens, resizing and measuring 47.8 s for both looks together, the default look's own round 56.0 s with opening its screens, the step 6 min 56 s against 5 min 39 s to 6 min 2 s on three runs of master. About 80 seconds more.
+**The sweep.** `tests/ui/sweep.js`, called from `tests/ui/panel.test.js`: the 45 screens and states of `tests/ui/signal-pages.js`, in Signal and in the default look, each at 13 windows (320, 360, 390, 600, 768, 899, 900, 1200, 1366, 1600 px wide; 667x375, 844x390, 932x430). The first run in CI: 90 screens, resizing and measuring 47.8 s for both looks together, the default look's own round 56.0 s with the opening of its screens; so a little over a minute more (half of the measuring rides on a round that ran anyway). That run failed at the sweep, as it should, so its step time is not a passing run's: three runs of master took 5 min 39 s to 6 min 2 s, and the pull request has the time of a run that passed.
 
-**The faults, and what mends each.** The first five were found on the Mac before the first push, the rest by the first run in CI (which listed 100 lines; the tab bar's fault is on every screen).
+**The faults, and what mends each.** The first five were found on the Mac before the first push and their repairs were in the first run in CI, which did not name them again. That run named the rest (100 lines; the tab bar's fault is on every screen); whether the repairs for 6 to 10 hold is what the pull request's last run says.
 
 1. Schedule, the form for a new entry, both looks: the seven day buttons were 34 to 37 px wide at 320, 40 to 43 at 360, 40 to 42 at 900 and 42 at 932x430 (the laptop's two columns make the card narrow again). Now a grid: seven across where each can be 44 px, four and three where not.
 2. Live in the default look at 320 and 360: the page scrolled sideways (367 px in a window of 320). Blackout, the last of the four big buttons, was at 241 to 333, and the pill beside the title reached 366. The four buttons wrap (two and two under 380); the title row wraps and the pill may break.
@@ -20,7 +20,7 @@ Pull request #100, branch `resize-step1`, not merged. The owner said yes to step
 6. The default look at 320, every screen with five tabs: "System" was cut and ran out of its tab (58 px in 52). Under 380 a tab is as wide as its word plus an even share of the rest, 44 px at least.
 7. The default look, a row of choices: "Exponential" (a shader's wave on Live) was cut at 320, 360, 390, 900 and 932 (107 px in 70 to 94), "Round" on Mix at 320. Under 1200 a choice is as wide as its word and the row wraps.
 8. The Shaders page in the default look at 390: "Previous" cut (78 px in 76). Under 600 the three buttons are even columns.
-9. Live with a shader on, the laptop's columns, both looks: the Vibes button had no floor. Signal: 63 px wide at 1200 with its words outside it, 40x126 at 932x430; the default look: a word cut at 900. It keeps 10rem now and the buttons beside it go to a second line. At 1366 it was 161 px (measured on the Mac with the strip put in by hand) and is unchanged.
+9. Live with a shader on, the laptop's columns, both looks: the Vibes button had no floor. Signal: 63 px wide at 1200 with its words outside it, 40x126 at 932x430; the default look: a word cut at 900. From 900 to 1365 it keeps 10rem now and the buttons beside it go to a second line. The sweep found no fault there at 1366 or 1600, so the rule stops at 1365 and those sizes are as they were.
 10. The same screen at 932x430, both looks: the lower controls of the shader's strip could not be brought into view, or lay under the tab bar. The strip is held in place beside the pads and is taller than that window. In a window under 480 px high it now scrolls with the page.
 11. Projectors, the form for a new one, Signal at 932x430: the port field lay under the message line. Not mended: the line goes by itself, and the sweep no longer counts it as a cover.
 
@@ -28,7 +28,7 @@ Pull request #100, branch `resize-step1`, not merged. The owner said yes to step
 
 **Not fixed, on purpose.** The transport's "Prev" and "– 10 s" go to two lines at 320 in the default look (between words, so no word is cut). The left and right safe areas of a notched phone held sideways are not padded; a headless browser has none to measure.
 
-**Pictures.** No rule here changes Signal at 390 or 1366, by the numbers above, so the `signal-` pictures should not shift. The two to look at first if one does: `signal-live-shader-laptop` (the Vibes row) and `signal-schedule-add-phone` (the days). The pull request says what the last run's pictures showed.
+**Pictures.** Which of CI's pictures changed is in the pull request, from a comparison of the last run's set with master's. No rule here is meant to change anything at 1366.
 
 **Tests.** The unit tests on the Mac: 1565 run, 15 failures and 15 errors, all in `test_install`, `test_update`, `test_release` and `test_netd` for the Mac's own reasons (the hand-off notes list them), after one of this branch's own was found and fixed (LESSONS). The browser test and the unit tests on Linux: the pull request's checks.
 

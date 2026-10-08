@@ -307,7 +307,7 @@ The browser test watches the console for missing files, and a browser writes eve
 ## Testing
 
 - `python3 -m unittest discover -s tests` (about a minute; needs mpv).
-- Browser test: `node tests/ui/panel.test.js` (needs Playwright and Chromium). It includes the width sweep (D64, `tests/ui/sweep.js`), which adds about 80 seconds.
+- Browser test: `node tests/ui/panel.test.js` (needs Playwright and Chromium). It includes the width sweep (D64, `tests/ui/sweep.js`), which adds a little over a minute.
 - On a real board: **Option C** in [tools/DEVICE-TESTING.md](tools/DEVICE-TESTING.md) (flash the CI image, then the numbered checklist). `tools/device-test.sh` and the manual "Device test" workflow are Options A and B. `tools/artnet-send.py` sends Art-Net to test DMX from a laptop.
 - Static checks of the systemd units run everywhere (`tests/test_units.py`): the ordering-cycle bug that stopped the player at boot could not be seen in a container.
 - Risky features got an independent read-only review; every finding was fixed with a test that reproduces it. Keep doing that for anything touching root, the network, uploads or auth, and have the fixes read again when they change threads or locks.
