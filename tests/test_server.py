@@ -1027,10 +1027,10 @@ class ManyAtOnceTest(ServerBase):
     documented, drops their handshake and they ask again about a second later.
 
     What each test proves, measured with the queue put back to 5 (2026-10-08). On the dev Mac all four failed (the
-    one about the cap in two runs of three). On CI's Linux (Ubuntu 24.04, Python 3.12; a throwaway branch, the test
-    of the two numbers skipped) one of the three that test behaviour failed: the forty waiting connections, 34 of
-    which had not connected after half a second. The six browsers passed there, in 7.3 s where the same test takes
-    1.3 s with the queue at 128, which fits handshakes dropped and sent again but proves nothing by itself; the
+    one about the cap in two runs of three). On CI's Linux (Ubuntu 24.04, Python 3.12 and 3.9; a throwaway branch,
+    the test of the two numbers skipped) one of the three that test behaviour failed, on both: the forty waiting
+    connections, 34 and 33 of which had not connected after half a second. The six browsers passed there, in 7.3 s
+    and 8.8 s where the same test takes 1.3 s with the queue at 128, which fits handshakes dropped and sent again but proves nothing by itself; the
     test of the cap passed, as it must, since it is about the cap and not the queue. So on Linux the queue is held
     by the forty connections alone, and on the Pi by nothing: none of this was run there."""
 
@@ -1089,7 +1089,7 @@ class ManyAtOnceTest(ServerBase):
 
     def test_six_browsers_at_once_all_get_every_file(self):
         # Tells a queue of 5 from 128 on macOS, where the connection that does not fit is reset (measured: 196 of
-        # 810 answered). On CI's Linux it passed at 5 as well, only slower (7.3 s against 1.3 s, one run each): a
+        # 810 answered). On CI's Linux it passed at 5 as well, only slower (7.3 s and 8.8 s against 1.3 s): a
         # dropped handshake is sent again within the 5 s each connection is given here. It is not made stricter by
         # a limit on time, which a slow runner would trip; on Linux the next test is the one that tells.
         self.serve()
@@ -1120,9 +1120,9 @@ class ManyAtOnceTest(ServerBase):
         # The server is not taking connections yet (as when its loop is busy with the one before): forty arrive.
         # With a queue of five a Linux kernel finishes six handshakes and drops the rest, to be sent again after
         # about a second (as documented), which the half second here does not wait for. Measured on CI's Linux
-        # with the queue at 5 (Ubuntu 24.04, Python 3.12, 2026-10-08): this test failed, 34 of the 40 "no connection
-        # (TimeoutError)"; on the Mac five to twelve of the forty were reset. Not measured on the Pi. Then the server
-        # starts, and each of them is answered.
+        # with the queue at 5 (Ubuntu 24.04, 2026-10-08): this test failed on Python 3.12 and on 3.9, with 34 and 33
+        # of the 40 "no connection" (a timeout); on the Mac five to twelve of the forty were reset. Not measured on
+        # the Pi. Then the server starts, and each of them is answered.
         self.serve(start=False)
         conns = [None] * 40
 
