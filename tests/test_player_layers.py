@@ -63,6 +63,23 @@ class LayersTest(unittest.TestCase):
         self.assertIsNone(self.p.play_source("/run/s3.glsl", CARRIER, epoch))
         self.assertEqual(self.mpv.props["path"], "/media/a.mp4")
 
+    def test_another_text_of_the_source_leaves_the_buffers_format_alone(self):
+        """A generator's text is exchanged at every change of a value, and each `fbo-format` set made mpv set its
+        renderer up anew. It is set when a source comes or goes, as an effect's is."""
+        sets = lambda: [c[2] for c in self.mpv.commands if c[:2] == ("set_property", "fbo-format")]
+        epoch = self.p.play_source("/run/s1.glsl", CARRIER)
+        self.assertEqual((self.mpv.props["fbo-format"], sets()), ("rgba8", ["rgba8"]))
+        for n in range(2, 6):
+            self.assertTrue(self.p.swap_source("/run/s%d.glsl" % n, epoch))
+        self.assertEqual((self.mpv.props["glsl-shaders"], sets()), (["/run/s5.glsl"], ["rgba8"]))
+        self.assertTrue(self.p.swap_source(None, epoch))             # the bare carrier: no pass is added any more
+        self.assertEqual((self.mpv.props["glsl-shaders"], sets()), ([], ["rgba8", "auto"]))
+        self.assertTrue(self.p.swap_source("/run/s6.glsl", epoch))   # and a source again
+        self.assertEqual(sets(), ["rgba8", "auto", "rgba8"])
+        self.mpv.restart()                                           # the new player never had the source
+        self.p.swap_source("/run/s7.glsl", epoch)
+        self.assertEqual((self.p.source_shader, sets()), (None, ["rgba8", "auto", "rgba8", "auto"]))   # dropped, and the buffers chosen anew
+
     def test_after_an_mpv_restart_the_stale_source_is_dropped_before_the_buffers_are_chosen(self):
         """fbo-format stayed rgba8: autostart put a saved mapping that is off back on the restarted player, and
         set_mapping_mode(False) chose the buffers while the lost source still counted."""

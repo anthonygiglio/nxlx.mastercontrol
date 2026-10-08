@@ -1,9 +1,43 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
+import threading
 import unittest
 
+from pvj.api import Fader
 from pvj.player import Player, PlayerError
 from tests.test_server import ServerBase
+
+
+class FaderTest(unittest.TestCase):
+    def ramp(self, seconds, cost):
+        """Run one fade from 0 to 100 on a clock of our own, where each step costs the player `cost` seconds.
+        Returns (the levels set, when the fade was over)."""
+        now, levels, over, done = [100.0], [], [], threading.Event()
+
+        def apply(level):
+            levels.append(level)
+            now[0] += cost
+
+        def sleep(wait):
+            now[0] += wait
+
+        def then():
+            over.append(now[0] - 100.0)
+            done.set()
+        Fader(apply, clock=lambda: now[0], sleep=sleep).ramp(0, 100, seconds, then=then)
+        self.assertTrue(done.wait(5))
+        return levels, over[0]
+
+    def test_a_fade_takes_the_seconds_asked_for_whatever_a_step_costs(self):
+        # It slept a full step after each one on top of what the step took: 2 seconds became 2.6 on a Pi 4.
+        levels, took = self.ramp(2.0, 0.015)
+        self.assertEqual((len(levels), levels[0], levels[-1]), (40, 2.5, 100.0))
+        self.assertAlmostEqual(took, 2.0, places=6)
+
+    def test_a_fade_whose_steps_cost_more_than_their_share_never_sleeps_and_sets_every_level(self):
+        levels, took = self.ramp(1.0, 0.08)
+        self.assertEqual((len(levels), levels[-1]), (20, 100.0))
+        self.assertAlmostEqual(took, 20 * 0.08, places=6)      # as fast as the player allows, and no slower
 
 
 class TransportApiTest(ServerBase):
