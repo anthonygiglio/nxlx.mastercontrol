@@ -484,6 +484,29 @@ table.chan .lvl { width: 36%; }
 .lt-mine, .lt-inuse { font-size: 13px; font-weight: 400; color: var(--mu); }
 @media (min-width: 900px) { #lookthemes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
 
+/* ---- The resizing study, step 1 (D64): repairs to today's layout where the width sweep of the browser test
+   (tests/ui/sweep.js) found it broken, at 320 px, in a short window and from 600 to 899 px. The smallest rule that
+   mends each fault, nothing moved; control heights stay the tokens (44 and 56). Measured in headless Chromium. ---- */
+/* The days of a schedule entry: seven across where each can be 44 px wide (332 px of room: seven of 44 and six
+   gaps), four and three where they cannot (a 320 px phone, and the narrow card of the laptop's columns at 900). */
+.daychips { display: grid; grid-template-columns: repeat(auto-fit, minmax(clamp(44px, (332px - 100%) * 999, 25% - 3px), 1fr)); }
+/* Brightness of a controller's lights: a button is as wide as its word ("Medium" was cut in two) */
+.ctlbright .segbtn { flex: 1 1 auto; }
+@media (max-width: 599px) {
+  /* Live, the four big buttons at the foot: they go to a second line before Blackout leaves the window */
+  .row:has(> #fade) { flex-wrap: wrap; }
+  /* The title and the pill beside it (the board, what plays): the pill goes under the title, and breaks, before it
+     pushes the page wider than the window */
+  .top { flex-wrap: wrap; }
+  .top .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+}
+@media (max-width: 379px) {
+  .row:has(> #fade) > .btn { flex: 1 1 40%; }                     /* two and two */
+  /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word */
+  .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .transport3 .btn, .fxbuttons > .btn { padding: 0 2px; font-size: 14px; }
+}
+
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
    element carries data-style="signal", which the server writes for a theme that names that style. The look above is
@@ -996,27 +1019,7 @@ html[data-style="signal"] .lt-mine, html[data-style="signal"] .lt-inuse { font: 
 html[data-style="signal"] #themelist .lname { text-transform: none; }
 @media (min-width: 900px) { html[data-style="signal"] #lookthemes { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
 
-/* ---- The resizing study, step 1 (D64): repairs to today's layout where the width sweep of the browser test
-   (tests/ui/sweep.js) found it broken, at 320 px, in a short window and from 600 to 899 px. The smallest rule that
-   mends each fault, nothing moved; control heights stay the tokens (44 and 56). Measured in headless Chromium. ---- */
-/* The days of a schedule entry: seven across where each can be 44 px wide (332 px of room: seven of 44 and six
-   gaps), four and three where they cannot (a 320 px phone, and the narrow card of the laptop's columns at 900). */
-.daychips { display: grid; grid-template-columns: repeat(auto-fit, minmax(clamp(44px, (332px - 100%) * 999, 25% - 3px), 1fr)); }
-/* Brightness of a controller's lights: a button is as wide as its word ("Medium" was cut in two) */
-.ctlbright .segbtn { flex: 1 1 auto; }
-@media (max-width: 599px) {
-  /* Live, the four big buttons at the foot: they go to a second line before Blackout leaves the window */
-  .row:has(> #fade) { flex-wrap: wrap; }
-  /* The title and the pill beside it (the board, what plays): the pill goes under the title, and breaks, before it
-     pushes the page wider than the window */
-  .top { flex-wrap: wrap; }
-  .top .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-}
-@media (max-width: 379px) {
-  .row:has(> #fade) > .btn { flex: 1 1 40%; }                     /* two and two */
-  /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word */
-  .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-  .transport3 .btn, .fxbuttons > .btn { padding: 0 2px; font-size: 14px; }
-}
+/* ---- The resizing study, step 1 (D64), in Signal: what the width sweep found in this look. The repairs both
+   looks share are above the marker of this block. ---- */
 /* Room in Signal: a scene's name in the display face shrinks with a narrow phone ("WORKSHOP" broke at 320) */
 html[data-style="signal"] #roomscreen .room-scene { font-size: clamp(16px, 5.2vw, 20px); }
