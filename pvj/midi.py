@@ -19,6 +19,10 @@ Limits:
   after in the playlist, a Room scene, the shader rotation (Vibes on or off, next shader, dwell time) and the shader
   on screen (its first eight inputs, its speed, hue and brightness, the shader before and after it in the active set,
   its first eight presets) are reachable.
+* One more thing can be asked for, and it is not a call into the API: a one-time pairing code on the box's own
+  display (the actions code_join and code_owner; D61, controllercode.py). It needs a hold of HOLD_MIN to HOLD_MAX
+  seconds that ends with letting go, a box setting that is off unless a full-access device switched it on, and a
+  controller that is on USB. Nothing about the code is ever written to a controller.
 * A known controller gets a ready-made layout from a profile file in controllers.d (see "Controller profiles" in
   MIDI.md): matched by its ALSA card id and name, applied when it is plugged in, under the person's own mappings.
 * No more than 50 commands a second reach the player, whatever the controllers send.
@@ -93,6 +97,13 @@ ACTIONS.update({"effect_amount": ("level", 0.0, 1.0), "effect_toggle": ("trigger
                 "effect_prev": ("trigger", None, None), "effect_next": ("trigger", None, None)})
 for _n in range(1, SHADER_SLOTS + 1):
     ACTIONS["effect_control_%d" % _n] = ("control", _n, None)
+# A pairing code on the box's display, for someone at the box with no paired device (D61). Kind "hold": nothing
+# happens on a press; the control must be held for HOLD_MIN to HOLD_MAX seconds and then let go. So a tap, a stuck
+# note (it never ends) and something left lying on a button (it ends too late or never) all do nothing. The second
+# field is the kind of code asked for (controllercode.KINDS). These two are not API calls: see MidiHub._local.
+ACTIONS.update({"code_join": ("hold", "join", None), "code_owner": ("hold", "owner", None)})
+HOLD_MIN, HOLD_MAX = 3.0, 10.0
+LOCAL_CODE = "code"         # a planned call with this in the place of a path goes to the hub's own _local, never to the API
 BANKS = 3
 # Soft takeover ("pickup"): on a recognised controller these levels do nothing until the fader or knob reaches the
 # value the box has, so a fader left at the bottom does not black the screen out when it is first touched. The
@@ -648,6 +659,8 @@ def validate_entry(e, keep_id=False):
         raise MidiError("bad controller name")
     if ACTIONS[action][0] == "level" and kind == "program":
         raise MidiError("a program change cannot drive a level")
+    if ACTIONS[action][0] == "hold" and kind == "program":
+        raise MidiError("a program change cannot be held; use a pad or a button")
     stored = keep_id and isinstance(e.get("id"), str) and re.fullmatch(r"[0-9a-f]{8}", e["id"])
     out = {"id": e["id"] if stored else uuid.uuid4().hex[:8],
            "source": source, "kind": kind, "channel": e.get("channel", 0), "number": e["number"], "action": action}
@@ -693,6 +706,8 @@ class MidiMapper:
         self.bank = 0                       # the controllers' bank, for bank_pad; not saved
         self._pick = {}                     # (source, kind, number) -> {"caught", "prev", "sent", "at"}
         self._armed = {}                    # trigger key -> time of the first press of a guarded button
+        self._held = {}                     # trigger key -> when a control with a "hold" action went down
+        self.local = lambda source, body: False     # what is not an API call (a code on the display); the hub sets it
 
     def matching(self, source, kind, channel, number):
         """Entries for this control, in the order of precedence: the person's own mapping (it replaces the others
@@ -713,7 +728,7 @@ class MidiMapper:
         """A controller went: its pickup and guard state go with it, so it starts clean when it comes back. With no
         source, every controller's (MIDI was switched off: what is let go meanwhile is never heard, so a button
         that was down then would otherwise count as held for ever, and its next press would do nothing)."""
-        for store in (self._pick, self._armed, self._pressed, self.pending):
+        for store in (self._pick, self._armed, self._pressed, self.pending, self._held):
             for key in [k for k in store if source is None or source in k[:2]]:
                 del store[key]
 
@@ -817,6 +832,23 @@ class MidiMapper:
             kind_of, _, _ = ACTIONS[e["action"]]
             if kind_of == "control":                    # a knob or fader is followed; a pad or button is a press
                 kind_of = "level" if kind == "cc" else "trigger"
+            if kind_of == "hold":
+                # Held, then let go: the press only notes the time (and takes a code that is showing off the
+                # display, which needs no hold); the release asks, if the hold was neither too short nor too long.
+                # A control that never comes up asks for nothing, and one that is down already cannot go down again.
+                if kind == "program":
+                    continue
+                down = d2 >= 64 if kind == "cc" else d2 > 0
+                was = self._pressed.get(key, False)
+                self._pressed[key] = down
+                if down and not was:
+                    self._held[key] = now
+                    calls.append((LOCAL_CODE, {"press": now}))
+                elif was and not down:
+                    since = self._held.pop(key, None)
+                    if since is not None and HOLD_MIN <= now - since <= HOLD_MAX:
+                        calls.append((LOCAL_CODE, {"kind": ACTIONS[e["action"]][1], "since": since}))
+                continue
             if kind_of == "trigger":
                 down = d2 >= 64 if kind == "cc" else (d2 > 0 or kind == "program")
                 was = self._pressed.get(key, False)
@@ -845,6 +877,9 @@ class MidiMapper:
         """Handle one parsed message. Returns the number of calls made."""
         done = 0
         for path, body in self.plan(source, msg):
+            if path == LOCAL_CODE:
+                done += int(bool(self.local(source, body)))
+                continue
             if path == "/api/blackout" and body.get("on") is None:
                 body = {"on": not self.mix.get("blackout", False)}
             if path == "/api/vibes" and "on" in body and body["on"] is None:
@@ -1214,6 +1249,7 @@ class MidiHub:
         self.calls = RateLimiter(clock, rate=MAX_CALLS_PER_SECOND, burst=MAX_CALLS_PER_SECOND)   # a faulty pad cannot flood the player
         self.mapper = MidiMapper(self._do, [], api.mix, clock)
         self.mapper.target = self._target
+        self.mapper.local = self._local
         self.learn_until = 0.0
         self.captured = None
         self._quiet = None
@@ -1579,9 +1615,35 @@ class MidiHub:
         return mine + standard + (builtin_cached() if c["builtin"] else [])
 
     # --- messages ---------------------------------------------------------
-    def _run_calls(self, calls):
+    def _local(self, source, body):
+        """A pairing code on the box's display (D61): the one thing a controller can ask for that is not an API
+        call, so nothing that reaches the box through the API (OSC, DMX, the schedule, a Room scene, a device
+        through the support tunnel) can ask for it. Only this hub calls it, for a message it read from a MIDI
+        device file. A press takes a showing code off; a finished hold asks for one, and only from a controller
+        that is on USB: its card has a USB id. A device the box cannot place (no id: a virtual or a network MIDI
+        port, or the card list unreadable) is refused."""
+        codes = getattr(self.api, "controller_codes", None)
+        if codes is None or not isinstance(source, str):
+            return False
+        if "press" in body:
+            return codes.press(body["press"])
+        with self._lock:
+            paths = [p for p, i in self.inputs.items() if i.source == source]
+        try:
+            on_usb = bool(paths) and all(self._describer(p).get("usbid") for p in paths)
+        except Exception:
+            on_usb = False
+        if not on_usb:
+            self._note("%s asked for a code on the display, but it is not a USB controller the box can place; nothing was done" % source)
+            return False
+        return codes.request(body.get("kind"), body.get("since"), source)
+
+    def _run_calls(self, calls, source=None):
         """Make the calls a message planned. Called WITHOUT the hub lock: a play is many round trips to the player."""
         for path, body in calls:
+            if path == LOCAL_CODE:
+                self._local(source, body)
+                continue
             if path == "/api/blackout" and body.get("on") is None:
                 body = {"on": not self.api.mix.get("blackout", False)}
             if path == "/api/vibes" and "on" in body and body["on"] is None:
@@ -1598,7 +1660,7 @@ class MidiHub:
         if msg is None:
             with self._lock:
                 calls = [] if self._stop.is_set() else self.mapper.flush_calls()
-            self._run_calls(calls)
+            self._run_calls(calls, source)
             return
         with self._lock:
             if self._stop.is_set():                 # switched off while this message waited for the lock
@@ -1622,7 +1684,7 @@ class MidiHub:
             self.mapper.entries = self.entries(source)
             self.mapper.mix = self.api.mix
             calls = self.mapper.plan(source, msg)
-        self._run_calls(calls)
+        self._run_calls(calls, source)
 
     # --- learn ----------------------------------------------------------------
     def start_learn(self):

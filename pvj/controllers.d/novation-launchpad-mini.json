@@ -22,7 +22,7 @@
     {"id": "pad15", "name": "Pad 1.5", "row": 1, "col": 4, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 4}, "action": {"action": "pad", "bank": 0, "index": 4}},
     {"id": "pad16", "name": "Pad 1.6", "row": 1, "col": 5, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 5}, "action": {"action": "pad", "bank": 0, "index": 5}},
     {"id": "pad17", "name": "Pad 1.7", "row": 1, "col": 6, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 6}, "action": {"action": "effect_toggle"}},
-    {"id": "pad18", "name": "Pad 1.8", "row": 1, "col": 7, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 7}, "action": null},
+    {"id": "pad18", "name": "Pad 1.8", "row": 1, "col": 7, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 7}, "action": {"action": "code_join"}},
     {"id": "side_a", "name": "A", "row": 1, "col": 8, "kind": "button", "send": {"type": "note", "channel": 0, "number": 8}, "action": {"action": "scene_1"}, "guard": true},
     {"id": "pad21", "name": "Pad 2.1", "row": 2, "col": 0, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 16}, "action": {"action": "pad", "bank": 0, "index": 6}},
     {"id": "pad22", "name": "Pad 2.2", "row": 2, "col": 1, "kind": "pad", "send": {"type": "note", "channel": 0, "number": 17}, "action": {"action": "pad", "bank": 0, "index": 7}},
