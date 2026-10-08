@@ -541,15 +541,27 @@ class CommandLine(Folder):
         self.assertEqual((code, self.calls), (0, ["rollback"]), err)
         self.assertIn("could not look for old work folders", err)
 
-    def test_without_a_usable_lock_there_is_no_update_and_the_result_is_left_alone(self):
+    def test_without_a_usable_lock_there_is_no_update_and_the_panel_is_told_why(self):
+        # Review of #108, finding 3: the panel had already answered "started", and the result file never said why
+        # nothing happened. (Where another update holds the lock the file is that update's, and is left alone.)
+        import json
         os.mkdir(self.lock)                                      # the lock's name is taken by a folder
-        result = self.put("result.json", text='{"state": "running", "message": "other"}')
+        result = self.put("result.json", text='{"state": "done", "message": "updated to 1.0.0"}')
         code, out, err = self.main("rollback")
         self.assertEqual((code, self.calls), (1, []))
         self.assertIn("cannot use the update lock", err)
-        self.assertEqual(self.read(result), '{"state": "running", "message": "other"}')
+        said = json.loads(self.read(result))
+        self.assertEqual(said["state"], "failed")
+        self.assertIn("cannot use the update lock", said["message"])
         self.assertEqual(self.names(), ["lock", "result.json"])
 
+    def test_with_the_lock_held_elsewhere_the_result_is_the_running_updates(self):
+        held = update.take_lock()
+        self.addCleanup(held.close)
+        result = self.put("result.json", text='{"state": "running", "message": "other"}')
+        code, out, err = self.main("rollback")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.read(result), '{"state": "running", "message": "other"}')
 
 if __name__ == "__main__":
     unittest.main()

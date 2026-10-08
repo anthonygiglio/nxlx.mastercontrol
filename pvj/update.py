@@ -589,8 +589,9 @@ def main(argv=None):
     if args.cmd in ("check", "apply", "usb", "inbox", "rollback"):      # check too: it makes a work folder (D70)
         try:
             lock = take_lock()
-        except UpdateError as e:          # without the lock nobody knows whether an update is running: do nothing
-            print("pvj-update: %s" % e, file=sys.stderr)
+        except UpdateError as e:          # without the lock nobody knows whether an update is running: do nothing,
+            print("pvj-update: %s" % e, file=sys.stderr)      # and say so where the panel reads it (it has already
+            report("failed", str(e))                          # answered "started")
             return 1
         if lock is None:
             print("pvj-update: another update is running", file=sys.stderr)
