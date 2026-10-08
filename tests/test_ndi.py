@@ -1371,5 +1371,37 @@ class ReplySizeTest(unittest.TestCase):
         self.assertEqual([len(x["from"]) for x in out], [100])
 
 
+class LostConnectionTest(unittest.TestCase):
+    """Review finding 7: a library that answers "lost" at once, again and again, made the capture thread spin."""
+
+    def test_lost_for_ever_costs_a_few_calls_a_second_and_one_log_line_and_coming_back_is_one_more(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        calls, back = [], threading.Event()
+
+        class Lost(FakeLib):
+            def recv_capture(self, handle, timeout_ms):
+                calls.append(1)
+                if back.is_set():
+                    time.sleep(0.02)
+                    return frame(64, 16)
+                return ndi.Frame("lost")                                 # at once, never waiting
+        lib, logged = Lost(), []
+        r = ndi.Receiver(lib, ndi.clean_sources(lib.raw)[0][0], os.path.join(d, "f"), log=logged.append, pipe_wait=1e9)
+        self.addCleanup(r.close)
+        r.start()
+        time.sleep(1.0)
+        self.assertLessEqual(len(calls), 8, "the capture thread span")
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertEqual(logged, ["pvj-ndi: the connection to RESOLUME (Output) dropped; waiting for it"])
+        back.set()
+        self.assertTrue(r.first.wait(3))
+        self.assertTrue(wait(lambda: len(logged) == 2))
+        self.assertEqual(logged[1], "pvj-ndi: RESOLUME (Output) is back")
+        started = time.monotonic()
+        r.close()
+        self.assertLess(time.monotonic() - started, 1.5)
+
+
 if __name__ == "__main__":
     unittest.main()

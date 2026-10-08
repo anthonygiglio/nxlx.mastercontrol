@@ -533,12 +533,23 @@ class Receiver:
         self.first.set()
 
     def _capture(self):
-        spare = None
+        spare, lost = None, False
         try:
             while not self._stop.is_set():
                 f = self.lib.recv_capture(self._handle, 250)
-                if f is None or f.kind != "video":
+                if f is not None and f.kind == "lost":
+                    # The library says the connection dropped, and says so again at once for as long as it is down:
+                    # wait as long as a capture would have, and write it down once, not at every turn.
+                    if not lost:
+                        lost = True
+                        self.log("pvj-ndi: the connection to %s dropped; waiting for it" % self.source["name"])
+                    self._stop.wait(0.25)
                     continue
+                if f is None:
+                    continue
+                if lost:
+                    lost = False
+                    self.log("pvj-ndi: %s is back" % self.source["name"])
                 try:
                     fmt, stride = check_frame(f)
                     if self.format is None:
