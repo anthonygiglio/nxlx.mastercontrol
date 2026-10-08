@@ -395,9 +395,20 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
 
 class PvjServer(ThreadingHTTPServer):
     """Threaded server with a hard cap on simultaneous connections, so a flood of idle
-    sockets cannot exhaust threads; extra connections get a plain 503 straight away."""
+    sockets cannot exhaust threads; extra connections get a plain 503 straight away.
+
+    The queue of connections the kernel has finished and this server has not yet taken (the listen backlog) is 128,
+    not the 5 that socketserver asks for. A browser opens six connections at once for the files of the page, and
+    every request here is its own connection (HTTP/1.0), so two or three people opening the panel in the same
+    second ask for more than five before the loop below has taken the first. What the kernel does with the one too
+    many differs: macOS resets it (a script of the page then never arrives, measured 2026-10-08), Linux leaves the
+    client to ask again a second later. 128 is the largest value every kernel in use here grants (the kernel lowers
+    a larger one to its own limit, net.core.somaxconn or kern.ipc.somaxconn). A waiting connection costs the
+    kernel a little memory and this process nothing: no thread and no file descriptor until it is taken, and then
+    the cap below decides. So the bound on threads and descriptors is still max_connections."""
 
     daemon_threads = True
+    request_queue_size = 128
 
     def __init__(self, address, handler, max_connections=64):
         super().__init__(address, handler)

@@ -1018,3 +1018,130 @@ class HostileClientTest(ServerBase):
             c.settimeout(2)
             self.assertEqual(c.recv(1024), b"")
         self.assertEqual(self.call("GET", "/api/hello")[0], 200)  # capacity is back
+
+
+class ManyAtOnceTest(ServerBase):
+    """Several browsers opening the panel in the same second: every file arrives (D68). A browser opens six
+    connections at once and every request is its own connection, so three browsers ask for eighteen while the
+    kernel, asked for socketserver's queue of five, kept about five waiting: macOS reset the rest, Linux makes
+    them ask again a second later."""
+
+    PATHS = ("/", "/app.js", "/api/hello")
+
+    def serve(self, start=True, **kw):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.httpd = server.PvjServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, self.web, max_lifetime=5.0), **kw)
+        self.port = self.httpd.server_address[1]
+        self.addCleanup(self.httpd.server_close)
+        if start:
+            self.start()
+
+    def start(self):
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.shutdown)
+
+    def connect(self, timeout=5.0):
+        import socket
+        c = socket.socket()
+        c.settimeout(timeout)
+        try:
+            c.connect(("127.0.0.1", self.port))
+        except OSError as e:
+            c.close()
+            return None, "no connection (%s)" % type(e).__name__
+        return c, None
+
+    def answer(self, c, path):
+        """What came back on an open connection: the status, or a few words on what went wrong."""
+        try:
+            c.sendall(("GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % (path, self.port)).encode())
+            data = b""
+            while True:
+                chunk = c.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+        except OSError as e:
+            return "cut off (%s)" % type(e).__name__
+        finally:
+            c.close()
+        return data.split(b" ", 2)[1].decode() if data.startswith(b"HTTP/") else "no answer"
+
+    def get(self, path):
+        c, bad = self.connect()
+        return bad or self.answer(c, path)
+
+    def test_the_queue_is_longer_than_a_room_of_browsers_and_the_cap_is_as_it_was(self):
+        import inspect
+        self.assertEqual(server.PvjServer.request_queue_size, 128)
+        self.assertEqual(inspect.signature(server.PvjServer.__init__).parameters["max_connections"].default, 64)
+
+    def test_six_browsers_at_once_all_get_every_file(self):
+        self.serve()
+        got, lock = {}, threading.Lock()
+
+        def browser():
+            for _ in range(15):
+                todo = list(self.PATHS) * 3
+
+                def worker():
+                    while True:
+                        with lock:
+                            if not todo:
+                                return
+                            path = todo.pop()
+                        out = self.get(path)
+                        with lock:
+                            got[out] = got.get(out, 0) + 1
+                six = [threading.Thread(target=worker) for _ in range(6)]
+                [t.start() for t in six]
+                [t.join() for t in six]
+        browsers = [threading.Thread(target=browser) for _ in range(6)]
+        [t.start() for t in browsers]
+        [t.join() for t in browsers]
+        self.assertEqual(got, {"200": 6 * 15 * 9})
+
+    def test_forty_connections_wait_their_turn_while_the_server_is_busy(self):
+        # The server is not taking connections yet (as when its loop is busy with the one before): forty arrive.
+        # With a queue of five Linux leaves the seventh to ask again after a second, which the half second here
+        # does not wait for. Then the server starts, and each of them is answered.
+        self.serve(start=False)
+        conns = [None] * 40
+
+        def arrive(i):
+            conns[i] = self.connect(timeout=0.5)
+        ts = [threading.Thread(target=arrive, args=(i,)) for i in range(40)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.addCleanup(lambda: [c.close() for c, _ in conns if c])
+        self.assertEqual([bad for _, bad in conns if bad], [])
+        self.start()
+        got = {}
+        for c, _ in conns:
+            c.settimeout(5.0)
+            out = self.answer(c, "/api/hello")
+            got[out] = got.get(out, 0) + 1
+        self.assertEqual(got, {"200": 40})
+
+    def test_a_longer_queue_lets_nobody_past_the_cap(self):
+        # Three connections that say nothing hold the three places; thirty more arrive at once. None of them is
+        # served and none is left waiting: each is refused at once (a 503, or the connection is closed on it).
+        self.serve(max_connections=3)
+        idle = [self.connect()[0] for _ in range(3)]
+        self.addCleanup(lambda: [c.close() for c in idle])
+        time.sleep(0.2)
+        got, lock = {}, threading.Lock()
+
+        def one():
+            t = time.monotonic()
+            out = self.get("/api/hello")
+            with lock:
+                got[out] = got.get(out, 0) + 1
+                got["slow"] = got.get("slow", 0) + (time.monotonic() - t > 2.0)
+        ts = [threading.Thread(target=one) for _ in range(30)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(got.get("200", 0), 0, got)
+        self.assertEqual(got["slow"], 0, got)
+        self.assertEqual(sum(n for out, n in got.items() if out == "503" or out.startswith(("cut off", "no answer"))), 30, got)
