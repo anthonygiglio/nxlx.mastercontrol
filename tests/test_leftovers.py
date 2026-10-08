@@ -213,6 +213,10 @@ class UpdaterBase(Folder):
 class ScratchSweep(UpdaterBase):
     """P1: `.update-XXXXXXXX` in the install after a power cut: the bundle and its unpacked tree."""
 
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(os.umask, os.umask(0o022))               # the install is 755, as install.sh makes it
+
     def plant(self, name=".update-abcd1234"):
         self.put("opt/pvj", name, "bundle.tar.gz", text="x" * 1000)
         self.put("opt/pvj", name, "tree", "pvj", "__init__.py")
@@ -260,13 +264,45 @@ class ScratchSweep(UpdaterBase):
         self.assertEqual(self.names(self.prefix), [".update-link0000"])
         self.assertEqual(self.names(outside), ["precious"])
 
-    def test_an_install_folder_that_is_a_link_is_not_swept(self):
+    # Review of #108, finding 5: a linked install was swept by nobody, while check() made its work folder through
+    # the link all the same. The sweep now goes where the link goes, and looks at the folder it arrives in: a real
+    # folder of the owner's (root's on a box) that neither its group nor anybody else can write. A folder that is
+    # really somebody else's needs root to make; here that case is the default owner (root) seen by somebody who
+    # is not root, in test_a_folder_that_is_not_roots_is_left.
+
+    def test_an_install_folder_that_is_a_link_is_swept_where_it_really_is(self):
+        elsewhere = os.path.join(self.dir, "elsewhere")
+        self.put("elsewhere", ".update-abcd1234", "tree", "x")
+        self.put("elsewhere", ".update-abcd1234x", "keep")
+        self.put("elsewhere", "releases", "1.0.0", "keep")
+        os.makedirs(os.path.join(self.root, "opt"))
+        os.symlink(elsewhere, os.path.join(self.root, "opt", "by-way-of"))
+        os.symlink("by-way-of", self.prefix)                     # a link to a link to the folder
+        self.assertEqual(self.u.sweep_scratch(owner=self.me), [".update-abcd1234"])
+        self.assertEqual(self.names(elsewhere), [".update-abcd1234x", "releases"])
+        self.assertTrue(os.path.islink(self.prefix))
+
+    def test_an_install_folder_that_others_can_write_is_not_swept_linked_or_not(self):
         elsewhere = os.path.join(self.dir, "elsewhere")
         self.put("elsewhere", ".update-abcd1234", "x")
+        self.plant()
+        link = Updater(root=self.root, prefix="/opt/linked")
+        os.symlink(elsewhere, os.path.join(self.root, "opt", "linked"))
+        for folder, u in ((self.prefix, self.u), (elsewhere, link)):
+            for mode in (0o775, 0o757, 0o1777):
+                os.chmod(folder, mode)
+                self.assertEqual(u.sweep_scratch(owner=self.me), [], "%s %o" % (folder, mode))
+                self.assertEqual(self.names(folder), [".update-abcd1234"])
+            os.chmod(folder, 0o755)
+            self.assertEqual(u.sweep_scratch(owner=self.me), [".update-abcd1234"])
+
+    def test_an_install_folder_that_is_a_link_to_nothing_or_to_a_file_is_no_error(self):
         os.makedirs(os.path.join(self.root, "opt"))
-        os.symlink(elsewhere, self.prefix)
+        os.symlink(os.path.join(self.dir, "nowhere"), self.prefix)
         self.assertEqual(self.u.sweep_scratch(owner=self.me), [])
-        self.assertEqual(self.names(elsewhere), [".update-abcd1234"])
+        os.unlink(self.prefix)
+        os.symlink(self.put("a-file"), self.prefix)
+        self.assertEqual(self.u.sweep_scratch(owner=self.me), [])
 
     @unittest.skipIf(ROOT, "as root every folder here is root's")
     def test_a_folder_that_is_not_roots_is_left(self):

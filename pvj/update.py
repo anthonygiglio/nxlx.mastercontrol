@@ -350,24 +350,36 @@ class Updater:
         unpacked tree, up to hundreds of megabytes each, and nothing else ever removed them). Call it only while
         holding the update lock: then no update is running and every such folder is a leftover. Only a real folder
         (never a link) directly in the install, named as check() names them and owned by `owner` (root on a box)
-        is removed; rmtree does not follow links inside. Returns the names removed; never raises (D70)."""
+        is removed; rmtree does not follow links inside. An install that is a link is swept where it really is,
+        because check() makes its folder there; wherever it is, it has to be a folder of `owner` that neither its
+        group nor anybody else can write, or nothing is removed. Returns the names removed; never raises (D70)."""
         gone = []
-        parent = self.real(self.prefix)
         try:
-            if os.path.islink(parent):
-                return gone
-            names = [n for n in os.listdir(parent) if SCRATCH_NAME.fullmatch(n)]
+            resolved = os.path.realpath(self.real(self.prefix))
+            fd = os.open(resolved, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
         except OSError:
             return gone
-        for name in names:
-            path = os.path.join(parent, name)
-            try:
-                st = os.lstat(path)
-                if stat.S_ISDIR(st.st_mode) and st.st_uid == owner:
-                    shutil.rmtree(path)
-                    gone.append(name)
-            except OSError:
-                pass
+        try:
+            top = os.fstat(fd)
+            if not stat.S_ISDIR(top.st_mode) or top.st_uid != owner or stat.S_IMODE(top.st_mode) & 0o022:
+                return gone
+            for name in os.listdir(fd):
+                if not SCRATCH_NAME.fullmatch(name):
+                    continue
+                try:
+                    st = os.lstat(name, dir_fd=fd)
+                    # rmtree takes a path (its dir_fd is newer than the oldest Python this runs on), so the path
+                    # must still be the folder that was opened and looked at.
+                    if (stat.S_ISDIR(st.st_mode) and st.st_uid == owner
+                            and os.path.samestat(os.lstat(resolved), top)):
+                        shutil.rmtree(os.path.join(resolved, name))
+                        gone.append(name)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
         return sorted(gone)
 
     def _previous_file(self):
