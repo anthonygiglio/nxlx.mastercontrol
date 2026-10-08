@@ -230,7 +230,7 @@ The Schedule page starts with the box's own time ("Box time now: Sat 3 Oct, 17:3
 
 Check the box time before relying on the schedule: a Pi has no battery clock, and until the network sets the time the clock is wrong. When the clock was not set from the network the page says so in red and, where the box can, offers **Set the box clock to this phone's time**.
 
-### NDI® input (beta, not yet tried with a real sender)
+### NDI® input (beta; one short first run on a Pi 4, not yet watched on a screen)
 
 Shows the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) on the box's screen, like a clip. About NDI and its free tools: [ndi.video](https://ndi.video/) and [ndi.video/tools](https://ndi.video/tools/). NDI® is a registered trademark of Vizrt NDI AB.
 
@@ -386,4 +386,4 @@ Not tested on a real box yet (2026-10-03): the three cards were tested with the 
 
 Crossfade, updates from the network, a panel update button, NDI sound, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
 
-**SMPTE ST 2110** is not supported directly and not planned: use a converter from 2110 to HDMI into the live input (USB capture), or from 2110 to NDI (see NDI input above; it has not yet been tried with a real sender).
+**SMPTE ST 2110** is not supported directly and not planned: use a converter from 2110 to HDMI into the live input (USB capture), or from 2110 to NDI (see NDI input above; it has had one short first run on a Pi 4 on 2026-10-08, by SSH; nobody has watched it on a screen yet with a real sender).

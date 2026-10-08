@@ -35,7 +35,8 @@ ExecStart=@PVJ_DIR@/bin/pvj-ndi
 Restart=always
 RestartSec=2
 
-# Sandbox. NOT YET RUN ON A DEVICE with the real runtime: every line is to be checked there (tools/DEVICE-TESTING.md,
+# Sandbox. Run once on a Pi 4 with the real runtime (2026-10-08: it loaded, found senders and received). Not each
+# line by itself, and not the memory bound, which could not be read there: still to be checked (tools/DEVICE-TESTING.md,
 # "NDI input"), because a line that is wrong empties the list of sources without an error.
 CapabilityBoundingSet=
 NoNewPrivileges=yes

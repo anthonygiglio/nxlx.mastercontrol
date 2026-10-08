@@ -29,7 +29,8 @@ every install or update, so there is one writer of these files; a box that does 
 the panel and the player are restarted. The account, the group and the avahi packages stay (avahi may have been on
 the box before, and other things may use it); the command says so and how to remove them.
 
-None of this has run on a device. tests/test_ndi_setup.py drives it with a fake root folder and fake commands;
+The opt-in ran once on a Pi 4 (2026-10-08) as it was at ae4d690; the opt-out, an update and a rollback over it
+have not run on a device. tests/test_ndi_setup.py drives it with a fake root folder and fake commands;
 tests/real_install_test.sh runs it under a real systemd on the CI runner, without NDI's library.
 """
 
