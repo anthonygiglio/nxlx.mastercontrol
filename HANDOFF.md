@@ -16,7 +16,7 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - New code is Apache-2.0 (SPDX headers, `REUSE.toml`). Legacy code stays under the upstream `LICENSE.md`. `LICENSE.md` and `AUTHORS.md` are never edited. Copyright holder in headers: "NXLX.Systems and contributors".
 - One long-lived mpv controlled over JSON IPC, supervised by systemd (`pvj-player.service`). The panel (`pvj-web.service`) is unprivileged; anything needing root goes through small helpers (`pvj-netd`, `pvj-sysd`, `pvj-supportd`) that answer only pvj-web over a socket.
 - Token auth (PIN pairing, roles view/live/full), CSRF header, strict CSP. Signed updates with rollback.
-- NDI and AES67/Dante are separate optional modules. NDI receive is built as of 2026-10-07 (D61, `pvj/NDI.md`), video only, never run against a real sender; AES67/Dante is not built. ST 2110 is not planned natively; it comes in through a gateway (D30). SRT/RTSP/RTMP streams, DMX, MIDI, the schedule and autostart are built, off by default.
+- NDI and AES67/Dante are separate optional modules. NDI receive is built as of 2026-10-07 on the branch `ndi-input` (D61, `pvj/NDI.md`), video only, never run against a real sender, and it moves the settings to schema 14 (deploy it to the test Pi only when it is next to merge); AES67/Dante is not built. ST 2110 is not planned natively; it comes in through a gateway (D30). SRT/RTSP/RTMP streams, DMX, MIDI, the schedule and autostart are built, off by default.
 - Naming: the `pvj` package, `pvj-*` services and commands and install paths keep their names.
 - Style: no em dashes in written text (commas, semicolons, new sentences). Default document font Inter.
 

@@ -1925,13 +1925,18 @@ class Api:
         with self.ndi.lock:                # open, load and note as one step: a double tap cannot cross two sources
             if again is not None and self.ndi.current is not again:
                 return {"playing": None}
+            ticket = self.ndi.ticket()
             try:
                 p = self.ndi.open(sid)
             except ndi_mod.NdiError as e:
                 raise ApiError(409, str(e))
-            if again is not None and self.ndi.current is not again:      # stopped, or a clip played, while it connected
+            # Connecting takes seconds. If anything was played or stopped meanwhile (every such path calls
+            # _stop_ndi), that later choice stands: the source is let go and the screen is not touched.
+            if not self.ndi.still(ticket) or (again is not None and self.ndi.current is not again):
                 self.ndi.client_close()
-                return {"playing": None}
+                if again is not None:
+                    return {"playing": None}
+                raise ApiError(409, "something else was played while the source was connecting")
             self.fader.cancel()
             entry = {"id": p["id"], "name": p["name"]}
             self.ndi.current = entry

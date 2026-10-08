@@ -668,6 +668,11 @@ class ImportTest(Base):
             ("shaders", {"included": ["isf-ridgelines.fs", "isf-ridgelines.fs"]}),
             ("shaders", {"included": "isf-ridgelines.fs"}),
             ("shaders", []),
+            ("ndi", {"addresses": ["8.8.8.8"]}),                            # not a private address
+            ("ndi", {"addresses": ["192.168.1.20\n"]}),
+            ("ndi", {"addresses": ["192.168.1.20", "192.168.1.20"]}),
+            ("ndi", {"addresses": [], "library": "/tmp/evil.so"}),          # nothing but addresses is taken
+            ("ndi", ["192.168.1.20"]),
             ("sync", {"role": "boss"}),
             ("sync", {"wall": {"cols": 2, "rows": 2, "col": 5, "row": 0}}),
             ("room", {"groups": [{"name": "Main wall", "projectors": []}]}),

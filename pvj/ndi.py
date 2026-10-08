@@ -52,6 +52,7 @@ FOURCC_UYVA = 0x41565955                  # "UYVA": a UYVY plane and then an alp
 FIRST_FRAME_SECONDS = 6.0
 PIPE_OPEN_SECONDS = 10.0
 QUIET_SECONDS = 2.0                       # no frame for this long: "waiting for the source"
+PLAYER_LEFT = "the player stopped reading the input"      # something else was played: an end, not a fault
 SOURCES_CACHE = 1.0
 PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"))
 STATES = ("connecting", "ready", "playing", "waiting", "changed", "refused", "stopped")
@@ -513,8 +514,15 @@ class Receiver:
                 self._end("stopped", "the input pipe was replaced; not writing to it")
                 return None
             try:
-                fcntl.fcntl(fd, getattr(fcntl, "F_SETPIPE_SZ", 1031), 8 * 1024 * 1024)     # room for a 1080p frame
-            except OSError:
+                # Fewer wake-ups for a 4 MB frame. An account without privileges gets at most
+                # /proc/sys/fs/pipe-max-size (1 MiB unless the box raises it); asked for from large to small.
+                for size in (8, 4, 1):
+                    try:
+                        fcntl.fcntl(fd, getattr(fcntl, "F_SETPIPE_SZ", 1031), size * 1024 * 1024)
+                        break
+                    except OSError:
+                        continue
+            except Exception:
                 pass
             return fd
         return None
@@ -533,7 +541,7 @@ class Receiver:
             except BlockingIOError:
                 continue
             except OSError:
-                self._end("stopped", "the player stopped reading the input")
+                self._end("stopped", PLAYER_LEFT)
                 return False
         return True
 
@@ -830,6 +838,18 @@ class Input:
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = threading.RLock()      # open, load in the player and note, as one step (like the capture input)
         self._retry_at = 0.0
+        self._ticket, self._ticket_lock = 0, threading.Lock()
+
+    def ticket(self):
+        """Taken before a source is opened (which can take seconds). `still(ticket)` afterwards says whether
+        nothing else was played or stopped meanwhile: stop() makes every ticket taken before it worthless."""
+        with self._ticket_lock:
+            self._ticket += 1
+            return self._ticket
+
+    def still(self, ticket):
+        with self._ticket_lock:
+            return self._ticket == ticket
 
     def sync(self):
         """Tell the helper whether the module is on and which addresses to ask. Returns its status, or {"ok": False}."""
@@ -874,8 +894,9 @@ class Input:
         return p
 
     def client_close(self):
+        """Longer than the helper may hold its lock while it waits for a first frame: a close must not be lost."""
         try:
-            self.client.request({"cmd": "close"})
+            self.client.request({"cmd": "close"}, timeout=FIRST_FRAME_SECONDS + 4)
         except NdiError:
             pass
 
@@ -883,6 +904,7 @@ class Input:
         """Nothing of NDI is on the screen any more: have the helper let go of the source. `current` is cleared
         first and without the lock, so a source being shown again (tick) sees at once that it is no longer wanted."""
         had, self.current = self.current, None
+        self.ticket()                      # a source still connecting for an earlier play is no longer wanted either
         if had:
             self.client_close()
         return bool(had)
@@ -899,6 +921,10 @@ class Input:
         if st.get("configured") is not True:       # the helper started again and knows nothing yet
             self.sync()
         p = _playing(st.get("playing"))
+        if p is not None and p["id"] == cur["id"] and p["state"] == "stopped" and p["message"] == PLAYER_LEFT:
+            if self.current is cur:                # the player went on to something else without a word to us
+                self.current = None
+            return False
         if p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):
             return False                           # playing, waiting, or ended for a reason a retry would not cure
         self._retry_at = self._clock() + self.RETRY_SECONDS

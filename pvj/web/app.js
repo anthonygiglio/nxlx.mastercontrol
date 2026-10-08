@@ -2433,7 +2433,7 @@
   // link to ndi.video beside the place a source is chosen. The runtime is not part of the box; when it is missing
   // the page says so and how to get it, with the list and the address form still here.
   var NDI_MARK = 'NDI® is a registered trademark of Vizrt NDI AB.';
-  var ndiForm = { address: '' }, ndiTimer = null;
+  var ndiForm = { address: '' }, ndiTimer = null, ndiBusy = null;      // ndiBusy: the id of a source being connected to
   function ndiLink(url, text) { return h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: text }); }
   function ndiSentence(text) { return text ? text.charAt(0).toUpperCase() + text.slice(1) + (/[.!?]$/.test(text) ? '' : '.') : ''; }
   function ndiCards(full) {
@@ -2476,15 +2476,17 @@
         var mine = playing && playing.id === s.id && playing.state !== 'refused' && playing.state !== 'stopped';
         srcBody.appendChild(listRow({ cls: 'ndi-entry', data: s.id, name: s.name, sub: s.from, key: 'ndi-' + s.id, redraw: function () { drawSources(d); },
           state: mine ? playLine(playing) : '',
-          primary: can('live') ? h('button', { class: 'btn on pri', text: 'Play', 'aria-label': 'Play ' + s.name, onclick: function (e) {
-            var btn = e.currentTarget;
-            btn.disabled = true;
+          primary: can('live') ? h('button', { class: 'btn on pri', text: ndiBusy === s.id ? 'Connecting...' : 'Play', 'aria-label': 'Play ' + s.name, disabled: !!ndiBusy, onclick: function () {
+            if (ndiBusy) return;
+            ndiBusy = s.id;                            // one connection at a time, and the button stays off through redraws
+            drawSources(d);
             say('Connecting to ' + s.name + '...');
             api('POST', '/api/play', { ndi: s.id }).then(function (r) {
-              btn.disabled = false;
-              if (!r.ok) return say(ndiSentence(r.data.error || 'the source could not be shown'), true);
-              say('Showing ' + s.name);
+              ndiBusy = null;
+              drawn = '';
+              say(r.ok ? 'Showing ' + s.name : ndiSentence(r.data.error || 'the source could not be shown'), !r.ok);
               poll(); refresh();
+              if (document.getElementById('ndicard')) drawSources(d);
             });
           } }) : null }));
       });
@@ -2518,17 +2520,20 @@
           err);
       }, function () { drawAddresses(d); }));
     }
-    var first = true;
+    var first = true, drawn = '';
     function refresh() {
       clearTimeout(ndiTimer);
       api('GET', '/api/ndi').then(function (r) {
         if (!document.getElementById('ndicard')) return;
-        ndiTimer = setTimeout(refresh, 2000);          // senders come and go; only the list is drawn again, never the form
+        ndiTimer = setTimeout(refresh, 2000);          // only the list of sources is ever drawn again, never the address form
         if (!r.ok) {
           if (first) { srcBody.textContent = ''; srcBody.appendChild(h('div', { class: 'hint', id: 'ndimsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); }
           return;
         }
-        if (!document.getElementById('confirmrow')) drawSources(r.data);
+        // Senders come and go, so the list is asked for every 2 seconds, but it is drawn again only when what it
+        // shows changed: a button replaced between a finger going down and coming up loses the tap (D59).
+        var now = JSON.stringify([r.data.helper, r.data.runtime, r.data.sources, r.data.playing]);
+        if (now !== drawn && !ndiBusy) { drawn = now; drawSources(r.data); }
         if (first) drawAddresses(r.data);
         first = false;
       });

@@ -35,6 +35,7 @@ Until the file is there, the NDI page says "The NDI runtime is not on this box y
 - The size and frame rate are not known until the first frame. So: the panel asks the helper to open a source; the helper connects and waits up to 6 seconds for a frame; it answers with the width, height and rate; the panel loads the pipe in the player with exactly those; the helper starts writing when the player opens the pipe.
 - **A sender that changes size or rate**: the helper stops writing (the raw pipe has one fixed layout) and says "changed"; the panel, which looks at the helper once a second while NDI is on screen, opens the source again and reloads the pipe. The picture is gone for the second or two that takes.
 - **A sender that goes away**: the helper keeps the connection (the library reconnects by name by itself), the screen holds the last frame, and the page says "Waiting for the source". When frames return they continue; if they return in another size, see above.
+- **Something else is played while a source is still connecting** (it can take seconds): the later choice stands; the source is let go and the screen is not touched.
 - **Slow screen, fast sender**: the helper holds one frame; a newer one replaces it and the old one is counted as dropped. A frame is never written in part. The counts (received, shown, dropped here, dropped by the library) are on the page and in the status route.
 - **Fields**: a sender of interlaced video delivers single fields in this format. They are refused with a plain message ("the source sends interlaced fields"); set the sender to progressive.
 - **Sound: not built.** The helper asks the library for video only. See "Open design questions".
@@ -55,7 +56,7 @@ Settings: `"ndi": {"addresses": []}` (schema 14). The switch is the module `inpu
 Everything that arrives from the network is treated as hostile, and the code that reads it is a closed-source library, so the design assumes the helper can be taken over by a bad packet and limits what that would give.
 
 - **Its own account and group** (`pvj-ndi`). It is not in group `pvj`, so it cannot reach the player's control socket (mpv's control channel can run programs), the PIN, the settings or the media. The player and the panel are each given the extra group `pvj-ndi`, which lets them read the helper's folder and nothing else.
-- **Its sandbox** (`install/pvj-ndi.service`): no capabilities, no devices, a read-only system, no home folders, a private `/tmp`, one writable folder (`/run/pvj-ndi`), and **network addresses limited to private ranges, link-local and multicast** (`IPAddressDeny=any` with an allow list), so the library cannot talk to the internet at all. `tests/test_units.py` pins every line.
+- **Its sandbox** (`install/pvj-ndi.service`): no capabilities, no devices, a read-only system, no home folders, a private `/tmp`, one writable folder (`/run/pvj-ndi`), and **network addresses limited to private ranges, link-local and multicast** (`IPAddressDeny=any` with an allow list), which is meant to keep the library from talking to the internet at all. `tests/test_units.py` pins every line; that the lines do on a device what they say is step N9 of the device steps, not yet done.
 - **The helper answers only the panel's account** on its socket (`SO_PEERCRED`), with the same small server the other helpers use.
 - **Names**: a source name from the network is shown and used only if it is valid UTF-8, 1 to 128 characters, with no control, format (bidirectional overrides, zero width) or line-separator characters; at most 64 sources are kept. The panel plays by an id, a hash of the name made by the helper, never by a string from the request.
 - **Frames**: width, height, line stride and format are checked against fixed bounds (16 to 3840 by 16 to 2160, an even width, a stride of at least two bytes per pixel and at most a bounded excess) before a single byte is read from the library's buffer; the byte count read is computed from the checked values only.
@@ -92,7 +93,7 @@ What follows for this project:
 1. **Nothing of NDI's is in this repository or the image**: no library, no header, no logo. The structures in `pvj/ndi.py` were written here from the layout the public headers describe; no header text is copied. So the distribution terms (a matching EULA, keeping distributed versions current) do not come into play.
 2. **The owner fetches and accepts.** The installer does not download the SDK. An automatic fetch would have to say yes to NDI's licence on somebody's behalf, and there is no vendor address for the bare Linux library to fetch.
 3. **In the product**: the NDI page writes NDI® on first use, carries the trademark sentence and a link to ndi.video beside the list where a source is chosen, and points to ndi.video/tools for the tools. About and power carries the trademark sentence. This document and the manual do the same. The library lives in the application's own folder (`/opt/pvj-ndi`), not on the system path.
-4. **The name.** The product is nxlx.mastercontrol; "NDI input" is the label of one page. Whether that counts as using NDI "within the name of your product" is for the owner to judge or ask NDI about.
+4. **The name.** The product is nxlx.mastercontrol; "NDI input" is the label of one page. Whether that counts as using NDI "within the name of your product" is for the owner to judge or ask NDI about. Also the owner's to judge: the System index shows the row "NDI® input" and Live's "Now playing" line says "NDI: <the source>" with the trademark sentence one tap away (on the NDI page and on About and power), not on those screens themselves.
 
 **Not confirmed, and for the owner before NDI is used at a venue or the box is sold or lent:**
 
@@ -106,6 +107,7 @@ What follows for this project:
 - Where mDNS does not pass, add the sender's IPv4 address on the page. The library then asks that machine directly (TCP 5960) for its sources.
 - Video arrives on TCP or UDP ports from 5960 upward (5961 and up per stream, 6960 and 7960 and up for the multi-connection modes). The box runs no firewall of its own, so nothing needs opening on it. A managed switch or a firewall between sender and box must let these through.
 - The helper only receives. It never announces a source.
+- A cost that is there even with the NDI input switched off: `pvj-ndi.service` is enabled on every box (idle, no library loaded, nothing sent) and wants `avahi-daemon`, which the installer adds where it is missing (Raspberry Pi OS has it already). A box with avahi answers to its name by mDNS on the network it is on.
 
 ## Not verified
 

@@ -648,6 +648,23 @@ class InputTest(unittest.TestCase):
         self.assertTrue(self.i.tick(lambda sid: seen.append(self.s.on)))
         self.assertEqual(seen, [True])
 
+    def test_a_player_that_went_on_to_something_else_by_itself_ends_it_quietly(self):
+        # Vibes or a schedule entry may take the screen without telling the NDI input: the pipe just loses its reader.
+        self.i.status()
+        self.lib.frames.put(frame(64, 16))
+        self.i.open(self.rid)
+        self.i.current = {"id": self.rid, "name": "x"}
+        fd = os.open(self.s.fifo, os.O_RDONLY)
+        self.assertTrue(wait(lambda: self.s.receiver.status()["state"] == "playing"))
+        os.close(fd)
+        self.lib.frames.put(frame(64, 16))
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(wait(lambda: self.s.receiver.status()["message"] == ndi.PLAYER_LEFT))
+        self.assertFalse(self.i.tick(lambda sid: self.fail("no replay")))
+        self.assertIsNone(self.i.current)
+        self.assertIsNone(self.i.status()["playing"])
+        self.assertEqual(self.lib.closed, 1)                           # and the source was let go
+
     def test_refused_and_stopped_are_not_retried_and_nothing_wanted_means_no_questions(self):
         self.i.status()
         self.lib.frames.put(frame(64, 16))
@@ -880,6 +897,43 @@ class NdiApiTest(ServerBase):
         self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), pipes)
         self.assertEqual(len(self.lib.opened), 1)                      # the source was not even opened again
         self.assertFalse(self.api.ndi_tick())
+
+    def test_what_is_played_or_stopped_while_a_source_is_still_connecting_keeps_the_screen(self):
+        # Connecting takes seconds. The later choice stands: the pipe is never loaded over it and the source is let go.
+        self.enable()
+        real = self.client.request
+        for later in ({"path": "/api/play", "body": {"file": "a.mp4"}}, {"path": "/api/control", "body": {"action": "stop"}}):
+            gate, entered = threading.Event(), threading.Event()
+
+            def slow(message, timeout=None):
+                if message.get("cmd") != "open":
+                    return real(message, timeout)
+                self.lib.frames.put(frame(64, 16))
+                reply = real(message, timeout)             # the helper has the source open and a first frame
+                entered.set()
+                gate.wait(5)
+                return reply
+            self.client.request = slow
+            out, pipes, closed = [], len([c for c in self.player.calls if c[0] == "play_pipe"]), self.lib.closed
+            t = threading.Thread(target=lambda: out.append(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)))
+            t.start()
+            self.assertTrue(entered.wait(5))
+            self.assertEqual(self.call("POST", later["path"], later["body"], token=self.full)[0], 200)
+            gate.set()
+            t.join(5)
+            self.client.request = real
+            self.assertEqual((out[0][0], out[0][1]["error"]), (409, "something else was played while the source was connecting"), later)
+            self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), pipes, later)
+            self.assertEqual((self.api.ndi.current, self.service.receiver, self.lib.closed), (None, None, closed + 1), later)
+
+    def test_a_close_waits_longer_than_the_helper_may_be_busy_with_a_first_frame(self):
+        self.enable()
+        self.api.ndi.client_close()
+        self.assertEqual(self.client.sent[-1], {"cmd": "close"})
+        seen = []
+        self.client.request = lambda message, timeout=None: seen.append(timeout) or {"ok": True}
+        self.api.ndi.client_close()
+        self.assertGreater(seen[0], ndi.FIRST_FRAME_SECONDS)
 
     def test_addresses_are_added_checked_saved_and_sent_to_the_helper(self):
         self.enable()
