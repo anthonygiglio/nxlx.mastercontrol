@@ -8,6 +8,11 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
 - `tests.test_boxcare.ExportTest.test_default_export_holds_no_secret` failed once in CI on #102: it looks for the box's PIN anywhere in the text of a settings export, the PIN is four random digits, and that run's PIN was "0002", which stands in the test's own projector id "aaaa0002". Nothing leaked. The test now sets a PIN of its own choosing that is nowhere in its fixtures, and looks for a secret made of digits (the PIN, a join code) standing by itself, not inside a longer number or word. A real leak of either would be the value by itself.
 
+## 2026-10-08, the evening (CI's install retry met its first slow mirror, and lost)
+
+- On #102's second run the `effects-gpu` job for the Pi 4's kind of OpenGL failed in its install step with "ci-apt: gave up after 3 attempts": the lists came at once each time and the 48 MB of packages did not arrive in 90 seconds, three times, from `azure.archive.ubuntu.com`. So the retry of #101 failed sooner (under five minutes instead of ten) but cured nothing: the same runner asked the same slow mirror three times.
+- `tools/ci-apt.sh` now changes the mirror after a failed attempt: `azure.archive.ubuntu.com` becomes `archive.ubuntu.com` in the files apt reads its mirrors from. What an attempt downloaded stays in apt's cache, so the next one carries on. Not proven: no run has needed the second attempt since; the first slow mirror after this merges is its test. If Ubuntu's own archive is slow from that runner too, the step still fails, and a rerun is still the cure.
+
 ## 2026-10-08 (the ISF parser: comments before the header, and an input called `time`)
 
 Branch `isf-leading-comments`, not merged. D66 has the decision. **Run on the dev Mac only, where there is no mpv: the translator's text was checked, nothing was drawn. The GPU tests added here run in CI. Nothing ran on a box.**
