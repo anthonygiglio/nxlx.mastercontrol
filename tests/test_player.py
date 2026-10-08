@@ -273,6 +273,83 @@ class SocketOpenerTest(unittest.TestCase):
             proc.wait()
 
 
+DEAF_MPV = """#!%s
+# A stand-in for mpv as it was seen in CI at its first start on a machine: it answers the first question, then
+# nothing for a while (the real one is making its window), then everything it was asked.
+import json, os, socket, sys, threading, time
+path = [a.split('=', 1)[1] for a in sys.argv if a.startswith('--input-ipc-server=')][0]
+s = socket.socket(socket.AF_UNIX)
+s.bind(path)
+s.listen(8)
+state = {'hears_again': None}
+lock = threading.Lock()
+
+
+def serve(c):
+    msg = json.loads(c.makefile().readline())
+    with lock:
+        if state['hears_again'] is None:
+            state['hears_again'] = time.monotonic() + %r         # deaf from the first answer on
+            wait = 0
+        else:
+            wait = max(0, state['hears_again'] - time.monotonic())
+    time.sleep(wait)
+    try:
+        c.sendall(json.dumps({'request_id': msg['request_id'], 'error': 'success', 'data': os.getpid()}).encode() + b'\\n')
+    except OSError:
+        pass
+    c.close()
+    if msg['command'][0] == 'quit':
+        os._exit(0)
+
+
+while True:
+    threading.Thread(target=serve, args=(s.accept()[0],), daemon=True).start()
+"""
+
+
+class DeafAtTheStartTest(unittest.TestCase):
+    """"no reply from mpv" in CI's GPU jobs: a player that this process has just started answers nothing while it
+    makes its window (up to 3.3 s on a fresh machine, where a request waits 2). A stand-in player that is deaf in
+    the same way, with the times made short: no mpv and no GPU needed."""
+
+    def start(self, deaf):
+        import sys
+        d = tempfile.mkdtemp(prefix="pvjd", dir="/tmp")              # short: a socket's path has little room
+        self.addCleanup(shutil.rmtree, d, True)
+        os.chmod(d, 0o700)
+        fake = os.path.join(d, "fake-mpv")
+        with open(fake, "w") as f:
+            f.write(DEAF_MPV % (sys.executable, deaf))
+        os.chmod(fake, 0o755)
+        p = Player(mpv_bin=fake, rundir=d)
+        self.addCleanup(p.stop)
+        p.ipc.timeout = 0.3
+        p._spawn()                                                  # the first question is answered: it "runs"
+        return p
+
+    def test_a_request_right_after_the_start_waits_for_a_player_that_is_still_coming_up(self):
+        p = self.start(1.0)
+        t = time.monotonic()
+        p.ipc.request("set_property", "keep-open", "no")            # was: PlayerError("no reply from mpv") after 0.3 s
+        self.assertGreater(time.monotonic() - t, 0.5)
+
+    def test_after_the_start_a_silent_player_is_reported_as_soon_as_before(self):
+        p = self.start(1.2)
+        self.assertGreater(p.ipc.patient_until, time.monotonic() + player.START_GRACE - 5)
+        p.ipc.patient_until = time.monotonic()                      # as if the start were long ago
+        t = time.monotonic()
+        with self.assertRaises(PlayerError) as e:
+            p.ipc.request("set_property", "keep-open", "no")
+        self.assertEqual(str(e.exception), "no reply from mpv")
+        self.assertLess(time.monotonic() - t, 0.6)
+
+    def test_a_client_that_started_nothing_waits_as_it_always_did(self):
+        self.assertEqual(player.Ipc("/nonexistent").patient_until, 0.0)
+        p = Player(rundir=tempfile.mkdtemp())
+        self.assertEqual((p.ipc.timeout, p.ipc.patient_until), (2.0, 0.0))
+
+
 class HardeningFlagsTest(unittest.TestCase):
     """A file is judged by its content: a hostile USB drive can hold an "mp4" that is really a playlist or an EDL."""
 

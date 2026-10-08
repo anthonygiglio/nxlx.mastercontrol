@@ -83,10 +83,24 @@ def detach_socket_opener(path, mode=0o660):
     os.waitpid(pid, 0)
 
 
+# A player that this process has just started is deaf for a while: mpv answers nothing while it makes its window and
+# its GPU output. Measured on CI's runners (Mesa's software GPU under xvfb, 2026-10-08, pull request #96; the runs
+# are in the journal): at the first start of a player on a fresh machine, the first answer came 0.2 to 5.0 seconds
+# after the request (19 machines: 6 of them over 2 seconds, the longest 5.04), with the player's threads asleep and
+# the machine idle; every later start answered within half a second and every other request within a second. The
+# deaf moment can also begin after the first answer (seen once, 2026-10-05: the first question answered, the next
+# request lost, a test failed). So for START_GRACE seconds after a start a request waits up to START_WAIT for its
+# answer. Only then: at any other time a player that says nothing for `timeout` is a fault, and the caller hears of
+# it as soon as before. Nothing here says what a real board needs; this was a software GPU.
+START_WAIT = 10.0
+START_GRACE = 15.0
+
+
 class Ipc:
     def __init__(self, path, timeout=2.0):
         self.path = path
         self.timeout = timeout
+        self.patient_until = 0.0    # time.monotonic() until which a request waits START_WAIT (Player._spawn sets it)
         self._id = 0
 
     def request(self, *command):
@@ -94,12 +108,13 @@ class Ipc:
         rid = self._id
         payload = json.dumps({"command": list(command), "request_id": rid}).encode() + b"\n"
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(self.timeout)
+        wait = max(self.timeout, START_WAIT) if time.monotonic() < getattr(self, "patient_until", 0.0) else self.timeout
+        s.settimeout(wait)
         try:
             s.connect(self.path)
             s.sendall(payload)
             buf = b""
-            deadline = time.monotonic() + self.timeout
+            deadline = time.monotonic() + wait
             while time.monotonic() < deadline:
                 try:
                     chunk = s.recv(65536)
@@ -212,6 +227,7 @@ class Player:
         except FileNotFoundError:
             raise PlayerError("mpv not found; install it (sudo apt install mpv)")
         self._proc = proc
+        self.ipc.patient_until = time.monotonic() + START_GRACE     # a player that is coming up is given time to answer
         with open(self.pid_path, "w") as f:
             f.write(str(proc.pid))
         deadline = time.monotonic() + 10

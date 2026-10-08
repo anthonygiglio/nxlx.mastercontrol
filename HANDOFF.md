@@ -70,7 +70,6 @@ The journal has an entry for each, and one for the night of 2026-10-07 and 08 as
 
 Queued on 2026-10-08, not started, in no order among the above:
 
-- The "no reply from mpv" screenshot failure that comes and goes in CI (see "Test failures that come and go").
 - A factory reset that also removes the root-only update backups. It needs a `pvj-sysd` action and its own review.
 - The move to the HP laptop (see "How to work here").
 
@@ -91,7 +90,7 @@ Further out, unchanged: live coding with a last-good fallback and projectM as an
 
 **Known and open.**
 
-- "no reply from mpv" to a screenshot in the GPU tests has been seen twice in CI (once on OpenGL ES in `test_a_capped_effect_draws_the_right_picture...`), never reproduced. Worth chasing, not only rerunning.
+- "no reply from mpv" in the GPU tests was two different things (#96, a draft; see "Test failures that come and go"): a player's first start, shown and fixed; and one screenshot on 2026-10-05, not explained and not reproduced. The GPU tests now time every request to the player and print a report when one gets no reply (`tests/mpv_watch.py`).
 - GitHub sometimes never gives a job a runner ("The job was not acquired by Runner of type hosted"); rerun the failed jobs.
 - An effect put on a paused clip is not drawn until the next frame; the projection mapping alone is heavy on a Pi 4 (see "Effects and Effect detail").
 - Never run on hardware: a real projector, the Wi-Fi feature, any controller control pressed by a person, a Pi 3, a Pi 5, x86, NDI on Linux.
@@ -292,12 +291,15 @@ Looked at together on 2026-10-05 in pull request #86 (merged). The journal entry
 | A `panel-ui` job twenty minutes in "Install mpv and a browser" (once, 2026-10-05); "Install mpv" timed out on the Ubuntu mirror (once, the night of 2026-10-07 and 08) | That runner's package mirror was slow (about 50 kB a second on 2026-10-05); nothing of ours. Every job of `pvj.yml` has a time limit now and every install step ten minutes (#86): read the log, then rerun it. The second one passed on a rerun. |
 | `test_projectors_are_not_all_asked_at_once` (twice: 0.295 and 0.248 s where more than 0.3 was wanted) | Cause shown and the test fixed (#86): it measured the gap between two projectors' first checks, which a slow "who are you" narrows. It is three projectors now, each measured from the start, and it fails against one delay for all. |
 | Jobs "cancelled" after half an hour in the queue (2026-10-05, several) | GitHub's: the annotation says "The job was not acquired by Runner of type hosted even after multiple attempts". Nothing ran. Rerun the run when the queue is shorter. |
-| "no reply from mpv" to a screenshot in the GPU tests (twice: `tests.test_shaderlive_gpu` `test_time_goes_on_across_a_change_of_a_value_and_of_the_speed`, 2026-10-05, Python 3.9, the GLSL 1.40 step, run 37339188136 attempt 3; and once on OpenGL ES in `test_a_capped_effect_draws_the_right_picture...`) | Not explained, never reproduced. The control socket waits 2 seconds; in the first the speed had just been set to 0. Queued to chase, not started. |
+| "no reply from mpv" in the GPU tests, at a player's first start (run 37377643589, job 111990914734, `effects-gpu (OpenGL ES)`, 2026-10-05: `set_property keep-open` in the set-up of the job's first test, not a screenshot as was written here) | Cause shown in CI and fixed in `pvj/player.py` (#96): a player that was just started answers nothing while it makes its window, 0.2 to 5.0 s at the first start on a fresh runner (19 runners, 6 over 2 s), and the client waited 2 s. A request within 15 s of a start by this process now waits up to 10 s; every other request waits 2 s as before. What mpv waits for in that moment is not known. |
+| "no reply from mpv" to a screenshot (once: run 37339188136 attempt 3, job 111886082758, `test (3.9)`, the GLSL 1.40 step, 2026-10-05, `test_time_goes_on_across_a_change_of_a_value_and_of_the_speed`, right after the speed was set to 0) | Not explained and not made to happen in #96: about 34,000 screenshots, quiet, with every processor busy, twice as busy, and on the code path of that day (a buffer format set at every value change, gone since #92), the slowest 0.21 s. If it comes again the job's log has a report after `MPV-WATCH`: read it first (when the answer did come, what the player's threads did). |
 | `test_no_secret_is_in_it` (once, on the Mac: the PIN's digits inside a byte count) | Not fixed (LESSONS). |
 
 When a browser step fails, the job's log has, after the `FAILED:` line, what every open page showed (screen, message line, cursor, the elements the step named, the whole screen's text) and the box's last answers to it. Read that first. The server's request log, with times, is in the same job log. The two `test` jobs no longer cancel each other, so both logs are there.
 
 The browser test watches the console for missing files, and a browser writes every 404 to its console. A route a page may call a moment late answers 409, not 404 (LESSONS); a new status the test provokes on purpose goes into the test's list with the reason.
+
+**When a GPU test says "no reply from mpv"** (#96): every request of the GPU tests to the real mpv goes through a watch (`tests/mpv_watch.py`, tests only). The job's log has, at `MPV-WATCH`, the request, what the player sent meanwhile, what its threads did, the load, when the answer did come on its own connection, and how long the same request took when asked again; and at the end of each step a table of what every kind of request took. `PVJ_MPV_LOG=1` makes the player write its own log, whose end is then in the report. The request still fails; the watch only looks.
 
 ## Testing
 
