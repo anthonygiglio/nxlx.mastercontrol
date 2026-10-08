@@ -4,6 +4,14 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08, the morning (the box brought to master; the owner's answers read)
+
+- **Deploy.** The owner said "deploy to the Pi". The test Pi 4 was brought from the merge of #91 to master at `2bfaabb` (#92, #93, #96 and the documents of #95 and #97) at about 14:13 UTC by the usual route (`git archive`, `install.sh --offline` through `pvj-dev`). Four files compared equal by hash; the five services were active; the panel answered 200 on the box; `pvj-selftest` had no failed check; settings went from schema 13 to 14 with the controller code off. The panel and the player restarted. The player's log has "pw.conf: can't load config client.conf" twice after the restart; the same line is there 32 times between 2026-10-05 and the deploy, so it is not new. Nobody looked at the monitor, and nothing of #92, #93 or #96 has been tried by hand on the box.
+- **The answers.** He answered all fourteen questions on the page; D63 has them. His taps saved, which was the one part of that page nobody had tried.
+- **Started from them:** step 1 of the resizing study (branch `resize-step1`), 540 lines for edge glow and corner colour tint (`auto-540-two`), and the NDI helper as an opt-in (onto #94). The layout C shell starts when step 1 has merged, because both change `app.css` and the browser test.
+- **Waiting for him:** to run the NDI SDK installer himself (`~/ndi-sdk-linux`), and to add the `workflow` scope (`gh auth refresh -h github.com -s workflow`).
+- **Found while reading for the NDI test:** master refuses a settings file from a newer schema, so a test of #94 on the box (schema 15) needs the settings file copied aside first and put back before the box returns to master. Written into HANDOFF.
+
 ## 2026-10-08, the end of the night session (what changed after the night's entry was written)
 
 - #95 (the hand-off notes as one document, the night's entry, three lessons) and #96 (the entry below) are merged; master is at `8bced2e`. The entry below says "a draft, not merged": it was read by the coordinator, the 20 lines in `pvj/player.py` checked against where a player is started (on a box systemd starts it, so the longer wait never applies there), all 28 checks green, then merged.
