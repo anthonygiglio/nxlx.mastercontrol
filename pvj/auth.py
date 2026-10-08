@@ -422,6 +422,8 @@ class Auth:
         if role == "full" and via != "controller":
             return len(devices) < MAX_DEVICES
         shared = sum(1 for d in devices if d["role"] != "full" or d.get("via") == "controller")
+        if role == "full" and len(devices) >= MAX_DEVICES:     # (via a controller) the list as a whole is full too
+            return False
         return shared < MAX_DEVICES - FULL_RESERVED
 
     @staticmethod
