@@ -458,6 +458,14 @@ table.chan .lvl { width: 36%; }
 @media (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 @media (min-width: 900px) {
   #devicelist, #midimaplist { max-height: calc(100dvh - 420px); min-height: 180px; overflow-y: auto; padding-right: 8px; }
+  /* People and codes on a laptop, in every look: "Let someone in" and under it "A code from a controller" in the
+     left column, the paired devices alone in the right one beside both. Without this the page's two-column grid
+     places three cards in turn, and the devices card lands under the first. A presenter has the first card only. */
+  .syspage .grid2 > #accesscard { grid-column: 1; grid-row: 1; }
+  .syspage .grid2 > #ctlcodecard { grid-column: 1; grid-row: 2; }
+  .syspage .grid2 > #devicescard { grid-column: 2; grid-row: 1 / span 2; }
+  /* a long list of devices makes the second row taller, not the first: no gap opens between the two cards on the left */
+  .syspage .grid2:has(> #ctlcodecard) { grid-template-rows: auto 1fr; }
 }
 
 /* -- Look: each look as a small picture drawn from its own tokens (app.js: lookTile sets the colours, the radius and

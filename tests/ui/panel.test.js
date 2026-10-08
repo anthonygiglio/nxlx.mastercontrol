@@ -2761,6 +2761,14 @@ function startServer() {
     await page.waitForSelector('#devicelist');
     assert(await page.evaluate(() => { const a = document.getElementById('accesscard').getBoundingClientRect(), b = document.getElementById('devicescard').getBoundingClientRect(); return b.left > a.right - 2; }),
       'People and codes: the two cards are side by side on a laptop');
+    // "A code from a controller" (D61) is in the left column, under "Let someone in", and the devices card is beside both
+    await page.waitForSelector('#ctlcodecard #ctlcode-on');
+    const cols = await page.evaluate(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(); return { a: r('accesscard'), c: r('ctlcodecard'), d: r('devicescard') }; });
+    assert(Math.abs(cols.c.left - cols.a.left) <= 1 && Math.abs(cols.c.right - cols.a.right) <= 1, 'the controller code card is in the left column: ' + JSON.stringify(cols));
+    assert(cols.c.top >= cols.a.bottom - 1, 'it is under Let someone in: ' + JSON.stringify(cols));
+    assert(cols.d.left > cols.c.right - 2 && Math.abs(cols.d.top - cols.a.top) <= 1, 'the devices card is beside both, from the top: ' + JSON.stringify(cols));
+    await fitsCard('#ctlcodecard', 'A code from a controller at 1366');
+    await fitsOn(page, 'People and codes at 1366 with the controller code card');
     assert.strictEqual(await page.evaluate(() => getComputedStyle(document.getElementById('devicelist')).overflowY), 'auto', 'the device list scrolls by itself on a laptop');
     // Desktop width
     await page.setViewportSize({ width: 1280, height: 800 });
