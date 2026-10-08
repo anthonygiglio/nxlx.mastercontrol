@@ -1327,5 +1327,49 @@ class RuntimeInstallHardeningTest(unittest.TestCase):
             self.assertTrue(f.read().endswith(b"payload"))
 
 
+class ReplySizeTest(unittest.TestCase):
+    """Review finding 6: 64 sources with long names made an answer of 96,799 bytes, the client reads 65,536, and the
+    helper looked dead."""
+
+    def test_the_largest_status_there_can_be_fits_what_the_client_reads(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        worst = []
+        for kind, char, count in (("emoji", "\U0001f600", 64), ("accent", "é", 128), ("ascii", "\\", 128)):
+            for n in range(200):
+                name = ("%03d" % n) + char * (count - 3)
+                self.assertIsNotNone(ndi.clean_name(name), kind)
+                worst.append((name.encode(), ("h" * 85 + "%03d.local:65535" % n).encode()[-ndi.MAX_WHERE:]))
+        lib = FakeLib(worst)
+        s = ndi.Service(d, "/opt/pvj-ndi/libndi.so.6", loader=lambda path: lib, problem=lambda path: None, log=lambda *_: None, first_frame=0.3)
+        self.addCleanup(s.close)
+        s.handle({"cmd": "configure", "on": True, "addresses": ["192.168.100.%d" % n for n in range(100, 116)]})
+        st = s.handle({"cmd": "status"})
+        self.assertEqual((len(st["sources"]), st["cut"]), (ndi.MAX_SOURCES, True))
+        lib.frames.put(frame(3840, 2160))
+        self.assertTrue(s.handle({"cmd": "open", "id": st["sources"][0]["id"]})["ok"])
+        s.receiver.message = "m" * 400
+        s.lib_error = "e" * 400
+        sizes = [len(json.dumps(s.handle({"cmd": "status"})).encode()) + 1]
+        for char in ("\U0001f600", "é"):                            # every row of the worst kind at once
+            lib.raw = [(("%03d" % n + char * (64 if char > "￿" else 128))[:64 if char > "￿" else 128].encode(),
+                        ("h" * 85 + "%03d.local:65535" % n).encode()[-ndi.MAX_WHERE:]) for n in range(200)]
+            s._sources_at = None
+            sizes.append(len(json.dumps(s.handle({"cmd": "status"})).encode()) + 1)
+        self.assertLess(max(sizes), ndi.REPLY_LIMIT, sizes)
+        self.assertGreater(max(sizes), 40000)                            # and the test did build a large one
+        from pvj import netd
+        import inspect
+        self.assertIn("len(data) < %d" % ndi.REPLY_LIMIT, inspect.getsource(netd.exchange))      # the limit this is measured against
+
+    def test_a_name_longer_than_that_on_the_wire_is_dropped_like_any_other_bad_name(self):
+        self.assertIsNone(ndi.clean_name("\U0001f600" * 65))
+        self.assertIsNotNone(ndi.clean_name("\U0001f600" * 64))
+        self.assertIsNotNone(ndi.clean_name("é" * 128))
+        self.assertIsNone(ndi.clean_name('"' * 128 + "x"))
+        out, _ = ndi.clean_sources([(b"cam", b"h" * 101), (b"cam", b"h" * 100)])
+        self.assertEqual([len(x["from"]) for x in out], [100])
+
+
 if __name__ == "__main__":
     unittest.main()

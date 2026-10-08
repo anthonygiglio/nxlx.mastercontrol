@@ -25,6 +25,7 @@ import errno
 import fcntl
 import hashlib
 import ipaddress
+import json
 import os
 import re
 import select
@@ -45,6 +46,9 @@ LIB_MAX_BYTES = 96 * 1024 * 1024
 MAX_SOURCES = 64
 SCAN_ROWS = 2048                          # rows of the library's list that are looked at, whatever it says it has
 MAX_NAME = 128
+MAX_NAME_WIRE = 768                       # and as the helper's answer writes it (6 bytes for an accented letter, 12 for an emoji)
+MAX_WHERE = 100                           # a host and a port
+REPLY_LIMIT = 65536                       # what a helper's client reads of one answer (netd.exchange)
 MAX_ADDRESSES = 16
 MIN_SIDE, MAX_WIDTH, MAX_HEIGHT = 16, 3840, 2160
 MAX_STRIDE_PAD = 256                      # a line may be padded; never by more than this
@@ -61,7 +65,7 @@ STATES = ("connecting", "ready", "playing", "waiting", "changed", "refused", "st
 ENDED = ("changed", "refused", "stopped")
 
 _ID = re.compile(r"[0-9a-f]{12}")
-_WHERE = re.compile(r"[A-Za-z0-9._:\[\]-]{1,255}")
+_WHERE = re.compile(r"[A-Za-z0-9._:\[\]-]{1,%d}" % MAX_WHERE)
 _IPV4 = re.compile(r"[0-9]{1,3}(\.[0-9]{1,3}){3}")
 _BAD_CATEGORIES = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")     # control, format (bidi, zero width), surrogate, private, unassigned, line breaks
 
@@ -86,6 +90,10 @@ def clean_name(raw):
     if not isinstance(raw, str) or not 1 <= len(raw) <= MAX_NAME or raw != raw.strip():
         return None
     if any(unicodedata.category(ch) in _BAD_CATEGORIES for ch in raw):
+        return None
+    # The helper's whole answer must fit what its client reads (REPLY_LIMIT), with MAX_SOURCES names in it. An
+    # answer that does not fit makes the helper look dead, so a name is also bounded as it is written there.
+    if len(json.dumps(raw)) - 2 > MAX_NAME_WIRE:
         return None
     return raw
 
