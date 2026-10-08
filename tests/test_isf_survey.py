@@ -90,6 +90,8 @@ class SurveyTest(unittest.TestCase):
                  "credited-filter.fs": lead + isf({"INPUTS": [{"NAME": "inputImage", "TYPE": "image"}]}, READS),
                  "credited-sound.fs": (lead + isf({"INPUTS": [{"NAME": "fft", "TYPE": "audioFFT"}]})).replace("\n", "\r\n"),
                  "credited-twice.fs": lead + '/*{"CREDIT": "a", "CREDIT": "b"}*/' + MAIN,
+                 # 3 KB of credit and a header of 6 KB: each inside its own limit, so not a matter of "limits"
+                 "credited-long.fs": ("// " + "x" * 3000 + "\n" + isf({"DESCRIPTION": "d" * 6000})).replace("\n", "\r\n"),
                  "no-header.fs": "/* only a credit */" + MAIN}
         with tempfile.TemporaryDirectory() as folder:
             for name, text in files.items():
@@ -98,7 +100,8 @@ class SurveyTest(unittest.TestCase):
             rows = {r["file"]: r for r in survey.survey(folder)}
         self.assertEqual({n: r["needs"] for n, r in rows.items()}, {
             "credited.fs": [], "credited-filter.fs": ["filter"], "credited-sound.fs": ["audio"], "credited-twice.fs": ["checks"],
-            "no-header.fs": ["checks"]})
+            "credited-long.fs": [], "no-header.fs": ["checks"]})
+        self.assertTrue(rows["credited-long.fs"]["translates"])
         self.assertEqual((rows["credited.fs"]["translates"], rows["credited.fs"]["credit"]), (True, "Ana Example"))
         self.assertTrue(rows["credited-filter.fs"]["as_effect"])
         self.assertIn("twice", rows["credited-twice.fs"]["checks"])

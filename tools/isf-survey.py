@@ -41,21 +41,22 @@ _IMG_CALL = re.compile(r"\bIMG_(?:NORM_PIXEL|PIXEL|THIS_NORM_PIXEL|THIS_PIXEL)\b
 _BIG = re.compile(r"(?<![\w.])(\d{5,}(?:\.\d*)?)(?![\w.])")
 
 
-def header_start(text):
-    """Where the header comment starts: where the translator finds it (after comments and blank space at the top, so
-    a credit comment is not taken for the header), else the first comment of any kind, else -1."""
+def locate(text):
+    """(text, start, end) of the header comment: where the translator finds it (after blank space and comments at the
+    top, so a credit comment is not taken for the header; the text is then as the translator reads it, with \\n line
+    ends), else the first comment of any kind in the text as it is. An index is -1 for what is not there."""
     try:
-        return S.find_header(text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")), True
+        plain = text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+        a = S.find_header(plain)
+        text = plain
     except S.ShaderError:
-        return text.find("/*"), False
+        a = text.find("/*")
+    return text, a, (text.find("*/", a + 2) if a >= 0 else -1)
 
 
 def header(text):
     """The JSON header read leniently (the survey must describe files the translator would refuse)."""
-    a, found = header_start(text)
-    if found:
-        text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
-    b = text.find("*/", a + 2)
+    text, a, b = locate(text)
     if a < 0 or b < 0:
         return {}, text
     try:
@@ -65,12 +66,15 @@ def header(text):
     return (head if isinstance(head, dict) else {}), text[b + 2:]
 
 
+def header_bytes(text):
+    """The size of the header comment, as the translator's limit counts it."""
+    text, a, b = locate(text)
+    return 0 if a < 0 or b < 0 else len(text[a:b].encode("utf-8", "replace"))
+
+
 def header_problem(text):
     """What the translator's strict reading of the JSON header refuses (a key twice, NaN, text it cannot read)."""
-    a, found = header_start(text)
-    if found:
-        text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
-    b = text.find("*/", a + 2)
+    text, a, b = locate(text)
     if a < 0 or b < 0:
         return "not an ISF file: no JSON header comment"
     if b - a > S.MAX_HEADER:
@@ -84,8 +88,11 @@ def header_problem(text):
     return ""
 
 
-def needs(head, body, path, size):
-    """The engine features a file needs, from its header and code."""
+def needs(head, body, path, size, head_size=None):
+    """The engine features a file needs, from its header and code. `head_size` is the header comment's own size
+    (header_bytes); without it, everything that is not the code is counted as header."""
+    if head_size is None:
+        head_size = size - len(body.encode("utf-8", "replace"))
     out = set()
     inputs = [i for i in head.get("INPUTS") or [] if isinstance(i, dict)]
     images = [i.get("NAME") for i in inputs if i.get("TYPE") in ("image", "cube")]
@@ -104,7 +111,7 @@ def needs(head, body, path, size):
         out.add("imported")
     if os.path.exists(path[:-3] + ".vs"):
         out.add("vertex")
-    if size > S.MAX_SOURCE or len(inputs) > S.MAX_INPUTS or size - len(body.encode("utf-8", "replace")) > S.MAX_HEADER:
+    if size > S.MAX_SOURCE or len(inputs) > S.MAX_INPUTS or head_size > S.MAX_HEADER:
         out.add("limits")
     return out
 
@@ -178,7 +185,7 @@ def survey(folder):
             data = f.read()
         text = data.decode("utf-8", "replace")
         head, body = header(text)
-        need = needs(head, body, path, len(data))
+        need = needs(head, body, path, len(data), header_bytes(text))
         try:
             S.translate(S.parse(data), (1280, 720))
             verdict = ""
