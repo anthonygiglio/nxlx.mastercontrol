@@ -83,6 +83,15 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(data["theme"]["name"], "light")
         self.assertEqual(self.read(self.path + ".bak-v2")["schema"], 2)
 
+    def test_real_migration_from_schema_13_adds_the_ndi_input_with_no_addresses(self):
+        with open(self.path, "w") as f:
+            json.dump({"schema": 13, "streams": [], "modules": {"enabled": {"inputs-srt": True}}}, f)
+        data = settings.Settings(self.path).load()
+        self.assertEqual((data["schema"], data["ndi"]), (14, {"addresses": []}))
+        self.assertEqual(data["modules"]["enabled"], {"inputs-srt": True})         # the module itself stays off
+        self.assertEqual(self.read(self.path + ".bak-v13")["schema"], 13)
+        self.assertEqual(settings.default_settings()["ndi"], {"addresses": []})
+
     def test_real_migration_from_schema_3_adds_empty_streams(self):
         with open(self.path, "w") as f:
             json.dump({"schema": 3, "schedule": {"enabled": True, "entries": []}}, f)

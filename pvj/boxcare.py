@@ -47,7 +47,7 @@ import subprocess
 import time
 from urllib.parse import unquote
 
-from . import dmx as dmx_mod, midi as midi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
+from . import dmx as dmx_mod, midi as midi_mod, ndi as ndi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
 from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
@@ -55,7 +55,7 @@ from .settings import SettingsError, default_control, default_settings, migrate
 
 FORMAT = "nxlx.mastercontrol settings"
 FORMAT_VERSION = 1
-KNOWN_SCHEMA = 13                    # the section checks below know the settings as of this schema
+KNOWN_SCHEMA = 14                    # the section checks below know the settings as of this schema
 MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved mapping is well under this
 MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
@@ -441,15 +441,20 @@ def check_room(v, care):
     return room_mod.validate(_obj(v))
 
 
+def check_ndi(v, care):
+    """The addresses the NDI input also asks for sources, by its own rules (private IPv4 literals, a bounded list)."""
+    return ndi_mod.validate_saved(v)
+
+
 # Every section that is exported and imported, in the order they are checked.
 SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_theme), ("mix", check_mix), ("osc", check_osc),
             ("schedule", check_schedule), ("streams", check_streams), ("control", check_control),
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
             ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
-            ("room", check_room))
+            ("room", check_room), ("ndi", check_ndi))
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
-                projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError)
+                projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError, ndi_mod.NdiError)
 
 
 def _printable(v):

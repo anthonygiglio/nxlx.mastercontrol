@@ -15,6 +15,7 @@ import time
 import unittest
 
 from pvj import ndi, paths
+from tests.test_server import ServerBase
 
 
 def frame(w=64, h=16, fill=1, stride=None, fourcc=ndi.FOURCC_UYVY, fps=(30000, 1001), fields=1, data=None, address=1):
@@ -753,6 +754,188 @@ class RuntimeFileTest(unittest.TestCase):
             self.assertIn("sudo", out.getvalue())
             self.assertEqual(ndi.runtime_main(["remove"], io.StringIO()), 1)
         self.assertEqual(ndi.runtime_main(["status"], io.StringIO()), 0)
+
+
+class NdiApiTest(ServerBase):
+    """The routes, with the real Service behind a client that calls it directly, and the fake library behind that."""
+
+    def setUp(self):
+        super().setUp()
+        self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
+        self.lib = FakeLib([(b"RESOLUME (Output)", b"192.168.0.20:5961"), (b"MAD (Out)", b"192.168.0.21:5961")])
+        self.missing = False
+
+        def loader(path):
+            if self.missing:
+                raise ndi.NdiError("the NDI runtime is not on this box yet")
+            return self.lib
+        self.ndidir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.ndidir, True)
+        self.service = ndi.Service(self.ndidir, "x", loader=loader, log=lambda *_: None, first_frame=0.3,
+                                   problem=lambda path: "the NDI runtime is not on this box yet" if self.missing else None)
+        self.addCleanup(self.service.close)
+        self.client = FakeClient(self.service)
+        reg, st = self.api.registry, self.settings
+        self.api.ndi = ndi.Input(self.client, self.service.fifo, lambda: (reg.enabled("inputs-ndi"), list(st.data["ndi"]["addresses"])),
+                                 log=lambda *_: None)
+        self.rid = ndi.source_id("RESOLUME (Output)")
+
+    def invite(self, role):
+        return self.call("POST", "/api/devices/invite", {"name": "g", "role": role}, token=self.full)[1]["token"]
+
+    def enable(self, on=True):
+        return self.call("POST", "/api/modules/inputs-ndi", {"enabled": on}, token=self.full)
+
+    def test_the_module_is_off_by_default_and_everything_is_refused_until_it_is_on(self):
+        self.assertEqual(self.call("GET", "/api/ndi", token=self.full)[0], 409)
+        self.assertEqual(self.call("POST", "/api/ndi", {"action": "add_address", "address": "10.0.0.5"}, token=self.full)[0], 409)
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 409)
+        self.assertEqual(self.lib.finders, [])                         # the helper has not touched the network
+        self.assertEqual(self.enable()[0], 200)
+        self.assertEqual(self.lib.finders, [""])                       # switching on tells the helper at once
+
+    def test_the_page_gets_sources_the_runtime_and_how_to_get_it(self):
+        self.enable()
+        st, body, _ = self.call("GET", "/api/ndi", token=self.invite("view"))
+        self.assertEqual(st, 200)
+        self.assertEqual([s["name"] for s in body["sources"]], ["MAD (Out)", "RESOLUME (Output)"])
+        self.assertEqual((body["helper"], body["runtime"]["loaded"], body["playing"], body["addresses"]), (True, True, None, []))
+        self.assertEqual(body["install"]["get"], "https://ndi.video/")
+
+    def test_without_the_runtime_the_page_is_told_in_plain_words(self):
+        self.missing = True
+        self.enable()
+        body = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertEqual((body["helper"], body["runtime"]["present"], body["runtime"]["problem"], body["sources"]),
+                         (True, False, "the NDI runtime is not on this box yet", []))
+        st, out, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
+        self.assertEqual((st, out["error"]), (409, "the NDI runtime is not on this box yet"))
+        self.assertFalse([c for c in self.player.calls if c[0] == "play_pipe"])
+
+    def test_without_the_helper_the_page_still_answers(self):
+        self.enable()
+        self.client.down = True
+        st, body, _ = self.call("GET", "/api/ndi", token=self.full)
+        self.assertEqual((st, body["helper"], body["sources"]), (200, False, []))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 409)
+        self.assertEqual(self.enable(False)[0], 200)                   # it can still be switched off
+
+    def test_play_loads_the_pipe_with_the_first_frames_size_in_uyvy(self):
+        self.enable()
+        self.lib.frames.put(frame(1920, 1080, fps=(60000, 1001)))
+        st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.invite("live"))
+        self.assertEqual((st, body), (200, {"playing": "ndi", "name": "RESOLUME (Output)", "width": 1920, "height": 1080, "fps": 59.94}))
+        self.assertIn(("play_pipe", self.service.fifo, 1920, 1080, 59.94, "uyvy422"), self.player.calls)
+        self.assertEqual(self.api.ndi.current, {"id": self.rid, "name": "RESOLUME (Output)"})
+        page = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertEqual((page["playing"]["name"], page["playing"]["width"]), ("RESOLUME (Output)", 1920))
+        self.player.status = lambda: {"running": True, "path": self.service.fifo}
+        pl = self.call("GET", "/api/status", token=self.full)[1]["player"]
+        self.assertEqual((pl["path"], pl["ndi"]), (None, "RESOLUME (Output)"))     # the pipe's path is never shown
+
+    def test_play_takes_an_id_and_nothing_else_and_view_may_not(self):
+        self.enable()
+        for bad in ("RESOLUME (Output)", "192.168.0.20:5961", self.rid + "\n", "../../etc/passwd", None, 5, {"name": "x"}, [self.rid], "f" * 12):
+            self.assertEqual(self.call("POST", "/api/play", {"ndi": bad}, token=self.full)[0], 409, bad)
+        self.assertEqual(self.lib.opened, [])
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.invite("view"))[0], 403)
+        self.assertFalse([c for c in self.player.calls if c[0] == "play_pipe"])
+
+    def test_playing_something_else_stopping_and_switching_off_let_go_of_the_source(self):
+        self.enable()
+        for leave in (lambda: self.call("POST", "/api/play", {"file": "a.mp4"}, token=self.full),
+                      lambda: self.call("POST", "/api/control", {"action": "stop"}, token=self.full),
+                      lambda: self.enable(False)):
+            self.enable()
+            self.lib.frames.put(frame(64, 16))
+            self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+            closed = self.lib.closed
+            self.assertEqual(leave()[0], 200)
+            self.assertEqual((self.lib.closed, self.api.ndi.current, self.service.receiver), (closed + 1, None, None))
+        self.assertEqual((self.service.on, self.lib.closed_finders), (False, 1))
+        self.assertIn(("clear",), self.player.calls)                   # switched off while showing: the last frame goes
+
+    def test_a_source_that_changes_size_is_loaded_again_by_the_watch(self):
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
+        self.assertFalse(self.api.ndi_tick())
+        self.lib.frames.put(frame(128, 16))
+        self.assertTrue(wait(lambda: self.service.receiver.state == "changed"))
+        threading.Timer(0.1, self.lib.frames.put, [frame(128, 16)]).start()
+        self.assertTrue(self.api.ndi_tick())
+        self.assertIn(("play_pipe", self.service.fifo, 128, 16, 29.97, "uyvy422"), self.player.calls)
+        self.assertEqual(self.api.ndi.current["id"], self.rid)
+
+    def test_a_reload_that_lost_the_race_with_a_clip_does_not_take_the_screen_back(self):
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
+        was = self.api.ndi.current
+        self.call("POST", "/api/play", {"file": "a.mp4"}, token=self.full)          # the operator moved on
+        pipes = len([c for c in self.player.calls if c[0] == "play_pipe"])
+        self.assertEqual(self.api.play_ndi({"ndi": self.rid}, again=was), {"playing": None})
+        self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), pipes)
+        self.assertEqual(len(self.lib.opened), 1)                      # the source was not even opened again
+        self.assertFalse(self.api.ndi_tick())
+
+    def test_addresses_are_added_checked_saved_and_sent_to_the_helper(self):
+        self.enable()
+        st, body, _ = self.call("POST", "/api/ndi", {"action": "add_address", "address": "192.168.1.20"}, token=self.full)
+        self.assertEqual((st, body["addresses"]), (200, ["192.168.1.20"]))
+        self.assertEqual(self.lib.finders[-1], "192.168.1.20")
+        from pvj.settings import Settings
+        self.assertEqual(Settings(self.settings.path).load()["ndi"], {"addresses": ["192.168.1.20"]})
+        for bad in ("8.8.8.8", "192.168.1.20\n", "192.168.1.21,8.8.8.8", "cam.local", "", None, 7, "127.0.0.1"):
+            self.assertEqual(self.call("POST", "/api/ndi", {"action": "add_address", "address": bad}, token=self.full)[0], 400, bad)
+        self.assertEqual(self.call("POST", "/api/ndi", {"action": "add_address", "address": "192.168.1.20"}, token=self.full)[0], 400)
+        self.assertEqual(self.call("POST", "/api/ndi", {"action": "remove_address", "address": "10.9.9.9"}, token=self.full)[0], 404)
+        self.assertEqual(self.call("POST", "/api/ndi", {"action": "run", "address": "10.0.0.1"}, token=self.full)[0], 400)
+        self.assertEqual(self.call("POST", "/api/ndi", {"action": "add_address", "address": "10.0.0.1"}, token=self.invite("live"))[0], 403)
+        self.assertEqual(self.settings.data["ndi"], {"addresses": ["192.168.1.20"]})
+        for n in range(15):
+            self.assertEqual(self.call("POST", "/api/ndi", {"action": "add_address", "address": "10.0.0.%d" % (n + 1)}, token=self.full)[0], 200)
+        self.assertEqual(self.call("POST", "/api/ndi", {"action": "add_address", "address": "10.0.1.1"}, token=self.full)[0], 400)
+        st, body, _ = self.call("POST", "/api/ndi", {"action": "remove_address", "address": "192.168.1.20"}, token=self.full)
+        self.assertEqual((st, len(body["addresses"])), (200, 15))
+
+    def test_a_settings_file_carries_the_addresses_and_a_bad_one_is_refused(self):
+        self.enable()
+        self.call("POST", "/api/ndi", {"action": "add_address", "address": "192.168.1.20"}, token=self.full)
+        st, out, _ = self.call("POST", "/api/system/settings/export", {}, token=self.full)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["file"]["settings"]["ndi"], {"addresses": ["192.168.1.20"]})
+        from pvj import boxcare
+        self.assertEqual(boxcare.check_ndi({"addresses": ["10.0.0.1"]}, None), {"addresses": ["10.0.0.1"]})
+        for bad in ({"addresses": ["8.8.8.8"]}, {"addresses": ["10.0.0.1\n"]}, {"lib": "/tmp/evil.so"}, "x"):
+            with self.assertRaises(boxcare.CHECK_ERRORS, msg=bad):
+                boxcare.check_ndi(bad, None)
+
+
+class PlayerPipeFormatTest(unittest.TestCase):
+    def test_the_pipe_is_loaded_in_the_format_asked_for_and_an_unknown_one_is_refused(self):
+        from pvj.player import Player, PlayerError
+        sent = []
+
+        class Ipc:
+            def request(self, *a):
+                sent.append(a)
+        p = Player.__new__(Player)
+        p.ipc, p._lock = Ipc(), threading.RLock()
+        p.is_running, p._end_source = (lambda: True), (lambda: None)
+        p.play_pipe("/run/pvj-ndi/ndi.fifo", 1920, 1080, 59.94, "uyvy422")
+        load = [a for a in sent if a[0] == "loadfile"][0]
+        self.assertIn("demuxer-rawvideo-mp-format=uyvy422", load[4])
+        self.assertIn("demuxer-rawvideo-fps=59.94", load[4])
+        self.assertIn("demuxer-rawvideo-w=1920", load[4])
+        sent.clear()
+        p.play_pipe("/x", 1280, 720, 30)
+        load = [a for a in sent if a[0] == "loadfile"][0]
+        self.assertIn("demuxer-rawvideo-mp-format=yuyv422", load[4])   # the capture input is as it was
+        self.assertIn("demuxer-rawvideo-fps=30,", load[4])
+        for bad in ("bgra", "uyvy422,cache=yes", "", None):
+            with self.assertRaises(PlayerError):
+                p.play_pipe("/x", 16, 16, 30, bad)
 
 
 if __name__ == "__main__":

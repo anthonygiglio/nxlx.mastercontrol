@@ -356,7 +356,7 @@ class ServerTest(ServerBase):
         st, body, _ = self.call("GET", "/api/modules", token=token)
         self.assertTrue(any(m["id"] == "inputs-ndi" for m in body["modules"]))
         self.assertEqual(self.call("POST", "/api/modules/core", {"enabled": False}, token=token)[0], 409)
-        self.assertEqual(self.call("POST", "/api/modules/inputs-ndi", {"enabled": True}, token=token)[0], 409)
+        self.assertEqual(self.call("POST", "/api/modules/inputs-audio-ip", {"enabled": True}, token=token)[0], 409)
         self.assertEqual(self.call("POST", "/api/modules/Bad..Id", {"enabled": True}, token=token)[0], 404)
         self.assertEqual(self.call("POST", "/api/theme", {"name": "night-red", "accent": "#ffffff"}, token=token)[0], 200)
         st, css, r = self.call("GET", "/theme.css")

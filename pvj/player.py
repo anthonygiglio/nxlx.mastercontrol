@@ -278,17 +278,22 @@ class Player:
                     pass
             self._pipe_globals = None
 
-    def play_pipe(self, path, width, height, fps):
-        """Play raw YUYV frames from a pipe (a live input read by a separate helper; see pvj/capture.py)."""
+    PIPE_FORMATS = ("yuyv422", "uyvy422")
+
+    def play_pipe(self, path, width, height, fps, fmt="yuyv422"):
+        """Play raw frames from a pipe (a live input read by a separate helper): YUYV from a capture device
+        (pvj/capture.py), UYVY from the NDI helper (pvj/ndi.py), whose rate may be a fraction such as 59.94."""
+        if fmt not in self.PIPE_FORMATS:
+            raise PlayerError("unknown pipe format")
         with self._lock:
             self._end_source()
-            return self._play_pipe(path, width, height, fps)
+            return self._play_pipe(path, width, height, fps, fmt)
 
-    def _play_pipe(self, path, width, height, fps):
+    def _play_pipe(self, path, width, height, fps, fmt="yuyv422"):
         if not self.is_running():
             raise PlayerError("player service is not running (systemctl start pvj-player)")
         opts = {"demuxer": "rawvideo", "demuxer-rawvideo-w": int(width), "demuxer-rawvideo-h": int(height),
-                "demuxer-rawvideo-mp-format": "yuyv422", "demuxer-rawvideo-fps": int(fps), "cache": "no",
+                "demuxer-rawvideo-mp-format": fmt, "demuxer-rawvideo-fps": int(fps) if fps == int(fps) else round(float(fps), 3), "cache": "no",
                 "demuxer-readahead-secs": 0, "demuxer-max-bytes": "32MiB"}
         self.ipc.request("set_property", "keep-open", "no")
         self.ipc.request("set_property", "loop-file", "no")

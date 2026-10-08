@@ -863,15 +863,18 @@ class Input:
             raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
         return p
 
+    def client_close(self):
+        try:
+            self.client.request({"cmd": "close"})
+        except NdiError:
+            pass
+
     def stop(self):
         """Nothing of NDI is on the screen any more: have the helper let go of the source. `current` is cleared
         first and without the lock, so a source being shown again (tick) sees at once that it is no longer wanted."""
         had, self.current = self.current, None
         if had:
-            try:
-                self.client.request({"cmd": "close"})
-            except NdiError:
-                pass
+            self.client_close()
         return bool(had)
 
     def tick(self, replay):

@@ -161,6 +161,7 @@ class Api:
         self.pinscreen = None     # PinScreen or None
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
         self.capture = None       # Capture or None (live input from a USB capture device)
+        self.ndi = None           # ndi.Input or None (the NDI helper's client; D61)
         self._import = {}         # the USB copy running or last run
         self._import_lock = threading.Lock()
         self._care_busy = None    # "an import" or "a factory reset" while boxcare runs one (set and read under _import_lock)
@@ -407,6 +408,9 @@ class Api:
         if self.capture is not None and path == self.capture.fifo:
             cur = self.capture.status(devices=False)["current"] or {}
             status["path"], status["capture"] = None, cur or True
+            return status
+        if self.ndi is not None and path == self.ndi.fifo:
+            status["path"], status["ndi"] = None, (self.ndi.current or {}).get("name") or True
             return status
         for channel, url in getattr(self.player, "TEST_TONES", {}).items():
             if path == url:
@@ -803,6 +807,8 @@ class Api:
             return self.play_slideshow(body)
         if "capture" in body:
             return self.play_capture(body)
+        if "ndi" in body:
+            return self.play_ndi(body)
         if "usb_drive" in body:
             return self.play_usb_drive(body)
         if "pad" in body:
@@ -951,6 +957,7 @@ class Api:
         elif action == "stop":
             self._player_call(p.clear)
             self._stop_capture()
+            self._stop_ndi()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
             if self.effects.on is not None:     # a Stop takes the effect off (the player did); its text goes too. Only
                 self.effects.sweep()            # then: a Stop with no effect on does nothing more than it did before
@@ -1238,6 +1245,7 @@ class Api:
         if not on:
             self._player_call(self.player.clear)
             self._stop_capture()
+            self._stop_ndi()
             return {"test_pattern": False}
         self.fader.cancel()
         self._player_call(self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
@@ -1260,6 +1268,7 @@ class Api:
         # The systemd unit (Restart=always) brings the player straight back.
         self._player_call(self.player.ipc.request, "quit")
         self._stop_capture()
+        self._stop_ndi()
         return {"ok": True}
 
     def get_modules(self, body, device, client):
@@ -1282,6 +1291,13 @@ class Api:
             self.sync.apply()
         if module_id == "projector":       # starts or stops the background status checks
             self.projectors.apply()
+        if module_id == "inputs-ndi" and self.ndi is not None:     # the helper looks for sources only while this is on
+            if not self.registry.enabled("inputs-ndi") and self._stop_ndi():
+                try:
+                    self._player_call(self.player.clear)      # the pipe has ended: do not leave its last frame up
+                except ApiError:
+                    pass
+            self.ndi.sync()
         if module_id == "room" and not self.registry.enabled("room"):     # off: what a scene had not sent yet is dropped
             self.room.stop()
         for mid, manager in (("control-dmx", self.dmx), ("control-midi", self.midi)):
@@ -1879,13 +1895,93 @@ class Api:
                     return want
         return "auto"
 
-    def _started_playing(self, capture=False):
+    def _started_playing(self, capture=False, ndi=False):
         """Something is about to be on screen: take any on-screen pairing PIN off it at once, and stop a live input
-        that is no longer shown (its helper must not keep the device busy)."""
+        that is no longer shown (its helper must not keep the device, or the NDI source, busy)."""
         if self.pinscreen is not None:
             self.pinscreen.clear()
         if not capture:
             self._stop_capture()
+        if not ndi:
+            self._stop_ndi()
+
+    # ---- NDI input (pvj/ndi.py, D61) ----
+    def _need_ndi(self):
+        if self.ndi is None:
+            raise ApiError(404, "the NDI input is not available")
+        if not self.registry.enabled("inputs-ndi"):
+            raise ApiError(409, "turn on the NDI input in System first")
+
+    def _stop_ndi(self):
+        return self.ndi.stop() if self.ndi is not None else False
+
+    def play_ndi(self, body, again=None):
+        """{"ndi": "<id>"}: a source the helper found, by the id the helper gave it; never a name or an address.
+        `again` is the entry being shown when the helper asks for it to be loaded again (a sender changed size):
+        it is dropped if something else was played meanwhile."""
+        from . import ndi as ndi_mod
+        self._need_ndi()
+        sid = body.get("ndi")
+        with self.ndi.lock:                # open, load and note as one step: a double tap cannot cross two sources
+            if again is not None and self.ndi.current is not again:
+                return {"playing": None}
+            try:
+                p = self.ndi.open(sid)
+            except ndi_mod.NdiError as e:
+                raise ApiError(409, str(e))
+            if again is not None and self.ndi.current is not again:      # stopped, or a clip played, while it connected
+                self.ndi.client_close()
+                return {"playing": None}
+            self.fader.cancel()
+            entry = {"id": p["id"], "name": p["name"]}
+            self.ndi.current = entry
+            try:
+                self._player_call(self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"], "uyvy422")
+            except ApiError:
+                self.ndi.stop()
+                raise
+        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._started_playing(ndi=True)
+        return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"]}
+
+    def ndi_tick(self):
+        """About once a second (server.py): show the source again when the helper says it changed size or rate."""
+        if self.ndi is None or not self.ndi.current or not self.registry.enabled("inputs-ndi"):
+            return False
+        cur = self.ndi.current
+        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur))
+
+    def get_ndi(self, body, device, client):
+        self._need_ndi()
+        return self.ndi.status()
+
+    def set_ndi(self, body, device, client):
+        """Add or remove one address the helper also asks for sources (for networks where mDNS does not pass)."""
+        from . import ndi as ndi_mod
+        self._need_ndi()
+        action = body.get("action")
+        if action not in ("add_address", "remove_address"):
+            raise bad("action must be add_address or remove_address")
+        with self.settings.lock:
+            items = list(self.settings.data.get("ndi", {}).get("addresses", []))
+            try:
+                address = ndi_mod.clean_address(body.get("address"))
+                if action == "add_address":
+                    if address in items:
+                        raise bad("that address is already in the list")
+                    if len(items) >= ndi_mod.MAX_ADDRESSES:
+                        raise bad("at most %d addresses" % ndi_mod.MAX_ADDRESSES)
+                    items.append(address)
+                else:
+                    if address not in items:
+                        raise ApiError(404, "no such address")
+                    items.remove(address)
+            except ndi_mod.NdiError as e:
+                raise bad(str(e))
+            self.settings.data["ndi"] = {"addresses": items}
+            self.settings.save()
+        self.ndi.sync()
+        return self.ndi.status()
 
     def play_capture(self, body):
         """{"capture": {"device": "video0", "mode": "720p30"}}: a live input, read by a separate helper process."""
@@ -2464,6 +2560,8 @@ class Api:
             ("POST", "/api/midi/learn"): ("full", self.midi_learn),
             ("POST", "/api/midi/map"): ("full", self.midi_map),
             ("POST", "/api/midi/lights"): ("full", self.midi_lights),
+            ("GET", "/api/ndi"): ("view", self.get_ndi),
+            ("POST", "/api/ndi"): ("full", self.set_ndi),
             ("GET", "/api/streams"): ("view", self.get_streams),
             ("POST", "/api/streams"): ("full", self.set_streams),
             ("GET", "/api/schedule"): ("view", self.get_schedule),
