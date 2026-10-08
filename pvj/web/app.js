@@ -386,7 +386,11 @@
     btn.addEventListener('click', function () {
       btn.disabled = true; note.hidden = false; note.textContent = 'Taking a snapshot...';
       fetch('/api/preview.jpg?t=' + Date.now(), { credentials: 'same-origin' }).then(function (r) {
-        if (r.status === 409) return tell('Nothing is on the screen right now.');
+        // 409 is "no picture, and that is not a fault": an idle player, or an NDI source that has sent too few pictures
+        // for the player to copy one (the box says which, in words).
+        if (r.status === 409) return r.json().then(function (d) {
+          tell(d && typeof d.error === 'string' && d.error.indexOf('NDI') >= 0 ? d.error.charAt(0).toUpperCase() + d.error.slice(1) + '.' : 'Nothing is on the screen right now.');
+        }, function () { tell('Nothing is on the screen right now.'); });
         if (!r.ok) return tell('No picture: the player is not running or could not make one. Try again in a moment.');
         return r.blob().then(function (blob) {
           var reader = new FileReader();
@@ -1115,7 +1119,7 @@
         blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
         body: function () { return [streamsCard(full)]; } },
       { id: 'ndi', group: 'show', name: 'NDI\u00ae input', role: 'live', module: 'inputs-ndi', url: '/api/ndi',
-        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Picture only, no sound yet. New: not yet tried with a real sender.',
+        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Picture only, no sound yet. New: tried once, briefly, and not yet watched on a screen.',
         confirmOff: function (ask) { ask(((S.status && S.status.player) || {}).ndi ? 'The NDI picture comes off the screen now.' : null); },
         body: function () { return ndiCards(full); } },
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',

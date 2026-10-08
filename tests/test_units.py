@@ -541,7 +541,8 @@ if __name__ == "__main__":
 
 class NdiUnitTest(unittest.TestCase):
     """D62: the one process that loads a closed-source library reading the network. Every line of its sandbox is
-    pinned, and so is what it must never be given. None of it has run on a device with the real library."""
+    pinned, and so is what it must never be given. It ran once on a Pi 4 with the real library (2026-10-08); the
+    lines were not tried one by one there."""
 
     def setUp(self):
         from pvj import ndisetup

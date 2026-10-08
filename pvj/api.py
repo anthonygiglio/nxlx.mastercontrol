@@ -74,6 +74,8 @@ def number(body, key, lo, hi, integer=False):
     return int(v) if integer else float(v)
 
 
+NDI_NO_SNAPSHOT = ("no snapshot yet: the NDI source has not given the player enough pictures to copy one "
+                   "(a still source sends very few); look at the screen itself, or try again in a moment")
 PREVIEW_MIN_INTERVAL = 3.0    # seconds: a snapshot stalls playback for about a quarter second on a Pi 4, so viewers share one frame
 PREVIEW_MAX_BYTES = 8 * 1024 * 1024
 MAX_UPLOAD_BYTES = int(os.environ.get("PVJ_MAX_UPLOAD_MB", "8192")) * 1024 * 1024
@@ -385,6 +387,12 @@ class Api:
                     # That is not a fault: say so in its own way, so the panel can say "nothing is on the screen".
                     if self._nothing_on_screen():
                         raise ApiError(409, "nothing is on the screen right now")
+                    # An NDI source that has given the player too few pictures to copy one (a still source: seen on
+                    # the first run on a Pi 4, where this was a 503 "mpv: error running command"). Not a fault of
+                    # the player and not "nothing": said as what it is. Whether the picture is on the screen itself
+                    # this cannot know.
+                    if self._ndi_on_screen():
+                        raise ApiError(409, NDI_NO_SNAPSHOT)
                     raise
                 fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
                 try:
@@ -409,6 +417,15 @@ class Api:
             clean = clean and (not with_text or not self.access_on_screen())      # and none appeared while it was taken
             self._preview = (time.monotonic(), data, with_text, clean)
             return data
+
+    def _ndi_on_screen(self):
+        """True when what the player reads is the NDI helper's pipe (asked only after a snapshot failed)."""
+        if self.ndi is None or not self.ndi.current:
+            return False
+        try:
+            return self.player.status().get("path") == self.ndi.fifo
+        except Exception:
+            return False
 
     def _nothing_on_screen(self):
         """True when the player runs and plays nothing (asked only after a snapshot failed)."""

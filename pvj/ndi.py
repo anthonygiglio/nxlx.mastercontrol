@@ -18,7 +18,8 @@ Three parts, in one file so the bounds live in one place:
 Everything that comes from the network, through a closed-source library, is hostile until checked: source names
 (clean_name), where a source is (clean_sources), and every number of a frame (check_frame), each against a fixed
 bound and with fullmatch. The library itself is behind a seam of a few methods (CtypesLibrary); the tests drive
-everything above the seam with a fake. NEVER RUN against the real library, a real sender or mpv.
+everything above the seam with a fake. Run once against the real library, a real sender and mpv on a Pi 4
+(2026-10-08, one short run by SSH, nobody at the monitor: pvj/NDI.md); what was changed after it has not been.
 """
 
 import ctypes
@@ -60,6 +61,12 @@ PROGRESSIVE, INTERLACED = 1, (0, 2, 3)      # the frame format values: 0 two fie
 FIRST_FRAME_SECONDS = 6.0
 PIPE_OPEN_SECONDS = 10.0
 QUIET_SECONDS = 2.0                       # no frame for this long: "still" (or "waiting", if the connection dropped)
+# A frame that nothing follows is written to the pipe once more after this long. Why: on the first run on a Pi 4
+# (mpv 0.40) a still source's one frame was in the pipe and mpv reported frame 0, position 0.0 and "idle", and could
+# not make a snapshot. mpv, as far as its source is remembered here (player/video.c; NOT read again for this, and
+# NOT tried), shows a frame only once it also holds the one after it, to know how long the first lasts. If that is
+# right the repeat puts a still picture on the screen; if it is wrong the repeat costs one frame. Device step N12.
+REPEAT_AFTER = 0.3
 PLAYER_LEFT = "the player stopped reading the input"      # something else was played: an end, not a fault
 SOURCES_CACHE = 1.0
 PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"))
@@ -517,7 +524,7 @@ class Receiver:
         self.lib, self.source, self.fifo, self.log, self._clock, self._pipe_wait = lib, source, fifo, log, clock, pipe_wait
         self._join_wait = join_wait
         self.state, self.message, self.format = "connecting", "", None
-        self.counts = {"received": 0, "shown": 0, "dropped": 0}
+        self.counts = {"received": 0, "shown": 0, "dropped": 0, "repeated": 0}
         self.first = threading.Event()             # a first good frame, or the end
         self._stop = threading.Event()
         self._cond = threading.Condition()
@@ -665,16 +672,34 @@ class Receiver:
             with self._cond:
                 if self.state == "ready":
                     self.state = "playing"
+            # `last` is the frame written most recently. It is kept (not given back) until the next one is taken, so
+            # that it can be written once more if nothing follows it (REPEAT_AFTER). The writer so never holds more
+            # than one buffer at a time, which is what the capture thread's three buffers allow for.
+            last, wrote_at, repeated = None, 0.0, True
             while not self._stop.is_set():
+                again = False
                 with self._cond:
                     while self._pending is None and not self._stop.is_set():
-                        self._cond.wait(0.25)
-                    buf, self._pending = self._pending, None
+                        if last is not None and not repeated and self._clock() - wrote_at >= REPEAT_AFTER:
+                            again = True
+                            break
+                        self._cond.wait(0.05 if last is not None and not repeated else 0.25)
+                    if not again:
+                        buf, self._pending = self._pending, None
+                        if buf is not None and last is not None:
+                            self._free.append(last)
+                            last = None
+                if again:
+                    repeated = True                        # once: a still picture is not written over and over
+                    if self._write(fd, last):
+                        with self._cond:
+                            self.counts["repeated"] += 1
+                    continue
                 if buf is None:
                     break
                 ok = self._write(fd, buf)
+                last, wrote_at, repeated = buf, self._clock(), not ok
                 with self._cond:
-                    self._free.append(buf)
                     if ok:
                         self.counts["shown"] += 1
         except Exception as e:
@@ -1024,7 +1049,7 @@ def _playing(p):
     if isinstance(fps, (int, float)) and not isinstance(fps, bool) and 1 <= fps <= 120:
         out["fps"] = round(float(fps), 3)
     counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
-    out["counts"] = {k: counts[k] for k in ("received", "shown", "dropped", "dropped_by_runtime")
+    out["counts"] = {k: counts[k] for k in ("received", "shown", "dropped", "dropped_by_runtime", "repeated")
                      if isinstance(counts.get(k), int) and not isinstance(counts.get(k), bool) and 0 <= counts[k] < 2 ** 53}
     return out
 
@@ -1204,11 +1229,41 @@ def find_in_sdk(folder, machine):
     return None
 
 
+LINK_HOPS = 2                             # libndi.so -> libndi.so.6 -> libndi.so.6.3.2 is the longest the SDK has
+
+
+def same_folder_target(path):
+    """The file a library name stands for. The SDK ships `libndi.so.6` as a link to `libndi.so.6.3.2` beside it
+    (found on the first run on a Pi: the name NDI's own pages give was refused as "a link"). A link is followed
+    only to a plain name in the SAME folder as the link, at most LINK_HOPS times; a link that leaves its folder,
+    points nowhere or goes on and on is refused. What is returned is opened without following a link, so a name
+    swapped for a link after this look is refused there. Not a link: returned as it is."""
+    if not os.path.islink(path):
+        return path
+    folder = os.path.dirname(os.path.abspath(path))
+    current = os.path.join(folder, os.path.basename(path))
+    for _ in range(LINK_HOPS):
+        try:
+            target = os.readlink(current)
+        except OSError:
+            break
+        # only a bare name: no folder in it at all, so not "../x", not "/abs/x", not "sub/x", not "./x"
+        if not target or "/" in target or target in (".", ".."):
+            raise NdiError("%s is a link, and not to a plain name beside it (it points to %s); give the file itself"
+                           % (path, _text(target, 120) or "nothing"))
+        current = os.path.join(folder, target)
+        if not os.path.islink(current):
+            if not os.path.lexists(current):
+                raise NdiError("%s is a link to a file that is not there (%s)" % (path, _text(target, 120)))
+            return current
+    raise NdiError("%s is a link to a link to a link; give the file itself" % path)
+
+
 def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
     """Copy the library from `source` (the file, or an unpacked SDK folder) to dest_dir/LIB_NAME. Returns the path.
     Raises NdiError in words. The copy is checked, not the source: what was checked is what is put in place."""
     machine = machine if machine is not None else box_machine()
-    path = find_in_sdk(source, machine) if os.path.isdir(source) else source
+    path = find_in_sdk(source, machine) if os.path.isdir(source) else same_folder_target(source)
     if path is None:
         raise NdiError("no libndi.so for this box (%s) under %s/lib" % (ELF_MACHINES.get(machine, "unknown processor"), source))
     # Root reads a name somebody else may control (a USB stick, a download folder). So: never through a link in

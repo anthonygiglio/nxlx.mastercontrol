@@ -329,12 +329,59 @@ class ReceiverTest(unittest.TestCase):
         self.assertEqual(self.r.status()["state"], "playing")
         self.now[0] += ndi.QUIET_SECONDS + 0.5
         self.assertEqual(self.r.status()["state"], "still")             # no new frame is not a lost sender
+        self.assertTrue(wait(lambda: len(self.got) == 4096))            # the frame nothing followed was written once more
         self.lib.frames.put(ndi.Frame("lost"))                          # the library says the connection dropped
         self.assertTrue(wait(lambda: self.r.status()["state"] == "waiting"))
         self.lib.frames.put(frame(64, 16, fill=2))
-        self.assertTrue(wait(lambda: len(self.got) == 4096))
+        self.assertTrue(wait(lambda: len(self.got) == 6144))
+        self.assertEqual(bytes(self.got), b"\x01" * 4096 + b"\x02" * 2048)
         self.assertEqual(self.r.status()["state"], "playing")
         self.assertEqual(self.lib.closed, 0)                            # the connection was kept all along
+
+    def test_a_frame_that_nothing_follows_is_written_once_more_and_only_once(self):
+        """The first run on a Pi 4 (2026-10-08): a still source's one frame was in the pipe, and mpv reported frame 0,
+        position 0.0, idle, and could make no snapshot. The helper now writes a frame that nothing follows a second
+        time, once. That this puts the picture on the screen is NOT shown by this test (no mpv here): device step N12."""
+        self.r.start()
+        self.lib.frames.put(frame(64, 16, fill=7))
+        self.read()
+        self.assertTrue(wait(lambda: len(self.got) == 2048))
+        time.sleep(0.3)
+        self.assertEqual(len(self.got), 2048)                           # not before REPEAT_AFTER has passed (the clock stands still here)
+        self.assertEqual(self.r.status()["counts"]["repeated"], 0)
+        self.now[0] += ndi.REPEAT_AFTER - 0.01
+        time.sleep(0.2)
+        self.assertEqual(len(self.got), 2048)
+        self.now[0] += 0.02
+        self.assertTrue(wait(lambda: len(self.got) == 4096))
+        self.assertEqual(bytes(self.got), b"\x07" * 4096)                # the same frame, whole
+        self.now[0] += 60
+        time.sleep(0.4)
+        self.assertEqual(len(self.got), 4096)                           # once: a still picture is not written over and over
+        c = self.r.status()["counts"]
+        self.assertEqual((c["shown"], c["repeated"]), (1, 1))           # counted apart: "shown" stays the sender's frames
+        # the next frame is written as ever, and is itself written once more when nothing follows it
+        self.lib.frames.put(frame(64, 16, fill=8))
+        self.assertTrue(wait(lambda: len(self.got) == 6144))
+        self.now[0] += 1
+        self.assertTrue(wait(lambda: len(self.got) == 8192))
+        self.assertEqual(bytes(self.got[4096:]), b"\x08" * 4096)
+        c = self.r.status()["counts"]
+        self.assertEqual((c["shown"], c["repeated"], c["dropped"]), (2, 2, 0))
+
+    def test_frames_that_follow_each_other_are_never_written_twice_and_no_buffer_runs_out(self):
+        self.r.start()
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.read()
+        self.assertTrue(wait(lambda: len(self.got) == 2048))
+        for n in range(2, 60):                                          # the clock moves less than REPEAT_AFTER between frames
+            self.now[0] += 0.033
+            self.lib.frames.put(frame(64, 16, fill=n))
+            self.assertTrue(wait(lambda: len(self.got) == 2048 * n), n)
+        st = self.r.status()
+        self.assertEqual((st["state"], st["counts"]["repeated"], st["counts"]["shown"]), ("playing", 0, 59))
+        self.assertEqual(bytes(self.got), b"".join(bytes([n]) * 2048 for n in range(1, 60)))
+        self.assertEqual(st["message"], "")                             # no "list index" fault from an empty pool of buffers
 
     def test_a_slow_screen_gets_the_newest_frame_and_never_part_of_one(self):
         w, h = 256, 128                                                 # 64 KiB a frame: more than the pipe takes at once
@@ -1289,13 +1336,78 @@ class RuntimeInstallHardeningTest(unittest.TestCase):
         with open(self.good, "wb") as f:
             f.write(elf(183) + b"payload")
 
-    def test_a_link_given_as_the_file_is_not_followed(self):
-        link = os.path.join(self.dir, "libndi.so.6")
-        os.symlink(self.good, link)
+    def test_a_link_given_as_the_file_is_followed_only_to_a_plain_name_beside_it(self):
+        """The first run on a Pi 4: the SDK's own `libndi.so.6` is a link to `libndi.so.6.3.2` beside it, and the
+        name NDI's pages give was refused as "a link". Followed now, and no further than that."""
+        sdk = os.path.join(self.dir, "sdk", "lib", "aarch64-rpi4-linux-gnueabi")
+        other = os.path.join(self.dir, "elsewhere")
+        os.makedirs(sdk)
+        os.makedirs(other)
+        real = os.path.join(sdk, "libndi.so.6.3.2")
+        with open(real, "wb") as f:
+            f.write(elf(183) + b"the real one")
+        os.symlink("libndi.so.6.3.2", os.path.join(sdk, "libndi.so.6"))          # as the SDK ships it
+        os.symlink("libndi.so.6", os.path.join(sdk, "libndi.so"))                # and a link to that link
+        for name in ("libndi.so.6", "libndi.so"):
+            path = ndi.install_runtime(os.path.join(sdk, name), self.dest, machine=183, chown=False)
+            with open(path, "rb") as f:
+                self.assertTrue(f.read().endswith(b"the real one"), name)
+            self.assertFalse(os.path.islink(path))                               # a copy, never a link
+            os.unlink(path)
+        # the wrong processor is still told apart through the link (what device step N2 asks for)
+        x86 = os.path.join(self.dir, "sdk", "lib", "x86_64-linux-gnu")
+        os.makedirs(x86)
+        with open(os.path.join(x86, "libndi.so.6.3.2"), "wb") as f:
+            f.write(elf(62))
+        os.symlink("libndi.so.6.3.2", os.path.join(x86, "libndi.so.6"))
         with self.assertRaises(ndi.NdiError) as e:
-            ndi.install_runtime(link, self.dest, machine=183, chown=False)
-        self.assertIn("cannot be read as a file", str(e.exception))
-        self.assertFalse(os.path.exists(os.path.join(self.dest, ndi.LIB_NAME)))
+            ndi.install_runtime(os.path.join(x86, "libndi.so.6"), self.dest, machine=183, chown=False)
+        self.assertIn("is for x86_64, this box is aarch64", str(e.exception))
+        # everything else that is a link stays refused, and nothing is put in place
+        with open(os.path.join(other, "lib.so"), "wb") as f:
+            f.write(elf(183) + b"from another folder")
+        os.mkdir(os.path.join(sdk, "sub"))
+        with open(os.path.join(sdk, "sub", "lib.so"), "wb") as f:
+            f.write(elf(183))
+        refused = {"abs": self.good, "abs-beside": real, "up": "../../../elsewhere/lib.so", "down": "sub/lib.so", "dot": "./libndi.so.6.3.2",
+                   "dangling": "not-there.so", "itself": "itself", "three": "two", "two": "one", "one": "libndi.so.6.3.2",
+                   "loop-a": "loop-b", "loop-b": "loop-a"}
+        for name, target in refused.items():
+            os.symlink(target, os.path.join(sdk, name))
+        shutil.rmtree(self.dest)
+        for name, words in (("abs", "not to a plain name beside it"), ("abs-beside", "not to a plain name beside it"),
+                            ("up", "not to a plain name beside it"), ("down", "not to a plain name beside it"),
+                            ("dot", "not to a plain name beside it"),
+                            ("dangling", "a file that is not there"), ("itself", "a link to a link to a link"),
+                            ("three", "a link to a link to a link"), ("loop-a", "a link to a link to a link")):
+            with self.assertRaises(ndi.NdiError, msg=name) as e:
+                ndi.install_runtime(os.path.join(sdk, name), self.dest, machine=183, chown=False)
+            self.assertIn(words, str(e.exception), name)
+            self.assertFalse(os.path.lexists(self.dest), name)
+        ndi.install_runtime(os.path.join(sdk, "two"), self.dest, machine=183, chown=False)       # two links: the bound, and allowed
+        self.assertEqual(ndi.LINK_HOPS, 2)
+
+    def test_a_name_swapped_for_a_link_after_the_look_is_refused_at_the_open(self):
+        sdk = os.path.join(self.dir, "sdk")
+        os.makedirs(sdk)
+        real = os.path.join(sdk, "libndi.so.6.3.2")
+        with open(real, "wb") as f:
+            f.write(elf(183))
+        os.symlink("libndi.so.6.3.2", os.path.join(sdk, "libndi.so.6"))
+        looked = ndi.same_folder_target
+
+        def swap(path):
+            out = looked(path)
+            os.unlink(real)
+            os.symlink(self.good, real)                                 # between the look and the open
+            return out
+        from unittest import mock
+        with mock.patch.object(ndi, "same_folder_target", swap):
+            with self.assertRaises(ndi.NdiError) as e:
+                ndi.install_runtime(os.path.join(sdk, "libndi.so.6"), self.dest, machine=183, chown=False)
+        self.assertIn("cannot be read as a file (it is a link)", str(e.exception))
+        self.assertFalse(os.path.lexists(self.dest))
+        self.assertIn('getattr(os, "O_NOFOLLOW", 0)', __import__("inspect").getsource(ndi.install_runtime))
 
     def test_a_pipe_given_as_the_file_is_refused_at_once(self):
         pipe = os.path.join(self.dir, "pipe")

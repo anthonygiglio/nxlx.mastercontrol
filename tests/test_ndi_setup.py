@@ -792,6 +792,54 @@ class RollbackTest(unittest.TestCase):
         self.assertNotIn("AssertPathExists", text)         # an assertion that is not met is a failure; a condition is not
 
 
+class SnapshotOfAStillSourceTest(ServerBase):
+    """The first run on a Pi 4 (2026-10-08): with a still NDI source up, GET /api/preview.jpg answered 503
+    {"error": "mpv: error running command"}. It is not a fault of the player and it is not an empty screen."""
+
+    def setUp(self):
+        super().setUp()
+        self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
+        self.fifo = os.path.join(self.tmp, "ndi.fifo")
+        self.api.ndi = ndi.Input(Untouchable(), self.fifo, lambda: (True, []), log=lambda *_: None)
+        from pvj.player import PlayerError
+
+        def no_picture(path, quality=60, with_text=True):
+            raise PlayerError("mpv: error running command")
+        self.player.screenshot = no_picture
+        self.playing = self.fifo
+        self.player.status = lambda: {"running": True, "path": self.playing}
+
+    def test_it_is_said_as_what_it_is_and_not_as_a_fault(self):
+        self.api.ndi.current = {"id": "0123456789ab", "name": "Test Patterns"}
+        st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
+        self.assertEqual(st, 409)
+        self.assertIn("the NDI source has not given the player enough pictures to copy one", body["error"])
+        self.assertIn("look at the screen itself", body["error"])       # it does not claim to know what the screen shows
+        self.assertNotIn("mpv", body["error"])
+
+    def test_any_other_source_whose_snapshot_fails_is_still_a_fault_and_an_idle_player_still_says_nothing(self):
+        self.api.ndi.current = None
+        self.playing = "/var/lib/pvj/video/a.mp4"
+        st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
+        self.assertEqual((st, body["error"]), (503, "mpv: error running command"))
+        self.api._preview = None
+        self.api.ndi.current = {"id": "0123456789ab", "name": "x"}      # an NDI source is noted, and the player plays a clip
+        st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
+        self.assertEqual(st, 503)
+        self.api._preview = None
+        self.playing = None
+        st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
+        self.assertEqual((st, body["error"]), (409, "nothing is on the screen right now"))
+
+    def test_the_page_shows_the_boxes_words_for_it(self):
+        with open(os.path.join(os.path.dirname(ndisetup.__file__), "web", "app.js")) as f:
+            js = f.read()
+        self.assertIn("d.error.indexOf('NDI') >= 0", js)
+        self.assertIn("'Nothing is on the screen right now.'", js)
+        from pvj import api as api_mod
+        self.assertIn("NDI", api_mod.NDI_NO_SNAPSHOT)
+
+
 class HelperIdlesTest(unittest.TestCase):
     """Second review, N6: what the helper does when the library is missing or does not load decides how hard the
     unit's "start again every 2 seconds, without a limit" can bite. It stays up and says what is wrong; it does not
