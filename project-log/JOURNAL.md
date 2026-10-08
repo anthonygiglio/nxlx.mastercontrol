@@ -4,6 +4,23 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-07, later (the independent review of the controller code: two medium, eight low, all fixed on `controller-code`)
+
+Nothing high. Each finding and what was done; the tests are in `tests/test_controller_code_review.py`, one class per finding. They were written with the fixes, from the reviewer's sequences; they were not each run against the code before its fix.
+
+1. **Medium: a tap could count as a hold when the thread that handles MIDI was waiting for the player.** `MidiInput` now has a thread that only reads and stamps each message with the clock, and a second that hands them on; the hold is timed from the stamps (`plan(..., at)`). For a caller with no stamps, calls slower than half a second end what is held. A full queue ends it too. Tests: `ReadTime`.
+2. **Medium/low: the full access switch could come back by itself** from a hand-edited `{"enabled": false, "owner": true}`. One function, `auth.controller_setting`, now says what the section means; `validate`, the diagnostics file and the start of the box (which rewrites the section) all use it. Tests: `OwnerSwitch`.
+3. **Low: the look at the display and the screenshot were two steps.** Decided under the preview lock now, looked at again after the picture, retaken without text for a lesser device if something appeared; and a kept picture with text is not given to a lesser device unless nothing secret was up around it. Tests: `Snapshot`.
+4. **Low: a release swallowed by Learn left the control held.** What is held is forgotten when Learn starts, ends or captures, when the map is saved, and when a MIDI switch changes. Tests: `LearnAndTheMap`.
+5. **Low: the lockout denies the code to the person at the box.** The lockout is untouched. The display says "Pairing is locked for N minutes after wrong guesses": instead of a code when the lock outlasts one, under the code otherwise. In `pvj/MIDI.md`. Tests: `Lockout`.
+6. **Low: the press that hides a code runs before the USB check and without the setting.** Left so, and said in the docstring of `MidiHub._local`; `pvj/MIDI.md` now says that a USB id proves a USB MIDI interface, not a person.
+7. **Low: a fader could carry the action through a personal mapping.** A controller number counts only as 127 down and 0 up with nothing between. Not "notes only": that would shut out every button of a nanoKONTROL2. Tests: `OnlyAButton`.
+8. **Low: devices paired this way were never pruned.** A presenter paired so goes after 7 unused days (a presenter from a join code does not expire, so there was nothing to match; the guest rule was used). A full-access device paired so cannot take the PIN's 20 places. Tests: `Devices`.
+9. **Low: the code was used up before its device was added.** Now after. A failed save no longer leaves a device in memory only. Tests: `Devices` (a race of two requests, a list that filled, a device that slipped in, a full disk).
+10. **Low leftovers.** `Player.overlay_remove` removes the QR code's file, also when the player is silent; `clear_qr` remembers a failure and each tick tries again; the diagnostics file's scrub list has the active code. Tests: `Leftovers`, `Diagnostics`.
+
+Also added from the reviewer's list: MIDI switched off in the middle of a hold, two controllers holding at once (one code at a time, the later replaces the earlier, both counted), the QR code drawn again after 15 seconds for a restarted player, and the `with_text` a lesser device's screenshot is really taken with. One word changed on the display: the comma in "Scan the QR code, or type it" is gone, since a comma is not in the display's set of characters. Still not run: the browser test, anything on the Pi, any real controller.
+
 ## 2026-10-07 (a pairing code on the display from a MIDI controller, D61; branch `controller-code`, not pushed, not merged)
 
 - The owner asked for "a way to pull up a join code or owner code from a controller if i dont have a paired device with me". Built: two MIDI actions (`code_join`, `code_owner`) that make the box draw a one-time code on its own display for 2 minutes; a box setting with two switches, off by default, on System > People and codes ("A code from a controller"), where a paired owner also sees that a code is showing and can end it. D61 has every choice and its cost; `pvj/MIDI.md` ("A pairing code on the display") has the rules as a person meets them.

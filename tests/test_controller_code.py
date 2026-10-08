@@ -272,7 +272,7 @@ class HoldTest(unittest.TestCase):
     def test_a_button_that_sends_a_controller_number_is_held_the_same_way(self):
         self.m.message("nano", ("cc", 0, CC_JOIN, 127))
         self.t[0] += 3.5
-        self.m.message("nano", ("cc", 0, CC_JOIN, 100))                       # still down (64 or more)
+        self.m.message("nano", ("cc", 0, CC_JOIN, 127))                       # sent again while down
         self.assertEqual(self.requests(), [])
         self.m.message("nano", ("cc", 0, CC_JOIN, 0))
         self.assertEqual(self.asked[-1], ("nano", {"kind": "join", "since": 100.0}))
