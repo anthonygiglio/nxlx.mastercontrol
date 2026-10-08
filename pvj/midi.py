@@ -818,12 +818,18 @@ class MidiMapper:
             return [("/api/shaders/values", {"controls": {a[7:]: round(lo + (hi - lo) * value / 127.0, 2)}})]
         return [("/api/control", {"action": a, "value": round(lo + (hi - lo) * value / 127.0, 2)})]
 
-    def forget_held(self, source=None):
+    def forget_held(self, source=None, pressed=False):
         """Forget every hold that is under way (of one controller, or of all). For when a release may have been
         missed: Learn started or ended, the map or a layout changed, messages were lost. The control still counts as
-        down until its release is seen, so the press that is under way cannot start a hold again."""
-        for key in [k for k in self._held if source is None or k[1] == source]:
-            del self._held[key]
+        down until its release is seen, so the press that is under way cannot start a hold again.
+        `pressed` (messages were LOST): which controls are down is not known any more either, so that is forgotten
+        too, for every control of the controller. Otherwise a press whose release was among the lost messages would
+        stay "down", the next press would not count as one, and its release would be timed from nothing or, worse,
+        from an older press."""
+        stores = (self._held, self._pressed) if pressed else (self._held,)
+        for store in stores:
+            for key in [k for k in store if source is None or k[1] == source]:
+                del store[key]
 
     def plan(self, source, msg, at=None):
         """What a message should do: a list of (path, body) calls. Nothing is called here, so a caller can release its
@@ -925,6 +931,7 @@ class MidiMapper:
 
 LOST = "lost"               # handed to a stamped on_message in the place of a message: some were dropped (the queue was full)
 QUEUE_MAX = 2048
+STOP_WAIT = 3.0             # stopping waits this long in all for the threads of the inputs being stopped
 
 
 class MidiInput:
@@ -935,12 +942,14 @@ class MidiInput:
     that hands on can wait seconds for the player; the one that reads never waits, so `at` is when the control
     was really touched (D61: a hold is timed by it)."""
 
-    def __init__(self, path, source, on_message, log=print, open_fn=None, clock=None):
+    def __init__(self, path, source, on_message, log=print, open_fn=None, clock=None, queue_max=QUEUE_MAX):
         self.path, self.source, self.on_message, self.log = path, source, on_message, log
         self._open = open_fn or self._open_device
         self._clock = clock
-        self._queue = queue.Queue(QUEUE_MAX) if clock is not None else None
+        self._queue = queue.Queue(queue_max) if clock is not None else None
         self._lost = False
+        self._said_at = 0.0
+        self._deadline = None
         self._worker = None
         self._stop = threading.Event()
         self._thread = None
@@ -978,7 +987,13 @@ class MidiInput:
                         if self._stop.is_set():         # told to stop: what was still in the pipe is not acted on
                             break
                         if self._queue is not None:     # stamped and queued; the other thread hands it on
+                            # Messages that did not fit are dropped, and a marker says so IN the queue, at the
+                            # place where they are missing: before the next message that does fit. (A flag the
+                            # worker looked at by itself would be acted on before the older messages still queued.)
                             try:
+                                if self._lost:
+                                    self._queue.put_nowait((LOST, at))
+                                    self._lost = False
                                 self._queue.put_nowait((msg, at))
                             except queue.Full:
                                 self._lost = True
@@ -1003,24 +1018,34 @@ class MidiInput:
     def _work(self):
         """Hand the queued messages on, in order, each with the time it was read; a tick whenever nothing waits."""
         reader = self._thread
-        try:
-            while not self._stop.is_set():
-                if self._lost:
-                    self._lost = False
-                    self.on_message(self.source, LOST, self._clock())
-                try:
-                    msg, at = self._queue.get(timeout=0.1)
-                except queue.Empty:
-                    if not reader.is_alive() and self._queue.empty():
-                        break                           # the device is gone and everything read from it was handed on
-                    self.on_message(self.source, None)  # a tick: lets the hub flush held fader values
-                    continue
+        while not self._stop.is_set():
+            try:
+                msg, at = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                if self._lost:                          # dropped, and nothing came after that could carry the marker:
+                    self._lost = False                  # everything older has been handed on, so this is its place
+                    self._hand(LOST, self._clock())
+                if not reader.is_alive() and self._queue.empty():
+                    break                               # the device is gone and everything read from it was handed on
+                self._hand(None, self._clock())         # a tick: lets the hub flush held fader values
+                continue
+            if msg != LOST:
                 self.messages += 1
-                self.on_message(self.source, msg, at)
-                if self._queue.empty():
-                    self.on_message(self.source, None)
+            self._hand(msg, at)
+            if self._queue.empty():
+                self._hand(None, self._clock())
+
+    def _hand(self, msg, at):
+        """One message to the handler. Whatever it raises (a save that failed somewhere under the API, a bug) ends
+        with that message: this thread goes on to the next one, or the controller would be deaf from then on. Said
+        in the log with the kind of error, at most once in ten seconds."""
+        try:
+            self.on_message(self.source, msg, at)
         except Exception as e:
-            self.log("midi: %s: internal error: %r" % (self.path, e))
+            now = time.monotonic()
+            if now >= self._said_at:
+                self._said_at = now + 10.0
+                self.log("midi: %s: a message could not be handled (%s: %s); carrying on" % (self.path, type(e).__name__, e))
 
     def start(self):
         self._stop.clear()
@@ -1032,20 +1057,39 @@ class MidiInput:
 
     @property
     def alive(self):
-        return bool(self._thread and self._thread.is_alive())
+        """Both threads are there. An input with only one of them left delivers nothing, so the hub's scan must see
+        it as gone and put a new one in its place."""
+        reading = bool(self._thread and self._thread.is_alive())
+        return reading and (self._queue is None or bool(self._worker and self._worker.is_alive()))
 
     def halt(self):
         """Tell the reader to stop, without waiting for it (stop() waits)."""
         self._stop.set()
 
     def stop(self):
+        """Stop and wait for both threads: until the deadline stop_inputs() set for several inputs together, else
+        STOP_WAIT from now in all."""
         self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=3)
-            self._thread = None
-        if self._worker:
-            self._worker.join(timeout=3)
-            self._worker = None
+        deadline, self._deadline = self._deadline, None
+        deadline = time.monotonic() + STOP_WAIT if deadline is None else deadline
+        for name in ("_thread", "_worker"):
+            thread = getattr(self, name)
+            if thread:
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+                setattr(self, name, None)
+
+
+def stop_inputs(inputs, timeout=None):
+    """Stop several inputs: all are told first, then all are waited for against ONE deadline. A handler stuck in a
+    call to the player holds its thread for seconds; waiting for each in turn made switching MIDI off take that long
+    per thread."""
+    inputs = list(inputs)
+    for inp in inputs:
+        inp.halt()
+    deadline = time.monotonic() + (STOP_WAIT if timeout is None else timeout)
+    for inp in inputs:
+        inp._deadline = deadline
+        inp.stop()
 
 
 # --- lights: the writer ------------------------------------------------------
@@ -1321,6 +1365,7 @@ class MidiHub:
         self.mapper = MidiMapper(self._do, [], api.mix, clock)
         self.mapper.target = self._target
         self.mapper.local = self._local
+        self.queue_max = QUEUE_MAX          # messages read from one controller and not yet handled (a test makes it small)
         self.learn_until = 0.0
         self.captured = None
         self._quiet = None
@@ -1747,13 +1792,13 @@ class MidiHub:
         if self._stop.is_set() or source in self._retired:
             return
         if msg == LOST:                             # the reader's queue was full: a release may be among what was dropped
-            with self._lock:
-                self.mapper.forget_held(source)
+            with self._lock:                        # (the marker comes in the queue, where the messages are missing)
+                self.mapper.forget_held(source, pressed=True)
             return
         if msg is None:
             with self._lock:
                 calls = [] if self._stop.is_set() else self.mapper.flush_calls()
-            self._run_calls(calls, source)
+            self._run_calls(calls, source, stamped=at is not None)      # the tick of an input that stamps: its holds are timed rightly
             return
         with self._lock:
             if self._stop.is_set():                 # switched off while this message waited for the lock
@@ -1817,7 +1862,7 @@ class MidiHub:
                         self._retired.add(inp.source)
             for path in sorted(paths - set(self.inputs)):
                 source = self._namer(path)
-                inp = MidiInput(path, source, self.on_message, log=self.log, open_fn=self._open_fn, clock=self._clock)
+                inp = MidiInput(path, source, self.on_message, log=self.log, open_fn=self._open_fn, clock=self._clock, queue_max=self.queue_max)
                 if not any(i.source == source for i in self.inputs.values()):
                     self.mapper.forget(source)          # nothing of it was heard until now: no button of it is held
                 self.inputs[path] = inp
@@ -1833,8 +1878,7 @@ class MidiHub:
                 inp.start()
         finally:
             self._lock.release()
-        for path, inp in gone:                          # joining a reader can take seconds: never under the lock
-            inp.stop()
+        stop_inputs([inp for path, inp in gone])        # joining a reader can take seconds: never under the lock
         if gone:
             with self._lock:
                 for path, inp in gone:
@@ -1897,8 +1941,7 @@ class MidiHub:
         if lighter:
             lighter.join(timeout=3)
         self._lights_off()                              # every light off, each writer on its own, before the readers end
-        for inp in inputs:
-            inp.stop()
+        stop_inputs(inputs)                             # all told first, then one wait for all of them
         with self._lock:                                # only now, with every reader ended, do the layouts go
             if self._stop.is_set():
                 self._matched.clear()
