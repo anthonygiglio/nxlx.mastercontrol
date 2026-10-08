@@ -4012,6 +4012,8 @@
     setInterval(poll, 1000);
     document.addEventListener('input', function (e) { if (e.target && e.target.type === 'range') fillRanges(); }, true);
     setInterval(fillRanges, 250);
+    // A part of the page that was not delivered at first and has arrived now (load.js): draw with it.
+    document.addEventListener('pvjfile', function () { if (S.device && app.firstChild) render(); });
   }
   boot();
 })();
