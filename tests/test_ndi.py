@@ -1420,11 +1420,11 @@ class LaterChoiceWinsTest(NdiApiTest):
             order.append("pipe loaded")
         real_play = self.player.play
 
-        def play(paths, *a, **kw):
+        def play(player, paths, *a, **kw):
             order.append("clip loaded")
             return real_play(paths, *a, **kw)
-        play.__name__ = "play"
-        self.player.play_pipe, self.player.play = play_pipe, play
+        import types
+        self.player.play_pipe, self.player.play = play_pipe, types.MethodType(play, self.player)
         self.lib.frames.put(frame(64, 16))
         out = []
         ndi_play = threading.Thread(target=lambda: out.append(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)))
@@ -1444,15 +1444,21 @@ class LaterChoiceWinsTest(NdiApiTest):
 
     def test_everything_that_loads_or_clears_the_player_cancels_a_source_still_connecting(self):
         self.enable()
-        def clear():
+        import types
+
+        def clear(player):
             return None
 
-        def play_pipe(*args):
+        def play_pipe(player, *args):
             return None
-        for fn, args in ((self.player.play, ([os.path.join(self.media, "a.mp4")],)), (clear, ()), (play_pipe, ("/x", 16, 16, 30))):
+        for fn, args in ((self.player.play, ([os.path.join(self.media, "a.mp4")],)), (types.MethodType(clear, self.player), ()),
+                         (types.MethodType(play_pipe, self.player), ("/x", 16, 16, 30))):
             t = self.api.ndi.ticket()
             self.api._player_call(fn, *args)
             self.assertFalse(self.api.ndi.still(t), fn.__name__)
+        t = self.api.ndi.ticket()
+        self.api._player_call(clear, None)                               # something else that happens to be called "clear"
+        self.assertTrue(self.api.ndi.still(t))
         from pvj.player import Player
         for name in self.api.PLAYER_LOADS:                               # the names are the real player's
             self.assertEqual(getattr(Player, name).__name__, name)
@@ -1830,6 +1836,35 @@ class SourceIsPlainTextTest(unittest.TestCase):
             with open(path, encoding="utf-8") as f:
                 odd = sorted({"U+%04X" % ord(ch) for ch in f.read() if ord(ch) > 126 or (ord(ch) < 32 and ch not in "\n\t")})
             self.assertEqual(odd, [], path)
+
+
+class BracketsInNamesTest(unittest.TestCase):
+    """Found by a second read of review fix 1: the bound on nesting counted brackets inside names, so one sender
+    named with brackets made every answer of the helper a "bad answer" and the input look dead."""
+
+    def test_a_real_status_with_brackets_in_every_name_goes_through_the_real_client(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        names = ["[" * 128, "{" * 128, "]" * 100 + "[" * 28, 'quote " [[[[', "back\\slash [[[["] + ["Cam [%02d" % n for n in range(59)]
+        lib = FakeLib([(n.encode(), b"192.168.0.%d:5961" % (i + 1)) for i, n in enumerate(names)])
+        s = ndi.Service(d, "x", loader=lambda path: lib, problem=lambda path: None, log=lambda *_: None)
+        self.addCleanup(s.close)
+        c = ndi.Client("unused")
+        c._exchange = lambda message, timeout: json.dumps(s.handle(message)).encode() + b"\n"
+        i = ndi.Input(c, s.fifo, lambda: (True, []), log=lambda *_: None)
+        st = i.status()
+        self.assertEqual((st["helper"], len(st["sources"])), (True, 64))
+        self.assertEqual(sorted(x["name"] for x in st["sources"]), sorted(names))
+
+    def test_depth_is_counted_outside_strings_only(self):
+        for raw, want in ((b'{"a": [1, {"b": []}]}', 4), (b'{"name": "[[[[[[[[{{{{"}', 1), (b'{"n": "a\\"[[[", "m": [[]]}', 3),
+                          (b'{"n": "a\\\\", "m": [[[]]]}', 4), (b"[" * 60000, 60000), (b'"' + b"[" * 60000, 0), (b"", 0), (b"]]]][", 1)):
+            self.assertEqual(ndi.json_depth(raw), want, raw[:30])
+        c = ndi.Client("unused")
+        for raw in (b"[" * 60000 + b"\n", b'{"a":' * 65 + b"1" + b"}" * 65):                  # deep outside any string: still refused
+            c._exchange = lambda message, timeout, raw=raw: raw
+            with self.assertRaises(ndi.NdiError):
+                c.request({"cmd": "status"})
 
 
 if __name__ == "__main__":

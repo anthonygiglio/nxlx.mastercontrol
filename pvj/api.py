@@ -269,7 +269,8 @@ class Api:
     def _player_call(self, fn, *args):
         # Whatever loads or clears the player first makes a still-connecting NDI source worthless, and waits while
         # an NDI play is in the middle of loading its pipe (ndi.Input.screen), so the later choice always stays.
-        if self.ndi is not None and getattr(fn, "__name__", "") in self.PLAYER_LOADS and not getattr(self._ndi_loading, "on", False):
+        if (self.ndi is not None and getattr(fn, "__self__", None) is self.player and getattr(fn, "__name__", "") in self.PLAYER_LOADS
+                and not getattr(self._ndi_loading, "on", False)):
             self.ndi.cancel()
         try:
             return fn(*args)

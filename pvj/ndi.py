@@ -921,6 +921,29 @@ def main(argv=None):
 
 
 # ---- the panel's side --------------------------------------------------------------------------------------------------
+def json_depth(raw):
+    """How deep the brackets of a JSON text nest, not counting brackets inside its strings (a source may be named
+    "Cam [2]", and sixty-four of those are not a deep answer)."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for byte in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5c:             # a backslash: the next byte is not the end of the string
+                escaped = True
+            elif byte == 0x22:
+                in_string = False
+        elif byte == 0x22:
+            in_string = True
+        elif byte in b"[{":
+            depth += 1
+            deepest = max(deepest, depth)
+        elif byte in b"]}":
+            depth = max(0, depth - 1)      # closing brackets that open nothing do not buy depth for later
+    return deepest
+
+
 def helper_uid():
     """The uid of the helper's account, whose pipe the player may be told to read; our own where there is none (a desk)."""
     import pwd
@@ -953,15 +976,8 @@ class Client:
             raw = self._exchange(message, timeout or self.timeout)
         except (OSError, ValueError):
             raise NdiError("the NDI helper (pvj-ndi) is not running")
-        depth = deepest = 0
-        for byte in raw:
-            if byte in b"[{":
-                depth += 1
-                deepest = max(deepest, depth)
-            elif byte in b"]}":
-                depth -= 1
         try:
-            if deepest > self.MAX_NESTING:
+            if json_depth(raw) > self.MAX_NESTING:
                 raise ValueError("nested too deep")
             reply = json.loads(raw)
         except (ValueError, RecursionError, MemoryError):
