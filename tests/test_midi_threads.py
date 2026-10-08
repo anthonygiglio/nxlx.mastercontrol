@@ -49,10 +49,13 @@ class WorkerTest(InputBase):
     """1. One bad message must not leave a controller deaf."""
 
     def test_a_handler_that_raises_once_still_gets_the_next_message(self):
-        got = []
+        got, lost = [], []
 
         def handler(source, msg, at=None):
             if msg is None:
+                return
+            if msg == midi.LOST:                                     # what follows a message that failed
+                lost.append(at)
                 return
             got.append(msg[2])
             if len(got) == 1:
@@ -62,6 +65,7 @@ class WorkerTest(InputBase):
         self.assertTrue(until(lambda: got == [1]))
         os.write(w, bytes([0x90, 2, 127]))
         self.assertTrue(until(lambda: got == [1, 2]), got)
+        self.assertEqual(len(lost), 1)                                # the failed message was followed by "lost", once
         self.assertTrue(inp.alive)
         self.assertEqual(len([line for line in self.said if "OSError" in line]), 1, self.said)
         os.close(w)
@@ -70,7 +74,7 @@ class WorkerTest(InputBase):
         got = []
 
         def handler(source, msg, at=None):
-            if msg is not None:
+            if msg is not None and msg != midi.LOST:
                 got.append(msg[2])
                 raise ValueError("bug")
         inp, w = self.make(handler)
@@ -276,7 +280,8 @@ class HubAndWorker(RealHub):
         self.write(0x90, NOTE_OTHER, 1)
         self.assertTrue(until(lambda: not first._worker.is_alive()))
         self.assertFalse(first.alive)
-        self.real.scan()
+        self.real.scan()                                              # halted and joined in this pass
+        self.real.scan()                                              # replaced in the next
         self.assertTrue(until(lambda: self.real.inputs.get(PAD) is not None and self.real.inputs[PAD] is not first))
         self.assertTrue(until(lambda: self.real.inputs[PAD].alive))
 
@@ -380,6 +385,140 @@ class Reserve(unittest.TestCase):
         self.assertEqual(self.a.pair(self.a.controller_digits()[1], "x", "c")[1]["role"], "full")
         with self.assertRaises(auth_mod.TooManyDevices):
             self.a.invite("one more", "view")
+
+    def test_a_full_list_is_full_for_a_code_from_a_controller_too(self):
+        self.add(160, "live")
+        self.add(40, "full")                                          # 200 in all, with shared places to spare
+        self.assertEqual(len(self.settings.data["devices"]), auth_mod.MAX_DEVICES)
+        with self.assertRaises(auth_mod.TooManyDevices):
+            self.a.create_controller_code("owner")
+        self.settings.data["devices"].pop()
+        self.a.create_controller_code("owner")
+        code = self.a.controller_digits()[1]
+        self.add(1, "full")                                           # the list filled while the code was up
+        with self.assertRaises(auth_mod.TooManyDevices):
+            self.a.pair(code, "x", "c")
+        self.assertEqual(len(self.settings.data["devices"]), auth_mod.MAX_DEVICES)
+
+
+class ThirdPass(RealHub):
+    """The third read of the fixes: what a swallowed error, the flag for lost messages and a restart can still do."""
+
+    def test_an_error_on_the_release_does_not_leave_the_hold_armed(self):
+        real, state = self.real.entries, {"raise": False}
+
+        def entries(source=None):
+            if state["raise"]:
+                state["raise"] = False
+                raise OSError(5, "Input/output error")
+            return real(source)
+        self.real.entries = entries
+        self.t[0] = 3000.0
+        self.write(0x90, NOTE_JOIN, 127)                              # a tap of a tenth of a second
+        self.assertTrue(self.drained())
+        self.t[0] = 3000.1
+        state["raise"] = True
+        self.write(0x80, NOTE_JOIN, 0)                                # its release: the hub raises while handling it
+        self.assertTrue(self.drained())
+        self.assertFalse(state["raise"])
+        self.t[0] = 3004.1
+        self.write(0x90, NOTE_JOIN, 127)                              # a second tap, four seconds later
+        self.assertTrue(self.drained())
+        self.t[0] = 3004.2
+        self.write(0x80, NOTE_JOIN, 0)
+        self.assertTrue(self.drained())
+        time.sleep(0.05)
+        self.assertIsNone(self.digits())
+        self.assertEqual(self.state()["controller"]["status"]["made_this_hour"], 0)
+        self.t[0] = 3010.0                                            # and a real hold still works afterwards
+        self.write(0x90, NOTE_JOIN, 127)
+        self.assertTrue(self.drained())
+        self.t[0] = 3013.5
+        self.write(0x80, NOTE_JOIN, 0)
+        self.assertTrue(until(lambda: self.digits() is not None))
+
+    def test_only_the_reader_touches_the_flag_for_lost_messages(self):
+        import inspect
+        self.assertNotIn("_lost", inspect.getsource(midi.MidiInput._work))        # the worker neither reads nor clears it
+        self.assertNotIn("_lost", inspect.getsource(midi.MidiInput._hand))
+        self.assertIn("_lost", inspect.getsource(midi.MidiInput._run))
+
+    def test_a_loss_with_nothing_after_it_still_gives_a_marker_after_the_queued_press(self):
+        order = []
+        inner = self.inp.on_message
+
+        def seen(source, msg, at=None):
+            if msg is not None:
+                order.append(msg if msg == midi.LOST else (msg[0], msg[2]))
+            return inner(source, msg, at)
+        self.inp.on_message = seen
+        self.t[0] = 4000.0
+        with self.real._lock:
+            self.write(0x90, NOTE_OTHER, 1)
+            self.assertTrue(until(lambda: self.inp.messages == 1))
+            self.write(0x90, NOTE_JOIN, 127)
+            self.assertTrue(until(lambda: self.inp._queue.qsize() == 1))
+            for n in range(self.QUEUE - 1):
+                self.write(0x90, NOTE_OTHER, 1)
+            self.assertTrue(until(lambda: self.inp._queue.full()))
+            self.write(0x80, NOTE_JOIN, 0)                            # dropped, and nothing is written after it
+            self.dropped += 1
+            self.assertTrue(until(lambda: self.inp._lost))
+        self.assertTrue(until(lambda: midi.LOST in order), order)
+        self.assertGreater(order.index(midi.LOST), order.index(("on", NOTE_JOIN)))
+        self.assertTrue(until(lambda: not self.inp._lost))
+        self.assertEqual(order.count(midi.LOST), 1)
+        self.assertFalse([k for k in self.real.mapper._held if k[1] == "Mini"])
+
+    def test_an_input_is_halted_in_one_scan_and_replaced_in_the_next_and_never_open_twice(self):
+        opens = []
+        inner = self.real._open_fn
+
+        def open_fn(path):
+            opens.append([i for i in self.made if i._thread is not None and i._thread.is_alive() and i.connected])
+            return inner(path)
+        self.real._open_fn = open_fn
+        first = self.inp
+        self.made = [first]
+        first.on_message = lambda source, msg, at=None: (_ for _ in ()).throw(SystemExit) if msg is not None else None
+        self.write(0x90, NOTE_OTHER, 1)
+        self.assertTrue(until(lambda: not first._worker.is_alive()))
+        self.real.scan()                                              # this pass: the old one is halted and waited for
+        self.assertNotIn(PAD, self.real.inputs)
+        self.assertEqual(opens, [])
+        self.assertFalse(first.connected)
+        self.real.scan()                                              # the next: a new one
+        self.assertTrue(until(lambda: len(opens) == 1 and PAD in self.real.inputs and self.real.inputs[PAD].alive))
+        self.assertEqual(opens, [[]])                                 # nothing else had the device open then
+        self.assertIsNot(self.real.inputs[PAD], first)
+
+
+class AfterALoss(unittest.TestCase):
+    """What "messages were lost" forgets: holds, and which pads are down; not where a knob or fader rests."""
+
+    def setUp(self):
+        self.t, self.calls, self.asked = [100.0], [], []
+        entries = [midi.validate_entry({"kind": "cc", "number": 40, "action": "stop"}),
+                   midi.validate_entry({"kind": "note", "number": NOTE_JOIN, "action": "code_join"})]
+        self.m = midi.MidiMapper(lambda path, body: self.calls.append(body) or True, entries, {}, clock=lambda: self.t[0])
+        self.m.local = lambda source, body: self.asked.append(dict(body)) or True
+
+    def test_a_knob_resting_high_on_a_trigger_does_not_fire_again(self):
+        self.m.message("nano", ("cc", 0, 40, 100))
+        self.assertEqual(len(self.calls), 1)
+        self.t[0] += 5
+        self.m.forget_held("nano", pressed=True)                      # messages were lost
+        self.m.message("nano", ("cc", 0, 40, 101))                    # its next value: still up, not a new press
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_pad_is_no_longer_down_so_the_next_hold_counts(self):
+        self.m.message("Mini", ("on", 0, NOTE_JOIN, 127))             # its release is among what was lost
+        self.m.forget_held("Mini", pressed=True)
+        self.t[0] += 20
+        self.m.message("Mini", ("on", 0, NOTE_JOIN, 127))
+        self.t[0] += 3.5
+        self.m.message("Mini", ("off", 0, NOTE_JOIN, 0))
+        self.assertEqual([b for b in self.asked if "kind" in b], [{"kind": "join", "since": 120.0}])
 
 
 if __name__ == "__main__":

@@ -4,6 +4,21 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08 (a third, narrow read of the fixes, and the first run of the browser test on `controller-code`)
+
+Four small things in the two-thread reader and the device count, each with a test written first and seen to fail (`tests/test_midi_threads.py`: `ThirdPass`, `AfterALoss`, `Reserve`).
+
+1. **Medium: an error swallowed on a release left the hold armed**, so a later tap could make a code. A real message that fails is now followed by "lost", and the hub forgets what is held and which pads are down.
+2. **Low to medium: the worker's test-then-clear of the lost flag could wipe out a newer loss.** Only the reader touches the flag now; when nothing else comes it puts the marker itself as soon as there is room.
+3. **Low: a full access code could pair device 201.** A device paired from a controller also needs the list as a whole to have room.
+4. **Low: a scan could open a device again before the old reader had closed it.** A path whose input was halted in a pass gets its new one in the next pass.
+
+A side effect of the second pass is undone: on "lost" the hub forgets which controls are down only for what sends notes. A knob or fader mapped to a trigger rests at a value, and forgetting that fired the trigger again at its next step.
+
+**The browser test ran in CI for the first time with this branch and failed**, rightly: on a laptop People and codes is a grid of two columns, and the new card pushed the devices card under the first one. The page now puts "Let someone in" and "A code from a controller" in the left column and the devices beside both (one rule, for every look; a phone keeps the order access, controller code, devices). The test's own assertion is unchanged and has new ones beside it. Not run here: only `node --check`.
+
+**Seen and left.** Guests and presenters can pass 200 devices in all: their rule counts only the 180 shared places, not the total, so 160 of them beside 40 PIN devices still admit one more. That is so on master with this feature off, and changing it is a decision of its own.
+
 ## 2026-10-07, later still (a second review, of the fixes: two medium, three low, all fixed on `controller-code`)
 
 The two-thread reader from the first review brought faults of its own. The tests are in `tests/test_midi_threads.py` and run the real threads on a pipe; each was written first and seen to fail before its fix.
