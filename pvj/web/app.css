@@ -538,6 +538,15 @@ main.ws:focus { outline: none; }
 .libhead { justify-content: flex-end; }
 .wsdock { grid-area: dock; position: sticky; bottom: 0; z-index: 12; background: var(--bg); min-width: 0; }
 .wsdock .tabs { position: static; }
+/* The four area tabs share the width in equal columns that may shrink, whatever the typeface: a button's own
+   least width is its word plus its padding, and four of those were 330 px in a 320 px window in the faces of CI's
+   Linux ("Setup" reached 330), while the Mac's narrower face fitted. So: no least width, next to no side padding,
+   and under 380 px a smaller word and less air round the row. The longest word, "Shape", then has 74 px. */
+.wstabs .btn { min-width: 0; padding: 0 2px; overflow-wrap: normal; }
+@container app (max-width: 379px) {
+  .wstabs { gap: 2px; padding-left: 8px; padding-right: 8px; }
+  .wstabs .btn { font-size: 14px; }
+}
 /* The transport strip. A phone: what is playing and More on one line, then Previous, Next, Stop and Blackout;
    More opens the other five and the place in the clip in place, UNDER those four, which stay where the thumb
    found them: two rows of 44 px (back and forward 10 s, Fade in, Fade out; then Freeze and the place in the clip).
@@ -558,7 +567,7 @@ main.ws:focus { outline: none; }
 .tp .tpmore { flex: none; min-width: 64px; }
 .tp:not(.open) .tpx { display: none; }
 /* (a 320 px phone: "Blackout" needs 69 px in the widest of the faces this look is drawn in, and gets 75) */
-@container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } }
+@container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } .tp .tpb { font-size: 13px; } }      /* (13 px: room to spare in a wider face than the one it was measured in) */
 @container app (min-width: 600px) {
   .frame { grid-template-columns: 168px minmax(0, 1fr); grid-template-rows: auto 1fr auto; grid-template-areas: "head head" "side main" "dock dock"; }
   .wssub, .wsdock .wstabs { display: none; }
@@ -1114,6 +1123,11 @@ html[data-style="signal"] .tpinfo #time, html[data-style="signal"] .tpinfo #plpo
 html[data-style="signal"] .tp #black { border-color: var(--st-problem, var(--fg)); }
 html[data-style="signal"] .tp #black.solid { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
 html[data-style="signal"] .tp #freeze.solid { background: var(--ac); border-color: var(--ac); color: var(--on); }
+/* (a 320 px phone: the strip's words keep room to spare, also in a theme that asks for the device's own typeface) */
+@container app (max-width: 379px) {
+  html[data-style="signal"] .tp { padding-left: 4px; padding-right: 4px; gap: 4px; }
+  html[data-style="signal"] .tp .tpb { padding: 4px 0; font-size: 13px; }
+}
 @container app (min-width: 600px) {
   html[data-style="signal"] .wshead { padding: 8px 16px; align-items: center; border-bottom: 0; }
   html[data-style="signal"] .wstitle { font-size: 26px; line-height: 1.15; }
