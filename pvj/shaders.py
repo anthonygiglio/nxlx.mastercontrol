@@ -126,7 +126,9 @@ _INPUT_RENAMED = ("color",)             # as an input's name, in any letter case
 # they are refused in any letter case, `color` apart (above). Every other reserved word is the language's or ISF's
 # and means something in its exact spelling only: see renamed().
 _PLAYER_WORDS = frozenset("main hook frame random input_size target_size tex_offset pixel_size color".split())
-_BLANK = " \t\n\x0b\x0c"                # what may stand between the comments before the header (line ends are \n by then)
+# The only texts a bool input's DEFAULT may be, besides true, false and the numbers 0 and 1 (D66, the owner's choice).
+_BOOL_TEXT = {"0": False, "1": True, "false": False, "true": True}
+_BLANK = " \t\n\x0b\x0c"               # what may stand between the comments before the header (line ends are \n by then)
 
 
 HIDDEN = ("Cc", "Cf", "Zl", "Zp", "Cs")      # Unicode categories no name or label may hold
@@ -222,10 +224,15 @@ def _input(spec, seen, kind=GENERATOR):
         out.update(min=lo, max=hi, default=min(hi, max(lo, _num(spec.get("DEFAULT", (lo + hi) / 2.0), "DEFAULT of " + name))))
     elif kind == "bool":
         # true and false, and the numbers 0 and 1 (0.0 and 1.0 are the same numbers), as real files write a switch.
-        # Nothing else: no other number, and no text ("1" and "true" in quotes are text, not a switch).
+        # And four texts, letter for letter (_BOOL_TEXT): files written for other ISF hosts carry them. The list is
+        # closed, so a typo is still an error ("TRUE", "yes", " 1", "1.0" and "" are refused). Nothing of the text
+        # goes on: the value is a Python bool from here, and reaches the shader only as `true` or `false`.
         d = spec.get("DEFAULT", False)
-        if not isinstance(d, bool) and not (isinstance(d, (int, float)) and d in (0, 1)):
-            raise ShaderError("DEFAULT of %s must be true or false (or the number 0 or 1)" % name)
+        if isinstance(d, str) and d in _BOOL_TEXT:
+            d = _BOOL_TEXT[d]
+        elif not isinstance(d, bool) and not (isinstance(d, (int, float)) and d in (0, 1)):
+            raise ShaderError("DEFAULT of %s must be true or false (also taken: the numbers 0 and 1, and \"0\", \"1\", \"true\", \"false\" "
+                              "in quotes, in lower case)" % name)
         out["default"] = bool(d)
     elif kind == "long":
         values = spec.get("VALUES")

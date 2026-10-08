@@ -672,7 +672,7 @@ class LenientTest(unittest.TestCase):
                            ("1.0000000000000001", True)):            # JSON reads this as the number 1.0: it IS 1 by then
             got = default(word)
             self.assertIs(got, want, word)                           # a real true or false, never the number
-        for word in ('"1"', '"0"', '"true"', '"false"', '"yes"', '""', "2", "-1", "0.5", "1.0000001", "0.9999999", "1e-9", "255", "[1]", "[true]",
+        for word in ('"yes"', '""', "2", "-1", "0.5", "1.0000001", "0.9999999", "1e-9", "255", "[1]", "[true]",
                      "[]", "{}", "null", "NaN", "Infinity", "1e999", "9" * 400):
             with self.assertRaises(S.ShaderError, msg=word) as c:
                 default(word)
@@ -685,6 +685,47 @@ class LenientTest(unittest.TestCase):
         self.assertEqual(S.clean_values(p, {"lit": False}), {"lit": False})
         # the other switch in a header: an event has no DEFAULT of its own and is never on by itself
         self.assertIs(S.parse('/*{"INPUTS": [{"NAME": "go", "TYPE": "event", "DEFAULT": 1}]}*/\n' + OK_MAIN)["inputs"][0]["default"], False)
+
+    def test_a_switch_also_takes_four_texts_in_quotes_as_its_default_and_no_other_text(self):
+        """The owner's choice of 2026-10-08 (D66): "0", "1", "true" and "false" in quotes, letter for letter, as files
+        written for other ISF hosts have them. The list is closed, so a typo is still an error, and nothing of the
+        text reaches the shader: the value is true or false from the parser on."""
+        def parsed(word):
+            return S.parse('/*{"INPUTS": [{"NAME": "lit", "TYPE": "bool", "DEFAULT": %s}]}*/\nvoid main() { gl_FragColor = vec4(lit ? 1.0 : 0.0); }' % word)
+        for word, want in (('"1"', True), ('"0"', False), ('"true"', True), ('"false"', False)):
+            p = parsed(word)
+            self.assertIs(p["inputs"][0]["default"], want, word)                 # a real true or false, never the text
+            out = S.translate(p, (640, 360))
+            self.assertIn("const bool lit = %s;" % ("true" if want else "false"), out, word)
+            self.assertEqual(out.count("const bool lit"), 1)
+            self.assertNotIn('"', out)                                           # nothing of the text is in the shader
+            self.assertEqual(S.input_lines(p, {"lit": not want}), ["const bool lit = %s;" % ("false" if want else "true")])
+        self.assertEqual(S._BOOL_TEXT, {"0": False, "1": True, "false": False, "true": True})
+        for word in ('"TRUE"', '"True"', '"FALSE"', '"False"', '"yes"', '"no"', '"on"', '"off"', '" 1"', '"1 "', '"1\\n"', '"\\t0"', '"1.0"', '"0.0"',
+                     '"01"', '"00"', '"+1"', '"-0"', '"2"', '""', '" "', '"t"', '"f"', '"y"', '"null"', '"true;"', '"true\\u0000"', '"\\uff11"',
+                     '"1\\u200b"', '"tru\\u0435"', '["1"]', '["true"]', '{"1": true}', '"true); float x = (1.0"'):
+            with self.assertRaises(S.ShaderError, msg=word) as c:
+                parsed(word)
+            self.assertIn("DEFAULT of lit must be true or false (also taken: the numbers 0 and 1, and \"0\", \"1\", \"true\", \"false\" in quotes",
+                          str(c.exception), word)
+        # only a switch's DEFAULT in the header: a value that is set stays exactly true or false,
+        p = parsed('"1"')
+        for bad in ("1", "0", "true", "false", 1, 0):
+            with self.assertRaises(S.ShaderError, msg=repr(bad)):
+                S.clean_values(p, {"lit": bad})
+            with self.assertRaises(S.ShaderError, msg=repr(bad)):
+                S.translate(p, (640, 360), {"lit": bad})
+        # an event has no DEFAULT (whatever is written there is never read),
+        self.assertIs(S.parse('/*{"INPUTS": [{"NAME": "go", "TYPE": "event", "DEFAULT": "true"}]}*/\n' + OK_MAIN)["inputs"][0]["default"], False)
+        # and no other type takes text for a number
+        for spec in ('"TYPE": "float", "DEFAULT": "1"', '"TYPE": "long", "DEFAULT": "1"', '"TYPE": "float", "MIN": "0"',
+                     '"TYPE": "color", "DEFAULT": ["1", "0", "0", "1"]', '"TYPE": "point2D", "DEFAULT": ["0", "1"]', '"TYPE": "long", "VALUES": ["0", "1"]'):
+            with self.assertRaises(S.ShaderError, msg=spec):
+                S.parse('/*{"INPUTS": [{"NAME": "a", %s}]}*/\n%s' % (spec, OK_MAIN))
+        # the switches a header is refused for are read as before: text there refuses the file, "0" and "false" too
+        for head in ('{"PERSISTENT_BUFFERS": "0"}', '{"PASSES": [{"PERSISTENT": "false"}]}', '{"PASSES": [{"FLOAT": "0"}]}', '{"IMPORTED": "false"}'):
+            with self.assertRaises(S.ShaderError, msg=head):
+                S.parse("/*" + head + "*/\n" + OK_MAIN)
 
     # -- an input whose name is a reserved word in another letter case --
     def test_an_input_called_time_is_renamed_and_the_clock_stays_the_clock(self):
