@@ -462,9 +462,15 @@ function startServer() {
     // The whole screen with the tab bar at its foot (fixed, it would lie across the middle of a tall page)
     const wholeOf = async (pg, f) => {
       // (the same for the message line, which Signal shows as a toast fixed above the tab bar)
+      // (and from the top of the page: Live's strip for a playing shader is held in place beside the pads on a laptop,
+      // so in a picture of the whole screen it sat wherever the last step had left the scroll)
+      await pg.evaluate(() => window.scrollTo(0, 0));
       await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.setProperty('position', 'static', 'important'); b.style.setProperty('animation', 'none', 'important'); } }); });
       try { await pg.locator('.shell').first().screenshot({ path: f }); } finally {
-        await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.removeProperty('position'); b.style.removeProperty('animation'); } }); }).catch(() => {});
+        // (and from the top of the page: Live's strip for a playing shader is held in place beside the pads on a laptop,
+      // so in a picture of the whole screen it sat wherever the last step had left the scroll)
+      await pg.evaluate(() => window.scrollTo(0, 0));
+      await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.removeProperty('position'); b.style.removeProperty('animation'); } }); }).catch(() => {});
       }
     };
     const signalRound = async (suffix, pick) => {
