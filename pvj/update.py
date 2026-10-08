@@ -586,7 +586,8 @@ def main(argv=None):
     result = getattr(args, "result", None)
     if result is None and args.cmd in ("apply", "rollback"):
         # Run from a terminal: the panel's Updates card reads this file, and it would go on saying "updated to X"
-        # after a rollback. It is only written where it can already be (the folder is made by the update units).
+        # after a rollback. No folder is made for it here. On a box it is in the update units' folder, which is
+        # also the lock's, and take_lock() makes that one where no unit has run yet; so there it is always written.
         result = os.environ.get("PVJ_UPDATE_RESULT", DEFAULT_RESULT)
 
     def report(state, message, version=None):

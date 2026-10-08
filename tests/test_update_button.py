@@ -213,10 +213,19 @@ class CommandLineTest(unittest.TestCase):
             self.assertEqual(self.read(), dict(self.read(), state="done", version="1.0.0", message="rolled back to 1.0.0"))
             self.assertEqual(update.main(["apply", "pvj-3.0.0.tar.gz"]), 0)
             self.assertEqual(self.read(), dict(self.read(), state="done", version="3.0.0", message="updated to 3.0.0"))
-            # where the update units never ran there is no folder, and none is made
+            # no folder is made for the result: named somewhere that is not there, it is not written
             os.environ["PVJ_UPDATE_RESULT"] = os.path.join(os.path.dirname(self.result), "missing", "result.json")
             self.assertEqual(update.main(["rollback"]), 0)
             self.assertFalse(os.path.exists(os.path.dirname(os.environ["PVJ_UPDATE_RESULT"])))
+            # On a box it is in the folder of the lock, and that one is made where no update unit has run yet
+            # (second review of #108, finding 6: the comment in main() still said that it never is).
+            both = os.path.join(os.path.dirname(self.result), "run-pvj-update")
+            os.environ["PVJ_UPDATE_LOCK"] = os.path.join(both, "update.lock")
+            os.environ["PVJ_UPDATE_RESULT"] = os.path.join(both, "result.json")
+            self.assertEqual(update.main(["rollback"]), 0)
+            self.assertEqual(sorted(os.listdir(both)), ["result.json", "update.lock"])
+            self.assertEqual(os.stat(both).st_mode & 0o777, 0o755)
+            self.assertEqual(os.path.dirname(update.DEFAULT_LOCK), os.path.dirname(update.DEFAULT_RESULT))
 
     def test_a_failed_rollback_from_a_terminal_is_reported(self):
         class Fake:
