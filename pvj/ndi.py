@@ -46,6 +46,7 @@ LIB_MAX_BYTES = 96 * 1024 * 1024
 MAX_SOURCES = 64
 SCAN_ROWS = 2048                          # rows of the library's list that are looked at, whatever it says it has
 MAX_NAME = 128
+MAX_MARKS = 2                             # combining marks in a row that a name may have, after NFC
 MAX_NAME_WIRE = 768                       # and as the helper's answer writes it (6 bytes for an accented letter, 12 for an emoji)
 MAX_WHERE = 100                           # a host and a port
 REPLY_LIMIT = 65536                       # what a helper's client reads of one answer (netd.exchange)
@@ -90,10 +91,22 @@ def clean_name(raw):
             raw = bytes(raw).decode("utf-8")
         except UnicodeDecodeError:
             return None
-    if not isinstance(raw, str) or not 1 <= len(raw) <= MAX_NAME or raw != raw.strip():
+    if not isinstance(raw, str) or len(raw) > MAX_NAME * 4:
+        return None
+    # Two names that look alike must not be two rows. So: one way of writing an accented letter (NFC), every kind
+    # of space (no-break, thin, ideographic) shown and compared as a plain one and runs of them as one, and no
+    # pile of accents on one letter (more than MAX_MARKS in a row is refused: no real name has it).
+    raw = unicodedata.normalize("NFC", raw)
+    raw = re.sub(" +", " ", "".join(" " if unicodedata.category(ch) == "Zs" else ch for ch in raw))
+    if not 1 <= len(raw) <= MAX_NAME or raw != raw.strip():
         return None
     if any(unicodedata.category(ch) in _BAD_CATEGORIES for ch in raw):
         return None
+    marks = 0
+    for ch in raw:
+        marks = marks + 1 if unicodedata.category(ch) in ("Mn", "Mc", "Me") else 0
+        if marks > MAX_MARKS:
+            return None
     # The helper's whole answer must fit what its client reads (REPLY_LIMIT), with MAX_SOURCES names in it. An
     # answer that does not fit makes the helper look dead, so a name is also bounded as it is written there.
     if len(json.dumps(raw)) - 2 > MAX_NAME_WIRE:
@@ -971,7 +984,11 @@ class Client:
 
 
 def _text(v, limit=200):
-    return v[:limit] if isinstance(v, str) else ""
+    """Words from the helper for the page: nothing that could change how the line reads (control characters, the
+    marks that turn text round, line breaks), and then cut to a length. Scrubbed first, cut after."""
+    if not isinstance(v, str):
+        return ""
+    return "".join(ch for ch in v[:limit * 8] if unicodedata.category(ch) not in _BAD_CATEGORIES)[:limit]
 
 
 def _playing(p):

@@ -1778,5 +1778,52 @@ class LifetimeTest(unittest.TestCase):
         t.join(5)
 
 
+class LookAlikeNamesTest(unittest.TestCase):
+    """Review finding 13: two rows must not look alike, and the helper's words cannot change how a line reads."""
+
+    def test_one_way_of_writing_a_name_so_two_spellings_are_one_source(self):
+        self.assertEqual(ndi.clean_name("Café (Out)"), "Café (Out)")              # e + accent, and the one letter
+        self.assertEqual(ndi.clean_name("Café (Out)"), "Café (Out)")
+        for spaced in ("RESOLUME (Output)", "RESOLUME (Output)", "RESOLUME　(Output)", "RESOLUME  (Output)", "RESOLUME   (Output)"):
+            self.assertEqual(ndi.clean_name(spaced), "RESOLUME (Output)", repr(spaced))
+        rows = [("RESOLUME (Output)".encode(), b"192.168.0.20:5961"), ("RESOLUME (Output)".encode(), b"192.168.0.20:5962"),
+                ("Café".encode(), b"192.168.0.21:1"), ("Café".encode(), b"192.168.0.21:2")]
+        out, _ = ndi.clean_sources(rows)
+        self.assertEqual([x["name"] for x in out], ["Café", "RESOLUME (Output)"])         # one row each, not two that look the same
+        self.assertEqual(ndi.clean_name(ndi.clean_name("Café  x y")), ndi.clean_name("Café  x y"))    # and doing it twice changes nothing
+
+    def test_names_made_to_mislead_are_dropped(self):
+        for bad in ("a" + "́" * 5, "x̀́̂", " cam", "cam ", "　", "a" * 127 + "   ",
+                    "é" * 200 + "x" * 100, "a" * 600):
+            self.assertIsNone(ndi.clean_name(bad) if len(ndi.clean_name(bad) or "") > ndi.MAX_NAME or bad[-1:].isspace() or bad[:1].isspace()
+                              or "́́" in bad or "̀́̂" in bad or len(bad) > 512 else None, repr(bad[:12]))
+        self.assertIsNone(ndi.clean_name("a" + "́" * 5))
+        self.assertIsNone(ndi.clean_name("x̀́̂"))
+        self.assertIsNone(ndi.clean_name(" cam"))
+        self.assertIsNone(ndi.clean_name("cam "))
+        self.assertIsNone(ndi.clean_name("a" * 600))
+        self.assertIsNotNone(ndi.clean_name("x̣́"))                                 # two marks on a letter is ordinary (Vietnamese)
+        self.assertEqual(len(ndi.clean_name("é" * 128)), 128)                           # 256 written, 128 letters
+
+    def test_words_from_the_helper_are_scrubbed_and_then_cut(self):
+        self.assertEqual(ndi._text("the source\n\x1b[31m sent‮ a frame​  that"), "the source[31m sent a frame that")
+        self.assertEqual(ndi._text("‮" * 300 + "x" * 300), "x" * 200)                    # scrubbed first: the cut cannot hide what follows
+        self.assertEqual(ndi._text(None), "")
+        self.assertEqual(ndi._text(5), "")
+        self.assertEqual(ndi._text("v" * 500, 80), "v" * 80)
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        s = ndi.Service(d, "x", loader=lambda path: FakeLib(), problem=lambda path: None, log=lambda *_: None)
+        client = FakeClient(s)
+        rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
+        client.answer = {"ok": True, "configured": True, "on": True, "addresses": [],
+                         "runtime": {"present": True, "loaded": True, "version": "6.3‮.2\n", "problem": "bad\x07⁦ thing"},
+                         "sources": [], "playing": {"id": rid, "name": "x", "state": "playing", "message": "line\r\none‮two"}}
+        i = ndi.Input(client, s.fifo, lambda: (True, []), log=lambda *_: None)
+        i.current = {"id": rid, "name": "x"}
+        st = i.status()
+        self.assertEqual((st["runtime"]["version"], st["runtime"]["problem"], st["playing"]["message"]), ("6.3.2", "bad thing", "lineonetwo"))
+
+
 if __name__ == "__main__":
     unittest.main()
