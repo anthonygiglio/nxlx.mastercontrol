@@ -673,13 +673,16 @@ class Player:
 
     def swap_source(self, shader, epoch):
         """Exchange the shader source for another file, or None for the bare carrier (black), only while `epoch` is
-        still current. True if it was done."""
+        still current. True if it was done. The buffers' format is set only when a source comes or goes (the bare
+        carrier, a player that was restarted), never for another text of a source that stays: setting it makes mpv
+        set its renderer up anew, and a generator's text is exchanged at every change of a value."""
         with self._lock:
             if epoch != self.source_epoch:
                 return False
-            self._source = shader
+            had, self._source = self._source, shader
             self._push_shaders()
-            self._apply_fbo()
+            if (had is None) != (self._source is None):
+                self._apply_fbo()
             return True
 
     def flip(self, horizontal, on):
