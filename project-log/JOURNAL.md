@@ -4,6 +4,30 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08, the evening: more from the Pi, the repeat taken out, live sources at speed 1, and CI's mpv on the sound
+
+Branch `ndi-input`, draft pull request #94, still a draft. The Pi's figures are the coordinator's, from the build deployed in the afternoon (master merged into `ae4d690`: **without** the repeat of a frame, without sound, without the speed fix). Nothing built today after that has been on the box. Nobody has heard the sound.
+
+**From the Pi (2026-10-08, evening).**
+1. **The still source is on the screen without any repeat.** With "FIRESPRAY-31.LOCAL (Test Patterns)" playing (helper state "still", counts received 1 shown 2 at that time, mpv path the FIFO, estimated-frame-number 0, core-idle true, time-pos 0, no shaders, no overlay, the box's own test pattern not playing), a USB camera the owner pointed at the monitor (a Logitech Brio on the Pi, one frame grabbed with v4l2-ctl by the coordinator) shows the NDI test pattern, a white grid with circles on black. `GET /api/preview.jpg` still answers 503 "mpv: error running command" while the still picture is visibly on the screen.
+2. The owner saw the moving Scan Converter picture on the monitor himself: "The pi looked good."
+3. **A sender that changes size works.** Between 19:18 and 19:27 the Scan Converter changed size twelve times (for example 1764x992, 1528x860, 1506x848, 970x546, 844x474 and back), each logged by the helper as "is W x H at 30.0", no error, NRestarts 0, playback carried on. N8's first half, once.
+4. **Five clean minutes**, Scan Converter 1764x992, speed 1, no effect: helper received 6228, shown 6201, dropped 28, dropped_by_runtime 0; mpv frame-drop-count rose from 1 to 8, decoder drops 0, estimated-vf-fps 30.0, time-pos 207 s after about 305 s of wall time (frames arrived at about 20.4 a second on average though the sender says 30; the Pi showed nearly all it got, so the shortfall is before the Pi: the Mac's Wi-Fi or the capture). CPU by top: mpv 93 percent of one core, helper 52; load 2.4; 50 to 52 C; helper RSS 108 MB, mpv 409 MB, both flat over the run (the helper had been 50 MB an hour earlier, before many source changes: to be watched, N14).
+5. **A fault:** playback speed applied to NDI. With the Mix speed left at 1.86 and the effect fx-kaleido on, five minutes gave helper received 7321, shown 7240, dropped 82, and mpv frame-drop-count rose by about 4800; mpv 150 percent CPU, helper 87, load 3.85. The effect on top of 1764x992 NDI is a legitimate load and belongs in the measurements, not a fault.
+6. The source list also showed "FIRESPRAY-31.LOCAL (macOS AV Output)": the owner's audio sender.
+
+**What was done about it.**
+- **The repeat is out** (`REPEAT_AFTER`, the count `repeated`, its tests and its words), as D62 promised for the case that the picture is on the screen without it. It never ran on a box. Test: `ReceiverTest.test_a_still_picture_is_written_once_and_never_again`; with sound, `ReceiverSoundTest.test_a_still_picture_with_sound_is_one_frame_and_the_sound_goes_on`.
+- **The snapshot's words** no longer suggest that the picture may be missing: "no snapshot of this NDI source could be made (the player could not copy its picture, which happens with a still source); the picture on the screen is not affected". Still a 409. N12 lists what to try on the box to find why mpv refuses.
+- **A live source plays at speed 1.** NDI, the capture input and streams (the last two had the same fault, unnoticed): `_started_playing` sets the player to 1 for a live source and gives the Mix speed back at the next clip; a speed set meanwhile is stored and not applied; the status says `speed_held` and the Mix screen says so beside the slider. Tests: `LiveSpeedTest` (five).
+- **About item 4's clock:** with bare frames mpv counts frames, so its time fell 98 seconds behind in five minutes. The stream that carries sound has a real time on every frame, so there the picture stays on the wall clock and with its sound; that is one more reason for the design chosen in the morning.
+
+**CI on the first push of the sound work (`79e5ed6`).** 26 of the 28 checks had finished when this was written and all 26 passed, the unit tests on Python 3.9 and 3.12 among them, and in them the two tests that run the real mpv (0.37 on the runner) ran and passed at the first try: mpv read the helper's Matroska from a pipe, decoded a 64 x 16 picture whose colour was the red that was sent, and wrote out 48 kHz stereo sound of the right length with the tone at -20 dBFS; and it played the bare frames of a source without sound as before. The browser test, with its new step for the sound switch, passed. That is a reader on a Linux runner with no display and no sound device: it is not the Pi's mpv 0.40 and nothing was heard.
+
+**The dev Mac's disk filled up** during this session (118 MB left of 460 GB): the system's temporary folder held 17 GB in more than 110000 folders, left behind by test runs over time, this session's nine full runs among them. With no space no command could run. 1332 stale copies of the source tree made by the installer tests (older than half an hour) were removed, which gave 4.5 GB; the rest was left alone. LESSONS has it. **The owner should know: the temporary folder still holds about 12 GB of old test folders.**
+
+**Not verified.** The speed fix, the new snapshot words and the removal of the repeat on the box. Everything about sound that needs ears.
+
 ## 2026-10-08, NDI sound (built, measured on the dev Mac, never heard)
 
 Branch `ndi-input`, draft pull request #94, still a draft; master (#101) merged in first. **Nobody has heard any of this.** Nothing here ran on the Pi.
