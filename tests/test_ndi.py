@@ -131,7 +131,7 @@ class AddressTest(unittest.TestCase):
 class FrameTest(unittest.TestCase):
     def test_a_good_frame_gives_its_size_rate_and_stride(self):
         self.assertEqual(ndi.check_frame(frame(1920, 1080)), ((1920, 1080, 29.97), 3840))
-        self.assertEqual(ndi.check_frame(frame(1280, 720, stride=2560 + 64, fps=(60, 1), fields=0)), ((1280, 720, 60.0), 2624))
+        self.assertEqual(ndi.check_frame(frame(1280, 720, stride=2560 + 64, fps=(60, 1), fields=1)), ((1280, 720, 60.0), 2624))
         self.assertEqual(ndi.check_frame(frame(64, 16, fourcc=ndi.FOURCC_UYVA))[0], (64, 16, 29.97))
 
     def test_hostile_numbers_are_refused_before_anything_is_read(self):
@@ -1089,6 +1089,47 @@ class HelperCannotHoldThePanelTest(unittest.TestCase):
         self.assertEqual(i.sync(), {"ok": False})
         src = inspect.getsource(server.build)
         self.assertRegex(src, r"try:[^\n]*\n\s+api\.ndi\.sync\(\)\n\s+except Exception")
+
+
+class InterlacedTest(unittest.TestCase):
+    """Review finding 2: a frame of two woven fields was let through and would have shown combed."""
+
+    def test_only_a_progressive_frame_is_shown_and_each_interlaced_kind_is_refused_in_the_same_words(self):
+        self.assertEqual((ndi.PROGRESSIVE, ndi.INTERLACED), (1, (0, 2, 3)))
+        self.assertEqual(ndi.check_frame(frame(64, 16, fields=1))[0], (64, 16, 29.97))
+        said = set()
+        for value in (0, 2, 3):
+            f = frame(64, 16, fields=value)
+            with self.assertRaises(ndi.NdiError, msg=value) as e:
+                ndi.check_frame(f)
+            said.add(str(e.exception))
+            self.assertEqual(f.token, [], value)                         # refused before its memory is read
+        self.assertEqual(said, {"the source sends interlaced video, which this input does not show; set the sender to progressive"})
+        for value in (4, -1, 100, 0x7fffffff):
+            with self.assertRaises(ndi.NdiError) as e:
+                ndi.check_frame(frame(64, 16, fields=value))
+            self.assertNotIn("interlaced", str(e.exception))
+
+    def test_a_woven_frame_ends_the_receiver_with_that_reason(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        lib = FakeLib()
+        s = ndi.Service(d, "x", loader=lambda path: lib, problem=lambda path: None, log=lambda *_: None, first_frame=0.3)
+        self.addCleanup(s.close)
+        s.handle({"cmd": "configure", "on": True, "addresses": []})
+        lib.frames.put(frame(1920, 1080, fields=0))
+        reply = s.handle({"cmd": "open", "id": s.handle({"cmd": "status"})["sources"][0]["id"]})
+        self.assertEqual(reply["ok"], False)
+        self.assertIn("interlaced video", reply["error"])
+
+    def test_what_the_library_is_asked_for_is_fastest_full_bandwidth_with_fields_allowed(self):
+        spec, keep = ndi.CtypesLibrary.recv_spec((b"RESOLUME (Output)", b"192.168.0.20:5961"))
+        self.assertEqual((spec.color, spec.bandwidth, spec.fields), (100, 100, True))
+        self.assertIs(ndi.ALLOW_FIELDS, True)                            # "fastest" implies it; a False here would be a lie
+        self.assertEqual(ctypes.string_at(spec.source.name), b"RESOLUME (Output)")
+        self.assertEqual(ctypes.string_at(spec.source.url), b"192.168.0.20:5961")
+        self.assertEqual(spec.name, b"nxlx.mastercontrol")
+        self.assertEqual(len(keep), 3)                                   # the strings outlive the call that made them
 
 
 if __name__ == "__main__":

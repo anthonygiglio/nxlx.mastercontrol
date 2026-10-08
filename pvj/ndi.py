@@ -49,6 +49,7 @@ MIN_SIDE, MAX_WIDTH, MAX_HEIGHT = 16, 3840, 2160
 MAX_STRIDE_PAD = 256                      # a line may be padded; never by more than this
 FOURCC_UYVY = 0x59565955                  # "UYVY", read as a little-endian number
 FOURCC_UYVA = 0x41565955                  # "UYVA": a UYVY plane and then an alpha plane, which is never read
+PROGRESSIVE, INTERLACED = 1, (0, 2, 3)      # the frame format values: 0 two fields in one frame, 2 and 3 single fields
 FIRST_FRAME_SECONDS = 6.0
 PIPE_OPEN_SECONDS = 10.0
 QUIET_SECONDS = 2.0                       # no frame for this long: "waiting for the source"
@@ -164,9 +165,12 @@ def check_frame(f):
     w, h, stride, fourcc, fields = f.width, f.height, f.stride, f.fourcc, f.fields
     if any(isinstance(v, bool) or not isinstance(v, int) for v in (w, h, stride, fourcc, fields)):
         raise NdiError("the source sent a frame that could not be read")
-    if fields in (2, 3):
-        raise NdiError("the source sends interlaced fields, which this input does not show; set the sender to progressive")
-    if fields not in (0, 1):
+    # 1 is a progressive frame. 0 is a frame of two fields woven together, 2 and 3 are single fields: all three are
+    # interlaced video, and all three are refused alike. The library is asked for its "fastest" format, in which
+    # (its documentation says) fields are always allowed, so it never de-interlaces for us; see pvj/NDI.md.
+    if fields in INTERLACED:
+        raise NdiError("the source sends interlaced video, which this input does not show; set the sender to progressive")
+    if fields != PROGRESSIVE:
         raise NdiError("the source sent a frame that could not be read")
     if fourcc not in (FOURCC_UYVY, FOURCC_UYVA):
         raise NdiError("the source sends a picture format this input does not read (%s)" % _fourcc_text(fourcc))
@@ -227,6 +231,7 @@ class _Perf(ctypes.Structure):
 
 
 COLOR_FASTEST, BANDWIDTH_HIGHEST = 100, 100
+ALLOW_FIELDS = True                       # what "fastest" implies whatever is asked; said outright, and pinned by a test
 FRAME_VIDEO, FRAME_ERROR = 1, 4
 _CSTR_MAX = 512
 
@@ -366,13 +371,20 @@ class CtypesLibrary:
 
     def recv_open(self, raw):
         """`raw` is the (name, address) pair the library itself gave for a source that passed clean_sources."""
-        keep = [ctypes.create_string_buffer(raw[0]), ctypes.create_string_buffer(raw[1]), ctypes.create_string_buffer(b"nxlx.mastercontrol")]
-        spec = _RecvCreate(_Source(ctypes.addressof(keep[0]), ctypes.addressof(keep[1])), COLOR_FASTEST, BANDWIDTH_HIGHEST, True,
-                           ctypes.cast(keep[2], ctypes.c_char_p))
+        spec, keep = self.recv_spec(raw)
         handle = self.lib.NDIlib_recv_create_v3(ctypes.byref(spec))
         if not handle:
             raise NdiError("the NDI runtime could not open the source")
         return (handle, keep)
+
+    @staticmethod
+    def recv_spec(raw):
+        """(what the library is asked for when a source is opened, the strings it points at). No library needed,
+        so a test can read it: the fastest format, full bandwidth, fields allowed."""
+        keep = [ctypes.create_string_buffer(raw[0]), ctypes.create_string_buffer(raw[1]), ctypes.create_string_buffer(b"nxlx.mastercontrol")]
+        spec = _RecvCreate(_Source(ctypes.addressof(keep[0]), ctypes.addressof(keep[1])), COLOR_FASTEST, BANDWIDTH_HIGHEST, ALLOW_FIELDS,
+                           ctypes.cast(keep[2], ctypes.c_char_p))
+        return spec, keep
 
     def recv_capture(self, handle, timeout_ms):
         """None when nothing came in time; a Frame of kind "video" (to be given back with recv_free), or "lost"."""
