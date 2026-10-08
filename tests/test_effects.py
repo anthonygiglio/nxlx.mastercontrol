@@ -2103,6 +2103,45 @@ class RolesTest(Base):
         for body, status in (({"id": "../../etc/passwd"}, 400), ({"id": "nope.fs"}, 404), ({"id": "fx-wash.fs", "values": {"strength": "a lot"}}, 422), ({}, 400)):
             self.assertEqual(self.call("POST", "/api/effects", body, token=live)[0], status, body)
 
+    def test_with_nothing_playing_a_panel_is_told_so_and_a_controller_still_asks_the_player_nothing(self):
+        """Next, Previous, the one button and a preset of another effect answered "ok" with nothing playing and then
+        came to nothing. That was the price of a controller's calls never asking the player. A panel's request may
+        ask: it gets the 409 and the reason that putting an effect on always gave. A controller's does not."""
+        full, _ = self.pair()
+        self.fx.put("fx-wash.fs")
+        self.fx.preset_save("One")
+        self.fx.off()
+        self.player.clear()
+        wishes = (("/api/effects/step", {"dir": 1}), ("/api/effects/step", {"dir": -1}), ("/api/effects", {"toggle": True}),
+                  ("/api/effects/preset", {"id": "fx-wash.fs", "name": "One"}))
+        for path, body in wishes:
+            st, answer, _ = self.call("POST", path, body, token=full)
+            self.assertEqual((st, E.NO_PICTURE in answer.get("error", "")), (409, True), (path, answer))
+            self.assertFalse(self.fx.changer.pump(), path)                             # and nothing was noted for the worker
+        self.assertEqual((self.fx.error, self.mpv.loaded), (None, []))
+        for device in (M.MIDI_DEVICE, {"id": "osc", "name": "OSC", "role": "live"}, {"id": "dmx", "name": "DMX", "role": "live"},
+                       {"id": "room", "name": "Room", "role": "live"}):
+            for path, body in wishes:
+                asked = len(self.mpv.commands)
+                self.assertEqual(self.api.handle("POST", path, body, device, "t")[0], 200, (device["id"], path))
+                self.assertEqual(self.mpv.commands[asked:], [], (device["id"], path))  # answered from memory, as before
+            self.fx.off()
+        self.assertEqual(self.api.handle("POST", "/api/effects/step", {"dir": 1}, M.MIDI_DEVICE, "midi")[0], 200)
+        self.pump()                                                                    # the worker finds out and says why
+        self.assertIn(E.NO_PICTURE, self.state()["error"]["message"])
+        self.assertEqual(self.mpv.loaded, [])
+        # with a picture a panel's wishes are noted as they were, and Off from the one button never asks
+        self.player.play(["/media/a.mp4"])
+        st, answer, _ = self.call("POST", "/api/effects/step", {"dir": 1}, token=full)
+        self.assertEqual((st, answer["ok"]), (200, True))
+        self.pump()
+        self.assertEqual(self.state()["on"]["id"], answer["id"])
+        self.player.clear()                                                            # Stop takes it off in the player; this
+        self.fx._intent = True                                                         # process has not looked yet
+        asked = len(self.mpv.commands)
+        self.assertEqual(self.call("POST", "/api/effects", {"toggle": True}, token=full)[1], {"ok": True, "on": False})
+        self.assertEqual([c for c in self.mpv.commands[asked:] if c[:2] == ("get_property", "video-params")], [])
+
     def test_the_module_is_refused_while_off(self):
         full, _ = self.pair()
         self.api.registry.set_enabled("shaders", False)

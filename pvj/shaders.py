@@ -600,7 +600,13 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
              "#define vv_FragNormCoord pvj_norm",
              "PVJ_HP float pvj_time;", "vec2 pvj_norm;", "vec4 pvj_coord;", "vec4 pvj_color;"]
     lines += input_lines(parsed, values)
-    lines += ["#line %d" % parsed["line"], parsed["code"], "",
+    # The file's own line numbers, for what the compiler says. "#line n" makes the next line n on OpenGL ES and from
+    # GLSL 3.30 on. Before that it makes it n + 1 (the GLSL 1.40 specification, 3.3: "as if it is compiling at line
+    # number line+1"; 3.30 says "line number line"), and GLSL 1.40 is what mpv makes on a Raspberry Pi 4, where a
+    # refused generator named a line one too high. The same lines as in an effect's text (effects._block).
+    lines += ["#if defined(GL_ES) || __VERSION__ >= 330", "#define PVJ_LINE %d" % parsed["line"], "#else",
+              "#define PVJ_LINE %d" % max(0, parsed["line"] - 1), "#endif",
+              "#line PVJ_LINE", parsed["code"], "",
               "vec4 hook() {"]
     if anchor is None:
         # frame = hi * 512 + lo, in whole numbers small enough for 16 bits; hi starts again after 8192 (38.8 hours)

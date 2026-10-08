@@ -94,7 +94,13 @@ class TranslatorTest(unittest.TestCase):
         p = S.parse(text)
         self.assertEqual(text.splitlines()[p["line"] - 1], "}*/")           # the code starts on the line the header ends on
         self.assertEqual(text.splitlines()[p["line"]], "// a comment")
-        self.assertIn("#line %d\n" % p["line"], S.translate(p, (640, 360)))
+        # "#line n" names the next line n on OpenGL ES and from GLSL 3.30 on, and n + 1 before that (the
+        # specifications of 1.40 and 3.30, section 3.3; GLSL 1.40 is a Raspberry Pi 4's): the number is picked by
+        # the language, and the file's code follows it at once
+        out = S.translate(p, (640, 360))
+        self.assertIn("#if defined(GL_ES) || __VERSION__ >= 330\n#define PVJ_LINE %d\n#else\n#define PVJ_LINE %d\n#endif\n#line PVJ_LINE\n%s"
+                      % (p["line"], p["line"] - 1, p["code"]), out)
+        self.assertEqual(out.count("#line"), 1)
 
     def test_slider_values_are_kept_inside_min_and_max_and_only_known_numbers_are_taken(self):
         p = S.parse(isf())
