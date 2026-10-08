@@ -83,6 +83,7 @@ WEB_UNIT="$ROOT/etc/systemd/system/pvj-web.service"
 NET_UNIT="$ROOT/etc/systemd/system/pvj-netd.service"
 SYS_UNIT="$ROOT/etc/systemd/system/pvj-sysd.service"
 SUP_UNIT="$ROOT/etc/systemd/system/pvj-supportd.service"
+NDI_UNIT="$ROOT/etc/systemd/system/pvj-ndi.service"
 JOURNAL_CONF="$ROOT/etc/systemd/journald.conf.d/50-pvj-persistent-log.conf"
 UPD_USB_UNIT="$ROOT/etc/systemd/system/pvj-update-usb@.service"
 UPD_INBOX_UNIT="$ROOT/etc/systemd/system/pvj-update-inbox@.service"
@@ -99,6 +100,11 @@ uninstall() {
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 		systemctl disable --now pvj-player.service 2>/dev/null || true
 	fi
+	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
+		systemctl disable --now pvj-ndi.service 2>/dev/null || true
+	fi
+	# The owner's copy of the NDI runtime in /opt/pvj-ndi is theirs and is left where it is.
+	run rm -f "$NDI_UNIT" "$BIN_LINKS/pvj-ndi-runtime"
 	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
 	run rm -rf "${ROOT}${PREFIX:?}"
@@ -142,6 +148,20 @@ if [ ${#optional[@]} -gt 0 ]; then
 	fi
 fi
 
+# Optional: the NDI input finds senders through avahi-daemon, and the NDI runtime (which the owner supplies, see
+# pvj/NDI.md; it is never fetched here) needs the avahi client library to load at all.
+ndi_needs=()
+[ -x /usr/sbin/avahi-daemon ] || ndi_needs+=(avahi-daemon)
+ls /usr/lib/*/libavahi-client.so.3 /usr/lib/libavahi-client.so.3 >/dev/null 2>&1 || ndi_needs+=(libavahi-client3)
+if [ ${#ndi_needs[@]} -gt 0 ]; then
+	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
+		log "the NDI input will be unavailable until these are installed: ${ndi_needs[*]}"
+	else
+		log "installing ${ndi_needs[*]} (for the NDI input)"
+		run apt-get install -y --no-install-recommends "${ndi_needs[@]}" || log "could not install ${ndi_needs[*]}; the NDI input stays unavailable"
+	fi
+fi
+
 # --- accounts -----------------------------------------------------------
 if [ -z "$PVJ_USER" ] && [ -f "$ETC/install.json" ]; then
 	PVJ_USER="$(sed -n 's/.*"user": "\([a-z_][a-z0-9_-]*\)".*/\1/p' "$ETC/install.json" | head -n 1)"
@@ -177,6 +197,14 @@ if [ "$REAL" = 1 ]; then
 		log "creating system user pvj-web"
 		run useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj pvj-web
 	fi
+	# The NDI helper loads a closed-source library that reads the network: an account and a group of its own, and
+	# never group pvj (D61). The group must exist before the player and the panel start: their units name it as an
+	# extra group, and systemd refuses to start a unit that names a group the system does not have.
+	getent group pvj-ndi >/dev/null || run groupadd --system pvj-ndi
+	if ! id pvj-ndi >/dev/null 2>&1; then
+		log "creating system user pvj-ndi"
+		run useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj-ndi pvj-ndi
+	fi
 fi
 
 # --- program files: releases/<version>, "current" points at the active one --
@@ -211,6 +239,7 @@ run ln -sfn "$PREFIX/current/bin/pvj-usb" "$BIN_LINKS/pvj-usb"
 run ln -sfn "$PREFIX/current/bin/pvj-rootfs" "$BIN_LINKS/pvj-rootfs"
 run ln -sfn "$PREFIX/current/bin/pvj-pin" "$BIN_LINKS/pvj-pin"
 run ln -sfn "$PREFIX/current/bin/pvj-update" "$BIN_LINKS/pvj-update"
+run ln -sfn "$PREFIX/current/bin/pvj-ndi-runtime" "$BIN_LINKS/pvj-ndi-runtime"
 
 # --- settings and media (never overwritten if they exist) -----------------
 run mkdir -p "$ETC"
@@ -263,6 +292,7 @@ if [ "$DRY" = 0 ]; then
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-netd.service" > "$NET_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sysd.service" > "$SYS_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-supportd.service" > "$SUP_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-ndi.service" > "$NDI_UNIT"
 	# Updates from the panel: started on request by pvj-sysd, never enabled.
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-usb@.service" > "$UPD_USB_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-inbox@.service" > "$UPD_INBOX_UNIT"
@@ -386,6 +416,10 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	else
 		log "NetworkManager not found: network settings in the panel stay unavailable"
 	fi
+	# The NDI helper is idle until the panel says its module is on, and says what is missing when the runtime is not
+	# there. Like the network helper it moves to the new program even with --no-start; try-restart starts nothing.
+	systemctl enable pvj-ndi.service
+	if [ "$START" = 1 ]; then systemctl restart pvj-ndi.service; else systemctl try-restart pvj-ndi.service || true; fi
 	# With --no-start: what was stopped above for the runtime folder is started again, and nothing else.
 	if [ "$START" = 0 ] && [ ${#RUN_WAS_ACTIVE[@]} -gt 0 ]; then systemctl start "${RUN_WAS_ACTIVE[@]}" || true; fi
 fi

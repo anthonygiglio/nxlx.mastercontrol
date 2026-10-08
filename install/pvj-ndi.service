@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=nxlx.mastercontrol NDI input helper (unprivileged, loads the owner's copy of the NDI runtime)
+# The NDI runtime finds senders through avahi-daemon. Without it the helper still runs and says what is missing.
+After=network.target avahi-daemon.service
+Wants=avahi-daemon.service
+StartLimitIntervalSec=0
+
+[Service]
+# This is the one process that loads the NDI runtime: closed-source code that reads packets from the network. So it
+# has an account and a group of its own (D61). It is NOT in group "pvj": that group reaches the player's control
+# socket (which can run programs), the PIN and the settings. The panel and the player are each given the extra
+# group "pvj-ndi" instead, which lets them into this folder: the panel to ask (the helper answers only the panel's
+# account), the player to read the picture from the pipe.
+User=pvj-ndi
+Group=pvj-ndi
+UMask=0027
+RuntimeDirectory=pvj-ndi
+RuntimeDirectoryMode=0750
+Environment=PVJ_NDI_DIR=/run/pvj-ndi
+# The runtime keeps its settings under $HOME/.ndi unless told otherwise. It is told a folder that is root's and
+# read-only here (where root also puts the library), and its home is its own runtime folder, so it has nowhere
+# to leave anything that outlasts a restart.
+Environment=HOME=/run/pvj-ndi
+Environment=NDI_CONFIG_DIR=/opt/pvj-ndi
+ExecStart=@PVJ_DIR@/bin/pvj-ndi
+Restart=always
+RestartSec=2
+
+# Sandbox. NOT YET RUN ON A DEVICE with the real runtime: every line is to be checked there (tools/DEVICE-TESTING.md,
+# "NDI input"), because a line that is wrong empties the list of sources without an error.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/run/pvj-ndi
+InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# AF_UNIX: the panel's socket and the system D-Bus socket (the way to avahi-daemon). AF_NETLINK: the list of the
+# box's own network interfaces, which a network library asks for (see LESSONS on the Network card).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# The runtime may talk to private and link-local addresses and to multicast (mDNS), and to nothing else: not the
+# internet, whatever a sender or the runtime itself asks for. Addresses added in the panel are held to the same ranges.
+IPAddressDeny=any
+IPAddressAllow=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# Not set, on purpose, until tried on a device: MemoryDenyWriteExecute (ctypes and an unknown library),
+# SystemCallFilter, and ProcSubset=pid (the runtime may read /proc/cpuinfo to choose its code).
+
+[Install]
+WantedBy=multi-user.target

@@ -14,7 +14,8 @@ StartLimitIntervalSec=0
 # sound card, and @PVJ_DIR@ with the install directory.
 User=@PVJ_USER@
 Group=pvj
-SupplementaryGroups=video render audio input
+# pvj-ndi: to read the picture from the NDI helper's pipe (D61); the helper itself is not in group pvj
+SupplementaryGroups=video render audio input pvj-ndi
 # Its own folder for the control socket and the preview picture: only this account can create, replace or remove
 # anything in it; group "pvj" (the panel) can reach the socket. No other unit may name this folder: systemd gives
 # a RuntimeDirectory to the unit that starts, so a shared one ends up owned by whoever started last (D45).

@@ -217,7 +217,10 @@ class RuntimeFolderTest(unittest.TestCase):
             self.assertEqual(folders[d], {owner}, d)
             self.assertEqual(self.units[owner[0]]["Group"], ["pvj"], d)      # the panel reaches each through group pvj
         self.assertEqual({user for _u, user, _m, _k in folders["pvj-update"]}, {"root"})
-        self.assertEqual(set(folders), set(want) | {"pvj-update"})
+        # the NDI helper's folder is the one that is NOT reached through group pvj (D61)
+        self.assertEqual(folders["pvj-ndi"], {("pvj-ndi.service", "pvj-ndi", "0750", "no")})
+        self.assertEqual("/run/pvj-ndi", p.NDI_DIR)
+        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi"})
         self.assertEqual(["/run/" + d for d in want], [p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR])
         self.assertEqual("/run/pvj-update", p.UPDATE_DIR)
 
@@ -337,7 +340,7 @@ class RuntimeFolderTest(unittest.TestCase):
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
                  p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
-                 p.RUN + "/<name>"}
+                 p.RUN + "/<name>", p.NDI_DIR}
         files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*"))
         seen = set()
         for path in files:
@@ -440,7 +443,7 @@ class WebUnitLightsTest(unittest.TestCase):
 
     def test_nothing_else_in_the_sandbox_widened(self):
         web = load_units()["pvj-web.service"]
-        self.assertEqual((web["User"], web["Group"], words(web, "SupplementaryGroups")), (["pvj-web"], ["pvj"], ["audio", "video"]))
+        self.assertEqual((web["User"], web["Group"], words(web, "SupplementaryGroups")), (["pvj-web"], ["pvj"], ["audio", "video", "pvj-ndi"]))
         self.assertEqual(web["CapabilityBoundingSet"], ["CAP_NET_BIND_SERVICE"])
         self.assertEqual(web["AmbientCapabilities"], ["CAP_NET_BIND_SERVICE"])
         self.assertEqual(sorted(words(web, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
@@ -529,3 +532,94 @@ class NetdUnitTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NdiUnitTest(unittest.TestCase):
+    """D61: the one process that loads a closed-source library reading the network. Every line of its sandbox is
+    pinned, and so is what it must never be given. None of it has run on a device with the real library."""
+
+    def setUp(self):
+        self.units = load_units()
+        self.ndi = self.units["pvj-ndi.service"]
+        with open(os.path.join(REPO, "install", "install.sh")) as f:
+            self.sh = f.read()
+
+    def test_its_own_account_and_group_and_never_the_groups_that_reach_the_player_the_screen_or_sound(self):
+        self.assertEqual((self.ndi["User"], self.ndi["Group"]), (["pvj-ndi"], ["pvj-ndi"]))
+        self.assertNotIn("SupplementaryGroups", self.ndi)
+        self.assertIn("useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj-ndi pvj-ndi", self.sh)
+        for line in self.sh.splitlines():                  # the installer never puts the account into another group
+            if "usermod" in line:
+                self.assertNotIn("pvj-ndi", line, line)
+        # no other unit runs as this account or in this group as its main group
+        for name, keys in self.units.items():
+            if name != "pvj-ndi.service":
+                self.assertNotEqual(keys.get("User"), ["pvj-ndi"], name)
+                self.assertNotEqual(keys.get("Group"), ["pvj-ndi"], name)
+
+    def test_only_the_panel_and_the_player_are_let_into_its_folder(self):
+        got = sorted(n for n, k in self.units.items() if "pvj-ndi" in words(k, "SupplementaryGroups"))
+        self.assertEqual(got, ["pvj-player.service", "pvj-web.service"])
+        self.assertEqual((self.ndi["RuntimeDirectory"], self.ndi["RuntimeDirectoryMode"], self.ndi["UMask"]), (["pvj-ndi"], ["0750"], ["0027"]))
+        from pvj import paths
+        env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
+        web = dict(w.split("=", 1) for w in words(self.units["pvj-web.service"], "Environment"))
+        self.assertEqual(env["PVJ_NDI_DIR"], paths.NDI_DIR)
+        self.assertEqual(paths.ndi_socket(web), paths.ndi_socket(env))
+        self.assertEqual(paths.ndi_fifo(web), paths.NDI_DIR + "/" + paths.NDI_FIFO)
+
+    def test_the_group_exists_before_any_unit_that_names_it_is_written_or_started(self):
+        # systemd refuses to start a unit whose extra group does not exist: the player would stay down
+        make = self.sh.index("groupadd --system pvj-ndi")
+        self.assertLess(make, self.sh.index('"$SRC/install/pvj-player.service" > "$UNIT"'))
+        self.assertLess(make, self.sh.index("systemctl restart pvj-player.service"))
+
+    def test_the_sandbox_is_exactly_this(self):
+        n = self.ndi
+        self.assertEqual(n["CapabilityBoundingSet"], [""])
+        self.assertNotIn("AmbientCapabilities", n)
+        for key, value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"), ("ProtectHome", "yes"), ("PrivateTmp", "yes"),
+                           ("PrivateDevices", "yes"), ("ProtectKernelTunables", "yes"), ("ProtectKernelModules", "yes"),
+                           ("ProtectKernelLogs", "yes"), ("ProtectControlGroups", "yes"), ("ProtectClock", "yes"), ("ProtectHostname", "yes"),
+                           ("RestrictNamespaces", "yes"), ("RestrictRealtime", "yes"), ("RestrictSUIDSGID", "yes"),
+                           ("LockPersonality", "yes"), ("SystemCallArchitectures", "native")):
+            self.assertEqual(n[key], [value], key)
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi"])
+        self.assertEqual(sorted(words(n, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
+        self.assertEqual(words(n, "InaccessiblePaths"), ["-/var/lib/pvj", "-/etc/pvj", "-/run/pvj"])
+        for key in ("DeviceAllow", "BindPaths", "StateDirectory", "ExecStartPre", "ExecStartPost", "EnvironmentFile"):
+            self.assertNotIn(key, n, key)
+
+    def test_the_library_cannot_reach_the_internet_and_the_panel_takes_only_addresses_the_unit_allows(self):
+        import ipaddress
+        from pvj import ndi
+        self.assertEqual(self.ndi["IPAddressDeny"], ["any"])
+        allow = words(self.ndi, "IPAddressAllow")
+        self.assertEqual(allow, ["localhost", "link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"])
+        nets = {ipaddress.ip_network(a) for a in allow if "/" in a} | {ipaddress.ip_network("169.254.0.0/16")}      # link-local
+        self.assertEqual(set(ndi.PRIVATE_NETS), nets)
+
+    def test_the_library_is_given_nowhere_to_write_that_lasts_and_comes_from_a_folder_that_is_roots(self):
+        from pvj import ndi
+        env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
+        self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/run/pvj-ndi", ndi.LIB_DIR))
+        self.assertFalse(ndi.LIB_DIR.startswith(("/usr/lib", "/lib", "/usr/local/lib", "/var", "/run", "/tmp")))   # not the system path, not writable state
+        self.assertNotIn("libndi", self.sh)                # the installer never fetches or copies the runtime
+        self.assertNotRegex(self.sh, r"ndi\.(video|tv)|downloads\.ndi")
+
+    def test_installer_and_image_enable_it_and_uninstall_removes_it(self):
+        self.assertIn("systemctl enable pvj-ndi.service", self.sh)
+        self.assertIn("systemctl try-restart pvj-ndi.service", self.sh)
+        self.assertIn('"$SRC/install/pvj-ndi.service" > "$NDI_UNIT"', self.sh)
+        self.assertIn('run rm -f "$NDI_UNIT" "$BIN_LINKS/pvj-ndi-runtime"', self.sh)
+        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
+            self.assertIn("pvj-ndi.service", f.read())
+        for name in ("pvj-ndi", "pvj-ndi-runtime"):
+            self.assertTrue(os.access(os.path.join(REPO, "bin", name), os.X_OK), name)
+
+    def test_no_ndi_file_is_in_the_repository(self):
+        for root, _dirs, files in os.walk(REPO):
+            if os.sep + "." in root[len(REPO):]:
+                continue
+            for n in files:
+                self.assertNotRegex(n, r"(?i)libndi|Processing\.NDI|\.so(\.[0-9]+)*$", os.path.join(root, n))
