@@ -57,7 +57,9 @@ CONTROLLER_LABELS = {"join": "One-time presenter code", "owner": "One-time full 
 NOTICE_SECONDS = 8            # a line that says why no code came (too many this hour) stays this long
 NOTICES = {"limit": "No more codes from a controller for now. Try again in %d minutes.",
            "owner off": "Full access codes from a controller are switched off on this box.",
-           "full": "Too many devices are paired with this box. No code was made."}
+           "full": "Too many devices are paired with this box. No code was made.",
+           "locked": "Pairing is locked for %d minutes after wrong guesses. No code was made."}
+LOCKED_LINE = "Pairing is locked for %d minutes after wrong guesses"     # under a code that is showing
 
 
 class Busy(Exception):
@@ -74,6 +76,7 @@ class PinScreen:
         self._notice = None      # (until, text): why a hold on a controller gave no code, for a few seconds
         self._lock = threading.RLock()
         self._qr_sig = None      # what the QR overlays currently show (so they are only redrawn when it changes)
+        self._qr_stale = False   # a QR code could not be taken off (the player did not answer): tried again each tick
         self._qr_at = 0.0
         self.interval = interval
         self.hostname = hostname if hostname is not None else socket.gethostname()
@@ -208,10 +211,14 @@ class PinScreen:
         kind, digits, left = c
         addr = ["http://%s.local/" % clean(self.hostname)] if self.hostname else []
         addr += ["http://%s/" % clean(a) for a in self.addresses()[:1]]
-        return ["nxlx.mastercontrol", "Open " + "  or  ".join(addr) if addr else "Open the panel in a browser",
-                "%s  %s" % (CONTROLLER_LABELS[kind], clean(digits)),
-                "Scan the QR code, or type it in the 6 digit code field" if kind == "join" else "Type it in the 6 digit code field",
-                "Works once. Hides in %d s. Press the control again to hide it now" % left]
+        out = ["nxlx.mastercontrol", "Open " + "  or  ".join(addr) if addr else "Open the panel in a browser",
+               "%s  %s" % (CONTROLLER_LABELS[kind], clean(digits)),
+               "Scan the QR code or type it in the 6 digit code field" if kind == "join" else "Type it in the 6 digit code field",
+               "Works once. Hides in %d s. Press the control again to hide it now" % left]
+        locked = getattr(self.auth, "pairing_locked", lambda: 0)()
+        if locked:                                  # wrong guesses locked pairing: the code will be refused until then
+            out.append(LOCKED_LINE % -(-locked // 60))
+        return out
 
     def auto_wanted(self):
         """True when the first-run screen (PIN and its QR code) should be up: no device paired, player idle."""
@@ -275,19 +282,24 @@ class PinScreen:
                 x -= w
                 player.overlay(oid, x, 40, w, h, pixels)
                 x -= 20
-            self._qr_sig, self._qr_at = sig, now
+            self._qr_sig, self._qr_at, self._qr_stale = sig, now, False
         except (PlayerError, qr.QrError, OSError):
             pass
 
     def clear_qr(self):
+        """Take every QR code off. If the player does not answer, that is remembered (`_qr_stale`) and each tick
+        tries again until it does: a QR code is an access code, and must not come back into view with the player."""
         self._qr_sig = None
         if not hasattr(self.api.player, "overlay_remove"):
+            self._qr_stale = False
             return
-        for oid in QR_IDS.values():
+        failed = False
+        for oid in QR_IDS.values():                 # every one is tried: each call also removes that code's file
             try:
                 self.api.player.overlay_remove(oid)
             except PlayerError:
-                return
+                failed = True
+        self._qr_stale = failed
 
     def clear(self):
         """Take the text and the QR codes off the screen now (a clip is starting). Best effort."""
@@ -323,7 +335,7 @@ class PinScreen:
                 self._controller_up, self._notice = False, None
                 self.clear()
             if not (m or self.auto_wanted()):
-                if self._qr_sig is not None:                  # e.g. the first device just paired
+                if self._qr_sig is not None or self._qr_stale:     # e.g. the first device just paired; or the player did not answer last time
                     self.clear_qr()
                 return False
             if m:

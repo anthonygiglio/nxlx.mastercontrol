@@ -485,8 +485,8 @@ def public_settings(data, support_configured=None):
                       "server_set": bool(support.get("endpoint")), "configured": support_configured}
     out["support_log"] = [{k: e.get(k) for k in ("started", "ended", "minutes", "role", "reason", "logins")}
                           for e in data.get("support_log", []) if isinstance(e, dict)]
-    code = data.get("controller_code") if isinstance(data.get("controller_code"), dict) else {}
-    out["controller_code"] = {"enabled": code.get("enabled") is True, "owner": code.get("owner") is True}
+    from . import auth as auth_mod
+    out["controller_code"] = auth_mod.controller_setting(data.get("controller_code"))      # what it means: never owner without enabled
     known = {n for n, _ in SECTIONS} | set(NEVER) | {"schema"}
     out["not_shown"] = sorted(k for k in data if k not in known) + ["auth (the PIN)"]
     return out
@@ -840,6 +840,11 @@ class BoxCare:
         found.add((data.get("support") or {}).get("server_key"))
         try:
             found.update(j["code"] for j in api.auth.list_joins())
+        except Exception:
+            pass
+        try:                                     # the code a MIDI controller put on the display (D61), while it is active
+            shown = api.auth.controller_digits()
+            found.add(shown[1] if shown else None)
         except Exception:
             pass
         session = api.support.session

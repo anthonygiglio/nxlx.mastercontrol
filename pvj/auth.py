@@ -79,6 +79,16 @@ class NotPaired(AuthError):
     """The device that asked is no longer paired (removed while its request was on its way)."""
 
 
+def controller_setting(section):
+    """The `controller_code` section as the two switches it means, whatever a file holds: anything that is not
+    exactly true is off, and the full-access kind counts only beside the first switch. Every reader of the section
+    goes through this, so a stale `"owner": true` beside `"enabled": false` is off everywhere and stays off when
+    the first switch is turned on."""
+    c = section if isinstance(section, dict) else {}
+    on = c.get("enabled") is True
+    return {"enabled": on, "owner": on and c.get("owner") is True}
+
+
 def generate_pin():
     return "%0*d" % (PIN_LENGTH, secrets.randbelow(10 ** PIN_LENGTH))
 
@@ -107,6 +117,10 @@ class Auth:
         self._controller_made = []  # when (monotonic) such codes were made, within the last hour
         self.controller_last = None  # the one before: {"kind", "shown", "ended" (wall), "how", "device"?}, for the panel
         self._prune_idle()
+        with settings.lock:                 # at load: the section is written as what it means (controller_setting)
+            if "controller_code" in settings.data and settings.data["controller_code"] != controller_setting(settings.data["controller_code"]):
+                settings.data["controller_code"] = controller_setting(settings.data["controller_code"])
+                settings.save()
         if rotate_on_start or not settings.data["auth"].get("pin_hash"):
             self._new_pin()
 
@@ -177,9 +191,13 @@ class Auth:
                 raise AuthError("too many attempts", retry_after=int(wait) + 1)
             given = pin if isinstance(pin, str) else ""
             if len(given) == JOIN_LENGTH and given.isascii() and given.isdigit():
-                role = self._use_controller(given)       # the code shown from a controller, if this is it (D61)
+                role = self._match_controller(given)     # the code shown from a controller, if this is it (D61)
                 if role:          # as for a join code: no guess is counted, and the failure count is not reset
+                    # The device first, the code second: if the device cannot be added (the list filled up this
+                    # instant, the settings could not be saved) the code is still good and still on the display.
+                    # Two requests with the same code cannot both get here: this runs under `_pair_lock`.
                     token, device = self._add_device(name, role, via="controller")
+                    self._end_controller("used")
                     self.controller_last["device"] = device["name"]
                     return token, device
                 role = self._use_join(given)      # TooManyDevices: the code is right, is not used up, and no guess is counted
@@ -287,10 +305,8 @@ class Auth:
     def _controller_cfg(self):
         """(codes from a controller are on, the full-access kind is allowed), from the settings. Anything that is
         not exactly true counts as off: the file is one a person may have edited."""
-        c = self.settings.data.get("controller_code")
-        c = c if isinstance(c, dict) else {}
-        on = c.get("enabled") is True
-        return on, on and c.get("owner") is True
+        c = controller_setting(self.settings.data.get("controller_code"))
+        return c["enabled"], c["owner"]
 
     def _end_controller(self, how):
         """Forget the active code and keep what became of it. Call with `_pair_lock` held."""
@@ -310,20 +326,24 @@ class Auth:
         elif not on or (c["kind"] == "owner" and not owner):
             self._end_controller("switched off")
 
-    def _use_controller(self, given):
-        """The role of the controller code if `given` is it (and it is used up), else None. Call with `_pair_lock`
-        held. The comparison is made even when no code is active, against digits nobody can type, so timing does
-        not say whether one is."""
+    def _match_controller(self, given):
+        """The role of the controller code if `given` is it, else None. It is NOT used up here: pair() ends it once
+        the device is in the list. Call with `_pair_lock` held. The comparison is made even when no code is
+        active, against digits nobody can type, so timing does not say whether one is."""
         self._prune_controller()
         c = self._controller
         if not hmac.compare_digest(c["code"] if c else "x" * JOIN_LENGTH, given) or c is None:
             return None
         role = CONTROLLER_KINDS[c["kind"]]
         self._prune_idle()
-        if not self._room_for(role):
+        if not self._room_for(role, "controller"):
             raise TooManyDevices(self.FULL_TEXT)
-        self._end_controller("used")
         return role
+
+    def pairing_locked(self):
+        """Seconds for which nobody at all can pair (the lockout after GLOBAL_FAILS wrong guesses), else 0. For the
+        display: a code shown from a controller is no use while this lasts. Reads only."""
+        return max(0, int(self._locked_until.get("*", 0) - self._clock()))
 
     def create_controller_code(self, kind):
         """A new code of `kind` ("join" or "owner") in the place of any that is active. Only the controller code
@@ -344,7 +364,7 @@ class Auth:
             if len(self._controller_made) >= CONTROLLER_PER_HOUR:
                 raise JoinLimit("too many codes were shown from a controller in the last hour",
                                 retry_after=int(3600.0 - (t - self._controller_made[0])) + 1)
-            if not self._room_for(CONTROLLER_KINDS[kind]):
+            if not self._room_for(CONTROLLER_KINDS[kind], "controller"):
                 raise TooManyDevices(self.FULL_TEXT)
             self._end_controller("replaced")
             while True:
@@ -391,18 +411,29 @@ class Auth:
     FULL_TEXT = ("too many devices are paired with this box; the owner removes some under System, People and codes, "
                  "and then this works")
 
-    def _room_for(self, role):
+    def _room_for(self, role, via=None):
         """Is there a place for one more device of `role`? Guests and presenters share MAX_DEVICES - FULL_RESERVED
         places; the rest can only be taken by full-access devices, so the PIN always pairs while fewer than
-        FULL_RESERVED full-access devices exist, however many guests there are. Nothing is ever evicted to make room."""
+        FULL_RESERVED full-access devices exist, however many guests there are. Nothing is ever evicted to make room.
+        A full-access device paired with a code from a controller (`via` "controller") never takes one of the
+        reserved places: those are for the PIN, so codes from a controller cannot keep the PIN from pairing."""
         devices = self.settings.data["devices"]
+        if role == "full" and via == "controller":
+            return len(devices) < MAX_DEVICES - FULL_RESERVED
         if role == "full":
             return len(devices) < MAX_DEVICES
         return sum(1 for d in devices if d["role"] != "full") < MAX_DEVICES - FULL_RESERVED
 
+    @staticmethod
+    def _expires(device):
+        """Does this device go when it is not used for GUEST_IDLE_DAYS: a guest that joined with a join code, and a
+        presenter that joined with a code shown from a controller (anyone at the controller can make those, so
+        they must not pile up). A presenter from a join code or a link, and every full-access device, stays."""
+        return ((device.get("via") == "code" and device["role"] == "view")
+                or (device.get("via") == "controller" and device["role"] == "live"))
+
     def _idle(self, device, now):
-        return (device.get("via") == "code" and device["role"] == "view"
-                and now - device.get("seen", device["created"]) > GUEST_IDLE_DAYS * 86400)
+        return self._expires(device) and now - device.get("seen", device["created"]) > GUEST_IDLE_DAYS * 86400
 
     def _prune_idle(self):
         """Drop the devices that joined with a guest code and were not used for GUEST_IDLE_DAYS. Run at start and
@@ -423,10 +454,14 @@ class Auth:
         if via:
             device["via"] = via
         with self.settings.lock:
-            if not self._room_for(role):
+            if not self._room_for(role, via):
                 raise TooManyDevices(self.FULL_TEXT)
             self.settings.data["devices"].append(device)
-            self.settings.save()
+            try:
+                self.settings.save()
+            except OSError:                 # not saved, so not paired: memory and disk must not disagree
+                self.settings.data["devices"] = [d for d in self.settings.data["devices"] if d is not device]
+                raise
         return token, self._public(device)
 
     def authenticate(self, token):
@@ -443,7 +478,7 @@ class Auth:
                 self.revoke(found["id"])
                 return None
             self.last_seen[found["id"]] = now
-            if found.get("via") == "code" and found["role"] == "view" and now - found.get("seen", found["created"]) >= SEEN_EVERY:
+            if self._expires(found) and now - found.get("seen", found["created"]) >= SEEN_EVERY:
                 with self.settings.lock:               # written down once a day at most, so its idle time survives a restart
                     found["seen"] = now
                     self.settings.save()

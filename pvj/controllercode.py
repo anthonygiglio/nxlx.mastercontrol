@@ -39,8 +39,8 @@ class ControllerCodeError(Exception):
 
 def validate(body, current):
     """New switches from untrusted input, based on `current`. Only the keys given change. Raises ControllerCodeError."""
-    new = {"enabled": current.get("enabled") is True, "owner": current.get("owner") is True}
-    for key in ("enabled", "owner"):
+    new = auth_mod.controller_setting(current)      # owner counts only beside enabled: a stale "owner" in a file with
+    for key in ("enabled", "owner"):                # "enabled" false must not come back when the first switch goes on
         if key in body:
             if not isinstance(body[key], bool):
                 raise ControllerCodeError("%s must be true or false" % key)
@@ -97,6 +97,13 @@ class ControllerCodes:
         screen, auth = self._screen(), self.api.auth
         if screen is None:
             self._quiet("asked for, but this box has no on-screen display")
+            return False
+        locked = auth.pairing_locked()
+        if locked >= auth_mod.CONTROLLER_SECONDS and self.cfg()["enabled"] and (kind != "owner" or self.cfg()["owner"]):
+            # Wrong guesses have locked pairing for longer than a code would last: it could not be used, so none
+            # is made (and none is counted); the display says why. The lockout itself is not touched.
+            self._quiet("asked for from %s, but pairing is locked for %d more seconds after wrong guesses" % (source, locked))
+            screen.controller_notice("locked", -(-locked // 60))
             return False
         try:
             auth.create_controller_code(kind)
