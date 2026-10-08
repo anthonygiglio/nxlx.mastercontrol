@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The NDI input above its seam, against a fake library and fake frames (D61). The real library was never loaded:
+"""The NDI input above its seam, against a fake library and fake frames (D62). The real library was never loaded:
 nothing here says that NDI works, only that what this project wrote does what it says with what it is given."""
 import ctypes
 import io
@@ -1177,7 +1177,7 @@ class SavedSettingsTest(unittest.TestCase):
             self.assertEqual(w(), (True, []), bad)
             self.assertEqual(w.problem, "the saved NDI addresses could not be read and are not used")
         self.assertEqual(len(logged), 1)                                 # said once, not at every poll
-        del data["ndi"]                                                  # a file from before schema 14, mid-migration
+        del data["ndi"]                                                  # a file from before schema 15, mid-migration
         self.assertEqual((w(), w.problem), ((True, []), ""))
         w = ndi.Wanted(lambda: 1 / 0, lambda: data, log=logged.append)
         self.assertEqual(w(), (False, []))

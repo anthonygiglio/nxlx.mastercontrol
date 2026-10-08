@@ -93,6 +93,23 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 | L12 | With lights on on every controller: `sudo systemctl stop pvj-web`, look, then `sudo systemctl start pvj-web` | Every light on every controller goes dark within about two seconds of the stop, and comes back after the start | The panel is away meanwhile |
 | L13 | `journalctl -u pvj-web -b \| grep -i -e light -e midi` | | No permission errors, no line that repeats |
 
+### A pairing code from a controller (D61)
+
+**Never run on a box or with a real controller.** Before: MIDI is on, a Launchpad Mini is plugged in (or give "Show a one-time presenter code" to a button of another controller on its card), a screen is on the box, one phone is paired with full access and a second phone is not paired.
+
+| # | Do | See on the box's display | See on the paired phone (System > People and codes) |
+| --- | --- | --- | --- |
+| C1 | With "A code from a controller" off: hold the eighth pad of the top row for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
+| C2 | Switch "Presenter codes from a controller" on (answer the question). Tap the pad | Nothing | The second switch appears |
+| C3 | Hold the pad for 4 seconds, let go | The address, "One-time presenter code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time presenter code is on the box's display now", and End this code. No digits |
+| C4 | On the second phone open the address, type the code | The code leaves the display within a second or two | "The last one: a presenter code, just now, used by the device ..." and the phone is in Paired devices as Presenter |
+| C5 | Hold again, then press the pad once | The code appears, then goes at the press | "hidden at the controller" |
+| C6 | Hold again, wait 2 minutes | The code goes by itself | "ran out unused" |
+| C7 | Hold the pad for 15 seconds, let go. Then lay something on the pad for a minute | Nothing either time | |
+| C8 | Hold again, then press End this code on the phone | The code goes | "ended from the panel" |
+| C9 | `journalctl -u pvj-web -b \| grep "controller code"` on the Pi | | A line for each code shown and each refusal, and no line with 6 digits in it |
+| C10 | Other controllers: give the action to a button on the card, repeat C3. On a nanoKONTROL2 say whether the button needs holding or two presses | | |
+
 ### Runtime folders: who owns what in /run (D45)
 
 **Not run on any box yet.** The change that gives each service its own runtime folder ran in CI only: the unit tests, and one job that runs the installer for real as root under the runner's systemd (`tests/real_install_test.sh`: no display, not a Pi, not the box's systemd). This list is the proof for a box; until someone has run it, nothing may be claimed about how the folders behave on hardware.
@@ -181,11 +198,11 @@ L; ls /run/pvj
 
 Send back the output of `L` at every step, R0, and the output of R10. If any line differs from the table, stop and send it: do not "fix" an owner by hand.
 
-### NDI input (D61): never run, everything here is still to do
+### NDI input (D62): never run, everything here is still to do
 
 Nothing of the NDI input has run on a device. (Its library layer has run once against the real library on a Mac, see `pvj/NDI.md`; that says nothing about this box.) **Before N2: the owner must have decided that NDI's licence covers this box** (`pvj/NDI.md`, "The SDK License Agreement itself"); if that is open, stop after N1. Do these in order; stop at the first that fails and send the journal lines (`journalctl -u pvj-ndi -b`). You need the NDI SDK for Linux (from ndi.video, with its licence read and accepted by the owner) and a sender on the same wired network: Resolume's NDI output, or NDI Tools "Test Patterns" and "Screen Capture" on a laptop.
 
-N0. **Before anything: this branch moves the box's settings to schema 14.** After it has run once, a version that only knows schema 13 (master before this merges, or any branch cut from it) refuses to start the panel, correctly, until the newer code is back (LESSONS, the sync branch). An update through the panel that fails goes back with its settings backup; a deploy by hand over SSH does not. So keep a copy of `/var/lib/pvj/settings.json` first, and deploy this branch to the test Pi only when it is next to merge. After the installer: `id pvj-ndi` shows the account in group `pvj-ndi` only; `systemctl is-active pvj-player pvj-web pvj-ndi` says active three times (the player and the panel now name the extra group `pvj-ndi`; a unit naming a group that does not exist does not start); `ls -ld /run/pvj-ndi` is `pvj-ndi pvj-ndi drwxr-x---`. Do this once as an update over the running older version too, not only on a fresh image.
+N0. **Before anything: this branch moves the box's settings to schema 15.** After it has run once, a version that only knows schema 14 (master before this merges, or any branch cut from it) refuses to start the panel, correctly, until the newer code is back (LESSONS, the sync branch). An update through the panel that fails goes back with its settings backup; a deploy by hand over SSH does not. So keep a copy of `/var/lib/pvj/settings.json` first, and deploy this branch to the test Pi only when it is next to merge. After the installer: `id pvj-ndi` shows the account in group `pvj-ndi` only; `systemctl is-active pvj-player pvj-web pvj-ndi` says active three times (the player and the panel now name the extra group `pvj-ndi`; a unit naming a group that does not exist does not start); `ls -ld /run/pvj-ndi` is `pvj-ndi pvj-ndi drwxr-x---`. Do this once as an update over the running older version too, not only on a fresh image.
 N1. Without the runtime: System > NDI input, switch on. The page says "The NDI runtime is not on this box yet" with the steps. `sudo pvj-ndi-runtime status` says the same.
 N2. `sudo pvj-ndi-runtime install "<the SDK folder>"`. It must name the file it took. Try the x86_64 file on the Pi on purpose: it must refuse with "is for x86_64, this box is aarch64". Then `sudo systemctl restart pvj-ndi` and read `journalctl -u pvj-ndi -n 20`: "loaded the NDI runtime (...)" once the page has been opened with the module on.
 N3. **The sandbox, line by line.** If the runtime does not load or finds nothing, find the line: `sudo systemd-run --pty -p User=pvj-ndi -p Group=pvj-ndi -p ProtectSystem=strict ... python3 -c 'import ctypes; ctypes.CDLL("/opt/pvj-ndi/libndi.so.6")'`, adding the unit's lines one at a time. The ones most likely to matter: `IPAddressDeny=any` with its allow list (does discovery still work? does video arrive?), `PrivateDevices`, `RestrictAddressFamilies`, `ProtectHome` (the runtime's settings folder is pointed at `/opt/pvj-ndi`), and whether `libavahi-client.so.3` is installed and `avahi-daemon` runs. Then try adding `MemoryDenyWriteExecute=yes` and `SystemCallFilter=@system-service`; if both hold through N4 to N8, add them to the unit and to `tests/test_units.py`.

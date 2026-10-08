@@ -199,7 +199,7 @@ if [ "$REAL" = 1 ]; then
 		run useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj pvj-web
 	fi
 	# The NDI helper loads a closed-source library that reads the network: an account and a group of its own, and
-	# never group pvj (D61). The group must exist before the player and the panel start: their units name it as an
+	# never group pvj (D62). The group must exist before the player and the panel start: their units name it as an
 	# extra group, and systemd refuses to start a unit that names a group the system does not have.
 	getent group pvj-ndi >/dev/null || run groupadd --system pvj-ndi
 	if ! id pvj-ndi >/dev/null 2>&1; then

@@ -437,7 +437,17 @@ class Player:
         self.ipc.request("overlay-add", oid, int(x), int(y), path, 0, "bgra", int(width), int(height), int(width) * 4)
 
     def overlay_remove(self, oid):
-        self.ipc.request("overlay-remove", oid)
+        """Take an overlay off, and remove the file overlay() wrote for it: for a QR code those pixels are an access
+        code, which must not lie in the runtime folder after it ended. The file goes even if the player does not
+        answer (it has read the pixels already or never will)."""
+        try:
+            self.ipc.request("overlay-remove", oid)
+        finally:
+            if isinstance(oid, int) and 0 <= oid < 64:
+                try:
+                    os.unlink(os.path.join(self.rundir, "overlay-%d.bgra" % oid))
+                except OSError:
+                    pass
 
     def overlay_file(self, oid, path, width, height):
         """Draw a ready raw BGRA file (width x height, at 0, 0) over the picture until overlay_remove(oid)."""
@@ -678,13 +688,16 @@ class Player:
 
     def swap_source(self, shader, epoch):
         """Exchange the shader source for another file, or None for the bare carrier (black), only while `epoch` is
-        still current. True if it was done."""
+        still current. True if it was done. The buffers' format is set only when a source comes or goes (the bare
+        carrier, a player that was restarted), never for another text of a source that stays: setting it makes mpv
+        set its renderer up anew, and a generator's text is exchanged at every change of a value."""
         with self._lock:
             if epoch != self.source_epoch:
                 return False
-            self._source = shader
+            had, self._source = self._source, shader
             self._push_shaders()
-            self._apply_fbo()
+            if (had is None) != (self._source is None):
+                self._apply_fbo()
             return True
 
     def flip(self, horizontal, on):

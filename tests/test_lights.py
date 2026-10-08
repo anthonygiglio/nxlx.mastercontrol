@@ -101,8 +101,9 @@ class LightsFilesTest(unittest.TestCase):
                 ctl = next(c for c in p["controls"] if c["id"] == cid)
                 self.assertIn(ctl["kind"], ("button", "pad"))
             # and every standard action of a lit control has a style in its own file, so none is dark by oversight
+            # (dark on purpose: a control that asks for a pairing code, D61; a controller shows nothing about a code)
             for ctl in p["controls"]:
-                if ctl["id"] in p["lights"]["controls"] and ctl["action"] is not None:
+                if ctl["id"] in p["lights"]["controls"] and ctl["action"] is not None and midi.ACTIONS[ctl["action"]["action"]][0] != "hold":
                     self.assertIn(midi.light_meaning(ctl["action"]), p["lights"]["styles"], (p["id"], ctl["id"]))
 
     def test_a_lights_section_does_not_depend_on_what_the_controls_do(self):
@@ -110,8 +111,9 @@ class LightsFilesTest(unittest.TestCase):
         may make a profile fail its check (it would lose its whole layout): the section only lists which controls
         have a light, and a light with nothing to show is dark."""
         p = raw(PAD)
-        spare = next(c for c in p["controls"] if c["id"] == "pad18")         # the one pad the effects left spare
-        self.assertIsNone(spare["action"])
+        spare = next(c for c in p["controls"] if c["id"] == "pad18")         # the pad the effects left spare; since D61 it asks for a code
+        self.assertEqual(spare["action"], {"action": "code_join"})
+        self.assertIsNone(midi.light_meaning(spare["action"]))               # nothing about a code is ever shown on a controller
         spare["action"] = {"action": "blackout"}
         clean = midi.validate_profile(p, PAD)
         self.assertIn("pad18", clean["lights"]["controls"])

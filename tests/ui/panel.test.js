@@ -575,6 +575,7 @@ function startServer() {
     assert.strictEqual(await page.locator('#miditoggle').count(), 0, 'no second switch inside the MIDI card');
     await page.waitForSelector('#midinomap');
     for (const a of ['vibes', 'vibes_next', 'vibes_dwell']) assert.strictEqual(await page.locator('#midiaction option[value="' + a + '"]').count(), 1, 'the MIDI action list offers ' + a);
+    for (const a of ['code_join', 'code_owner']) assert(/hold 3 seconds/.test(await page.textContent('#midiaction option[value="' + a + '"]')), 'the action list offers ' + a + ' and says it is a hold');
     await page.selectOption('#midiaction', 'pad');
     await page.selectOption('#midibank', '1');
     await page.click('#midilearn');
@@ -1508,6 +1509,34 @@ function startServer() {
     assert.deepStrictEqual(await page.$$eval('#linkrole option', (os) => os.map((o) => o.textContent)), ['Guest (can watch)', 'Presenter (can play and mix)'], 'the link roles, in the one vocabulary');
     assert(/Owner \(everything\)/.test(await page.textContent('#devicescard')), 'this device is named Owner (everything) in the list');
     assert(!/watch only|View only|\(play and mix\)/.test(await page.textContent('#sysbody')), 'no other names for the roles on People and codes: ' + await page.textContent('#sysbody'));
+    // A code from a controller (D61): off on a new box; a question in place before it goes on; the full access kind is
+    // a second switch that is only there once the first is on; off applies at once and takes the second with it. The
+    // card never holds a code: only a hold on a controller makes one, and this test has no controller on this page.
+    await page.waitForSelector('#ctlcodecard #ctlcode-on');
+    assert.strictEqual(await page.getAttribute('#ctlcode-on', 'aria-checked'), 'false', 'codes from a controller are off on a new box');
+    assert.strictEqual(await page.locator('#ctlcode-owner, #ctlcodeshown, #ctlcodeend').count(), 0, 'no second switch and no code while it is off');
+    await page.click('#ctlcode-on');
+    await page.waitForSelector('#ctlcodecard #confirmrow');
+    assert.strictEqual((await get('/api/access')).controller.enabled, false, 'nothing is switched on before the question is answered');
+    await page.click('#confirmno');
+    await page.waitForFunction(() => document.getElementById('ctlcode-on').getAttribute('aria-checked') === 'false' && !document.getElementById('confirmrow'));
+    await page.click('#ctlcode-on');
+    await page.click('#confirmyes');
+    await page.waitForSelector('#ctlcode-owner');
+    assert.deepStrictEqual(await get('/api/access').then((a) => [a.controller.enabled, a.controller.owner, a.controller.status.active]), [true, false, false], 'on, without the full access kind');
+    assert(/No code has been shown from a controller/.test(await page.textContent('#ctlcodelast')), 'the card says nothing was shown yet');
+    await page.click('#ctlcode-owner');
+    await page.waitForSelector('#ctlcodecard #confirmrow');
+    assert(/everything allowed/.test(await page.textContent('#confirmrow')), 'the question says what a full access code gives');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => { const s = document.getElementById('ctlcode-owner'); return s && s.getAttribute('aria-checked') === 'true'; });
+    assert.strictEqual((await get('/api/access')).controller.owner, true, 'the full access kind is allowed');
+    assert.strictEqual(await post('/api/access/controller', { kind: 'owner' }), 400, 'no request makes a code');
+    assert.strictEqual(await post('/api/access/controller', { cancel: true }), 409, 'and there is none to end');
+    assert(!/[0-9]{6}/.test(await page.textContent('#ctlcodecard')), 'no digits on the card');
+    await page.click('#ctlcode-on');                                  // off: at once, no question
+    await page.waitForFunction(() => !document.getElementById('ctlcode-owner') && document.getElementById('ctlcode-on').getAttribute('aria-checked') === 'false');
+    assert.deepStrictEqual(await get('/api/access').then((a) => [a.controller.enabled, a.controller.owner]), [false, false], 'off takes the full access kind off with it');
     await page.click('#makelink');
     await page.waitForFunction(() => { const i = document.querySelector('input[aria-label="Link"]'); return i && !i.hidden && /#token=/.test(i.value); });
     const guestLink = await page.inputValue('input[aria-label="Link"]');
@@ -2774,6 +2803,14 @@ function startServer() {
     await page.waitForSelector('#devicelist');
     assert(await page.evaluate(() => { const a = document.getElementById('accesscard').getBoundingClientRect(), b = document.getElementById('devicescard').getBoundingClientRect(); return b.left > a.right - 2; }),
       'People and codes: the two cards are side by side on a laptop');
+    // "A code from a controller" (D61) is in the left column, under "Let someone in", and the devices card is beside both
+    await page.waitForSelector('#ctlcodecard #ctlcode-on');
+    const cols = await page.evaluate(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(); return { a: r('accesscard'), c: r('ctlcodecard'), d: r('devicescard') }; });
+    assert(Math.abs(cols.c.left - cols.a.left) <= 1 && Math.abs(cols.c.right - cols.a.right) <= 1, 'the controller code card is in the left column: ' + JSON.stringify(cols));
+    assert(cols.c.top >= cols.a.bottom - 1, 'it is under Let someone in: ' + JSON.stringify(cols));
+    assert(cols.d.left > cols.c.right - 2 && Math.abs(cols.d.top - cols.a.top) <= 1, 'the devices card is beside both, from the top: ' + JSON.stringify(cols));
+    await fitsCard('#ctlcodecard', 'A code from a controller at 1366');
+    await fitsOn(page, 'People and codes at 1366 with the controller code card');
     assert.strictEqual(await page.evaluate(() => getComputedStyle(document.getElementById('devicelist')).overflowY), 'auto', 'the device list scrolls by itself on a laptop');
     // Desktop width
     await page.setViewportSize({ width: 1280, height: 800 });

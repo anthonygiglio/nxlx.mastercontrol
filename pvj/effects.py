@@ -62,6 +62,10 @@ FPS_SAME = 0.06
 UNFIT_FORMATS = re.compile(r"^(?:xyz|gray|y8|y1[0-6]|ya8|ya16|mono[bw]|pal8)")
 UNFIT = "This picture's format cannot take an effect"
 NO_PICTURE = "Nothing with a picture is playing"
+# The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
+# dmx.DMX_DEVICE, room.ROOM_DEVICE). Their calls run on the thread that reads the controller and never ask the player
+# (see Effects._seen). A paired device's id is eight hex digits, so none of these can be one.
+CONTROLLERS = ("midi", "osc", "dmx", "room")
 # Kr and Kb of the colour matrices mpv names in video-params/colormatrix. Anything else is treated as BT.709.
 MATRICES = {"bt.601": (0.299, 0.114), "bt.709": (0.2126, 0.0722), "bt.2020-ncl": (0.2627, 0.0593),
             "bt.2020-cl": (0.2627, 0.0593), "smpte-240m": (0.212, 0.087)}
@@ -1161,6 +1165,20 @@ class Effects(S.Engine):
             return GENERATOR_HAS_IT
         return None
 
+    def _ask(self, ask):
+        """For Next, Previous, the one button and a preset of another effect, before the wish is noted. A panel
+        (`ask`) is told now, with a 409, when no effect could go on: it used to hear "ok" and then nothing happened.
+        A controller's call is not: it asks the player nothing, hears "ok", and the worker says why in `error`."""
+        if ask:
+            ok, why = self.available()
+            if not ok:
+                raise ApiError(409, why)
+
+    @staticmethod
+    def _panel(device):
+        """True unless the call comes from the box's own controller threads (see CONTROLLERS)."""
+        return not (isinstance(device, dict) and device.get("id") in CONTROLLERS)
+
     def available(self):
         """(True, None), or (False, why an effect cannot be put on now, in plain words)."""
         if not self.enabled():
@@ -1578,9 +1596,10 @@ class Effects(S.Engine):
         self._intent = False
         self.changer.show({"off": True, "gen": self._gen})
 
-    def apply_preset(self, body):
+    def apply_preset(self, body, ask=False):
         """{"name"} or {"index": 1 to 16} for the effect that is on, or with "id" for another one, which is then put
-        on with it. Answers at once; the worker does it."""
+        on with it. Answers at once; the worker does it. With `ask` (a panel's call) the player is asked first
+        whether another effect could go on at all (see _ask)."""
         self._need()
         on = self._seen()
         sid = body.get("id") if body.get("id") is not None else (on["id"] if on else None)
@@ -1614,13 +1633,14 @@ class Effects(S.Engine):
             why = self._blocked()
             if why:
                 raise ApiError(409, why)
+            self._ask(ask)
             self._queue(sid, name)
         return {"ok": True, "id": sid, "preset": name}
 
-    def step(self, direction):
+    def step(self, direction, ask=False):
         """The next filter of the library, or the one before, put on in place of the one that is on (the first or the
         last when none is). Answers at once; the worker puts it on, and only if nothing was played, stopped or put
-        on in between."""
+        on in between. With `ask` (a panel's call) the player is asked first whether one could go on (see _ask)."""
         self._need()
         if isinstance(direction, bool) or not isinstance(direction, int) or direction not in (1, -1):
             raise ApiError(400, "dir must be 1 (next) or -1 (the one before)")
@@ -1630,6 +1650,7 @@ class Effects(S.Engine):
         ids = self.order()
         if not ids:
             raise ApiError(409, "there is no effect that can be put on")
+        self._ask(ask)
         on = self._seen() if self._intent is not False else None
         player = self.api.player
         wish = self.changer.queued()
@@ -1639,11 +1660,12 @@ class Effects(S.Engine):
         self._queue(nxt)
         return {"ok": True, "id": nxt}
 
-    def toggle(self):
+    def toggle(self, ask=False):
         """On or off from one button (a controller's): off if an effect is on or on its way, otherwise the one that
         was on last (or the first of the library) is put back. It acts on what was last asked for, so two quick
         presses are on and off whether or not the worker came round in between. Answers at once; the worker does
-        it, and the player is not asked anything here."""
+        it, and the player is not asked anything here, unless `ask` says a panel calls and the wish is On (see
+        _ask)."""
         self._need()
         if self._intent if self._intent is not None else (self._seen() is not None):
             self.off_soon()
@@ -1654,6 +1676,7 @@ class Effects(S.Engine):
         ids = self.order()
         if not ids:
             raise ApiError(409, "there is no effect that can be put on")
+        self._ask(ask)
         sid = self.recent if self.recent in ids else ids[0]
         self._queue(sid)
         return {"ok": True, "on": True, "id": sid}
@@ -1733,7 +1756,8 @@ class Effects(S.Engine):
 
     def api_put(self, body, device, client):
         """Live access: {"id": "fx-vignette.fs", "values"?, "controls"?: {"amount"?, "speed"?, "half"?}, "preset"?}
-        puts an effect on over what plays; {"off": true} takes it off; {"toggle": true} is a controller's one button."""
+        puts an effect on over what plays; {"off": true} takes it off; {"toggle": true} is a controller's one button.
+        From a panel the toggle, a step and a preset of another effect ask the player first (see _ask)."""
         self._need()
         for word in ("off", "toggle"):
             if word in body and body[word] is not True:
@@ -1741,7 +1765,7 @@ class Effects(S.Engine):
         if body.get("off") is True:
             self.off()
         elif body.get("toggle") is True:
-            return self.toggle()
+            return self.toggle(ask=self._panel(device))
         else:
             try:
                 self.put(body.get("id"), body.get("values"), body.get("controls"), body.get("preset"))
@@ -1753,10 +1777,10 @@ class Effects(S.Engine):
         return self.change(body)
 
     def api_step(self, body, device, client):
-        return self.step(body.get("dir", 1))
+        return self.step(body.get("dir", 1), ask=self._panel(device))
 
     def api_preset(self, body, device, client):
-        return self.apply_preset(body)
+        return self.apply_preset(body, ask=self._panel(device))
 
     def api_presets(self, body, device, client):
         """Full access: {"action": "save", "name", "id"?}, {"action": "rename", "id", "name", "to"}, {"action":

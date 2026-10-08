@@ -14,7 +14,7 @@ StartLimitIntervalSec=0
 User=pvj-web
 Group=pvj
 # audio: USB MIDI controllers; video: live input from a USB capture device (read by a helper this service starts);
-# pvj-ndi: the NDI helper's socket (D61)
+# pvj-ndi: the NDI helper's socket (D62)
 SupplementaryGroups=audio video pvj-ndi
 UMask=0007
 # Its own folder: the PIN, the live-input pipe, and the overlay, shader and mapping files it hands to the player

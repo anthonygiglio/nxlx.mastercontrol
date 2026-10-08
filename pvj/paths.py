@@ -10,7 +10,7 @@ On a box each service has a folder of its own that only it can write, under a pa
     /run/pvj/netd           root:pvj        0750   pvj-netd: netd.sock
     /run/pvj-sysd           root:pvj        0750   pvj-sysd: sysd.sock
     /run/pvj-supportd       root:pvj        0750   pvj-supportd: supportd.sock
-    /run/pvj-ndi            pvj-ndi:pvj-ndi 0750   pvj-ndi: ndi.sock, ndi.fifo (D61: its own group, never group pvj; the
+    /run/pvj-ndi            pvj-ndi:pvj-ndi 0750   pvj-ndi: ndi.sock, ndi.fifo (D62: its own group, never group pvj; the
                                                    panel and the player are each given the extra group pvj-ndi)
     /run/pvj-update         root:root       0755   the update units: result.json
 

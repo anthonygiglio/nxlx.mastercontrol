@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""NDI input: receive a sender's picture and hand it to the one mpv as raw frames in a pipe (D61, pvj/NDI.md).
+"""NDI input: receive a sender's picture and hand it to the one mpv as raw frames in a pipe (D62, pvj/NDI.md).
 
 NDI(R) is a registered trademark of Vizrt NDI AB. Nothing of NDI's is in this file or this repository: the runtime
 library (libndi.so.6) is proprietary and is put on the box by its owner (`pvj-ndi-runtime`, below). It is loaded

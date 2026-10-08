@@ -1924,13 +1924,17 @@
       ['bank_pad', 'Play a pad of the controllers\' bank'], ['bank_prev', 'Controllers\' bank: the one before'], ['bank_next', 'Controllers\' bank: the next']])
     .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['scene_' + n, 'Room scene ' + n]; }))
     .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one']])
-    .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['effect_control_' + n, 'Effect: control ' + n + ' of the one that is on (knob)']; }));
+    .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['effect_control_' + n, 'Effect: control ' + n + ' of the one that is on (knob)']; }))
+    // a pairing code on the box's own display (System > People and codes switches it on): held 3 to 10 seconds, then let go
+    .concat([['code_join', 'Show a one-time presenter code on the display (hold 3 seconds, let go)'],
+      ['code_owner', 'Show a one-time full access code on the display (hold 3 seconds, let go)']]);
   // the actions that follow a fader or knob; a shader control does both (a knob sets it, a button steps or toggles it)
   var MIDI_LEVELS = ['opacity', 'size', 'position', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
   // What an action is called on the drawn layout of a controller: short, since a control is a small box.
   var MIDI_SHORT = { shader_speed: 'Shader speed', shader_prev: 'Previous shader', shader_next: 'Next shader', shader_hue: 'Shader colour turn',
     shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
-    effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect' };
+    effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
+    code_join: 'Presenter code (hold)', code_owner: 'Full access code (hold)' };
   function midiWhat(a) {
     if (!a) return 'Spare';
     if (a.action === 'none') return 'Nothing';
@@ -2429,7 +2433,7 @@
     });
     return card;
   }
-  // ---- NDI input (pvj/ndi.py, D61). NDI's terms: the mark with its sign on first use, the trademark sentence and a
+  // ---- NDI input (pvj/ndi.py, D62). NDI's terms: the mark with its sign on first use, the trademark sentence and a
   // link to ndi.video beside the place a source is chosen. The runtime is not part of the box; when it is missing
   // the page says so and how to get it, with the list and the address form still here.
   var NDI_MARK = 'NDI® is a registered trademark of Vizrt NDI AB.';
@@ -3861,6 +3865,7 @@
     }
     function drawLive(d) {
       last = d;
+      if (all && controllerCodeDraw) controllerCodeDraw(d.controller);
       live.textContent = '';
       var scr = d.screen, codes = d.codes.filter(function (c) { return all || c.role === 'view'; });
       live.appendChild(h('div', { class: 'hint', id: 'accesshint', text: all ?
@@ -3915,7 +3920,8 @@
           } }) : null));
       }
       clearTimeout(accessTimer);
-      if (scr.showing || scr.other || d.codes.length) accessTimer = setTimeout(function () { if (live.isConnected) refresh(); }, 5000);
+      // also while codes from a controller are on: one can appear on the display with nobody touching this page
+      if (scr.showing || scr.other || d.codes.length || (all && d.controller && d.controller.enabled)) accessTimer = setTimeout(function () { if (live.isConnected) refresh(); }, 5000);
     }
     function refresh(force) {
       // The check is after the answer arrives: on the first call the part is not on the page yet.
@@ -3933,6 +3939,66 @@
     }
     refresh();
     return live;
+  }
+  // A code from a controller (D61): the two switches, what the box did, and End. The card never has the digits: they
+  // are on the box's display only. It is drawn from the same answer as "Let someone in" (GET /api/access), which
+  // carries `controller` for the owner; the function below is called with it each time that answer arrives.
+  var controllerCodeDraw = null;
+  function agoWords(sec) { return sec < 60 ? 'just now' : sec < 3600 ? plural(Math.floor(sec / 60), 'minute') + ' ago' : plural(Math.floor(sec / 3600), 'hour') + ' ago'; }
+  function controllerCodeCard() {
+    var card = h('div', { class: 'card', id: 'ctlcodecard' }, h('h2', { text: 'A code from a controller' }));
+    var body = h('div', { class: 'list', id: 'ctlcodebody' });
+    var KIND = { join: 'presenter', owner: 'full access' };
+    var HOW = { used: 'used', expired: 'ran out unused', 'pressed again': 'hidden at the controller', cancelled: 'ended from the panel',
+      replaced: 'replaced by a newer one', 'switched off': 'ended when the switch went off', 'not shown': 'the display could not show it' };
+    function send(change, said, sw) {
+      api('POST', '/api/access/controller', change).then(function (r) {
+        if (!card.isConnected) return;
+        if (!r.ok) { say(r.data.error || 'Something went wrong', true); if (sw) sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true'); return; }
+        say(said);
+        draw(r.data.controller, true);
+      });
+    }
+    function flip(key, question, yes, onText, offText) {
+      return function (v, sw) {
+        var change = {}; change[key] = v;
+        if (!v) return send(change, offText, sw);
+        confirmRow(question, yes, 'Leave it off', function () { send(change, onText, sw); }, sw, function () { sw.setAttribute('aria-checked', 'false'); });
+      };
+    }
+    function draw(c, force) {
+      if (!c || (!force && asking(card))) return;          // a question is open: it is not wiped
+      body.textContent = '';
+      body.appendChild(h('div', { class: 'hint', id: 'ctlcodehint', text: 'For when you stand at the box with a MIDI controller and no paired phone. ' +
+        'Hold the pad or button that has this action for 3 seconds and let go: the box draws a one-time code on its own display for ' +
+        plural(Math.round(c.seconds / 60), 'minute') + ', and one new device pairs with it. Anyone who can reach the controller can do this, so it is off until you switch it on here.' }));
+      body.appendChild(toggle('ctlcode-on', 'Presenter codes from a controller', c.enabled,
+        flip('enabled', 'Let a controller show a presenter code? Anyone who can hold a button on a controller plugged into the box can then pair a device that plays and mixes.',
+          'Switch it on', 'Codes from a controller are on.', 'Codes from a controller are off.'),
+        'Pairs one device as ' + roleName('live') + '. The MIDI action is "Show a one-time presenter code".'));
+      if (c.enabled) body.appendChild(toggle('ctlcode-owner', 'Full access codes too', c.owner,
+        flip('owner', 'Let a controller show a full access code? Anyone who can hold a button on a controller plugged into the box can then pair a device with everything allowed.',
+          'Allow full access codes', 'Full access codes from a controller are allowed.', 'Full access codes from a controller are off.'),
+        'Pairs one device as ' + roleName('full') + ', like the PIN. Leave it off unless you need it. The MIDI action is "Show a one-time full access code".'));
+      if (c.enabled && !c.midi_on) body.appendChild(h('div', { class: 'hint', id: 'ctlcodemidi', text: 'MIDI controllers are switched off (System, MIDI controller), so no control can ask for a code yet.' }));
+      if (c.enabled) body.appendChild(h('div', { class: 'hint', id: 'ctlcodehow', text: 'Give a pad or button the action under System, MIDI controller: tap it on its controller\'s card, or use Learn. ' +
+        'On a Launchpad Mini the eighth pad of the top row shows a presenter code already. A second press takes the code off the display. At most ' + c.status.per_hour + ' codes an hour.' }));
+      var s = c.status;
+      if (s.active) {
+        body.appendChild(h('div', { class: 'codeshown', id: 'ctlcodeshown', role: 'status' },
+          h('span', { text: 'A one-time ' + KIND[s.kind] + ' code is on the box\'s display now, put there from a controller ' + agoWords(s.shown_ago) + '. It works for ' +
+            Math.floor(s.seconds_left / 60) + ':' + ('0' + s.seconds_left % 60).slice(-2) + ' more.' }),
+          h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'ctlcodeend', text: 'End this code', onclick: function () { send({ cancel: true }, 'The code is ended and off the display.'); } }))));
+      } else {
+        body.appendChild(h('div', { class: 'hint', id: 'ctlcodelast', text: s.last ?
+          'The last one: a ' + KIND[s.last.kind] + ' code, ' + agoWords(s.last.ended_ago) + ', ' + (HOW[s.last.how] || s.last.how) +
+          (s.last.device ? ' by the device "' + s.last.device + '" (it is in the list below)' : '') + '.' :
+          'No code has been shown from a controller since the box started.' }));
+      }
+    }
+    controllerCodeDraw = function (c) { if (card.isConnected) draw(c); };
+    card.appendChild(body);
+    return card;
   }
   // People and codes. A presenter gets the first card only, with the guest code only. The owner also gets the paired
   // devices, the links that do not expire and the PIN.
@@ -3988,7 +4054,7 @@
     } })));
     card.appendChild(h('div', { class: 'hint', text: 'After too many wrong PINs or codes the box stops taking them for a while. Unblock joining opens it again at once.' }));
     card.appendChild(pinOut);
-    return [first, card];
+    return [first, controllerCodeCard(), card];
   }
   // A page to print and pin up in a studio: the panel address as a QR code (no access in it), plus the current guest
   // and presenter codes if any. Printed from the browser; nothing leaves the box.

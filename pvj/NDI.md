@@ -63,7 +63,7 @@ Until the file is there, the NDI page says "The NDI runtime is not on this box y
 | `POST /api/ndi` `{"action": "remove_address", "address": "..."}` | full | Forget it |
 | `POST /api/play` `{"ndi": "<id>"}` | live | Show a source. The id comes from `GET /api/ndi`; a name is never taken |
 
-Settings: `"ndi": {"addresses": []}` (schema 14). The switch is the module `inputs-ndi` (off by default, D43).
+Settings: `"ndi": {"addresses": []}` (schema 15; 14 is the controller code's). The switch is the module `inputs-ndi` (off by default, D43).
 
 ## Safety
 

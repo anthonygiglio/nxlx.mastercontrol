@@ -217,7 +217,7 @@ class RuntimeFolderTest(unittest.TestCase):
             self.assertEqual(folders[d], {owner}, d)
             self.assertEqual(self.units[owner[0]]["Group"], ["pvj"], d)      # the panel reaches each through group pvj
         self.assertEqual({user for _u, user, _m, _k in folders["pvj-update"]}, {"root"})
-        # the NDI helper's folder is the one that is NOT reached through group pvj (D61)
+        # the NDI helper's folder is the one that is NOT reached through group pvj (D62)
         self.assertEqual(folders["pvj-ndi"], {("pvj-ndi.service", "pvj-ndi", "0750", "no")})
         self.assertEqual("/run/pvj-ndi", p.NDI_DIR)
         self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi"})
@@ -535,7 +535,7 @@ if __name__ == "__main__":
 
 
 class NdiUnitTest(unittest.TestCase):
-    """D61: the one process that loads a closed-source library reading the network. Every line of its sandbox is
+    """D62: the one process that loads a closed-source library reading the network. Every line of its sandbox is
     pinned, and so is what it must never be given. None of it has run on a device with the real library."""
 
     def setUp(self):

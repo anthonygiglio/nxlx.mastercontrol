@@ -36,7 +36,7 @@ class ValidateTest(unittest.TestCase):
     def test_a_clean_section_and_its_defaults(self):
         self.assertEqual(room.validate(None), {"groups": [], "scenes": []})
         self.assertEqual(settings_mod.default_settings()["room"], room.default_room())
-        self.assertEqual(settings_mod.SCHEMA, 14)                                 # room itself made no schema change; 14 is the NDI input
+        self.assertFalse([m for m in settings_mod.MIGRATIONS.values() if "room" in (m.__doc__ or "").lower()])   # a new section, no schema change
         out = room.validate({"groups": [dict(self.GROUP, name="  Main wall ")], "scenes": [self.scene()]})
         g, s = out["groups"][0], out["scenes"][0]
         self.assertEqual((g["name"], g["projectors"]), ("Main wall", ["0123abcd"]))
@@ -287,7 +287,7 @@ class GroupTest(RoomBase):
         self.assertEqual((d["groups"], d["scenes"], d["all"]["projectors"]), ([], [], [pa]))
         self.group("Main wall", [pa])
         self.assertEqual(self.settings.data["room"]["groups"][0]["name"], "Main wall")
-        self.assertEqual(self.settings.data["schema"], 14)
+        self.assertEqual(self.settings.data["schema"], settings_mod.SCHEMA)
 
 
 class SceneTest(RoomBase):

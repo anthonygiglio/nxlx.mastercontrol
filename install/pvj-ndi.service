@@ -9,7 +9,7 @@ StartLimitIntervalSec=0
 
 [Service]
 # This is the one process that loads the NDI runtime: closed-source code that reads packets from the network. So it
-# has an account and a group of its own (D61). It is NOT in group "pvj": that group reaches the player's control
+# has an account and a group of its own (D62). It is NOT in group "pvj": that group reaches the player's control
 # socket (which can run programs), the PIN and the settings. The panel and the player are each given the extra
 # group "pvj-ndi" instead, which lets them into this folder: the panel to ask (the helper answers only the panel's
 # account), the player to read the picture from the pipe.
