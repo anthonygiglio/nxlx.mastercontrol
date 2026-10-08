@@ -47,7 +47,7 @@ This section is the newest and wins over the older "Start here" below where they
 
 - "no reply from mpv" to a screenshot in the GPU tests has now been seen twice in CI (once on OpenGL ES in `test_a_capped_effect_draws_the_right_picture...`), never reproduced. Worth chasing, not only rerunning.
 - GitHub sometimes never gives a job a runner ("The job was not acquired by Runner of type hosted"); rerun the failed jobs.
-- An effect put on a paused clip is not drawn until the next frame; fades run about 30 percent long; the projection mapping alone is heavy on a Pi 4.
+- An effect put on a paused clip is not drawn until the next frame; the projection mapping alone is heavy on a Pi 4. (Fades ran about 30 percent long; `Fader.ramp` now paces its steps against the clock, tested with a clock of its own and not run on hardware.)
 - Never run on hardware: a real projector, the Wi-Fi feature, any controller control pressed by a person, a Pi 3, a Pi 5, x86.
 - The panel makes a new pairing PIN at every start, so each deploy changes it (`sudo -n pvj-pin` shows it); paired devices are unaffected.
 
@@ -115,7 +115,7 @@ This section is the newest and wins over the older "Start here" below where they
 - **Over a frozen clip an effect is not drawn until the next frame** (the player redraws its cached picture), the request waits 4 seconds, and the panel's snapshot shows the effect anyway. Somebody has to look at the real screen with a clip paused, then decide on a cure (the journal, item 2 of "Found").
 - **The mapping with three surfaces drops 6 to 10 frames a second by itself** on the 2560 x 1440 screen; an effect adds 4 more. Measure the mapping on the venue's projector before planning a mapped show with effects.
 - **Three of the owner's ten clips cannot be played smoothly on the Pi 4** (two HEVC, one of 1206 x 2622 at 60): 17 to 28 frames dropped a second with no effect.
-- **A fade takes about a third longer than asked** (`Fader.ramp`), and a clip shorter than 6 seconds can never be called "heavy" by the guard (read from the code): both small, both unfixed.
+- **A fade took about a third longer than asked** (`Fader.ramp` slept a full step on top of what each step cost). Fixed on 2026-10-07: the steps are paced against the clock, as Vibes' own fade already was. Not run on hardware. The other half of this line, a clip shorter than 6 seconds that could never be called "heavy" by the guard, was already fixed in #87 (`Guard.sample` adds the rises up across a loop; `test_a_clip_shorter_than_the_guards_window_can_be_called_heavy`).
 - **Not run:** the buffer comparison for more than one filter, a restart of the player with an effect on, an upload and a GPU refusal on V3D, the panel in a browser, a controller. A person pressed Stop on the panel at 13:07 UTC and the run ended there.
 - The contact sheets of the run (24 pictures, 7.4 MB) are in a temporary folder on the Mac that macOS will empty in time; the pull request names it.
 - **8-bit buffers under an effect** are right on the Pi 4 for the one filter measured (fx-wash over 1080p: 0.9 dropped a second against 8.5 in the player's own buffers), and left alone on other boards after a black screenshot in CI (D55).

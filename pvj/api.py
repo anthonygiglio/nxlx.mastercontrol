@@ -85,10 +85,14 @@ RATE_GRACE_SECONDS = 30.0
 
 class Fader:
     """Ramps opacity in steps inside the player, on a background thread, so one
-    request replaces the old one-process-per-step approach."""
+    request replaces the old one-process-per-step approach. The steps are paced
+    against the clock, so a fade takes the seconds asked for whatever a step
+    costs the player (sleeping a full step after each one made 2 seconds 2.6
+    on a Pi 4)."""
 
-    def __init__(self, apply):
+    def __init__(self, apply, clock=time.monotonic, sleep=time.sleep):
         self._apply = apply
+        self._clock, self._sleep = clock, sleep
         self._token = 0
         self._lock = threading.Lock()
         self.label = None       # "out" from a fade out until something else sets the picture, "in" while a fade in runs (read by the controller lights)
@@ -104,6 +108,7 @@ class Fader:
             token = self._token
             self.label = label
         steps = max(1, int(seconds * 20))
+        began = self._clock()
 
         def run():
             for i in range(1, steps + 1):
@@ -111,7 +116,9 @@ class Fader:
                     if token != self._token:
                         return
                 self._apply(start + (end - start) * i / steps)
-                time.sleep(seconds / steps)
+                wait = began + seconds * i / steps - self._clock()      # what is left of this step, if anything
+                if wait > 0:
+                    self._sleep(wait)
             with self._lock:
                 if token != self._token:
                     return
