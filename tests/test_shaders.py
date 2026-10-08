@@ -577,6 +577,48 @@ class LenientTest(unittest.TestCase):
         self.assertIn("not closed, or is larger", refusal(self, fits + "/*{}" + " " * S.MAX_HEADER + "*/\n" + OK_MAIN))
         self.assertIn("larger than", refusal(self, fits + head + "/" * S.MAX_SOURCE))
         self.assertGreaterEqual(S.MAX_SOURCE - S.MAX_HEADER - S.MAX_LEADING, 20 * 1024)        # room that is left for the code
+        # plain blank space counts like comments: 4096 spaces fit, 4097 do not
+        self.assertTrue(S.parse(" " * S.MAX_LEADING + head))
+        self.assertIn("stand before the JSON header", refusal(self, " " * (S.MAX_LEADING + 1) + head))
+        # the limit is counted after the byte order mark is dropped and Windows line ends are made \n (as the header's
+        # is): 900 lines of "//x" are 4,500 bytes with \r\n and 3,600 as they are counted
+        self.assertTrue(S.parse(("﻿" + "//x\r\n" * 900 + head).encode("utf-8")))
+        self.assertIn("stand before the JSON header", refusal(self, "//x\r\n" * 1025 + head))
+
+    def test_the_headers_limit_is_counted_in_bytes(self):
+        """It was counted in characters (on master too): a header of 8,100 euro signs is 24 KB and was taken, so less
+        than the promised room was left for the code."""
+        def with_description(text):
+            return "/*{\"DESCRIPTION\": \"%s\"}*/\n%s" % (text, OK_MAIN)
+        self.assertTrue(S.parse(with_description("d" * 8000)))                         # 8,000 bytes
+        self.assertTrue(S.parse(with_description("€" * 2600)))                    # 7,800 bytes
+        for text in ("€" * 2800, "€" * 8100, "d" * S.MAX_HEADER, "é" * 4100):
+            self.assertIn("not closed, or is larger", refusal(self, with_description(text)), text[:3])
+            self.assertIn("not closed, or is larger", refusal(self, LEAD + with_description(text)), text[:3])
+        edge = "/*{}" + " " * (S.MAX_HEADER - 4) + "*/\n" + OK_MAIN                    # exactly at the limit, and one over
+        self.assertTrue(S.parse(edge))
+        self.assertIn("not closed, or is larger", refusal(self, edge.replace("{} ", "{}  ", 1)))
+
+    def test_which_comment_is_the_header_is_decided_by_its_first_character_after_plain_blank_space(self):
+        """Blank space here is space, tab, line break, form feed and vertical tab. A comment whose first character
+        after those is not { is a plain comment, however much it looks like a header, and the first comment after it
+        that does begin with { is the header."""
+        image = "{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}]}"
+        rest = "*/\n/*{\"DESCRIPTION\": \"second\"}*/\n" + OK_MAIN
+        for start in ("/*", "/* ", "/*\t\n ", "/*\r\n", "/*\n\n\n"):                   # the header: its picture input refuses the file
+            self.assertIn("only generator shaders", refusal(self, start + image + rest), repr(start))
+        for start in ("/**", "/* ", "/*/", "/*-", "/* ", "/*　", "/*\x00", "/*﻿", "/*x", "/*[", "/*\"", "/* * "):
+            self.assertEqual(S.parse(start + image + rest)["description"], "second", repr(start))    # a plain comment
+        # a form feed and a vertical tab are blank space to the search and not to JSON: the comment is the header,
+        # and it cannot be read
+        for start in ("/*\x0c", "/*\x0b", "/* \x0c "):
+            self.assertIn("cannot be read", refusal(self, start + image + rest), repr(start))
+        # before the header, blank space is the same five characters: everything else Unicode calls blank is refused
+        for blank in (" ", "\x85", " ", " ", "　", "\x1c", "\x1f", "​", " "):
+            self.assertIn("it must start with", refusal(self, blank + "/*{}*/\n" + OK_MAIN), repr(blank))
+            self.assertIn("it must start with", refusal(self, "// a\n" + blank + "/*{}*/\n" + OK_MAIN), repr(blank))
+        for blank in (" ", "\t", "\n", "\r\n", "\r", "\x0c", "\x0b"):
+            self.assertTrue(S.parse(blank + "// a\n" + blank + "/*{}*/\n" + OK_MAIN), repr(blank))
 
     def test_nothing_that_was_refused_gets_through_behind_comments_before_the_header(self):
         cases = [(isf(PASSES=[{"TARGET": "a"}, {}]), "several passes"), (isf(PERSISTENT_BUFFERS=["a"]), "persistent buffer"),
@@ -626,7 +668,8 @@ class LenientTest(unittest.TestCase):
             self.assertIn("const bool lit = %s;" % ("true" if p["inputs"][0]["default"] else "false"), S.translate(p, (640, 360)))
             return p["inputs"][0]["default"]
         for word, want in (("true", True), ("false", False), ("1", True), ("0", False), ("1.0", True), ("0.0", False), ("-0.0", False),
-                           ("-0", False), ("1e0", True), ("0e5", False), ("1.000", True)):
+                           ("-0", False), ("1e0", True), ("0e5", False), ("1.000", True),
+                           ("1.0000000000000001", True)):            # JSON reads this as the number 1.0: it IS 1 by then
             got = default(word)
             self.assertIs(got, want, word)                           # a real true or false, never the number
         for word in ('"1"', '"0"', '"true"', '"false"', '"yes"', '""', "2", "-1", "0.5", "1.0000001", "0.9999999", "1e-9", "255", "[1]", "[true]",

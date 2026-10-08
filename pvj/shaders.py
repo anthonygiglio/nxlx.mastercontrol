@@ -39,7 +39,8 @@ MAX_SOURCE = 32 * 1024        # bytes of one ISF file (it must also fit a JSON r
 MAX_HEADER = 8 * 1024
 # What may stand before the JSON header: blank space and comments (the credit lines of a real file), this much of them.
 # Credits run to a few hundred bytes and a whole licence text to one or two KB; with the header's 8 KB this still
-# leaves 20 KB of the 32 for the code, and the search for the header never reads further than this.
+# leaves 20 KB of the 32 for the code (both limits are counted once line ends are \n: with Windows line ends the file
+# itself is a little larger). No comment that starts after this is looked at when the header is searched for.
 MAX_LEADING = 4 * 1024
 MAX_INPUTS = 24
 MAX_UPLOADS = 64
@@ -352,13 +353,17 @@ def _read_calls(text, keep=True):
 
 def find_header(source):
     """Where the JSON header comment starts in a file's text (line ends already \\n): the index of its "/*".
-    Before it only blank space, // comments and /* */ comments may stand, at most MAX_LEADING bytes of them.
+    Before it only blank space, // comments and /* */ comments may stand, at most MAX_LEADING bytes of them
+    (counted in this text: after the byte order mark is dropped and the line ends are made \\n).
+    Blank space is _BLANK and nothing else: space, tab, line break, form feed, vertical tab.
     The header is the first /* comment whose first character after blank space is {. That comment is the header
     whatever else it holds: if its JSON cannot be read the file is refused, and no later comment is tried. A comment
     that begins with anything else is a plain comment and is passed over. A // comment ends at its line break and
     whatever it holds is comment text, a "/*{" too. Comments do not nest: a "/*{" inside a /* comment is part of
     that comment, which ends at the first "*/". Raises ShaderError.
-    One pass with str.find and no pattern, and it stops at MAX_LEADING: the time is linear in what it reads."""
+    No pattern, only str.find and plain loops, and no place is looked at more than a few times, so the time is
+    linear in the file's size. No comment that starts after MAX_LEADING is looked at; a run of blank space, a //
+    line or a /* comment that starts before it is read to its end, which may be the end of the file."""
     i, n, passed = 0, len(source), False
     while i <= MAX_LEADING:
         while i < n and source[i] in _BLANK:
@@ -416,7 +421,9 @@ def parse(source, kind=GENERATOR):
     # stay those of the file. The stored file is the upload's own bytes (Engine.upload), comments and all.
     start = find_header(source)
     end = source.find("*/", start + 2)
-    if end < 0 or end - start > MAX_HEADER:
+    # in bytes, as the file's size and MAX_LEADING are: counted in characters, a header of 8,000 three-byte
+    # characters was 24 KB and passed
+    if end < 0 or end - start > MAX_HEADER or len(source[start:end].encode("utf-8", "replace")) > MAX_HEADER:
         raise ShaderError("the JSON header comment is not closed, or is larger than %d KB" % (MAX_HEADER // 1024))
     try:
         head = json.loads(source[start + 2:end], parse_constant=_no_constant, object_pairs_hook=_no_repeats)
