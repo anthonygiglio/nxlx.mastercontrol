@@ -31,11 +31,13 @@ def phase(load, until, env, es, counts, spin=0):
     short = ["tests.test_effects_gpu.%sEffectTest.%s" % (es, t) for t in FX_SHORT]
     if load == "cold":                      # one start of the player per process, each from an empty disk cache
         batches = [[t] for t in live[:3] + short + live[3:]]
+    elif load.startswith("old"):            # round 2: the generators' tests only, on the code path of 2026-10-05
+        batches = [live]
     else:
         batches = [live, fx, live]
     spinners = []
-    if load == "busy":
-        for _ in range(spin or os.cpu_count() or 2):
+    if load in ("busy", "old-heavy"):
+        for _ in range(spin or (os.cpu_count() or 2) * (2 if load == "old-heavy" else 1)):
             spinners.append(subprocess.Popen([sys.executable, "-c", "while True: pass"]))
     print("soak: %s, load %s, %d processors, load average %s, %d spinners" % (es, load, os.cpu_count(), os.getloadavg(), len(spinners)), flush=True)
     n = 0
@@ -49,7 +51,9 @@ def phase(load, until, env, es, counts, spin=0):
             e = dict(env, PVJ_MPV_LOG="1" if n % 2 else "0")
             t = time.monotonic()
             try:
-                p = subprocess.run([sys.executable, "-m", "unittest", "-v"] + names, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=420)
+                if load.startswith("old"):
+                    e["PVJ_SOAK_OLD_FBO"] = "1"
+                p = subprocess.run([sys.executable, "-m", "tests.soak_gpu", "--child"] + names, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=420)
                 text, code = p.stdout.decode("utf-8", "replace"), p.returncode
             except subprocess.TimeoutExpired as x:
                 text, code = (x.stdout or b"").decode("utf-8", "replace") + "\nSOAK: the batch did not end in 7 minutes", 1
@@ -69,7 +73,27 @@ def phase(load, until, env, es, counts, spin=0):
             s.wait()
 
 
+def child(names):
+    """One batch. With PVJ_SOAK_OLD_FBO=1 a generator's value change sets fbo-format again every time, as the
+    player did until #92: the first lost screenshot (2026-10-05) was taken right after such a change."""
+    import unittest
+    if os.environ.get("PVJ_SOAK_OLD_FBO") == "1":
+        from pvj.player import Player
+        real = Player.swap_source
+
+        def swap_source(self, shader, epoch):
+            with self._lock:
+                done = real(self, shader, epoch)
+                if done:
+                    self._apply_fbo()
+                return done
+        Player.swap_source = swap_source
+    unittest.main(module=None, argv=["soak", "-v"] + names)
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--child":
+        return child(sys.argv[2:])
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes", type=float, default=19.0, help="in all: a third quiet, a third busy, the rest cold")
     ap.add_argument("--spinners", type=int, default=0, help="busy: how many (default: one per processor)")
@@ -80,7 +104,7 @@ def main():
     counts = {"batches": 0, "tests": 0, "failed": 0}
     start = time.monotonic()
     subprocess.run("nproc; free -m; mpv --version | head -1; dpkg -s libgl1-mesa-dri | grep Version", shell=True)
-    for load, share in (("none", 1 / 3.0), ("busy", 2 / 3.0), ("cold", 1.0)):
+    for load, share in (("none", 0.08), ("old", 0.45), ("old-heavy", 1.0)):
         out = os.path.join(folder, load + ".jsonl")
         phase(load, start + args.minutes * 60 * share, dict(os.environ, PVJ_GPU_TEST="1", PVJ_MPV_WATCH_OUT=out), es, counts, args.spinners)
         totals(out, "%s, load %s" % (es, load))
