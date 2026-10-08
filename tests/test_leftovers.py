@@ -489,6 +489,20 @@ class Lock(Folder):
         self.assertIsNotNone(f)
         f.close()
 
+    def test_the_default_lock_takes_the_old_name_without_being_asked(self):
+        new, old = os.path.join(self.dir, "run", "update.lock"), os.path.join(self.dir, "old.lock")
+        env = {k: v for k, v in os.environ.items() if k != "PVJ_UPDATE_LOCK"}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(update, "DEFAULT_LOCK", new), \
+                mock.patch.object(update, "OLD_LOCK", old):
+            mine = update.take_lock()                            # as main() calls it on a box
+            self.addCleanup(mine.close)
+            self.assertEqual(stat.S_IMODE(os.stat(old).st_mode), 0o600)
+            self.assertIsNone(update.take_lock(old), "an updater from before the move is kept out")
+            mine.close()
+            earlier = update.take_lock(old)
+            self.addCleanup(earlier.close)
+            self.assertIsNone(update.take_lock(), "and one that runs keeps this one out")
+
     def test_the_old_name_is_only_touched_where_the_lock_is_the_default_one(self):
         opened = []
         real = os.open
