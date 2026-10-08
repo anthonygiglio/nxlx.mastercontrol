@@ -1479,6 +1479,13 @@
     else history.pushState({ sys: id }, '');
     if (other) render(); else redrawSystem();     // from another tab the tab bar changes too
     window.scrollTo(0, 0);
+    focusScreen();
+  }
+  // The row or the button that was pressed is gone with the screen it was on: the new screen takes the cursor, so
+  // the keyboard goes on from its top and not from the top of the document.
+  function focusScreen() {
+    var main = document.getElementById('wsmain');
+    if (main && (!document.activeElement || document.activeElement === document.body)) main.focus({ preventScroll: true });
   }
   function leaveSysPage() {          // back at the index, or at the tab the page was opened from
     S.sys = null; S.msg = ''; S.sysFresh = false;
@@ -1490,6 +1497,7 @@
     leaveSysPage();
     render();
     window.scrollTo(0, 0);
+    focusScreen();
   }
   function system() {
     var row = S.sys && sysRows().filter(function (r) { return r.id === S.sys; })[0];
@@ -4122,7 +4130,7 @@
     var areas = AREAS.filter(function (a) { return list.some(function (x) { return x.area === a[0]; }); });
     var areaName = AREAS.filter(function (a) { return a[0] === area; })[0][1];
     var mine = list.filter(function (x) { return x.area === area; });
-    var job = cur && cur.job && !paged ? (mine.length > 1 ? cur.name + ': ' : '') + cur.job : '';
+    var job = cur && cur.job && !paged ? (mine.length > 1 && area !== 'setup' ? cur.name + ': ' : '') + cur.job : '';
     var item = function (x, cls, prefix, text) {
       return h('button', { class: cls + (x.key === key ? ' on' : ''), id: prefix + x.key.replace('/', '-'), 'data-go': x.key, 'aria-current': x.key === key ? 'page' : false, text: text || x.name,
         onclick: function () { go(x.key); } });
@@ -4244,6 +4252,7 @@
       else leaveSysPage();
       render();
       window.scrollTo(0, 0);
+      focusScreen();
     });
     var m = /^#token=([A-Za-z0-9_-]+)$/.exec(location.hash);
     var first = m ? api('POST', '/api/session', { token: m[1] }).then(function () { history.replaceState(null, '', location.pathname); }) : Promise.resolve();

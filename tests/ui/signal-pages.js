@@ -36,20 +36,21 @@ async function has(t, pg, sel, ms) { return soft(t, 'waited in vain for ' + sel,
 // Setup: the row of the index). It waits until the screen has been drawn: a press reads the box's state and only
 // then draws (so "the screen is there" can be true of the one that is about to be replaced), except between the
 // screens that are parts of one build (Shape's Controls, Effect and Picture; Room's three), which only change
-// what is shown. Only plain selectors, and click, isVisible, evaluate and waitForFunction, are used.
+// what is shown. Only plain selectors, and click, isVisible, evaluate and waitForFunction, are used. With
+// how = 'keys' nothing is clicked: the item is given the cursor and Enter is pressed.
 // What the five tabs of the panel before D65 are now: Live is play/pads (its transport is the strip on every
 // screen, its shader and effect strips are on shape/controls), Media is play/library, Mix is shape/picture (with
 // shape/controls, shape/effect, shape/mapping and shape/sound), System is setup/index, Room is room/scenes and
 // room/walls.
 const at = (pg) => pg.evaluate(() => { const m = document.querySelector('main.ws'); return m ? m.getAttribute('data-screen') : null; });
 const ONE_BUILD = [['shape/controls', 'shape/effect', 'shape/picture'], ['room/scenes', 'room/walls', 'room/guests']];
-async function go(pg, key) {
+async function go(pg, key, how) {
   await pg.waitForFunction(() => !!document.querySelector('main.ws'), null, { timeout: 15000 });
   const press = async (sel, want) => {                    // want: the key to arrive at, or an area ('room/': any of its screens)
     const from = await at(pg);
     const kept = !!from && ONE_BUILD.some((g) => g.indexOf(from) >= 0 && (g.indexOf(want) >= 0 || (want.slice(-1) === '/' && from.indexOf(want) === 0)));
     if (!kept) await pg.evaluate(() => { const old = document.querySelector('main.ws > .screen'); if (old) old.setAttribute('data-before-go', ''); });      // (the screen is what is replaced, not the workspace)
-    await pg.click(sel);
+    if (how === 'keys') { await pg.focus(sel); await pg.keyboard.press('Enter'); } else await pg.click(sel);
     await pg.waitForFunction(([k, fresh]) => {
       const m = document.querySelector('main.ws'), now = m && m.getAttribute('data-screen');
       return !!now && (k.slice(-1) === '/' ? now.indexOf(k) === 0 : now === k) && !(fresh && m.querySelector(':scope > .screen[data-before-go]'));
@@ -197,8 +198,8 @@ async function playClip(t) {                             // a clip on the displa
   await post(t, '/api/control', { action: 'stop' });
   await post(t, '/api/play', { pad: [0, 0] });
 }
-async function putEffectOn(t) {                          // on Mix, with the card's own button, as someone would
-  await tab(t.page, 'Mix');
+async function putEffectOn(t) {                          // on Shape > Effect, with the card's own button, as someone would
+  await go(t.page, 'shape/effect');
   await has(t, t.page, '#fxlist [data-effect]', 20000);
   if (!(await t.page.locator('#fx-amount').count())) {
     await soft(t, 'the effect could not be put on', t.page.click('#fxlist [data-put="fx-vignette.fs"]:not([disabled])', { timeout: 20000 }));
@@ -220,8 +221,8 @@ async function projectorMore(t) {
 function sysPages() {
   // the row's name, the picture's name, what shows that the page has its data
   return [['Health', 'health', '#healthpower'], ['Room', 'room-settings', '#roomsetup'], ['Schedule', 'schedule', '.sched-entry'],
-    ['People and codes', 'people', '#devicelist'], ['Sound', 'sound', '#audioline, #audiomsg'], ['At power-up', 'power-up', '#autosave'],
-    ['Streams', 'streams', '.stream-entry'], ['Projection mapping', 'mapping', '#sysbody .card'], ['Boxes in step', 'boxes-in-step', '#syncline'],
+    ['People and codes', 'people', '#devicelist'], ['At power-up', 'power-up', '#autosave'],
+    ['Streams', 'streams', '.stream-entry'], ['Boxes in step', 'boxes-in-step', '#syncline'],
     ['DMX lighting desk', 'dmx', '#dmxchannels'], ['OSC', 'osc', '#oscport'], ['Network', 'network', '#netiface'], ['Updates', 'updates', '#updateversion'],
     ['Remote support', 'support', '#supportline'], ['Backup and reset', 'backup', '#resetcard'], ['Look', 'look', '#lookthemes'], ['About and power', 'about', '#boxcard .kvv']];
 }
@@ -242,92 +243,120 @@ function pages() {
     return pg;
   }, { done: closeOthers });
 
-  // ---- Room ----
-  // A tap on a tab reads everything again and only then draws the screen anew (goTab: loadAll().then(render)). A
-  // presenter is on Room already when the page opens, so "the first wall is there" was true of the screen that was
-  // about to be replaced, and a fold opened on it was closed again by the redraw (seen once in CI: the fold's GET
-  // /api/access came before the new screen's GET /api/room, and its QR picture was never asked for). The screen
-  // that is there before the tap is marked, and the wait is for a wall on a screen without the mark.
-  const roomUp = async (t, pg) => {
-    await pg.evaluate(() => { const old = document.getElementById('roomscreen'); if (old) old.setAttribute('data-before-tap', ''); });
-    await tab(pg, 'Room');
-    await has(t, pg, '#roomscreen:not([data-before-tap]) .room-group:has-text("' + WALLS[0] + '")');
-  };
-  add('room', 'room', async (t) => {
+  // ---- Room: Scenes, Walls, Guests ----
+  // (go() waits for the screen that the press draws, not the one that was there: a presenter is on Room already
+  // when the page opens, and a fold opened on the screen about to be replaced was closed again by the redraw.)
+  const wall = '.room-group:has-text("' + WALLS[0] + '")';
+  add('scenes', 'room', async (t) => {                  // ambience playing, and the scenes
     await post(t, '/api/vibes', { on: true });
-    await roomUp(t, t.page);
-    await soft(t, 'no button on the first wall', t.page.locator('.room-group:has-text("' + WALLS[0] + '") .btn').first().click({ timeout: 5000 }));
-    await has(t, t.page, '.room-group:has-text("' + WALLS[0] + '") .room-result', 15000);
+    await go(t.page, 'room/scenes');
+    await has(t, t.page, '#roomscenes .btn');
     await soft(t, 'ambience did not start', t.page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
   }, { room: true, light: true });
-  add('room-all-off', 'room', async (t) => {
-    await roomUp(t, t.page);
+  add('walls', 'room', async (t) => {                   // each wall, one of them just pressed
+    await go(t.page, 'room/walls');
+    await has(t, t.page, wall);
+    await soft(t, 'no button on the first wall', t.page.locator(wall + ' .btn').first().click({ timeout: 5000 }));
+    await has(t, t.page, wall + ' .room-result', 15000);
+  }, { room: true, light: true });
+  add('walls-all-off', 'room', async (t) => {
+    await go(t.page, 'room/walls');
+    await has(t, t.page, wall);
     await t.page.click('#roomalloff');
     await t.page.waitForSelector('#roomallask');
   }, { room: true, quick: true, light: true });
-  add('room-presenter', 'room', async (t) => {          // what staff have: no set-up, and the fold to let someone in, open
+  add('scenes-presenter', 'room', async (t) => {        // where staff land: no set-up, the scenes and ambience
     const pg = await other(t, '#token=' + t.presenterToken);
-    await pg.waitForSelector('nav.tabs');
-    await roomUp(t, pg);
+    await pg.waitForSelector('main.ws[data-screen="room/scenes"]');
+    await has(t, pg, '#roomscenes .btn');
+    return pg;
+  }, { room: true, done: closeOthers });
+  add('guests-presenter', 'room', async (t) => {        // the fold to let someone in, open
+    const pg = await other(t, '#token=' + t.presenterToken);
+    await pg.waitForSelector('main.ws');
+    await go(pg, 'room/guests');
     await soft(t, 'the fold to let someone in', pg.click('#roomletin > summary', { timeout: 5000 }));
     await has(t, pg, '#roomletin #accesslive');
     return pg;
   }, { room: true, done: closeOthers });
 
-  // ---- Live ----
-  add('live', 'clips', async (t) => {                   // a clip playing with an effect over it: the effects strip with Amount
+  // ---- Play: Pads, Library (Shaders is further down, with its own colour) ----
+  add('pads', 'clips', async (t) => {                   // a clip playing: its pad lit, the strip saying what plays
     await playClip(t);
-    await putEffectOn(t);
-    await tab(t.page, 'Live');
+    await go(t.page, 'play/pads');
     await has(t, t.page, '.pads');
-    await has(t, t.page, '#live-fx-amount', 15000);
   }, { light: true });
-  add('live-shader', 'clips', async (t) => {            // a shader chosen by hand: its strip, and Vibes off
-    await post(t, '/api/effects', { off: true });
-    await post(t, '/api/vibes', { on: false });
-    await post(t, '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
-    await tab(t.page, 'Live');
-    await has(t, t.page, '#liveshader:visible', 15000);
-  });
-  add('live-idle', 'clips', async (t) => {              // nothing playing: empty states, the effects strip saying why
-    await post(t, '/api/vibes', { on: false });
-    await post(t, '/api/control', { action: 'stop' });
-    await tab(t.page, 'Live');
-    await has(t, t.page, '#livefxwhy', 20000);
-  });
-
-  // ---- Media ----
-  add('media', 'clips', async (t) => {                  // the library, an upload's line and progress bar, what Info says
+  add('pads-strip-open', 'clips', async (t) => {        // a phone's strip with More open: the place in the clip and the other five
     await playClip(t);
-    await tab(t.page, 'Media');
+    await go(t.page, 'play/pads');
+    await has(t, t.page, '.pads');
+    await stripOpen(t.page);
+  }, { light: true, done: async (t) => { if (await t.page.isVisible('#wsmore') && (await t.page.getAttribute('#wsmore', 'aria-expanded')) === 'true') await t.page.click('#wsmore'); } });
+  add('library', 'clips', async (t) => {                // the library, an upload's line and progress bar, what Info says
+    await playClip(t);
+    await go(t.page, 'play/library');
     await has(t, t.page, '#uploadbtn');
     await soft(t, 'the upload', t.page.setInputFiles('#filepick', { name: 'New loop (take 2).mkv', mimeType: 'video/x-matroska', buffer: Buffer.alloc(200000, 7) }));
     await soft(t, 'Info', t.page.locator('.item:has-text("intro.mkv") button:text-is("Info")').first().click({ timeout: 8000 }));      // a real clip: the box reads it
     await soft(t, 'what Info says', t.page.waitForFunction(() => { const m = document.getElementById('msg'); return m && m.textContent && !/^Reading/.test(m.textContent); }, null, { timeout: 8000 }));
   }, { light: true });
-  add('media-usb', 'clips', async (t) => {              // a USB stick, as the box lists one, and the question before a file is deleted
+  add('library-usb', 'clips', async (t) => {            // a USB stick, as the box lists one, and the question before a file is deleted
     await t.page.route('**/api/media', async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       const r = await route.fetch(); const d = await r.json().catch(() => ({}));
       d.usb = [{ drive: 'STICK', files: [{ name: 'festival_reel_2026.mp4', size: 734003200 }, { name: 'loop-a.mkv', size: 52428800 }, { name: 'poster.png', size: 2097152 }] }];
       await route.fulfill({ response: r, json: d });
     });
-    await tab(t.page, 'Live');
-    await tab(t.page, 'Media');
-    await t.page.click('.top button:text-is("Refresh")');
+    await go(t.page, 'play/pads');
+    await go(t.page, 'play/library');
+    await t.page.click('.libhead button:text-is("Refresh")');
     await has(t, t.page, '.usb-drive');
     await soft(t, 'Delete', t.page.locator('.item:has-text("logo.png") button:text-is("Delete")').first().click({ timeout: 8000 }));
   }, { quick: true, done: async (t) => { await t.page.unroute('**/api/media'); } });
 
-  // ---- Mix ----
-  add('mix', 'mix', async (t) => {                      // an effect on in the Effects card, and the mapping card with its pointer
+  // ---- Shape: Controls, Effect, Picture, Mapping, Sound ----
+  add('controls', 'mix', async (t) => {                 // a clip playing with an effect over it: the effect strip with Amount, Speed, Loop
     await playClip(t);
     await putEffectOn(t);
-    await has(t, t.page, '#mapcanvas');
+    await go(t.page, 'shape/controls');
+    await has(t, t.page, '#live-fx-amount', 15000);
   }, { light: true });
+  add('controls-shader', 'mix', async (t) => {          // a shader chosen by hand: its strip
+    await post(t, '/api/effects', { off: true });
+    await post(t, '/api/vibes', { on: false });
+    await post(t, '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
+    await go(t.page, 'shape/controls');
+    await has(t, t.page, '#liveshader:visible', 15000);
+  });
+  add('controls-idle', 'mix', async (t) => {            // nothing playing: empty states, the effect strip saying why
+    await post(t, '/api/vibes', { on: false });
+    await post(t, '/api/control', { action: 'stop' });
+    await go(t.page, 'play/pads');
+    await go(t.page, 'shape/controls');
+    await has(t, t.page, '#livefxwhy', 20000);
+  });
+  add('effect', 'mix', async (t) => {                   // an effect on in the Effects card
+    await playClip(t);
+    await putEffectOn(t);
+  }, { light: true });
+  add('picture', 'mix', async (t) => {                  // the sliders, the transition, mirror, overlay, rotate
+    await playClip(t);
+    await go(t.page, 'shape/picture');
+    await has(t, t.page, '#mo');
+    await has(t, t.page, '#overlaybody > *');
+  }, { light: true });
+  add('mapping', 'mix', async (t) => {                  // the mapping page with its switch and the card with its pointer
+    await go(t.page, 'shape/mapping');
+    await has(t, t.page, '#mapcanvas');
+  });
+  add('sound', 'mix', async (t) => {                    // Volume and Audio above the Sound page's card
+    await go(t.page, 'shape/sound');
+    await has(t, t.page, '#mvol');
+    await has(t, t.page, '#audioline, #audiomsg');
+  });
 
-  // ---- System ----
-  add('system-index', 'system', async (t) => {
+  // ---- Setup ----
+  add('setup-index', 'system', async (t) => {
     await sysIndex(t.page);
     await has(t, t.page, '.navrow .chip-ready, .navrow .chip-active');
     await t.page.waitForTimeout(1500);                  // every row has its answer
@@ -353,16 +382,21 @@ function pages() {
     { done: async (t) => { await soft(t, 'the schedule form stayed', t.page.click('#schedcancel', { timeout: 3000 })); } });
   add('people-presenter', 'system', async (t) => {      // a presenter's People and codes: guest codes only
     const pg = await other(t, '#token=' + t.presenterToken);
-    await pg.waitForSelector('nav.tabs');
+    await pg.waitForSelector('main.ws');
     await sys(pg, 'People and codes');
     await has(t, pg, '#accesslive');
     return pg;
   }, { done: closeOthers });
-  add('shaders', 'shaders', async (t) => {
+  add('shaders', 'shaders', async (t) => {              // Play > Shaders: the one screen that wears the Shaders colour
     await post(t, '/api/vibes', { on: true });
-    await sys(t.page, 'Shaders and Vibes');
+    await go(t.page, 'play/shaders');
     await has(t, t.page, '#shadercontrols', 15000);
   }, { light: true });
+  add('shaders-from-index', 'shaders', async (t) => {   // the same page as the owner opens it from the Setup index: with a Back to it
+    await sys(t.page, 'Shaders and Vibes');
+    await has(t, t.page, '#sysback');
+    await has(t, t.page, '#shadercontrols', 15000);
+  });
   add('midi', 'system', async (t) => {                  // the drawn controllers with their lights on: the switch, the brightness, Test lights
     await sys(t.page, 'MIDI controller');
     await has(t, t.page, '.ctlgrid', 15000);
@@ -449,7 +483,7 @@ async function check(pg, o) {
       if (!shown(el)) return;
       const r = el.getBoundingClientRect();
       if (r.height < 43.5 || r.width < 43.5) out.push('small (' + Math.round(r.width) + 'x' + Math.round(r.height) + '): ' + name(el));
-      else if (el.tagName === 'BUTTON' && el.closest('#roomscreen, .livecols, .banks, .row:has(> #fade)') && r.height < 55.5) out.push('under 56 px where staff press: ' + name(el));
+      else if (el.tagName === 'BUTTON' && el.closest('#roomscreen, .livecols, .banks, .tp .keep') && r.height < 55.5) out.push('under 56 px where staff press: ' + name(el));
     });
     // text: size, and contrast against what is behind it
     const lum = (c) => { const v = c.map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
@@ -534,12 +568,28 @@ async function check(pg, o) {
       await new Promise((done) => setTimeout(done, 300));
       late.forEach((el) => { const still = fillOff(el); if (still) out.push(still); });
     }
-    // the title: whole, inside the window, in the area's colour; and the open tab too
-    const h1 = document.querySelector('.screen h1');
-    if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
+    // the title: whole, inside the window, in the area's colour. Before pairing it is the screen's own heading; in
+    // the Workspace shell (D65) it is the title bar, and the open screen's item (the area's tab under 600 px, the
+    // side menu's item from 600 px) is that colour too. Exactly one heading of the first rank is shown, and the
+    // transport strip is on every screen with the four buttons that never fold away.
     const bg = (el) => (el ? getComputedStyle(el).backgroundColor : '');
-    const tab = document.querySelector('nav.tabs .btn.on'), top = h1 && h1.closest('.top');
-    if (!h1 || [bg(h1), bg(top)].indexOf(areaRgb) < 0 || (wantArea && bg(tab) !== areaRgb)) out.push('the title block and the open tab are not the area colour ' + areaRgb + ': ' + JSON.stringify([bg(h1), bg(top), bg(tab)]));
+    const bar = document.getElementById('wshead');
+    const h1 = bar ? document.getElementById('wstitle') : document.querySelector('.screen h1');
+    if (h1) { const r = h1.getBoundingClientRect(); if (r.right > window.innerWidth + 1 || r.left < -1 || h1.scrollWidth > h1.clientWidth + 1) out.push('the title sticks out: ' + h1.textContent); }
+    if (bar) {
+      const open = Array.prototype.filter.call(document.querySelectorAll('#wsside [aria-current="page"], #wstabs [aria-current="page"]'), shown);
+      const inMenu = !!document.querySelector('#wsside [aria-current="page"]');         // (a page whose module is off is not in the menu: only its area's tab can be open)
+      if (!h1 || !shown(h1) || bg(bar) !== areaRgb) out.push('the title bar is not the area colour ' + areaRgb + ': ' + bg(bar));
+      if (open.length > 1 || (!open.length && (inMenu || window.innerWidth < 600))) out.push(open.length + ' open items are shown in the menus');
+      else if (open.length && bg(open[0]) !== areaRgb) out.push('the open item of the menu is not the area colour ' + areaRgb + ': ' + bg(open[0]));
+      const heads = Array.prototype.filter.call(shell.querySelectorAll('h1'), shown);
+      if (heads.length !== 1) out.push(heads.length + ' first headings are shown: ' + heads.map((x) => x.textContent).join(', '));
+      const strip = document.getElementById('wstp');
+      if (!strip || !shown(strip) || !['prev', 'next', 'stop', 'black'].every((id) => { const b = document.getElementById(id); return b && shown(b); })) out.push('the transport strip is not whole on this screen');
+    } else {
+      const top = h1 && h1.closest('.top');
+      if (!h1 || [bg(h1), bg(top)].indexOf(areaRgb) < 0) out.push('the title block is not the area colour ' + areaRgb + ': ' + JSON.stringify([bg(h1), bg(top)]));
+    }
     return out;
   }, [o.area, !!o.light]);
 }
