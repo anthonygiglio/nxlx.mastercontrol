@@ -257,7 +257,7 @@ class TranslatorTest(unittest.TestCase):
         def one(spec):
             return isf(INPUTS=[spec])
         for name in ("gl_FragColor", "hook", "frame", "random", "main", "TIME", "RENDERSIZE", "sin", "float", "pvj_x", "isf_x", "HOOKED_pos",
-                     "PVJ_HP", "Hook", "Time", "rendersize", "Gl_x", "hooked_x", "texture0", "TEXCOORD0",
+                     "PVJ_HP", "Hook", "Frame", "RANDOM", "Main", "Gl_x", "hooked_x", "texture0", "TEXCOORD0",    # (Time, rendersize: LenientTest)
                      "a b", "a;float b", "1a", "_a", "a__b", "", "x" * 33, "speed\n", "café", None, 7, ["a"]):
             with self.assertRaises(S.ShaderError, msg=repr(name)):
                 S.parse(one({"NAME": name, "TYPE": "float"}))
@@ -323,8 +323,12 @@ class TranslatorTest(unittest.TestCase):
 
     def test_files_that_are_not_isf_or_too_large_are_refused(self):
         ok = "void main() { gl_FragColor = vec4(1.0); }"
-        for text, reason in ((ok, "not an ISF file"), ("/*{", "not closed"), ("/* not json */" + ok, "cannot be read"),
-                             ("/*[1, 2]*/" + ok, "must be an object"), ("/*" + "[" * 5000 + "*/" + ok, "cannot be read"),
+        # (a first comment that does not begin with { is a plain comment since comments may stand before the header:
+        # "/* not json */" and "/*[1, 2]*/" are refused as before, now for having no header; see LenientTest)
+        for text, reason in ((ok, "not an ISF file"), ("/*{", "not closed"), ("/*{ not json }*/" + ok, "cannot be read"),
+                             ("/* not json */" + ok, "not an ISF file"), ("/*[1, 2]*/" + ok, "not an ISF file"),
+                             ("/*{\"a\": " + "[" * 5000 + "*/" + ok, "cannot be read"), ("/*" + "[" * 500 + "*/" + ok, "not an ISF file"),
+                             ("/*" + "[" * 5000 + "*/" + ok, "stand before the JSON header"),
                              ("/*{\"INPUTS\": 5}*/" + ok, "INPUTS"), ("/*{}" + " " * S.MAX_HEADER + "*/" + ok, "not closed, or is larger"),
                              (isf() + "/" * S.MAX_SOURCE, "larger than"), (b"\xff\xfe\x00", "not plain text"), (5, "must be text")):
             with self.assertRaises(S.ShaderError) as c:
@@ -448,6 +452,364 @@ class TranslatorTest(unittest.TestCase):
         self.assertEqual(S.shader_errors([("vo/gpu/drm", "error", "Failed to commit atomic request")]), "")   # not about a shader
         self.assertEqual(S.shader_errors([("ipc_3", "error", "shader compile log")]), "")                     # not the video output
         self.assertEqual(S.shader_errors([("vo/gpu/opengl", "v", "fragment shader source:")]), "")            # not an error
+
+
+# Text that stands before the header in the tests below. Written for these tests: a made-up author, both kinds of
+# comment, a comment of several lines, blank lines, text that is not ASCII, and things that only look like a header.
+LEAD = ("// Slow Lanterns, by Ana Example (a made-up credit) – café\n"
+        "// free to use; a brace { and a /*{\"DESCRIPTION\": \"not me\"}*/ in a line comment are comment text\n"
+        "\n"
+        "/* a block of credit\n"
+        "   over three lines, with {braces} that do not come first\n"
+        "*/\n"
+        "\t /**/ /* two more */\n"
+        "\n")
+OK_MAIN = "void main() { gl_FragColor = vec4(1.0); }"
+
+
+class LenientTest(unittest.TestCase):
+    """Three things real files do that were refused: comments before the header, a switch whose DEFAULT is the number
+    0 or 1, and an input whose name is a reserved word in another letter case (`time`). With what must stay refused."""
+
+    # -- comments before the header --
+    def test_comments_and_blank_space_may_stand_before_the_header_and_never_reach_the_player(self):
+        plain, text = S.parse(isf()), LEAD + isf()
+        p = S.parse(text)
+        for key in ("description", "credit", "inputs", "body", "code", "kind"):
+            self.assertEqual(p[key], plain[key], key)                # the same shader, whatever stood before it
+        out = S.translate(p, (640, 360))
+        for gone in ("Ana", "Lanterns", "credit", "braces", "not me", "two more"):
+            self.assertNotIn(gone, out)
+        self.assertEqual(out.replace("PVJ_LINE %d" % p["line"], "L").replace("PVJ_LINE %d" % (p["line"] - 1), "M"),
+                         S.translate(plain, (640, 360)).replace("PVJ_LINE %d" % plain["line"], "L").replace("PVJ_LINE %d" % (plain["line"] - 1), "M"))
+        # Windows line ends, a byte order mark, and bytes instead of text
+        for same in (text.replace("\n", "\r\n"), "﻿" + text, text.encode("utf-8"), ("﻿" + text.replace("\n", "\r\n")).encode("utf-8")):
+            self.assertEqual(S.parse(same)["code"], plain["code"])
+        # each kind alone, and a header that has blank space before its {
+        for lead in ("// one line\n", "//\n", "/* one block */", "/**/", "/***/", "/*/ a slash first */", "\n\n\t ", "//a\n//b\n/*c*/\n//d\n"):
+            self.assertEqual(S.parse(lead + isf())["code"], plain["code"], lead)
+        self.assertEqual(S.parse("// x\n/* \n\t {\"DESCRIPTION\": \"late brace\"} */\n" + OK_MAIN)["description"], "late brace")
+        # the same for a filter of the playing picture (it is the same parser)
+        fx = "/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}]}*/\nvoid main() { gl_FragColor = IMG_THIS_PIXEL(inputImage); }\n"
+        self.assertEqual(S.parse(LEAD + fx, S.FILTER)["code"], S.parse(fx, S.FILTER)["code"])
+
+    def test_line_numbers_stay_those_of_the_file_with_comments_before_the_header(self):
+        """The compiler is told the file's own line numbers (#line): the lines before the header are counted, so a
+        mistake is still reported on the line it has in the file."""
+        body = "\nfloat one() { return 1.0; }\n/* a comment\n   of two lines */\nvoid main() { gl_FragColor = vec4(MARK); }\n"
+        for lead in ("", LEAD, "// a\n", "/* a\n\n\nb */", LEAD * 3):
+            text = lead + isf(body=body)
+            p = S.parse(text)
+            lines = text.split("\n")
+            self.assertEqual(lines[p["line"] - 1], "}*/", lead)             # the code starts on the line the header ends on
+            code = p["code"].split("\n")
+            at = [n for n, line in enumerate(lines) if "MARK" in line]
+            self.assertEqual(len(at), 1)
+            self.assertIn("MARK", code[at[0] - (p["line"] - 1)], lead)      # the line of the file is the line of the code
+            self.assertEqual(p["line"], S.parse(isf(body=body))["line"] + lead.count("\n"))
+            out = S.translate(p, (640, 360))
+            self.assertIn("#define PVJ_LINE %d\n#else\n#define PVJ_LINE %d\n#endif\n#line PVJ_LINE\n%s" % (p["line"], p["line"] - 1, p["code"]), out)
+            self.assertEqual(out.count("#line"), 1)
+
+    def test_only_comments_and_blank_space_may_stand_before_the_header(self):
+        head = "/*{}*/\n" + OK_MAIN
+        for lead in ("float x = 1.0;\n", "x", "/", "#version 100\n", "#define A 1\n", "#\n", "uniform float u;\n", "*/", "{}", "\\\n",
+                     "// a\nvoid f() {}\n", " ", " ", "\x00", "\x1b", "﻿﻿​"):
+            self.assertIn("not an ISF file: it must start with", refusal(self, lead + head), repr(lead))
+        # code after a plain comment: the message says that the comment was not taken for the header
+        for lead in ("/**/uniform float u;\n", "/* credit */ #version 100\n", "/* a */ float x;", "/* a *//", "/* [1, 2] */ x"):
+            self.assertIn("read as a plain comment", refusal(self, lead + head), repr(lead))
+        # nothing but comments, or nothing at all
+        for text in ("", "   \n", "// only a line", "// a line\n", "// /*{}*/ " + OK_MAIN):
+            self.assertIn("not an ISF file: it must start with", refusal(self, text), repr(text))
+        for text in ("/* a */", "/* a */\n// b\n", "/* not json */" + OK_MAIN, "/*[1, 2]*/" + OK_MAIN, "/**/" + OK_MAIN):
+            self.assertIn("read as a plain comment", refusal(self, text), repr(text))
+        # a comment that is never closed
+        for text in ("/* credit", "/* credit\n" + OK_MAIN, "// a\n/*", "/**/ /* x * /" + head.replace("*/", "* /"), "/*/"):
+            self.assertIn("before the JSON header is never closed", refusal(self, text), repr(text))
+        self.assertIn("not closed", refusal(self, "// a\n/*{\"INPUTS\": []}\n" + OK_MAIN))          # the header itself
+        # mpv's command marker is refused wherever it stands, before the header too
+        for lead in ("//!HOOK OUTPUT\n", "// credit //!DESC x\n", "/* //!BIND X */\n", "/*\n//!HOOK OUTPUT\n*/", "// a\n\n//!SAVE MAIN\n"):
+            self.assertIn("//!", refusal(self, lead + head), repr(lead))
+        # a // comment ends at its line break here whatever its last character is: what follows is not comment
+        self.assertTrue(S.parse("// credit \\\n" + head))
+        self.assertIn("it must start with", refusal(self, "// credit \\\nuniform float u;\n" + head))
+
+    def test_the_first_comment_that_begins_with_a_brace_is_the_header_and_no_other_is_tried(self):
+        ok = "\n" + OK_MAIN
+        # it looks like JSON and begins with {: it IS the header, and its mistakes are reported, not passed over
+        for text, reason in (("/* {\"INPUTS\": 5} */" + ok, "INPUTS"),
+                             ("/*{ credit: me }*/\n/*{}*/" + ok, "cannot be read"),
+                             ("// a\n/*{broken*/\n/*{\"DESCRIPTION\": \"second\"}*/" + ok, "cannot be read"),
+                             ("/*\n{ }x*/\n/*{}*/" + ok, "cannot be read"),
+                             ("/*{\"PASSES\": [{}, {}]}*/\n/*{}*/" + ok, "several passes"),
+                             ("/* c */\n/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}]}*/\n/*{}*/" + ok, "only generator shaders"),
+                             ("/*{\"A\": 1, \"A\": 2}*/" + ok, "twice")):
+            self.assertIn(reason, refusal(self, text), text[:50])
+        # a second header after the first is a comment in the code, as it always was: it changes nothing
+        two = "// a\n/*{\"DESCRIPTION\": \"first\"}*/\n/*{\"DESCRIPTION\": \"second\", \"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}]}*/" + ok
+        p = S.parse(two)
+        self.assertEqual((p["description"], p["inputs"]), ("first", []))
+        self.assertNotIn("second", S.translate(p, (640, 360)))
+        # a header cannot hide inside a comment before it. Comments do not nest: the plain comment ends at the first
+        # */, which is the hidden header's own, and what follows is code with no header before it
+        self.assertIn("read as a plain comment", refusal(self, "/* credit\n/*{\"DESCRIPTION\": \"hidden\"}*/" + ok))
+        self.assertIn("cannot be read", refusal(self, "/* credit\n/*{\"DESCRIPTION\": \"hidden\"}*/\n/*{ \"x\" */\n/*{}*/" + ok))
+        # in a // line it is comment text, and the header is the one that follows
+        p = S.parse("// /*{\"DESCRIPTION\": \"in a line\", \"INPUTS\": [{\"NAME\": \"a\", \"TYPE\": \"float\"}]}*/\n/*{\"DESCRIPTION\": \"real\"}*/" + ok)
+        self.assertEqual((p["description"], p["inputs"]), ("real", []))
+        # a comment that holds braces but does not begin with one is a plain comment
+        self.assertEqual(S.parse("/* by me {2026} */\n/*{\"DESCRIPTION\": \"real\"}*/" + ok)["description"], "real")
+
+    def test_what_stands_before_the_header_is_bounded(self):
+        head = "/*{}*/\n" + OK_MAIN
+        fits = "//" + "x" * (S.MAX_LEADING - 3) + "\n"
+        self.assertEqual(len(fits), S.MAX_LEADING)
+        self.assertTrue(S.parse(fits + head))
+        for lead in (fits + " ", fits + "\n", "//" + "x" * S.MAX_LEADING + "\n", " " * (S.MAX_LEADING + 1), "\n" * (2 * S.MAX_LEADING),
+                     "/*" + "x" * S.MAX_LEADING + "*/", "/**/" * (S.MAX_LEADING // 4) + " ", "// a\n" * S.MAX_LEADING,
+                     "//" + "é" * (S.MAX_LEADING // 2) + "\n",            # counted in bytes, as the file's size is
+                     "/* a */" + " " * S.MAX_LEADING):
+            self.assertIn("stand before the JSON header", refusal(self, lead + head), lead[:20])
+        self.assertIn("stand before the JSON header", refusal(self, " " * (S.MAX_LEADING + 1) + "float x;" + head))
+        # the header's own limit is counted from where the header starts, and the file's limit is the file's
+        self.assertTrue(S.parse(fits + "/*{}" + " " * (S.MAX_HEADER - 8) + "*/\n" + OK_MAIN))
+        self.assertIn("not closed, or is larger", refusal(self, fits + "/*{}" + " " * S.MAX_HEADER + "*/\n" + OK_MAIN))
+        self.assertIn("larger than", refusal(self, fits + head + "/" * S.MAX_SOURCE))
+        self.assertGreaterEqual(S.MAX_SOURCE - S.MAX_HEADER - S.MAX_LEADING, 20 * 1024)        # room that is left for the code
+        # plain blank space counts like comments: 4096 spaces fit, 4097 do not
+        self.assertTrue(S.parse(" " * S.MAX_LEADING + head))
+        self.assertIn("stand before the JSON header", refusal(self, " " * (S.MAX_LEADING + 1) + head))
+        # the limit is counted after the byte order mark is dropped and Windows line ends are made \n (as the header's
+        # is): 900 lines of "//x" are 4,500 bytes with \r\n and 3,600 as they are counted
+        self.assertTrue(S.parse(("﻿" + "//x\r\n" * 900 + head).encode("utf-8")))
+        self.assertIn("stand before the JSON header", refusal(self, "//x\r\n" * 1025 + head))
+
+    def test_the_headers_limit_is_counted_in_bytes(self):
+        """It was counted in characters (on master too): a header of 8,100 euro signs is 24 KB and was taken, so less
+        than the promised room was left for the code."""
+        def with_description(text):
+            return "/*{\"DESCRIPTION\": \"%s\"}*/\n%s" % (text, OK_MAIN)
+        self.assertTrue(S.parse(with_description("d" * 8000)))                         # 8,000 bytes
+        self.assertTrue(S.parse(with_description("€" * 2600)))                    # 7,800 bytes
+        for text in ("€" * 2800, "€" * 8100, "d" * S.MAX_HEADER, "é" * 4100):
+            self.assertIn("not closed, or is larger", refusal(self, with_description(text)), text[:3])
+            self.assertIn("not closed, or is larger", refusal(self, LEAD + with_description(text)), text[:3])
+        edge = "/*{}" + " " * (S.MAX_HEADER - 4) + "*/\n" + OK_MAIN                    # exactly at the limit, and one over
+        self.assertTrue(S.parse(edge))
+        self.assertIn("not closed, or is larger", refusal(self, edge.replace("{} ", "{}  ", 1)))
+
+    def test_which_comment_is_the_header_is_decided_by_its_first_character_after_plain_blank_space(self):
+        """Blank space here is space, tab, line break, form feed and vertical tab. A comment whose first character
+        after those is not { is a plain comment, however much it looks like a header, and the first comment after it
+        that does begin with { is the header."""
+        image = "{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}]}"
+        rest = "*/\n/*{\"DESCRIPTION\": \"second\"}*/\n" + OK_MAIN
+        for start in ("/*", "/* ", "/*\t\n ", "/*\r\n", "/*\n\n\n"):                   # the header: its picture input refuses the file
+            self.assertIn("only generator shaders", refusal(self, start + image + rest), repr(start))
+        for start in ("/**", "/* ", "/*/", "/*-", "/* ", "/*　", "/*\x00", "/*﻿", "/*x", "/*[", "/*\"", "/* * "):
+            self.assertEqual(S.parse(start + image + rest)["description"], "second", repr(start))    # a plain comment
+        # a form feed and a vertical tab are blank space to the search and not to JSON: the comment is the header,
+        # and it cannot be read
+        for start in ("/*\x0c", "/*\x0b", "/* \x0c "):
+            self.assertIn("cannot be read", refusal(self, start + image + rest), repr(start))
+        # before the header, blank space is the same five characters: everything else Unicode calls blank is refused
+        for blank in (" ", "\x85", " ", " ", "　", "\x1c", "\x1f", "​", " "):
+            self.assertIn("it must start with", refusal(self, blank + "/*{}*/\n" + OK_MAIN), repr(blank))
+            self.assertIn("it must start with", refusal(self, "// a\n" + blank + "/*{}*/\n" + OK_MAIN), repr(blank))
+        for blank in (" ", "\t", "\n", "\r\n", "\r", "\x0c", "\x0b"):
+            self.assertTrue(S.parse(blank + "// a\n" + blank + "/*{}*/\n" + OK_MAIN), repr(blank))
+
+    def test_nothing_that_was_refused_gets_through_behind_comments_before_the_header(self):
+        cases = [(isf(PASSES=[{"TARGET": "a"}, {}]), "several passes"), (isf(PERSISTENT_BUFFERS=["a"]), "persistent buffer"),
+                 (isf(IMPORTED={"pic": {"PATH": "/etc/passwd"}}), "IMPORTED"), (isf(INPUTS=[{"NAME": "inputImage", "TYPE": "image"}]), "only generator shaders"),
+                 (isf(INPUTS=[{"NAME": "snd", "TYPE": "audio"}]), "sound"),
+                 (isf(INPUTS=[{"NAME": "a%d" % i, "TYPE": "float"} for i in range(S.MAX_INPUTS + 1)]), "at most"),
+                 (isf(INPUTS=[{"NAME": "hook", "TYPE": "float"}]), "is taken"),
+                 (isf(body="#version 100\n" + OK_MAIN), "not allowed"), (isf(body="#include <x>\n" + OK_MAIN), "not allowed"),
+                 (isf(body="#line 1\n" + OK_MAIN), "not allowed"), (isf(body="#define hook x\n" + OK_MAIN), "is not allowed"),
+                 (isf(body="uniform sampler2D secret;\n" + OK_MAIN), "uniform, varying, in or out"),
+                 (isf(body="float pvj_time;\n" + OK_MAIN), "used by the player"), (isf(body="vec4 hook() { return vec4(1.0); }\n" + OK_MAIN), "used by the player"),
+                 (isf(body=OK_MAIN + "\nvoid main() {}"), "exactly one void main"), (isf(body="float a = 1.0; \\\n" + OK_MAIN), "line continuations"),
+                 (isf(body="float café;\n" + OK_MAIN), "ASCII"), (isf(body=OK_MAIN + "/" * S.MAX_SOURCE), "larger than")]
+        for text, reason in cases:
+            self.assertIn(reason, refusal(self, text), text[:80])
+            for lead in (LEAD, "// a\n", "/* a */"):
+                self.assertIn(reason, refusal(self, lead + text), text[:80])
+        fx = "/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}, {\"NAME\": \"other\", \"TYPE\": \"image\"}]}*/\n" + OK_MAIN
+        with self.assertRaises(S.ShaderError) as c:
+            S.parse(LEAD + fx, S.FILTER)
+        self.assertIn("second picture", str(c.exception))
+
+    def test_a_file_built_to_make_the_search_for_the_header_slow_is_read_quickly(self):
+        """The search is one pass that stops at MAX_LEADING; these are the worst texts for it, as large as an upload
+        may be (32 KB), and each is read 20 times."""
+        import time
+        n = S.MAX_SOURCE - 64
+        tail = "/*{}*/\n" + OK_MAIN
+        worst = ["/**/" * (n // 4), "//\n" * (n // 3), " " * n, "\n" * n, "/*" + " " * n, "/*" * (n // 2), "/* " * (n // 3), "/" * n,
+                 "//" + "/" * n, "/*" + " " * (n - 4) + "*/", ("/*" + " " * 30 + "x*/") * (n // 35), "/*" + "{" * n, "/*" + " {" * (n // 2),
+                 "/*" + "*" * n, ("/*" + "\t" * 2000) * (n // 2002), "// \\\n" * (n // 5), "/*{" + "/*{" * (n // 3 - 1), "/* */ " * (n // 6)]
+        for text in worst + [w[:S.MAX_LEADING - 8] + "\n" + tail for w in worst] + [w + tail for w in worst]:
+            self.assertLessEqual(len(text), S.MAX_SOURCE)
+            started = time.thread_time()
+            for _ in range(20):
+                try:
+                    S.translate(S.parse(text), (1280, 720))
+                except S.ShaderError:
+                    pass
+            self.assertLess(time.thread_time() - started, 1.0, text[:12])
+
+    # -- a switch whose DEFAULT is a number --
+    def test_a_switch_takes_true_false_and_the_numbers_0_and_1_as_its_default_and_nothing_else(self):
+        def default(word):
+            text = '/*{"INPUTS": [{"NAME": "lit", "TYPE": "bool", "DEFAULT": %s}]}*/\nvoid main() { gl_FragColor = vec4(lit ? 1.0 : 0.0); }' % word
+            p = S.parse(text)
+            self.assertIn("const bool lit = %s;" % ("true" if p["inputs"][0]["default"] else "false"), S.translate(p, (640, 360)))
+            return p["inputs"][0]["default"]
+        for word, want in (("true", True), ("false", False), ("1", True), ("0", False), ("1.0", True), ("0.0", False), ("-0.0", False),
+                           ("-0", False), ("1e0", True), ("0e5", False), ("1.000", True),
+                           ("1.0000000000000001", True)):            # JSON reads this as the number 1.0: it IS 1 by then
+            got = default(word)
+            self.assertIs(got, want, word)                           # a real true or false, never the number
+        for word in ('"yes"', '""', "2", "-1", "0.5", "1.0000001", "0.9999999", "1e-9", "255", "[1]", "[true]",
+                     "[]", "{}", "null", "NaN", "Infinity", "1e999", "9" * 400):
+            with self.assertRaises(S.ShaderError, msg=word) as c:
+                default(word)
+            self.assertRegex(str(c.exception), "DEFAULT of lit must be true or false|not a number", word)
+        # a value that is set (the panel, a preset, MIDI) stays exactly true or false: this is about the file's header only
+        p = S.parse('/*{"INPUTS": [{"NAME": "lit", "TYPE": "bool", "DEFAULT": 1}]}*/\n' + OK_MAIN)
+        for bad in (1, 0, 1.0, "1", None):
+            with self.assertRaises(S.ShaderError, msg=repr(bad)):
+                S.clean_values(p, {"lit": bad})
+        self.assertEqual(S.clean_values(p, {"lit": False}), {"lit": False})
+        # the other switch in a header: an event has no DEFAULT of its own and is never on by itself
+        self.assertIs(S.parse('/*{"INPUTS": [{"NAME": "go", "TYPE": "event", "DEFAULT": 1}]}*/\n' + OK_MAIN)["inputs"][0]["default"], False)
+
+    def test_a_switch_also_takes_four_texts_in_quotes_as_its_default_and_no_other_text(self):
+        """The owner's choice of 2026-10-08 (D66): "0", "1", "true" and "false" in quotes, letter for letter, as files
+        written for other ISF hosts have them. The list is closed, so a typo is still an error, and nothing of the
+        text reaches the shader: the value is true or false from the parser on."""
+        def parsed(word):
+            return S.parse('/*{"INPUTS": [{"NAME": "lit", "TYPE": "bool", "DEFAULT": %s}]}*/\nvoid main() { gl_FragColor = vec4(lit ? 1.0 : 0.0); }' % word)
+        for word, want in (('"1"', True), ('"0"', False), ('"true"', True), ('"false"', False)):
+            p = parsed(word)
+            self.assertIs(p["inputs"][0]["default"], want, word)                 # a real true or false, never the text
+            out = S.translate(p, (640, 360))
+            self.assertIn("const bool lit = %s;" % ("true" if want else "false"), out, word)
+            self.assertEqual(out.count("const bool lit"), 1)
+            self.assertNotIn('"', out)                                           # nothing of the text is in the shader
+            self.assertEqual(S.input_lines(p, {"lit": not want}), ["const bool lit = %s;" % ("false" if want else "true")])
+        self.assertEqual(S._BOOL_TEXT, {"0": False, "1": True, "false": False, "true": True})
+        for word in ('"TRUE"', '"True"', '"FALSE"', '"False"', '"yes"', '"no"', '"on"', '"off"', '" 1"', '"1 "', '"1\\n"', '"\\t0"', '"1.0"', '"0.0"',
+                     '"01"', '"00"', '"+1"', '"-0"', '"2"', '""', '" "', '"t"', '"f"', '"y"', '"null"', '"true;"', '"true\\u0000"', '"\\uff11"',
+                     '"1\\u200b"', '"tru\\u0435"', '["1"]', '["true"]', '{"1": true}', '"true); float x = (1.0"'):
+            with self.assertRaises(S.ShaderError, msg=word) as c:
+                parsed(word)
+            self.assertIn("DEFAULT of lit must be true or false (also taken: the numbers 0 and 1, and \"0\", \"1\", \"true\", \"false\" in quotes",
+                          str(c.exception), word)
+        # only a switch's DEFAULT in the header: a value that is set stays exactly true or false,
+        p = parsed('"1"')
+        for bad in ("1", "0", "true", "false", 1, 0):
+            with self.assertRaises(S.ShaderError, msg=repr(bad)):
+                S.clean_values(p, {"lit": bad})
+            with self.assertRaises(S.ShaderError, msg=repr(bad)):
+                S.translate(p, (640, 360), {"lit": bad})
+        # an event has no DEFAULT (whatever is written there is never read),
+        self.assertIs(S.parse('/*{"INPUTS": [{"NAME": "go", "TYPE": "event", "DEFAULT": "true"}]}*/\n' + OK_MAIN)["inputs"][0]["default"], False)
+        # and no other type takes text for a number
+        for spec in ('"TYPE": "float", "DEFAULT": "1"', '"TYPE": "long", "DEFAULT": "1"', '"TYPE": "float", "MIN": "0"',
+                     '"TYPE": "color", "DEFAULT": ["1", "0", "0", "1"]', '"TYPE": "point2D", "DEFAULT": ["0", "1"]', '"TYPE": "long", "VALUES": ["0", "1"]'):
+            with self.assertRaises(S.ShaderError, msg=spec):
+                S.parse('/*{"INPUTS": [{"NAME": "a", %s}]}*/\n%s' % (spec, OK_MAIN))
+        # the switches a header is refused for are read as before: text there refuses the file, "0" and "false" too
+        for head in ('{"PERSISTENT_BUFFERS": "0"}', '{"PASSES": [{"PERSISTENT": "false"}]}', '{"PASSES": [{"FLOAT": "0"}]}', '{"IMPORTED": "false"}'):
+            with self.assertRaises(S.ShaderError, msg=head):
+                S.parse("/*" + head + "*/\n" + OK_MAIN)
+
+    # -- an input whose name is a reserved word in another letter case --
+    def test_an_input_called_time_is_renamed_and_the_clock_stays_the_clock(self):
+        body = ("float wave(float time_scale) { return sin(TIME * time + time_scale + TIMEDELTA); }\n"
+                "void main() {\n    float t = time;\n    gl_FragColor = vec4(wave(t), Date, my_time.x, 1.0);\n}\n")
+        inputs = [{"NAME": "time", "TYPE": "float", "MIN": 0, "MAX": 2, "DEFAULT": 0.5, "LABEL": "Time"}, {"NAME": "Date", "TYPE": "float"},
+                  {"NAME": "my_time", "TYPE": "point2D"}]
+        p = S.parse(isf(INPUTS=inputs, body=body))
+        self.assertEqual([(i["name"], i["label"]) for i in p["inputs"]], [("time", "Time"), ("Date", "Date"), ("my_time", "my_time")])
+        out = S.translate(p, (640, 360), {"time": 1.5})
+        self.assertIn("const float pvj_in_time = 1.5;", out)
+        self.assertIn("const float pvj_in_Date = 0.5;", out)
+        self.assertIn("const vec2 my_time = vec2(0.0, 0.0);", out)                 # a name that only holds the word is left alone
+        self.assertIn("#define TIME pvj_time", out)
+        self.assertIn("return sin(TIME * pvj_in_time + time_scale + TIMEDELTA);", out)
+        self.assertIn("float t = pvj_in_time;", out)
+        self.assertIn("vec4(wave(t), pvj_in_Date, my_time.x, 1.0)", out)
+        self.assertNotRegex(out, r"\btime\b")
+        self.assertNotRegex(out.split("#line", 1)[1], r"\bDate\b")
+        # everything outside the shader text keeps the file's own name: values by name, and their limits
+        self.assertEqual(S.clean_values(p, {"time": 5, "Date": -1}), {"time": 2.0, "Date": 0.0})
+        with self.assertRaises(S.ShaderError):
+            S.clean_values(p, {"pvj_in_time": 1})
+        self.assertEqual(S.shape_of(p, {"time": 1.0}), "[]")
+        # both spellings at once are two inputs
+        p = S.parse(isf(INPUTS=[{"NAME": "time", "TYPE": "float"}, {"NAME": "Time", "TYPE": "bool"}], body="void main() { gl_FragColor = vec4(Time ? time : 0.0); }"))
+        out = S.translate(p, (640, 360))
+        self.assertIn("const float pvj_in_time = 0.5;\nconst bool pvj_in_Time = false;", out)
+        self.assertIn("vec4(pvj_in_Time ? pvj_in_time : 0.0)", out)
+        # in a filter of the playing picture too
+        fx = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}, {\"NAME\": \"time\", \"TYPE\": \"float\"}]}*/\n"
+              "void main() { gl_FragColor = IMG_THIS_PIXEL(inputImage) * time * fract(TIME); }\n")
+        f = S.parse(fx, S.FILTER)
+        self.assertEqual(([i["name"] for i in f["inputs"]], f["clock"]), (["time"], True))
+        self.assertIn("pvj_img_this() * pvj_in_time * fract(TIME)", f["code"])
+        self.assertEqual(S.input_lines(f, {}), ["const float pvj_in_time = 0.5;"])
+
+    def test_one_rule_says_which_reserved_names_are_renamed_and_which_stay_refused(self):
+        def one(name):
+            return S.parse(isf(INPUTS=[{"NAME": name, "TYPE": "float"}], body=OK_MAIN))["inputs"][0]["name"]
+        # the language's and ISF's words in another letter case: taken, under a name no file can write
+        for name in ("time", "Time", "tIME", "date", "Date", "timedelta", "frameindex", "passindex", "rendersize", "RenderSize", "Float", "FLOAT", "Mix",
+                     "SIN", "Step", "Length", "Filter", "Input", "Sample", "Sampler2d", "TEXTURE", "img_pixel", "vv_fragnormcoord", "Color", "COLOR", "color"):
+            self.assertEqual(one(name), name)
+            self.assertTrue(S.renamed(name), name)
+            self.assertEqual(S.ident(name), "pvj_in_" + name)
+        # a reserved word letter for letter: refused, since renaming it would rename the code's own uses of the word
+        for name in ("TIME", "TIMEDELTA", "DATE", "FRAMEINDEX", "PASSINDEX", "RENDERSIZE", "IMG_PIXEL", "float", "mix", "sin", "step", "length", "filter",
+                     "input", "sample", "sampler2D", "texture", "texture2D", "vec4", "main", "frame", "random", "hook", "input_size", "pixel_size"):
+            self.assertIn("is taken", refusal(self, isf(INPUTS=[{"NAME": name, "TYPE": "float"}])), name)
+            self.assertFalse(S.renamed(name), name)
+        # the player's and the translator's own words, their patterns and their prefixes: refused in any letter case
+        for name in ("Frame", "FRAME", "Random", "RANDOM", "Main", "MAIN", "Hook", "HOOK", "Input_Size", "TARGET_SIZE", "Tex_Offset", "Pixel_Size",
+                     "Out_Color", "out_color", "OUT_COLOR", "TEXCOORD0", "Texture0", "Hooked_pos", "HOOKED", "Gl_x", "GL_FragColor", "Pvj_x", "PVJ_HP",
+                     "pvj_in_time", "Isf_x", "ISF_FragNormCoord", "isf_fragnormcoord", "ti__me", "time__"):
+            self.assertIn("is taken", refusal(self, isf(INPUTS=[{"NAME": name, "TYPE": "float"}])), name)
+        # every reserved word, in four spellings: it is refused or it is renamed, and never an input under its own name
+        taken = 0
+        for word in sorted(S.RESERVED):
+            for name in {word, word.lower(), word.upper(), word.capitalize()}:
+                try:
+                    one(name)
+                except S.ShaderError:
+                    self.assertTrue(name in S.RESERVED or name.lower() in S._PLAYER_WORDS or name.lower().startswith("isf_"), name)
+                    self.assertNotIn(name.lower(), S._INPUT_RENAMED)
+                    continue
+                taken += 1
+                self.assertTrue(S.ident(name).startswith("pvj_in_"), name)
+                self.assertTrue(name not in S.RESERVED or name == "color", name)
+        self.assertGreater(taken, 250)
+        self.assertTrue(S._PLAYER_WORDS <= S.RESERVED)
+        # an ordinary name is neither
+        for name in ("speed", "timer", "my_time", "time2", "colour", "frames"):
+            self.assertEqual((one(name), S.ident(name)), (name, name))
+        # the renamed names cannot be defined, undefined or written by the code itself
+        for line in ("#define time 1.0", "#undef time", "#define Time x", "#define Date 1.0", "#define TIME 0.0", "#undef TIME"):
+            self.assertIn("is not allowed", refusal(self, isf(INPUTS=[{"NAME": "time", "TYPE": "float"}], body=line + "\n" + OK_MAIN)), line)
+        for line in ("float pvj_in_time = 1.0;", "float PVJ_IN_TIME;", "float pvj_time;"):
+            self.assertIn("used by the player", refusal(self, isf(INPUTS=[{"NAME": "time", "TYPE": "float"}], body=line + "\n" + OK_MAIN)), line)
+        # in a filter the player's clock names stay refused as inputs, letter for letter and in any letter case
+        for name in ("frame", "random", "Frame", "RANDOM"):
+            with self.assertRaises(S.ShaderError, msg=name):
+                S.parse("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}, {\"NAME\": \"%s\", \"TYPE\": \"float\"}]}*/\n"
+                        "void main() { gl_FragColor = IMG_THIS_PIXEL(inputImage); }" % name, S.FILTER)
 
 
 class FakeIpc:
@@ -1071,6 +1433,42 @@ class EngineTest(Base):
         self.assertEqual(self.engine.config(), {"dwell": 180, "vary": True, "height": 720, "disabled": ["ok.fs"]})
         self.settings.data["shaders"] = "nonsense"
         self.assertEqual(self.engine.config(), dict(S.default_config(), height=720))      # the test box is an x86
+
+
+class LenientUploadTest(Base):
+    def test_an_upload_with_credits_before_its_header_is_stored_byte_for_byte(self):
+        """The credit lines are the author's: the stored file is the upload's own bytes, with its comments, its
+        Windows line ends and its text that is not ASCII. Only the player's text leaves them out."""
+        head = {"DESCRIPTION": "with credits", "CREDIT": "Ana Example", "INPUTS": [
+            {"NAME": "time", "TYPE": "float", "MIN": 0, "MAX": 2, "DEFAULT": 0.5}, {"NAME": "lit", "TYPE": "bool", "DEFAULT": 1}]}
+        source = (LEAD + "/*" + json.dumps(head, indent=1) + "*/\n// more\nvoid main() { gl_FragColor = vec4(lit ? time : fract(TIME)); }\n").replace("\n", "\r\n")
+        out = self.engine.api_set({"action": "upload", "name": "credits.fs", "source": source}, None, "t")
+        with open(os.path.join(self.tmp, "shaders", "credits.fs"), "rb") as f:
+            stored = f.read()
+        self.assertEqual(stored, source.encode("utf-8"))
+        self.assertTrue(stored.startswith(b"// Slow Lanterns, by Ana Example (a made-up credit) \xe2\x80\x93 caf\xc3\xa9\r\n"))
+        row = [s for s in out["shaders"] if s["id"] == "credits.fs"][0]
+        self.assertEqual((row["error"], row["description"], row["credit"]), (None, "with credits", "Ana Example"))
+        # the panel, and so every mapping and preset, sees the inputs under the file's own names
+        self.assertEqual([(i["name"], i["type"], i["default"]) for i in row["inputs"]], [("time", "float", 0.5), ("lit", "bool", True)])
+        r = self.engine.show("credits.fs", {"time": 1.25, "lit": False})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.engine.playing["values"], {"time": 1.25, "lit": False})
+        with open(os.path.join(self.rundir, self.generated()[-1])) as f:
+            text = f.read()
+        self.assertIn("const float pvj_in_time = 1.25;\nconst bool lit = false;", text)
+        self.assertIn("vec4(lit ? pvj_in_time : fract(TIME))", text)
+        for gone in ("Ana", "Lanterns", "not me", "\r", "more"):
+            self.assertNotIn(gone, text)
+        self.assertTrue(text.isascii())
+        # what is refused is not stored, with comments before the header as without
+        for name, text in (("a.fs", LEAD + "uniform float u;\n" + GOOD), ("b.fs", "/* credit */\n" + GOOD + "//!HOOK OUTPUT\n"),
+                           ("c.fs", "// " + "x" * S.MAX_LEADING + "\n" + GOOD), ("d.fs", "/* never closed\n" + GOOD.replace("*/", "")),
+                           ("e.fs", LEAD + GOOD.replace("void main", "#version 100\nvoid main"))):
+            with self.assertRaises(ApiError, msg=name) as c:
+                self.engine.api_set({"action": "upload", "name": name, "source": text}, None, "t")
+            self.assertEqual(c.exception.status, 422, name)
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "shaders")), ["credits.fs"])
 
 
 class FakeFader:
