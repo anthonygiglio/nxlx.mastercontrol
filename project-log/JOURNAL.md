@@ -4,6 +4,26 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-08 (the Workspace shell: four areas, a side menu, one transport strip)
+
+Branch `workspace-shell`, made from `origin/resize-step1` (afba416, pull request #100), which merges first. D65 has the decision and the full map; this is what was done and measured. **Measured in headless Edge 153 on the dev Mac against the harness with no player (real presses and keys over the DevTools protocol). The Mac has no Playwright: the browser test's own run is CI's, and had not happened when this was written. Nothing was seen on a phone, in Safari or on a box.**
+
+**What was built.** `pvj/web/app.js`: a table of screens (`screenList`), `go()`, the title bar, the row of an area's screens, the side menu and the tabs (`chrome`), the transport strip (`transport`, built once and kept), and `render()` around them. `live()` is the Pads screen, `mix()` builds Shape's three screens as parts, `media()` is the Library, `system()` is Setup and also draws the three pages that are screens of Play and Shape; the Room screens are `room.js`'s one build with the cards of the other screens hidden. `shaders.js`: the strip and the Vibes row can each be drawn without the other. `app.css`: the shell for both looks, its Signal rules in the Signal block, the cards' `@media` rules for a laptop turned into `@container ws`, and the rules for parts that are gone taken out (Live's bottom row, five tabs, the strip beside the pads). No Python changed but three sentences that said "System".
+
+**The inventory** (`tests/ui/inventory.js`, `tests/ui/fixtures/controls-before.json`). Master at 022de3e and the repairs branch at afba416 gave the same list, twice each: 600 controls for the owner, 238 for a presenter, 68 for a guest. The shell: 600, 237 and 68. The one that is gone is the row "Room" of a presenter's System index, on purpose (D65). Taking the three lists took 166 s here.
+
+**The sweep.** Every screen of the owner's menu (29) at the 13 sizes: Signal 0 faults at the first run. The default look 64, of two kinds: "Blackout" broken on the strip at 320 px (66 px of word in 62), and the five screens of Shape in one row ("Controls", "Picture", "Mapping" broken at 320 to 390). Mended: the strip's side padding and gap at 320, and the row goes to a second line. Then 0. With forms and questions open (a schedule entry, a projector's More and Add, All off asked, Let someone in) 0 in both looks. The strip with More open took 350 px of a 568 px phone with the tabs: it was rearranged (the four stay, two rows of 44 px under them) and is 278 px. Signal's own checks (`check()` of `signal-pages.js`) on the 29 screens at 390 and 1366 px, dark and light: 116 of 116 without a finding. These runs walked the menu; the list of `signal-pages.js` with its states (which needs Playwright) is CI's.
+
+**The shell's checks** (`tests/ui/shell.js`), here: 87 screens opened by a press and 87 with the keyboard (29 at each of 390, 768 and 1366 px), the menus by width, the strip and its More, the three roles and a module switched off: all passed, in Signal and in the default look, about 21 s.
+
+**Unit tests on the Mac:** 1565 run, 29 not passing, all in `test_install` (12), `test_update` (10), `test_netd` (4) and `test_release` (3), the Mac's own reasons, as before.
+
+**The browser test** (`tests/ui/panel.test.js`, `screenshots.js`, `mockups.js`) was moved to the new navigation by reading, site by site (about forty presses of a tab, the index helpers, the Signal title checks, the laptop layout of Live). What changed in meaning: Back says "‹ Pads" and "‹ Setup"; the open tab is asked as the open screen's key; the room's set-up is done on Setup > Room and the groups and scenes are looked at on Walls and Scenes; a presenter's index has no Room row; the laptop check "pads left, strip right" is replaced by the strip on Shape > Controls beside the side menu; Signal's title is real text. One assertion is gone with what it held: the panel's name under the title on a phone.
+
+**Found on the way.** The strip and the Vibes row were coupled (LESSONS). Going from the Setup index to a page left the cursor on nothing; the new screen takes it now. The side menu forgot its place at every redraw; it keeps it and brings the open item into view.
+
+**Open.** The first CI run of this branch: the Playwright steps were not run here. The fixture's comparison in CI (Linux) has not run; if a control exists on the Mac's harness and not on CI's, it will say so by name. The owner's look, and his judgement on the places D65 lists as a judgement. `tools/DEVICE-TESTING.md` still names the old tabs. New pictures for `docs/images/ui`.
+
 ## 2026-10-08 (the resizing study, step 1: a width sweep, and the twelve faults it found)
 
 Pull request #100, branch `resize-step1`, not merged. The owner said yes to step 1 the same day. D64 has the decision; this is what was measured. **Measured in headless Chromium (CI, Linux) and in headless Edge on the dev Mac against the harness with no player. Nothing was seen on a real phone, and nothing ran on a box.**

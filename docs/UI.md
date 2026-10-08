@@ -10,6 +10,35 @@ SHOTS=docs/images/ui node tests/ui/screenshots.js     # needs playwright, Chromi
 
 The CI job "panel-ui" also runs it and uploads the result as the `ui-screenshots` artifact, so a change that breaks a screen shows up there.
 
+## The Workspace shell (2026-10-08, D65)
+
+The panel is laid out as four areas, each with screens that have one job. **The pictures further down this page were taken before that** and show the five tabs it had (Room, Live, Mix, Media, System); the cards in them are the same cards, in new places. New pictures come from the `ui-screenshots` artifact of a CI run of the browser job (`signal-<screen>-phone` and `-laptop` for every screen in `tests/ui/signal-pages.js`); none has been copied into `docs/images/ui` yet.
+
+| Area | Screens | What is on them (every card is the one the panel had) |
+| --- | --- | --- |
+| **Play** | Pads | the big Vibes button with its set chooser and the Shaders link, the banks, the pads, Edit pads, the Screen card (Take snapshot) |
+| | Library | everything the Media tab had: Refresh, Quick play, Live input, Slideshow, Upload clips, the clips (Play, Info, Rename, Delete), USB drives |
+| | Shaders | the Shaders and Vibes page (while its module is on) |
+| **Shape** | Controls | the playing shader's strip and the effect strip (both were on Live), Speed, Loop |
+| | Effect | the Effects card (while Shaders and Vibes is on) |
+| | Picture | Opacity, Size, Position X and Y, Transition, Mirror, Overlay picture, Rotate, Test pattern, Reset mix |
+| | Mapping | the Projection mapping page with its switch (a presenter: the card alone), while its module is on |
+| | Sound | Volume, Audio on or mute, and the Sound page's output card |
+| **Room** | Scenes | ambience, the scenes |
+| | Walls | each group, and Everything (All on, All off) |
+| | Guests | Let someone in (a presenter and the owner) |
+| **Setup** | the index, then a page per row | everything System had; the page Room holds the room's set-up (groups and scenes) |
+
+**Getting about.** Under 600 px wide the areas are tabs at the foot and the open area's screens are a row under the title; from 600 px a side menu lists every area and its screens (168 px wide, 200 from 900, 224 from 1200), and the tabs and the row are gone. The title bar names the area and says the open screen's job. A page of Setup has a Back to the index, and the phone's back gesture does the same. The rows Shaders and Vibes, Projection mapping and Sound of the Setup index open the screens of Play and Shape where those things are used. A screen whose module is switched off is in no menu; the owner switches it on from its row of the Setup index.
+
+**The transport strip** is at the foot of every screen at every width: what is playing, the time, the place in the clip, Previous, back and forward 10 seconds, Next, Fade in, Fade out, Freeze, Stop, Blackout. These are the controls Live had in its Now playing card and its bottom row; they are nowhere else now. Under 600 px it shows what is playing, Previous, Next, Stop and Blackout, and **More** opens the rest under them, in place, until **Less** is tapped.
+
+**Sizes.** The size classes of the resizing study are asked of the panel itself through container queries: compact under 600 px, medium 600 to 899, expanded 900 to 1199, large 1200 to 1599, extra large from 1600; a window under 480 px high is short. The cards ask the workspace (the part beside the menu) how much room they have, so a page's two columns come when the page itself has 900 px, and the three of the Shaders page and of Room when it has 1100. Control heights are the tokens, 44 and 56 px, at every size.
+
+**Who sees what.** Everyone has the four areas. A presenter has the pages of Setup a presenter can use (Health, Projectors, People and codes, Streams, Boxes in step, About and power) and the mapping card without its switch; a guest has no Guests screen and only Health and About and power in Setup, and every control a guest cannot use is greyed as before. Both start on Room > Scenes.
+
+Measured in headless Chromium (CI) and headless Edge (the dev Mac). Nobody has seen it on a phone, in Safari or on the box.
+
 ## Pairing
 
 Enter the four digit PIN shown on the box (`sudo pvj-pin`, or the projector test screen). A device is remembered until it is removed.

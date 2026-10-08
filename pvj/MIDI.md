@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # MIDI controllers (beta)
 
-Play pads, fade and mix from USB MIDI controllers: pad grids, fader boxes, keyboards. Switch it on under System > MIDI controller (full-access devices only) with the switch at the top of the page: it is the only switch, and the box reads controllers as soon as it says On. Off until you switch it on; switching off switches the module off and keeps your mappings. In the API these are still two things: the `control-midi` module and `enabled` in `POST /api/midi`.
+Play pads, fade and mix from USB MIDI controllers: pad grids, fader boxes, keyboards. Switch it on under Setup > MIDI controller (full-access devices only) with the switch at the top of the page: it is the only switch, and the box reads controllers as soon as it says On. Off until you switch it on; switching off switches the module off and keeps your mappings. In the API these are still two things: the `control-midi` module and `enabled` in `POST /api/midi`.
 
 **Every controller that is plugged in is read at once**, and a controller unplugged and replugged is picked up again within a couple of seconds. The box lights the buttons and pads of a controller it knows (see "Lights"); nothing else is written to a controller, and nothing at all to one it does not know (no motor faders).
 
@@ -120,7 +120,7 @@ A box that already had MIDI switched on behaves differently for these three cont
 
 ### The two-minute check, per controller
 
-With the controller plugged in, open System > MIDI controller and look at its card.
+With the controller plugged in, open Setup > MIDI controller and look at its card.
 
 1. The card says "recognised, standard layout on". If there is no card or it says "No built-in layout", note the name it shows: the card id or product name in the profile is wrong.
 2. Move or press **each control once** and watch its box on the card light up. A box that does not light is a wrong number in the profile (or, on the nanoKONTROL2, the controller is not in CC mode). A different box lighting is a swapped number.
@@ -347,7 +347,7 @@ A trigger fires once per press (a note-on, or a CC that goes from below 64 to 64
 
 For when you stand at the box with a controller and no phone or laptop that is paired. **Hold** the control that has the action for **3 to 10 seconds and let go**: the box draws a one-time code on its own display, with its address, for 2 minutes. On the new phone open the address, type the code in the "6 digit code" field of the pairing page (or scan the QR code), and it is paired.
 
-**It is off until a full-access device switches it on**: System > People and codes > "A code from a controller". There are two switches, because there are two actions:
+**It is off until a full-access device switches it on**: Setup > People and codes > "A code from a controller". There are two switches, because there are two actions:
 
 | Action | Pairs one device as | Switch |
 | --- | --- | --- |
@@ -370,7 +370,7 @@ Anyone who can reach a controller plugged into the box can do this once it is on
 - **A full-access device sees it and can end it.** The card on People and codes says "A one-time presenter code is on the box's display now", with **End this code**, and afterwards what became of the last one (used, and by which device; ran out; hidden at the controller; ended from the panel). Switching either switch off ends a code that switch allowed. Neither the switches nor End work through remote support.
 - **Not in a settings file.** The two switches are never exported or imported, and a factory reset switches both off.
 
-**Giving a control the action.** On a controller's card (System > MIDI controller) tap a pad or a button and choose the action, or use Learn. A fader, a knob and a program change cannot have it (a fader given it through Learn does nothing, see "A button, not a fader"). **On a Launchpad Mini the eighth pad of the top row (note 7), the one pad that was spare, shows a presenter code**; while the switch is off it does nothing. No layout has the full access code: put it on a control yourself if you want it. The nanoKONTROL2 has no spare button (its one spare control is fader 8). The MIDI Mix's one spare button is Solo, which is held down while playing to reach the Solo+Mute row, so a hold on it would show a code by accident; it stays spare. On those two, give the action to a button you can do without.
+**Giving a control the action.** On a controller's card (Setup > MIDI controller) tap a pad or a button and choose the action, or use Learn. A fader, a knob and a program change cannot have it (a fader given it through Learn does nothing, see "A button, not a fader"). **On a Launchpad Mini the eighth pad of the top row (note 7), the one pad that was spare, shows a presenter code**; while the switch is off it does nothing. No layout has the full access code: put it on a control yourself if you want it. The nanoKONTROL2 has no spare button (its one spare control is fader 8). The MIDI Mix's one spare button is Solo, which is held down while playing to reach the Solo+Mute row, so a hold on it would show a code by accident; it stays spare. On those two, give the action to a button you can do without.
 
 If nothing happens: is MIDI on, is the switch on (People and codes), did you hold for at least 3 seconds and then let go, and is the player running (the code is drawn by the player; if it cannot draw, no code is made). `journalctl -u pvj-web | grep "controller code"` says why a request was refused.
 
@@ -378,7 +378,7 @@ If nothing happens: is MIDI on, is the switch on (People and codes), did you hol
 
 ## Built-in map
 
-On unless you turn it off (System > MIDI controller > Built-in map). It exists so a plain pad controller works with no setup: notes 36 to 71 (and program changes 0 to 35) play pads 1 to 36 (A is 1 to 12, B 13 to 24, C 25 to 36); notes 72 to 76 are stop, pause, blackout, fade out and reset; CC 20 to 24 are opacity, size, position, speed and volume; CC 25 is blackout while up. Real controllers rarely use these numbers (a Novation Launchpad Mini sends notes 0 to 120 and CC 104 to 111), so a controller without a profile is taught with Learn. The built-in map is not used for a controller whose standard layout is on.
+On unless you turn it off (Setup > MIDI controller > Built-in map). It exists so a plain pad controller works with no setup: notes 36 to 71 (and program changes 0 to 35) play pads 1 to 36 (A is 1 to 12, B 13 to 24, C 25 to 36); notes 72 to 76 are stop, pause, blackout, fade out and reset; CC 20 to 24 are opacity, size, position, speed and volume; CC 25 is blackout while up. Real controllers rarely use these numbers (a Novation Launchpad Mini sends notes 0 to 120 and CC 104 to 111), so a controller without a profile is taught with Learn. The built-in map is not used for a controller whose standard layout is on.
 
 ## Safety
 
