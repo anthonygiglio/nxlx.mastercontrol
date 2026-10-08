@@ -72,6 +72,21 @@ class RemoveLeftovers(Folder):
         self.assertEqual(self.names(), [n for n in before if n not in (".settings-abcd1234", ".settings-fresh123")])
         self.assertTrue(os.path.exists(precious))
 
+    def test_a_file_from_the_future_is_a_leftover_too(self):
+        # Review of #108, finding 4: a Pi has no clock of its own. Started without a time source it believes an
+        # earlier time than the one its files were written at, and "older than an hour" was then never true.
+        self.put(".settings-tomorrow", age=-86400)
+        self.put(".settings-skewed00", age=-1800)                # the clock was set back a little: may be a save now
+        self.put(".settings-fresh123", age=10)
+        self.assertEqual(paths.remove_leftovers(self.dir, TEMP_NAME, older_than=3600), [".settings-tomorrow"])
+        self.assertEqual(self.names(), [".settings-fresh123", ".settings-skewed00"])
+        # the clock the files were written by, an hour and more behind and ahead of the file's time
+        self.put(".upload-1-2")
+        at = os.stat(os.path.join(self.dir, ".upload-1-2")).st_mtime
+        for now in (at - 3599, at, at + 3599):
+            self.assertEqual(paths.remove_leftovers(self.dir, r"\.upload-\d+-\d+", 3600, now=now), [], now - at)
+        self.assertEqual(paths.remove_leftovers(self.dir, r"\.upload-\d+-\d+", 3600, now=at - 3601), [".upload-1-2"])
+
     def test_a_folder_that_is_a_link_is_left_alone(self):
         real = os.path.join(self.dir, "real")
         self.put("real", ".upload-1-2", age=7200)
@@ -98,11 +113,13 @@ class SettingsLeftovers(Folder):
         s.load()
         s.save()                                                 # so that there is a .bak too
         old = self.put(".settings-abcd1234", text='{"half": ', age=TEMP_STALE + 60)
+        ahead = self.put(".settings-ahead000", text='{"half": ', age=-TEMP_STALE - 60)   # a box that lost its clock
         fresh = self.put(".settings-efgh5678", text="{}", age=TEMP_STALE - 60)
         before = {n: self.read(os.path.join(self.dir, n)) for n in ("settings.json", "settings.json.bak")}
         again = Settings(path)
         again.load()
         self.assertFalse(os.path.exists(old))
+        self.assertFalse(os.path.exists(ahead))
         self.assertTrue(os.path.exists(fresh), "another service may be saving at this moment")
         self.assertEqual({n: self.read(os.path.join(self.dir, n)) for n in before}, before)
         self.assertEqual(again.data, s.data)

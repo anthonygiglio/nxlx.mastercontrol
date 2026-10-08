@@ -154,6 +154,10 @@ def remove_leftovers(folder, pattern, older_than=0.0, now=None):
     """Unlink the temp files a power cut or a crash left in `folder`: plain files whose whole name matches
     `pattern` and that were last written more than `older_than` seconds ago (D70). Returns the names removed.
 
+    A time more than `older_than` in the future counts as old as well: a Pi has no clock of its own, and started
+    without a time source it believes an earlier time than the one its files carry. A file written just now is
+    never that far ahead. (Less far ahead it is kept, and goes once the clock has caught up.)
+
     Only ever a regular file directly in the folder, found and removed through the opened folder: a link is never
     followed and never removed, and neither is a folder, and if `folder` itself is a link nothing is done. Never
     raises: this runs where a service starts, and a leftover is not worth a service that does not start."""
@@ -163,13 +167,13 @@ def remove_leftovers(folder, pattern, older_than=0.0, now=None):
     except (OSError, TypeError, ValueError):
         return gone
     try:
-        limit = (time.time() if now is None else now) - older_than
+        now = time.time() if now is None else now
         for name in os.listdir(fd):
             if not re.fullmatch(pattern, name):
                 continue
             try:
                 st = os.lstat(name, dir_fd=fd)
-                if stat.S_ISREG(st.st_mode) and st.st_mtime <= limit:
+                if stat.S_ISREG(st.st_mode) and abs(now - st.st_mtime) >= older_than:
                     os.unlink(name, dir_fd=fd)
                     gone.append(name)
             except OSError:
