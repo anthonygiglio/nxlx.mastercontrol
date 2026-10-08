@@ -118,6 +118,9 @@ async function setUp(t) {
   }
   await post(t, '/api/access/code', { role: 'view', minutes: 60 });
   await post(t, '/api/access/code', { role: 'live', minutes: 60 });
+  // People and codes with "A code from a controller" switched on: both switches and the lines under them. The state
+  // "a code is on the display" needs a hold on a real controller, so it is not in the pictures.
+  await post(t, '/api/access/controller', { enabled: true });
   for (const m of [{ source: 'nanoKONTROL2', kind: 'cc', number: 0, action: 'opacity' }, { source: 'nanoKONTROL2', kind: 'cc', number: 16, action: 'volume' },
     { source: 'Mini', kind: 'note', number: 11, action: 'pad', bank: 0, index: 0 }]) await post(t, '/api/midi/map', { add: m });
   await post(t, '/api/autostart', { mode: 'file', file: 'intro.mkv', loop: true, delay: 5 });
