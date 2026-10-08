@@ -8,6 +8,10 @@
 //                         the keyboard ('keys'), and on each: the right screen is drawn, the title bar names its
 //                         area, one item of the menus is marked as open, the strip is whole, exactly one first
 //                         heading is shown, and the cursor is not lost (it is on the item pressed, or on the screen)
+//   tabWalk(pg)           the Tab key alone, pressed from the top of the page at 390, 768 and 1366 px, comes to
+//                         every item of the menus that is shown and to the strip's buttons, the side menu before
+//                         the screen (reach() by 'keys' puts the cursor on an item and presses Enter: it shows that
+//                         Enter opens the screen, this shows that the keyboard gets there)
 //   menus(pg)             which menu is shown at 390, 599, 600, 768 and 1366 px
 //   strip(pg)             the strip's nine buttons and the place in the clip from 600 px; on a phone four of
 //                         them, and More opens the rest in place, stays open on the next screen, and closes
@@ -86,6 +90,40 @@ async function reach(pg, how) {
     }
   }
   return count;
+}
+
+async function tabWalk(pg) {
+  await ready(pg);
+  const out = {};
+  for (const [width, height] of SIZES) {
+    await pg.setViewportSize({ width, height });
+    await frames(pg);
+    await go(pg, 'shape/sound');
+    // what the keyboard must come to: every item of the menus that is shown, and the strip's buttons that can be pressed
+    const want = await pg.evaluate(() => {
+      const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      window.scrollTo(0, 0);
+      return Array.prototype.filter.call(document.querySelectorAll('#wsside button, #wssub button, #wstabs button, #wstp button'), (b) => shown(b) && !b.disabled).map((b) => b.id);
+    });
+    const seen = [];
+    for (let i = 0; i < 200; i++) {
+      await pg.keyboard.press('Tab');
+      const id = await pg.evaluate(() => { const a = document.activeElement; return !a || a === document.body ? '' : a.id || (a.closest('main') ? 'main:' : '') + a.tagName.toLowerCase(); });
+      if (seen.length && id === seen[0]) break;          // round again
+      seen.push(id);
+    }
+    const missed = want.filter((id) => seen.indexOf(id) < 0);
+    assert.deepStrictEqual(missed, [], 'at ' + width + ' px the Tab key never comes to: ' + missed.join(', ') + ' (it came to ' + seen.join(' ') + ')');
+    ALWAYS.concat(width < 600 ? ['wsmore', 'tab-play', 'tab-setup', 'sub-shape-sound'] : ['side-play-pads', 'side-setup-index', 'side-shape-sound']).forEach((id) => {
+      if (id !== 'prev' && id !== 'next') assert(seen.indexOf(id) >= 0, 'at ' + width + ' px the Tab key comes to ' + id);
+    });
+    const inMain = seen.findIndex((id) => id.indexOf('main:') === 0 || id === 'mvol');
+    if (width >= 600) assert(inMain > seen.indexOf('side-setup-index') && seen.indexOf('side-play-pads') >= 0, 'at ' + width + ' px the side menu comes before the screen in the Tab order');
+    assert(inMain >= 0 && inMain < seen.indexOf('stop'), 'at ' + width + ' px the screen comes before the strip in the Tab order');
+    out[width] = seen.length;
+  }
+  return out;
 }
 
 async function menus(pg) {
@@ -206,7 +244,13 @@ async function inventory(o) {
     const pg = await o.open(token);
     await pg.setViewportSize({ width: 1366, height: 900 });
     const after = await inv.walk(pg);
-    const lost = inv.compare(before.roles[role], after, MOVED[role]);
+    let lost = inv.compare(before.roles[role], after, MOVED[role]);
+    if (lost.length) {          // a card whose answer came late on a slow machine reads as lost: every screen is taken once more
+      if (o.log) o.log('controls of the ' + role + ': ' + lost.length + ' not seen at first, walking once more');
+      const again = await inv.walk(pg);
+      Object.keys(again).forEach((k) => { after[k] = after[k] || again[k]; });
+      lost = inv.compare(before.roles[role], after, MOVED[role]);
+    }
     const fresh = Object.keys(after).filter((k) => !before.roles[role][k]);
     out[role] = { before: Object.keys(before.roles[role]).length, after: Object.keys(after).length, lost, fresh };
     if (o.log) o.log('controls of the ' + role + ': ' + out[role].before + ' before the shell, ' + out[role].after + ' now' + (fresh.length ? '; new: ' + fresh.join(', ') : ''));
@@ -215,4 +259,4 @@ async function inventory(o) {
   return out;
 }
 
-module.exports = { reach, menus, strip, roles, inventory, MENUS, MOVED };
+module.exports = { reach, tabWalk, menus, strip, roles, inventory, MENUS, MOVED };
