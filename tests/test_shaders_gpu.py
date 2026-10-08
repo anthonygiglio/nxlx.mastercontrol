@@ -36,6 +36,12 @@ PROBE_COORD = "/*{}*/\nvoid main() { gl_FragColor = vec4(gl_FragCoord.xy / RENDE
 PROBE_TIME = ("/*{}*/\nvoid main() {\n    float inside = (TIME > 100000.0 && TIME < 100600.0) ? 1.0 : 0.0;\n"
               "    gl_FragColor = vec4(inside, fract(TIME / 8.0), 0.0, 1.0);\n}\n")
 BROKEN = "/*{\n \"DESCRIPTION\": \"a mistake on line 6\"\n}*/\n\nvoid main() {\n    gl_FragColor = vec4(nonsense, 1.0);\n}\n"
+# Comments before the header (written for this test), a switch whose DEFAULT is the number 1, and inputs called `time`
+# and `Date` beside ISF's TIME: what the translator takes since D66. A flat colour of (0.25, 0.5, 0.75).
+CREDITS = "// Flat Probe, by Ana Example (a made-up credit)\n/* a comment\n   of two lines */\n\n"
+LENIENT = (CREDITS + "/*{\"INPUTS\": [{\"NAME\": \"time\", \"TYPE\": \"float\", \"DEFAULT\": 0.25}, {\"NAME\": \"lit\", \"TYPE\": \"bool\", \"DEFAULT\": 1},\n"
+           " {\"NAME\": \"Date\", \"TYPE\": \"float\", \"DEFAULT\": 0.75}]}*/\n"
+           "void main() {\n    float t = time + 0.0 * fract(TIME);\n    gl_FragColor = vec4(t, lit ? 0.5 : 0.0, Date, 1.0);\n}\n")
 SWAP = "//!HOOK OUTPUT\n//!BIND HOOKED\n//!DESC swap\nvec4 hook() { return vec4(HOOKED_tex(HOOKED_pos).bgr, 1.0); }\n"
 
 
@@ -286,6 +292,21 @@ class GpuCase:
         self.assertEqual(self.engine.state()["playing"]["id"], "probe.fs")
         self.assertEqual(self.engine.state()["error"]["id"], "broken.fs")
         self.assertEqual(len(self.shaders_in_player()), 1)
+
+    def test_comments_before_the_header_a_number_for_a_switch_and_an_input_called_time_draw(self):
+        """The three things of D66 on a real compiler: the picture is the inputs' own values (so `time` and `Date`
+        are the inputs and TIME is still the clock, which compiles beside them), and a mistake in a file with four
+        lines of comments before its header is reported on its own line of that file, four further down."""
+        self.engine.upload("lenient.fs", LENIENT)
+        self.show("lenient.fs")
+        self.near(self.shot()[H // 2][W // 2], (64, 128, 191))
+        self.show("lenient.fs", values={"time": 0.75, "lit": False, "Date": 0.25})
+        self.near(self.shot()[H // 2][W // 2], (191, 0, 64))
+        self.engine.upload("broken.fs", CREDITS + BROKEN)
+        r = self.engine.show("broken.fs")
+        self.assertEqual((r["ok"], r["showing"]), (False, "lenient.fs"))
+        self.assertIn("nonsense", r["error"])
+        self.assertIn("line 10:", r["error"])                       # line 6 of BROKEN, after the four lines before it
 
     def test_a_refused_shader_with_nothing_before_it_ends_in_black_not_in_a_broken_picture(self):
         self.engine.upload("broken.fs", BROKEN)
