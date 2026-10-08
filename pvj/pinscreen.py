@@ -14,6 +14,11 @@ box with no keyboard could not be paired. It is drawn by mpv on its own idle scr
   shown as text only, never as a QR code;
 * only characters from a short safe set, because mpv would expand `${...}` in the text.
 
+A third thing can be on the display: the one-time code a person asked for by holding a control on a MIDI controller
+(D61, controllercode.py). It is not a request kept here: each tick asks `auth` whether such a code is active and
+draws it if so, in the place of anything else, so it leaves the display the moment the code is used, cancelled or
+run out. Its presenter kind has a QR code; its full-access kind is text only, like the PIN.
+
 One lock serialises show, hide and each tick, and a tick reads the state once, so a Hide can never be followed by a
 stale draw. Snapshots for devices without full access leave the on-screen text out while any of this is shown.
 """
@@ -42,12 +47,17 @@ def lines(pin, hostname, addresses):
     return out
 
 
-QR_IDS = {"view": 1, "live": 2, "pin": 3}       # overlay ids on the player
+QR_IDS = {"view": 1, "live": 2, "pin": 3, "controller": 4}       # overlay ids on the player
 QR_REFRESH = 15.0
 QR_MAX_SCALE = 16                                # pixels per module; bounds the bitmap whatever size the player reports                                # a player that restarted has lost its overlays: draw them again after this long
 MANUAL_ITEMS = ("pin", "view", "live", "address")    # "address": only where to open the panel
 MANUAL_MIN_SECONDS, MANUAL_MAX_SECONDS, MANUAL_DEFAULT_SECONDS = 10, 3600, 60
 LABELS = {"pin": "Full access PIN", "view": "Guest, watch only, code", "live": "Presenter, play and mix, code"}
+CONTROLLER_LABELS = {"join": "One-time presenter code", "owner": "One-time full access code"}
+NOTICE_SECONDS = 8            # a line that says why no code came (too many this hour) stays this long
+NOTICES = {"limit": "No more codes from a controller for now. Try again in %d minutes.",
+           "owner off": "Full access codes from a controller are switched off on this box.",
+           "full": "Too many devices are paired with this box. No code was made."}
 
 
 class Busy(Exception):
@@ -60,6 +70,8 @@ class PinScreen:
         self.api, self.auth, self.log = api, auth, log
         self._clock = clock or time.monotonic
         self.manual = None       # {"until": t, "items": [...]} while shown on request
+        self._controller_up = False     # a controller code (or a notice about one) was drawn at the last tick
+        self._notice = None      # (until, text): why a hold on a controller gave no code, for a few seconds
         self._lock = threading.RLock()
         self._qr_sig = None      # what the QR overlays currently show (so they are only redrawn when it changes)
         self._qr_at = 0.0
@@ -169,6 +181,38 @@ class PinScreen:
         out.append("Hides in %d s" % max(0, int(m["until"] - self._clock())))
         return out
 
+    # --- the code asked for from a MIDI controller (D61) ----------------------------------------------
+    def _controller(self):
+        """(kind, digits, seconds left) of the active controller code, or None."""
+        ask = getattr(self.auth, "controller_digits", None)
+        return ask() if ask else None
+
+    def controller_up(self):
+        """True while a controller code is active, so on the display. Snapshots for devices without full access
+        leave the on-screen text out then (api.access_on_screen)."""
+        return self._controller() is not None
+
+    def controller_changed(self):
+        """A controller code was made, used or ended: draw or clear now, not at the next tick. True if drawn."""
+        with self._lock:
+            return self.tick()
+
+    def controller_notice(self, why, minutes=0):
+        """Say on the display, for a few seconds, why a hold on a controller gave no code. Fixed words only."""
+        text = NOTICES[why]
+        with self._lock:
+            self._notice = (self._clock() + NOTICE_SECONDS, text % minutes if "%d" in text else text)
+            self.tick()
+
+    def controller_lines(self, c):
+        kind, digits, left = c
+        addr = ["http://%s.local/" % clean(self.hostname)] if self.hostname else []
+        addr += ["http://%s/" % clean(a) for a in self.addresses()[:1]]
+        return ["nxlx.mastercontrol", "Open " + "  or  ".join(addr) if addr else "Open the panel in a browser",
+                "%s  %s" % (CONTROLLER_LABELS[kind], clean(digits)),
+                "Scan the QR code, or type it in the 6 digit code field" if kind == "join" else "Type it in the 6 digit code field",
+                "Works once. Hides in %d s. Press the control again to hide it now" % left]
+
     def auto_wanted(self):
         """True when the first-run screen (PIN and its QR code) should be up: no device paired, player idle."""
         if self.auth.list_devices():
@@ -259,6 +303,25 @@ class PinScreen:
             if self.manual is not None and m is None:        # a request just ran out: take it off the screen
                 self.manual = None
                 self.clear()
+            c = self._controller()
+            notice = self._notice[1] if self._notice and self._clock() < self._notice[0] else None
+            if c or notice:                                  # a code from a controller, before anything else
+                if c:
+                    self._notice, text = None, "\n".join(self.controller_lines(c))
+                else:
+                    text = "nxlx.mastercontrol\n" + notice
+                base = self.base_url()
+                self.draw_qr([(QR_IDS["controller"], "%s#code=%s" % (base, clean(c[1])))] if c and c[0] == "join" and base else [])
+                self._controller_up = True
+                try:
+                    self.api.player.ipc.request("show-text", text, SHOW_MS)
+                except PlayerError:
+                    return False
+                self.shown += 1
+                return True
+            if self._controller_up:                          # it was used, cancelled or ran out: off the screen at once
+                self._controller_up, self._notice = False, None
+                self.clear()
             if not (m or self.auto_wanted()):
                 if self._qr_sig is not None:                  # e.g. the first device just paired
                     self.clear_qr()
@@ -298,4 +361,5 @@ class PinScreen:
             self._thread = None
         with self._lock:
             self.manual = None
+            self._notice = None
             self.clear()

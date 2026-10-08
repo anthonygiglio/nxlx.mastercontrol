@@ -159,6 +159,8 @@ class Api:
         self.scheduler = None     # Scheduler or None
         self.autostart = None     # Autostart or None
         self.pinscreen = None     # PinScreen or None
+        from . import controllercode as controllercode_mod
+        self.controller_codes = controllercode_mod.ControllerCodes(self, log=lambda line: self.log(line))   # a code on the display from a MIDI controller (D61)
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
         self.capture = None       # Capture or None (live input from a USB capture device)
         self._import = {}         # the USB copy running or last run
@@ -280,6 +282,7 @@ class Api:
             raise ApiError(409, str(e))
         except AuthError as e:
             raise ApiError(429 if e.retry_after else 403, str(e), e.retry_after)
+        self.controller_codes.used()       # if it was the code shown from a controller, it leaves the display now
         return {"device": dev, "token": token}
 
     def session(self, body, device, client):
@@ -302,7 +305,8 @@ class Api:
         if ps is None:
             return False
         try:
-            return bool(ps.status()["showing"]) or ps.auto_wanted()
+            shown = getattr(ps, "controller_up", None)        # a code asked for from a MIDI controller (D61)
+            return bool(ps.status()["showing"]) or bool(shown and shown()) or ps.auto_wanted()
         except Exception:
             return True                           # when unsure, treat it as shown: a snapshot then leaves the text out
 
@@ -2011,7 +2015,43 @@ class Api:
             mine = [i for i in screen["items"] if i in self.PRESENTER_ITEMS]
             screen = {"showing": bool(mine), "items": mine, "seconds_left": screen["seconds_left"] if mine else 0,
                       "other": any(i not in self.PRESENTER_ITEMS and i != "address" for i in screen["items"])}
-        return {"codes": codes, "screen": screen, "screen_available": self.pinscreen is not None}
+        out = {"codes": codes, "screen": screen, "screen_available": self.pinscreen is not None}
+        if Auth.allows(device, "full"):       # the code a MIDI controller can put on the display (D61): never its digits
+            out["controller"] = self.controller_codes.state()
+        return out
+
+    def set_controller_code(self, body, device, client):
+        """Full access only, and (like every /api/access route) never through the support tunnel.
+        {"enabled"?: bool, "owner"?: bool}: may a hold on a MIDI controller put a one-time presenter code on the
+        display, and may it put a full-access code there. {"cancel": true}: end the code that is on the display.
+        There is no way to MAKE such a code here: only a controller on the box does that (controllercode.py)."""
+        from . import controllercode as controllercode_mod
+        if body.get("cancel") is True and len(body) == 1:
+            if not self.controller_codes.cancel():
+                raise ApiError(404, "no code from a controller is on the display")
+            self.log("pvj-web: controller code: ended by device %s (from %s)" % (device.get("id"), client))
+            return self._access_state(device)
+        if not body or any(k not in ("enabled", "owner") for k in body):
+            raise bad("send enabled and/or owner (true or false), or cancel: true")
+        with self.settings.lock:
+            current = self.settings.data.get("controller_code")
+            current = dict(current) if isinstance(current, dict) else {}
+            try:
+                new = controllercode_mod.validate(body, current)
+            except controllercode_mod.ControllerCodeError as e:
+                raise bad(str(e))
+            if not self._still_paired(device):
+                raise ApiError(401, "this device is no longer paired")
+            self.settings.data["controller_code"] = new
+            try:
+                self.settings.save()
+            except OSError as e:
+                self.settings.data["controller_code"] = current      # memory and disk must not disagree
+                raise ApiError(500, "could not save: %s" % (e.strerror or e))
+        self.controller_codes.switched()         # outside the settings lock: a code the new setting does not allow goes
+        self.log("pvj-web: controller code: set to %s%s by device %s (from %s)"
+                 % ("on" if new["enabled"] else "off", ", full access codes allowed" if new["owner"] else "", device.get("id"), client))
+        return self._access_state(device)
 
     def get_access(self, body, device, client):
         return self._access_state(device)
@@ -2415,6 +2455,7 @@ class Api:
             ("POST", "/api/access/code"): ("live", self.make_join_code),
             ("POST", "/api/access/cancel"): ("live", self.cancel_join_code),
             ("POST", "/api/access/screen"): ("live", self.show_access),
+            ("POST", "/api/access/controller"): ("full", self.set_controller_code),      # the switches and Cancel only (D61)
             ("GET", "/api/inputs"): ("view", self.get_inputs),
             ("GET", "/api/overlay"): ("view", self.get_overlay),
             ("POST", "/api/overlay"): ("live", self.set_overlay),
