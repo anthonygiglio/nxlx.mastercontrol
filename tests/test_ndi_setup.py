@@ -7,7 +7,6 @@ systemctl, and nothing ran on Linux or a Pi. The real commands under a real syst
 (the CI runner), and the device steps N0 to N18 in tools/DEVICE-TESTING.md."""
 import inspect
 import io
-import json
 import os
 import shutil
 import tempfile
@@ -19,7 +18,7 @@ from unittest import mock
 from pvj import ndi, ndisetup, paths, server
 from pvj import support as sp
 from tests.test_server import ServerBase
-from tests.test_support import CFG, TUNNEL, SupportBase
+from tests.test_support import TUNNEL, SupportBase
 
 
 class Commands:

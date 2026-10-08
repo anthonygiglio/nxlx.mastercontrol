@@ -116,20 +116,19 @@ A library is a program. A route that took the file from a browser would let any 
 
 Sources: the SDK documentation's [Licensing](https://docs.ndi.video/all/developing-with-ndi/sdk/licensing), [Software Distribution](https://docs.ndi.video/all/developing-with-ndi/sdk/software-distribution), [Dynamic Loading](https://docs.ndi.video/all/developing-with-ndi/sdk/dynamic-loading-of-ndi-libraries), [Platform Considerations](https://docs.ndi.video/all/developing-with-ndi/sdk/platform-considerations) and [Port Numbers](https://docs.ndi.video/all/developing-with-ndi/sdk/port-numbers) pages, and the SDK's public header files as mirrored in the DistroAV project (`lib/ndi/Processing.NDI.*.h`).
 
-What those pages say, in their words:
+What those pages say, given here in this project's words (the wording is NDI's to publish, not this project's; read the pages themselves, and the agreement in the SDK, before relying on any of it):
 
-- "The NDI SDK remains royalty-free, subject to the SDK terms and conditions. For more details including a full explanation and updated list of exclusions please consult the terms and conditions by downloading the NDI 6.3.2 SDK." and "You may use this SDK in accordance with its License Agreement, which is available for review in the root level of the SDK folder."
-- "Your application must provide a link to ndi.video in a location close to all locations where NDI is used/selected within the product, on your website, and in its documentation."
-- "You may not distribute the NDI tools; if you wish to make these accessible to your users, you may provide a link to ndi.video/tools."
-- "NDI is a registered trademark of Vizrt NDI AB and should be used only with the ® as follows: NDI®, along with the statement "NDI® is a registered trademark of Vizrt NDI AB" located on the same page near the mark where it is first used, or at the bottom of the page in footnotes. You are required to use the registered trademark designation only on the first use of the word NDI within a single document."
-- "Your application's About Box and any other locations where trademark attribution is provided should also specifically indicate that "NDI® is a registered trademark of Vizrt NDI AB"."
-- "Note that if you wish to use "NDI" within the name of your product please reach out to the NDI team."
-- "You should include the NDI DLLs as part of your own application and keep them in your application folders ... Please do not install your NDI DLLs into the system path for this reason. If you are distributing the NDI DLLs, you need to ensure that your application complies with the License Agreement, this section, and the license terms outlined in "3rd party rights" towards the end of this manual."
-- Binary files: "You may distribute these files within your application if your EULA terms cover the specific requirements of the NDI SDK EULA, and your application covers the terms of the License section above." Redistributables: "you must make all reasonable efforts to keep the versions you distribute up to date."
-- Header files "may be distributed with open-source projects under the terms of the MIT license ... (see "Dynamic Loading" section for preferred mechanism)."
-- "Because AAC, H.264, and H.265 are formats that potentially are not license-free, it is your responsibility to ensure that these are correctly licensed for your product if you are using these with this SDK." (This is NDI HX.)
-- Linux: "The NDI library on Linux depends on two 3rd party libraries: `libavahi-common.so.3`, `libavahi-client.so.3`. The usage of these libraries depends on the `avahi-daemon` service to be installed and running."
-- In the header for Linux the library name is `libndi.so.6` and the download address for a redistributable is an empty string: **NDI publishes no separate runtime download for Linux.** The library comes only inside the SDK, whose installer shows the licence and asks for a yes.
+- The SDK stays royalty-free under its own terms and conditions, and it may be used only in accordance with its License Agreement, which is in the root of the SDK folder. The full list of what is excluded is in those terms, not on the pages.
+- A product must give a link to ndi.video close to every place where NDI is used or chosen in it, on its website and in its documentation.
+- The NDI tools may not be passed on; a product may link to ndi.video/tools instead.
+- NDI is a registered trademark of Vizrt NDI AB. It is to be written with the registered sign on its first use in a document, with the sentence "NDI® is a registered trademark of Vizrt NDI AB" on the same page near that first use or in a footnote. An About box, and any other place where trademarks are attributed, is to carry that sentence too.
+- Whoever wants "NDI" in the name of a product is asked to contact the NDI team first.
+- The library files belong in the application's own folders and not on the system path. Whoever distributes them must meet the License Agreement, the page's own conditions and the third-party terms listed in the manual.
+- The binary files may be distributed inside an application only if that application's own licence terms cover what the SDK's agreement requires; whoever distributes redistributables is to make reasonable efforts to keep them current.
+- The header files may be distributed with open-source projects under the MIT licence; loading the library at run time is the mechanism the pages prefer.
+- AAC, H.264 and H.265 may need licences of their own, and getting those is the responsibility of whoever uses them with the SDK. (This is NDI HX.)
+- On Linux the library depends on two libraries of avahi (`libavahi-common.so.3` and `libavahi-client.so.3`), which need the `avahi-daemon` service installed and running.
+- In the header for Linux the library name is `libndi.so.6` and the download address for a redistributable is empty: **NDI publishes no separate runtime download for Linux.** The library comes only inside the SDK, whose installer shows the licence and asks for a yes.
 
 What follows for this project:
 

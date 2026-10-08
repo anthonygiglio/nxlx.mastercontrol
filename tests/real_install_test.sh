@@ -234,10 +234,13 @@ groups_of() { systemctl show -p SupplementaryGroups --value "$1"; }
 panel_answers() { curl -sS -m 5 -o /dev/null http://127.0.0.1/api/hello; }
 ndi_page() {       # the panel's own account of NDI, with the module on
 	wait_for 40 panel_answers || fail "the panel does not answer"
-	curl -sS -m 20 -o /dev/null -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d '{"enabled": true}' http://127.0.0.1/api/modules/inputs-ndi
-	curl -sS -m 20 -H "Authorization: Bearer $TOKEN" http://127.0.0.1/api/ndi > "$OUT"
+	local code
+	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d '{"enabled": true}' http://127.0.0.1/api/modules/inputs-ndi)"
+	[ "$code" = 200 ] || fail "the NDI module could not be switched on: HTTP $code, $(head -c 300 "$OUT")"
+	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1/api/ndi)"
 	cat "$OUT"
 	echo
+	[ "$code" = 200 ] || fail "GET /api/ndi answered HTTP $code"
 }
 in_group() {       # in_group PID GID: the running process has the group
 	grep -E "^Groups:.*[[:space:]]$2([[:space:]]|\$)" "/proc/$1/status"
@@ -287,7 +290,10 @@ is "$NDI_WEB_DROPIN" "root:root 644 regular file"
 is "$NDI_PLAYER_DROPIN" "root:root 644 regular file"
 sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/pvj/systemd/pvj-ndi.service" | cmp - /etc/systemd/system/pvj-ndi.service || fail "the helper's unit is not the template"
 systemctl is-enabled --quiet pvj-ndi.service || fail "pvj-ndi is not enabled after the opt-in"
-wait_for 40 systemctl is-active --quiet pvj-ndi.service || fail "pvj-ndi is not active after the opt-in"
+if ! wait_for 40 systemctl is-active --quiet pvj-ndi.service; then
+	systemctl status pvj-ndi.service --no-pager -l >&2 || true
+	fail "pvj-ndi is not active after the opt-in"
+fi
 wait_for 40 test -S /run/pvj-ndi/ndi.sock || fail "pvj-ndi made no socket"
 is /run/pvj-ndi "pvj-ndi:pvj-ndi 750 directory"
 is /run/pvj-ndi/ndi.sock "pvj-ndi:pvj-ndi 660 socket"
