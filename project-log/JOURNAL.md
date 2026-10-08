@@ -30,6 +30,15 @@ Branch `isf-leading-comments`, not merged. D66 has the decision. **Run on the de
 
 **Open.** Whether a switch's DEFAULT may be the text `"0"` or `"1"` (the owner). The GPU test's first run in CI. Nothing here was seen on a display.
 
+**After the independent review, the same day** (pull request #103; no high or medium finding, four low ones, all taken):
+
+- The header's 8 KB was counted in characters, on master too: a header of 8,100 euro signs is 24 KB and passed. It is counted in bytes now, which is tighter than master. Test: `test_the_headers_limit_is_counted_in_bytes`.
+- D66 and SHADERS.md named one thing that is refused now and was not (a no-break space before the header). There are more, and both say so now: every other kind of Unicode blank space there, and more than 4 KB of plain blank space.
+- The 4 KB is counted after the byte order mark is dropped and Windows line ends are made `\n`, and SHADERS.md said "as the file's 32 KB is". The words were wrong, not the code; a test pins what is counted.
+- `tools/isf-survey.py`: where the translator refuses to look for the header, the survey fell back to the first comment of any kind, so it took a long credit for the header and reported no problem. It gives the translator's own words now, and for the description looks only for a comment that begins with `{`.
+- Which comment is the header is pinned character by character (`test_which_comment_is_the_header_is_decided_by_its_first_character_after_plain_blank_space`): `/* {` is the header, `/**{` and a no-break space before the brace make a plain comment. The docstring of `find_header` said the search stops at 4 KB; it reads a run of blank space or a comment that starts before that to its end, linear all the same, and says so now.
+- Master was merged in (#101).
+
 ## 2026-10-08, the afternoon (CI's package installs retry)
 
 - The owner logged `gh` in again with the `workflow` scope (D63), so a workflow file could be changed. The first two tries left a token this session's shell could not read back from the keychain (`gh auth token` was empty and every call answered 401); a login with `--insecure-storage`, which keeps the token in `~/.config/gh/hosts.yml`, worked. The earlier working login of the night must have been stored the same way; nobody had written that down.
