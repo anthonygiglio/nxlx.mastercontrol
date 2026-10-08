@@ -230,18 +230,25 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.setInputFiles('#filepick', { name: 'virus.exe', mimeType: 'application/octet-stream', buffer: Buffer.alloc(100, 1) });
     await page.waitForFunction(() => /only video, image and audio files/.test(document.getElementById('uploads').textContent), null, { timeout: 8000 });
 
-    // Nothing in a card may be wider than the card at phone width (names squeezed, buttons off the edge).
+    // Nothing in a card may be wider than the card at phone width (names squeezed, buttons off the edge). Only cards
+    // that are shown are measured: since the Workspace shell (D65) a build holds the cards of its other screens too,
+    // hidden (Room's set-up card while Walls is open, the Effects card while Picture is), and a hidden card has no
+    // width, so every row in it read as "squeezed". At least one card must have been measured.
     async function fitsCard(selector, what) {
       const bad = await page.evaluate((sel) => {
         const out = [];
+        let measured = 0;
         document.querySelectorAll(sel).forEach((card) => {
           const box = card.getBoundingClientRect();
+          if (!box.width || !box.height) return;
+          measured++;
           card.querySelectorAll('button, input, select, span, img').forEach((el) => {
             const r = el.getBoundingClientRect();
             if (r.width && (r.right > box.right + 1 || r.left < box.left - 1)) out.push((el.textContent || el.id || el.tagName).trim().slice(0, 30));
           });
           card.querySelectorAll('.item > span:first-child').forEach((el) => { if (el.getBoundingClientRect().width < 60 && el.textContent.length > 8) out.push('squeezed: ' + el.textContent.slice(0, 30)); });
         });
+        if (!measured) out.push('no card is shown for ' + sel);
         return out;
       }, selector);
       assert(bad.length === 0, what + ': outside the card or squeezed: ' + bad.join(', '));
