@@ -707,6 +707,7 @@ class Service:
                  first_frame=FIRST_FRAME_SECONDS, receiver=Receiver):
         self.rundir, self.lib_path, self._loader, self._problem, self.log, self._clock = rundir, lib_path, loader, problem, log, clock
         self._first_frame, self._receiver = first_frame, receiver
+        self.on_unload = None                      # called when the module is switched off with the library loaded (main: exit)
         self.fifo = os.path.join(rundir, paths.NDI_FIFO)
         self.lock = threading.RLock()              # configure, open and close, one at a time
         self._find_lock = threading.Lock()         # the finder: asked by status, replaced by configure
@@ -743,6 +744,11 @@ class Service:
             if not on:
                 self._close_receiver()
                 self._close_finder()
+                # "Off" means no NDI code running. A library cannot be unloaded from a process, so the process ends
+                # (after this answer has gone) and systemd starts a new one, which loads nothing until told "on".
+                if self.lib is not None and self.on_unload is not None:
+                    self.log("pvj-ndi: the NDI input was switched off; starting again without the NDI runtime")
+                    self.on_unload()
             elif self._load() is not None and (self._finder is None or addresses != self.addresses):
                 self._close_finder()
                 try:
@@ -859,6 +865,7 @@ def main(argv=None):
         os.unlink(service.fifo)                    # a pipe left by a run that was killed
     except OSError:
         pass
+    service.on_unload = lambda: threading.Timer(0.5, os._exit, [0]).start()      # Restart=always brings up a clean one
     server = NetServer(os.path.join(rundir, paths.NDI_SOCKET), service, lambda uid: uid in allowed)
     print("pvj-ndi: ready (%s)" % (service.runtime()["problem"] or "the NDI runtime is in place"), flush=True)
     try:

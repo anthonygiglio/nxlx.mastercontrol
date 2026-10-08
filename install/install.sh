@@ -103,15 +103,16 @@ uninstall() {
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 		systemctl disable --now pvj-ndi.service 2>/dev/null || true
 	fi
-	# The owner's copy of the NDI runtime in /opt/pvj-ndi is theirs and is left where it is.
 	run rm -f "$NDI_UNIT" "$BIN_LINKS/pvj-ndi-runtime"
 	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
+	# The owner's copy of NDI's library is theirs: it goes only with --purge.
+	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi"; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
-	log "done. Kept ${ETC} and media unless --purge; users and group pvj are left in place."
+	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime) unless --purge; the users (pvj-web, pvj-ndi, the player's) and the groups pvj and pvj-ndi are left in place (remove them with deluser and delgroup if you want them gone)."
 }
 
 if [ "$UNINSTALL" = 1 ]; then uninstall; exit 0; fi

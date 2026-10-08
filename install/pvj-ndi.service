@@ -20,9 +20,9 @@ RuntimeDirectory=pvj-ndi
 RuntimeDirectoryMode=0750
 Environment=PVJ_NDI_DIR=/run/pvj-ndi
 # The runtime keeps its settings under $HOME/.ndi unless told otherwise. It is told a folder that is root's and
-# read-only here (where root also puts the library), and its home is its own runtime folder, so it has nowhere
-# to leave anything that outlasts a restart.
-Environment=HOME=/run/pvj-ndi
+# read-only here (where root also puts the library). Its home is the small private /tmp below, so anything it
+# writes there is bounded, is seen by nobody else and is gone at the next start.
+Environment=HOME=/tmp
 Environment=NDI_CONFIG_DIR=/opt/pvj-ndi
 ExecStart=@PVJ_DIR@/bin/pvj-ndi
 Restart=always
@@ -34,9 +34,19 @@ CapabilityBoundingSet=
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-PrivateTmp=yes
+# A /tmp and /var/tmp of its own, in memory and 8 MB each, in place of PrivateTmp (whose folders are on the card
+# and have no bound). With ProtectSystem=strict these and /run/pvj-ndi are the only places it can write.
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,size=8M,mode=1777 /var/tmp:rw,nosuid,nodev,size=8M,mode=1777
 PrivateDevices=yes
 ReadWritePaths=/run/pvj-ndi
+# Bounds, so that a library gone wrong (or taken over) cannot starve the player. How they were chosen, none of
+# them measured on a device: memory, three buffers of the largest frame taken (3840 x 2160, 16.6 MB each) plus the
+# library's own decoding, with room, and what it writes to /run and its /tmp counts against the same figure;
+# tasks, the two threads here plus a library that starts a few per processor; processor, three of a Pi 4's four
+# cores at the very most, so the player always has one.
+MemoryMax=512M
+TasksMax=64
+CPUQuota=300%
 InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
@@ -44,13 +54,17 @@ ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
+# The system bus is NOT denied, and cannot be: NDI's library finds senders through libavahi-client (NDI's
+# documentation names it), and that library talks to avahi-daemon over the system D-Bus socket and no other way.
+# What the bus offers an account with no privileges is what every such account on the box can already ask.
 # AF_UNIX: the panel's socket and the system D-Bus socket (the way to avahi-daemon). AF_NETLINK: the list of the
 # box's own network interfaces, which a network library asks for (see LESSONS on the Network card).
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # The runtime may talk to private and link-local addresses and to multicast (mDNS), and to nothing else: not the
 # internet, whatever a sender or the runtime itself asks for. Addresses added in the panel are held to the same ranges.
 IPAddressDeny=any
-IPAddressAllow=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+# Not localhost: nothing here listens on it for the helper (the panel is asked over a Unix socket, avahi over D-Bus).
+IPAddressAllow=link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

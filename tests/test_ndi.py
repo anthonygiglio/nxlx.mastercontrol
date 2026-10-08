@@ -1563,5 +1563,58 @@ class WatchTest(unittest.TestCase):
         self.assertIsNone(self.i.ended)
 
 
+class OffMeansNoNdiCodeTest(unittest.TestCase):
+    """Review finding 10: switched off after being on, the helper ends so that the library is no longer loaded."""
+
+    def test_switching_off_with_the_library_loaded_asks_for_a_clean_start_and_only_then(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        lib, asked, logged = FakeLib(), [], []
+        s = ndi.Service(d, "x", loader=lambda path: lib, problem=lambda path: None, log=logged.append)
+        self.addCleanup(s.close)
+        s.on_unload = lambda: asked.append(1)
+        s.handle({"cmd": "configure", "on": False, "addresses": []})     # never on: nothing is loaded, nothing to end
+        self.assertEqual(asked, [])
+        s.handle({"cmd": "configure", "on": True, "addresses": []})
+        s.handle({"cmd": "configure", "on": True, "addresses": ["10.0.0.1"]})
+        self.assertEqual(asked, [])
+        reply = s.handle({"cmd": "configure", "on": False, "addresses": []})
+        self.assertEqual((asked, reply["ok"], reply["on"], lib.closed_finders), ([1], True, False, 2))     # the answer still goes out
+        self.assertIn("pvj-ndi: the NDI input was switched off; starting again without the NDI runtime", logged)
+
+    def test_the_helper_as_started_ends_itself_and_answers_only_the_panels_account(self):
+        import inspect
+        src = inspect.getsource(ndi.main)
+        self.assertIn("service.on_unload = lambda: threading.Timer(0.5, os._exit, [0]).start()", src)
+        # who may ask: the panel's account, and nobody else (not root, not the player, which is in the folder's group)
+        self.assertIn('allowed.add(pwd.getpwnam("pvj-web").pw_uid)', src)
+        self.assertIn("lambda uid: uid in allowed", src)
+        self.assertNotIn("allowed = {0}", src)
+        from unittest import mock
+        made = {}
+
+        class Server:
+            def __init__(self, path, service, is_allowed):
+                made.update(path=path, service=service, is_allowed=is_allowed)
+
+            def serve_forever(self):
+                raise KeyboardInterrupt
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, paths.NDI_FIFO), "w"):
+            pass                                                         # a pipe left by a run that was killed
+        import pwd
+        web = mock.Mock(pw_uid=4242)
+        with mock.patch.dict(os.environ, {"PVJ_NDI_DIR": d}), mock.patch("pvj.netd.NetServer", Server), \
+                mock.patch.object(pwd, "getpwnam", lambda name: web if name == "pvj-web" else (_ for _ in ()).throw(KeyError(name))), \
+                mock.patch("builtins.print"):
+            self.assertEqual(ndi.main([]), 0)
+        self.assertEqual(made["path"], os.path.join(d, paths.NDI_SOCKET))
+        self.assertEqual([made["is_allowed"](uid) for uid in (4242, 0, os.getuid(), 4243, 65534)],
+                         [True, False, os.getuid() == 4242, False, False])
+        self.assertFalse(os.path.exists(os.path.join(d, paths.NDI_FIFO)))
+        self.assertIsNotNone(made["service"].on_unload)
+
+
 if __name__ == "__main__":
     unittest.main()

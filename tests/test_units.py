@@ -578,7 +578,7 @@ class NdiUnitTest(unittest.TestCase):
         n = self.ndi
         self.assertEqual(n["CapabilityBoundingSet"], [""])
         self.assertNotIn("AmbientCapabilities", n)
-        for key, value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"), ("ProtectHome", "yes"), ("PrivateTmp", "yes"),
+        for key, value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"), ("ProtectHome", "yes"),
                            ("PrivateDevices", "yes"), ("ProtectKernelTunables", "yes"), ("ProtectKernelModules", "yes"),
                            ("ProtectKernelLogs", "yes"), ("ProtectControlGroups", "yes"), ("ProtectClock", "yes"), ("ProtectHostname", "yes"),
                            ("RestrictNamespaces", "yes"), ("RestrictRealtime", "yes"), ("RestrictSUIDSGID", "yes"),
@@ -595,14 +595,14 @@ class NdiUnitTest(unittest.TestCase):
         from pvj import ndi
         self.assertEqual(self.ndi["IPAddressDeny"], ["any"])
         allow = words(self.ndi, "IPAddressAllow")
-        self.assertEqual(allow, ["localhost", "link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"])
+        self.assertEqual(allow, ["link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"])      # not localhost
         nets = {ipaddress.ip_network(a) for a in allow if "/" in a} | {ipaddress.ip_network("169.254.0.0/16")}      # link-local
         self.assertEqual(set(ndi.PRIVATE_NETS), nets)
 
     def test_the_library_is_given_nowhere_to_write_that_lasts_and_comes_from_a_folder_that_is_roots(self):
         from pvj import ndi
         env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
-        self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/run/pvj-ndi", ndi.LIB_DIR))
+        self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/tmp", ndi.LIB_DIR))
         self.assertFalse(ndi.LIB_DIR.startswith(("/usr/lib", "/lib", "/usr/local/lib", "/var", "/run", "/tmp")))   # not the system path, not writable state
         self.assertNotIn("libndi", self.sh)                # the installer never fetches or copies the runtime
         self.assertNotRegex(self.sh, r"ndi\.(video|tv)|downloads\.ndi")
@@ -623,3 +623,30 @@ class NdiUnitTest(unittest.TestCase):
                 continue
             for n in files:
                 self.assertNotRegex(n, r"(?i)libndi|Processing\.NDI|\.so(\.[0-9]+)*$", os.path.join(root, n))
+
+    def test_what_it_can_write_and_use_is_bounded(self):
+        # Review finding 10. None of these figures has been tried on a device.
+        n = self.ndi
+        self.assertEqual((n["MemoryMax"], n["TasksMax"], n["CPUQuota"]), (["512M"], ["64"], ["300%"]))
+        self.assertNotIn("PrivateTmp", n)                  # its folders are on the card and have no bound
+        self.assertEqual(words(n, "TemporaryFileSystem"), ["/tmp:rw,nosuid,nodev,size=8M,mode=1777", "/var/tmp:rw,nosuid,nodev,size=8M,mode=1777"])
+        env = dict(w.split("=", 1) for w in words(n, "Environment"))
+        self.assertEqual(env["HOME"], "/tmp")              # a home in the bounded private /tmp, not in /run
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi"])
+        self.assertEqual(n["Restart"], ["always"])         # the helper ends itself when the module goes off, and comes back clean
+
+    def test_the_system_bus_stays_reachable_and_the_unit_says_why(self):
+        with open(os.path.join(REPO, "install", "pvj-ndi.service")) as f:
+            text = f.read()
+        self.assertIn("The system bus is NOT denied, and cannot be", text)
+        self.assertIn("libavahi-client", text)
+        for key in ("InaccessiblePaths", "TemporaryFileSystem", "BindReadOnlyPaths"):
+            self.assertFalse([w for w in words(self.ndi, key) if "dbus" in w], key)
+        self.assertIn("AF_UNIX", words(self.ndi, "RestrictAddressFamilies"))
+
+    def test_uninstall_says_what_stays_and_purge_takes_the_runtime(self):
+        body = self.sh[self.sh.index("uninstall() {"):self.sh.index('if [ "$UNINSTALL" = 1 ]')]
+        self.assertIn('if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi"; fi', body)
+        self.assertIn("/opt/pvj-ndi (your copy of the NDI runtime) unless --purge", body)
+        self.assertIn("pvj-ndi, the player's) and the groups pvj and pvj-ndi are left in place", body)
+        self.assertNotIn("userdel", body)
