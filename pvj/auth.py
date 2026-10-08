@@ -14,6 +14,12 @@
   devices, so guests and presenters can never fill the list and keep the owner's PIN from pairing; at most
   PRESENTER_CODES_PER_HOUR guest codes made by presenters in an hour; and a device that joined with a GUEST code is
   dropped once it has not been used for GUEST_IDLE_DAYS (its last use is written down at most once a day).
+* A CONTROLLER CODE (D61) is one more 6-digit code, made only by a deliberate hold on a MIDI controller plugged into
+  the box and drawn only on the box's display, for someone who stands at the box with no paired device. It has its
+  own single place here, apart from the join codes: it works once, for CONTROLLER_SECONDS, is never listed with its
+  digits, and at most CONTROLLER_PER_HOUR are made in an hour. Its "join" kind pairs a presenter, its "owner" kind
+  a full-access device. Both need the box setting `controller_code` (off unless a full-access device switched it
+  on; the owner kind has its own switch), which is read again when the code is used.
 * The PIN is stored as a salted scrypt hash. Because it is short, guessing is
   throttled per client and globally, and comparisons are constant-time.
 """
@@ -39,6 +45,9 @@ MAX_DEVICES = 200                               # paired devices in all
 FULL_RESERVED = 20                              # of those, places only a full-access device can take
 GUEST_IDLE_DAYS = 7                             # a device that joined with a guest code goes when unused this long
 SEEN_EVERY = 86400                              # its last use is saved at most this often (seconds)
+CONTROLLER_KINDS = {"join": "live", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs
+CONTROLLER_SECONDS = 120                        # it works for this long
+CONTROLLER_PER_HOUR = 6                         # and this many are made in any hour, of both kinds together
 PER_CLIENT_FAILS, PER_CLIENT_WINDOW = 5, 60.0
 GLOBAL_FAILS, GLOBAL_WINDOW = 20, 600.0
 LOCKOUT_SECONDS = 60.0
@@ -60,6 +69,10 @@ class JoinLimit(AuthError):
 
 class TooManyDevices(AuthError):
     """The list of paired devices is full for this kind of device. Not a wrong guess."""
+
+
+class ControllerOff(AuthError):
+    """Codes from a controller are switched off on this box, or the full-access kind is."""
 
 
 class NotPaired(AuthError):
@@ -90,6 +103,9 @@ class Auth:
         self._pair_lock = threading.Lock()  # one PIN attempt at a time, so the counters are exact
         self._joins = {}        # code -> {"role", "expires" (monotonic), "uses"}
         self._presenter_made = []   # when (monotonic) presenters made guest codes, within the last hour
+        self._controller = None     # the code shown from a controller: {"code", "kind", "expires" (monotonic), "shown" (wall)}
+        self._controller_made = []  # when (monotonic) such codes were made, within the last hour
+        self.controller_last = None  # the one before: {"kind", "shown", "ended" (wall), "how", "device"?}, for the panel
         self._prune_idle()
         if rotate_on_start or not settings.data["auth"].get("pin_hash"):
             self._new_pin()
@@ -161,6 +177,11 @@ class Auth:
                 raise AuthError("too many attempts", retry_after=int(wait) + 1)
             given = pin if isinstance(pin, str) else ""
             if len(given) == JOIN_LENGTH and given.isascii() and given.isdigit():
+                role = self._use_controller(given)       # the code shown from a controller, if this is it (D61)
+                if role:          # as for a join code: no guess is counted, and the failure count is not reset
+                    token, device = self._add_device(name, role, via="controller")
+                    self.controller_last["device"] = device["name"]
+                    return token, device
                 role = self._use_join(given)      # TooManyDevices: the code is right, is not used up, and no guess is counted
                 if role:          # the failure count is NOT reset: a real code must not buy more PIN guesses
                     return self._add_device(name, role, via="code")
@@ -230,7 +251,7 @@ class Auth:
                 raise AuthError("too many join codes; cancel one first")
             while True:
                 code = "%0*d" % (JOIN_LENGTH, secrets.randbelow(10 ** JOIN_LENGTH))
-                if code not in self._joins:
+                if code not in self._joins and not (self._controller and self._controller["code"] == code):
                     break
             self._joins[code] = {"role": role, "expires": self._clock() + minutes * 60, "uses": uses, "by": by}
             if by == "presenter":
@@ -261,6 +282,106 @@ class Auth:
             for c in found:
                 del self._joins[c]
             return bool(found)
+
+    # --- the code shown from a controller (D61) -------------------------
+    def _controller_cfg(self):
+        """(codes from a controller are on, the full-access kind is allowed), from the settings. Anything that is
+        not exactly true counts as off: the file is one a person may have edited."""
+        c = self.settings.data.get("controller_code")
+        c = c if isinstance(c, dict) else {}
+        on = c.get("enabled") is True
+        return on, on and c.get("owner") is True
+
+    def _end_controller(self, how):
+        """Forget the active code and keep what became of it. Call with `_pair_lock` held."""
+        c, self._controller = self._controller, None
+        if c is not None:
+            self.controller_last = {"kind": c["kind"], "shown": c["shown"], "ended": int(self._now()), "how": how}
+        return c is not None
+
+    def _prune_controller(self):
+        """Call with `_pair_lock` held. A code that ran out goes, and so does one whose switch was turned off."""
+        c = self._controller
+        if c is None:
+            return
+        on, owner = self._controller_cfg()
+        if c["expires"] <= self._clock():
+            self._end_controller("expired")
+        elif not on or (c["kind"] == "owner" and not owner):
+            self._end_controller("switched off")
+
+    def _use_controller(self, given):
+        """The role of the controller code if `given` is it (and it is used up), else None. Call with `_pair_lock`
+        held. The comparison is made even when no code is active, against digits nobody can type, so timing does
+        not say whether one is."""
+        self._prune_controller()
+        c = self._controller
+        if not hmac.compare_digest(c["code"] if c else "x" * JOIN_LENGTH, given) or c is None:
+            return None
+        role = CONTROLLER_KINDS[c["kind"]]
+        self._prune_idle()
+        if not self._room_for(role):
+            raise TooManyDevices(self.FULL_TEXT)
+        self._end_controller("used")
+        return role
+
+    def create_controller_code(self, kind):
+        """A new code of `kind` ("join" or "owner") in the place of any that is active. Only the controller code
+        manager calls this (controllercode.py), for a hold on a MIDI controller; no API route does. Raises
+        ControllerOff when the setting (or the owner kind's) is off, JoinLimit after CONTROLLER_PER_HOUR in an hour,
+        TooManyDevices when a device of that role could not be added anyway. Returns nothing: the digits are read
+        by the display alone (controller_digits)."""
+        if kind not in CONTROLLER_KINDS:
+            raise AuthError("a controller code is a join code or an owner code")
+        with self._pair_lock:
+            self._prune_controller()
+            on, owner = self._controller_cfg()
+            if not on or (kind == "owner" and not owner):
+                raise ControllerOff("codes from a controller are switched off" if not on else
+                                    "full access codes from a controller are switched off")
+            t = self._clock()
+            self._controller_made = [x for x in self._controller_made if t - x < 3600.0]
+            if len(self._controller_made) >= CONTROLLER_PER_HOUR:
+                raise JoinLimit("too many codes were shown from a controller in the last hour",
+                                retry_after=int(3600.0 - (t - self._controller_made[0])) + 1)
+            if not self._room_for(CONTROLLER_KINDS[kind]):
+                raise TooManyDevices(self.FULL_TEXT)
+            self._end_controller("replaced")
+            while True:
+                code = "%0*d" % (JOIN_LENGTH, secrets.randbelow(10 ** JOIN_LENGTH))
+                if code not in self._joins:
+                    break
+            self._controller = {"code": code, "kind": kind, "expires": t + CONTROLLER_SECONDS, "shown": int(self._now())}
+            self._controller_made.append(t)
+
+    def controller_digits(self):
+        """(kind, digits, seconds left) of the active controller code, or None. For the box's own display only:
+        nothing that answers a device may call this."""
+        with self._pair_lock:
+            self._prune_controller()
+            c = self._controller
+            return (c["kind"], c["code"], max(0, int(c["expires"] - self._clock()))) if c else None
+
+    def controller_status(self):
+        """What a full-access device may know: whether a code is on the display, its kind, when it was shown and
+        how long it still works, and what became of the one before. Never the digits."""
+        with self._pair_lock:
+            self._prune_controller()
+            c, t, now = self._controller, self._clock(), int(self._now())
+            made = [x for x in self._controller_made if t - x < 3600.0]
+            last = dict(self.controller_last) if self.controller_last else None
+            if last:                                # how long ago, by the box's own clock (a phone's may differ)
+                last["ended_ago"] = max(0, now - last["ended"])
+            return {"active": c is not None, "kind": c["kind"] if c else None, "shown": c["shown"] if c else None,
+                    "shown_ago": max(0, now - c["shown"]) if c else None,
+                    "seconds_left": max(0, int(c["expires"] - t)) if c else 0, "last": last,
+                    "made_this_hour": len(made), "per_hour": CONTROLLER_PER_HOUR}
+
+    def cancel_controller_code(self, how="cancelled"):
+        """End the active controller code. True if there was one."""
+        with self._pair_lock:
+            self._prune_controller()
+            return self._end_controller(how)
 
     def invite(self, name, role):
         if role not in ("view", "live"):

@@ -55,11 +55,12 @@ from .settings import SettingsError, default_control, default_settings, migrate
 
 FORMAT = "nxlx.mastercontrol settings"
 FORMAT_VERSION = 1
-KNOWN_SCHEMA = 13                    # the section checks below know the settings as of this schema
+KNOWN_SCHEMA = 14                    # the section checks below know the settings as of this schema (14 changed none of them)
 MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved mapping is well under this
 MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
-NEVER = ("auth", "devices", "support", "support_log")      # never exported, never imported
+# never exported, never imported. "controller_code" (D61) is a way to hand out access, so a file cannot switch it on
+NEVER = ("auth", "devices", "support", "support_log", "controller_code")
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
@@ -484,6 +485,8 @@ def public_settings(data, support_configured=None):
                       "server_set": bool(support.get("endpoint")), "configured": support_configured}
     out["support_log"] = [{k: e.get(k) for k in ("started", "ended", "minutes", "role", "reason", "logins")}
                           for e in data.get("support_log", []) if isinstance(e, dict)]
+    code = data.get("controller_code") if isinstance(data.get("controller_code"), dict) else {}
+    out["controller_code"] = {"enabled": code.get("enabled") is True, "owner": code.get("owner") is True}
     known = {n for n, _ in SECTIONS} | set(NEVER) | {"schema"}
     out["not_shown"] = sorted(k for k in data if k not in known) + ["auth (the PIN)"]
     return out
@@ -953,6 +956,7 @@ class BoxCare:
             new["auth"] = dict(previous["auth"])           # replaced below: the box is never without a PIN
             self._replace(new)
             auth._joins.clear()
+            auth._controller, auth._controller_made, auth.controller_last = None, [], None     # a code shown from a controller
             auth._fails.clear()
             auth._global_fails = []
             auth._locked_until.clear()
