@@ -813,8 +813,12 @@ class SnapshotOfAStillSourceTest(ServerBase):
         self.api.ndi.current = {"id": "0123456789ab", "name": "Test Patterns"}
         st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
         self.assertEqual(st, 409)
-        self.assertIn("the NDI source has not given the player enough pictures to copy one", body["error"])
-        self.assertIn("look at the screen itself", body["error"])       # it does not claim to know what the screen shows
+        # On the Pi 4 the still picture WAS on the screen while the snapshot failed (2026-10-08): the words say that
+        # the snapshot failed and do not put the screen in doubt.
+        self.assertIn("no snapshot of this NDI source could be made", body["error"])
+        self.assertIn("the picture on the screen is not affected", body["error"])
+        for doubt in ("look at the screen", "not given the player", "nothing", "yet"):
+            self.assertNotIn(doubt, body["error"])
         self.assertNotIn("mpv", body["error"])
 
     def test_any_other_source_whose_snapshot_fails_is_still_a_fault_and_an_idle_player_still_says_nothing(self):
@@ -838,6 +842,76 @@ class SnapshotOfAStillSourceTest(ServerBase):
         self.assertIn("'Nothing is on the screen right now.'", js)
         from pvj import api as api_mod
         self.assertIn("NDI", api_mod.NDI_NO_SNAPSHOT)
+
+
+class LiveSpeedTest(ServerBase):
+    """Found on the Pi 4 on 2026-10-08: with the Mix speed left at 1.86 an NDI source was played at 1.86, and mpv
+    dropped some 4800 frames in five minutes. A source that arrives in real time plays at 1, whatever the Mix speed
+    is; the Mix speed is kept and comes back with the next clip. The same for the capture input and for streams."""
+
+    def setUp(self):
+        super().setUp()
+        self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
+        self.speeds = lambda: [c[1] for c in self.player.calls if c[0] == "speed"]
+
+    def control(self, value):
+        return self.call("POST", "/api/control", {"action": "speed", "value": value}, token=self.full)
+
+    def test_a_clip_then_a_live_source_then_a_clip(self):
+        self.assertEqual(self.control(1.86)[0], 200)
+        self.assertEqual(self.speeds(), [1.86])
+        self.assertNotIn("speed_held", self.call("GET", "/api/status", token=self.full)[1]["player"])
+        for start, name in ((lambda: self.api._started_playing(ndi=True), "ndi"), (lambda: self.api._started_playing(capture=True), "capture"),
+                            (lambda: self.api._started_playing(live=True), "stream")):
+            self.player.calls.clear()
+            start()
+            self.assertEqual(self.speeds(), [1], name)                                    # held at 1 for as long as it plays
+            player = self.call("GET", "/api/status", token=self.full)[1]["player"]
+            self.assertEqual((player["speed_held"], player["speed_level"]), (True, 1.86), name)
+            self.api._started_playing()                                                   # the next clip
+            self.assertEqual(self.speeds(), [1, 1.86], name)                              # the Mix speed is back
+            self.assertNotIn("speed_held", self.call("GET", "/api/status", token=self.full)[1]["player"])
+            self.api._started_playing()
+            self.assertEqual(self.speeds(), [1, 1.86], name)                              # and is not sent again for every clip after
+
+    def test_a_speed_set_while_a_live_source_plays_is_kept_for_the_next_clip_and_not_applied(self):
+        self.api._started_playing(ndi=True)
+        self.player.calls.clear()
+        st, body, _ = self.control(0.5)
+        self.assertEqual((st, body), (200, {"ok": True, "speed_held": True}))
+        self.assertEqual(self.speeds(), [])                                               # the live source goes on at 1
+        self.assertEqual(self.api.levels["speed"], 0.5)
+        self.assertEqual(self.control(9)[0], 400)                                         # still checked
+        self.api._started_playing()
+        self.assertEqual(self.speeds(), [0.5])
+
+    def test_one_live_source_after_another_stays_at_one(self):
+        self.control(2)
+        self.player.calls.clear()
+        self.api._started_playing(ndi=True)
+        self.api._started_playing(capture=True)
+        self.api._started_playing(live=True)
+        self.assertEqual(self.speeds(), [1, 1, 1])
+        self.assertTrue(self.api._speed_held)
+
+    def test_the_three_live_sources_say_that_they_are(self):
+        from pvj.api import Api
+        self.assertIn("self._started_playing(ndi=True)", inspect.getsource(Api.play_ndi))
+        self.assertIn("self._started_playing(capture=True)", inspect.getsource(Api.play_capture))
+        self.assertIn("self._started_playing(live=True)", inspect.getsource(Api.play_stream))
+        with open(os.path.join(os.path.dirname(ndisetup.__file__), "web", "app.js")) as f:
+            js = f.read()
+        self.assertIn("pl.speed_held", js)
+        self.assertIn("it plays at 1.00x. This speed is kept for the next clip.", js)
+
+    def test_a_player_that_went_away_does_not_stop_the_play(self):
+        from pvj.api import ApiError
+
+        def gone(fn, *a):
+            raise ApiError(503, "player service is not running")
+        self.api._player_call = gone
+        self.api._started_playing(ndi=True)                                               # no exception
+        self.assertTrue(self.api._speed_held)
 
 
 class HelperIdlesTest(unittest.TestCase):

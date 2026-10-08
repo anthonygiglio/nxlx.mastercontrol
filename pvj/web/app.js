@@ -534,8 +534,15 @@
         slider('ms', 'Size', 1, 200, 1, m.size === undefined ? 100 : m.size, function (v) { return v + '%'; }, ctl('size')),
         slider('mp', 'Position X', -100, 100, 1, m.position === undefined ? 0 : m.position, function (v) { return String(v); }, ctl('position')),
         slider('mpy', 'Position Y', -100, 100, 1, m.position_y === undefined ? 0 : m.position_y, function (v) { return String(v); }, ctl('position_y')),
-        slider('mv', 'Speed', 25, 200, 5, Math.round((pl.speed || 1) * 100), function (v) { return (v / 100).toFixed(2) + 'x'; },
-          function (v) { ctl('speed')(v / 100); }),
+        // A live source (NDI, the capture input, a stream) plays at 1.00x whatever this says: the slider then shows the
+        // Mix speed that is kept for the next clip, and says so.
+        (function () {
+          var held = !!pl.speed_held;
+          var card = slider('mv', 'Speed', 25, 200, 5, Math.round(((held ? pl.speed_level : pl.speed) || 1) * 100), function (v) { return (v / 100).toFixed(2) + 'x'; },
+            function (v) { ctl('speed')(v / 100); });
+          if (held) card.appendChild(h('div', { class: 'hint', id: 'speedheld', text: 'A live source is playing (NDI, the capture input or a stream): it plays at 1.00x. This speed is kept for the next clip.' }));
+          return card;
+        })(),
         slider('mvol', 'Volume', 0, 130, 1, Math.round(pl.volume === undefined || pl.volume === null ? 100 : pl.volume), function (v) { return v + '%'; }, ctl('volume'))),
       window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null,
       h('div', { class: 'card' },

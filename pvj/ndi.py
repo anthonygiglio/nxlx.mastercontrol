@@ -64,13 +64,6 @@ PROGRESSIVE, INTERLACED = 1, (0, 2, 3)      # the frame format values: 0 two fie
 FIRST_FRAME_SECONDS = 6.0
 PIPE_OPEN_SECONDS = 10.0
 QUIET_SECONDS = 2.0                       # no frame for this long: "still" (or "waiting", if the connection dropped)
-# A frame that nothing follows is written to the pipe once more after this long. Why: on the first run on a Pi 4
-# (mpv 0.40) a still source's one frame was in the pipe and mpv reported frame 0, position 0.0 and "idle", and could
-# not make a snapshot. mpv, as far as its source is remembered here (player/video.c; NOT read again for this, and
-# NOT tried), shows a frame only once it also holds the one after it, to know how long the first lasts. If that is
-# right the repeat puts a still picture on the screen; if it is wrong the repeat costs one frame. Device step N12.
-REPEAT_AFTER = 0.3
-
 # ---- sound (D62, 2026-10-08). Every figure of a block of sound is the sender's and is held to these.
 AUDIO_FLTP = 0x70544C46                   # "FLTp": 32-bit floats, one plane a channel; the only form the library hands out
 AUDIO_RATES = (32000, 44100, 48000, 88200, 96000)
@@ -762,7 +755,7 @@ class Receiver:
         self._apts = None                          # where the next block of sound belongs, by count
         self._users = 0                            # threads that may be inside the library with the connection
         self.state, self.message, self.format = "connecting", "", None
-        self.counts = {"received": 0, "shown": 0, "dropped": 0, "repeated": 0}
+        self.counts = {"received": 0, "shown": 0, "dropped": 0}
         self.first = threading.Event()             # a first good frame, or the end
         self._stop = threading.Event()
         self._cond = threading.Condition()
@@ -1027,44 +1020,30 @@ class Receiver:
                 if self.state == "ready":
                     self.state = "playing"
             self._sound_end = 0.0
-            # `last` is the frame written most recently. It is kept (not given back) until the next one is taken, so
-            # that it can be written once more if nothing follows it (REPEAT_AFTER). The writer so never holds more
-            # than one buffer at a time, which is what the capture thread's three buffers allow for.
-            last, wrote_at, repeated, shown_at = None, 0.0, True, -1.0
+            shown_at = -1.0
             while not self._stop.is_set():
-                again, blocks, buf, at = False, (), None, 0.0
+                blocks, buf, at = (), None, 0.0
                 with self._cond:
                     while self._pending is None and not self._queue and not self._stop.is_set():
-                        if last is not None and not repeated and self._clock() - wrote_at >= REPEAT_AFTER:
-                            again = True
-                            break
-                        self._cond.wait(0.05 if last is not None and not repeated else 0.25)
+                        self._cond.wait(0.25)
                     if self._queue:
                         blocks, self._queued = tuple(self._queue), 0.0
                         self._queue.clear()
-                    if not again and self._pending is not None:
+                    if self._pending is not None:
                         buf, self._pending, at = self._pending, None, self._at
-                        if last is not None:
-                            self._free.append(last)
-                            last = None
-                if self._stop.is_set() and buf is None and not blocks:
+                if buf is None and not blocks:
                     break
-                now = self._clock() - self._t0
-                if mkv and (blocks or buf is not None or again) and not self._write_sound(fd, blocks, now):
-                    break
-                if again:
-                    repeated = True                        # once: a still picture is not written over and over
-                    shown_at = max(shown_at + 0.001, now)
-                    if self._write_frame(fd, last, shown_at):
+                if mkv and not self._write_sound(fd, blocks, self._clock() - self._t0):
+                    if buf is not None:
                         with self._cond:
-                            self.counts["repeated"] += 1
-                    continue
+                            self._free.append(buf)
+                    break
                 if buf is None:
                     continue
                 shown_at = max(shown_at + 0.001, at - self._t0)        # where it arrived; never before the one before it
                 ok = self._write_frame(fd, buf, shown_at)
-                last, wrote_at, repeated = buf, self._clock(), not ok
                 with self._cond:
+                    self._free.append(buf)
                     if ok:
                         self.counts["shown"] += 1
         except Exception as e:
@@ -1434,7 +1413,7 @@ def _playing(p):
     if isinstance(fps, (int, float)) and not isinstance(fps, bool) and 1 <= fps <= 120:
         out["fps"] = round(float(fps), 3)
     counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
-    out["counts"] = {k: counts[k] for k in ("received", "shown", "dropped", "dropped_by_runtime", "repeated")
+    out["counts"] = {k: counts[k] for k in ("received", "shown", "dropped", "dropped_by_runtime")
                      if isinstance(counts.get(k), int) and not isinstance(counts.get(k), bool) and 0 <= counts[k] < 2 ** 53}
     out["container"] = p["container"] if p.get("container") in CONTAINERS else "raw"
     out["audio"] = _audio(p.get("audio"))

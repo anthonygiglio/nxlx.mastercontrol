@@ -74,8 +74,11 @@ def number(body, key, lo, hi, integer=False):
     return int(v) if integer else float(v)
 
 
-NDI_NO_SNAPSHOT = ("no snapshot yet: the NDI source has not given the player enough pictures to copy one "
-                   "(a still source sends very few); look at the screen itself, or try again in a moment")
+# Seen on the Pi 4 on 2026-10-08: with a still NDI source the picture IS on the screen (a camera pointed at the
+# monitor showed it) and mpv still answers a snapshot with "error running command". Why is not known. So the words
+# say what is known: the snapshot failed, the screen is not in doubt.
+NDI_NO_SNAPSHOT = ("no snapshot of this NDI source could be made (the player could not copy its picture, which happens "
+                   "with a still source); the picture on the screen is not affected")
 PREVIEW_MIN_INTERVAL = 3.0    # seconds: a snapshot stalls playback for about a quarter second on a Pi 4, so viewers share one frame
 PREVIEW_MAX_BYTES = 8 * 1024 * 1024
 MAX_UPLOAD_BYTES = int(os.environ.get("PVJ_MAX_UPLOAD_MB", "8192")) * 1024 * 1024
@@ -159,6 +162,9 @@ class Api:
         self._media_lock = threading.Lock()   # rename, delete and publishing an upload never interleave
         self.mix = {"opacity": 100, "blackout": False, "size": 100, "position": 0, "position_y": 0, "rotate": 0,
                     "flip_h": False, "flip_v": False}
+        # True while a live source (NDI, the capture input, a stream) is what plays: the player is then held at speed 1
+        # whatever the Mix speed is, and the Mix speed (levels["speed"]) comes back with the next clip.
+        self._speed_held = False
         self.levels = {"volume": 100.0, "speed": 1.0}    # what was last set here (mpv's own start values until then); a
         self.fader = Fader(self._apply_opacity)          # MIDI fader reads them for pickup without asking the player
         self._preview_lock = threading.Lock()
@@ -387,10 +393,9 @@ class Api:
                     # That is not a fault: say so in its own way, so the panel can say "nothing is on the screen".
                     if self._nothing_on_screen():
                         raise ApiError(409, "nothing is on the screen right now")
-                    # An NDI source that has given the player too few pictures to copy one (a still source: seen on
-                    # the first run on a Pi 4, where this was a 503 "mpv: error running command"). Not a fault of
-                    # the player and not "nothing": said as what it is. Whether the picture is on the screen itself
-                    # this cannot know.
+                    # An NDI source of which mpv cannot make a snapshot (a still source: seen on a Pi 4, where this
+                    # was a 503 "mpv: error running command" while the picture was on the screen). Not "nothing on
+                    # the screen" and not a player that is down: said as what it is.
                     if self._ndi_on_screen():
                         raise ApiError(409, NDI_NO_SNAPSHOT)
                     raise
@@ -463,6 +468,8 @@ class Api:
         effect = self.effects.current()                   # an effect over the picture: its name, for the Live screen
         if effect is not None:
             status["effect"] = effect["id"][:-3]
+        if self._speed_held:                              # a live source: it plays at 1, and the Mix speed waits
+            status["speed_held"], status["speed_level"] = True, self.levels["speed"]
         if self.capture is not None and path == self.capture.fifo:
             cur = self.capture.status(devices=False)["current"] or {}
             status["path"], status["capture"] = None, cur or True
@@ -929,7 +936,7 @@ class Api:
         self.fader.cancel()
         self._player_call(self.player.play, [match[0]["url"]], False, None, False, self.spawn)
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
-        self._started_playing()
+        self._started_playing(live=True)
         return {"playing": match[0]["name"]}
 
     def get_streams(self, body, device, client):
@@ -974,7 +981,11 @@ class Api:
         if action == "seek":
             self._player_call(p.seek, number(body, "value", -3600, 3600))
         elif action == "speed":
-            self._player_call(p.speed, number(body, "value", 0.1, 4))
+            value = number(body, "value", 0.1, 4)
+            if self._speed_held:                   # a live source plays: the speed is kept for the next clip, not applied
+                self.levels["speed"] = float(value)
+                return {"ok": True, "speed_held": True}
+            self._player_call(p.speed, value)
             self.levels["speed"] = float(body["value"])
         elif action == "volume":
             self._player_call(p.volume, number(body, "value", 0, 130))
@@ -1953,15 +1964,27 @@ class Api:
                     return want
         return "auto"
 
-    def _started_playing(self, capture=False, ndi=False):
+    def _started_playing(self, capture=False, ndi=False, live=False):
         """Something is about to be on screen: take any on-screen pairing PIN off it at once, and stop a live input
-        that is no longer shown (its helper must not keep the device, or the NDI source, busy)."""
+        that is no longer shown (its helper must not keep the device, or the NDI source, busy).
+
+        A live source (NDI, the capture input, a stream: `live`) plays at speed 1 whatever the Mix speed is. A source
+        that arrives in real time cannot be played faster than it comes: on a Pi 4 an NDI source at 1.86 made mpv
+        drop some 4800 frames in five minutes (2026-10-08). The Mix speed is kept, not changed, and is given back to
+        the player when the next thing that is not live is played."""
         if self.pinscreen is not None:
             self.pinscreen.clear()
         if not capture:
             self._stop_capture()
         if not ndi:
             self._stop_ndi()
+        live = bool(live or capture or ndi)
+        if live or self._speed_held:
+            self._speed_held = live
+            try:
+                self._player_call(self.player.speed, 1 if live else self.levels["speed"])
+            except ApiError:
+                pass                               # the player went away meanwhile: nothing to hold or give back
 
     # ---- NDI input (pvj/ndi.py, D62) ----
     def _need_ndi(self):

@@ -509,15 +509,22 @@ class ReceiverSoundTest(Base):
         audio = [b for b in self.stream() if b[0] == 2]
         self.assertGreaterEqual(audio[-1][1] + 1e-6, audio[-2][1] + len(audio[-2][2]) / 8 / 48000.0)
 
-    def test_a_still_picture_with_sound_is_written_once_more_with_a_later_time(self):
+    def test_a_still_picture_with_sound_is_one_frame_and_the_sound_goes_on(self):
+        """What Test Patterns is: one picture, then only its tone."""
         r = self.start_with_sound()
         self.assertTrue(wait(lambda: len(self.stream()) >= 1))
-        self.now[0] += ndi.REPEAT_AFTER + 0.05
-        self.assertTrue(wait(lambda: len([b for b in self.stream() if b[0] == 1]) == 2))
-        video = [b for b in self.stream() if b[0] == 1]
-        self.assertEqual(video[0][2], video[1][2])
-        self.assertAlmostEqual(video[1][1], ndi.REPEAT_AFTER + 0.05, places=3)
-        self.assertEqual(r.status()["counts"]["repeated"], 1)
+        for k in range(1, 31):                                                           # three seconds of tone, no new picture
+            self.now[0] += 0.1
+            self.lib.sounds.put(sound(4800))
+            self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == k), k)
+        got = self.stream()
+        self.assertEqual(len([b for b in got if b[0] == 1]), 1)                          # the frame once, never again
+        audio = [b for b in got if b[0] == 2]
+        self.assertEqual(len(audio), 30)
+        for a, b in zip(audio, audio[1:]):
+            self.assertAlmostEqual(b[1], a[1] + 0.1, places=5)                           # each block follows the last, by count
+        st = r.status()
+        self.assertEqual((st["state"], st["counts"]["shown"], st["audio"]["counts"]["filled"], st["audio"]["counts"]["dropped"]), ("still", 1, 0, 0))
 
     def test_the_connection_is_given_back_only_when_the_pictures_and_the_sounds_threads_are_both_out(self):
         """The picture's thread ends first here (the picture changes size) while the sound's thread is still inside
@@ -896,7 +903,7 @@ class RealMpvTest(Base):
             self.assertRegex(said, r"%dx%d" % (w, h), tail)
             self.assertNotRegex(said, r"(?i)cannot seek|seek failed|unsupported codec|could not open codec", tail)
             pictures = sorted(os.listdir(out))
-            written = st["counts"]["shown"] + st["counts"]["repeated"]
+            written = st["counts"]["shown"]
             self.assertGreaterEqual(len(pictures), written - 5, tail)                    # a frame or two may be left out where the stream starts or ends
             self.assertLessEqual(len(pictures), written, tail)
             self.assertGreater(len(pictures), 20, tail)

@@ -329,59 +329,27 @@ class ReceiverTest(unittest.TestCase):
         self.assertEqual(self.r.status()["state"], "playing")
         self.now[0] += ndi.QUIET_SECONDS + 0.5
         self.assertEqual(self.r.status()["state"], "still")             # no new frame is not a lost sender
-        self.assertTrue(wait(lambda: len(self.got) == 4096))            # the frame nothing followed was written once more
         self.lib.frames.put(ndi.Frame("lost"))                          # the library says the connection dropped
         self.assertTrue(wait(lambda: self.r.status()["state"] == "waiting"))
         self.lib.frames.put(frame(64, 16, fill=2))
-        self.assertTrue(wait(lambda: len(self.got) == 6144))
-        self.assertEqual(bytes(self.got), b"\x01" * 4096 + b"\x02" * 2048)
+        self.assertTrue(wait(lambda: len(self.got) == 4096))
         self.assertEqual(self.r.status()["state"], "playing")
         self.assertEqual(self.lib.closed, 0)                            # the connection was kept all along
 
-    def test_a_frame_that_nothing_follows_is_written_once_more_and_only_once(self):
-        """The first run on a Pi 4 (2026-10-08): a still source's one frame was in the pipe, and mpv reported frame 0,
-        position 0.0, idle, and could make no snapshot. The helper now writes a frame that nothing follows a second
-        time, once. That this puts the picture on the screen is NOT shown by this test (no mpv here): device step N12."""
+    def test_a_still_picture_is_written_once_and_never_again(self):
+        """A frame that nothing follows used to be written a second time, on a guess about mpv that the Pi 4 then
+        showed to be wrong (2026-10-08: a still source's one frame was on the monitor without it). Taken out again."""
         self.r.start()
         self.lib.frames.put(frame(64, 16, fill=7))
         self.read()
         self.assertTrue(wait(lambda: len(self.got) == 2048))
-        time.sleep(0.3)
-        self.assertEqual(len(self.got), 2048)                           # not before REPEAT_AFTER has passed (the clock stands still here)
-        self.assertEqual(self.r.status()["counts"]["repeated"], 0)
-        self.now[0] += ndi.REPEAT_AFTER - 0.01
-        time.sleep(0.2)
-        self.assertEqual(len(self.got), 2048)
-        self.now[0] += 0.02
-        self.assertTrue(wait(lambda: len(self.got) == 4096))
-        self.assertEqual(bytes(self.got), b"\x07" * 4096)                # the same frame, whole
-        self.now[0] += 60
-        time.sleep(0.4)
-        self.assertEqual(len(self.got), 4096)                           # once: a still picture is not written over and over
-        c = self.r.status()["counts"]
-        self.assertEqual((c["shown"], c["repeated"]), (1, 1))           # counted apart: "shown" stays the sender's frames
-        # the next frame is written as ever, and is itself written once more when nothing follows it
-        self.lib.frames.put(frame(64, 16, fill=8))
-        self.assertTrue(wait(lambda: len(self.got) == 6144))
-        self.now[0] += 1
-        self.assertTrue(wait(lambda: len(self.got) == 8192))
-        self.assertEqual(bytes(self.got[4096:]), b"\x08" * 4096)
-        c = self.r.status()["counts"]
-        self.assertEqual((c["shown"], c["repeated"], c["dropped"]), (2, 2, 0))
-
-    def test_frames_that_follow_each_other_are_never_written_twice_and_no_buffer_runs_out(self):
-        self.r.start()
-        self.lib.frames.put(frame(64, 16, fill=1))
-        self.read()
-        self.assertTrue(wait(lambda: len(self.got) == 2048))
-        for n in range(2, 60):                                          # the clock moves less than REPEAT_AFTER between frames
-            self.now[0] += 0.033
-            self.lib.frames.put(frame(64, 16, fill=n))
-            self.assertTrue(wait(lambda: len(self.got) == 2048 * n), n)
+        self.now[0] += 3600
+        time.sleep(0.5)
+        self.assertEqual(bytes(self.got), b"\x07" * 2048)
         st = self.r.status()
-        self.assertEqual((st["state"], st["counts"]["repeated"], st["counts"]["shown"]), ("playing", 0, 59))
-        self.assertEqual(bytes(self.got), b"".join(bytes([n]) * 2048 for n in range(1, 60)))
-        self.assertEqual(st["message"], "")                             # no "list index" fault from an empty pool of buffers
+        self.assertEqual((st["state"], st["counts"]["shown"]), ("still", 1))
+        self.assertNotIn("repeated", st["counts"])
+        self.assertFalse(hasattr(ndi, "REPEAT_AFTER"))
 
     def test_a_slow_screen_gets_the_newest_frame_and_never_part_of_one(self):
         w, h = 256, 128                                                 # 64 KiB a frame: more than the pipe takes at once
