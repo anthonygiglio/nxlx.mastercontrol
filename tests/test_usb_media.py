@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
+import shutil
 import os
 import unittest
 from unittest import mock
@@ -148,6 +149,7 @@ class UsbImportTest(ServerBase):
         super().setUp()
         import tempfile as _t
         self.usb = _t.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.usb, True)
         os.makedirs(os.path.join(self.usb, "SHOW"))
         self.data = os.urandom(3 * 1024 * 1024 + 17)
         with open(os.path.join(self.usb, "SHOW", "film.mp4"), "wb") as f:
