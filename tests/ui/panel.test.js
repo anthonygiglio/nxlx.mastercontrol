@@ -3035,6 +3035,11 @@ function startServer(env) {          // env: more for the harness's environment 
         await ws.menus(page);
         await ws.strip(page);
         const call = (url, body) => page.evaluate(([u, b]) => fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b || {}) }).then((r) => r.json().catch(() => ({}))), [url, body]);
+        // no text overruns on any screen at 320, 390, 600 and 768 px and on a phone held sideways, in both looks,
+        // with long names in the box's answers (2026-10-09)
+        const narrowBegan = Date.now();
+        const narrowLooks = await ws.narrow(page, call, (url) => page.evaluate((u) => fetch(u, { credentials: 'same-origin' }).then((r) => r.json().catch(() => ({}))), url));
+        console.log('text at narrow widths: ' + narrowLooks + ' looks at every screen with long names, in both looks, nothing overran (' + ((Date.now() - narrowBegan) / 1000).toFixed(1) + ' s)');
         const people = [];
         const person = async (name, role) => {
           const token = (await call('/api/devices/invite', { name, role })).token;

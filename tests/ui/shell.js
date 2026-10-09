@@ -19,13 +19,21 @@
 //                         three; from 800 px without the place in the clip; from 600 px those three alone), and
 //                         More opens the rest under the line; on a phone four buttons, and More opens the rest
 //                         in place, stays open on the next screen, and closes
+//   narrow(pg, post, get) no text overruns at 320, 390, 600 and 768 px and on a phone held sideways (740 by 360),
+//                         on every screen, in the default look and in Signal, with long names (a clip, a
+//                         shader, an effect, presets, scenes, walls, projectors, devices, a USB drive) put into
+//                         the box's answers on their way to the page: the page does not scroll sideways, no
+//                         text leaves its box or the window or is clipped, a line cut with dots has its whole
+//                         text in a title, no two texts lie on one another, a title is not cut inside a word.
+//                         The failure names each element (overruns() is the measuring function, in the page)
 //   roles(pages)          what the owner, a presenter and a guest have in their menus, where each lands, and that
 //                         a switched-off module's page is not in the menu while the owner's Setup index has its row
 //   inventory(o)          the controls of every screen, by role, against the list of the panel before the shell
 //                         (tests/ui/fixtures/controls-before.json): nothing may be missing
 //
 // Every function throws an Error that says what was seen. pg: a Playwright page (click, focus, isVisible,
-// keyboard.press, evaluate, waitForFunction, setViewportSize and goto are all that is used).
+// keyboard.press, evaluate, waitForFunction, setViewportSize and goto are all that is used; narrow() also uses
+// route and unroute, as tests/ui/signal-pages.js does).
 'use strict';
 const assert = require('assert');
 const { go, at } = require('./signal-pages.js');
@@ -226,6 +234,185 @@ async function strip(pg) {
   assert(s.more === 'false' && !s.buttons.fade && s.buttons.stop, 'More closes it again');
 }
 
+// ---- Text that overruns (2026-10-09). The owner saw it on the narrow layouts: a page's title cut inside a word
+// beside its switch ("PROJECTOR" and "S"), the job line of the title bar squeezed to a column, what plays cut to a
+// letter on the strip. The width sweep (tests/ui/sweep.js) holds the controls; this holds every text, with the long
+// names a real room has.
+/* eslint-disable no-undef */
+// Runs in the page. Returns what overruns as [{ kind, name, detail }]; an empty list is a pass. Every text that is
+// shown is looked at, by the boxes of its own lines:
+//   the page scrolls sideways; a text leaves its own box, a box that holds it (up to the screen) or the window; a
+//   text is clipped by a box that hides what runs over (a line cut with dots is right when a title holds the whole
+//   text); two texts lie on one another; a first heading or a page's title is cut inside a plain word.
+// Not looked at: what scrolls sideways inside itself on purpose, what is read out and not shown (1 px boxes), the
+// options of a chooser, and a text of the page against one of a bar that stays put over it.
+function overruns() {
+  const out = [];
+  const root = document.documentElement, shell = document.querySelector('.shell');
+  if (!shell) return [{ kind: 'there is no screen', name: '', detail: '' }];
+  const vw = root.clientWidth;
+  const px = (n) => Math.round(n);
+  const tagOf = (el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/).join('.') : '');
+  const name = (el) => { const t = (el.textContent || '').replace(/\s+/g, ' ').trim(); return tagOf(el) + ' "' + (t.length > 40 ? t.slice(0, 40) + '...' : t) + '"'; };
+  const told = {};
+  const add = (kind, el, detail) => { const k = kind + '|' + name(el); if (told[k]) return; told[k] = 1; out.push({ kind, name: name(el), detail: detail || '' }); };
+  const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden' && (!el.checkVisibility || el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })); };
+  if (root.scrollWidth > vw + 1) out.push({ kind: 'the page scrolls sideways', name: '', detail: root.scrollWidth + ' px in a window of ' + vw });
+  const range = document.createRange();
+  const texts = [];
+  const walker = document.createTreeWalker(shell, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const el = n.parentElement, text = n.nodeValue.replace(/\s+/g, ' ').trim();
+    if (!text || !el || /^(SCRIPT|STYLE|OPTION|SELECT|TEXTAREA)$/.test(el.tagName) || el.closest('svg, select') || !shown(el)) continue;
+    range.selectNodeContents(n);
+    const lines = Array.prototype.filter.call(range.getClientRects(), (r) => r.width > 0.5 && r.height > 0.5);
+    if (!lines.length) continue;
+    const said = '"' + (text.length > 40 ? text.slice(0, 40) + '...' : text) + '" ';
+    // the boxes that hold this text, from its own element up to the screen
+    let looked = true, layer = 'page';
+    const boxes = [];
+    for (let e = el; e; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if (cs.position === 'sticky' || cs.position === 'fixed') layer = e.id || e.className;
+      if (cs.display !== 'inline' && cs.display !== 'contents') {
+        const b = e.getBoundingClientRect();
+        if (b.width <= 1 || b.height <= 1) { if (/hidden|clip/.test(cs.overflowX) || cs.clipPath !== 'none' || cs.clip !== 'auto') { looked = false; break; } }       // read out, not shown
+        else if (/auto|scroll/.test(cs.overflowX)) { if (e !== el || e.scrollWidth > e.clientWidth + 1) { looked = false; break; } }                                  // it scrolls sideways inside itself
+        else boxes.push([e, cs, b]);
+      }
+      if (e === shell) break;
+    }
+    if (!looked) continue;
+    let cut = false;
+    for (const [e, cs, b] of boxes) {
+      const clips = /hidden|clip/.test(cs.overflowX);
+      let over = null;
+      for (const r of lines) if (r.right > b.right + 1.5 || r.left < b.left - 1.5) { over = r; break; }
+      const where = over ? said + px(over.left) + ' to ' + px(over.right) + ', the box is ' + px(b.left) + ' to ' + px(b.right) : '';
+      if (over && clips && cs.textOverflow === 'ellipsis') {
+        const holder = e.closest('[title]');
+        if (!holder || holder.getAttribute('title').replace(/\s+/g, ' ').indexOf(text.slice(0, 30)) < 0) add('a text is cut with dots and no title holds the whole of it', e, said);
+      } else if (over && clips) add('a text is clipped', e, where);
+      else if (over) add(e === el ? 'a text runs out of its own box' : 'a text runs out of ' + tagOf(e), el, where);
+      else if (/hidden|clip/.test(cs.overflowY) && (lines[lines.length - 1].bottom > b.bottom + 2 || lines[0].top < b.top - 2)) add('a text is clipped above or below', e, said + px(lines[0].top) + ' to ' + px(lines[lines.length - 1].bottom) + ', the box is ' + px(b.top) + ' to ' + px(b.bottom));
+      else continue;
+      cut = true;
+      break;
+    }
+    if (cut) continue;
+    const far = lines.filter((r) => r.right > vw + 1 || r.left < -1)[0];
+    if (far) { add('a text leaves the window', el, said + px(far.left) + ' to ' + px(far.right) + ' of ' + vw); continue; }
+    // a first heading or a page's title, cut inside a plain word (a long name with no space in it has to be cut)
+    if (el.closest('h1, .wstitle') && boxes.length) {
+      const room = boxes[0][2].width - parseFloat(boxes[0][1].paddingLeft) - parseFloat(boxes[0][1].paddingRight);
+      for (const w of text.split(' ').filter((x) => /^[A-Za-z]{3,14}$/.test(x))) {
+        const probe = document.createElement('span');
+        probe.textContent = w;
+        probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+        el.appendChild(probe);
+        const need = probe.getBoundingClientRect().width;
+        el.removeChild(probe);
+        if (need > room + 1) { add('a title is cut inside a word', el, '"' + w + '" needs ' + px(need) + ' px and has ' + px(room)); break; }
+      }
+    }
+    texts.push({ el, lines, layer });
+  }
+  for (let i = 0; i < texts.length; i++) {
+    for (let j = i + 1; j < texts.length; j++) {
+      const a = texts[i], b = texts[j];
+      if (a.layer !== b.layer || a.el === b.el || a.el.contains(b.el) || b.el.contains(a.el)) continue;
+      const hit = a.lines.some((r) => b.lines.some((q) => Math.min(r.right, q.right) - Math.max(r.left, q.left) > 2 && Math.min(r.bottom, q.bottom) - Math.max(r.top, q.top) > 3));
+      if (hit) add('two texts lie on one another', a.el, 'the other is ' + name(b.el));
+    }
+  }
+  return out;
+}
+/* eslint-enable no-undef */
+
+// Long names, put into the box's answers on their way to the page (nothing is stored on the box, so no later step
+// meets them). The lengths are the longest each answer may hold: a file's name is free, a preset's and a shader's
+// 40 characters, a scene's and a wall's 32, a projector's, a pad's, a device's and a stream's 40.
+const LONG = { clip: 'A_very_long_clip_name_without_any_spaces_2026-10-09_final_v3.mp4', shader: 'isf-a-very-long-shader-name-kaleidoscope-tunnel-v3', effect: 'fx-a-very-long-effect-name-chromatic-aberration-v2',
+  preset: 'A_very_long_preset_name_for_the_opening', scene: 'Movie_night_with_surround_and_di', wall: 'Main_wall_with_the_three_blended', projector: 'Main_projector_above_the_door_EB-L1075U',
+  pad: 'A_very_long_pad_label_without_spaces_26', device: 'Presenters_tablet_in_the_staff_room_iPad', stream: 'Stage_camera_on_the_balcony_PTZ_number_2', drive: 'A_LONG_USB_STICK_NAME_KINGSTON_DATATRAVELER' };
+function longNames(url, d) {
+  const first = (list, key, value) => { if (Array.isArray(list) && list[0] && typeof list[0][key] === 'string') list[0][key] = value; };
+  if (/\/api\/status$/.test(url)) {         // a clip of a playlist plays, an hour in, with the long effect over it
+    d.player = Object.assign({}, d.player, { running: true, path: '/media/' + LONG.clip, duration: 5400, position: 3723, playlist_count: 12, playlist_pos: 10, effect: LONG.effect + '.fs' });
+    delete d.player.shader;
+    d.system = Object.assign({}, d.system, { board: 'Raspberry Pi 4 Model B', temp_c: 61.4 });
+  } else if (/\/api\/shaders$/.test(url)) {
+    (d.shaders || []).slice(0, 2).forEach((x, i) => { if (!i) { x.id = LONG.shader + '.fs'; x.name = LONG.shader; } x.presets = [LONG.preset, 'Short']; });
+  } else if (/\/api\/effects$/.test(url)) {
+    (d.effects || []).slice(0, 1).forEach((x) => { x.id = LONG.effect + '.fs'; x.name = LONG.effect; x.presets = [LONG.preset, 'Short']; });
+  } else if (/\/api\/media$/.test(url)) {
+    d.usb = [{ drive: LONG.drive, files: [{ name: 'festival_reel_2026_with_a_very_long_file_name_final_master_copy.mp4', size: 734003200 }, { name: 'poster.png', size: 2097152 }] }];
+  } else if (/\/api\/room$/.test(url)) { first(d.scenes, 'name', LONG.scene); first(d.groups, 'name', LONG.wall); first(d.projectors, 'name', LONG.projector); }
+  else if (/\/api\/projectors$/.test(url)) first(d.projectors, 'name', LONG.projector);
+  else if (/\/api\/devices$/.test(url)) first(d.devices, 'name', LONG.device);
+  else if (/\/api\/streams$/.test(url)) first(d.streams, 'name', LONG.stream);
+  else if (/\/api\/pads$/.test(url)) { if (d.banks && d.banks[0] && d.banks[0].pads && d.banks[0].pads[0] && d.banks[0].pads[0].file) d.banks[0].pads[0].label = LONG.pad; }
+  return d;
+}
+const NARROW = [[320, 568], [390, 844], [600, 800], [768, 1024], [740, 360]];
+const FAKED = ['status', 'shaders', 'effects', 'media', 'room', 'projectors', 'devices', 'streams', 'pads'];
+// pg: the owner's page, with every module on. post(url, body), get(url): calls of the box as the owner, each
+// resolving with the answer's data. Both looks are gone through, and the look the box had is put back.
+async function narrow(pg, post, get) {
+  const was = ((await get('/api/theme')) || {}).theme || { name: 'dark-stage', accent: null };
+  const home = await pg.evaluate(() => location.origin + '/');
+  const handler = async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const r = await route.fetch();
+    let d = null;
+    try { d = await r.json(); } catch (e) { d = null; }
+    if (!d || r.status() !== 200) return route.fulfill({ response: r });
+    return route.fulfill({ response: r, json: longNames(route.request().url().split('?')[0], d) });
+  };
+  const found = [];
+  let looked = 0;
+  for (const u of FAKED) await pg.route('**/api/' + u, handler);
+  try {
+    for (const lookName of ['dark-stage', 'signal']) {
+      await post('/api/theme', { name: lookName, accent: null });
+      await pg.setViewportSize({ width: 390, height: 844 });
+      await pg.goto(home);
+      await ready(pg);
+      await pg.waitForFunction(() => document.querySelectorAll('#wsside [data-go^="room/"]').length > 0, null, { timeout: 15000 });
+      const keys = (await see(pg)).menu;
+      assert(keys.length >= 20, 'the menu lists the screens for the narrow widths: ' + keys.join(' '));
+      for (const key of keys) {
+        await pg.setViewportSize({ width: 390, height: 844 });
+        await frames(pg);
+        await go(pg, key);
+        // its cards have their data (the same wait for every screen: a poll of the status is one second), the folds
+        // are opened, and on a phone the strip is open too: More shows the most there is
+        await pg.waitForFunction(() => !!document.querySelector('main.ws > .screen') && !/Checking\.\.\./.test(document.querySelector('main.ws').textContent) && /A_very_long_clip_name/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
+        await pg.evaluate(() => { document.querySelectorAll('main.ws details').forEach((x) => { x.open = true; }); });
+        for (const [width, height] of NARROW) {
+          await pg.setViewportSize({ width, height });
+          for (const more of width < 600 ? [false, true] : [false]) {
+            if ((await pg.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded') === 'true')) !== more) await pg.evaluate(() => document.getElementById('wsmore').click());
+            await frames(pg);
+            const got = await pg.evaluate(overruns);
+            looked++;
+            got.forEach((f) => found.push(lookName + ', ' + key + ' at ' + width + ' by ' + height + (more ? ' with More open' : '') + ': ' + f.kind + (f.name ? ': ' + f.name : '') + (f.detail ? ' (' + f.detail + ')' : '')));
+          }
+        }
+      }
+    }
+  } finally {
+    for (const u of FAKED) await pg.unroute('**/api/' + u, handler).catch(() => {});
+    await post('/api/theme', { name: was.name, accent: was.accent === undefined ? null : was.accent });
+    await pg.setViewportSize({ width: 390, height: 844 });
+    await pg.goto(home);
+    await ready(pg);
+    if ((await see(pg)).more === 'true') await pg.click('#wsmore');
+  }
+  assert.deepStrictEqual(found, [], 'text overruns at narrow widths (' + found.length + '):\n' + found.slice(0, 60).join('\n') + (found.length > 60 ? '\n... and ' + (found.length - 60) + ' more' : '') + '\n');
+  return looked;
+}
+
 // What each role has, with every module on (tests/ui/signal-pages.js setUp). A presenter has no page of Setup that
 // is for the owner, and the mapping card without its page; a guest has no way to let anyone in.
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];
@@ -324,4 +511,4 @@ async function inventory(o) {
   return out;
 }
 
-module.exports = { reach, tabWalk, menus, strip, roles, inventory, MENUS, MOVED };
+module.exports = { reach, tabWalk, menus, strip, narrow, overruns, longNames, roles, inventory, MENUS, MOVED };
