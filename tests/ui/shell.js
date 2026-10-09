@@ -22,11 +22,17 @@
 //                         one tab; the cursor is handed on when a tab goes with the width; a name typed in one
 //                         column is still there after a tab, and after the window was made narrower and wider
 //   strip(pg)             the strip is ONE line of buttons at every width from 600 px, with Freeze, Stop and
-//                         Blackout at its right end: everything from 1440 px; under that it folds behind More
-//                         (from 1200 px Speed and Loop; from 1000 px also back and forward 10 s and the fades;
-//                         from 800 px also the place in the clip; from 600 px also Previous and Next), and More
-//                         opens the rest under the line; on a phone four buttons, and More opens the rest in
-//                         place, stays open on the next screen, and closes
+//                         Blackout at its right end and at least 180 px for the name of what plays. What else
+//                         is on the line, by the owner's order of who has the room first: Previous and Next
+//                         from 800 px, Loop from 940, Speed from 1080, the fades from 1280, back and forward
+//                         10 s from 1440, the place in the clip from 1640; the rest is behind More, which
+//                         opens it under the line; on a phone four buttons, and More opens the rest in place,
+//                         stays open on the next screen, and closes
+//   stripText(pg, post, get)  the words on the strip at every width from 320 to 1920 px (step 40) in every
+//                         look the box has, with a long clip name, "Clip 11 of 12" and an hour's time: the time
+//                         and the clip count are each one line and not cut, the name has its least width
+//                         and is cut with dots (whole in its title), nothing leaves the strip, and from 600 px
+//                         the buttons are one line (stripWords() is the measuring function, in the page)
 //   narrow(pg, post, get) no text overruns at 320, 390, 600 and 768 px, on a phone held sideways (740 by 360) and
 //                         at the desk's widths (1200, 1366, 1440 and 1920 px),
 //                         on every screen, in the default look and in Signal, with long names (a clip, a
@@ -58,6 +64,11 @@ const HOMES = ['vibes', 'mapping', 'sound'];      // rows of the Setup index tha
 const STRIP = ['prev', 'back10', 'fwd10', 'next', 'fadein', 'fade', 'freeze', 'stop', 'black'];
 const SPEED = ['mv', 'loop'];      // Speed and Loop, on the strip since D72 (Loop has no id: it is found by its class)
 const ALWAYS = ['prev', 'next', 'stop', 'black'];
+// From which width of the panel each control is on the strip's one line (under it: behind More). The owner's order
+// of who has the room first (D72): Blackout, Stop, Freeze; Previous and Next; Loop; Speed; the fades; back and
+// forward 10 s; the place in the clip.
+const ON_LINE = { freeze: 600, stop: 600, black: 600, prev: 800, next: 800, loop: 940, mv: 1080, fadein: 1280, fade: 1280, back10: 1440, fwd10: 1440, seek: 1640 };
+const NAME = 180;                  // the least width of the name of what plays, in px
 // (what the closed strip shows whatever the width: under 600 px those four, from 600 px Freeze, Stop and Blackout, with Previous and Next from 800 px)
 const kept = (width) => (width < 600 ? ALWAYS : ['freeze', 'stop', 'black'].concat(width >= 800 ? ['prev', 'next'] : []));
 
@@ -82,7 +93,8 @@ function look(strip) {
     focus: !a || a === document.body ? '' : a.id || a.tagName.toLowerCase(),
     cols: cols.map((c) => c.getAttribute('data-col')),
     regions: cols.map((c) => [c.getAttribute('role') || c.tagName.toLowerCase(), c.getAttribute('aria-label')]),
-    colHeads: cols.map((c) => Array.prototype.filter.call(c.querySelectorAll(':scope > .deskhead, .syshead h2'), shown).map((x) => x.textContent)[0] || ''),
+    colHeads: cols.map((c) => Array.prototype.filter.call(c.querySelectorAll(':scope > .deskhead, .syshead h2'), shown).map((x) => x.textContent).join(' + ')),
+    headSizes: Array.prototype.concat.apply([], cols.map((c) => Array.prototype.filter.call(c.querySelectorAll(':scope > .deskhead, .syshead h2'), shown).map((x) => getComputedStyle(x).fontSize))),
     rail: Array.prototype.map.call(document.querySelectorAll('#wsside button'), (b) => [b.id, b.textContent]),
     subs: Array.prototype.filter.call(document.querySelectorAll('#wssub button'), shown).map((b) => b.id),
     job: Array.prototype.filter.call(document.querySelectorAll('.wsjob'), shown).map((x) => x.textContent).join(' | '),
@@ -228,6 +240,7 @@ async function menus(pg) {
     assert.deepStrictEqual(s.cols, wide ? ['effect', 'picture', 'sound'] : ['picture'], at + 'the columns of Shape');
     assert.deepStrictEqual(s.regions, (wide ? ['Effect', 'Picture', 'Sound'] : ['Picture']).map((n) => ['region', n]), at + 'every column is a region with its name');
     assert.deepStrictEqual(s.colHeads, wide ? ['Effect', 'Picture', 'Sound'] : [''], at + (wide ? 'every column of the desk has its heading' : 'one screen has no column heading'));
+    assert.deepStrictEqual(s.headSizes.filter((x, i, all) => all.indexOf(x) === i).length, wide ? 1 : 0, at + 'the headings of the columns are one size: ' + s.headSizes.join(' '));
     // where the screens share the page the title bar speaks of the area, and no column is named as the open one
     assert(wide ? !/^(Effect|Picture|Sound): /.test(s.job) && s.job.length > 0 : /^Picture: /.test(s.job), at + 'what the title bar says: ' + s.job);
     assert.deepStrictEqual(s.landmarks.nav.slice().sort(), ['Areas', 'Areas', 'Screens of Shape'], 'the menus are named landmarks');
@@ -237,8 +250,12 @@ async function menus(pg) {
     await go(pg, 'play/pads');
     const p = await see(pg);
     assert.deepStrictEqual(p.cols, wide ? ['pads', 'library', 'shaders'] : ['pads'], at + 'the columns of Play');
+    if (wide) {
+      assert.deepStrictEqual(p.colHeads, ['Pads', 'Library', 'Shaders'], at + 'the headings of Play\'s columns (the Shaders page\'s own title is not a second one)');
+      assert.deepStrictEqual(await pg.evaluate(() => { const v = (q) => { const el = document.querySelector(q); return !!el && el.getClientRects().length > 0; }; return [v('#syspage #sysblurb'), v('#syspage #sysswitch')]; }), [false, true], at + 'the Shaders column has its switch and not the page\'s sentence');
+    }
     assert.strictEqual(p.sub, !wide, at + 'the tabs of Play\'s screens');
-    assert.strictEqual(await pg.isVisible('#shaderslink'), !wide, at + 'the link from the pads to the Shaders screen');
+    assert.strictEqual(await pg.isVisible('#shaderslink'), false, at + 'the pads have no link to the Shaders screen: it is the tab above them, or the column beside them');
   }
   // each card is on the page once, whatever is shown: one build per area
   for (const [key, ids] of [['play/pads', ['pads', 'libraryscreen', 'shaderpage', 'vibes', 'transitioncard', 'msg']], ['shape/picture', ['fxcard', 'mo', 'mvol', 'overlaycard', 'msg']], ['room/scenes', ['roomscenes', 'roomgroups', 'msg']]]) {
@@ -319,28 +336,22 @@ async function strip(pg) {
   await pg.setViewportSize({ width: 1366, height: 768 });
   await frames(pg);
   if ((await see(pg)).more === 'true') await pg.evaluate(() => document.getElementById('wsmore').click());
-  // From 600 px: one line, whatever is folded. [width, height, Previous and Next, the place in the clip, back and
-  // forward 10 s and the fades, Speed and Loop]
-  const FOLDED = ['back10', 'fwd10', 'fadein', 'fade'], ALL = STRIP.concat(SPEED);
-  for (const [width, height, steps, seek, rest, speed] of [[600, 900, false, false, false, false], [667, 375, false, false, false, false], [768, 1024, false, false, false, false], [799, 900, false, false, false, false],
-    [800, 900, true, false, false, false], [999, 900, true, false, false, false], [1000, 800, true, true, false, false], [1199, 800, true, true, false, false], [1200, 800, true, true, true, false], [1366, 768, true, true, true, false],
-    [1439, 900, true, true, true, false], [1440, 900, true, true, true, true], [1920, 1080, true, true, true, true]]) {
+  // From 600 px: one line, whatever is folded; each control is on it from its width and behind More under that
+  const ALL = STRIP.concat(SPEED);
+  for (const [width, height] of [[600, 900], [667, 375], [768, 1024], [799, 900], [800, 900], [939, 900], [940, 900], [1079, 800], [1080, 800], [1199, 800], [1200, 800], [1279, 800], [1280, 800],
+    [1366, 768], [1439, 900], [1440, 900], [1639, 900], [1640, 900], [1920, 1080]]) {
     await pg.setViewportSize({ width, height });
     await frames(pg);
     const s = await see(pg), l = await pg.evaluate(lie, ALL);
     const where = 'at ' + width + ' px the strip ';
     assert.strictEqual(l.lines, 1, where + 'is one line of buttons, not ' + l.lines + ': ' + JSON.stringify(l.at));
-    ['freeze', 'stop', 'black'].forEach((b) => assert(s.buttons[b], where + 'shows ' + b));
-    assert(l.at.freeze.left < l.at.stop.left && l.at.stop.left < l.at.black.left && l.at.black.right <= l.vw && l.at.black.right >= l.vw - 24,
+    assert(l.at.freeze && l.at.stop && l.at.black && l.at.freeze.left < l.at.stop.left && l.at.stop.left < l.at.black.left && l.at.black.right <= l.vw && l.at.black.right >= l.vw - 24,
       where + 'ends with Freeze, Stop and Blackout at the right edge: ' + JSON.stringify(l.at));
     Object.keys(l.at).forEach((b) => assert(l.at[b].left >= 0 && l.at[b].right <= l.vw + 1, where + 'keeps ' + b + ' inside the window: ' + JSON.stringify(l.at[b])));
     assert(l.page <= l.vw + 1, where + 'does not make the page scroll sideways (' + l.page + ' px)');
-    assert(l.name >= 60, where + 'leaves room for what plays: ' + l.name + ' px');
-    assert.strictEqual(s.buttons.seek, seek, where + (seek ? 'shows' : 'folds') + ' the place in the clip');
-    ['prev', 'next'].forEach((b) => assert.strictEqual(s.buttons[b], steps, where + (steps ? 'shows ' : 'folds ') + b));
-    FOLDED.forEach((b) => assert.strictEqual(s.buttons[b], rest, where + (rest ? 'shows ' : 'folds ') + b));
-    SPEED.forEach((b) => assert.strictEqual(s.buttons[b], speed, where + (speed ? 'shows ' : 'folds ') + (b === 'mv' ? 'Speed' : 'Loop')));
-    assert.strictEqual(s.buttons.wsmore, !speed, where + (speed ? 'has no More' : 'has More'));
+    assert(l.name >= NAME, where + 'leaves ' + NAME + ' px for what plays: ' + l.name + ' px');
+    Object.keys(ON_LINE).forEach((b) => assert.strictEqual(s.buttons[b], width >= ON_LINE[b], where + (width >= ON_LINE[b] ? 'shows ' : 'folds ') + b));
+    assert.strictEqual(s.buttons.wsmore, width < ON_LINE.seek, where + (width < ON_LINE.seek ? 'has More' : 'has no More'));
   }
   // Speed and Loop are on the strip and nowhere else, on a screen of every area
   for (const key of ['play/pads', 'shape/picture', 'room/scenes', 'setup/index']) {
@@ -362,12 +373,14 @@ async function strip(pg) {
   await pg.click('#wsmore');
   s = await see(pg);
   assert(s.more === 'false' && !s.buttons.fade && !s.buttons.seek && !s.buttons.mv && s.buttons.freeze, 'at 768 px More closes it again');
-  // More at 1366 px opens Speed and Loop, which is all that is folded there
+  // at 1366 px Speed and Loop are on the line, and More opens the place in the clip and back and forward 10 s
   await pg.setViewportSize({ width: 1366, height: 768 });
   await frames(pg);
+  s = await see(pg);
+  assert(s.buttons.mv && s.buttons.loop && s.buttons.fade && !s.buttons.seek && !s.buttons.back10, 'at 1366 px Speed, Loop and the fades are on the line');
   await pg.click('#wsmore');
   s = await see(pg);
-  assert(s.buttons.mv && s.buttons.loop && s.buttons.fade && s.buttons.seek, 'at 1366 px More opens Speed and Loop');
+  assert(s.buttons.seek && s.buttons.back10 && s.buttons.fwd10, 'at 1366 px More opens the place in the clip and back and forward 10 s');
   await pg.click('#wsmore');
   await pg.setViewportSize({ width: 390, height: 844 });
   await frames(pg);
@@ -555,7 +568,7 @@ async function narrow(pg, post, get) {
         await pg.evaluate(() => { document.querySelectorAll('main.ws details').forEach((x) => { x.open = true; }); });
         for (const [width, height] of NARROW) {
           await pg.setViewportSize({ width, height });
-          for (const more of width < 600 || width === 1366 ? [false, true] : [false]) {        // (at 1366 px More holds Speed and Loop)
+          for (const more of width < 600 || width === 1366 ? [false, true] : [false]) {        // (at 1366 px More holds the place in the clip and back and forward 10 s)
             if ((await pg.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded') === 'true')) !== more) await pg.evaluate(() => document.getElementById('wsmore').click());
             await frames(pg);
             const got = await pg.evaluate(overruns);
@@ -579,6 +592,87 @@ async function narrow(pg, post, get) {
     if ((await see(pg)).more === 'true') await pg.click('#wsmore');
   }
   assert.deepStrictEqual(found, [], 'text overruns at narrow widths (' + found.length + '):\n' + found.slice(0, 60).join('\n') + (found.length > 60 ? '\n... and ' + (found.length - 60) + ' more' : '') + '\n');
+  return looked;
+}
+
+// ---- The words on the strip (2026-10-09, after the owner's coordinator saw "01:02 / 03:05" broken over four lines
+// at 1280 px in Signal). At every width and in every look: the time and the clip count are whole, each on one
+// line; the name has its least width and is cut with dots, with the whole of it in its title; nothing leaves the
+// strip; and from 600 px the buttons are one line.
+/* eslint-disable no-undef */
+function stripWords(least) {
+  const out = [], vw = document.documentElement.clientWidth, tp = document.getElementById('wstp');
+  const lines = (el) => { const r = document.createRange(); r.selectNodeContents(el); const tops = []; Array.prototype.forEach.call(r.getClientRects(), (b) => { if (b.width > 0.5 && !tops.some((t) => Math.abs(t - b.top) <= 2)) tops.push(b.top); }); return tops.length; };
+  const box = tp.getBoundingClientRect();
+  ['time', 'plpos'].forEach((id) => {
+    const el = document.getElementById(id), r = el.getBoundingClientRect();
+    if (!r.width) return out.push(id + ' is not shown');
+    if (lines(el) !== 1) out.push(id + ' "' + el.textContent + '" is broken over ' + lines(el) + ' lines');
+    if (el.scrollWidth > el.clientWidth + 1) out.push(id + ' "' + el.textContent + '" is cut (' + el.scrollWidth + ' px in ' + el.clientWidth + ')');
+    if (r.left < box.left - 1 || r.right > box.right + 1 || r.right > vw + 1) out.push(id + ' leaves the strip: ' + Math.round(r.left) + ' to ' + Math.round(r.right));
+    if (getComputedStyle(el).fontVariantNumeric.indexOf('tabular-nums') < 0) out.push(id + ' has no figures of one width');
+  });
+  const np = document.getElementById('np'), n = np.getBoundingClientRect();
+  if (n.width < least) out.push('the name of what plays has ' + Math.round(n.width) + ' px, under ' + least);
+  if (lines(np) !== 1) out.push('the name of what plays is on ' + lines(np) + ' lines');
+  if (np.scrollWidth > np.clientWidth + 1 && (getComputedStyle(np).textOverflow !== 'ellipsis' || np.title !== np.textContent)) out.push('the name is cut without dots, or its title does not hold the whole of it');
+  const more = document.getElementById('wsmore').getBoundingClientRect(), t = document.getElementById('time').getBoundingClientRect();
+  if (more.width && t.right > more.left + 1 && t.bottom > more.top && t.top < more.bottom) out.push('the time runs under More');
+  if (vw >= 600) {
+    const mids = [];
+    tp.querySelectorAll('button').forEach((b) => { const r = b.getBoundingClientRect(); if (!r.width) return; const m = Math.round(r.top + r.height / 2); if (!mids.some((y) => Math.abs(y - m) <= 4)) mids.push(m); });
+    if (mids.length !== 1) out.push('the buttons are on ' + mids.length + ' lines');
+    const sc = document.getElementById('seek').getBoundingClientRect();
+    if (sc.width > 0 && sc.width < 150) out.push('the place in the clip is ' + Math.round(sc.width) + ' px wide');
+  }
+  if (document.documentElement.scrollWidth > vw + 1) out.push('the page scrolls sideways');
+  return out;
+}
+/* eslint-enable no-undef */
+// pg: the owner's page. post(url, body), get(url): calls of the box as the owner. Every look the box has is gone
+// through, and the look it had is put back. What plays is put into the box's answer on its way to the page.
+async function stripText(pg, post, get) {
+  const theme = (await get('/api/theme')) || {}, was = theme.theme || { name: 'dark-stage', accent: null };
+  const looks = (theme.available || []).map((x) => x.id);
+  assert(looks.length >= 2, 'the box says which looks it has: ' + JSON.stringify(looks));
+  const home = await pg.evaluate(() => location.origin + '/');
+  const handler = async (route) => {
+    try {
+      if (route.request().method() !== 'GET') return await route.continue();
+      const r = await route.fetch();
+      let d = null;
+      try { d = await r.json(); } catch (e) { d = null; }
+      if (!d || r.status() !== 200) return await route.fulfill({ response: r });
+      d.player = { running: true, path: '/media/' + LONG.clip, duration: 7384, position: 3723, playlist_count: 12, playlist_pos: 10, effect: LONG.effect + '.fs', volume: (d.player || {}).volume, paused: false };
+      return await route.fulfill({ response: r, json: d });
+    } catch (e) { return route.continue().catch(() => {}); }
+  };
+  const found = [];
+  let looked = 0;
+  await pg.route('**/api/status', handler);
+  try {
+    for (const lookName of looks) {
+      await post('/api/theme', { name: lookName, accent: null });
+      await pg.setViewportSize({ width: 320, height: 800 });
+      await pg.goto(home);
+      await ready(pg);
+      await pg.waitForFunction(() => /A_very_long_clip_name/.test(document.getElementById('np').textContent) && /\d \/ \d/.test(document.getElementById('time').textContent), null, { timeout: 15000 });
+      if ((await see(pg)).more === 'true') await pg.click('#wsmore');
+      for (let width = 320; width <= 1920; width += 40) {
+        await pg.setViewportSize({ width, height: 800 });
+        await frames(pg);
+        (await pg.evaluate(stripWords, NAME)).forEach((f) => found.push(lookName + ' at ' + width + ' px: ' + f));
+        looked++;
+      }
+    }
+  } finally {
+    await pg.unroute('**/api/status', handler).catch(() => {});
+    await post('/api/theme', { name: was.name, accent: was.accent === undefined ? null : was.accent });
+    await pg.setViewportSize({ width: 390, height: 844 });
+    await pg.goto(home);
+    await ready(pg);
+  }
+  assert.deepStrictEqual(found, [], 'the words on the strip (' + found.length + '):\n' + found.slice(0, 60).join('\n') + (found.length > 60 ? '\n... and ' + (found.length - 60) + ' more' : '') + '\n');
   return looked;
 }
 
@@ -680,6 +774,7 @@ async function roles(pages, post) {
 // Controls, was a second copy of the head of the Effects card. The playing shader's strip was the other copy that
 // went; it has no entry here because nothing plays while the list is taken, so none of its controls is in it:
 // panel.test.js holds each of them on the Shaders screen while a shader plays.)
+const LINK = 'the link beside the Vibes button to the Shaders screen: that screen is the tab above the pads (#sub-play-shaders), and the column beside them from 1200 px';
 const FX_STRIP = {
   '#livefxprev': 'the effect strip was a copy: the same control is #fxprev on Shape > Effect',
   '#livefxon': 'the effect strip was a copy: the same control is #fxon on Shape > Effect (#fxoff while an effect is on)',
@@ -687,9 +782,9 @@ const FX_STRIP = {
   '#livefxmore': 'the effect strip\'s link to the Effects card: the card is the Effect screen, a tab of Shape (a column of its desk from 1200 px)',
 };
 const MOVED = {
-  owner: FX_STRIP,
-  presenter: Object.assign({ '#nav-room': 'the row "Room" of a presenter\'s System index led to the Room screen\'s own cards; they are the screens of the Room area now' }, FX_STRIP),
-  guest: { '#livefxmore': FX_STRIP['#livefxmore'] },
+  owner: Object.assign({ '#shaderslink': LINK }, FX_STRIP),
+  presenter: Object.assign({ '#nav-room': 'the row "Room" of a presenter\'s System index led to the Room screen\'s own cards; they are the screens of the Room area now', '#shaderslink': LINK }, FX_STRIP),
+  guest: { '#livefxmore': FX_STRIP['#livefxmore'], '#shaderslink': LINK },
 };
 // What stands for each of them: the list fails if a control that replaced a removed copy is not there.
 const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext'], presenter: ['#fxprev', '#fxon', '#fxnext'], guest: [] };
@@ -723,4 +818,4 @@ async function inventory(o) {
   return out;
 }
 
-module.exports = { screens, reach, tabWalk, menus, strip, narrow, overruns, longNames, roles, inventory, MENUS, MOVED };
+module.exports = { screens, reach, tabWalk, menus, strip, stripText, stripWords, narrow, overruns, longNames, roles, inventory, MENUS, MOVED, ON_LINE };

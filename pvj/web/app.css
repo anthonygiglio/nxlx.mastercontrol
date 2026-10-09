@@ -547,6 +547,9 @@ main.ws:focus, .deskcol:focus { outline: none; }
 :where(.ws) > #msg:empty { min-height: 0; }
 :where(.ws) > #msg:not(:empty) { padding-top: 6px; padding-bottom: 6px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
 .navrow.on .navname { color: var(--ac); }
+/* (the link from the pads to the Shaders screen: that screen is a tab right above the pads, or the column beside
+   them, wherever the pads are shown, so the link is not) */
+#shaderslink { display: none; }
 .deskcol > .screen { max-width: 1100px; width: 100%; margin: 0 auto; padding-bottom: 24px; }
 .deskcol > .screen:has(#shaderpage) { max-width: 1600px; }
 .libhead { justify-content: flex-end; }
@@ -567,18 +570,16 @@ main.ws:focus, .deskcol:focus { outline: none; }
    So the open strip and the tabs are under half of a 568 px phone. (On a phone the rows are placed by `order`,
    so the cursor's order there is the laptop's: Previous, back, forward, Next, the fades, Freeze, Stop, Blackout.) */
 .tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 16px; border-top: 1.5px solid var(--ln); }
-.tpinfo { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(min-content, 1fr) auto; align-items: center; min-width: 0; }
-/* What plays, "Clip 11 of 12", the time and More stood on one line, and the name was what gave way: to one letter
-   at 600 px, to nothing at 768 (where the time then ran into the place in the clip), to 19 px at 1280. Now the
-   name has a line and the clip count and the time stand under it, beside More, which is as tall as both; the strip
-   is no taller for it. The name is as wide as the two columns under it, with no say in how wide they are; it is
-   cut with dots, and whole in its title (app.js). */
-.tpinfo #np { grid-column: 1 / 3; grid-row: 1; width: 0; min-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tpinfo #plpos { grid-column: 1; grid-row: 2; }
-.tpinfo #plpos:not(:empty) { margin-right: 10px; }
-.tpinfo #time { grid-column: 2; grid-row: 2; }
-.tpinfo #time, .tpinfo #plpos { white-space: nowrap; }
-.tpinfo .tpmore { grid-column: 3; grid-row: 1 / span 2; margin-left: 10px; white-space: nowrap; }      /* ("Less" is one word in any look) */
+.tpinfo { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-width: 0; }
+/* What plays has a line, cut with dots where it is long (whole in its title, app.js), and under it the clip count
+   and the time, beside More, which is as tall as both. Neither the count nor the time is ever broken: each is
+   one piece with figures of one width, and where the two have no room side by side the time stands under the
+   count, whole. */
+.tpinfo #np { grid-column: 1; grid-row: 1; width: 0; min-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpmeta { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; column-gap: 10px; min-width: 0; }
+.tpmeta #time, .tpmeta #plpos { white-space: nowrap; overflow-wrap: normal; font-variant-numeric: tabular-nums; }
+.tpmeta #plpos:empty { display: none; }
+.tpinfo .tpmore { grid-column: 2; grid-row: 1 / span 2; margin-left: 10px; white-space: nowrap; }      /* ("Less" is one word in any look) */
 .tpscrub { grid-column: span 3; order: 4; display: flex; min-width: 0; }
 .tp .tpx { order: 2; }
 .tp #freeze { order: 3; }
@@ -597,9 +598,6 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }
 .tpspeed input { flex: 1 1 0; min-width: 0; margin: 0; height: 44px; }
 /* (a 320 px phone: "Blackout" needs 69 px in the widest of the faces this look is drawn in, and gets 75) */
-/* (under 1600 px, where the line is full: if the clip count and the time have no room on one
-   line, as in larger text, the time goes to a second line; it is not cut and no button is sent down) */
-@container app (max-width: 1599px) { .tpinfo { grid-template-columns: auto minmax(0, 1fr) auto; } .tpinfo #time { white-space: normal; } }      /* (to 1599 px since D72: with More on the line from 1200 px, and Speed and Loop from 1440, a wider face sent Blackout down before it let the time wrap) */
 @container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } .tp .tpb { font-size: 13px; } }      /* (13 px: room to spare in a wider face than the one it was measured in) */
 @container app (min-width: 600px) {
   .frame { grid-template-columns: 96px minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; grid-template-areas: "head head" "side sub" "side main" "dock dock"; }
@@ -616,58 +614,37 @@ main.ws:focus, .deskcol:focus { outline: none; }
   /* the open area's screens: tabs across the top of the workspace, which stay there while the screen scrolls */
   .wssub { position: sticky; top: 0; z-index: 11; padding: 8px 16px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
   .wssub .segbtn { flex: 0 1 auto; min-width: 6.5rem; }
-  .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  /* (what plays is never under 13rem and shares what is left with the place in the clip, so its time stands on
-     one line wherever there is room; a time that must wrap wraps at its spaces. The 13rem is its base size, not
-     more: a line of a strip that wraps is filled by base sizes, and a larger one sent Blackout down) */
-  .tpinfo { flex: 2 1 13rem; min-width: 13rem; }
-  .tpinfo #time { overflow-wrap: normal; }
-  .tpscrub, .tp:not(.open) .tpscrub { display: flex; flex: 2 1 0; min-width: 3rem; order: 0; }
-  .tp .tpx, .tp #freeze { order: 0; }
-  .tp:not(.open) button.tpx { display: inline-block; }
-  .tp .tpspeed, .tp:not(.open) .tpspeed { display: flex; flex: 0 1 150px; min-width: 110px; }
-  .tpgrp { display: flex; gap: 6px; }
+  /* The strip: ONE line at every width from here. What plays has at least 180 px for its name and is never
+     squeezed under that; Freeze, Stop and Blackout are always at the right end. Everything else is on the line
+     only from the width where it fits (below), and behind More under that; More opens what is folded in a second
+     line under the first, in place. */
+  .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .tpgrp { display: contents; }
+  .tpinfo { flex: 1 1 0; min-width: min-content; grid-template-columns: minmax(11.25rem, 1fr) auto; }
+  .tp .tpmore { display: block; }
   .tp .tpb { min-height: 44px; padding: 0 10px; font-size: inherit; }
   .tp .tpb.keep { min-height: 56px; }
-  .tp .tpmore { display: none; }
-}
-/* One line from 600 px. Eleven controls, the place in the clip and what plays need about 1440 px; under that the
-   strip took two rows, or three, and Stop and Blackout (or Freeze with them) were the ones sent down to the left of
-   the next row. So under 1440 px it folds as a phone's does, and Freeze, Stop and Blackout keep the right end of
-   the one line at every width: from 1200 px it shows what plays, the place in the clip, Previous, back and forward
-   10 s, Next, the fades and those three, with Speed and Loop behind More; from 1000 px back and forward 10 s and
-   the fades are behind More as well; from 800 px the place in the clip too; from 600 px Previous and Next too. More
-   opens what is folded in a second line under the first, in place. (If the words are much larger than the panel's
-   own, the line wraps and nothing is cut.) */
-@container app (min-width: 600px) and (max-width: 1439px) {
-  .tp { column-gap: 8px; }
-  .tpgrp { display: contents; }
-  .tp .tpmore { display: block; }
-  .tp .tpx { order: 2; }
   .tp #freeze { order: 0; }
-  .tp:not(.open) button.tpx:not(#freeze), .tp:not(.open) .tpscrub, .tp:not(.open) .tpspeed { display: none; }
+  .tp:not(.open) #freeze { display: inline-block; }
+  .tp .fold { order: 2; }
+  .tp:not(.open) .fold { display: none; }
   .tp.open::before { content: ""; order: 1; flex: 0 0 100%; height: 0; margin-top: -6px; }
+  .tp .tpscrub { flex: 3 1 160px; min-width: 160px; }
+  .tp .tpspeed { flex: 0 1 150px; min-width: 110px; }
+  .tp.open .tpscrub, .tp.open .tpspeed { display: flex; }
 }
-@container app (min-width: 600px) and (max-width: 799px) {
-  .tp #prev, .tp #next { order: 2; }
-  .tp:not(.open) #prev, .tp:not(.open) #next { display: none; }
-}
-@container app (min-width: 1000px) and (max-width: 1439px) {
-  .tp .tpscrub, .tp:not(.open) .tpscrub { display: flex; order: 0; }
-}
-/* (from 1440 px, where everything is on the line: until 1600 px it is full, and in a wide typeface it gives a
-   little everywhere before a button goes down a line) */
-@container app (min-width: 1440px) and (max-width: 1599px) {
-  .tp { column-gap: 6px; }
-  .tpgrp { gap: 4px; }
-  .tpinfo { min-width: 11rem; }
-  .tp .tpspeed, .tp:not(.open) .tpspeed { min-width: 96px; }
-  .tp .tpb { padding: 0 8px; }
-}
-@container app (min-width: 1200px) and (max-width: 1439px) {
-  .tp #back10, .tp #fwd10, .tp #fadein, .tp #fade { order: 0; }
-  .tp:not(.open) button.tpx:is(#back10, #fwd10, #fadein, #fade) { display: inline-block; }
-}
+/* What is on the line from which width (D72). The owner's order of who has the room first: Blackout, Stop and
+   Freeze (always); Previous and Next; Loop; Speed; Fade in and Fade out; back and forward 10 s; the place in the
+   clip, which needs 160 px. Each width is where the line still holds in a typeface a fifth wider than the
+   panel's own, with a long clip name and an hour's time on it (measured; the widths are in D72). */
+@container app (min-width: 800px) { .tp .fold.f-steps { order: 0; } .tp:not(.open) .fold.f-steps { display: inline-block; } }
+@container app (min-width: 940px) { .tp .fold.f-loop { order: 0; } .tp:not(.open) .fold.f-loop { display: inline-block; } }
+@container app (min-width: 1080px) { .tp .fold.f-speed { order: 0; } .tp:not(.open) .fold.f-speed { display: flex; } }
+@container app (min-width: 1280px) { .tp .fold.f-fades { order: 0; } .tp:not(.open) .fold.f-fades { display: inline-block; } }
+@container app (min-width: 1440px) { .tp .fold.f-ten { order: 0; } .tp:not(.open) .fold.f-ten { display: inline-block; } }
+/* (from 1440 px the line is at its fullest until the place in the clip joins it: it gives a little everywhere) */
+@container app (min-width: 1440px) and (max-width: 1639px) { .tp { column-gap: 6px; } .tp .tpb { padding: 0 8px; } }
+@container app (min-width: 1640px) { .tp .fold.f-scrub { order: 0; } .tp:not(.open) .fold.f-scrub { display: flex; } .tp .tpmore { display: none; } }
 /* A desk, from 1200 px of panel (D72): the columns of the area that is built stand side by side, all of them
    equally live, each under its name. 1200 px is where the narrowest column is no narrower than a phone: beside the
    96 px rail the workspace has 1104 px, and its columns come to 344, 345 and 414 px in Play, 453, 325 and 325 px
@@ -695,7 +672,13 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .wssub.all { display: none; }
   .wsjob.one { display: none; }
   .wsjob.all { display: block; }
-  #shaderslink { display: none; }          /* (the Shaders column stands beside the pads) */
+  /* every column has the same small heading: a column that is a page (Shaders, Sound) leaves its own title and
+     sentence out here and keeps its switch, at the right of the heading; the Scenes card of Room is not named a
+     second time under the column's name */
+  .desk:not([data-cols="1"]) > .deskcol { position: relative; }
+  .desk:not([data-cols="1"]) .syspage .syshead h2, .desk:not([data-cols="1"]) .syspage #sysblurb { display: none; }
+  .desk:not([data-cols="1"]) .syspage .syshead { position: absolute; top: 6px; right: 16px; margin: 0; }
+  .desk:not([data-cols="1"]) #roomscenes > h2 { display: none; }
   .setupdesk { display: flex; align-items: stretch; }
   .setupdesk > .deskcol.ix { display: block; flex: 0 0 272px; align-self: flex-start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; }
   .setupdesk > .deskcol.cur { flex: 1 1 0; border-left: 1.5px solid var(--ln); }
@@ -707,6 +690,9 @@ main.ws:focus, .deskcol:focus { outline: none; }
 @media (max-height: 599px) {
   .tp.open { max-height: calc(50dvh - 70px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
   @container app (min-width: 600px) { .tp.open { max-height: 44dvh; } }      /* (under half: a control brought to the middle of the window is then clear of the strip) */
+  /* while a part of it is below what is shown (app.js says so): its lower edge fades into a line in the accent */
+  .tp.open.below::after { content: ""; order: 99; grid-column: 1 / -1; flex: 0 0 100%; position: sticky; bottom: -8px; height: 28px; margin-top: -34px; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--bg) 75%); border-bottom: 3px solid var(--ac); }
 }
 /* short: the title bar gives way, the controls keep their height */
 @media (max-height: 479px) {

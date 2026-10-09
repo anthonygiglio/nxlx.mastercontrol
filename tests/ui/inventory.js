@@ -128,8 +128,7 @@ function note(found, where, keys) { keys.forEach((k) => { (found[k] = found[k] |
 // Each area's button of the rail is pressed in turn, and each tab of the area's screens; where the area is a desk
 // (the list is taken at 1366 px) its screens are columns of one page, which is gathered once. Every row of the
 // Setup index is opened, the ones whose module is off and the three that lead to a screen of another area too. The
-// strip is taken once more with its More open. And the pads are looked at once at 768 px: the link from the pads to
-// the Shaders screen is shown only where Shaders is another tab, not where it is the column beside the pads.
+// strip is taken once more with its More open.
 async function walk(pg) {
   const found = {};
   await pg.waitForFunction(() => !!document.querySelector('#wsside [data-ar]'), null, { timeout: 15000 });
@@ -170,13 +169,6 @@ async function walk(pg) {
   await pg.evaluate(() => { const m = document.getElementById('wsmore'); if (m && m.getClientRects().length && m.getAttribute('aria-expanded') !== 'true') m.click(); });
   note(found, 'the transport strip', await pg.evaluate(collect));
   await pg.evaluate(() => { const m = document.getElementById('wsmore'); if (m && m.getAttribute('aria-expanded') === 'true') m.click(); });
-  const size = await pg.evaluate(() => [window.innerWidth, window.innerHeight]);
-  await pg.setViewportSize({ width: 768, height: size[1] });
-  await press('#side-play');
-  await at('play/');
-  if (await press('#sub-play-pads')) await at('play/pads');
-  note(found, 'play/pads (Pads) at 768 px', await gather(pg));
-  await pg.setViewportSize({ width: size[0], height: size[1] });
   return found;
 }
 

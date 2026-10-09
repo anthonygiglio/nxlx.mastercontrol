@@ -1768,8 +1768,10 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(await page.isVisible('#liveprev'), 'and Previous is beside it');
     await fitsPhone('Pads while Vibes is playing');
     if (shots) await page.screenshot({ path: path.join(shots, '8-live-vibes.png') });
-    // The link lands on the same page (Play > Shaders): another tab of Play, so there is no Back; the Pads tab leads back
-    await page.click('#shaderslink');
+    // The Shaders tab above the pads leads to the same page (Play > Shaders): another tab of Play, so there is no
+    // Back, and the Pads tab leads back. The link that stood beside the Vibes button is not shown: it did what the tab does.
+    assert.strictEqual(await page.isVisible('#shaderslink'), false, 'no link to the Shaders screen beside the Vibes button');
+    await go(page, 'play/shaders');
     await page.waitForSelector('#syspage .syshead :is(h1, h2):text-is("Shaders and Vibes")');
     await page.waitForFunction(() => /Vibes is playing/.test((document.getElementById('shaderline') || {}).textContent));
     assert.strictEqual(await page.textContent('#vibesbtn'), 'Stop Vibes');
@@ -1781,7 +1783,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await go(guest, 'play/pads');
     await guest.waitForSelector('#vibes');
     assert(await guest.isDisabled('#vibes'), 'a guest cannot start or stop Vibes');
-    await guest.click('#shaderslink');
+    await go(guest, 'play/shaders');
     await guest.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
     assert(/Vibes is playing/.test(await guest.textContent('#shaderline')), 'a guest sees that Vibes is playing');
     assert.strictEqual(await guest.locator('#shaderpage button, #shaderpage input[type=range], #vibesdwell, #shaderheight, #sysswitch').count(), 0, 'a guest gets nothing to press on the Shaders page (only the filter of the list)');
@@ -2373,7 +2375,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // A presenter's Shaders page: start, stop, skip, play one and move sliders; no switches, no settings, no upload
     await presenter.waitForSelector('#vibes');
     assert(!(await presenter.isDisabled('#vibes')), 'a presenter can use the Vibes button');
-    await presenter.click('#shaderslink');
+    await go(presenter, 'play/shaders');
     await presenter.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
     assert.deepStrictEqual(await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard'], 'a presenter gets no settings and no links to MIDI and DMX');
     assert.strictEqual(await presenter.locator('#syspage .switch').count(), 0, 'no module switch and no rotation switches for a presenter');
@@ -2957,14 +2959,14 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.setViewportSize({ width: 1366, height: 800 });
       await signalRound(' at 1366', false);
       // The place in the clip is on the strip of every screen, and the box moves it once a second: its fill follows
-      // it at every moment, at each width where it shows (from 1000 px always; under that with More open).
+      // it at every moment, at each width where it shows (from 1640 px always; under that with More open).
       // A clip has to be playing for this to try anything: one is started if none is, and a frozen one is let go.
       await signal.go(page, 'play/pads');
       await page.waitForSelector('.pads');
       const nowPl = (await get('/api/status')).player || {};
       if (!(nowPl.duration > 0)) { assert.strictEqual(await post('/api/play', { file: 'tunnel.mkv' }), 200); await page.waitForTimeout(2500); }
       else if (nowPl.paused) { assert.strictEqual(await post('/api/control', { action: 'pause' }), 200); await page.waitForTimeout(1500); }
-      for (const [w, more] of [[1366, false], [768, true], [390, true]]) {       // (under 1000 px the place in the clip is behind More)
+      for (const [w, more] of [[1920, false], [1366, true], [768, true], [390, true]]) {       // (under 1640 px the place in the clip is behind More)
         await page.setViewportSize({ width: w, height: 800 });
         if (more) await signal.stripOpen(page);
         const f = await signal.seekFill(page);
@@ -3022,8 +3024,9 @@ function startServer(env) {          // env: more for the harness's environment 
       // 1366 px, with the title bar, the open items, one heading, the columns that width has, the strip and the
       // cursor held on each; the tabs at the foot are there under 600 px, the rail and the tabs of the screens
       // from 600 px, the desks from 1200 px; each card is in the page once; what is typed survives a tab and a
-      // resize; the strip is one line from 600 px (whole from 1440 px, folded behind More under that) and on a
-      // phone four buttons with More, with Speed and Loop on it and nowhere else; an owner, a presenter and a guest
+      // resize; the strip is one line from 600 px (Speed and Loop on it from 1080 px, everything from 1640 px, the
+      // rest behind More) and on a phone four buttons with More, with Speed and Loop on it and nowhere else; its
+      // time and clip count are never broken and its name never under 180 px, in every look from 320 to 1920 px; an owner, a presenter and a guest
       // each have the screens and the columns they should, and a module that is off has no screen while the
       // owner's index keeps its row.
       {
@@ -3043,6 +3046,8 @@ function startServer(env) {          // env: more for the harness's environment 
         const narrowBegan = Date.now();
         const narrowLooks = await ws.narrow(page, call, (url) => page.evaluate((u) => fetch(u, { credentials: 'same-origin' }).then((r) => r.json().catch(() => ({}))), url));
         console.log('text at narrow and at desk widths: ' + narrowLooks + ' looks at every screen with long names, in both looks, nothing overran (' + ((Date.now() - narrowBegan) / 1000).toFixed(1) + ' s)');
+        const stripLooks = await ws.stripText(page, call, (url) => page.evaluate((u) => fetch(u, { credentials: 'same-origin' }).then((r) => r.json().catch(() => ({}))), url));
+        console.log('the words on the strip: ' + stripLooks + ' looks, 320 to 1920 px in every look the box has, the time and the clip count whole and the name at its least width or more');
         const people = [];
         const person = async (name, role) => {
           const token = (await call('/api/devices/invite', { name, role })).token;

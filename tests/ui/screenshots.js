@@ -266,13 +266,12 @@ function startServer() {
       await page.setViewportSize({ width: 390, height: 844 });
     }
     await pageShot('access', 'People and codes', 'Let someone in', () => page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));
-    // Shaders and Vibes: the page with Vibes playing (opened from Pads, as staff do), and Pads with the big button.
+    // Shaders and Vibes: the page with Vibes playing (the Shaders tab of Play), and Pads with the big button.
     await api('POST', '/api/modules/shaders', { enabled: true });
     await api('POST', '/api/vibes', { on: true });
     await shot('shaders-page', async (f) => {
       await go(page, 'play/pads');
-      await page.waitForSelector('#shaderslink');
-      await page.click('#shaderslink');
+      await go(page, 'play/shaders');
       await soft('shaders page', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
       await page.waitForTimeout(600);
       await whole(f);
@@ -318,7 +317,7 @@ function startServer() {
     await api('POST', '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
     await api('POST', '/api/shaders/presets', { action: 'save', name: 'Warm' });
     await shot('shaders-instrument', async (f) => {
-      await page.click('#shaderslink');
+      await go(page, 'play/shaders');
       await soft('the instrument', page.waitForSelector('#shaderpresets [data-preset="Warm"]', { timeout: 15000 }));
       await page.waitForTimeout(600);
       await whole(f);

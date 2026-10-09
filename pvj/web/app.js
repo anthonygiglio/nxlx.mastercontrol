@@ -391,22 +391,25 @@
       el.classList.toggle('open', open);
       more.setAttribute('aria-expanded', open ? 'true' : 'false');
       more.textContent = open ? 'Less' : 'More';
+      moreBelow();
     } });
     var el = h('div', { class: 'tp', id: 'wstp', role: 'group', 'aria-label': 'Transport' },
-      h('div', { class: 'tpinfo' }, h('div', { id: 'np', style: false, text: '' }), h('div', { class: 'k', id: 'plpos' }), h('div', { class: 'k', id: 'time' }), more),
-      h('div', { class: 'tpscrub tpx' }, seekBar(canLive)),
+      // (fold f-...: what leaves the one line of a wider panel for More, in the stylesheet's order: the place in the
+      // clip first, then back and forward 10 s, the fades, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout)
+      h('div', { class: 'tpinfo' }, h('div', { id: 'np', style: false, text: '' }), h('div', { class: 'tpmeta' }, h('div', { class: 'k', id: 'plpos' }), h('div', { class: 'k', id: 'time' })), more),
+      h('div', { class: 'tpscrub tpx fold f-scrub' }, seekBar(canLive)),
       h('div', { class: 'tpgrp' }, speedBar(canLive),
-        h('button', { class: 'btn tpb tpx tploop', text: 'Loop: off', disabled: !canLive, onclick: function () {
+        h('button', { class: 'btn tpb tpx tploop fold f-loop', text: 'Loop: off', disabled: !canLive, onclick: function () {
           act('POST', '/api/control', { action: 'loop', value: !looping() }, poll);
         } })),
       h('div', { class: 'tpgrp' },
-        b('prev', '⏮ Prev', 'Previous clip', 'keep', ctl('prev')),
-        b('back10', '− 10 s', 'Back 10 seconds', 'tpx', ctl('seek', -10)),
-        b('fwd10', '+ 10 s', 'Forward 10 seconds', 'tpx', ctl('seek', 10)),
-        b('next', 'Next ⏭', 'Next clip', 'keep', ctl('next'))),
+        b('prev', '⏮ Prev', 'Previous clip', 'keep fold f-steps', ctl('prev')),
+        b('back10', '− 10 s', 'Back 10 seconds', 'tpx fold f-ten', ctl('seek', -10)),
+        b('fwd10', '+ 10 s', 'Forward 10 seconds', 'tpx fold f-ten', ctl('seek', 10)),
+        b('next', 'Next ⏭', 'Next clip', 'keep fold f-steps', ctl('next'))),
       h('div', { class: 'tpgrp' },
-        b('fadein', 'Fade in', null, 'tpx', function () { act('POST', '/api/fadein', { seconds: 2 }, poll); }),
-        b('fade', 'Fade out', null, 'tpx', function () { act('POST', '/api/fadeout', { seconds: 2 }); }),
+        b('fadein', 'Fade in', null, 'tpx fold f-fades', function () { act('POST', '/api/fadein', { seconds: 2 }, poll); }),
+        b('fade', 'Fade out', null, 'tpx fold f-fades', function () { act('POST', '/api/fadeout', { seconds: 2 }); }),
         b('freeze', 'Freeze', null, 'tpx', ctl('pause'))),
       h('div', { class: 'tpgrp' },
         b('stop', 'Stop', null, 'keep', ctl('stop')),
@@ -414,6 +417,7 @@
           var on = !(S.status && S.status.mix && S.status.mix.blackout);
           act('POST', '/api/blackout', { on: on }, poll);
         })));
+    el.addEventListener('scroll', moreBelow);
     dock = { key: key, el: el };
     return el;
   }
@@ -467,6 +471,11 @@
     bar.addEventListener('pointerup', function () { setTimeout(function () { seeking = false; }, 1500); });
     return bar;
   }
+  // In a low window the open strip is held to half the window and scrolls inside (the stylesheet): while a part of
+  // it is below what is shown, the strip says so, and its lower edge fades.
+  function moreBelow() {
+    if (dock) dock.el.classList.toggle('below', dock.el.scrollHeight - dock.el.scrollTop - dock.el.clientHeight > 4);
+  }
   // Speed: the slider that was on Shape > Controls, with its id. Like the place in the clip, it is not moved by the
   // once-a-second status update while a finger is on it.
   var speeding = false;
@@ -478,7 +487,7 @@
     bar.addEventListener('pointerdown', function () { speeding = true; });
     bar.addEventListener('input', function () { speeding = true; out.textContent = (bar.value / 100).toFixed(2) + 'x'; sendSoon(+bar.value); });
     bar.addEventListener('change', function () { send(+bar.value); setTimeout(function () { speeding = false; }, 1500); });
-    return h('div', { class: 'tpspeed tpx' }, h('label', { for: 'mv' }, 'Speed', out), bar);
+    return h('div', { class: 'tpspeed tpx fold f-speed' }, h('label', { for: 'mv' }, 'Speed', out), bar);
   }
   function looping() {
     var pl = (S.status && S.status.player) || {};
@@ -4227,11 +4236,12 @@
     play: { pads: live, library: media, shaders: function () { return pagePart('vibes'); } },
     shape: { effect: effectPart, picture: picturePart, sound: function () { return pagePart('sound'); } }
   };
-  // One column: a named region with its screen in it. Its heading is shown where the columns stand side by side; a
-  // column that is a page has the page's own title.
+  // One column: a named region with its screen in it. Its heading is shown where the columns stand side by side,
+  // the same small one for every column; a column that is a page (Shaders, Sound) shows its own title and sentence
+  // only where it stands alone, and keeps its switch beside the column's heading.
   function column(x, screen) {
     var col = h('section', { class: 'deskcol' + (x.part === S.part[x.tab] ? ' cur' : ''), 'data-col': x.part, role: 'region', 'aria-label': x.name, tabindex: -1 },
-      screen.id === 'syspage' ? null : h('h2', { class: 'deskhead', text: x.name }), screen);
+      h('h2', { class: 'deskhead', text: x.name }), screen);
     col.drawnFrom = stamp(x.part);
     return col;
   }
@@ -4411,6 +4421,7 @@
   function dockHeight() {           // how tall the strip and the tabs are: what floats above them (a message) clears them
     var d = document.getElementById('wsdock');
     if (d) document.documentElement.style.setProperty('--dock', d.offsetHeight + 'px');
+    moreBelow();
   }
   function render() {
     markArea();
