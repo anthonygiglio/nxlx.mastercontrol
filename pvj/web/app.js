@@ -4012,6 +4012,35 @@
     setInterval(poll, 1000);
     document.addEventListener('input', function (e) { if (e.target && e.target.type === 'range') fillRanges(); }, true);
     setInterval(fillRanges, 250);
+    // A part of the page that was not delivered at first and has arrived now (load.js): draw with it. Only on a
+    // paired page that has drawn (never under a PIN being typed), and not under somebody's hands: render() empties
+    // the page and keeps only the Network and the Boxes-in-step fields, so a name being typed, a list that is open,
+    // a question waiting for its answer (confirmRow) or a slider being dragged would be gone. Then the drawing
+    // waits: it looks again when the field is left, and a few times a second for the rest.
+    var late = null, pressed = false;
+    function inUse() {
+      var a = document.activeElement;
+      var field = a && app.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' ||
+        (a.tagName === 'INPUT' && !/^(range|checkbox|radio|button|submit|reset|color|file)$/.test(a.type)));
+      return !!field || pressed || asking(app);
+    }
+    function drawLate() {
+      clearTimeout(late);
+      late = null;
+      if (!S.device || !app.firstChild) return;
+      if (inUse()) { late = setTimeout(drawLate, 400); return; }
+      render();
+    }
+    document.addEventListener('pvjfile', drawLate);
+    // (after the moment in which the cursor is nowhere: it may be on its way to the next field)
+    document.addEventListener('focusout', function () { if (late) { clearTimeout(late); late = setTimeout(drawLate, 0); } }, true);
+    document.addEventListener('pointerdown', function () { pressed = true; }, true);
+    ['pointerup', 'pointercancel', 'blur'].forEach(function (n) { window.addEventListener(n, function () { pressed = false; }, true); });
   }
   boot();
+  // The last statement of the file, read by load.js (data-gives in index.html): the file was read as a program and
+  // ran to the point where the panel was started. A file the browser cannot read as a program (a syntax error after
+  // a merge, a browser too old for it), or one that stops before here, leaves this unset, and the page says so
+  // instead of staying empty. What goes wrong later, in an answer from the box, is not seen by this.
+  window.pvjApp = true;
 })();

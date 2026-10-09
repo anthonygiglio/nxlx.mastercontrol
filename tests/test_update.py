@@ -53,6 +53,7 @@ def make_bundle(version, schema=None, top=True):
             tar.add(os.path.join(tree, sub), arcname=("pvj-%s/%s" % (version, sub)) if top else sub)
     with open(out + ".sha256", "w") as f:
         f.write(update.sha256_file(out) + "  " + os.path.basename(out) + "\n")
+    shutil.rmtree(tree, True)           # the copy of the source is in the bundle now: 3 MB a call (D69)
     return out
 
 
@@ -145,6 +146,7 @@ class HelperTest(unittest.TestCase):
 
     def test_inspect_bundle(self):
         tree = make_tree("2.3.4")
+        self.addCleanup(shutil.rmtree, tree, True)
         info = update.inspect_bundle(tree)
         self.assertEqual(info["version"], "2.3.4")
         self.assertGreaterEqual(info["schema"], 1)

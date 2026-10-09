@@ -395,9 +395,22 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
 
 class PvjServer(ThreadingHTTPServer):
     """Threaded server with a hard cap on simultaneous connections, so a flood of idle
-    sockets cannot exhaust threads; extra connections get a plain 503 straight away."""
+    sockets cannot exhaust threads; extra connections get a plain 503 straight away.
+
+    The queue of connections the kernel has finished and this server has not yet taken (the listen backlog) is 128,
+    not the 5 that socketserver asks for. A browser opens six connections at once for the files of the page, and
+    every request here is its own connection (HTTP/1.0), so two or three people opening the panel in the same
+    second ask for more than five before the loop below has taken the first. What the kernel does with the one too
+    many differs: macOS resets it (a script of the page then never arrives, measured 2026-10-08). Linux, as
+    documented, drops the handshake and leaves the client to ask again about a second later; that was measured on
+    CI's Linux only (Ubuntu 24.04, 2026-10-08: with a queue of 5 and nobody taking connections, 33 and 34 of 40
+    had not connected after half a second, in two runs) and not on the Pi. 128 is the largest value every kernel
+    in use here grants (the kernel lowers a larger one to its own limit, net.core.somaxconn or kern.ipc.somaxconn). A waiting connection costs the
+    kernel a little memory and this process nothing: no thread and no file descriptor until it is taken, and then
+    the cap below decides. So the bound on threads and descriptors is still max_connections."""
 
     daemon_threads = True
+    request_queue_size = 128
 
     def __init__(self, address, handler, max_connections=64):
         super().__init__(address, handler)
@@ -411,7 +424,15 @@ class PvjServer(ThreadingHTTPServer):
                 pass
             self.shutdown_request(request)
             return
-        super().process_request(request, client_address)
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            # The thread did not start (the system had no thread to give), so process_request_thread below will
+            # never run for this connection and never give its place back: give it back here. Without this every
+            # such failure took one of the places for good, and after max_connections of them the panel answered
+            # nothing but 503 until the service was started again. socketserver closes the connection and logs.
+            self._slots.release()
+            raise
 
     def process_request_thread(self, request, client_address):
         try:
