@@ -738,8 +738,6 @@ class Crossfade(Base):
             self.now[0] += left.pop(0) if left else 0.0
             real(path)
         self.player.still = still
-        if self.settings.data["mix"]["duration"] == 1.0:
-            self.settings.data["mix"] = T.stored("crossfade", 2.0)    # longer than the stills here: that rule has its own test
 
     def test_one_slow_still_is_used_and_the_box_does_not_give_up(self):
         self.slow_stills(T.SLOW + 0.2)
@@ -778,16 +776,23 @@ class Crossfade(Base):
             self.play(name)
             self.assertEqual(self.tr.given_up, "", name)
 
-    def test_a_still_that_took_longer_than_the_transition_is_to_take_gives_up_at_once(self):
-        self.settings.data["mix"] = T.stored("crossfade", 0.5)
-        self.slow_stills(T.SLOW + 0.1)
+    def test_one_slow_still_is_used_at_every_duration_the_panel_offers(self):
+        # the tenth read: with "longer than the transition" in the rule, one still of 1.2 s was the last one at the
+        # box's default of one second and at half a second, and the helper above had hidden it by asking for two
+        for seconds in (0.5, 1.0, 2.0, 5.0):
+            self.tr.chosen_again()
+            self.settings.data["mix"] = T.stored("crossfade", seconds)
+            self.slow_stills(T.SLOW + 0.2)
+            if seconds in (1.0, 5.0):
+                self.play("b.mov")
+            else:
+                self.play()
+            self.assertEqual(self.tr.given_up, "", seconds)
+
+    def test_a_still_that_took_hopelessly_long_gives_up_at_once(self):
+        self.slow_stills(T.HOPELESS + 0.5)
         self.play()
-        self.assertIn("the still took 1.1 seconds, longer than the 0.5 second transition", self.tr.given_up)
-        self.tr.chosen_again()
-        self.settings.data["mix"] = T.stored("crossfade", 2.0)                    # the same still against two seconds: used
-        self.slow_stills(T.SLOW + 0.1)
-        self.play("b.mov")
-        self.assertEqual(self.tr.given_up, "")
+        self.assertIn("the still took 3.5 seconds", self.tr.given_up)
 
     def test_the_stills_time_is_the_screenshot_and_its_reading_alone(self):
         # the questions before it, the freeze and the file were counted too: on the Pi 4 a play answered after
