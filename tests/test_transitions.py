@@ -1513,8 +1513,8 @@ class Threads(ServerBase):
             in_step.set()
             let_go.wait(10)
             written.append(("step", level))
-        fader = Fader(apply)
-        fader.ramp(0, 100, 1.0)
+        fader, over = Fader(apply), self.threading.Event()
+        fader.ramp(0, 100, 1.0, cancelled=over.set)
         self.assertTrue(in_step.wait(5))                                # a step is in the player
 
         def set_level():
@@ -1527,8 +1527,10 @@ class Threads(ServerBase):
         self.assertTrue(setter.is_alive(), "a level was set while a step was still on its way: the step lands after it")
         let_go.set()
         setter.join(5)
-        self.assertEqual(written[-1], ("set", 0))
-        self.assertEqual(len(written), 2, "a step went on after the level was set")
+        self.assertTrue(over.wait(5), "the ramp never saw that the fader was taken")
+        # steps may have gone on until the setter got its turn (the lock is not a queue); none comes after it
+        self.assertEqual(written[-1], ("set", 0), "a step landed after the level was set: %s" % written)
+        self.assertEqual([w for w in written if w[0] == "set"], [("set", 0)])
 
     def test_next_and_previous_during_a_dip_do_not_leave_the_picture_dark(self):
         # M1 of the fourth review: they count as newer wishes and do not touch the fader, so the way down went on
