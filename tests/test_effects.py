@@ -1519,7 +1519,7 @@ class ValuesTest(Base):
         held, go = threading.Event(), threading.Event()
 
         def busy():
-            with self.player._lock, self.fx._lock:
+            with self.fx._lock, self.player._lock:      # in the order of the locks (pvj/locks.py): the engine's, then the player's
                 held.set()
                 go.wait(10)
         t = threading.Thread(target=busy)

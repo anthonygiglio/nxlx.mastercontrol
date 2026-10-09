@@ -11,7 +11,7 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 
-from pvj import server, themes as themes_mod
+from pvj import locks, server, themes as themes_mod
 from pvj.api import Api
 from pvj.auth import Auth
 from pvj.modules import Registry
@@ -20,11 +20,16 @@ from pvj.settings import Settings
 
 
 class FakePlayer:
+    # the calls for which pvj.player.Player takes its own lock: the fake takes one of the same place in the order
+    # of the locks (pvj/locks.py), so that what is tested against it keeps to the order as against the real one
+    LOCKED = ("set_shaders", "set_mapping_mode", "play_pipe", "clear")
+
     def __init__(self, rundir):
         self.rundir = rundir
         self.calls = []
         self.plays = []
         self.running = False
+        self._lock = locks.make("player", reentrant=True)
 
     TEST_PATTERN = "av://lavfi:smptehdbars=size=1920x1080:rate=25"
 
@@ -37,13 +42,18 @@ class FakePlayer:
         return {"running": self.running, "path": None}
 
     def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
-        self.calls.append(("play", paths, loop, spawn))
-        self.plays.append({"paths": paths, "loop": loop, "ending": ending or ("loop" if loop else "stop"), "image_seconds": image_seconds})
-        self.running = True
+        with self._lock:
+            self.calls.append(("play", paths, loop, spawn))
+            self.plays.append({"paths": paths, "loop": loop, "ending": ending or ("loop" if loop else "stop"), "image_seconds": image_seconds})
+            self.running = True
 
     def __getattr__(self, name):
         if name in ("set_shaders", "set_mapping_mode", "pause", "seek", "seek_to", "playlist_step", "shuffle", "flip", "overlay_remove", "overlay_file", "play_pipe", "speed", "volume", "opacity", "size", "position", "rotate", "loop", "mute", "clear", "volume_step"):
             def call(*args):
+                if name in self.LOCKED:
+                    with self._lock:
+                        self.calls.append((name,) + args)
+                    return None
                 self.calls.append((name,) + args)
                 return True if name in ("pause", "playlist_step") else None
             return call

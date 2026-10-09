@@ -39,8 +39,8 @@ class Screen(FakePlayer):
         self.fail = set()               # names of calls that raise PlayerError
         self.on_overlay = None
         # as pvj.player.Player: one lock for every change of what plays, and an epoch that a generator must hold
-        import threading
-        self._lock = threading.RLock()
+        from pvj import locks
+        self._lock = locks.make("player", reentrant=True)       # at the player's place in the order of the locks
         self.source_epoch, self.source_shader, self.path, self.carrier = 0, None, None, None
         self.socket_path = os.path.join(rundir, "player.sock")
         self.overlay_up = False
@@ -218,8 +218,8 @@ class Helper:
     """A live input's helper as pvj.capture.Capture is to the panel: prepare stops the one before, start runs one."""
 
     def __init__(self, rundir):
-        import threading
-        self.lock = threading.RLock()
+        from pvj import locks
+        self.lock = locks.make("capture", reentrant=True)       # at the live input's place in the order of the locks
         self.fifo = os.path.join(rundir, "capture.fifo")
         self.running, self.most, self.stops = 0, 0, 0
         self.on_prepare = None
@@ -572,6 +572,9 @@ class Crossfade(Base):
     # -- when it cannot be done --
     def test_a_still_that_fails_is_a_cut_with_the_clip_playing_and_nothing_left(self):
         for what in ("still", "overlay"):
+            import time
+            time.sleep(0.05)                    # the dip of the round before (its own thread, no sleeps) has run out
+            self.api.fader.cancel()
             self.player.fail = {what}
             self.tr.given_up = ""
             del self.player.calls[:]
@@ -982,13 +985,13 @@ class Threads(ServerBase):
         first = self.tr.hold("crossfade")
         second = self.tr.hold("crossfade")
         self.assertTrue(first and second and first != second)
-        workers = []
-        self.tr._thread = False                     # no clock in this test: who would step is noted, nobody steps
-        self.tr._work = lambda token, seconds, name: workers.append(token)
-        self.tr.run(first, 0.3)                     # the first play gets to its run late: it must do nothing
-        self.tr.run(second, 0.3)
+        workers, work = [], self.tr._work
+        self.tr._thread = False                     # the worker itself, on this thread: who steps is noted as it begins
+        self.tr._work = lambda token, seconds, name: (workers.append(token), work(token, seconds, name))
+        self.tr.run(first, 0.1)                     # the first play gets to its run late: it must do nothing
+        self.tr.run(second, 0.1)
         self.assertEqual(workers, [second], "the first play's run started a worker on the second play's still")
-        self.tr.end()
+        self.assertIsNone(self.tr.running)
 
     def test_two_plays_at_once_end_with_one_clean_transition(self):
         barrier = self.threading.Barrier(2)
@@ -1221,13 +1224,13 @@ class Threads(ServerBase):
             for name in ("a.mp4", "b.mov", "a.mp4", "a.mp4", "b.mov"):
                 self.api.play({"file": name}, MIDI_DEVICE, "midi")
             self.assertEqual(len(self.held), 5)
-            self.tr._thread = False
-            self.tr._work = lambda token, seconds, name: None
+            self.tr._thread = False                 # the last play's transition runs whole, on the thread that plays it
+            self.settings.data["mix"] = T.stored("crossfade", 0.1)
             self.release(order)
             self.assertEqual(self.names().count("still"), 1, "a still for each of the plays that were overtaken")
             self.assertEqual(self.names().count("pause"), 1)
             self.assertEqual(self.loaded(), ["b.mov"], "the clip on the screen is not the last one asked for")
-            self.tr.end()
+            self.assertIsNone(self.tr.running)
 
     def test_a_flood_of_plays_on_real_threads_ends_with_the_last_one(self):
         from pvj.midi import MIDI_DEVICE
@@ -1723,6 +1726,33 @@ class Threads(ServerBase):
         self.assertTrue(self.api.mix["blackout"])
         self.assertEqual(self.player.calls[-1], ("opacity", 0))
 
+    def test_the_opacitys_value_is_set_inside_the_levels_lock(self):
+        # the sixth review's mutation: the value set outside, two sliders could leave the mix at one value and the
+        # picture at the other. Parked as the Blackout switch's test: the mix must not say yet while the lock is waited for.
+        real, waiting = self.api.fader.stepping, self.threading.Event()
+
+        class Watched:
+            def __enter__(self_):
+                waiting.set()
+                real.acquire()
+
+            def __exit__(self_, *exc):
+                real.release()
+        for what, act, value in (("the Opacity slider", lambda: self.api.control({"action": "opacity", "value": 40}, None, "t"), 40),
+                                 ("Reset", lambda: self.api.control({"action": "reset"}, None, "t"), 100)):
+            before = self.api.mix["opacity"]
+            waiting.clear()
+            self.assertTrue(real.acquire(timeout=1))
+            self.api.fader.stepping = Watched()
+            t, _ = self.background(act)
+            self.assertTrue(waiting.wait(5))
+            said = self.api.mix["opacity"]
+            real.release()
+            t.join(5)
+            self.api.fader.stepping = real
+            self.assertEqual(said, before, "%s: the mix had the new opacity before the level's lock was its own" % what)
+            self.assertEqual(self.api.mix["opacity"], value)
+
     def test_every_write_of_the_level_is_made_under_the_levels_lock(self):
         # the fifth review's mutation i: a play's own level written beside the lock passed every test by hand
         self.settings.data["streams"] = [{"id": "bbbb0001", "name": "Camera", "url": "rtsp://192.168.1.60/live"}]
@@ -1777,7 +1807,8 @@ class Threads(ServerBase):
         for what, act in (("Blackout", lambda: self.api.blackout({"on": True}, None, "t")),
                           ("the Opacity slider", lambda: self.api.control({"action": "opacity", "value": 40}, None, "t")),
                           ("Reset", lambda: self.api.control({"action": "reset"}, None, "t")),
-                          ("Fade in", lambda: self.api.fadein({"seconds": 0.1}, None, "t"))):
+                          ("Fade in", lambda: self.api.fadein({"seconds": 0.1}, None, "t")),
+                          ("Fade out", lambda: self.api.fadeout({"seconds": 0.1}, None, "t"))):
             del seen[:]
             act()
             takes = [x for x in seen if x[0] == "fader"]
@@ -1857,6 +1888,27 @@ class Threads(ServerBase):
             self.assertEqual((self.api.fader.label, self.level_now()), ("out", 0),
                              "%s: a Fade out made while it loaded was undone by its load" % what)
 
+    def test_a_fade_out_between_a_dips_tap_and_its_way_down_is_not_replaced_by_the_way_down(self):
+        # low, sixth review: the way down took the fader whatever had come since the tap's mark
+        mark = self.api._level_mark
+        once = []
+
+        def tap():
+            token = mark()
+            if not once:
+                once.append(1)
+                self.fade_out_and_wait()            # the operator's Fade out, right after the tap
+            return token
+        self.api._level_mark = tap
+        self.settings.data["mix"] = {"transition": "dip", "duration": 0.2}
+        self.played.clear()
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertTrue(self.played.wait(5), "the clip was not loaded")
+        import time
+        time.sleep(0.05)
+        self.settle()
+        self.assertEqual((self.api.fader.label, self.level_now()), ("out", 0), "the dip's way down took the place of a Fade out that was newer than its tap")
+
     def test_a_fade_that_ran_before_the_tap_is_ended_by_the_load(self):
         # the other half of the rule: the tap is newer than a fade that was already running
         self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
@@ -1897,32 +1949,6 @@ class Threads(ServerBase):
         self.assertEqual(self.player.ipc.request("get_property", "path"), helper.fifo)
         self.assertEqual(helper.running, 0, "the helper was left under a clip because the player's path was late")
 
-    def test_vibes_writes_its_level_under_the_levels_lock_and_not_under_blackout(self):
-        # low, fifth review (older): a step of Vibes' own dip could land after a Blackout's dark
-        owner, held = [None], []
-        real = self.api.fader.stepping
-
-        class Watched:
-            def __enter__(self_):
-                real.acquire()
-                owner[0] = self.threading.get_ident()
-
-            def __exit__(self_, *exc):
-                owner[0] = None
-                real.release()
-        self.api.fader.stepping = Watched()
-        self.player.source_opacity = lambda value, epoch: held.append(owner[0] == self.threading.get_ident()) or True
-        vibes = self.api.vibes
-        vibes.running, vibes.epoch = True, self.player.source_epoch
-        vibes._clock, vibes._sleep = (lambda: 0.0), (lambda s: None)
-        self.assertTrue(vibes._fade(100, True, 0.2))
-        self.assertTrue(held and all(held), "Vibes wrote the picture's level outside the lock a level is written under")
-        del held[:]
-        self.api.mix["blackout"] = True
-        self.assertTrue(vibes._fade(100, True, 0.2))
-        self.assertEqual(held, [], "Vibes wrote a level under Blackout")
-        vibes.running = False
-
     def test_a_dip_that_a_stop_overtakes_does_not_show_the_old_picture_before_the_screen_is_cleared(self):
         # low, fifth review: the dip's own putting-back of the level could come before the Stop's clear
         self.dip(30.0)                                                  # a long way down
@@ -1944,6 +1970,202 @@ class Threads(ServerBase):
         names = self.names()
         last_level = max(i for i, c in enumerate(self.player.calls) if c == ("opacity", 255))
         self.assertLess(names.index("clear"), last_level, "the old picture was shown at full before it was cleared")
+
+
+class RealPlayer(ServerBase):
+    """The real pvj.player.Player over a stand-in for mpv on its socket (tests/fakempv.py): what player.py itself
+    does with its lock and with what it remembers, which the fakes of the other tests rewrote and so never tested.
+    The locks know their place here as everywhere (tests/lockrank.py): a taking out of order fails the test."""
+
+    def setUp(self):
+        super().setUp()
+        import threading
+        import time
+        from pvj.player import Player
+        from tests.fakempv import FakeMpv
+        self.threading, self.time = threading, time
+        self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))
+        self.addCleanup(self.mpv.stop)
+        self.player = self.api.player = Player(rundir=self.rundir)
+        self.helper = self.api.capture = Helper(self.rundir)
+        self.api.log = lambda line: None
+        self.api.transitions.log = lambda line: None
+        self.api.registry.set_enabled("shaders", True)
+        self.api.shaders.log = lambda *_: None
+        self.clip = os.path.join(self.media, "a.mp4")
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+
+    def background(self, fn):
+        t = self.threading.Thread(target=fn, daemon=True)
+        t.start()
+        self.addCleanup(t.join, 10)
+        return t
+
+    def live_input(self):
+        self.api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "t")
+        self.assertEqual((self.player.pipe_playing, self.helper.running), (True, 1))
+
+    # -- what the player remembers of the live input's pipe (the sixth review's M3: nothing tested the flag) --
+    def test_the_pipe_is_what_plays_from_its_load_until_anything_else_is_loaded(self):
+        sid = self.api.shaders.library()[0]["id"]
+        for what, act in (("a clip", lambda: self.player.play([self.clip], spawn=False)), ("the screen cleared", self.player.clear),
+                          ("a generator", lambda: self.api.shaders.show(sid)),
+                          ("the player's restart from the panel", lambda: self.api.stop_player({}, None, "t"))):
+            self.live_input()
+            act()
+            self.assertFalse(self.player.pipe_playing, "after %s the player still says the live input's pipe plays" % what)
+            self.api._stop_capture()
+            self.assertEqual(self.helper.running, 0, "after %s the live input's helper was left running" % what)
+
+    def test_a_player_that_restarted_by_itself_never_had_the_pipe(self):
+        self.live_input()
+        self.mpv.pid += 1                           # the service's unit started a new process
+        self.mpv._reset()
+        self.assertFalse(self.player.pipe_playing)
+        self.api._stop_capture()
+        self.assertEqual(self.helper.running, 0)
+
+    def test_a_pipe_that_was_not_loaded_is_not_what_plays(self):
+        from pvj.api import ApiError
+        self.mpv.fail.add("loadfile")
+        with self.assertRaises(ApiError):
+            self.api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "t")
+        self.assertFalse(self.player.pipe_playing)
+        self.assertEqual(self.helper.running, 0)
+
+    def test_the_panels_restart_of_the_player_stops_the_live_inputs_helper(self):
+        # M3: the restart went past the player's own bookkeeping, and the helper kept the device open
+        self.live_input()
+        self.assertEqual(self.api.stop_player({}, None, "t"), {"ok": True})
+        self.assertEqual(self.helper.running, 0)
+        self.assertEqual(self.mpv.log[-1][:2], ("load", "quit"))
+        self.assertIsNone(self.player.source_shader)
+
+    # -- Vibes' own dip, through the real player's own source_opacity (which takes the player's lock) --
+    def vibes(self):
+        vibes = self.api.vibes
+        sid = self.api.shaders.library()[0]["id"]
+        self.assertTrue(self.api.shaders.show(sid)["ok"])              # a generator is on the screen, as in a rotation
+        vibes.running, vibes.epoch = True, self.player.source_epoch
+        vibes._clock, vibes._sleep = (lambda: 0.0), (lambda s: None)
+        self.addCleanup(setattr, vibes, "running", False)
+        return vibes
+
+    def test_vibes_own_dip_writes_its_levels_and_leaves_a_dark_screen_dark(self):
+        vibes = self.vibes()
+        del self.mpv.levels[:]
+        self.assertTrue(vibes._fade(100, False, 0.2))
+        self.assertEqual(self.mpv.levels[-1], -100)
+        self.assertTrue(vibes._fade(0, True, 0.2))
+        self.assertEqual(self.mpv.levels[-1], 0)
+        self.api.blackout({"on": True}, None, "t")
+        del self.mpv.levels[:]
+        self.assertTrue(vibes._fade(0, True, 0.2))
+        self.assertEqual(self.mpv.levels, [], "Vibes wrote a level under Blackout")
+        self.api.blackout({"on": False}, None, "t")
+        self.api.fadeout({"seconds": 0.1}, None, "t")
+        deadline = self.time.monotonic() + 5
+        while self.time.monotonic() < deadline and (not self.mpv.levels or self.mpv.levels[-1] != -100):
+            self.time.sleep(0.005)
+        del self.mpv.levels[:]
+        self.assertTrue(vibes._fade(0, True, 0.2))
+        self.assertEqual(self.mpv.levels, [], "Vibes wrote a level over the operator's Fade out")
+
+    def test_a_stop_and_vibes_own_dip_do_not_wait_for_each_other(self):
+        # the sixth review's high finding: Stop held the player's lock and waited for the level's; Vibes' step held
+        # the level's and waited for the player's. Here the two are made to meet: Vibes' step is in the player
+        # while Stop comes. (The order itself is checked by the locks in every test; this is the hang, by a bound.)
+        vibes = self.vibes()
+        in_step, go = self.threading.Event(), self.threading.Event()
+        ask = self.player.ipc.request
+
+        def slow(*command):
+            if command[:2] == ("set_property", "brightness"):
+                in_step.set()
+                go.wait(5)
+            return ask(*command)
+        self.player.ipc.request = slow
+        dip = self.background(lambda: vibes._fade(100, False, 0.2))
+        self.assertTrue(in_step.wait(5))
+        stop = self.background(lambda: self.api.control({"action": "stop"}, None, "t"))
+        self.time.sleep(0.1)                                            # Stop has come as far as it gets
+        go.set()
+        dip.join(5), stop.join(5)
+        self.assertFalse(dip.is_alive() or stop.is_alive(), "Stop and Vibes' own dip wait for each other for ever")
+        black = self.background(lambda: self.api.blackout({"on": True}, None, "t"))
+        black.join(5)
+        self.assertFalse(black.is_alive(), "a Blackout after them hangs too")
+
+    # -- a Blackout waits for nothing but one write of the level --
+    BOUND = 0.5         # seconds: a level that is on its way to the player, and the Blackout's own (an answer takes 2 at the worst)
+
+    def slow_load(self, seconds=2.0):
+        """A clip whose load holds the player's lock for `seconds` (mpv says the old path for that long, and the
+        player waits for the new one). Returns the thread, once the load has the lock."""
+        self.mpv.lag = lambda kind: seconds if kind == "path" else 0.0
+        loading = self.threading.Event()
+        ask = self.player.ipc.request
+
+        def asked(*command):
+            if command and command[0] == "loadfile":
+                loading.set()
+            return ask(*command)
+        self.player.ipc.request = asked
+        t = self.background(lambda: self.player.play([os.path.join(self.media, "b.mov")], spawn=False))
+        self.assertTrue(loading.wait(5))
+        self.time.sleep(0.05)
+        self.mpv.lag = None
+        self.assertTrue(t.is_alive(), "the load was over before anything could meet it")
+        return t
+
+    def timed(self, fn):
+        began = self.time.monotonic()
+        fn()
+        return self.time.monotonic() - began
+
+    def test_a_blackout_does_not_wait_behind_a_load(self):
+        self.player.play([self.clip], spawn=False)
+        load = self.slow_load()
+        took = self.timed(lambda: self.api.blackout({"on": True}, None, "t"))
+        self.assertTrue(load.is_alive(), "the load ended first: nothing was measured")
+        self.assertLess(took, self.BOUND, "a Blackout waited %.2f s behind a load that holds the player" % took)
+        self.assertEqual(self.mpv.props["brightness"], -100)
+
+    def test_a_blackout_does_not_wait_behind_a_load_while_vibes_dips(self):
+        # the sixth review's M2: Vibes' step held the level's lock while it waited for the player's, behind the load
+        vibes = self.vibes()
+        vibes._clock, vibes._sleep = self.time.monotonic, self.time.sleep
+        load = self.slow_load()
+        dip = self.background(lambda: vibes._fade(100, False, 1.0))
+        self.time.sleep(0.1)                                            # the dip's step waits for the player's lock
+        took = self.timed(lambda: self.api.blackout({"on": True}, None, "t"))
+        self.assertTrue(load.is_alive(), "the load ended first: nothing was measured")
+        self.assertLess(took, self.BOUND, "a Blackout waited %.2f s behind a load, with Vibes' dip in between" % took)
+        vibes.running = False
+        dip.join(5), load.join(5)
+
+    def test_a_blackout_does_not_wait_behind_a_load_during_a_ramp_or_a_crossfade(self):
+        self.player.play([self.clip], spawn=False)
+        self.api.fadein({"seconds": 5}, None, "t")                     # a ramp runs
+        self.settings.data["mix"] = T.stored("crossfade", 5.0)
+        self.api.play({"file": "a.mp4"}, None, "t")                    # and a crossfade's still fades over it
+        load = self.slow_load()
+        took = self.timed(lambda: self.api.blackout({"on": True}, None, "t"))
+        self.assertTrue(load.is_alive(), "the load ended first: nothing was measured")
+        self.assertLess(took, self.BOUND, "a Blackout waited %.2f s behind a load, during a ramp and a crossfade" % took)
+        self.assertEqual(self.mpv.props["brightness"], -100)
+        self.assertEqual(self.mpv.overlays, {}, "the still stayed over the Blackout")
+        load.join(5)
+
+    def test_a_stop_waits_for_the_load_it_clears_and_no_longer(self):
+        # Stop is not a Blackout: it clears what the load puts up, so it has to come after it. What it must not do
+        # is wait for anything else.
+        self.player.play([self.clip], spawn=False)
+        load = self.slow_load(1.0)
+        took = self.timed(lambda: self.api.control({"action": "stop"}, None, "t"))
+        self.assertFalse(load.is_alive())
+        self.assertLess(took, 1.0 + self.BOUND, "Stop took %.2f s behind a load of one second" % took)
+        self.assertIsNone(self.mpv.path)
 
 
 class Stress(ServerBase):
@@ -1973,31 +2195,58 @@ class Stress(ServerBase):
     | e  a newer wish and its own change of what plays not one step (no player's lock)          | 3 of 3       | yes               |
     | f  a callback of the fader called under its lock                                          | 3 of 3       | the run hangs     |
     | g  a clip's last look at the newest wish outside the player's lock                        | 3 of 3       | yes               |
-    | h  the fader taken at the tap, before the clip has loaded                                 | 3 of 3       | yes               |
+    | h  the fader taken at the tap, before the clip has loaded                                 | 0 of 3       | yes               |
     | i  a play's own level written outside the level's lock                                    | 3 of 3       | yes               |
     | j  a load setting the level whatever was asked for since its tap                          | 3 of 3       | yes               |
     | k  Stop's wish and its clearing of the screen in two steps                                | 3 of 3       | yes               |
+    | l  the Opacity slider's value set outside the level's lock                                | 3 of 3       | yes               |
+    | m  a generator setting the level whatever was asked for since it was chosen               | 3 of 3       | yes               |
+    | n  the level put back after a Stop whoever has taken the fader since                      | 0 of 3       | no: see below     |
+    | o  Vibes' step taking the level's lock before the player's (the deadlock of round six)    | 3 of 3       | yes               |
+    | p  the player forgetting nothing at its restart (the pipe "plays" on)                     | 0 of 3       | yes               |
+    | q  a clip that is loaded leaving the pipe "playing" (a fault inside pvj/player.py)        | 3 of 3       | yes               |
 
-    (e is not the fifth review's e, "the fader taken before the generation moves": no way of playing takes the
-    fader before its load any more, so that order has gone. f by hand: a test with no bound of its own waits for
-    ever, so the run does not end; a watchdog, `python3 -X faulthandler` with `faulthandler.dump_traceback_later`,
-    shows where, and CI's job has its time limit. The first version of this test, with a fake that answered at
-    once, the last action begun after the others had returned and only the end looked at, caught b, c and f.)
+    What the rows say that is not "caught":
+    * h needs a Fade in that runs, a clip tapped with a blend, and then a Next before that clip loads; every other
+      newer wish puts the level right again by itself. The five seeds do not draw it. The test by hand makes it
+      (`test_a_tap_that_is_overtaken_before_it_loads_leaves_a_running_fade_alone`). The first stress test, with
+      seventeen kinds of action instead of twenty-five, drew it three times of three: more kinds of action, with the
+      same number of rounds, means fewer of each meeting.
+    * n is an equivalent mutation as far as the end can tell. Whoever takes the fader between a Stop's clear and
+      its putting-back of the level is a Fade out (which the look at the label stops anyway), a Blackout, the
+      Opacity slider or a Reset (which have set the very level that would be written), or another play's way down
+      (which is cut short, so that clip comes up at once and not out of the dark: a look, not a state).
+    * p needs a live input that plays, then a restart, then nothing else loaded. A restart is quick and a live
+      input slow, so in a round they come the other way round. By hand: three tests of the real player.
+    * o is caught by the locks themselves (tests/lockrank.py), in this test and in single-threaded tests by hand:
+      no interleaving is needed for it.
+    * e is not the fifth review's e, "the fader taken before the generation moves": no way of playing takes the
+      fader before its load any more. f by hand: a test with no bound of its own waits for ever, so the run does
+      not end; a watchdog (`python3 -X faulthandler`, `faulthandler.dump_traceback_later`) shows where, and CI's
+      job has its time limit.
+    The table is run again whenever this test changes: adding ten kinds of action to it took a from three of
+    three to none, and moving the fake's lateness from the caller to the stand-in for mpv took d and i to none,
+    before weights, a look inside each wish's own step and lateness on the way to the player brought them back.
     """
     SEEDS = (20261009, 1, 7, 4242, 99)
     ROUNDS = 50
-    FAST = 10.0                             # the fader's and the transitions' clocks run this much faster
-    LAGS = {"opacity": 0.003, "play": 0.008, "still": 0.008, "path": 0.010, "look": 0.002, "helper": 0.005}
+    FAST = 10.0                             # the fader's, the transitions' and Vibes' clocks run this much faster
+    LAGS = {"opacity": 0.003, "play": 0.006, "still": 0.008, "path": 0.004, "look": 0.002, "helper": 0.005}
+    BLACKOUT = 1.0                          # seconds a Blackout may take here, whatever else goes on (see the hand test for the bound)
 
     def setUp(self):
         super().setUp()
+        import re as re_module
         import threading
         import time
-        self.threading, self.time = threading, time
-        self.player = self.api.player = Screen(self.rundir)
-        self.player.running = True
-        self.player.steps_playlist = True
-        self.player.lag = self.lag
+        from pvj.player import Player
+        from tests.fakempv import FakeMpv
+        self.threading, self.time, self.re = threading, time, re_module
+        # the REAL player (pvj/player.py), talking to a stand-in for mpv on its socket: its lock, what it remembers
+        # of what it loaded and the order of its questions are what is tested, and a fault put into player.py shows
+        self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"), lag=self.lag)
+        self.addCleanup(self.mpv.stop)
+        self.player = self.api.player = Player(rundir=self.rundir)
         self.helper = self.api.capture = Helper(self.rundir)
         self.tr = self.api.transitions
         self.tr.log = lambda line: None
@@ -2005,7 +2254,10 @@ class Stress(ServerBase):
         fast = self.FAST
         self.tr._clock, self.tr._sleep = (lambda: time.monotonic() * fast), (lambda s: time.sleep(s / fast))
         self.api.fader = type(self.api.fader)(self.api._apply_opacity, clock=lambda: time.monotonic() * fast, sleep=lambda s: time.sleep(s / fast))
+        self.api.vibes._clock, self.api.vibes._sleep = (lambda: time.monotonic() * fast), (lambda s: time.sleep(s / fast))
         self.api.registry.set_enabled("shaders", True)
+        self.api.registry.set_enabled("inputs-srt", True)
+        self.settings.data["streams"] = [{"id": "bbbb0001", "name": "Camera", "url": "rtsp://192.168.1.60/live"}]
         self.api.shaders.log = lambda *_: None
         self.sid = self.api.shaders.library()[0]["id"]
         for i in range(6):
@@ -2014,17 +2266,32 @@ class Stress(ServerBase):
         self.me = threading.local()         # the action a thread is carrying out, or nothing (the test's own calls)
         self.bad = []                       # what was seen to go wrong while a round ran
         self.switches, self.sliders = [], []
-        self.wishes_for_level, self.taps = [], []   # (the fader's token, kind) of each wish for a level; the token at each tap
+        self.wishes_for_level, self.taps = [], []   # (the fader's token, kind) of each wish for a level; (token, action) at each tap
         marked = self.api._level_mark
-        self.api._level_mark = lambda: (self.taps.append(marked()), self.taps[-1])[1]
+
+        def tap():
+            token = marked()
+            self.taps.append((token, getattr(self.me, "index", None)))
+            return token
+        self.api._level_mark = tap
         self.lags, self.lag_lock = None, threading.Lock()
-        # -- the wishes, written into the fake's own list as they are made --
+        # -- every command that changes what plays is sent with the player's lock held --
+        ask = self.player.ipc.request
+
+        def asked(*command):
+            if command and command[0] in ("loadfile", "stop", "playlist-next", "playlist-prev", "quit") and not self.player._lock._is_owned():
+                self.bad.append("%s was sent to the player without the player's lock" % command[0])
+            if command[:2] == ("set_property", "brightness"):
+                self.wait("opacity")        # on its way to the player: a level that was decided too early lands late
+            return ask(*command)
+        self.player.ipc.request = asked
+        # -- the wishes, written into the stand-in's own list as they are made --
         claim, end, newest = self.tr.claim, self.tr.end, self.tr.newest
 
         def wish(gen):
             if not self.player._lock._is_owned():
                 self.bad.append("%s became the newest wish outside the player's lock" % getattr(self.me, "action", None))
-            self.player.log.append(("wish", gen, getattr(self.me, "index", None)))
+            self.mpv.log.append(("wish", gen, getattr(self.me, "index", None)))
 
         def claimed():
             ticket = claim()
@@ -2042,7 +2309,7 @@ class Stress(ServerBase):
             self.wait("look")               # a look that is not one step with the load shows here
             return answer
         self.tr.claim, self.tr.end, self.tr.newest = claimed, ended, looked
-        # -- the level's wishes, in the order the level's lock gave them --
+        # -- the level's wishes, in the order the level's lock gave them (a wrapper around the real lock) --
         real = self.api.fader.stepping
 
         class Noted:
@@ -2055,9 +2322,14 @@ class Stress(ServerBase):
                     self.me.noted = True
                     if kind in ("blackout on", "blackout off", "fade in"):
                         self.switches.append(kind == "blackout on")
-                    elif kind in ("opacity 40", "opacity 100"):
-                        self.sliders.append(float(kind.split()[1]))
-                    if kind in ("blackout on", "blackout off", "fade in", "opacity 40", "opacity 100") or (kind == "fade out" and not self.api.mix["blackout"]):
+                        if self.api.mix["blackout"] != (kind == "blackout on"):
+                            self.bad.append("%s found another Blackout switch in the mix inside its own step" % self.me.action)
+                    elif kind in ("opacity 40", "opacity 100", "reset"):
+                        value = 100.0 if kind == "reset" else float(kind.split()[1])
+                        self.sliders.append(value)
+                        if self.api.mix["opacity"] != value:
+                            self.bad.append("%s found another opacity in the mix inside its own step" % self.me.action)
+                    if kind in ("blackout on", "blackout off", "fade in", "opacity 40", "opacity 100", "reset") or (kind == "fade out" and not self.api.mix["blackout"]):
                         self.wishes_for_level.append((self.api.fader.mark(), kind))     # the fader's own count orders them
                 real.release()
         self.api.fader.stepping = Noted()
@@ -2071,16 +2343,31 @@ class Stress(ServerBase):
         if self.lags is None:
             return 0.0
         with self.lag_lock:
+            if kind == "path" and self.lags.random() < 0.8:     # the player's wait for a late path costs 50 ms a time
+                return 0.0
             return self.lags.random() * self.LAGS[kind]
 
-    KINDS = ("play cut", "play dip", "play crossfade", "play wipe", "controller plays crossfade", "controller plays slide",
-             "stop", "blackout on", "blackout off", "fade out", "fade in", "opacity 40", "opacity 100", "next",
-             "generator by hand", "rotation tick", "live input")
+    PLAYS = ("play cut", "play dip", "play crossfade", "play wipe", "controller plays crossfade", "controller plays slide")
+    CORE = PLAYS + ("stop", "blackout on", "blackout off", "fade out", "fade in", "opacity 40", "opacity 100", "next",
+                    "generator by hand", "rotation tick", "live input")
+    # what an operator does most, twice as often as the rest; the rare ones that matter (a restart, Vibes' own dip) too
+    KINDS = CORE + CORE + ("reset", "vibes dip", "vibes dip", "list", "stream", "test pattern", "test pattern off", "tone", "restart", "restart")
+    TAPS = ("generator by hand", "rotation tick", "live input", "list", "stream", "test pattern")     # besides the clips: who notes the level's mark
+
+    def vibes_dip(self):
+        """Vibes' own dip between two shaders, as its rotation makes it: only over a generator, down and up again,
+        and the screen put right if it loses the screen on the way."""
+        vibes = self.api.vibes
+        if self.player.source_shader is None:
+            return
+        vibes.running, vibes.epoch = True, self.player.source_epoch
+        if not (vibes._fade(vibes._level(), False, 0.3) and vibes._fade(0, True, 0.3)):
+            vibes._undip()
 
     def act(self, kind, index):
         from pvj.midi import MIDI_DEVICE
         api = self.api
-        if kind.startswith("play") or kind.startswith("controller"):
+        if kind in self.PLAYS:
             style = {"cut": "cut", "dip": "dip", "crossfade": "crossfade", "wipe": "wipe-from-left", "slide": "slide-up"}[kind.split()[-1]]
             self.settings.data["mix"] = T.stored(style, 0.3)
             return api.play({"file": "r%d.mp4" % index}, MIDI_DEVICE if kind.startswith("controller") else None, "stress")
@@ -2092,10 +2379,18 @@ class Stress(ServerBase):
             "fade in": lambda: api.fadein({"seconds": 0.3}, None, "stress"),
             "opacity 40": lambda: api.control({"action": "opacity", "value": 40}, None, "stress"),
             "opacity 100": lambda: api.control({"action": "opacity", "value": 100}, None, "stress"),
+            "reset": lambda: api.control({"action": "reset"}, None, "stress"),
             "next": lambda: api.control({"action": "next"}, None, "stress"),
             "generator by hand": lambda: api.shaders.show(self.sid),
             "rotation tick": lambda: api.shaders.show(self.sid, epoch=self.epoch, cut=False),
+            "vibes dip": self.vibes_dip,
             "live input": lambda: api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "stress"),
+            "list": lambda: api.play({"preset": "startless"}, None, "stress"),
+            "stream": lambda: api.play({"stream": "bbbb0001"}, None, "stress"),
+            "test pattern": lambda: api.test_pattern({"on": True}, None, "stress"),
+            "test pattern off": lambda: api.test_pattern({"on": False}, None, "stress"),
+            "tone": lambda: api.test_tone({"channel": "left"}, None, "stress"),
+            "restart": lambda: (api.stop_player({}, None, "stress"), api.restore_level()),      # and the watcher sees the new one
         }[kind]()
 
     def quiet(self, baseline, what):
@@ -2109,10 +2404,13 @@ class Stress(ServerBase):
             self.time.sleep(0.002)
         self.fail("%s: threads that never ended (a deadlock): %s" % (what, [t.name for t in left]))
 
+    def brightness(self):
+        return self.mpv.props["brightness"]
+
     def one_round(self, seed, number):
         import random
         from pvj.api import ApiError
-        api, player, time = self.api, self.player, self.time
+        api, player, mpv, time = self.api, self.player, self.mpv, self.time
         rng = random.Random("%d/%d" % (seed, number))           # this round's own numbers, whatever came before it
         chosen = [rng.choice(self.KINDS) for _ in range(rng.randint(3, 6))]
         delays = [rng.random() * 0.006 for _ in chosen]
@@ -2121,14 +2419,21 @@ class Stress(ServerBase):
         # a clean start: a clip plays, lit, nothing on its way
         self.lags = None
         self.me.kind = self.me.index = None
+        api.vibes.running = False
         api.control({"action": "stop"}, None, "stress")
         api.blackout({"on": False}, None, "stress")
         api.control({"action": "opacity", "value": 100}, None, "stress")
+        self.tr.given_up = ""
         self.settings.data["mix"] = T.stored("cut", 0.3)
         api.play({"file": "a.mp4"}, None, "stress")
+        before = rng.random()
+        if before < 0.35:                                       # or a generator, as while Vibes rotates
+            api.shaders.show(self.sid)
+        elif before < 0.5:                                      # or a live input, with its helper
+            api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "stress")
         self.quiet(baseline, what + " (before the round)")
         self.epoch = player.source_epoch
-        del player.log[:], self.bad[:], self.switches[:], self.sliders[:], self.wishes_for_level[:], self.taps[:]
+        del mpv.log[:], self.bad[:], self.switches[:], self.sliders[:], self.wishes_for_level[:], self.taps[:]
         self.helper.most = self.helper.running
         self.lags = random.Random("%d/%d/lags" % (seed, number))
         errors = []
@@ -2137,6 +2442,7 @@ class Stress(ServerBase):
             self.me.kind, self.me.index, self.me.noted = chosen[index], index, False
             self.me.action = "%d %s" % (index, chosen[index])
             time.sleep(delays[index])
+            began = time.monotonic()
             try:
                 self.act(chosen[index], index)
             except ApiError as e:
@@ -2144,75 +2450,88 @@ class Stress(ServerBase):
                     errors.append("%s raised %r" % (self.me.action, e))
             except Exception as e:
                 errors.append("%s raised %r" % (self.me.action, e))
+            if chosen[index].startswith("blackout") and time.monotonic() - began > self.BLACKOUT:
+                errors.append("%s took %.2f seconds: a Blackout waits for nothing but one write of the level" % (self.me.action, time.monotonic() - began))
         threads = [self.threading.Thread(target=run, args=(i,), daemon=True) for i in range(len(chosen))]
         for t in threads:
             t.start()
         told = lambda: "%s\n  actions (with the delay each began after, ms): %s\n  the order seen: %s" % (
-            what, ["%d %s +%.1f" % (i, k, d * 1000) for i, (k, d) in enumerate(zip(chosen, delays))], list(player.log))
+            what, ["%d %s +%.1f" % (i, k, d * 1000) for i, (k, d) in enumerate(zip(chosen, delays))], list(mpv.log))
         for t in threads:
             t.join(15)
             self.assertFalse(t.is_alive(), "a call never returned (a deadlock)\n" + told())
         self.quiet(baseline, what)
         self.lags = None
-        log, said = list(player.log), told()
+        api.vibes.running = False
+        log, said = list(mpv.log), told()
         # -- what must hold, whatever the order was --
         self.assertEqual(errors, [], said)
         self.assertEqual(self.bad, [], said)
-        self.assertEqual(player.unlocked, [], said)
-        self.assertFalse(player.overlay_up, "a still was left on the screen\n" + said)
-        self.assertFalse(player.props["pause"], "the clip was left frozen\n" + said)
+        self.assertEqual(self.tr.given_up, "", "the box gave up on transitions\n" + said)
+        self.assertEqual(mpv.overlays, {}, "a still was left on the screen\n" + said)
+        self.assertFalse(mpv.props["pause"], "the clip was left frozen\n" + said)
         self.assertEqual([n for n in os.listdir(self.rundir) if n.startswith("transition-") or n.startswith("overlay-")], [], said)
         # newest wins, by the order in which the wishes were accepted
+        clip = self.re.compile(r"r(\d)\.mp4")
         newest = 0
-        claims = {}
+        claims, loaded = {}, set()
         for entry in log:
             if entry[0] == "wish":
                 self.assertGreater(entry[1], newest, "the wishes are not in the order of their generation\n" + said)
                 newest = entry[1]
                 claims[entry[2]] = entry[1]
-            elif entry[1] == "clip":
-                index = int(entry[2][1:-4])
+            elif entry[1] == "file" and clip.fullmatch(entry[2]):
+                index = int(clip.fullmatch(entry[2]).group(1))
+                loaded.add(index)
                 self.assertEqual(claims.get(index), newest, "the clip of action %d was loaded after a newer wish had been accepted\n%s" % (index, said))
         wishes = [i for i, entry in enumerate(log) if entry[0] == "wish"]
         loads = [i for i, entry in enumerate(log) if entry[0] == "load"]
+        path = os.path.basename(mpv.path or "")
         if wishes:
             at = wishes[-1]
             kind = chosen[log[at][2]]
-            if kind.startswith("play") or kind.startswith("controller"):
-                self.assertTrue(loads and loads[-1] > at and log[loads[-1]][1:] == ("clip", "r%d.mp4" % log[at][2]),
+            if kind in self.PLAYS:
+                self.assertTrue(loads and loads[-1] > at and log[loads[-1]][1:] == ("file", "r%d.mp4" % log[at][2]),
                                 "the newest wish was the clip of action %d, and it is not what was loaded last\n%s" % (log[at][2], said))
-                self.assertEqual(os.path.basename(player.path or ""), "r%d.mp4" % log[at][2], said)
+                self.assertEqual(path, "r%d.mp4" % log[at][2], said)
             else:
                 # its own change of what plays is one step with the wish: just before it (a generator) or just after
-                self.assertTrue(not loads or loads[-1] <= at + 1, "something was loaded after the newest wish (%s) and its own change\n%s" % (kind, said))
-                if kind == "stop":
-                    self.assertEqual((player.path, player.source_shader), (None, None), "something plays after the Stop that came last\n" + said)
+                later = [i for i in loads if i > at and not (log[i][1] == "file" and not clip.fullmatch(log[i][2]) and i <= at + 1)]
+                self.assertTrue(not later or later[-1] <= at + 1, "something was loaded after the newest wish (%s) and its own change\n%s" % (kind, said))
+                if kind in ("stop", "test pattern off", "restart"):
+                    self.assertEqual((mpv.path, player.source_shader), (None, None), "something plays after the %s that came last\n%s" % (kind, said))
                 elif kind == "generator by hand":
                     self.assertIsNotNone(player.source_shader, "the generator chosen last is not on the screen\n" + said)
                 elif kind == "live input":
                     self.assertTrue(player.pipe_playing, "the live input started last is not what plays\n" + said)
+                elif kind in ("list", "stream", "test pattern", "tone"):
+                    self.assertIsNotNone(mpv.path, "nothing plays after the %s that came last\n%s" % (kind, said))
         # the switches, by the order the level's lock gave them
         if self.switches:
             self.assertEqual(api.mix["blackout"], self.switches[-1], "Blackout is not as the last of its wishes said\n" + said)
         if self.sliders:
             self.assertEqual(api.mix["opacity"], self.sliders[-1], "the opacity is not as the last of its wishes said\n" + said)
         # a wish for the level that came after every tap stands: the last of them was a Fade out, so the picture is
-        # faded out, unless something was tapped after it (the order is the fader's own count)
+        # faded out, unless something was tapped after it AND LOADED (the order is the fader's own count). A tap that
+        # was overtaken, or a rotation's tick that the player refused, loads nothing and brings nothing back.
+        real_taps = [token for token, index in self.taps if index is not None and (
+            index in loaded if chosen[index] in self.PLAYS else (chosen[index] in self.TAPS and index in claims))]
         if self.wishes_for_level:
             token, kind = max(self.wishes_for_level)
-            if kind == "fade out" and not any(tap >= token for tap in self.taps):
+            if kind == "fade out" and not any(tap >= token for tap in real_taps):
                 self.assertEqual(api.fader.label, "out", "a Fade out that was asked for after every tap was undone by something that loaded\n" + said)
-        # the level: what the mix says, and never lit under a label that says dark
+        # the level: what the mix says, and never lit under a label that says dark, also on a player that restarted
         dark = api.mix["blackout"] or api.fader.label == "out"
         want = 0 if dark else int(round(api.mix["opacity"] * 2.55))
-        level = [c[1] for c in player.calls if c[0] == "opacity"][-1]
-        self.assertEqual(level, want, "the picture's level is %d and the mix says %d (blackout %s, the fader's label %s, opacity %s)\n%s"
-                         % (level, want, api.mix["blackout"], api.fader.label, api.mix["opacity"], said))
-        # the live input's helper runs exactly when the pipe is what plays, and never two
+        self.assertEqual(self.brightness(), int(round(-100 * (1 - want / 255.0))),
+                         "the picture's brightness is %s and the mix asks for level %d of 255 (blackout %s, the fader's label %s, opacity %s)\n%s"
+                         % (self.brightness(), want, api.mix["blackout"], api.fader.label, api.mix["opacity"], said))
+        # the live input's helper runs exactly when the pipe is what mpv itself has loaded, and never two; and the
+        # player's own word for it (which the panel goes by) is the truth
+        piped = (mpv.path or "").endswith(".fifo")
         self.assertLessEqual(self.helper.most, 1, "two helpers of a live input at once\n" + said)
-        self.assertEqual(self.helper.running, 1 if player.pipe_playing else 0, "the helper and what plays disagree\n" + said)
-        del player.calls[:]
-        player.calls.append(("opacity", level))
+        self.assertEqual(self.helper.running, 1 if piped else 0, "the live input's helper and what mpv plays disagree\n" + said)
+        self.assertEqual(player.pipe_playing, piped, "the player's word for whether the pipe plays is not what mpv plays\n" + said)
 
     def replay(self, seed, number, times=20):
         """Run one round again, `times` times: its actions and delays are the same, the interleaving is not."""

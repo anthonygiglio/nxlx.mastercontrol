@@ -837,6 +837,10 @@ class SourcePlayer:
         self.calls, self.drawn, self.down, self.pass_ns = [], [], False, 1500000
         self.level, self.carrier = 100.0, None
         self.ipc = FakeIpc(self)
+        # as pvj.player.Player: its own lock around every change of what plays, at the same place in the order of
+        # the locks (pvj/locks.py), so that the engines are tested against the order as against the real player
+        from pvj import locks
+        self._lock = locks.make("player", reentrant=True)
 
     def osd_size(self):
         return (1920, 1080)
@@ -846,56 +850,63 @@ class SourcePlayer:
 
     def play_source(self, shader, carrier, epoch=None, spawn=False):
         from pvj.player import PlayerError
-        if self.down:
-            raise PlayerError("player service is not running")
-        if epoch is not None and epoch != self.source_epoch:
-            return None
-        with open(shader) as f:
-            text = f.read()
-        self.drawn = [re.search(r"//!DESC (.*)", text).group(1)]
-        self.source_shader, self.path, self.carrier = shader, carrier, carrier
-        self.source_epoch += 1
-        self.calls.append(("play_source", shader, carrier))
-        return self.source_epoch
+        with self._lock:
+            if self.down:
+                raise PlayerError("player service is not running")
+            if epoch is not None and epoch != self.source_epoch:
+                return None
+            with open(shader) as f:
+                text = f.read()
+            self.drawn = [re.search(r"//!DESC (.*)", text).group(1)]
+            self.source_shader, self.path, self.carrier = shader, carrier, carrier
+            self.source_epoch += 1
+            self.calls.append(("play_source", shader, carrier))
+            return self.source_epoch
 
     def claim_screen(self):
-        self.source_epoch += 1
+        with self._lock:
+            self.source_epoch += 1
 
     def opacity(self, value):
         self.level = value / 2.55
         self.calls.append(("opacity", value))
 
     def source_opacity(self, value, epoch):
-        if epoch != self.source_epoch:
-            return False
-        self.opacity(value)
-        return True
+        with self._lock:
+            if epoch != self.source_epoch:
+                return False
+            self.opacity(value)
+            return True
 
     def opacity_now(self):
         return self.level
 
     def clear_source(self, epoch):
-        if epoch != self.source_epoch or self.carrier is None:
-            return False
-        self.clear()
-        return True
+        with self._lock:
+            if epoch != self.source_epoch or self.carrier is None:
+                return False
+            self.clear()
+            return True
 
     def swap_source(self, shader, epoch):
-        if epoch != self.source_epoch:
-            return False
-        self.source_shader = shader
-        self.calls.append(("swap_source", shader))
-        return True
+        with self._lock:
+            if epoch != self.source_epoch:
+                return False
+            self.source_shader = shader
+            self.calls.append(("swap_source", shader))
+            return True
 
     def play(self, paths, *a, **k):
-        self.source_epoch += 1
-        self.source_shader, self.path, self.carrier = None, paths[0], None
-        self.calls.append(("play", paths))
+        with self._lock:
+            self.source_epoch += 1
+            self.source_shader, self.path, self.carrier = None, paths[0], None
+            self.calls.append(("play", paths))
 
     def clear(self):
-        self.source_epoch += 1
-        self.source_shader, self.path, self.carrier = None, None, None
-        self.calls.append(("clear",))
+        with self._lock:
+            self.source_epoch += 1
+            self.source_shader, self.path, self.carrier = None, None, None
+            self.calls.append(("clear",))
 
     def __getattr__(self, name):
         if name in ("set_shaders", "set_mapping_mode", "overlay_remove", "pause", "size", "position", "speed", "rotate", "flip"):
