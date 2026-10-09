@@ -304,6 +304,13 @@ function startServer() {
     // Mix: drag a slider and check the throttle keeps request count sane
     await page.click('nav >> text=Mix');
     await page.waitForSelector('#mo');
+    // Mix: Crossfade can be chosen (it used to be greyed out as "soon"); the box keeps it and the picker shows it
+    await page.click('button:has-text("Crossfade")');
+    await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'crossfade'));
+    await page.waitForSelector('button.on:has-text("Crossfade")');
+    await page.click('button:has-text("Dip to black")');
+    await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'dip'));
+    await page.waitForSelector('button.on:has-text("Dip to black")');
     let controlCalls = 0;
     page.on('request', (r) => { if (r.url().endsWith('/api/control') && r.method() === 'POST') controlCalls++; });
     await page.evaluate(() => {

@@ -535,7 +535,7 @@
       window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null,
       h('div', { class: 'card' },
         h('div', { class: 'k', text: 'Transition between clips' }),
-        choice([{ label: 'Cut', value: 'cut' }, { label: 'Dip to black', value: 'dip' }, { label: 'Crossfade (soon)', value: 'x', disabled: true }],
+        choice([{ label: 'Cut', value: 'cut' }, { label: 'Dip to black', value: 'dip' }, { label: 'Crossfade', value: 'crossfade' }],
           m.transition, function (v) { setMix({ transition: v }); }),
         h('div', { class: 'k', text: 'Duration' }),
         choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); })),
