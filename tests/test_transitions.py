@@ -2374,9 +2374,9 @@ class Stress(ServerBase):
     * r is caught by the second test below, not by the first: an effect's actions (on, off, the next one; D74) are
       in rounds of their own, which are the first test's rounds with one or two of those actions added from numbers
       of their own. The first test's rounds are as they were, so the rows above stand as measured. The actions were
-      first put into the first test's rounds; on CI's machines a round with two more threads then took a still
-      longer than the box allows (a tenth of a second on this test's fast clock) once in four runs, and failed for
-      that. So the second test does not hold "the box never gives up on transitions": its rounds are about order.
+      first put into the first test's rounds, and for a while the second test did not hold "the box never gives
+      up on transitions": a still had a tenth of a second of real time on this test's fast clock, and a stalled
+      runner failed a round. That limit is out of the way now (setUp), and both tests hold it for every other reason.
     The table is run again whenever this test changes: adding ten kinds of action to it took a from three of
     three to none, and moving the fake's lateness from the caller to the stand-in for mpv took d and i to none,
     before weights, a look inside each wish's own step and lateness on the way to the player brought them back.
@@ -2401,6 +2401,13 @@ class Stress(ServerBase):
         self.threading, self.time, self.re = threading, time, re_module
         # the REAL player (pvj/player.py), talking to a stand-in for mpv on its socket: its lock, what it remembers
         # of what it loaded and the order of its questions are what is tested, and a fault put into player.py shows
+        # The limit after which the box gives up on transitions is a matter of time on a real clock, and this test
+        # runs its clock ten times fast: a still had a tenth of a second, and a runner that stalled for 80 ms failed
+        # the round with "the still took 1.0 seconds" (seen in CI on a branch stacked on this one, and on a loaded
+        # desk). The limit itself is held by the test with a clock of its own above; here it is out of the way.
+        slow = T.SLOW
+        T.SLOW = 600.0
+        self.addCleanup(setattr, T, "SLOW", slow)
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"), lag=self.lag)
         self.addCleanup(self.mpv.stop)
         self.player = self.api.player = Player(rundir=self.rundir)
@@ -2420,8 +2427,7 @@ class Stress(ServerBase):
         self.sid = self.api.shaders.library()[0]["id"]
         self.fid = self.api.effects.order()[0]
         self.effects_on = 0                 # how often an effect really went on, over all rounds (the actions prove nothing otherwise)
-        self.pairs = 0                      # how often the player was given a generator and an effect together
-        self.gave_up = 0                    # and how many rounds with an effect's actions gave up on a transition
+        self.pairs = 0                      # and how often the player was given a generator and an effect together
         for i in range(6):
             open(os.path.join(self.media, "r%d.mp4" % i), "w").close()
         self.epoch = 0
@@ -2653,10 +2659,7 @@ class Stress(ServerBase):
         # -- what must hold, whatever the order was --
         self.assertEqual(errors, [], said)
         self.assertEqual(self.bad, [], said)
-        if effects:
-            self.gave_up += 1 if self.tr.given_up else 0        # counted and said, not held: see row r
-        else:
-            self.assertEqual(self.tr.given_up, "", "the box gave up on transitions\n" + said)
+        self.assertEqual(self.tr.given_up, "", "the box gave up on transitions\n" + said)
         self.assertEqual(mpv.overlays, {}, "a still was left on the screen\n" + said)
         self.assertFalse(mpv.props["pause"], "the clip was left frozen\n" + said)
         self.assertEqual([n for n in os.listdir(self.rundir) if n.startswith("transition-") or n.startswith("overlay-")], [], said)
@@ -2738,8 +2741,7 @@ class Stress(ServerBase):
         """The same rounds with one or two actions of an effect added to each (on, off, the next one), and one more
         thing that must hold in them: the player is never given the effect before the generator (setUp's look at
         every shader list). An effect is no wish and sets no level, so everything else is held as in the first test,
-        but for one thing: see row r. Named to run after the first test, which so runs as it did before this one
-        existed; and it leaves no worker behind for whatever runs next."""
+        a give-up on transitions for any reason included. It leaves no worker behind for whatever runs next."""
         self.addCleanup(self.api.effects.changer.clear)
         self.addCleanup(self.api.effects.off)
         began = self.time.monotonic()
@@ -2747,8 +2749,7 @@ class Stress(ServerBase):
             for i in range(self.ROUNDS):
                 self.one_round(seed, i, effects=True)
         print("stress with an effect: %d rounds in %.1f s; an effect went on %d times, the player was given a generator and an effect "
-              "together %d times, %d rounds gave up on a transition"
-              % (len(self.SEEDS) * self.ROUNDS, self.time.monotonic() - began, self.effects_on, self.pairs, self.gave_up))
+              "together %d times" % (len(self.SEEDS) * self.ROUNDS, self.time.monotonic() - began, self.effects_on, self.pairs))
         self.assertGreater(self.effects_on, 40, "the effect's actions put next to nothing on: they prove nothing")
         self.assertGreater(self.pairs, 8, "a generator and an effect were hardly ever on together")
 
