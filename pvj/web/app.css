@@ -587,7 +587,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .tpscrub input.seek { margin: 0; height: 44px; }
 .tpgrp { display: contents; }
 .tp .tpb { min-width: 0; min-height: 56px; padding: 0; font-size: 14px; }
-.tp .tpmore { flex: none; min-width: 64px; }
+.tp .tpmore { flex: none; min-width: max-content; padding: 0 12px; }      /* (never narrower than its word: in a wider face "More" was 46 px in a button of 64 where the line is fullest) */
 .tp:not(.open) .tpx { display: none; }
 /* Speed and Loop (D72: they were on Shape > Controls). On a phone they are the last row that More opens: Loop, and
    Speed beside it with its value over the slider's name. */
@@ -687,6 +687,13 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .setupdesk > .deskcol.ix { display: block; flex: 0 0 272px; align-self: flex-start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; }
   .setupdesk > .deskcol.cur { flex: 1 1 0; border-left: 1.5px solid var(--ln); }
   .setupdesk .backrow.toindex { display: none; }
+}
+/* A low window (a small phone, a phone on its side): with Speed and Loop the open strip is a row taller, and with
+   the tabs it would take more than half of such a window. There it is no taller than half the window (less the
+   tabs under it), and what More opened scrolls inside it. */
+@media (max-height: 599px) {
+  .tp.open { max-height: calc(50dvh - 70px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+  @container app (min-width: 600px) { .tp.open { max-height: 50dvh; } }
 }
 /* short: the title bar gives way, the controls keep their height */
 @media (max-height: 479px) {

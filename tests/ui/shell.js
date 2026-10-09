@@ -402,7 +402,8 @@ async function strip(pg) {
 //   the page scrolls sideways; a text leaves its own box, a box that holds it (up to the screen) or the window; a
 //   text is clipped by a box that hides what runs over (a line cut with dots is right when a title holds the whole
 //   text); two texts lie on one another; a first heading or a page's title is cut inside a plain word.
-// Not looked at: what scrolls sideways inside itself on purpose, what is read out and not shown (1 px boxes), the
+// Not looked at: what scrolls sideways inside itself on purpose, what is scrolled out of view inside a box that
+// scrolls up and down, what is read out and not shown (1 px boxes), the
 // options of a chooser, and a text of the page against one of a bar that stays put over it.
 function overruns() {
   const out = [];
@@ -436,6 +437,7 @@ function overruns() {
         const b = e.getBoundingClientRect();
         if (b.width <= 1 || b.height <= 1) { if (/hidden|clip/.test(cs.overflowX) || cs.clipPath !== 'none' || cs.clip !== 'auto') { looked = false; break; } }       // read out, not shown
         else if (/auto|scroll/.test(cs.overflowX)) { if (e !== el || e.scrollWidth > e.clientWidth + 1) { looked = false; break; } }                                  // it scrolls sideways inside itself
+        else if (/auto|scroll/.test(cs.overflowY) && lines.every((r) => r.bottom <= b.top + 1 || r.top >= b.bottom - 1)) { looked = false; break; }                  // scrolled out of a box that scrolls up and down (the open strip in a low window): not shown now
         else boxes.push([e, cs, b]);
       }
       if (e === shell) break;
