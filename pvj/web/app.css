@@ -542,10 +542,10 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .deskcol { min-width: 0; container: ws / inline-size; }
 .deskcol:not(.cur) { display: none; }
 .deskhead { display: none; margin: 0; padding: 14px 16px 0; font-size: 17px; font-weight: 700; }
-/* (the default look only: a style that floats the message, as Signal does, places it itself) */
-html:not([data-style]) .ws > #msg { position: sticky; top: 0; z-index: 5; padding: 0 16px; }
-html:not([data-style]) .ws > #msg:empty { min-height: 0; }
-html:not([data-style]) .ws > #msg:not(:empty) { padding-top: 6px; padding-bottom: 6px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
+/* (:where: these weigh no more than "#msg", so a style that floats the message, as Signal does, places it itself) */
+:where(.ws) > #msg { position: sticky; top: 0; z-index: 5; padding: 0 16px; }
+:where(.ws) > #msg:empty { min-height: 0; }
+:where(.ws) > #msg:not(:empty) { padding-top: 6px; padding-bottom: 6px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
 .navrow.on .navname { color: var(--ac); }
 .deskcol > .screen { max-width: 1100px; width: 100%; margin: 0 auto; padding-bottom: 24px; }
 .deskcol > .screen:has(#shaderpage) { max-width: 1600px; }
@@ -1159,6 +1159,7 @@ html[data-style="signal"] .fxlib .seg { gap: 3px; }
 /* -- what an action did: a toast above the tab bar, where the thumb is; it goes by itself (an error stays longer) -- */
 html[data-style="signal"] #msg { position: fixed; left: 16px; right: 16px; bottom: calc(var(--dock, 180px) + 12px); z-index: 15; min-height: 0; padding: 12px 14px; background: var(--fg); color: var(--bg); font: 600 15px/1.35 var(--sans); animation: signal-toast 8s forwards; }
 html[data-style="signal"] #msg:empty { display: none; }
+html[data-style="signal"] .ws > #msg { top: auto; border-bottom: 0; }      /* (the one message line of a build: the default look holds it at the top of the workspace, this look floats it) */
 html[data-style="signal"] #msg.err { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); animation-duration: 20s; }
 html[data-style="signal"] .screen:has(> h1:first-child) #msg { bottom: 16px; }
 @keyframes signal-toast { 0%, 94% { opacity: 1; visibility: visible; } 100% { opacity: 0; visibility: hidden; } }
