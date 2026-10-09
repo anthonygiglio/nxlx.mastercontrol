@@ -1187,4 +1187,15 @@ class ManyAtOnceTest(ServerBase):
             first = self.get("/api/hello")
         self.assertEqual(len(failed), 1)
         self.assertIn(first.split(" (")[0], ("cut off", "no answer"))
-        self.assertEqual([self.get("/api/hello") for _ in range(3)], ["200", "200", "200"])
+        # A place is given back by the thread after it has closed the connection, so the client has its answer a
+        # moment before the place is free. With one place, a request sent straight after an answered one can meet
+        # the cap's 503 (seen in CI on both Pythons in one run, after three runs that passed). So each request may ask again for two
+        # seconds; a place that was gone for good, the fault this test is about, answers 503 for ever and still fails.
+        def served():
+            end = time.monotonic() + 2.0
+            while True:
+                out = self.get("/api/hello")
+                if out != "503" or time.monotonic() > end:
+                    return out
+                time.sleep(0.02)
+        self.assertEqual([served() for _ in range(3)], ["200", "200", "200"])
