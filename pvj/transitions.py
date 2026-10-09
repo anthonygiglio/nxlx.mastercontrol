@@ -335,14 +335,13 @@ class Transitions:
                 # until the next step's moment by the clock (not a step's length after this one: a step costs time)
                 wait = began + (int((self._clock() - began) * STEPS + 1e-6) + 1) / STEPS - self._clock()
                 self._sleep(max(wait, 0.002))       # always some: the lock must come free for whoever ends this
+            after = self._dropped()
+            lost = after - dropped if dropped is not None and after is not None else 0
             with self._lock:
                 if token != self._token:
                     return
-                self.last.update(steps=steps, seconds=round(self._clock() - began, 3), ended="done")
+                self.last.update(steps=steps, seconds=round(self._clock() - began, 3), dropped=lost, ended="done")
                 self._drop()
-            after = self._dropped()
-            lost = after - dropped if dropped is not None and after is not None else 0
-            self.last["dropped"] = lost
             if seconds >= 0.5 and steps < MIN_RATE * seconds:
                 self._give_up("%d steps in %.1f seconds" % (steps, seconds))
             elif lost > MAX_DROPS * max(seconds, 1.0):

@@ -26,6 +26,7 @@ from tests.test_transitions import png
 
 FLAT = "av://lavfi:color=c=0x2060C0:size=320x180:rate=25"
 BLUE = (28, 95, 195)            # what the player draws for it, give or take the conversion
+PICTURE = (20, 200, 220)       # the still picture that comes: far from the middle of the test clip, which is about (187, 121, 75)
 MIRROR = "//!HOOK OUTPUT\n//!BIND HOOKED\n//!DESC mirror\nvec4 hook() { return HOOKED_tex(vec2(1.0 - HOOKED_pos.x, HOOKED_pos.y)); }\n"
 
 
@@ -144,27 +145,27 @@ class CrossCase(FxCase):
     def test_a_play_from_the_panel_to_a_still_picture(self):
         """The whole way, through the panel's own play: the Mix setting, a file from the media folder, and a picture
         as what comes. A picture is one frame: the player draws nothing more by itself, and every step must show."""
-        with open(os.path.join(self.media, "red.png"), "wb") as f:
-            f.write(png(320, 180, (200, 40, 30)))
+        with open(os.path.join(self.media, "cyan.png"), "wb") as f:
+            f.write(png(320, 180, PICTURE))
         self.settings.data["mix"] = T.stored("crossfade", 1.5)
         old = self.still()
-        self.assertEqual(self.api.play({"file": "red.png"}, None, "t"), {"playing": "red.png"})
+        self.assertEqual(self.api.play({"file": "cyan.png"}, None, "t"), {"playing": "cyan.png"})
         seen = self.watch()
-        self.through(seen, old[H // 2][W // 2], (200, 40, 30), "the panel's play, to a still picture")
-        self.assertLessEqual(far(self.still(flat=True)[H // 2][W // 2], (200, 40, 30)), 24)
+        self.through(seen, old[H // 2][W // 2], PICTURE, "the panel's play, to a still picture")
+        self.assertLessEqual(far(self.still(flat=True)[H // 2][W // 2], PICTURE), 24)
         self.assertEqual(self.api.status({}, None, "t")["mix"]["transition"], "crossfade")
         self.assertNotIn("fallback", self.api.status({}, None, "t")["mix"])
         self.nothing_left()
 
     def test_a_frozen_clip_is_blended_from(self):
-        with open(os.path.join(self.media, "red.png"), "wb") as f:
-            f.write(png(320, 180, (200, 40, 30)))
+        with open(os.path.join(self.media, "cyan.png"), "wb") as f:
+            f.write(png(320, 180, PICTURE))
         self.settings.data["mix"] = T.stored("crossfade", 0.8)
         self.real.pause(True)
         old = self.still()
-        self.api.play({"file": "red.png"}, None, "t")
+        self.api.play({"file": "cyan.png"}, None, "t")
         seen = self.watch()
-        self.through(seen, old[H // 2][W // 2], (200, 40, 30), "from a frozen clip")
+        self.through(seen, old[H // 2][W // 2], PICTURE, "from a frozen clip")
         self.assertIs(self.real.ipc.request("get_property", "pause"), False)
 
     def test_the_still_stays_whole_until_a_slow_sources_first_frame(self):
@@ -189,7 +190,7 @@ class CrossCase(FxCase):
             wrote.append(time.monotonic())
             try:
                 while not stop.is_set():
-                    os.write(fd, bytes([150, 60, 150, 190]) * (320 * 180 // 2))
+                    os.write(fd, bytes([40, 128, 40, 128]) * (320 * 180 // 2))        # a dark grey: far from the old picture
                     time.sleep(0.04)
             except OSError:
                 pass
