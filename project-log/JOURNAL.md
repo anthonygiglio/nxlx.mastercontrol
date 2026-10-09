@@ -4,6 +4,15 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the evening (the second review of #111: ordering)
+
+Branch `transitions`, pull request #111, still a draft. A second independent read found the pictures and the arithmetic sound and the ordering weak: four medium findings and some low. All answered; D71 has "After the second review". **Nothing was run on hardware.**
+
+- **One play generation**, taken by `Api.play` in the caller and looked at for the last time together with the load under the player's own lock, so no window is left between the look and the load for anything that plays or stops through `pvj/player.py`. Every way of playing, Stop (also a sync server's), a generator and the player's restart are newer wishes; a play that is overtaken loads nothing and touches nothing. An `end()` while a play waits its turn takes its blend and leaves the brightness alone. Of a flood of plays the last one wins with one transition.
+- **A crossfade step scales the still once** again. `abandon` and the thaw belong to a hold's own token. A player that goes away during the still does not make the box give up. A command the player did not answer is followed by one more removal five seconds on.
+- **Tests** (`tests/test_transitions.py`, 85 now): the thread tests no longer count steps in real time or assert on a background thread; a thread's start can be held back (a stand-in for `Thread` in `pvj/api.py`). New: a Stop handled before the controller's thread starts; each other way of playing during a still; five controller plays queued in three orders, one still, the last clip; a flood on real threads; an end while a play waits; a wipe and a slide on 41 x 23 to the last column and row. Tried against the old ordering first: six of them fail there. The main guard is at the end of the file.
+- **Settled without a board:** `overlay-add` copies the pixels during the command (mpv's manual, and seen on 0.37 in the spike). **Open:** a command that timed out and is run later (D71; X17), and everything a board has to say.
+
 ## 2026-10-09, later (the review of #111 answered; the wipes and the slides)
 
 Branch `transitions`, pull request #111, still a draft. #108 had merged, so master was merged in first and the pull request shows this change alone. **Nothing was run on hardware.**

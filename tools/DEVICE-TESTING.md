@@ -221,6 +221,8 @@ Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between cli
 | X13 | During a crossfade at 1920 x 1080, move a MIDI fader for volume and watch a sync client if there is one | The fader answers as always; the client does not drift | Whether the controller felt slow during the fade: every crossfade step scales 8 MB in the panel |
 | X14 | Set the transition to **Wipe from left**, then **Slide off up**; play A1, A2 | An edge that moves evenly; the old picture stands still (wipe) or moves off as one piece (slide) | Whether the edge moved smoothly or in jumps, and the journal's line if the box gave up. A wipe should ask less of the box than a crossfade; say if it did not look so |
 | X15 | X8 again with a wipe on the 2560 x 1440 screen | | Whether a wipe holds where a crossfade gave up |
+| X16 | Run a slow wipe (duration 5s) ten times, then `journalctl -u pvj-player -n 50` | The player never restarts during a wipe (the still's file is replaced and removed while mpv has had its bytes: mpv's manual says it copies them during the command, and CI's 0.37 did) | Any restart of the player, or a line with SIGBUS or "overlay" in it: that would mean this mpv does not copy |
+| X17 | If the box ever stalls for seconds during a transition (a heavy clip, a slow card): look at the screen ten seconds later | No still left over the picture. The panel gives up after two seconds without an answer and sends the removal once more five seconds on | A still that stayed, what was played, and `mix.fallback` from `GET /api/status`: a command that timed out and was run later is the one case nobody could test |
 
 ### What to send back
 
