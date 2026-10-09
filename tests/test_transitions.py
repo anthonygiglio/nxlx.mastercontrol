@@ -2317,7 +2317,7 @@ class Stress(ServerBase):
     | e  a newer wish and its own change of what plays not one step (no player's lock)          | 3 of 3       | yes               |
     | f  a callback of the fader called under its lock                                          | 3 of 3       | the run hangs     |
     | g  a clip's last look at the newest wish outside the player's lock                        | 3 of 3       | yes               |
-    | h  the fader taken at the tap, before the clip has loaded                                 | 0 to 3 of 3  | yes               |
+    | h  the fader taken at the tap, before the clip has loaded                                 | 0 of 3       | yes               |
     | i  a play's own level written outside the level's lock                                    | 3 of 3       | yes               |
     | j  a load setting the level whatever was asked for since its tap                          | 3 of 3       | yes               |
     | k  Stop's wish and its clearing of the screen in two steps                                | 3 of 3       | yes               |
@@ -2331,11 +2331,14 @@ class Stress(ServerBase):
     What the rows say that is not "caught":
     * h needs a level wish that runs (a Fade in, a Fade out), a clip tapped with a blend, and then something newer
       before that clip loads. The spelling tried here was the line `self.fader.cancel()` put in before
-      `tapped = self._level_mark()` in Api.play; the seventh review spelled it `tapped = self.fader.cancel()`,
-      which is the same program (cancel returns the token that mark reads). It was caught none of six times here on
-      an idle machine and three of three on the reviewer's, which ran other suites beside it: how the threads meet
-      decides, as said above, and "0 of 3" in this column means "not on this machine, this time", never "cannot".
-      The test by hand makes it (`test_a_tap_that_is_overtaken_before_it_loads_leaves_a_running_fade_alone`).
+      `tapped = self._level_mark()` in Api.play: none of three, twice. The seventh review spelled it
+      `tapped = self.fader.cancel()` and saw this test fail three times of three, and so it does here. That is not
+      the fault being caught: this test learns of a tap by wrapping `Api._level_mark` (setUp), the second spelling
+      no longer calls it, and with no tap noted every Fade out counts as "asked for after every tap". A control
+      shows it: `tapped = self.fader.mark()`, which behaves exactly as the right code, fails the same way, with the
+      same message, two times of two. So: 0 of 3 for the fault, and A CHANGE THAT READS THE MARK WITHOUT
+      `_level_mark` MAKES THIS TEST FAIL WITH A MESSAGE ABOUT A FADE OUT; look at the hook first.
+      The test by hand makes the fault (`test_a_tap_that_is_overtaken_before_it_loads_leaves_a_running_fade_alone`).
     * n was called an equivalent mutation here until the seventh review, wrongly: a Fade in that comes between a
       Stop's clear and its putting-back of the level was cancelled by it, and the level snapped to full. The rounds
       do not draw that meeting (none of three, twice). The test by hand that kills it was added then:
