@@ -2959,14 +2959,14 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.setViewportSize({ width: 1366, height: 800 });
       await signalRound(' at 1366', false);
       // The place in the clip is on the strip of every screen, and the box moves it once a second: its fill follows
-      // it at every moment, at each width where it shows (from 1640 px always; under that with More open).
+      // it at every moment, at each width (a bar along the strip's top edge under 1640 px, on the line from there).
       // A clip has to be playing for this to try anything: one is started if none is, and a frozen one is let go.
       await signal.go(page, 'play/pads');
       await page.waitForSelector('.pads');
       const nowPl = (await get('/api/status')).player || {};
       if (!(nowPl.duration > 0)) { assert.strictEqual(await post('/api/play', { file: 'tunnel.mkv' }), 200); await page.waitForTimeout(2500); }
       else if (nowPl.paused) { assert.strictEqual(await post('/api/control', { action: 'pause' }), 200); await page.waitForTimeout(1500); }
-      for (const [w, more] of [[1920, false], [1366, true], [768, true], [390, true]]) {       // (under 1640 px the place in the clip is behind More)
+      for (const [w, more] of [[1920, false], [1366, false], [768, false], [390, false]]) {       // (it is never behind More)
         await page.setViewportSize({ width: w, height: 800 });
         if (more) await signal.stripOpen(page);
         const f = await signal.seekFill(page);
@@ -3025,7 +3025,8 @@ function startServer(env) {          // env: more for the harness's environment 
       // cursor held on each; the tabs at the foot are there under 600 px, the rail and the tabs of the screens
       // from 600 px, the desks from 1200 px; each card is in the page once; what is typed survives a tab and a
       // resize; the strip is one line from 600 px (Speed and Loop on it from 1080 px, everything from 1640 px, the
-      // rest behind More) and on a phone four buttons with More, with Speed and Loop on it and nowhere else; its
+      // rest behind More; the place in the clip never behind More, a bar along the strip's top edge under 1640 px)
+      // and on a phone four buttons with More, with Speed and Loop on it and nowhere else; its
       // time and clip count are never broken and its name never under 180 px, in every look from 320 to 1920 px; an owner, a presenter and a guest
       // each have the screens and the columns they should, and a module that is off has no screen while the
       // owner's index keeps its row.
@@ -3046,6 +3047,7 @@ function startServer(env) {          // env: more for the harness's environment 
         const narrowBegan = Date.now();
         const narrowLooks = await ws.narrow(page, call, (url) => page.evaluate((u) => fetch(u, { credentials: 'same-origin' }).then((r) => r.json().catch(() => ({}))), url));
         console.log('text at narrow and at desk widths: ' + narrowLooks + ' looks at every screen with long names, in both looks, nothing overran (' + ((Date.now() - narrowBegan) / 1000).toFixed(1) + ' s)');
+        await ws.seekBar(page);          // the place in the clip: a bar along the strip's edge under 1640 px, usable there and on the line
         const stripLooks = await ws.stripText(page, call, (url) => page.evaluate((u) => fetch(u, { credentials: 'same-origin' }).then((r) => r.json().catch(() => ({}))), url));
         console.log('the words on the strip: ' + stripLooks + ' looks, 320 to 1920 px in every look the box has, the time and the clip count whole and the name at its least width or more');
         const people = [];

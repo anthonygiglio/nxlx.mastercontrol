@@ -493,6 +493,8 @@ async function check(pg, o) {
     shell.querySelectorAll('button, select, summary, input, .xypad').forEach((el) => {
       if (!shown(el)) return;
       const r = el.getBoundingClientRect();
+      // (the place in the clip as a bar along the strip's edge, D72: its target is 24 px high, on purpose, and as wide as the strip)
+      if (el.id === 'seek' && getComputedStyle(el.parentElement).position === 'absolute') { if (r.height < 23.5) out.push('the bar of the place in the clip is under 24 px high: ' + Math.round(r.height)); return; }
       if (r.height < 43.5 || r.width < 43.5) out.push('small (' + Math.round(r.width) + 'x' + Math.round(r.height) + '): ' + name(el));
       else if (el.tagName === 'BUTTON' && el.closest('#roomscreen, .livecols, .banks, .tp .keep') && r.height < 55.5) out.push('under 56 px where staff press: ' + name(el));
     });

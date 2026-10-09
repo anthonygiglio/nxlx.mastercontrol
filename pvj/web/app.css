@@ -319,7 +319,7 @@ div.ctl.compact { padding: 4px 0; }
   .shaderlist { max-height: calc(100dvh - 330px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
   .keyshint { display: block; }
   .detailrow { grid-template-columns: minmax(0, 1fr) minmax(0, 14rem); align-items: center; }
-  .pickrow { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .pickrow { grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); }      /* (side by side where each has room for its words; a chooser that has not goes to a row of its own) */
   /* a laptop keeps the controls in view: the page's own description and state line give way (the Now card says both) */
   .syspage[data-page="vibes"] #sysblurb, .syspage[data-page="vibes"] #sysstate { display: none !important; }
   .midirow .keyshint { flex: 1 1 12rem; }
@@ -580,12 +580,32 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .tpmeta #time, .tpmeta #plpos { white-space: nowrap; overflow-wrap: normal; font-variant-numeric: tabular-nums; }
 .tpmeta #plpos:empty { display: none; }
 .tpinfo .tpmore { grid-column: 2; grid-row: 1 / span 2; margin-left: 10px; white-space: nowrap; }      /* ("Less" is one word in any look) */
-.tpscrub { grid-column: span 3; order: 4; display: flex; min-width: 0; }
+/* The place in the clip. Where it has no room on the strip's line (under 1640 px, a phone too) it is a slim bar
+   along the strip's top edge, as a media player has it: the whole width, 4 px of track that shows how far the
+   clip is, in a target 24 px high for a finger or the pointer; it grows to 8 px with its handle under the
+   pointer and with the cursor. It is the same one control at every width, placed by this sheet: never behind
+   More, never a second copy. It is placed on the dock, outside the strip's own flow, so it cannot send a button
+   to a second line, and nothing moves when it grows. With nothing to seek in (a shader, a live input, nothing
+   playing) it is an empty line. */
+.tpscrub { display: flex; flex: 3 1 160px; min-width: 160px; }
+.tpscrub input.seek { margin: 0; height: 44px; }
+@container app (max-width: 1639px) {
+  .wsdock .tpscrub { position: absolute; left: 0; right: 0; top: -12px; height: 24px; z-index: 1; display: block; }
+  .wsdock .tpscrub input.seek { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; accent-color: auto; }
+  .wsdock .tpscrub input.seek::-webkit-slider-runnable-track { height: 4px; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ac) var(--fill, 0%), var(--ln) var(--fill, 0%)); }
+  .wsdock .tpscrub input.seek::-moz-range-track { height: 4px; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ac) var(--fill, 0%), var(--ln) var(--fill, 0%)); }
+  .wsdock .tpscrub input.seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5px; border: 0; border-radius: 50%; background: var(--ac); box-shadow: none; opacity: 0; }
+  .wsdock .tpscrub input.seek::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--ac); opacity: 0; }
+  .wsdock .tpscrub input.seek:not(:disabled):hover::-webkit-slider-runnable-track, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-webkit-slider-runnable-track, .wsdock .tpscrub input.seek:not(:disabled):active::-webkit-slider-runnable-track { height: 8px; }
+  .wsdock .tpscrub input.seek:not(:disabled):hover::-moz-range-track, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-moz-range-track { height: 8px; }
+  .wsdock .tpscrub input.seek:not(:disabled):hover::-webkit-slider-thumb, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-webkit-slider-thumb, .wsdock .tpscrub input.seek:not(:disabled):active::-webkit-slider-thumb { opacity: 1; margin-top: -3px; }
+  .wsdock .tpscrub input.seek:not(:disabled):hover::-moz-range-thumb, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-moz-range-thumb { opacity: 1; }
+  .wsdock .tpscrub input.seek:disabled { cursor: default; opacity: 1; }
+  .wsdock > .tp.tp { padding-top: 12px; }
+}
 .tp .tpx { order: 2; }
 .tp #freeze { order: 3; }
-.tp .tpscrub { order: 4; }
 .tp button.tpx { min-height: 44px; }
-.tpscrub input.seek { margin: 0; height: 44px; }
 .tpgrp { display: contents; }
 .tp .tpb { min-width: 0; min-height: 56px; padding: 0; font-size: 14px; }
 .tp .tpmore { flex: none; min-width: max-content; padding: 0 12px; }      /* (never narrower than its word: in a wider face "More" was 46 px in a button of 64 where the line is fullest) */
@@ -593,7 +613,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
 /* Speed and Loop (D72: they were on Shape > Controls). On a phone they are the last row that More opens: Loop, and
    Speed beside it with its value over the slider's name. */
 .tp .tploop { order: 5; }
-.tp .tpspeed { order: 6; grid-column: span 3; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tp .tpspeed { order: 6; grid-column: span 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tp:not(.open) .tpspeed { display: none; }
 .tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }
 .tpspeed input { flex: 1 1 0; min-width: 0; margin: 0; height: 44px; }
@@ -629,9 +649,8 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .tp .fold { order: 2; }
   .tp:not(.open) .fold { display: none; }
   .tp.open::before { content: ""; order: 1; flex: 0 0 100%; height: 0; margin-top: -6px; }
-  .tp .tpscrub { flex: 3 1 160px; min-width: 160px; }
   .tp .tpspeed { flex: 0 1 150px; min-width: 110px; }
-  .tp.open .tpscrub, .tp.open .tpspeed { display: flex; }
+  .tp.open .tpspeed { display: flex; }
 }
 /* What is on the line from which width (D72). The owner's order of who has the room first: Blackout, Stop and
    Freeze (always); Previous and Next; Loop; Speed; Fade in and Fade out; back and forward 10 s; the place in the
@@ -644,7 +663,10 @@ main.ws:focus, .deskcol:focus { outline: none; }
 @container app (min-width: 1440px) { .tp .fold.f-ten { order: 0; } .tp:not(.open) .fold.f-ten { display: inline-block; } }
 /* (from 1440 px the line is at its fullest until the place in the clip joins it: it gives a little everywhere) */
 @container app (min-width: 1440px) and (max-width: 1639px) { .tp { column-gap: 6px; } .tp .tpb { padding: 0 8px; } }
-@container app (min-width: 1640px) { .tp .fold.f-scrub { order: 0; } .tp:not(.open) .fold.f-scrub { display: flex; } .tp .tpmore { display: none; } }
+/* (from 1440 px every button is on the line and nothing is left for More; from 1640 px the place in the clip is on
+   the line as well, a slider like the others) */
+@container app (min-width: 1440px) { .tp .tpmore { display: none; } }
+}
 /* A desk, from 1200 px of panel (D72): the columns of the area that is built stand side by side, all of them
    equally live, each under its name. 1200 px is where the narrowest column is no narrower than a phone: beside the
    96 px rail the workspace has 1104 px, and its columns come to 344, 345 and 414 px in Play, 453, 325 and 325 px
@@ -691,7 +713,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .tp.open { max-height: calc(50dvh - 70px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
   @container app (min-width: 600px) { .tp.open { max-height: 44dvh; } }      /* (under half: a control brought to the middle of the window is then clear of the strip) */
   /* while a part of it is below what is shown (app.js says so): its lower edge fades into a line in the accent */
-  .tp.open.below::after { content: ""; order: 99; grid-column: 1 / -1; flex: 0 0 100%; position: sticky; bottom: -8px; height: 28px; margin-top: -34px; pointer-events: none;
+  .tp.open.below::after { content: ""; order: 99; grid-column: 1 / -1; flex: 0 0 100%; position: sticky; bottom: -4px; height: 28px; margin-top: -34px; pointer-events: none;
     background: linear-gradient(to bottom, transparent, var(--bg) 75%); border-bottom: 3px solid var(--ac); }
 }
 /* short: the title bar gives way, the controls keep their height */

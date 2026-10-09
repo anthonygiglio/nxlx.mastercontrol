@@ -394,10 +394,12 @@
       moreBelow();
     } });
     var el = h('div', { class: 'tp', id: 'wstp', role: 'group', 'aria-label': 'Transport' },
-      // (fold f-...: what leaves the one line of a wider panel for More, in the stylesheet's order: the place in the
-      // clip first, then back and forward 10 s, the fades, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout)
+      // (fold f-...: what leaves the one line of a wider panel for More, in the stylesheet's order: back and forward
+      // 10 s first, then the fades, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout. The place in the
+      // clip is never behind More: where it has no room on the line it is a slim bar along the strip's top edge,
+      // the same one control, placed there by the stylesheet.)
       h('div', { class: 'tpinfo' }, h('div', { id: 'np', style: false, text: '' }), h('div', { class: 'tpmeta' }, h('div', { class: 'k', id: 'plpos' }), h('div', { class: 'k', id: 'time' })), more),
-      h('div', { class: 'tpscrub tpx fold f-scrub' }, seekBar(canLive)),
+      h('div', { class: 'tpscrub' }, seekBar(canLive)),
       h('div', { class: 'tpgrp' }, speedBar(canLive),
         h('button', { class: 'btn tpb tpx tploop fold f-loop', text: 'Loop: off', disabled: !canLive, onclick: function () {
           act('POST', '/api/control', { action: 'loop', value: !looping() }, poll);
@@ -3726,8 +3728,8 @@
   // the same turn, and the observer sees that; a slider written in place with nothing else drawn must call this
   // itself, as patchLive does. The clock four times a second is only a net under these. The default look does nothing.
   function fillRanges() {
-    if (!document.documentElement.hasAttribute('data-style')) return;
-    var rs = document.querySelectorAll('input[type=range]');
+    // (in the default look only the place in the clip, which is a bar of the stylesheet's own along the strip's edge)
+    var rs = document.querySelectorAll(document.documentElement.hasAttribute('data-style') ? 'input[type=range]' : '#seek');
     for (var i = 0; i < rs.length; i++) {
       var r = rs[i], min = r.min === '' ? 0 : parseFloat(r.min), max = r.max === '' ? 100 : parseFloat(r.max), v = parseFloat(r.value);
       var part = max > min && isFinite(v) ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;

@@ -25,9 +25,13 @@
 //                         Blackout at its right end and at least 180 px for the name of what plays. What else
 //                         is on the line, by the owner's order of who has the room first: Previous and Next
 //                         from 800 px, Loop from 940, Speed from 1080, the fades from 1280, back and forward
-//                         10 s from 1440, the place in the clip from 1640; the rest is behind More, which
-//                         opens it under the line; on a phone four buttons, and More opens the rest in place,
+//                         10 s from 1440; the rest is behind More, which opens it under the line. The place in
+//                         the clip is never behind More: a slim bar along the strip's top edge under 1640 px
+//                         (the same one control, 24 px of target), on the line from there; on a phone four buttons, and More opens the rest in place,
 //                         stays open on the next screen, and closes
+//   seekBar(pg)           the place in the clip while a clip plays, at 390, 768, 1280, 1366, 1440 (the edge bar)
+//                         and 1920 px (on the line): once in the page, not disabled, filled as far as the clip
+//                         is, moved by the arrow keys, each move asks the box to seek, nothing else moves
 //   stripText(pg, post, get)  the words on the strip at every width from 320 to 1920 px (step 40) in every
 //                         look the box has, with a long clip name, "Clip 11 of 12" and an hour's time: the time
 //                         and the clip count are each one line and not cut, the name has its least width
@@ -67,7 +71,10 @@ const ALWAYS = ['prev', 'next', 'stop', 'black'];
 // From which width of the panel each control is on the strip's one line (under it: behind More). The owner's order
 // of who has the room first (D72): Blackout, Stop, Freeze; Previous and Next; Loop; Speed; the fades; back and
 // forward 10 s; the place in the clip.
-const ON_LINE = { freeze: 600, stop: 600, black: 600, prev: 800, next: 800, loop: 940, mv: 1080, fadein: 1280, fade: 1280, back10: 1440, fwd10: 1440, seek: 1640 };
+const ON_LINE = { freeze: 600, stop: 600, black: 600, prev: 800, next: 800, loop: 940, mv: 1080, fadein: 1280, fade: 1280, back10: 1440, fwd10: 1440 };
+// The place in the clip is never behind More: under this width it is a slim bar along the strip's top edge (the same
+// one control), from it a slider on the line.
+const SEEK_LINE = 1640;
 const NAME = 180;                  // the least width of the name of what plays, in px
 // (what the closed strip shows whatever the width: under 600 px those four, from 600 px Freeze, Stop and Blackout, with Previous and Next from 800 px)
 const kept = (width) => (width < 600 ? ALWAYS : ['freeze', 'stop', 'black'].concat(width >= 800 ? ['prev', 'next'] : []));
@@ -314,6 +321,15 @@ async function menus(pg) {
 }
 
 /* eslint-disable no-undef */
+// The place in the clip, as it lies: how many there are, its box, and where the strip's top edge is. (How thick its
+// line is drawn, 4 px and 8 under the pointer, is the stylesheet's and is looked at in the pictures: a browser does
+// not say the size of a slider's track.)
+function edge() {
+  const all = document.querySelectorAll('#seek, input.seek'), el = all[0], r = el.getBoundingClientRect(), dock = document.getElementById('wsdock').getBoundingClientRect();
+  return { count: all.length, shown: r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden', label: el.getAttribute('aria-label'), disabled: el.disabled,
+    left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width), height: Math.round(r.height), mid: Math.round(r.top + r.height / 2), dockTop: Math.round(dock.top),
+    value: el.value, fill: el.style.getPropertyValue('--fill') };
+}
 // The strip's buttons as they lie: which are shown, on how many lines, and where the last one ends.
 function lie(strip) {
   const shown = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
@@ -351,7 +367,13 @@ async function strip(pg) {
     assert(l.page <= l.vw + 1, where + 'does not make the page scroll sideways (' + l.page + ' px)');
     assert(l.name >= NAME, where + 'leaves ' + NAME + ' px for what plays: ' + l.name + ' px');
     Object.keys(ON_LINE).forEach((b) => assert.strictEqual(s.buttons[b], width >= ON_LINE[b], where + (width >= ON_LINE[b] ? 'shows ' : 'folds ') + b));
-    assert.strictEqual(s.buttons.wsmore, width < ON_LINE.seek, where + (width < ON_LINE.seek ? 'has More' : 'has no More'));
+    assert.strictEqual(s.buttons.wsmore, width < 1440, where + (width < 1440 ? 'has More' : 'has no More: nothing is folded'));
+    // the place in the clip: shown at every width, once; along the top edge under 1640 px, on the line from there
+    const k = await pg.evaluate(edge);
+    assert.deepStrictEqual([k.count, k.shown, k.label], [1, true, 'Position in the clip'], where + 'has the place in the clip, once, with its name: ' + JSON.stringify(k));
+    if (width < SEEK_LINE) assert(k.left <= 1 && k.right >= l.vw - 1 && k.height >= 24 && k.height <= 28 && Math.abs(k.mid - k.dockTop) <= 4,
+      where + 'has the place in the clip as a bar along its top edge, as wide as the strip, in a target of 24 px: ' + JSON.stringify(k));
+    else assert(Math.abs(k.mid - l.at.stop.mid) <= 6 && k.width >= 160 && k.right < l.at.freeze.left, where + 'has the place in the clip on the line, 160 px or more: ' + JSON.stringify(k));
   }
   // Speed and Loop are on the strip and nowhere else, on a screen of every area
   for (const key of ['play/pads', 'shape/picture', 'room/scenes', 'setup/index']) {
@@ -372,23 +394,26 @@ async function strip(pg) {
   ['freeze', 'stop', 'black'].forEach((b) => assert(open.at[b].left === before.at[b].left && open.at[b].mid < open.at.fade.mid, 'at 768 px ' + b + ' keeps its place when More opens: ' + JSON.stringify([before.at[b], open.at[b]])));
   await pg.click('#wsmore');
   s = await see(pg);
-  assert(s.more === 'false' && !s.buttons.fade && !s.buttons.seek && !s.buttons.mv && s.buttons.freeze, 'at 768 px More closes it again');
-  // at 1366 px Speed and Loop are on the line, and More opens the place in the clip and back and forward 10 s
+  assert(s.more === 'false' && !s.buttons.fade && s.buttons.seek && !s.buttons.mv && s.buttons.freeze, 'at 768 px More closes it again, and the place in the clip stays along the edge');
+  // at 1366 px Speed and Loop are on the line, and More opens back and forward 10 s, which is all that is folded
   await pg.setViewportSize({ width: 1366, height: 768 });
   await frames(pg);
   s = await see(pg);
-  assert(s.buttons.mv && s.buttons.loop && s.buttons.fade && !s.buttons.seek && !s.buttons.back10, 'at 1366 px Speed, Loop and the fades are on the line');
+  assert(s.buttons.mv && s.buttons.loop && s.buttons.fade && s.buttons.seek && !s.buttons.back10, 'at 1366 px Speed, Loop and the fades are on the line');
+  const closed = await pg.evaluate(edge);
   await pg.click('#wsmore');
   s = await see(pg);
-  assert(s.buttons.seek && s.buttons.back10 && s.buttons.fwd10, 'at 1366 px More opens the place in the clip and back and forward 10 s');
+  const opened = await pg.evaluate(edge);
+  assert(s.buttons.back10 && s.buttons.fwd10, 'at 1366 px More opens back and forward 10 s');
+  assert(opened.count === 1 && opened.height === closed.height && Math.abs(opened.mid - opened.dockTop) <= 4, 'the place in the clip is along the edge of the open strip too, and not a second time under More: ' + JSON.stringify(opened));
   await pg.click('#wsmore');
   await pg.setViewportSize({ width: 390, height: 844 });
   await frames(pg);
   await go(pg, 'play/pads');
   if ((await see(pg)).more === 'true') await pg.click('#wsmore');
   s = await see(pg);
-  const folded = ALL.filter((b) => ALWAYS.indexOf(b) < 0).concat(['seek']);
-  ALWAYS.concat(['wsmore']).forEach((b) => assert(s.buttons[b], 'a phone\'s strip shows ' + b));
+  const folded = ALL.filter((b) => ALWAYS.indexOf(b) < 0);
+  ALWAYS.concat(['wsmore', 'seek']).forEach((b) => assert(s.buttons[b], 'a phone\'s strip shows ' + b));
   folded.forEach((b) => assert(!s.buttons[b], 'a phone\'s strip keeps ' + b + ' behind More'));
   assert.strictEqual(s.more, 'false', 'More says it is closed');
   await pg.click('#wsmore');
@@ -403,6 +428,59 @@ async function strip(pg) {
   await pg.click('#wsmore');
   s = await see(pg);
   assert(s.more === 'false' && !s.buttons.fade && s.buttons.stop, 'More closes it again');
+}
+
+// The place in the clip can be used where it is a bar along the edge (390, 768, 1280, 1366 and 1440 px) and where
+// it is on the line (1920 px), while a clip plays (put into the box's answer on its way to the page): it is not
+// disabled, it shows how far the clip is, the arrow keys move it, a press in it asks the box to seek, and under
+// the pointer nothing of the page or the strip moves.
+async function seekBar(pg) {
+  const home = await pg.evaluate(() => location.origin + '/');
+  const asked = [];
+  const status = async (route) => {
+    try {
+      if (route.request().method() !== 'GET') return await route.continue();
+      const r = await route.fetch();
+      let d = null;
+      try { d = await r.json(); } catch (e) { d = null; }
+      if (!d || r.status() !== 200) return await route.fulfill({ response: r });
+      d.player = { running: true, path: '/media/' + LONG.clip, duration: 200, position: 50, playlist_count: 1, playlist_pos: 0, volume: (d.player || {}).volume, paused: false };
+      return await route.fulfill({ response: r, json: d });
+    } catch (e) { return route.continue().catch(() => {}); }
+  };
+  await pg.route('**/api/status', status);
+  try {
+    await pg.setViewportSize({ width: 390, height: 844 });
+    await pg.goto(home);
+    await ready(pg);
+    await pg.waitForFunction(() => /A_very_long_clip_name/.test(document.getElementById('np').textContent) && !document.getElementById('seek').disabled, null, { timeout: 15000 });
+    await pg.evaluate(() => { window.pvjAsked = []; const f = window.fetch; window.fetch = function (u, o) { if (o && o.method === 'POST' && /\/api\/control$/.test(String(u))) window.pvjAsked.push(o.body); return f.apply(this, arguments); }; });
+    for (const width of [390, 768, 1280, 1366, 1440, 1920]) {
+      await pg.setViewportSize({ width, height: 844 });
+      await frames(pg);
+      const where = 'at ' + width + ' px the place in the clip ', before = await pg.evaluate(edge), was = await pg.evaluate(lie, STRIP.concat(SPEED));
+      assert(before.count === 1 && before.shown && !before.disabled, where + 'is there once and can be used while a clip plays: ' + JSON.stringify(before));
+      assert(Math.abs(parseFloat(before.fill) - 25) <= 1.5, where + 'shows how far the clip is (a quarter): ' + JSON.stringify(before));
+      if (width < SEEK_LINE) assert(before.left <= 1 && before.right >= was.vw - 1 && before.height >= 24 && Math.abs(before.mid - before.dockTop) <= 4, where + 'is a bar along the strip\'s top edge: ' + JSON.stringify(before));
+      else assert(Math.abs(before.mid - was.at.stop.mid) <= 6, where + 'is on the line: ' + JSON.stringify(before));
+      // the keyboard: the cursor goes to it, and an arrow key moves it
+      await pg.focus('#seek');
+      await pg.keyboard.press('ArrowRight');
+      const moved = await pg.evaluate(edge), now = await pg.evaluate(lie, STRIP.concat(SPEED));
+      assert(+moved.value > +before.value, where + 'is moved by the right arrow key: ' + before.value + ' to ' + moved.value);
+      assert.deepStrictEqual([now.lines, now.at.freeze, now.at.stop, now.at.black], [was.lines, was.at.freeze, was.at.stop, was.at.black], where + 'with the cursor in it leaves Freeze, Stop and Blackout where they were');
+      assert.strictEqual(moved.height, before.height, where + 'keeps its height with the cursor in it (what grows is its line, inside it)');
+      await pg.evaluate(() => document.getElementById('seek').blur());
+    }
+    const sought = await pg.evaluate(() => window.pvjAsked.filter((b) => /seek_to/.test(b)).length);
+    assert(sought >= 6, 'each move of the place in the clip asked the box to seek: ' + sought + ' requests');
+  } finally {
+    await pg.unroute('**/api/status', status).catch(() => {});
+    await pg.setViewportSize({ width: 390, height: 844 });
+    await pg.goto(home);
+    await ready(pg);
+  }
+  void asked;
 }
 
 // ---- Text that overruns (2026-10-09). The owner saw it on the narrow layouts: a page's title cut inside a word
@@ -623,7 +701,8 @@ function stripWords(least) {
     tp.querySelectorAll('button').forEach((b) => { const r = b.getBoundingClientRect(); if (!r.width) return; const m = Math.round(r.top + r.height / 2); if (!mids.some((y) => Math.abs(y - m) <= 4)) mids.push(m); });
     if (mids.length !== 1) out.push('the buttons are on ' + mids.length + ' lines');
     const sc = document.getElementById('seek').getBoundingClientRect();
-    if (sc.width > 0 && sc.width < 150) out.push('the place in the clip is ' + Math.round(sc.width) + ' px wide');
+    if (!sc.width) out.push('the place in the clip is not shown');
+    else if (sc.width < 150) out.push('the place in the clip is ' + Math.round(sc.width) + ' px wide');
   }
   if (document.documentElement.scrollWidth > vw + 1) out.push('the page scrolls sideways');
   return out;
@@ -818,4 +897,4 @@ async function inventory(o) {
   return out;
 }
 
-module.exports = { screens, reach, tabWalk, menus, strip, stripText, stripWords, narrow, overruns, longNames, roles, inventory, MENUS, MOVED, ON_LINE };
+module.exports = { screens, reach, tabWalk, menus, strip, seekBar, stripText, stripWords, narrow, overruns, longNames, roles, inventory, MENUS, MOVED, ON_LINE };

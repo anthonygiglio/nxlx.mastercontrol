@@ -72,7 +72,9 @@ function measure(o) {
     const r = el.getBoundingClientRect();
     const token = parseFloat(getComputedStyle(el).minHeight) || 0;
     if (o.signal || token >= 44) {
-      if (r.height < 43.5 || r.width < 43.5) add('small', el, px(r.width) + 'x' + px(r.height));
+      // (the place in the clip as a bar along the strip's edge, D72: its target is 24 px high, on purpose, and as wide as the strip)
+      if (el.id === 'seek' && getComputedStyle(el.parentElement).position === 'absolute') { if (r.height < 23.5) add('the bar of the place in the clip is under 24 px high', el, px(r.height)); }
+      else if (r.height < 43.5 || r.width < 43.5) add('small', el, px(r.width) + 'x' + px(r.height));
       else if (o.signal && el.tagName === 'BUTTON' && el.closest('#roomscreen, .livecols, .banks, .tp .keep') && r.height < 55.5) add('under 56 px where staff press', el, px(r.height) + ' px');
     }
   });
