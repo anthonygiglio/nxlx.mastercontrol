@@ -50,6 +50,7 @@ from urllib.parse import unquote
 from . import dmx as dmx_mod, midi as midi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
 from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
+from . import transitions as transitions_mod
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 from .settings import SettingsError, default_control, default_settings, migrate
 
@@ -251,12 +252,17 @@ def check_theme(v, care):
 
 
 def check_mix(v, care):
-    mode, duration = _obj(v).get("transition"), v.get("duration")
-    if mode not in ("cut", "dip"):
+    # A newer transition is kept beside "dip" as `style` (pvj/transitions.py), so that a file from this release is
+    # taken by an older one. A style this release does not know (a file from a newer one) is left out with a note.
+    mode, duration, style = _obj(v).get("transition"), v.get("duration"), v.get("style")
+    if mode not in transitions_mod.OLD:
         raise ValueError("transition must be cut or dip")
     if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
         raise ValueError("duration must be 0.1 to 10 seconds")
-    return {"transition": mode, "duration": float(duration)}
+    if style is not None and style not in transitions_mod.STYLES:
+        care.note("the transition %s is not known to this version; %s is used" % (_printable(style), mode))
+        style = None
+    return transitions_mod.stored(style or mode, duration)
 
 
 def check_osc(v, care):

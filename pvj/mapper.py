@@ -810,6 +810,9 @@ class Engine:
 
     def apply(self):
         """Make the screen match. Never raises for a player that is down (the status says so)."""
+        ending = getattr(self.api, "transitions", None)
+        if ending is not None:
+            ending.end()            # the still of a crossfade shows the surfaces where they were
         with self._lock:
             self._gen += 1
             gen = self._gen

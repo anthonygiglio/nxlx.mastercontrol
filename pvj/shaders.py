@@ -1232,6 +1232,9 @@ class Engine:
             try:
                 if cut:
                     self.api.fader.cancel()
+                ending = getattr(self.api, "transitions", None)
+                if ending is not None:
+                    ending.end()                    # a clip's crossfade does not go on over a generator
                 try:
                     new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
                     fx = getattr(self.api, "effects", None)

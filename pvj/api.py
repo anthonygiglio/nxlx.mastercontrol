@@ -23,6 +23,7 @@ import unicodedata
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
 from . import paths
+from . import transitions as transitions_mod
 from .auth import Auth, AuthError
 from .modules import ModuleError
 from .player import AUDIO_EXTENSIONS, ENDINGS, IMAGE_EXTENSIONS, PlayerError, VIDEO_EXTENSIONS
@@ -159,6 +160,7 @@ class Api:
                     "flip_h": False, "flip_v": False}
         self.levels = {"volume": 100.0, "speed": 1.0}    # what was last set here (mpv's own start values until then); a
         self.fader = Fader(self._apply_opacity)          # MIDI fader reads them for pickup without asking the player
+        self.transitions = transitions_mod.Transitions(self, log=lambda line: self.log(line))   # the crossfade (D71)
         self._preview_lock = threading.Lock()
         self._control_lock = threading.RLock()
         self._usb_cache = (0.0, [])
@@ -197,6 +199,22 @@ class Api:
         self.boxcare = boxcare_mod.BoxCare(self)                   # settings export and import, diagnostics, factory reset
 
     # --- helpers -------------------------------------------------------
+    def _settle(self):
+        """Before anything that sets the picture: a fade still running from an earlier action must not darken what
+        comes, and the still of a transition must not lie over it (the player's brightness does not reach it)."""
+        self.fader.cancel()
+        self.transitions.end()
+
+    def _mix_settings(self):
+        """The Mix settings as the API gives them: the transition by its name (see pvj/transitions.py for how it is
+        kept), the duration, and `fallback` with the reason while the box dips instead of a crossfade."""
+        mix = self.settings.data["mix"]
+        out = {"transition": transitions_mod.named(mix), "duration": mix["duration"]}
+        why = self.transitions.fallback() if out["transition"] in transitions_mod.STYLES else ""
+        if why:
+            out["fallback"] = why
+        return out
+
     def _apply_opacity(self, percent):
         try:
             self.player.opacity(round(min(100, max(0, percent)) * 2.55))
@@ -301,7 +319,7 @@ class Api:
 
     def status(self, body, device, client):
         temps = hardware.temperatures()
-        return {"player": self._public_player_status(), "mix": dict(self.mix, **self.settings.data["mix"]),
+        return {"player": self._public_player_status(), "mix": dict(self.mix, **self._mix_settings()),
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner()}
@@ -744,7 +762,7 @@ class Api:
             import random
             paths = list(paths)
             random.SystemRandom().shuffle(paths)
-        self.fader.cancel()
+        self._settle()
         self._player_call(self.player.play, paths, ending == "loop", None, False, self.spawn, ending, image_seconds)
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing()
@@ -864,12 +882,33 @@ class Api:
         claim = getattr(self.player, "claim_screen", None)
         if claim:            # with a dip the clip loads later; a shader rotation must know now that the screen is taken
             claim()
+        faded_out = self.fader.label == "out"       # the operator's Fade out: the screen is dark or going dark
         self.fader.cancel()  # a fade still running from an earlier action must not darken the new clip
 
-        dip = transition["transition"] == "dip" and not self.mix["blackout"]
+        kind = transitions_mod.named(transition)
+        # A crossfade lays a still of the screen over the new clip (pvj/transitions.py). A screen that is dark
+        # (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there; with nothing
+        # playing there is nothing to take a still of. Where the box cannot do one it dips; where the still itself
+        # fails, time has passed already and the clip is cut to.
+        blend = False
+        if kind in transitions_mod.STYLES:
+            if playing and not self.mix["blackout"] and self.mix["opacity"] > 0 and not faded_out:
+                if self.transitions.fallback() or self.access_on_screen():
+                    kind = "dip"
+                else:
+                    blend = self.transitions.hold(kind)
+            if not blend:
+                self.transitions.end()
+        else:
+            self.transitions.end()
+        dip = kind == "dip" and not self.mix["blackout"]
 
         def start():
-            self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
+            try:
+                self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
+            except ApiError:
+                self.transitions.abandon()          # the old clip is still there: it plays on, with no still over it
+                raise
             if self.mix["blackout"]:
                 return
             if dip:
@@ -877,6 +916,8 @@ class Api:
                 self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
             else:
                 self._apply_opacity(self.mix["opacity"])
+            if blend:
+                self.transitions.run(transition["duration"])
 
         if playing and dip:
             self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=start)
@@ -895,7 +936,7 @@ class Api:
         match = [s for s in self.settings.data["streams"] if s["id"] == sid]
         if not match:
             raise ApiError(404, "no such stream")
-        self.fader.cancel()
+        self._settle()
         self._player_call(self.player.play, [match[0]["url"]], False, None, False, self.spawn)
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing()
@@ -950,6 +991,7 @@ class Api:
             self.levels["volume"] = float(body["value"])
         elif action == "opacity":
             self.mix["opacity"] = number(body, "value", 0, 100)
+            self.transitions.end()
             if not self.mix["blackout"]:
                 self.fader.cancel()
                 self._player_call(p.opacity, round(self.mix["opacity"] * 2.55))
@@ -982,6 +1024,7 @@ class Api:
                 raise bad("value must be true or false")
             self._player_call(p.mute, body["value"])
         elif action == "stop":
+            self.transitions.end()
             self._player_call(p.clear)
             self._stop_capture()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
@@ -1002,7 +1045,7 @@ class Api:
             self.mix.update(opacity=100, size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)
             for k in flipped:
                 self._player_call(p.flip, k == "flip_h", False)
-            self.fader.cancel()
+            self._settle()
             # During a blackout the screen must stay dark: reset changes the stored mix, not the picture.
             shown = 0 if self.mix["blackout"] else 255
             for fn, arg in ((p.opacity, shown), (p.size, 100), (p.position, 0), (p.speed, 1), (p.rotate, 0)):
@@ -1016,7 +1059,7 @@ class Api:
         on = body.get("on")
         if not isinstance(on, bool):
             raise bad("on must be true or false")
-        self.fader.cancel()
+        self._settle()
         self.mix["blackout"] = on
         self._player_call(self.player.opacity, 0 if on else round(self.mix["opacity"] * 2.55))
         return {"blackout": on}
@@ -1024,6 +1067,7 @@ class Api:
     def fadeout(self, body, device, client):
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
+        self.transitions.end()
         self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
         return {"ok": True}
 
@@ -1032,7 +1076,7 @@ class Api:
         a fade in; until now the only way back from black here was an instant Show."""
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
-        self.fader.cancel()
+        self._settle()
         self.mix["blackout"] = False
         self._apply_opacity(0)
         self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
@@ -1044,7 +1088,7 @@ class Api:
         tones = getattr(self.player, "TEST_TONES", {})
         if channel not in tones:
             raise bad("channel must be left, right or both")
-        self.fader.cancel()
+        self._settle()
         self._player_call(self.player.play, [tones[channel]], False, None, False, self.spawn, "stop")
         self._started_playing()
         return {"test_tone": channel}
@@ -1269,10 +1313,11 @@ class Api:
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         if not on:
+            self.transitions.end()
             self._player_call(self.player.clear)
             self._stop_capture()
             return {"test_pattern": False}
-        self.fader.cancel()
+        self._settle()
         self._player_call(self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing()
@@ -1280,17 +1325,19 @@ class Api:
 
     def set_mix(self, body, device, client):
         mode, duration = body.get("transition"), body.get("duration")
-        if mode not in ("cut", "dip"):
-            raise bad("transition must be cut or dip (crossfade is not built yet)")
+        if mode not in transitions_mod.NAMES:
+            raise bad("transition must be cut, dip or crossfade")
         if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
             raise bad("duration must be 0.1 to 10 seconds")
         with self.settings.lock:
-            self.settings.data["mix"] = {"transition": mode, "duration": float(duration)}
+            self.settings.data["mix"] = transitions_mod.stored(mode, duration)
             self.settings.save()
-        return self.settings.data["mix"]
+        self.transitions.chosen_again()         # a box that gave up on crossfades tries again when somebody chooses
+        return self._mix_settings()
 
     def stop_player(self, body, device, client):
         # The systemd unit (Restart=always) brings the player straight back.
+        self.transitions.end()
         self._player_call(self.player.ipc.request, "quit")
         self._stop_capture()
         return {"ok": True}
@@ -1934,7 +1981,7 @@ class Api:
                 w, h, fps = self.capture.prepare(spec.get("device"), mode)
             except capture_mod.CaptureError as e:
                 raise bad(str(e))
-            self.fader.cancel()
+            self._settle()
             try:
                 self._player_call(self.player.play_pipe, self.capture.fifo, w, h, fps)
             except ApiError:

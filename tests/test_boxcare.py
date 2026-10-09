@@ -869,6 +869,31 @@ class ImportTest(Base):
         self.assertEqual(out["problems"], ["Mapper: no screen"])         # reported, and the rest still happened
 
 
+    def test_a_crossfade_is_exported_and_imported_in_the_form_an_older_release_reads(self):
+        from pvj import transitions
+        self.settings.data["mix"] = transitions.stored("crossfade", 2.0)
+        self.settings.save()
+        file = self.export()
+        self.assertEqual(file["settings"]["mix"], {"transition": "dip", "style": "crossfade", "duration": 2.0})
+        # the release before this one took a file's mix by `transition` and `duration` alone: here that is a dip
+        self.assertIn(file["settings"]["mix"]["transition"], ("cut", "dip"))
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["mix"], {"transition": "dip", "style": "crossfade", "duration": 2.0})
+        self.assertEqual(self.api.status({}, None, "t")["mix"]["transition"], "crossfade")
+
+    def test_a_transition_from_a_newer_release_is_left_out_with_a_note(self):
+        file = self.export()
+        file["settings"]["mix"] = {"transition": "dip", "style": "ripple", "duration": 3.0}
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["mix"], {"transition": "dip", "duration": 3.0})
+        self.assertTrue(any("ripple" in n and "not known" in n for n in out["notes"]), out["notes"])
+        file["settings"]["mix"] = {"transition": "crossfade", "duration": 3.0}      # never written that way
+        self.assertEqual(self.send(file)[0], 400)
+
+
 class FakeJournal:
     def __init__(self, stdout="", stderr="", code=0, error=None):
         self.stdout, self.stderr, self.code, self.error, self.argv = stdout, stderr, code, error, None

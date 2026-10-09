@@ -490,6 +490,10 @@ def build(env=None, player=None):
     except Exception as e:
         print("pvj-web: an old effect was not taken off: %s" % e, file=sys.stderr)
     try:
+        api.transitions.tidy()               # the still of a crossfade an earlier panel process left on the screen comes off
+    except Exception as e:
+        print("pvj-web: an old transition was not tidied: %s" % e, file=sys.stderr)
+    try:
         api.sync.apply()                     # lead or follow, as the settings say
     except Exception as e:                   # a busy port must not stop the panel
         print("pvj-web: sync not started: %s" % e, file=sys.stderr)

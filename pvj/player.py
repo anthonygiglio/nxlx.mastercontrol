@@ -427,6 +427,16 @@ class Player:
         self._set("screenshot-jpeg-quality", int(quality))
         self.ipc.request("screenshot-to-file", path, "window" if with_text else "video")
 
+    def still(self, path):
+        """Save the whole window as it is now (the picture with its effect, mapping and brightness, and what is
+        drawn over it) into `path` as a PNG whose rows are plain bytes: no compression and no row filter, so the
+        player does not spend time packing it and Python can read it with a few copies (pvj/transitions.py). The
+        file's ending says PNG to the player; `path` may be a file that exists, which is then written over."""
+        self._set("screenshot-high-bit-depth", False)
+        self._set("screenshot-png-compression", 0)
+        self._set("screenshot-png-filter", 0)
+        self.ipc.request("screenshot-to-file", path, "window")
+
     def osd_size(self):
         """(width, height) of the picture the player is drawing on, in pixels, or None if unknown."""
         try:
