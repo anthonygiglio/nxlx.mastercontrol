@@ -312,3 +312,7 @@ As long as a generator took the effect off, only one shader of the two could be 
 
 Over a generator `video-params` says 64 x 36: the carrier. The hook of the effect meets 960 x 540: the generator's drawing. The engine's size arithmetic for the panel came from `video-params` and would have told the owner his effect was working on a picture of 36 lines. The spike printed both, which is the only reason it was seen before a person read it on the card. What we do now: a probe that asks the player in words also asks the GPU in pixels, and prints the two side by side.
 
+## A wish worked out at the press is a reading the worker may be making old (2026-10-09, again)
+
+Found three times in one day in the shaders' queue on another branch, and the reviewer of this one asked whether the effects' queue had it. It did: Next named "the effect after the one that is on" when the button was pressed, and a second press made while the worker held the first named the same effect. The first tests of the cure all passed at once, and two of them could not have failed: one because an effect that is already on keeps its size by another path, one because the worker was too quick for two steps ever to wait together. Breaking the code on purpose showed both. What we do now: a wish that depends on the state it changes is queued as a move and resolved where it is carried out; and a test of a race is not believed until the race has been made on purpose and the test has failed for it.
+
