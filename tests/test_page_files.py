@@ -12,6 +12,7 @@ import unittest
 from html.parser import HTMLParser
 
 from pvj import server
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 WEB = server.WEB_DIR
 # Named by the page and not a file in pvj/web: the server makes it from the theme in use (server.py, do_GET).

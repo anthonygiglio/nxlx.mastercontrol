@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from pvj import paths
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 class LayoutTest(unittest.TestCase):

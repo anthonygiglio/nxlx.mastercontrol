@@ -7,6 +7,7 @@ import unittest
 from pvj import auth
 from pvj.auth import Auth, AuthError
 from pvj.settings import Settings
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 class Clock:

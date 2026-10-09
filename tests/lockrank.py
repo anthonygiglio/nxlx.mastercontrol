@@ -22,7 +22,8 @@ import traceback
 from pvj import locks
 
 _held = threading.local()           # .stack: [(place, name, lock, where it was taken)]
-breaches = []                       # what was seen, for the test that is running
+breaches = []                       # what was seen and not yet shown: never thrown away, only handed on by take()
+during = "no test"                  # the test that is running, for a breach's first line (tests/__init__.py sets it)
 _breaches_lock = threading.Lock()
 
 
@@ -52,9 +53,9 @@ class Ranked:
         if blocking and not again:
             for held_place, held_name, held_lock, where in _stack():
                 if held_place >= self.place and held_lock is not self:
-                    said = ("the order of the locks is broken: `%s` (place %d) is waited for while `%s` (place %d) is held.\n"
-                            "`%s` was taken here:\n%s`%s` is waited for here:\n%s"
-                            % (self.name, self.place + 1, held_name, held_place + 1, held_name, where, self.name,
+                    said = ("while %s ran, the order of the locks was broken: `%s` (place %d) is waited for while `%s` "
+                            "(place %d) is held.\n`%s` was taken here:\n%s`%s` is waited for here:\n%s"
+                            % (during, self.name, self.place + 1, held_name, held_place + 1, held_name, where, self.name,
                                "".join(traceback.format_stack(limit=12)[:-1])))
                     with _breaches_lock:
                         breaches.append(said)
@@ -93,7 +94,8 @@ class Ranked:
 
 
 def take():
-    """What was written down since the last call, and forget it."""
+    """What was written down since the last call. Whoever takes it must show it: tests/__init__.py puts it into a
+    failure of the test that runs, or of the next one, or into the end of the run."""
     with _breaches_lock:
         out = list(breaches)
         del breaches[:]

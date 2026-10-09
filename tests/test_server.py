@@ -17,6 +17,7 @@ from pvj.auth import Auth
 from pvj.modules import Registry
 from pvj.osc import OscManager
 from pvj.settings import Settings
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 class FakePlayer:
