@@ -140,7 +140,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | Screen snapshot (on request; live view dropped, D20) | `docs/MANUAL.md` | on |
 | PIN and the box's address drawn on the screen | `pvj/pinscreen.py` | on |
 | Health card (power, temperature, helpers, addresses) | `pvj/health.py` | on |
-| Updates from the panel: the Updates card takes signed bundles from USB or upload, with rollback (D33) | `pvj/README.md` | on (needs a signing key) |
+| Updates from the panel: the Updates card takes signed bundles from USB or upload, with rollback (D33); what a power cut during an update or a save leaves is cleared the next time (D70, not tried on a box) | `pvj/README.md` | on (needs a signing key) |
 | Box care: settings export and import, diagnostics file, factory reset (D39; not run on hardware) | `pvj/boxcare.py`, `docs/MANUAL.md` | on |
 | Looks and themes: a look chosen under System > Look; Signal and Signal light as a second style, not the default (D54), carried through every screen (D57); themes the owner can add, save as a file and remove, with a bounded list of design tokens and contrast enforced (D60) | `pvj/THEMES.md` | on |
 | Remote support over WireGuard, on request only | `docs/REMOTE-SUPPORT.md` | off |

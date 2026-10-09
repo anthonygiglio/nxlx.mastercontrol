@@ -10,7 +10,7 @@ On a box each service has a folder of its own that only it can write, under a pa
     /run/pvj/netd           root:pvj        0750   pvj-netd: netd.sock
     /run/pvj-sysd           root:pvj        0750   pvj-sysd: sysd.sock
     /run/pvj-supportd       root:pvj        0750   pvj-supportd: supportd.sock
-    /run/pvj-update         root:root       0755   the update units: result.json
+    /run/pvj-update         root:root       0755   the update units: result.json, update.lock
 
 A folder is a `RuntimeDirectory=` of exactly one unit, so systemd never hands it to another account. Before this
 the player, the panel and the network helper shared `RuntimeDirectory=pvj`, and systemd gave the whole folder,
@@ -29,7 +29,9 @@ A process creates and checks only its own folder (`own_dir`). It never creates a
 means that the peer is not running.
 """
 import os
+import re
 import stat
+import time
 
 RUN = "/run/pvj"                              # the parent: root's, nobody else may add, rename or remove a name in it
 PLAYER_DIR = RUN + "/player"
@@ -146,3 +148,38 @@ def overlay_file(rundir):
 
 def undervoltage_marker(rundir):
     return os.path.join(rundir, UNDERVOLTAGE)
+
+
+def remove_leftovers(folder, pattern, older_than=0.0, now=None):
+    """Unlink the temp files a power cut or a crash left in `folder`: plain files whose whole name matches
+    `pattern` and that were last written more than `older_than` seconds ago (D70). Returns the names removed.
+
+    A time more than `older_than` in the future counts as old as well: a Pi has no clock of its own, and started
+    without a time source it believes an earlier time than the one its files carry. A file written just now is
+    never that far ahead. (Less far ahead it is kept, and goes once the clock has caught up.)
+
+    Only ever a regular file directly in the folder, found and removed through the opened folder: a link is never
+    followed and never removed, and neither is a folder, and if `folder` itself is a link nothing is done. Never
+    raises: this runs where a service starts, and a leftover is not worth a service that does not start."""
+    gone = []
+    try:
+        fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+    except (OSError, TypeError, ValueError):
+        return gone
+    try:
+        now = time.time() if now is None else now
+        for name in os.listdir(fd):
+            if not re.fullmatch(pattern, name):
+                continue
+            try:
+                st = os.lstat(name, dir_fd=fd)
+                if stat.S_ISREG(st.st_mode) and abs(now - st.st_mtime) >= older_than:
+                    os.unlink(name, dir_fd=fd)
+                    gone.append(name)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+    return sorted(gone)

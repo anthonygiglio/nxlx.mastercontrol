@@ -32,6 +32,7 @@ import threading
 import time
 import unicodedata
 
+from . import paths
 from .api import ApiError, valid_name
 from .player import PlayerError
 
@@ -44,6 +45,7 @@ MAX_HEADER = 8 * 1024
 MAX_LEADING = 4 * 1024
 MAX_INPUTS = 24
 MAX_UPLOADS = 64
+UPLOAD_TEMP = r"\.upload-\d+-\d+"         # upload() writes here first: .upload-<process>-<thread>
 MAX_TEXT = 200                # description, credit
 CARRIER_FPS = 30
 HEIGHTS = (360, 540, 720, 1080)         # every drawing height any board may use (a settings file may hold any of them)
@@ -857,6 +859,8 @@ class Engine:
         self._clock = clock
         self._tap = tap
         self.dir = os.path.join(os.path.dirname(api.settings.path), "shaders")
+        # What an upload cut off by a power cut left (D70). Nothing is uploading yet: this is the panel starting.
+        paths.remove_leftovers(self.dir, UPLOAD_TEMP)
         self.bundled_dir = BUNDLED_DIR
         self._lock = threading.RLock()          # one change at a time
         self._serial = 0
