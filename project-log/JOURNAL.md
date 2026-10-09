@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, towards morning (the fifth review of #111: one rule for the level, and a stress test that is shown broken code)
+
+Branch `transitions`, pull request #111, still a draft. A fifth independent read found nothing high and no lock inversion; two medium findings and some low. All answered; D71 has "After the fifth review". **Nothing was run on hardware.**
+
+- **The level:** whatever loads something sets the picture's level when its load is done only if nobody has taken the fader since it was asked for. A Fade out, a Blackout or an opacity change made while a clip, a list, a stream, a live input, the test pattern or a generator loads now stands; the label and the level cannot disagree. Tested for each path with a load that takes time (the reviewer's four demonstrations are tests now).
+- **Newest wins, the other half:** a newer wish and its own change of what plays are one step under the player's lock (Stop and its clear, a list, a live input, Next). Found while writing the stress test's oracle.
+- **The stress test** was rebuilt (latency in the fake, overlapping actions, the accepted order of wishes written down and used to say what must be on the screen) and then **shown eleven broken copies of the code**: it catches each of them alone, three runs of three, where the first version caught three of eight. The table is in the test's docstring. Twenty runs of the unbroken code passed. It cannot replay an interleaving, and says so; a failure prints the seed, the round, the actions and the order seen.
+- **Lows:** the fader is taken before the level's lock is waited for (a player that does not answer); Stop against a Fade out; Vibes' own dip under the level's lock and not under Blackout; a generator no longer takes the fader early; the helper decided by what was loaded (`Player.pipe_playing`), not by the player's `path`; three timing bounds in the tests loosened to five seconds.
+- **A mistake of the session's own:** the first run of the new stress test passed in six seconds because the fake's latency was never switched on (a missing line). The mutation runs would have shown it; the run time did first. And a new test for the level waited for "the dark" of a fade and took a dark that was there already; it failed one run in six until it waited for its own.
+- **Tests:** `tests/test_transitions.py` has 123. The mutation runner is not in the repository (scratch copies of the tree, one replacement each); the table names what each one breaks.
+- **Open:** Vibes' dip and the fader (D71), and everything a board has to say (X18 added: a helper never stays under a clip).
+
 ## 2026-10-09, late (the fourth review of #111, and a stress test that found four older faults)
 
 Branch `transitions`, pull request #111, still a draft. A fourth independent read found one high fault (a callback called under the fader's lock: a slip of the round before, with a deadlock in it where live inputs exist), one medium (Next during a dip left the picture dark) and some low. All answered; D71 has "After the fourth review, and a test of another kind". **Nothing was run on hardware.**
