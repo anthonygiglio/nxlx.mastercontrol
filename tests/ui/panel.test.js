@@ -3077,6 +3077,19 @@ function startServer() {
       await page.setViewportSize({ width: 1280, height: 800 });
     }
 
+    {
+      // A file of the page that the box does not deliver (D68, tests/ui/delivery.js): asked for again, and said when it
+      // still does not come. On a page of its own, whose console (the withheld files, by design) is not this test's.
+      const fresh = async () => {
+        const pg = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+        const said = [];
+        pg.on('console', (m) => said.push(m.text()));
+        return { pg, said };
+      };
+      await require('./delivery').check({ info, base, page, fresh });
+      console.log('files not delivered: asked for again, said when missing');
+    }
+
     const csp = problems.filter((t) => /Content Security Policy|Refused to/i.test(t));
     assert.deepStrictEqual(csp, [], 'CSP violations: ' + csp.join('; '));
     assert.deepStrictEqual(problems, [], 'console problems: ' + problems.join('; '));
