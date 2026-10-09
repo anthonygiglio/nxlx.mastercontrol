@@ -859,7 +859,7 @@
             });
           } }),
           h('button', { class: 'btn', text: 'Delete', 'aria-label': 'Delete the preset ' + p, onclick: function (e) {
-            c.confirmRow('Delete the preset ' + p + '?', 'Delete', 'Keep it', function () { send('/api/shaders/presets', { action: 'delete', id: s.id, name: p }, null, 'presetmsg'); }, e.target);
+            c.confirmRow('Delete the preset ' + p + '?' + ((s.preset_pads || {})[p] ? ' ' + (s.preset_pads[p] === 1 ? 'One pad starts' : s.preset_pads[p] + ' pads start') + ' the shader with it and will start it as the shader does by itself.' : ''), 'Delete', 'Keep it', function () { send('/api/shaders/presets', { action: 'delete', id: s.id, name: p }, null, 'presetmsg'); }, e.target);
           } }));
         list.appendChild(h('div', { class: 'item presetitem' }, row));
       });

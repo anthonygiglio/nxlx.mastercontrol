@@ -258,16 +258,44 @@ class Tapped(PadBase):
             self.assertIn("this pad's shader, mine.fs, is not on the box any more", c.exception.message)
         self.assertEqual(self.player.calls, [], "something was sent to the player for a shader that is gone")
 
-    def test_the_preset_gone_since(self):
+    def test_a_pad_whose_preset_was_deleted_starts_the_shader_by_itself_and_says_so(self):
+        # it used to refuse the tap, though the shader is there; Vibes does the same for a set whose preset is gone
         self.a_preset(name="Slow")
         self.give(preset="Slow")
         self.engine.preset_delete(ONE, "Slow")
-        del self.player.calls[:]
-        with self.assertRaises(ApiError) as c:
-            self.tap()
-        self.assertEqual(c.exception.status, 404)
-        self.assertIn("this pad's preset of %s is gone" % ONE, c.exception.message)
-        self.assertEqual(self.player.calls, [])
+        said = []
+        self.api.log = said.append
+        out = self.tap()
+        self.assertEqual((out["playing"], self.on(), self.engine.on_screen()["preset"]), (ONE, ONE, None))
+        self.assertIn("this pad's preset, Slow, is gone", out["note"])
+        self.assertTrue(any("preset of %s is gone" % ONE in line for line in said), said)
+        self.api.control({"action": "stop"}, None, "t")
+        out = self.tap(device={"id": "midi"})
+        self.assertEqual(out["pending"], True)
+        self.assertIn("is gone", out["note"])
+        self.assertTrue(self.wait(lambda: self.on() == ONE))
+        self.give()                                                     # a pad with no preset says nothing of the kind
+        self.assertNotIn("note", self.tap())
+
+    def test_a_shader_pad_comes_up_from_black_after_a_fade_out_as_a_clip_does(self):
+        # low, the fifth read of #114: it snapped to full; from the Shaders page too
+        self.settings.data["mix"] = {"transition": "cut", "duration": 2.0}
+        self.give()
+        for how in ("pad", "hand"):
+            self.api.control({"action": "stop"}, None, "t")
+            self.api.fader.cancel()
+            self.player.play([os.path.join(self.media, "a.mp4")])
+            self.api.fadeout({"seconds": 0.1}, None, "t")
+            self.assertTrue(self.wait(lambda: self.api.fader.label == "out" and self.player.level == 0.0))
+            del self.player.calls[:]
+            self.tap() if how == "pad" else self.engine.api_play({"id": ONE}, None, "t")
+            levels = [c[1] for c in self.player.calls if c[0] == "opacity"]
+            self.assertEqual(levels[0], 0, "%s: the shader did not start from black after a Fade out" % how)
+            self.assertIsNone(self.api.fader.label, how)
+            time.sleep(0.3)                                             # a third of the second it takes: on its way, not there
+            now = [c[1] for c in self.player.calls if c[0] == "opacity"][-1]
+            self.assertTrue(0 < now < 255, "%s: after 0.3 s the level is %s: it does not rise over half the Mix duration" % (how, now))
+            self.assertTrue(self.wait(lambda: self.player.level == 100.0, 3), how)
 
     def test_a_shader_that_no_longer_reads_is_said_at_the_tap_and_vibes_goes_on(self):
         # low, the review of #114: a controller's tap answered "pending", ended Vibes and showed nothing
@@ -1007,6 +1035,220 @@ for _name in list(_CASES):
     setattr(StepsBesides, "test_" + _name, None)    # the table's cases are Steps' own: not run a second time here
 
 
+class WhileVibesChanges(PadBase):
+    """The fifth read of #114, its one high finding: a controller's shader pad tapped while Vibes was in the middle
+    of a change left the screen black and said nothing. Vibes' own thread runs here, as on the box, and is held in
+    each place of a change in turn while the wish comes."""
+
+    def setUp(self):
+        super().setUp()
+        self.player.vo = "gpu"
+        self.settings.data["mix"] = {"transition": "cut", "duration": 0.2}
+        self.a_preset(TWO, name="P")
+        self.give(0, ONE)
+        self._refusals_clear()
+        said = self.said = []
+        self.engine.log = lambda *a: said.append(" ".join(str(x) for x in a))
+        self.vibes = self.api.vibes = V.Vibes(self.api, self.engine, rng=random.Random(4), log=lambda *_: None)
+        self.addCleanup(self.vibes.stop)
+        self.where, self.reached, self.go = None, threading.Event(), threading.Event()
+        self.addCleanup(self.go.set)
+        engine, vibes = self.engine, self.vibes
+        playable, watch, show, off, fade = engine.playable, engine._watch, engine.show, engine.off, vibes._fade
+
+        def hold(name):
+            if self.where == name and threading.current_thread().name == "vibes" and not self.reached.is_set():
+                self.reached.set()
+                self.go.wait(10)
+
+        def held_playable(*a, **k):
+            hold("before its compose")
+            return playable(*a, **k)
+
+        def held_watch(tap, desc):
+            hold("during the GPU's look")
+            return watch(tap, desc)
+
+        def held_show(*a, **k):
+            out = show(*a, **k)
+            hold("after its play_source")
+            return out
+
+        def held_off(*a, **k):
+            hold("during its settle after a Stop")
+            return off(*a, **k)
+
+        def held_fade(*a, **k):
+            hold("during its own dip")
+            return fade(*a, **k)
+        engine.playable, engine._watch, engine.show, engine.off, vibes._fade = held_playable, held_watch, held_show, held_off, held_fade
+        # The worker waits until the rotation has done all it does on its way out: the worst order for the wish,
+        # and the one the box has when the GPU's look takes seconds. (Left to race, the worker usually came first
+        # and a rotation that still took the screen after it was ended went unseen.)
+        self.gate = threading.Event()
+        self.gate.set()
+        self.addCleanup(self.gate.set)
+        pump = engine.changer.pump
+        engine.changer.pump = lambda: (self.gate.wait(10), pump())[1]
+
+    def after_the_rotation(self):
+        """Let the rotation go on, wait until its change is over (and its settle), then let the worker work."""
+        self.go.set()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if self.vibes._work.acquire(blocking=False):
+                self.vibes._work.release()
+                if self.vibes._thread is None or not self.vibes._thread.is_alive():
+                    break
+            time.sleep(0.01)
+        time.sleep(0.05)
+        self.gate.set()
+
+    def _refusals_clear(self):
+        self.engine._checked.clear()
+        FakeTap.lines = []
+
+    def vibes_shows(self):
+        return [c for c in self.player.calls if c[0] == "play_source"]
+
+    WINDOWS = ("before its compose", "during the GPU's look", "after its play_source", "during its own dip")
+
+    def wish(self, kind):
+        if kind == "pad":
+            self.assertEqual(self.tap(0, device={"id": "midi"})["pending"], True)
+            return ONE
+        self.assertTrue(self.engine.apply_preset({"id": TWO, "name": "P"})["ok"])
+        return TWO
+
+    def one(self, window, kind):
+        if window == "during its own dip":
+            self.player.play([os.path.join(self.media, "a.mp4")])      # a picture is on: the rotation dips before its shader
+        self.where = window
+        self.vibes.start()
+        self.assertTrue(self.reached.wait(10), "Vibes never came to %r: nothing is tested" % window)
+        self.assertTrue(self.vibes.running)
+        shown_before = len(self.vibes_shows())
+        self.gate.clear()
+        want = self.wish(kind)
+        self.assertFalse(self.vibes.running)
+        calls = len(self.player.calls)
+        self.after_the_rotation()
+        ok = self.wait(lambda: self.on() == want and self.engine.changer.newest() is None, 8)
+        self.assertTrue(ok, "%s, a controller's %s: on the screen is %s (the player's shader %s), expected %s; the journal: %s"
+                        % (window, kind, self.on(), self.player.source_shader and "one", want, self.said[-2:]))
+        time.sleep(0.3)                                                 # and it stays: the rotation's thread has settled
+        self.assertEqual((self.on(), self.vibes.running), (want, False), window)
+        self.assertIsNotNone(self.player.source_shader, "the screen is black")
+        self.assertNotIn(("clear",), self.player.calls[calls:], "%s: the rotation cleared the screen to black on its way out, "
+                         "though a shader had been chosen" % window)
+        return shown_before
+
+
+def _vibes_case(window, kind):
+    def test(self):
+        self.one(window, kind)
+    return test
+
+
+for _window in WhileVibesChanges.WINDOWS:
+    for _kind in ("pad", "preset"):
+        setattr(WhileVibesChanges, "test_a_controllers_%s_%s" % (_kind, _window.replace("'", "").replace(" ", "_")), _vibes_case(_window, _kind))
+
+
+class WhileVibesEnds(WhileVibesChanges):
+    """The same for a rotation that is being stopped, and what a rotation that was ended may still do."""
+
+    def test_a_rotation_that_was_ended_puts_nothing_on_afterwards(self):
+        # held before it composes its next shader, ended by the tap: it used to put that shader on all the same,
+        # for a moment, over the screen the tapped shader was about to take
+        self.where = "before its compose"
+        self.vibes.start()
+        self.assertTrue(self.reached.wait(10))
+        self.gate.clear()
+        self.tap(0, device={"id": "midi"})
+        shown = []
+        real = self.player.play_source
+
+        def play_source(*a, **k):
+            shown.append(threading.current_thread().name)
+            return real(*a, **k)
+        self.player.play_source = play_source
+        self.after_the_rotation()
+        self.assertTrue(self.wait(lambda: self.on() == ONE and self.engine.changer.newest() is None, 8))
+        time.sleep(0.3)
+        self.assertNotIn("vibes", shown, "the rotation put a shader on after it was ended")
+
+    def stopped_then(self, kind):
+        self.where = None
+        self.vibes.start()
+        self.assertTrue(self.wait(lambda: self.vibes.started and self.vibes.current is not None, 10), "Vibes never showed a shader")
+        self.where = "during its settle after a Stop"
+        self.vibes.stop()                                               # as a Room scene's stop: it returns at once
+        self.assertTrue(self.reached.wait(10), "the rotation's thread never came to clear the screen: nothing is tested")
+        self.gate.clear()
+        want = self.wish(kind)                                          # straight after the Stop, before its clear
+        self.after_the_rotation()
+        self.assertTrue(self.wait(lambda: self.on() == want and self.engine.changer.newest() is None, 8),
+                        "a %s right after a Stop of Vibes: on the screen is %s, expected %s; the journal: %s" % (kind, self.on(), want, self.said[-2:]))
+        time.sleep(0.3)
+        self.assertEqual(self.on(), want)
+
+    def test_a_pad_right_after_a_stop_of_vibes_is_shown(self):
+        self.stopped_then("pad")
+
+    def test_a_preset_of_another_shader_right_after_a_stop_of_vibes_is_shown(self):
+        self.stopped_then("preset")
+
+    def test_a_stop_of_vibes_during_the_gpus_look_and_a_pad_right_after_it(self):
+        self.where = "during the GPU's look"
+        self.vibes.start()
+        self.assertTrue(self.reached.wait(10))
+        self.vibes.stop()
+        self.gate.clear()
+        self.tap(0, device={"id": "midi"})
+        self.after_the_rotation()
+        self.assertTrue(self.wait(lambda: self.on() == ONE and self.engine.changer.newest() is None, 8), (self.on(), self.said[-2:]))
+
+    def test_the_worker_looks_again_when_the_rotations_clear_came_after_it_read_the_epoch(self):
+        # the other order: the worker has read what the job's epoch stands for, and only then does the rotation's
+        # clear move it. The player refuses the job; the move was noted in the same step, and the worker, looking
+        # again under the player's lock, tries with the new epoch.
+        self.where = None
+        self.engine.show(TWO)                                           # as the rotation's shader, on the screen
+        was = self.player.source_epoch
+        real, first = type(self.engine).play.__get__(self.engine), []
+
+        def play(*a, **k):
+            if k.get("queued") and not first:
+                first.append(1)
+                self.assertIsNotNone(self.engine.off(was, adopt=True))  # the rotation's clear on its way out, right now
+            return real(*a, **k)
+        self.engine.play = play
+        self.tap(0, device={"id": "midi"})
+        self.assertTrue(self.wait(lambda: self.on() == ONE and self.engine.changer.newest() is None, 8), (self.on(), self.said[-2:]))
+        self.assertEqual(first, [1])
+
+    def test_a_stop_of_vibes_alone_still_clears_the_screen(self):
+        self.where = None
+        self.vibes.start()
+        self.assertTrue(self.wait(lambda: self.vibes.started and self.vibes.current is not None, 10))
+        self.vibes.stop()
+        self.assertTrue(self.wait(lambda: self.player.source_shader is None and self.on() is None, 8), "a Stop of Vibes left its shader on")
+
+    def test_a_queued_wish_that_is_dropped_says_so_in_the_journal(self):
+        self.where = None
+        with self.engine._lock:
+            self.tap(0, device={"id": "midi"})
+            self.player.play([os.path.join(self.media, "a.mp4")])
+        self.assertTrue(self.wait(lambda: any("was not shown" in line for line in self.said), 8), self.said)
+        self.assertIn(ONE, next(line for line in self.said if "was not shown" in line))
+
+
+for _name in list(vars(WhileVibesChanges)):
+    if _name.startswith("test_a_controllers_"):
+        setattr(WhileVibesEnds, _name, None)        # the table is WhileVibesChanges' own: not run a second time here
+
+
 class FromEverywhere(PadBase):
     """Every way a pad can be played. A controller does not wait for the GPU: its tap is queued for the engine's
     worker, as its own shader actions are."""
@@ -1103,7 +1345,17 @@ class FromEverywhere(PadBase):
         self.vibes.start()
         self.assertTrue(self.vibes.tick())
         self.assertEqual(lights(), ["on", "on", "on"], "a pad is lit as playing while Vibes shows a shader")
+        # and the pad that holds the very shader Vibes shows (the fifth read: Vibes showed one that was on no pad
+        # here, so the rule "not while Vibes shows it" was held by nothing)
+        shown = self.vibes.current
+        self.give(4, shown)
+        hub2 = midi.MidiHub(self.api, self.settings, log=lambda *_: None, lister=lambda: [], clock=time.monotonic)
+        snap = hub2._snapshot(time.monotonic(), True)
+        self.assertEqual((snap["shader"], snap["vibes"]), (shown, True))
+        self.assertEqual(midi.light_state({"action": "pad", "bank": 0, "index": 4}, snap), "on", "the pad of the shader Vibes shows is lit as playing")
         self.vibes.stop()
+        self.tap(4)
+        self.assertEqual(midi.light_state({"action": "pad", "bank": 0, "index": 4}, hub2._snapshot(time.monotonic(), True)), "active")
 
     def test_the_preset_lights_are_off_under_a_clip(self):
         # from the first round's own list: the engine remembers the shader it showed last, and the lights of its
@@ -1131,6 +1383,43 @@ class FromEverywhere(PadBase):
         self.assertEqual(again.data["pads"]["banks"][0]["pads"][0]["preset"], "Gentle")
         self.tap(0)
         self.assertEqual(self.engine.on_screen()["preset"], "Gentle")
+
+    def test_the_library_says_how_many_pads_start_a_shader_with_each_preset(self):
+        self.a_preset(name="Slow")
+        self.give(0, ONE, preset="Slow")
+        self.give(1, ONE, preset="Slow")
+        self.give(2, ONE)
+        row = next(s for s in self.engine.state()["shaders"] if s["id"] == ONE)
+        self.assertEqual((row["pads"], row["preset_pads"]), (3, {"Slow": 2}))
+        self.assertEqual(next(s for s in self.engine.state()["shaders"] if s["id"] == TWO)["preset_pads"], {})
+
+    def test_the_status_carries_the_last_refusal_for_the_live_page(self):
+        # medium, the fifth read: a controller's tap the GPU refused was said on the Shaders page only
+        self.player.vo = "gpu"
+        self.give(0, ONE)
+        self.assertNotIn("shader_refused", self.api.status({}, None, "t")["player"])
+        FakeTap.lines = REFUSAL
+        self.assertEqual(self.tap(0, device={"id": "midi"})["pending"], True)
+        self.assertTrue(self.wait(lambda: "shader_refused" in self.api.status({}, None, "t")["player"]))
+        said = self.api.status({}, None, "t")["player"]["shader_refused"]
+        self.assertEqual(said["id"], ONE)
+        self.assertIn("The screen is black", said["message"])           # nothing was on before it: not "keeps what it had"
+        self.assertEqual((self.on(), self.player.source_shader), (None, None))
+        FakeTap.lines = []
+        self.tap(0)                                                     # shown: the refusal is over
+        self.assertNotIn("shader_refused", self.api.status({}, None, "t")["player"])
+
+    def test_the_queues_record_of_its_own_epochs_does_not_grow_with_the_jobs(self):
+        self.give(0, ONE)
+        self.give(1, TWO)
+        for n in range(30):
+            self.tap(n % 2, device={"id": "midi"})
+            self.assertTrue(self.wait(lambda: self.on() == (ONE, TWO)[n % 2] and self.engine.changer.newest() is None))
+        self.assertLessEqual(len(self.engine._chain[0]), 6, self.engine._chain)
+        for n in range(40):
+            self.engine.adopt(1000 + n, 2000 + n)
+        from pvj import shaderlive
+        self.assertLessEqual(len(self.engine._adopted), shaderlive.ADOPTED)
 
     def test_the_library_says_how_many_pads_hold_a_shader(self):
         self.give(0, ONE)

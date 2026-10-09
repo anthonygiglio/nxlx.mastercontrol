@@ -2787,6 +2787,30 @@ function startServer() {
       await page.click('.pad >> nth=0');
       await page.waitForFunction(() => /intro/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
       await page.waitForFunction(() => !document.querySelector('.pad.shader.on'));
+      // A pad's shader that the box's graphics chip refused is said where the pads are: one line under them, and
+      // the pad marked. (The box's answer is given a refusal here: the harness's player refuses nothing.)
+      {
+        const message = "the player refused nxlx-aurora.fs: line 12: `oops' undeclared. The screen is black.";
+        assert.strictEqual(await page.locator('#padrefused').count(), 0, 'nothing is said while nothing was refused');
+        let refused = true;
+        await page.route('**/api/status', async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          if (refused) body.player.shader_refused = { id: 'nxlx-aurora.fs', message, at: '2026-10-09 12:00:00' };
+          await route.fulfill({ response, json: body });
+        });
+        await page.waitForSelector('#padrefused');
+        assert.strictEqual(await page.textContent('#padrefused'), "A pad's shader was not shown. The box refused nxlx-aurora.fs: line 12: `oops' undeclared. The screen is black.");
+        assert.deepStrictEqual(await page.$$eval('.pad', (els) => els.map((el, i) => (el.classList.contains('refused') ? i : -1)).filter((i) => i >= 0)), [5]);
+        const fits = await page.evaluate(() => {
+          const line = document.getElementById('padrefused').getBoundingClientRect(), pads = document.getElementById('pads').getBoundingClientRect();
+          return { right: line.right, wide: window.innerWidth, page: document.documentElement.scrollWidth, under: line.top >= pads.bottom - 1 };
+        });
+        assert(fits.right <= fits.wide && fits.page <= fits.wide && fits.under, 'the refusal sticks out, or is not under the pads: ' + JSON.stringify(fits));
+        refused = false;
+        await page.waitForFunction(() => !document.getElementById('padrefused') && !document.querySelector('.pad.refused'));
+        await page.unroute('**/api/status');
+      }
       // Which pad is "the one playing": two pads with the same shader and different presets, only the one whose
       // preset is on is marked; and none while Vibes is the one showing that shader.
       {

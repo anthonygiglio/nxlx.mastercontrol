@@ -306,15 +306,22 @@ class Api:
         way cannot land after a level set under it."""
         return getattr(self.fader, "stepping", None) or locks.make("fader.stepping")
 
-    def _show_level(self, mark=None):
+    def _show_level(self, mark=None, rise=False):
         """Set the picture's level to what the mix says now (dark under Blackout, the mix opacity otherwise) and
         take the fader, unless somebody has taken it since `mark` (see the rule above): then nothing is touched and
         False is returned. Without a mark it is always done. The look, the taking and the write are one step, and
-        the mix is read inside it, so of two that meet the later one has the last word and reads the newer state."""
+        the mix is read inside it, so of two that meet the later one has the last word and reads the newer state.
+        With `rise` (a shader chosen by hand or by a pad), a screen the operator had faded out comes up from black
+        over half the Mix's duration, as a clip does after a Fade out, and does not jump to full."""
         with self._levels():
             current = getattr(self.fader, "current", None)
             if mark is not None and current is not None and not current(mark):
                 return False
+            faded_out = getattr(self.fader, "label", None) == "out"
+            if rise and faded_out and not self.mix["blackout"] and getattr(self.fader, "ramp", None) is not None:
+                self._apply_opacity(0)
+                self.fader.ramp(0, self.mix["opacity"], self.settings.data["mix"]["duration"] / 2)
+                return True
             self.fader.cancel()
             self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
             return True
@@ -434,7 +441,17 @@ class Api:
 
     def status(self, body, device, client):
         temps = hardware.temperatures()
-        return {"player": self._public_player_status(), "mix": dict(self.mix, **self._mix_settings()),
+        player = self._public_player_status()
+        # What the GPU last refused, for the Live page, where the pads are: a controller's tap of a shader pad
+        # answers before the GPU has looked, so its refusal has no answer to ride on (D73). From the engine's own
+        # record: the player is asked nothing more.
+        try:
+            refused = self.shaders.error if self.registry.enabled("shaders") else None
+        except Exception:
+            refused = None
+        if isinstance(refused, dict) and refused.get("id"):
+            player["shader_refused"] = {"id": refused["id"], "message": refused.get("message", ""), "at": refused.get("at", "")}
+        return {"player": player, "mix": dict(self.mix, **self._mix_settings()),
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner()}
@@ -926,11 +943,19 @@ class Api:
             if e.status != 404:
                 raise
             raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+        said = {}
         if preset is not None:
             try:
                 preset = self._shader_preset(sid, preset)
             except ApiError:
-                raise ApiError(404, "this pad's preset of %s is gone (deleted or renamed): choose another for the pad" % sid)
+                # The pad's preset was deleted (a rename carries the pads): the shader is there, so it is shown
+                # with its own start, as Vibes does for a set that names a preset that is gone, and the answer and
+                # the journal say so. (It used to refuse the tap.)
+                said["note"] = "this pad's preset, %s, is gone: the shader starts as it does by itself. Choose a preset for the pad again" % preset
+                log = getattr(self, "log", None)
+                if log is not None:
+                    log("pvj-web: a pad's preset of %s is gone (%s); shown with the shader's own start" % (sid, preset))
+                preset = None
         try:
             engine._parsed(path)                    # before Vibes is ended: a file that no longer reads shows nothing
         except ValueError as e:
@@ -938,9 +963,9 @@ class Api:
         if isinstance(device, dict) and device.get("id") in CONTROLLERS:
             self.vibes.yield_screen()               # now, at the tap: the worker never ends a rotation
             engine.queue_show(sid, preset)          # with the epoch and the level's mark of this moment
-            return {"playing": sid, "shader": sid, "pending": True}
+            return dict({"playing": sid, "shader": sid, "pending": True}, **said)
         engine.play(sid, None, None, preset)
-        return {"playing": sid, "shader": sid}
+        return dict({"playing": sid, "shader": sid}, **said)
 
     @staticmethod
     def _ending(body, default):

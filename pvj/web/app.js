@@ -323,6 +323,23 @@
     }
     return !!(pl.path && pad.file && base(pl.path) === pad.file);
   }
+  // A shader pad whose shader the box's graphics chip refused (D73): said where the pads are, in one line under
+  // them, and marked on the pad. A controller's tap is answered before the chip has looked, so its refusal has no
+  // answer to ride on; the box's status carries the last refusal (player.shader_refused) until that shader shows.
+  function padRefusal(pads, pl) {
+    var r = pl.shader_refused, line = document.getElementById('padrefused');
+    var held = !!(r && (S.banks || []).some(function (b) { return (b.pads || []).some(function (p) { return padShader(p) === r.id; }); }));
+    ((S.banks[S.bank] || {}).pads || []).forEach(function (p, i) {
+      if (pads.children[i]) pads.children[i].classList.toggle('refused', held && padShader(p) === r.id);
+    });
+    if (!held) { if (line && line.parentNode) line.parentNode.removeChild(line); return; }
+    if (!line) {
+      line = h('div', { class: 'hint warn', id: 'padrefused', role: 'status' });
+      pads.parentNode.insertBefore(line, pads.nextSibling);
+    }
+    var text = 'A pad\'s shader was not shown. ' + String(r.message || '').replace(/^the player refused /, 'The box refused ');
+    if (line.textContent !== text) line.textContent = text;
+  }
   function padButton(bank, index, pad) {
     var held = padShader(pad);
     var playing = padPlaying(pad, (S.status && S.status.player) || {});
@@ -491,6 +508,7 @@
         el.classList.toggle('on', !!playing);
         el.setAttribute('aria-pressed', playing ? 'true' : 'false');
       });
+      padRefusal(pads, pl);
     }
   }
   function openSheet(bank, index) { S.sheet = { bank: bank, index: index }; render(); }

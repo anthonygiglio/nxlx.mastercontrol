@@ -22,6 +22,15 @@ Branch `transitions`, #111, still a draft. Nothing high; D71 has "After the nint
 - **A test of this session's own was flaky at first** (the Fade out test, two runs in ten): it looked at the calls before the fade's thread had written its last step and started from a dip that was still on its way. It waits for the dark and starts from a cut; twelve runs of twelve since.
 - **Open:** X1 to X23 with somebody at the monitor.
 
+## 2026-10-09, the night (the fifth read of #114, by another model: a pad during a Vibes change)
+
+Branch `shader-pads`, #114, with `transitions` at 82e1a82 merged in. One high that four reads had missed; D73 has "After the fifth read". **Nothing was run on hardware.**
+
+- **The high:** a controller's shader pad tapped while Vibes was changing shaders left the screen black, silently. A rotation ended for a chosen shader no longer clears the screen and puts nothing more on; what it still moves on its way out is noted for the engine's queue in the same step, and the worker looks again when it is refused. Tested with Vibes' own thread held in each place of a change (the table is in D73), for a pad and for a controller's preset, and for a Stop followed by either.
+- **Also:** the Live page says a refusal by the GPU under the pads; the light's rule under Vibes has a test that holds it; a shader comes up from black after a Fade out; a pad whose preset was deleted shows its shader; the queue's record does not grow.
+- **Tests:** `tests/test_shader_pads.py` has 110. Twelve faults put back one at a time: eleven failed a test at once; the twelfth (the worker not looking again) failed nothing once the tests took the worst order, so it has a test of its own for the other order.
+- **Open:** P1 to P7; the effects' own queue; an error state for the controllers' lights.
+
 ## 2026-10-09, the afternoon (shaders on pads, D73)
 
 Branch `shader-pads`, stacked on `transitions` (#111) at cfcacc5; one pull request against master, to merge after #111. The owner asked for shaders on pads and effects over shaders; this is the first, the second is another session's. **Nothing was run on hardware.**

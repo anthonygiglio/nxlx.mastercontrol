@@ -42,6 +42,7 @@ MAX_SETS = 16
 MAX_SET_ENTRIES = 128
 SET_ID = re.compile(r"[0-9a-f]{8}")
 DEFAULT_PRESET = "default"
+ADOPTED = 8                     # epochs kept that Vibes moved on its way out (see LiveEngine.adopt)
 STEP_ENTRIES = 8                # waiting steps are kept as at most this many sums (see Changer.step)
 
 
@@ -754,6 +755,7 @@ class LiveEngine(S.Engine):
         self._chain = None
         self._place = None                          # (epoch, place in the set, shader) of a step whose shader did not stay: the worker's too
         self._job = threading.local()               # .doing: the queued job this thread is carrying out (the worker only)
+        self._adopted = {}                          # epoch -> the epoch Vibes made of it while it was being ended: see adopt
         self.guard = Guard(self, clock)
         self._refusals = {}                         # source hash -> what the GPU said; a changed file has another hash
         # Settings are edited under this lock, never under the engine's own: that one is held while the GPU looks at a
@@ -834,20 +836,24 @@ class LiveEngine(S.Engine):
         members = {e["id"] for e in self.rotation(None, cfg, rows)["shaders"]}
         heavy = self.heavy_here(cfg)
         on = self.on_screen() if self.enabled() else None
-        pads = {}
+        pads, with_preset = {}, {}
         try:
             for bank in self.api.settings.data["pads"]["banks"]:
                 for pad in bank["pads"]:
                     if not pad.get("file") and isinstance(pad.get("shader"), str):
                         pads[pad["shader"]] = pads.get(pad["shader"], 0) + 1
+                        if isinstance(pad.get("preset"), str) and pad["preset"]:
+                            key = (pad["shader"], pad["preset"])
+                            with_preset[key] = with_preset.get(key, 0) + 1
         except (AttributeError, KeyError, TypeError):
-            pads = {}
+            pads, with_preset = {}, {}
         for s in rows:
             sid = s["id"]
             s["weight"], s["measured"] = weight_of(sid, s["cost"]), measured(sid)
             s["heavy"] = heavy.get(sid)
             s["presets"] = [p["name"] for p in cfg.get("presets", {}).get(sid, [])]
             s["pads"] = pads.get(sid, 0)            # how many pads hold it (D73): a Remove says so before it is done
+            s["preset_pads"] = {name: n for (shader, name), n in with_preset.items() if shader == sid}     # and per preset, for its Delete
             s["refused"] = None
             if not s["error"]:
                 try:
@@ -1279,8 +1285,24 @@ class LiveEngine(S.Engine):
         job["made"] = [epoch]                       # what it starts from, then what it makes
         self._job.doing = job
         try:
-            self.play(job["id"], job.get("values"), job.get("controls"), job.get("preset"), epoch=epoch, queued=True,
-                      mark=job["mark"] if "mark" in job else S.Engine.NOW)
+            for _ in range(3):
+                shown = self.play(job["id"], job.get("values"), job.get("controls"), job.get("preset"), epoch=epoch, queued=True,
+                                  mark=job["mark"] if "mark" in job else S.Engine.NOW)
+                if shown is not None:
+                    break
+                # Refused: the epoch moved after it was read here. If the rotation moved it on its way out, that is
+                # noted in the same step as the move (adopt), under the player's lock: looked at again under that
+                # lock, the epoch this job carries now stands for the new one, and the job is tried with it.
+                player = self.api.player
+                with (getattr(player, "_lock", None) or locks.make("player")):
+                    again = self._alias(job["epoch"])
+                if again == epoch:
+                    break
+                epoch = again
+                job["made"] = [epoch]
+            if shown is None:                       # never silent: a wish that was dropped says so in the journal
+                self.log("pvj-web: shader %s, asked for from a controller, was not shown: something else was played or "
+                         "stopped after it was asked for" % job["id"])
         except ApiError as e:
             self.error = {"id": job["id"], "message": e.message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
         finally:
@@ -1288,9 +1310,11 @@ class LiveEngine(S.Engine):
             if len(job["made"]) > 1:                # it took the screen, whatever came of it afterwards
                 # If it started from where the job before it left, the epochs that job made stand for this one's
                 # last too: a wish that waited through both (a step behind a pad's tap, pressed while the worker
-                # was busy with the job before the tap) is still only behind the queue's own jobs.
-                before = self._chain[0] if self._chain is not None and self._chain[1] == epoch else frozenset()
-                self._chain = (before | frozenset(job["made"]), job["made"][-1])
+                # was busy with the job before the tap) is still only behind the queue's own jobs. Only the job
+                # before: the set does not grow with the jobs.
+                made = frozenset(job["made"])
+                before = self._chain[2] if self._chain is not None and self._chain[1] == epoch else frozenset()
+                self._chain = (before | made, job["made"][-1], made)
             if "steps" in job:
                 # Where the next step counts from if this one's shader did not stay (the GPU refused it): its place
                 # in the set, good while nothing else takes the screen. A shown shader needs none: it is on.
@@ -1299,8 +1323,29 @@ class LiveEngine(S.Engine):
                 self._place = None if stays else (job["made"][-1], job["place"], job["id"])
 
     def _alias(self, epoch):
-        """`epoch` as the queue reads it: one that the worker's last job itself made stands for the one it left."""
-        return self._chain[1] if self._chain is not None and epoch in self._chain[0] else epoch
+        """`epoch` as the queue reads it: one that the worker's last job itself made stands for the one it left, and
+        one that the rotation moved on its way out (adopt) for where it moved it to."""
+        for _ in range(ADOPTED + 2):
+            if self._chain is not None and epoch in self._chain[0] and epoch != self._chain[1]:
+                epoch = self._chain[1]
+            elif epoch in self._adopted:
+                epoch = self._adopted[epoch]
+            else:
+                break
+        return epoch
+
+    def adopt(self, before, after):
+        """Vibes, while it was being ended, moved the player's epoch from `before` to `after`: its next shader had
+        already taken the screen when the wish that ended it came, or its stop cleared the screen. A wish queued
+        for the worker carries the epoch of its own moment, which may be `before`; it is the wish that ended the
+        rotation (or came right after its Stop), so the rotation's own last moves must not refuse it. Without
+        this a controller's pad tapped while Vibes changed shaders left the screen black and said nothing (the
+        fifth read of #114). Called from Vibes' thread; a plain dict, a few entries."""
+        if before is None or after is None or before == after:
+            return
+        self._adopted[before] = after
+        while len(self._adopted) > ADOPTED:
+            self._adopted.pop(next(iter(self._adopted)), None)
 
     def _resolve_steps(self, job):
         """Turn the steps that waited into one shader to show, now, in the worker: the only place that knows what
@@ -1372,10 +1417,10 @@ class LiveEngine(S.Engine):
             job["mark"] = mark
         self.changer.show(job)
 
-    def off(self, epoch=None):
+    def off(self, epoch=None, adopt=False):
         if epoch is None:                           # the module was switched off: what was waiting goes too
             self.changer.clear()
-        return super().off(epoch)
+        return super().off(epoch, adopt)
 
     def play(self, sid, values=None, controls=None, preset=None, epoch=None, queued=False, mark=S.Engine.NOW):
         """Show one shader by hand: with the values given, else its named preset, else its "default" preset, else the
