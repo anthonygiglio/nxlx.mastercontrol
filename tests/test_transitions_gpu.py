@@ -157,6 +157,63 @@ class CrossCase(FxCase):
         self.assertNotIn("fallback", self.api.status({}, None, "t")["mix"])
         self.nothing_left()
 
+    def test_after_stop_the_clip_just_starts(self):
+        """On a box the player always runs; after Stop it has nothing loaded, and there is nothing to take a still of."""
+        with open(os.path.join(self.media, "cyan.png"), "wb") as f:
+            f.write(png(320, 180, PICTURE))
+        self.settings.data["mix"] = T.stored("crossfade", 0.8)
+        self.api.control({"action": "stop"}, None, "t")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and self.real.ipc.request("get_property", "idle-active") is not True:
+            time.sleep(0.05)
+        self.assertTrue(self.api.player.status().get("running"), "the player runs with nothing loaded: the case this test is for")
+        lines = []
+        self.tr.log = lines.append
+        self.api.play({"file": "cyan.png"}, None, "t")
+        self.assertIsNone(self.tr.running)
+        self.assertEqual(lines, [], "the first play after a Stop wrote a line about a still that failed")
+        self.assertIs(self.real.ipc.request("get_property", "pause"), False)
+        self.assertLessEqual(far(self.still(flat=True)[H // 2][W // 2], PICTURE), 24)
+
+    def test_through_the_mapper_itself(self):
+        """The real projection mapping, switched on through its engine, and the panel's play: the still shows the
+        surface where it is, and the surface then shows the new picture."""
+        with open(os.path.join(self.media, "cyan.png"), "wb") as f:
+            f.write(png(320, 180, PICTURE))
+        self.settings.data["mix"] = T.stored("crossfade", 1.2)
+        self.api.registry.set_enabled("mapper", True)
+        self.api.mapper.handle({"action": "add", "type": "quad"})
+        self.api.mapper.handle({"action": "on", "on": True})
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and self.api.mapper.state()["status"]["state"] != "on":
+            time.sleep(0.1)
+        self.assertEqual(self.api.mapper.state()["status"]["state"], "on")
+        old = self.still()
+        self.assertEqual(old[4][4], (0, 0, 0), "outside the surface")
+        self.api.play({"file": "cyan.png"}, None, "t")
+        seen = self.watch()
+        self.through(seen, old[H // 2][W // 2], PICTURE, "under the projection mapping")
+        after = self.still(flat=True)
+        self.assertEqual(after[4][4], (0, 0, 0), "the still left something outside the surface")
+        self.assertLessEqual(far(after[H // 2][W // 2], PICTURE), 24)
+        self.api.mapper.handle({"action": "on", "on": False})
+
+    def test_an_effect_put_on_during_it_changes_the_new_clip_and_the_still_goes_on(self):
+        self.fx.upload("invert.fs", INVERT)
+        old = self.still()
+        self.assertTrue(self.tr.hold("crossfade"))
+        self.under()
+        self.tr.run(3.0)
+        time.sleep(0.3)
+        self.put("invert.fs")                           # the player sets its renderer up anew under the still
+        self.assertEqual(self.tr.running, "crossfade", "putting an effect on ended the transition: %s" % self.tr.last)
+        mid = self.middle()
+        self.assertLess(far(mid, old[H // 2][W // 2]), 0.8 * far(old[H // 2][W // 2], tuple(255 - c for c in BLUE)), "the still was gone after the effect went on")
+        self.watch()
+        self.assertEqual(self.tr.last["ended"], "done")
+        self.assertGreater(far(self.still(flat=True)[H // 2][W // 2], BLUE), 150, "the effect is not on the new clip")
+        self.fx.off()
+
     def test_a_frozen_clip_is_blended_from(self):
         with open(os.path.join(self.media, "cyan.png"), "wb") as f:
             f.write(png(320, 180, PICTURE))

@@ -1059,9 +1059,14 @@ class Api:
         on = body.get("on")
         if not isinstance(on, bool):
             raise bad("on must be true or false")
-        self._settle()
+        self.fader.cancel()
         self.mix["blackout"] = on
-        self._player_call(self.player.opacity, 0 if on else round(self.mix["opacity"] * 2.55))
+        try:
+            self._player_call(self.player.opacity, 0 if on else round(self.mix["opacity"] * 2.55))
+        finally:
+            # After the picture went dark, not before: ending a transition can wait for a still that is being
+            # taken, and the dark must not wait with it. (A still taken meanwhile is not laid down: it sees the end.)
+            self.transitions.end()
         return {"blackout": on}
 
     def fadeout(self, body, device, client):

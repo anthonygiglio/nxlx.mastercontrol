@@ -271,9 +271,12 @@ class Crossfade(Base):
         self.assertEqual(self.left(), [])
 
     def test_a_player_that_went_idle_is_not_waited_for(self):
-        self.player.props.update({"time-pos": GONE, "seeking": GONE, "idle-active": True})
+        # the new clip could not be opened: the player has nothing loaded any more
+        self.player.props.update({"time-pos": GONE, "seeking": GONE})
+        self.player.play = lambda *a, **kw: self.player.props.update({"idle-active": True})
         self.play()
         self.assertAlmostEqual(self.now[0], 51.0, places=6)
+        self.assertEqual(self.tr.last["ended"], "done")
 
     # -- what ends it --
     def ended_by(self, act, why=None):
@@ -287,7 +290,26 @@ class Crossfade(Base):
 
     def test_blackout_ends_it_at_once(self):
         self.ended_by(lambda: self.api.blackout({"on": True}, None, "t"))
-        self.assertEqual(self.player.calls[-1], ("opacity", 0))
+        self.assertEqual(self.player.calls[-2:], [("opacity", 0), ("overlay_remove", T.OVERLAY_ID)], "dark first, then the still goes")
+
+    def test_a_blackout_that_comes_while_the_still_is_taken_keeps_it_off_the_screen(self):
+        real = self.player.still
+
+        def during(path):
+            real(path)
+            self.tr._ended += 1             # what end() does first, before it waits for the lock this still holds
+        self.player.still = during
+        self.play()
+        self.assertNotIn("overlay", self.names(), "a still was laid over a screen that had just gone dark")
+        self.assertIn("play", self.names())
+        self.assertEqual(self.left(), [])
+
+    def test_a_player_that_runs_with_nothing_loaded_has_nothing_to_blend_from(self):
+        # on a box the player always runs: after Stop and at power-up it is idle, and `running` is still true
+        self.player.props["idle-active"] = True
+        self.play()
+        self.assertEqual(self.names(), ["play", "opacity"])
+        self.assertEqual(self.lines, [], "the ordinary first play is not worth a line in the journal")
 
     def test_stop_ends_it_at_once(self):
         self.ended_by(lambda: self.api.control({"action": "stop"}, None, "t"))

@@ -155,6 +155,7 @@ class Transitions:
         self.log = log or (lambda line: None)
         self._lock = threading.RLock()      # the token, the still and every overlay command of a transition
         self._token = 0
+        self._ended = 0                     # goes up at every end(), without the lock: a still being taken checks it
         self._still = None                  # (width, height, pixels) while a transition holds or runs
         self._pid = None                    # the player the still was given to: a restarted one never had it
         self._frozen = True                 # False while the outgoing clip is frozen by the transition, not by somebody
@@ -197,12 +198,18 @@ class Transitions:
                 return False
         except Exception:
             return False
-        began = self._clock()
+        began, ended = self._clock(), self._ended
         path = os.path.join(player.rundir, "transition-%d.png" % os.getpid())
         with self._lock:
             self._token += 1
             self._frozen = True
             try:
+                # A player that runs with nothing loaded (after Stop, at power-up: on a box the player always
+                # runs) has no picture to take a still of. No word in the log: this is the ordinary first play.
+                if player.ipc.request("get_property", "idle-active") is True:
+                    if self._still is not None:
+                        self._drop()
+                    return False
                 size = player.osd_size()
                 if not size or size[0] * size[1] > MAX_PIXELS:
                     raise StillError("no screen size")
@@ -215,6 +222,8 @@ class Transitions:
                 os.close(fd)
                 player.still(path)
                 w, h, pixels = read_still(path, size)
+                if ended != self._ended:        # a Blackout or a Stop came while the still was taken: it must not
+                    raise StillError("ended while the still was taken")     # be laid over the dark screen
                 player.overlay(OVERLAY_ID, 0, 0, w, h, pixels)
             except (PlayerError, StillError, OSError) as e:
                 self.log("pvj-web: no %s, a cut instead: %s" % (name, e))
@@ -248,6 +257,7 @@ class Transitions:
     def end(self, why="ended"):
         """Take the still off now. Called by everything the still would be wrong over: Blackout, a fade, a change of
         opacity, Stop, another way of playing. Nothing happens when no transition runs."""
+        self._ended += 1                    # seen at once by a still that is being taken (it holds the lock meanwhile)
         with self._lock:
             self._token += 1
             if self._still is not None:

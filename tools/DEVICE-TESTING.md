@@ -207,7 +207,7 @@ Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between cli
 | # | Do | Look for | Send back |
 | --- | --- | --- | --- |
 | X1 | Play A1, then A2 | A1 freezes, then melts into A2 over two seconds; A2 moves from its first frame | How long A1 stood still before the fade began (it should be well under a second), and whether the fade looked smooth or stepped |
-| X2 | The same again, three times, with `journalctl -u pvj-web -f` open | No line "crossfade given up" | The line, if one comes: it names the still's time, the steps or the dropped frames |
+| X2 | The same again, three times, with `journalctl -u pvj-web -f` open | No line "crossfade given up" and no line "no crossfade, a cut instead" | The line, if one comes. "given up" names the still's time, the steps or the dropped frames. "a cut instead" with "error running command" or a permission in it means the player could not write the still into the panel's folder (`/run/pvj/web`, a file of group `pvj`); with "rows are not plain bytes" or "not an 8-bit picture" it means this mpv writes its PNG another way than CI's 0.37 did. Either would make every crossfade a cut, and only a box can show it |
 | X3 | During a fade press **Blackout** | Black at once, no picture left behind | Anything that stayed lit |
 | X4 | During a fade press **Stop** | The screen clears at once | |
 | X5 | With **Freeze** on, play A2 | The frozen picture melts into A2, which plays | |
