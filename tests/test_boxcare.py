@@ -721,7 +721,7 @@ class ImportTest(Base):
         before = self.on_disk()
         file["settings"] = {"schema": file["settings"]["schema"], "autostart": {"mode": "pad", "pad": [2, 5]}}
         st, out = self.send(file)                                     # that pad of the box has no clip
-        self.assertEqual((st, out.get("error")), (400, "autostart: the pad it starts has no clip"))
+        self.assertEqual((st, out.get("error")), (400, "autostart: the pad it starts has no clip and no shader"))
         self.assertEqual(self.on_disk(), before)
         file["settings"]["autostart"]["pad"] = [0, 0]                 # this one has
         st, out = self.send(file)

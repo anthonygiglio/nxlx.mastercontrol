@@ -4,6 +4,16 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the afternoon (shaders on pads, D73)
+
+Branch `shader-pads`, stacked on `transitions` (#111) at cfcacc5; one pull request against master, to merge after #111. The owner asked for shaders on pads and effects over shaders; this is the first, the second is another session's. **Nothing was run on hardware.**
+
+- **Built:** a pad holds a generator shader instead of a clip (`shader`, and `preset` if chosen, beside an empty `file`; no schema change). A tap shows it through the one road a generator has, `LiveEngine.play`; from a controller it is queued for the engine's worker, as the controllers' own shader actions are. `set_pad`, the import's check, the autostart's two checks and the MIDI lights know the pad; the schedule cannot name a pad and sync sends "stop" for it as for any shader.
+- **Rollback tried with master's own code** (a4825ae in a scratch copy): loads, kept as written, plays as an empty pad, and the shader is dropped when that pad is edited or the settings are exported on the older release. D73 has it.
+- **The panel:** the word Shader and the name on the pad, Clip or Shader in the pad editor. Looked at as mock-ups of the pad and of the editor with the real stylesheet in headless Edge, in frames 320 and 390 px wide, in both looks: names of any length stay inside. **The running panel was not looked at here** (no Playwright and no mpv on this Mac); the browser test in CI drives it, with a measure of every pad at 320 px.
+- **Tests:** `tests/test_shader_pads.py` (35), one more in `tests/test_boxcare.py`, steps in `tests/ui/panel.test.js`. Five of the new behaviours were broken again on a committed copy and seen to fail. The stress test has the kind "shader pad", and **its whole mutation table was run again** (a to s): r (the shader shown under the player's lock) is caught three of three by the locks; s (two wishes for one tap) is not caught by it and has a test by hand; p went from none of three to three of three since the seventh review's changes; one of n's runs failed for a stall of the machine, not for n.
+- **Open:** P1 to P6 in `tools/DEVICE-TESTING.md`. A pad's preset does not follow a rename of the preset. When `area-desks` (#112) and this meet, the five panel functions named in D73 are where.
+
 ## 2026-10-09, the afternoon (#111 on the test Pi 4 for the first time: every crossfade was given up, and why)
 
 The owner said "deploy to the Pi" in the session. At about 14:01 UTC the box's schema 15 settings were copied to `/root/pvj-backups/settings-schema15-ndi-2026-10-09.json`, the schema 14 copy of 2026-10-08 was put back, and `transitions` at `fcd6bd0` was installed through `pvj-dev` with `install.sh --offline` (five files compared by hash, the five services active, `pvj-selftest` with no failed check, the panel answering 200). The deploy restarted the panel and the player. A full-access device `claude-transitions-test` was paired with the box's PIN to drive the API from the box (its token is in `/home/pvj-dev/.transitions-test-token`); it is to be revoked when the trial ends. The NDI test's device is gone with the schema 15 settings. **Nobody looked at the monitor**; all of the following is from the API, the journal and timings over SSH.
