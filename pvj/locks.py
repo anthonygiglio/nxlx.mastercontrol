@@ -39,7 +39,13 @@ one thread, for an inversion to show; the interleaving that would hang is not ne
 
 Not in the order, because their holders never call into these paths while holding them (read, not checked by the
 machine): the settings' lock, the MIDI, DMX, OSC and sync managers' own locks, the Room's `lock` ("never held while
-talking to a projector or the player"), the projectors', the health checks' and the uploads' locks.
+talking to a projector or the player"), the projectors' and the health checks' locks.
+
+The uploads' lock (Api._upload_lock) is not in the order for another reason, and its holders DO call into these
+paths: the factory reset (pvj/boxcare.py, _reset) holds it across the applying of the new settings, which takes the
+player's and the level's locks. It is only ever tried, never waited for (`acquire(blocking=False)` in all three
+places, with "an upload is running" as the answer), and a lock that nobody waits for cannot be part of a ring of
+waiters. Whoever makes one of those takings wait must give the lock a place here first, before every lock above.
 """
 import threading
 
