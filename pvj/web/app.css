@@ -617,11 +617,11 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .wssub { position: sticky; top: 0; z-index: 11; padding: 8px 16px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
   .wssub .segbtn { flex: 0 1 auto; min-width: 6.5rem; }
   .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  .tpinfo { flex: 1 1 0; min-width: auto; }
+  .tpinfo { flex: 1 1 0; min-width: 13rem; }      /* (what plays keeps a width of its own: the place in the clip is what gives way) */
   .tpscrub, .tp:not(.open) .tpscrub { display: flex; flex: 2 1 0; min-width: 3rem; order: 0; }
   .tp .tpx, .tp #freeze { order: 0; }
   .tp:not(.open) button.tpx { display: inline-block; }
-  .tp .tpspeed, .tp:not(.open) .tpspeed { display: flex; flex: 0 1 150px; }
+  .tp .tpspeed, .tp:not(.open) .tpspeed { display: flex; flex: 0 1 150px; min-width: 110px; }
   .tpgrp { display: flex; gap: 6px; }
   .tp .tpb { min-height: 44px; padding: 0 10px; font-size: inherit; }
   .tp .tpb.keep { min-height: 56px; }
@@ -650,6 +650,15 @@ main.ws:focus, .deskcol:focus { outline: none; }
 }
 @container app (min-width: 1000px) and (max-width: 1439px) {
   .tp .tpscrub, .tp:not(.open) .tpscrub { display: flex; order: 0; }
+}
+/* (from 1440 px, where everything is on the line: until 1600 px it is full, and in a wide typeface it gives a
+   little everywhere before a button goes down a line) */
+@container app (min-width: 1440px) and (max-width: 1599px) {
+  .tp { column-gap: 6px; }
+  .tpgrp { gap: 4px; }
+  .tpinfo { min-width: 11rem; }
+  .tp .tpspeed, .tp:not(.open) .tpspeed { min-width: 96px; }
+  .tp .tpb { padding: 0 8px; }
 }
 @container app (min-width: 1200px) and (max-width: 1439px) {
   .tp #back10, .tp #fwd10, .tp #fadein, .tp #fade { order: 0; }
