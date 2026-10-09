@@ -2313,6 +2313,56 @@ class OverShaderTest(Base):
         self.assertIs(vibes._guard(), True)
         self.assertIn(current, self.settings.data["shaders"]["heavy"])
 
+    def test_a_rotation_and_a_performer_on_the_effect_at_once(self):
+        """Two threads for a second: one shows generator after generator (a rotation's steps), the other puts an
+        effect on, changes it, looks and takes it off. The two engines hold different locks and meet in the
+        player's. Nothing may hang, nothing may raise, and no list the player was given has the effect before the
+        generator. (The order of the locks is checked at every taking by tests/lockrank.py, here as everywhere.)"""
+        self.show()
+        stop, errors = threading.Event(), []
+
+        def rotate():
+            n = 0
+            while not stop.is_set():
+                n += 1
+                try:
+                    if not self.gen.show(("nxlx-silk.fs", "nxlx-ember.fs")[n % 2])["ok"]:
+                        errors.append("a generator was refused: %s" % (self.gen.error,))
+                except Exception as e:
+                    errors.append("show: %r" % (e,))
+
+        def perform():
+            n = 0
+            while not stop.is_set():
+                n += 1
+                try:
+                    self.fx.put(("fx-wash.fs", "fx-vignette.fs")[n % 2])
+                    self.fx.change({"controls": {"amount": 0.25 + 0.5 * (n % 2)}})
+                    self.fx.changer._last = -1e9
+                    self.fx.changer.pump()
+                    self.fx.adjust("anchor")
+                    self.fx.state()
+                    self.gen.state()
+                    if n % 3 == 0:
+                        self.fx.off()
+                except Exception as e:
+                    errors.append("effect: %r" % (e,))
+        threads = [threading.Thread(target=rotate, daemon=True), threading.Thread(target=perform, daemon=True)]
+        before = len(self.mpv.commands)
+        for t in threads:
+            t.start()
+        time.sleep(1.0)
+        stop.set()
+        for t in threads:
+            t.join(30)
+        self.assertEqual([t.is_alive() for t in threads], [False, False], "a thread never ended (a deadlock)")
+        self.assertEqual(errors, [])
+        lists = self.lists(before)
+        self.assertGreater(len(lists), 6)
+        self.assertEqual(sorted(set(tuple(x) for x in lists) - {("shader",), ("shader", "effect")}), [], "a list with no generator, or the effect first")
+        self.assertIsNotNone(self.gen.on_screen())
+        self.assertEqual(self.fx.error, None)
+
     def test_a_controllers_lights_say_an_effect_can_go_on_over_a_generator(self):
         self.show()
         self.api.registry.set_enabled("control-midi", True)
