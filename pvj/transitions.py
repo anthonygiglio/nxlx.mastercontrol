@@ -223,14 +223,27 @@ BLENDS = {"crossfade": Crossfade,
 
 
 class Transitions:
-    """Who may wait for what. Three locks, never one inside another except `_mark` (which is never held over a
-    question to the player):
-    * `_holding`: one still is taken at a time. A second play waits here behind the first one's still. Nothing
-      else ever takes it: `end()` does not.
-    * `_io`: one overlay command at a time, each after a look whether its transition is still the current one.
-      `end()` takes it for its one command (the removal), so it waits for a step that is on its way, never for a
-      still.
-    * `_mark`: the token and the few fields beside it."""
+    """Three locks and three counters, and no more (if a change seems to need a fourth of either, look again for
+    a way to make these carry it):
+
+    | lock       | guards                                                          | who waits for it                    |
+    | ---------- | --------------------------------------------------------------- | ----------------------------------- |
+    | `_holding` | one still is taken at a time, from the freeze to the overlay     | only another play's still. Never end() |
+    | `_io`      | one overlay command at a time, each after a look at the token    | a step, a still being laid, end() for its one removal |
+    | `_mark`    | the counters and the fields beside them                         | nobody for long: never held over a question to the player |
+
+    The order is `_holding`, then `_io`, then `_mark`. One lock that is not this class's comes before all three:
+    the player's own (`Player._lock`), under which `Api.play` claims the screen with its ticket and later looks
+    and loads as one step, and under which a generator takes the screen.
+
+    | counter  | goes up at                                                    | who looks at it                                   |
+    | -------- | ------------------------------------------------------------- | ------------------------------------------------- |
+    | `_token` | every hold that begins and every end()                         | a hold, its steps and its worker: is this transition still the current one |
+    | `_gen`   | every play of a clip (`claim`) and every other newer wish (`newer`, `end(newer=True)`) | a play before its still, before the still is laid and with its load: is this still the newest wish |
+    | `_ends`  | every end()                                                   | a play that waited for its turn: was its blend ended meanwhile (the clip loads without it) |
+
+    Beside them: `_held`, the token of the newest hold that began, and `_paused`, true while a hold has frozen the
+    clip and nobody has thawed it; the hold named by `_held` owns that thaw."""
 
     def __init__(self, api, clock=time.monotonic, sleep=time.sleep, thread=True, log=None):
         self.api = api
@@ -243,7 +256,8 @@ class Transitions:
         self._still = None                  # (width, height, pixels) while a transition holds or runs
         self._up = False                    # an overlay of ours may be on the player
         self._pid = None                    # the player the still was given to: a restarted one never had it
-        self._froze = {}                    # token -> True for a hold that froze a clip that was playing (to thaw if its play fails)
+        self._held = 0                      # the token of the newest hold that began
+        self._paused = False                # the clip is frozen by a hold, not by somebody: whoever holds `_held` owns the thaw
         self._gen = 0                       # the play generation: goes up at every play of any kind, Stop and quit (`claim`, `newer`)
         self._ends = 0                      # goes up at every end(): a play that waits its turn sees that its blend is off
         self.running = None                 # the name of the transition that holds or runs
@@ -325,9 +339,10 @@ class Transitions:
                 if self.fallback():             # looked at here, in turn: the still before this one may have given up
                     return 0
                 self._token += 1
-                token = self._token
+                token = self._held = self._token
+                inherited = self._paused        # an older hold froze the clip and nobody has thawed it: it is this one's now
             began = self._clock()               # from here: the wait behind another play's still is not this still's time
-            froze, laid = False, False
+            froze, laid = inherited, False
             path = os.path.join(player.rundir, "transition-%d.png" % os.getpid())
             try:
                 if self.api.access_on_screen():
@@ -340,8 +355,11 @@ class Transitions:
                 if not size or size[0] * size[1] > MAX_PIXELS:
                     raise StillError("no screen size")
                 pid = player.ipc.request("get_property", "pid")
-                froze = player.ipc.request("get_property", "pause") is not True
+                froze = inherited or player.ipc.request("get_property", "pause") is not True
                 player.pause(True)              # the outgoing picture stands still from the tap on (see the top)
+                if froze:
+                    with self._mark:
+                        self._paused = True
                 # The player writes into this file, which is ours: it is made here, group-writable as the units'
                 # umask leaves every file of the panel, and removed here whatever happens.
                 os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o660))
@@ -365,7 +383,6 @@ class Transitions:
                         if token != self._token:
                             raise StillError("ended while the still was laid")
                         self._still, self.running, self._pid = (w, h, pixels), name, pid
-                        self._froze = {token: True} if froze else {}
             except Exception as e:              # every kind: a frozen clip and a 500 are worse than any cause
                 ended = not self.current(token)
                 gone = isinstance(e, PlayerError) and ("not running" in str(e) or "ipc error" in str(e))
@@ -439,11 +456,16 @@ class Transitions:
                     if not self._newer_up(token):
                         self._remove()
         if froze:
-            try:
-                self.api.player.pause(False)
-            except Exception:
-                pass
+            self._thaw()
         return 0
+
+    def _thaw(self):
+        with self._mark:
+            self._paused = False
+        try:
+            self.api.player.pause(False)
+        except Exception:
+            pass
 
     def _newer_up(self, token):
         with self._mark:
@@ -469,9 +491,10 @@ class Transitions:
         if that hold is no longer the current one (another play or an end() came since): two plays close together
         must never both step."""
         with self._mark:
+            if token and token == self._held:
+                self._paused = False            # the new clip plays (a load unfreezes): nothing to thaw any more
             if not token or token != self._token or self._still is None:
                 return
-            self._froze.pop(token, None)        # the new clip plays: nothing to thaw any more
             name = self.running
         if self._thread:
             threading.Thread(target=self._work, args=(token, seconds, name), name="transition", daemon=True).start()
@@ -505,15 +528,18 @@ class Transitions:
         still goes, if it is still the one on the screen, and the old clip plays on, if that hold froze it. A still
         that a newer play has laid since is not this play's to take off."""
         with self._mark:
-            froze = self._froze.pop(token, False)
-            mine = bool(token) and token == self._token
-        if mine:
-            self.end("the new clip did not start")
-        if froze:
-            try:
-                self.api.player.pause(False)
-            except Exception:
-                pass
+            thaw = self._paused and bool(token) and token == self._held     # a newer hold has taken the freeze over
+            mine = bool(token) and token == self._token and self._still is not None
+            if mine:                            # not an end(): no token and no count moves, so a play that waits its
+                self._still, self.running = None, None      # turn keeps its blend
+                self.last["ended"] = "the new clip did not start"
+            up = mine and self._up
+        if up:
+            with self._io:
+                if not self._newer_up(token):
+                    self._remove()
+        if thaw:
+            self._thaw()
 
     def _once_more(self):
         """A command the player did not answer in time may still be run by it later, after this side gave up and

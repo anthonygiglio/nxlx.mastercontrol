@@ -455,6 +455,9 @@ class SyncManager:
                     ending = getattr(api, "transitions", None)
                     if ending is not None:
                         ending.end("Stop", newer=True)      # a clip of this box's own that is on its way loads nothing after it
+                    back = getattr(api, "_level_back", None)
+                    if back is not None:
+                        back()                              # and its dip does not leave the picture dark
                     api.player.clear()
                 except Exception:
                     pass

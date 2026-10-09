@@ -28,7 +28,7 @@ class Screen(FakePlayer):
 
     def __init__(self, rundir):
         super().__init__(rundir)
-        self.size = (8, 4)
+        self.screen = (8, 4)
         self.colour = (200, 100, 50)
         self.props = {"pid": 4242, "pause": False, "time-pos": 0.5, "seeking": False, "idle-active": False,
                       "frame-drop-count": 0, "decoder-frame-drop-count": 0}
@@ -38,11 +38,44 @@ class Screen(FakePlayer):
         self.still_bytes = None         # what the next still holds instead of the screen
         self.fail = set()               # names of calls that raise PlayerError
         self.on_overlay = None
+        # as pvj.player.Player: one lock for every change of what plays, and an epoch that a generator must hold
+        import threading
+        self._lock = threading.RLock()
+        self.source_epoch, self.source_shader, self.path, self.carrier = 0, None, None, None
+        self.socket_path = os.path.join(rundir, "player.sock")
+        self.unlocked = []              # changes of what plays that were made without the lock (there must be none)
+        self.before_play = None         # called by play(), inside it, before the clip is noted
+
+    def _held(self, what):
+        if not self._lock._is_owned():
+            self.unlocked.append(what)
+
+    def claim_screen(self):
+        self._held("claim_screen")
+        with self._lock:
+            self.source_epoch += 1
+
+    def play_source(self, shader, carrier, epoch=None, spawn=False):
+        with self._lock:
+            if epoch is not None and epoch != self.source_epoch:
+                return None
+            self.source_shader, self.path, self.carrier = shader, carrier, carrier
+            self.source_epoch += 1
+            self.calls.append(("play_source", os.path.basename(shader)))
+            return self.source_epoch
+
+    def clear(self):
+        with self._lock:
+            self.source_epoch += 1
+            self.source_shader, self.path, self.carrier = None, None, None
+            self.calls.append(("clear",))
 
     def request(self, *command):
         if command[0] == "get_property":
             if "ipc" in self.fail:
                 raise PlayerError("player is not running")
+            if command[1] == "path":
+                return self.path
             v = self.props.get(command[1])
             if v is GONE:
                 raise PlayerError("mpv: property unavailable")
@@ -50,7 +83,7 @@ class Screen(FakePlayer):
         return None
 
     def osd_size(self):
-        return self.size
+        return self.screen
 
     def status(self):
         return {"running": self.running, "path": None}
@@ -61,10 +94,15 @@ class Screen(FakePlayer):
         return bool(value)
 
     def play(self, *a, **kw):
-        if "play" in self.fail:
-            raise PlayerError("player is not running")
-        super().play(*a, **kw)
-        self.props["pause"] = False
+        with self._lock:
+            if self.before_play:
+                self.before_play()
+            if "play" in self.fail:
+                raise PlayerError("player is not running")
+            super().play(*a, **kw)
+            self.source_epoch += 1
+            self.source_shader, self.path, self.carrier = None, a[0][0], None
+            self.props["pause"] = False
 
     def still(self, path):
         self.calls.append(("still", os.path.basename(path)))
@@ -72,7 +110,7 @@ class Screen(FakePlayer):
             raise PlayerError("mpv: error running command")
         assert os.path.exists(path), "the panel makes the file; the player may not make one in the panel's folder"
         with open(path, "wb") as f:
-            f.write(self.still_bytes if self.still_bytes is not None else png(self.size[0], self.size[1], self.colour))
+            f.write(self.still_bytes if self.still_bytes is not None else png(self.screen[0], self.screen[1], self.colour))
 
     def overlay(self, oid, x, y, w, h, pixels):
         if "overlay" in self.fail:
@@ -348,7 +386,7 @@ class Crossfade(Base):
     def test_stop_ends_it_at_once(self):
         self.ended_by(lambda: self.api.control({"action": "stop"}, None, "t"))
         i = self.names().index("clear")
-        self.assertEqual(self.names()[i - 1], "overlay_remove", "the still goes before the screen is cleared")
+        self.assertLess(self.names().index("overlay_remove"), i, "the still goes before the screen is cleared")
 
     def test_a_fade_out_a_fade_in_a_change_of_opacity_and_a_reset_end_it(self):
         for act in (lambda: self.api.fadeout({"seconds": 1}, None, "t"), lambda: self.api.fadein({"seconds": 1}, None, "t"),
@@ -521,7 +559,7 @@ class Crossfade(Base):
         for _ in range(5):
             self.api.status({}, None, "t")
         self.assertEqual(asked, [])
-        self.player.size = (3840, 2160)
+        self.player.screen = (3840, 2160)
         self.play()                                 # a play looks
         self.assertIn("larger than", self.api.status({}, None, "t")["mix"]["fallback"])
 
@@ -561,7 +599,7 @@ class Crossfade(Base):
         self.assertTrue(self.player.props["pause"])
 
     def test_a_screen_too_large_dips_and_the_status_says_why(self):
-        self.player.size = (3840, 2160)
+        self.player.screen = (3840, 2160)
         self.play()
         self.assertNotIn("still", self.names())
         import time
@@ -624,7 +662,7 @@ class Moves(Base):
 
     def go(self, name, seconds=1.0):
         self.settings.data["mix"] = T.stored(name, seconds)
-        self.player.size = (40, 20)
+        self.player.screen = (40, 20)
         self.play()
 
     def test_what_each_draws_of_the_still_at_the_start_half_way_and_at_the_end(self):
@@ -756,6 +794,12 @@ class Threads(ServerBase):
         self.tr.log = lambda line: None
         self.settings.data["mix"] = T.stored("crossfade", 0.3)
         self.gate, self.inside = threading.Event(), threading.Event()
+        self.played = threading.Event()
+        self.player.before_play = self.played.set
+        self.looked = threading.Event()             # set when a play has looked whether it is still the newest wish
+        newest = self.tr.newest
+        self.looks = []
+        self.tr.newest = lambda ticket: self.looks.append(1) or self.looked.set() or newest(ticket)
         real = self.player.still
 
         self.stuck = []
@@ -784,6 +828,31 @@ class Threads(ServerBase):
         real = api_module.threading.Thread
         api_module.threading.Thread = Held
         self.addCleanup(setattr, api_module.threading, "Thread", real)
+
+    def turn_taken(self):
+        """Take the stills' turn, as another play would while its still is in the player, and return an event that
+        is set when somebody else comes to wait for it (so a test never guesses with a sleep that somebody waits)."""
+        real, waiting = self.tr._holding, self.threading.Event()
+
+        class Watched:
+            def acquire(self, *a, **k):
+                waiting.set()
+                return real.acquire(*a, **k)
+
+            def __enter__(self):
+                self.acquire()
+
+            def __exit__(self, *exc):
+                real.release()
+
+            def release(self):
+                real.release()
+
+            def locked(self):
+                return real.locked()
+        self.assertTrue(real.acquire(timeout=1))
+        self.tr._holding = Watched()
+        return waiting
 
     def release(self, order=None):
         held, self.held = self.held, []
@@ -853,7 +922,7 @@ class Threads(ServerBase):
         self.assertIn("clear", self.names())
         self.gate.set()
         t.join(5)
-        self.assertEqual(out, [{"playing": "a.mp4"}])
+        self.assertEqual(out, [{"playing": None, "superseded": "a.mp4"}])
         self.assertNotIn("play", self.names(), "the clip was loaded after the Stop")
         self.assertNotIn("overlay", self.names(), "the still was laid over the cleared screen")
         self.assertFalse(self.player.props["pause"])
@@ -902,10 +971,9 @@ class Threads(ServerBase):
         # finding 4: the clock started before the lock, so a double tap could make the box give up for the show
         now = [100.0]
         self.tr._clock = lambda: now[0]
-        self.assertTrue(self.tr._holding.acquire(timeout=1))        # another play is taking its still
+        waiting = self.turn_taken()                                 # another play is taking its still
         t, out = self.background(lambda: self.tr.hold("crossfade"))
-        import time
-        time.sleep(0.2)
+        self.assertTrue(waiting.wait(5), "the hold never came to wait its turn")
         self.assertEqual(out, [], "the hold did not wait its turn")
         now[0] += T.SLOW + 5
         self.tr._holding.release()
@@ -923,7 +991,7 @@ class Threads(ServerBase):
         # M2: the snapshot was taken on the new thread, so a Stop that came before the thread ran was not newer
         from pvj.midi import MIDI_DEVICE
         self.hold_threads_back()
-        self.assertEqual(self.api.play({"file": "a.mp4"}, MIDI_DEVICE, "midi"), {"playing": "a.mp4"})
+        self.assertEqual(self.api.play({"file": "a.mp4"}, MIDI_DEVICE, "midi"), {"playing": "a.mp4", "pending": True})
         self.assertEqual(len(self.held), 1)
         self.api.control({"action": "stop"}, MIDI_DEVICE, "midi")
         del self.player.calls[:]
@@ -957,22 +1025,97 @@ class Threads(ServerBase):
             self.gate.set()
             t.join(5), other.join(5)
             self.settle()
-            self.assertEqual(out, [{"playing": "a.mp4"}], what)
+            self.assertEqual(out, [{"playing": None, "superseded": "a.mp4"}], "%s: a clip that did not load answered that it plays" % what)
             if what == "another clip":
                 self.assertEqual(self.loaded(), ["b.mov"], "the older clip loaded as well, or instead")
             else:
                 self.assertEqual(self.player.plays, theirs, "%s was started while the clip's still was taken, and the clip loaded over it" % what)
             self.assertFalse(self.player.props["pause"], what)
 
-    def test_a_generator_that_took_the_screen_during_a_still_keeps_it(self):
+    def shader(self):
+        self.api.registry.set_enabled("shaders", True)
+        self.api.shaders.log = lambda *_: None
+        return self.api.shaders.library()[0]["id"]
+
+    def test_a_generator_the_operator_chose_during_a_still_keeps_the_screen(self):
+        sid = self.shader()
         self.player.still = self.slow_still
         t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
         self.assertTrue(self.inside.wait(5))
-        self.tr.end("a generator", newer=True)          # what pvj/shaders.py does under the player's lock
+        self.assertTrue(self.api.shaders.show(sid)["ok"])          # the real engine: no epoch, the operator's own choice
         self.gate.set()
         t.join(5)
+        self.assertEqual(out, [{"playing": None, "superseded": "a.mp4"}])
         self.assertEqual(self.loaded(), [])
+        self.assertIsNotNone(self.player.source_shader, "the clip took the generator off the screen")
         self.assertNotIn("overlay", self.names())
+
+    def test_a_rotation_tick_never_beats_a_tap_that_waits_for_its_still(self):
+        # H1 of the third review: the ticket was taken before the screen was claimed, so a rotation that got the
+        # player in between became the newer wish and the operator's clip was never loaded
+        sid = self.shader()
+        epoch = self.player.source_epoch                            # what a rotation holds from before the tap
+        self.player.still = self.slow_still
+        t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+        self.assertTrue(self.inside.wait(5))
+        self.assertIsNone(self.api.shaders.show(sid, epoch=epoch, cut=False), "the rotation's change was not refused")
+        self.gate.set()
+        t.join(5)
+        self.assertEqual(out, [{"playing": "a.mp4"}])
+        self.assertEqual(self.loaded(), ["a.mp4"])
+        self.assertIsNone(self.player.source_shader)
+        self.settle()
+
+    def test_a_rotation_that_comes_between_the_tap_and_its_claim_of_the_screen_is_refused(self):
+        # H1 itself: the rotation gets its turn at the very moment the tap has taken its ticket. With the ticket
+        # and the claim of the screen as one step under the player's lock it has to wait, and is then refused.
+        sid = self.shader()
+        epoch = self.player.source_epoch
+        results, real = [], self.tr.claim
+
+        def claim():
+            ticket = real()
+            rotation = self.threading.Thread(target=lambda: results.append(self.api.shaders.show(sid, epoch=epoch, cut=False)), daemon=True)
+            rotation.start()
+            rotation.join(1.0)                      # it must not get through while the tap holds the lock
+            self.rotation = rotation
+            return ticket
+        self.tr.claim = claim
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+        self.assertEqual(self.api.play({"file": "a.mp4"}, None, "t"), {"playing": "a.mp4"}, "a rotation beat the operator's tap")
+        self.rotation.join(5)
+        self.assertEqual(results, [None], "the rotation's change was not refused")
+        self.assertEqual(self.loaded(), ["a.mp4"])
+        self.assertIsNone(self.player.source_shader)
+
+    def test_a_rotation_tick_never_beats_a_tap_that_dips(self):
+        sid = self.shader()
+        self.settings.data["mix"] = {"transition": "dip", "duration": 0.4}
+        epoch = self.player.source_epoch
+        self.assertEqual(self.api.play({"file": "a.mp4"}, None, "t"), {"playing": "a.mp4"})    # on its way down
+        self.assertIsNone(self.api.shaders.show(sid, epoch=epoch, cut=False))
+        self.assertTrue(self.played.wait(5), "the tapped clip was never loaded: the screen stays black")
+        self.assertEqual(self.loaded(), ["a.mp4"])
+
+    def test_the_screen_is_claimed_and_the_ticket_taken_as_one_step_under_the_players_lock(self):
+        seen = []
+        real = self.tr.claim
+        self.tr.claim = lambda: seen.append(self.player._lock._is_owned()) or real()
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.settle()
+        self.assertEqual(seen, [True], "the ticket was taken outside the lock the screen is claimed under")
+        self.assertEqual(self.player.unlocked, [], "the screen was claimed outside the player's lock")
+
+    def test_the_last_look_and_the_load_are_one_step_under_the_players_lock(self):
+        looks = []
+        real = self.tr.newest
+        self.tr.newest = lambda ticket: looks.append(self.player._lock._is_owned()) or real(ticket)
+        loads = []
+        self.player.before_play = lambda: loads.append(self.player._lock._is_owned())
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.settle()
+        self.assertEqual(loads, [True], "the clip was loaded outside the player's lock")
+        self.assertIs(looks[-1], True, "the last look at the newest wish was made outside the lock the load is made under")
 
     def test_of_many_plays_from_a_controller_the_last_wins_and_one_still_is_taken(self):
         # M3: one thread and one still each, in turn, and the last asked for need not be the last loaded
@@ -993,7 +1136,9 @@ class Threads(ServerBase):
 
     def test_a_flood_of_plays_on_real_threads_ends_with_the_last_one(self):
         from pvj.midi import MIDI_DEVICE
-        names = ["a.mp4", "b.mov"] * 6 + ["a.mp4"]
+        names = ["flood%02d.mp4" % i for i in range(13)]
+        for name in names:
+            open(os.path.join(self.media, name), "w").close()
         self.player.still = self.slow_still             # the first play's still is in the player while the others come
         for name in names:
             self.api.play({"file": name}, MIDI_DEVICE, "midi")
@@ -1004,19 +1149,16 @@ class Threads(ServerBase):
         while time.monotonic() < deadline and any(t.name == "transition-play" for t in self.threading.enumerate()):
             time.sleep(0.01)
         self.settle()
-        self.assertEqual(self.loaded()[-1], "a.mp4")
+        self.assertEqual(self.loaded()[-1], "flood12.mp4", "the clip on the screen is not the last one asked for")
+        self.assertLessEqual(len(self.loaded()), 2)
         self.assertLessEqual(self.names().count("still"), 2, "more stills than the one in flight and the last")
         self.assertIsNone(self.tr.running)
 
     def test_an_end_that_comes_while_a_play_waits_its_turn_takes_its_blend_and_keeps_its_brightness(self):
         # M1: pad A, pad B, Fade out could end with a lit still over the fade
-        self.assertTrue(self.tr._holding.acquire(timeout=1))            # another play's still is being taken
+        waiting = self.turn_taken()                                     # another play's still is being taken
         t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
-        import time
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not self.tr._holding.locked():
-            time.sleep(0.01)
-        time.sleep(0.1)
+        self.assertTrue(waiting.wait(5), "the play never came to wait its turn")
         self.assertEqual(out, [])
         self.api.blackout({"on": True}, None, "t")
         del self.player.calls[:]
@@ -1034,10 +1176,9 @@ class Threads(ServerBase):
         self.assertFalse(self.player.props["pause"])
 
     def test_a_play_whose_turn_comes_after_the_box_gave_up_takes_no_still(self):
-        self.assertTrue(self.tr._holding.acquire(timeout=1))
+        waiting = self.turn_taken()
         t, out = self.background(lambda: self.tr.hold("crossfade", self.tr.claim()))
-        import time
-        time.sleep(0.1)
+        self.assertTrue(waiting.wait(5), "the hold never came to wait its turn")
         self.tr.given_up = "the still took 3.0 seconds"                 # the still before this one said so
         self.tr._holding.release()
         t.join(5)
@@ -1049,9 +1190,30 @@ class Threads(ServerBase):
         self.tr.abandon(first)
         self.assertEqual(self.tr.running, "crossfade", "the newer play's still was taken off by the older one")
         self.assertNotEqual(self.player.levels[-1], None)
+        self.assertTrue(self.player.props["pause"], "the older play thawed a clip the newer play's still stands for")
         self.tr.abandon(second)
         self.assertIsNone(self.tr.running)
         self.assertEqual(self.player.levels[-1], None)
+        self.assertFalse(self.player.props["pause"], "a pause was left with no owner")
+
+    def test_abandon_is_not_an_end_a_play_that_waits_its_turn_keeps_its_blend(self):
+        # low, third review: abandon() went through end(), which takes the blend off every play that waits
+        older = self.tr.hold("crossfade")
+        ticket = self.tr.claim()                                        # a newer play, about to wait its turn
+        self.tr.abandon(older)                                          # the older one finds it is overtaken
+        self.assertIsNone(self.tr.running)
+        self.assertFalse(self.tr.ended_since(ticket))
+        token = self.tr.hold("crossfade", ticket)
+        self.assertTrue(token, "the newer play lost its blend to the older play's clean-up")
+        self.tr.abandon(token)
+
+    def test_a_freeze_is_handed_on_and_never_left_without_an_owner(self):
+        first = self.tr.hold("crossfade")                               # froze a clip that played
+        self.assertTrue(self.player.props["pause"])
+        self.player.props["idle-active"] = True                         # the next hold comes to nothing
+        self.assertEqual(self.tr.hold("crossfade"), 0)
+        self.assertFalse(self.player.props["pause"], "the hold that came to nothing left the first one's freeze behind")
+        self.tr.abandon(first)
 
     def test_the_thaw_belongs_to_the_hold_that_froze(self):
         token = self.tr.hold("crossfade")
@@ -1060,6 +1222,182 @@ class Threads(ServerBase):
         self.assertTrue(self.player.props["pause"])
         self.tr.abandon(token)
         self.assertFalse(self.player.props["pause"])
+
+    def test_an_older_play_that_finds_a_newer_one_waiting_leaves_it_its_blend(self):
+        # the older play has its still and is about to load; the newer one waits for its turn at the still
+        holding = self.threading.Event()
+        go = self.threading.Event()
+        real_play = self.player.before_play
+
+        def parked():
+            holding.set()
+        first_token = []
+        real_hold = self.tr.hold
+
+        def hold(name, ticket=None, wanted=None):
+            token = real_hold(name, ticket, wanted)
+            if not first_token:
+                first_token.append(token)
+                holding.set()
+                go.wait(5)                                              # parked between its still and its load
+            return token
+        self.tr.hold = hold
+        a, out_a = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+        self.assertTrue(holding.wait(5))
+        b, out_b = self.background(lambda: self.api.play({"file": "b.mov"}, None, "t"))
+        b.join(5)
+        go.set()
+        a.join(5)
+        self.settle()
+        self.assertEqual(out_a, [{"playing": None, "superseded": "a.mp4"}])
+        self.assertEqual(out_b, [{"playing": "b.mov"}])
+        self.assertEqual(self.loaded(), ["b.mov"])
+        self.assertEqual(self.names().count("still"), 2, "the newer play blended from a still of its own")
+        self.assertEqual(self.tr.last["ended"], "done")
+
+    def test_next_and_previous_are_newer_wishes_and_end_a_blend(self):
+        for action in ("next", "prev"):
+            self.gate.clear(), self.inside.clear()
+            del self.player.calls[:], self.player.plays[:]
+            real, self.player.still = self.player.still, self.slow_still
+            t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+            self.assertTrue(self.inside.wait(5))
+            self.player.still = real
+            self.api.control({"action": action}, None, "t")
+            self.gate.set()
+            t.join(5)
+            self.assertEqual(out, [{"playing": None, "superseded": "a.mp4"}], action)
+            self.assertEqual(self.loaded(), [], action)
+            self.assertNotIn("overlay", self.names(), action)
+
+    def test_a_play_that_fails_is_still_the_newest_wish(self):
+        # stated in D71: the operator's last tap was the one that failed; what it overtook is not brought back
+        from pvj.api import ApiError
+        self.player.still = self.slow_still
+        t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+        self.assertTrue(self.inside.wait(5))
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+        self.player.fail = {"play"}
+        with self.assertRaises(ApiError):
+            self.api.play({"file": "b.mov"}, None, "t")
+        self.player.fail = set()
+        self.gate.set()
+        t.join(5)
+        self.assertEqual(self.loaded(), [])
+        self.assertFalse(self.player.props["pause"], "the clip that was there plays on")
+
+    # -- the dip: the clip hangs on its end and on its being cut short alike --
+    def dip(self, seconds=2.0):
+        self.settings.data["mix"] = {"transition": "dip", "duration": seconds}
+        return self.api.play({"file": "a.mp4"}, None, "t")
+
+    def test_a_blackout_a_fade_a_reset_or_an_opacity_change_during_a_dip_still_loads_the_clip(self):
+        # older than this branch: the load hung on the fader's token, so any of these (a MIDI opacity fader that
+        # moves) meant the tapped clip was silently never loaded
+        for what, act, level in (("Blackout", lambda: self.api.blackout({"on": True}, None, "t"), 0),
+                                 ("Fade out", lambda: self.api.fadeout({"seconds": 30}, None, "t"), None),
+                                 ("Fade in", lambda: self.api.fadein({"seconds": 30}, None, "t"), None),
+                                 ("Reset", lambda: self.api.control({"action": "reset"}, None, "t"), 255),
+                                 ("an opacity change", lambda: self.api.control({"action": "opacity", "value": 40}, None, "t"), 102)):
+            self.api.mix.update(blackout=False, opacity=100)
+            self.api.fader.cancel()
+            self.played.clear()
+            del self.player.calls[:], self.player.plays[:]
+            self.assertEqual(self.dip(), {"playing": "a.mp4"})
+            act()
+            self.assertTrue(self.played.wait(5), "%s during the dip: the tapped clip was never loaded" % what)
+            self.assertEqual(self.loaded(), ["a.mp4"], what)
+            after = [c for c in self.player.calls[self.names().index("play"):] if c[0] == "opacity"]
+            if level is not None:
+                self.assertTrue(all(c[1] == level for c in after), "%s: the clip's load changed the level that was set: %s" % (what, after))
+                self.assertEqual([c for c in self.player.calls if c[0] == "opacity"][-1], ("opacity", level), what)
+            self.api.fader.cancel()
+
+    def test_a_stop_during_a_dip_drops_the_clip_and_does_not_leave_the_picture_dark(self):
+        # M1 of the third review: the fader had gone towards black and nobody put the picture back
+        self.dip()
+        self.looked.clear()
+        self.api.control({"action": "stop"}, None, "t")
+        self.assertTrue(self.looked.wait(5), "the dip's clip never came to look whether it is still wanted")
+        self.assertEqual(self.loaded(), [])
+        self.assertEqual([c for c in self.player.calls if c[0] == "opacity"][-1], ("opacity", 255), "the next shader would come up dark")
+
+    def test_a_stop_during_a_dip_leaves_blackout_and_a_fade_out_as_they_are(self):
+        self.api.blackout({"on": True}, None, "t")
+        self.api._level_back()
+        self.assertEqual(self.player.calls[-1], ("opacity", 0))
+        self.api.blackout({"on": False}, None, "t")
+        self.api.fadeout({"seconds": 30}, None, "t")
+        del self.player.calls[:]
+        self.api._level_back()
+        self.assertNotIn(("opacity", 255), self.player.calls, "a Stop undid the operator's Fade out")
+        self.api.fader.cancel()
+
+    def test_a_dip_that_is_overtaken_after_its_way_down_loads_nothing_and_the_picture_comes_back(self):
+        # the test has the player's lock, as a Stop's clear would: the clip's look and load wait for it
+        at_black = self.threading.Event()
+        real = self.player.opacity
+        self.player.opacity = lambda value: (real(value), at_black.set() if value == 0 else None)
+        with self.player._lock:
+            self.dip(0.2)
+            self.assertTrue(at_black.wait(5), "the dip never reached black")
+            self.looked.clear()
+            self.api.control({"action": "stop"}, None, "t")
+        self.assertTrue(self.looked.wait(5))
+        self.assertEqual(self.loaded(), [], "the clip loaded after the Stop")
+        self.assertEqual([c for c in self.player.calls if c[0] == "opacity"][-1], ("opacity", 255))
+
+    def test_a_newer_play_during_a_dip_drops_the_older_clip(self):
+        self.dip()
+        del self.looks[:]
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+        self.assertEqual(self.api.play({"file": "b.mov"}, None, "t"), {"playing": "b.mov"})
+        import time
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(self.looks) < 2:      # the cut's own look, and the dip's
+            time.sleep(0.005)
+        self.assertGreaterEqual(len(self.looks), 2, "the older clip never came to look whether it is still wanted")
+        self.assertEqual(self.loaded(), ["b.mov"])
+
+    def test_a_live_input_started_during_a_still_is_not_stopped_by_the_clip_it_overtook(self):
+        # M2 of the third review: the overtaken play still called "something started playing", which stops a live input
+        stops = []
+
+        class Capture:
+            lock = self.threading.RLock()
+            fifo = os.path.join(self.rundir, "capture.fifo")
+
+            def prepare(self, device, mode):
+                return 1280, 720, 30
+
+            def start(self, device, mode):
+                pass
+
+            def stop(self):
+                stops.append(1)
+        self.api.capture = Capture()
+        self.player.still = self.slow_still
+        t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+        self.assertTrue(self.inside.wait(5))
+        self.api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "t")
+        del stops[:]
+        self.gate.set()
+        t.join(5)
+        self.assertEqual(out, [{"playing": None, "superseded": "a.mp4"}])
+        self.assertEqual(stops, [], "the clip that was overtaken stopped the live input that overtook it")
+
+    def test_a_clip_that_loads_stops_the_live_input_it_replaces(self):
+        stops = []
+
+        class Capture:
+            lock = self.threading.RLock()
+
+            def stop(self):
+                stops.append(1)
+        self.api.capture = Capture()
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.settle()
+        self.assertEqual(stops, [1])
 
     def test_a_player_that_goes_away_during_the_still_is_no_reason_to_give_up(self):
         for message in ("player is not running", "ipc error: [Errno 32] Broken pipe"):
@@ -1130,7 +1468,7 @@ class OddRun(Base):
     def test_a_wipe_and_a_slide_run_whole_on_a_screen_of_41_by_23(self):
         for name in ("wipe-from-left", "wipe-from-bottom", "slide-right", "slide-up"):
             self.settings.data["mix"] = T.stored(name, 2.0)
-            self.player.size = (41, 23)
+            self.player.screen = (41, 23)
             del self.player.parts[:]
             self.now[0] = 50.0
             self.play()
