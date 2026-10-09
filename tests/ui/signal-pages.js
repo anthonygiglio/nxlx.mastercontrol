@@ -28,47 +28,60 @@ const first = (e) => e.message.split('\n')[0];
 
 async function soft(t, what, promise) { try { return await promise; } catch (e) { t.notes.push(what + ': ' + first(e)); return null; } }
 async function has(t, pg, sel, ms) { return soft(t, 'waited in vain for ' + sel, pg.waitForSelector(sel, { timeout: ms || 8000 })); }
-// ---- moving about in the Workspace shell (D65) ----
-// A screen has a key, 'area/screen': play/pads, play/library, play/shaders, shape/controls, shape/effect,
-// shape/picture, shape/mapping, shape/sound, room/scenes, room/walls, room/guests, setup/index and setup/<the id of
-// a page>. The open one is on the workspace as data-screen. go() presses what a person would at this width: the
-// item of the side menu from 600 px; under 600 px the area's tab, then the screen in the row under the title (in
-// Setup: the row of the index). It waits until the screen has been drawn: a press reads the box's state and only
-// then draws (so "the screen is there" can be true of the one that is about to be replaced), except between the
-// screens that are parts of one build (Shape's Controls, Effect and Picture; Room's three), which only change
-// what is shown. Only plain selectors, and click, isVisible, evaluate and waitForFunction, are used. With
-// how = 'keys' nothing is clicked: the item is given the cursor and Enter is pressed.
+// ---- moving about in the Workspace shell (D65, D72) ----
+// A screen has a key, 'area/screen': play/pads, play/library, play/shaders, shape/effect, shape/picture,
+// shape/sound, shape/mapping, room/scenes, room/walls, room/guests, setup/index and setup/<the id of a page>. The
+// open one is on the workspace as data-screen. go() presses what a person would at this width: the area's button
+// of the rail from 600 px, or its tab at the foot under that; then the screen's tab in the row of the area's
+// screens (in Setup: the row of the index, which from 1200 px also stands beside an open page). Where an area is
+// a desk (from 1200 px) its screens are columns of one page and have no tab: go() then uses the column, as a
+// person does (a press on its heading; with how = 'keys' the cursor goes into it), and the panel takes that
+// column for the open one.
+// It waits until the screen has been drawn: a press that leads to another build reads the box's state and only
+// then draws (so "the screen is there" can be true of the one that is about to be replaced). The screens of one
+// area that are columns of one build (ONE_BUILD) only change what is shown; a press on one of their tabs still
+// reads the box's lists again, and go() waits for that to end (the workspace is aria-busy meanwhile), so a step
+// that follows sees what the box has now. Only plain selectors, and click, isVisible, evaluate and
+// waitForFunction, are used. With how = 'keys' nothing is clicked: the item is given the cursor and Enter is pressed.
 // What the five tabs of the panel before D65 are now: Live is play/pads (its transport is the strip on every
-// screen, its shader and effect strips are on shape/controls), Media is play/library, Mix is shape/picture (with
-// shape/controls, shape/effect, shape/mapping and shape/sound), System is setup/index, Room is room/scenes and
-// room/walls.
+// screen), Media is play/library, Mix is shape/picture (with shape/effect, shape/sound and shape/mapping; Speed
+// and Loop are on the strip, the Transition on play/pads), System is setup/index, Room is room/scenes and room/walls.
 const at = (pg) => pg.evaluate(() => { const m = document.querySelector('main.ws'); return m ? m.getAttribute('data-screen') : null; });
-const ONE_BUILD = [['shape/controls', 'shape/effect', 'shape/picture'], ['room/scenes', 'room/walls', 'room/guests']];
+const ONE_BUILD = [['play/pads', 'play/library', 'play/shaders'], ['shape/effect', 'shape/picture', 'shape/sound'], ['room/scenes', 'room/walls', 'room/guests']];
 async function go(pg, key, how) {
   await pg.waitForFunction(() => !!document.querySelector('main.ws'), null, { timeout: 15000 });
-  const press = async (sel, want) => {                    // want: the key to arrive at, or an area ('room/': any of its screens)
+  const press = async (sel, want, into) => {              // want: the key to arrive at, or an area ('room/': any of its screens); into: a column, not a button
     const from = await at(pg);
     const kept = !!from && ONE_BUILD.some((g) => g.indexOf(from) >= 0 && (g.indexOf(want) >= 0 || (want.slice(-1) === '/' && from.indexOf(want) === 0)));
-    if (!kept) await pg.evaluate(() => { const old = document.querySelector('main.ws > .screen'); if (old) old.setAttribute('data-before-go', ''); });      // (the screen is what is replaced, not the workspace)
-    if (how === 'keys') { await pg.focus(sel); await pg.keyboard.press('Enter'); } else await pg.click(sel);
+    if (!kept) await pg.evaluate(() => { const old = document.querySelector('main.ws > .desk'); if (old) old.setAttribute('data-before-go', ''); });      // (the build is what is replaced, not the workspace)
+    if (how === 'keys') { await pg.focus(sel); if (!into) await pg.keyboard.press('Enter'); } else await pg.click(sel);
     await pg.waitForFunction(([k, fresh]) => {
       const m = document.querySelector('main.ws'), now = m && m.getAttribute('data-screen');
-      return !!now && (k.slice(-1) === '/' ? now.indexOf(k) === 0 : now === k) && !(fresh && m.querySelector(':scope > .screen[data-before-go]'));
+      return !!now && (k.slice(-1) === '/' ? now.indexOf(k) === 0 : now === k) && !m.hasAttribute('aria-busy') && !(fresh && m.querySelector(':scope > .desk[data-before-go]'));
     }, [want, !kept], { timeout: 15000 });
   };
-  const side = '#wsside [data-go="' + key + '"]';
-  if (await pg.isVisible(side)) return press(side, key);
   const area = key.split('/')[0], id = key.split('/')[1];
+  const here = async () => ((await at(pg)) || '').split('/')[0];
+  const areaButton = async () => ((await pg.isVisible('#side-' + area)) ? '#side-' + area : '#tab-' + area);
   if (area === 'setup') {
-    if (key === 'setup/index' || (await at(pg)) !== 'setup/index') await press('#tab-setup', 'setup/index');     // the tab of Setup is always its index
-    if (key !== 'setup/index') await press('#nav-' + id, key);
+    const row = '#nav-' + id;
+    if (key !== 'setup/index' && (await here()) === 'setup' && await pg.isVisible(row)) return press(row, key);
+    await press(await areaButton(), 'setup/index');       // the button of Setup is always its index
+    if (key !== 'setup/index') await press(row, key);
     return;
   }
-  if (((await at(pg)) || '').split('/')[0] !== area) await press('#tab-' + area, area + '/');      // the area comes back on the screen it was left on
-  if ((await at(pg)) !== key || !ONE_BUILD.some((g) => g.indexOf(key) >= 0)) await press('#sub-' + area + '-' + id, key);
+  if ((await here()) !== area) await press(await areaButton(), area + '/');      // the area comes back on the screen it was left on
+  const tab = '#sub-' + area + '-' + id, col = 'main.ws > .desk > .deskcol[data-col="' + id + '"]';
+  if (await pg.isVisible(tab)) return press(tab, key);
+  if (await pg.isVisible(col)) {                           // a column of the desk that is on the page
+    if ((await at(pg)) !== key) await press(how === 'keys' ? col : col + ' > .deskhead, ' + col + ' .syshead h2', key, true);
+    return;
+  }
+  if (await pg.isVisible('#sub-' + area + '-desk')) await press('#sub-' + area + '-desk', area + '/');      // from a tool that has the whole width, back to the desk
+  if ((await at(pg)) !== key) await press(how === 'keys' ? col : col + ' > .deskhead, ' + col + ' .syshead h2', key, true);
 }
 // The strip shows four of its buttons on a phone: More opens the rest (the place in the clip, back and forward 10
-// seconds, Fade in, Fade out, Freeze). It stays open across screens, so a step that needs them opens it once.
+// seconds, Fade in, Fade out, Freeze, Loop and Speed). It stays open across screens, so a step that needs them opens it once.
 async function stripOpen(pg) {
   if (await pg.isVisible('#wsmore') && (await pg.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded'))) !== 'true') await pg.click('#wsmore');
 }
@@ -77,12 +90,16 @@ async function sysIndex(pg) {
   await pg.waitForSelector('#sysindex');
 }
 // A page by the name of its row of the Setup index, as the owner finds it there. (Shaders and Vibes, Projection
-// mapping and Sound open as screens of Play and Shape, with a Back to the index; the others are pages of Setup.)
+// mapping and Sound open as screens of Play and Shape, with a Back to the index; the others are pages of Setup.
+// A page that is a column of an area has its title as a second heading.)
 async function sys(pg, name) {
   await sysIndex(pg);
-  await pg.click('.navrow:has(.navname:text-is("' + name + '"))');
-  await pg.waitForSelector('#syspage h1:text-is("' + name + '")');
+  await pg.click('#sysindex .navrow:has(.navname:text-is("' + name + '"))');
+  await pg.waitForSelector('#syspage .syshead :is(h1, h2):text-is("' + name + '")');
 }
+// Back from a page to where it was opened from, by the page's own Back. Where the index stands beside a page of
+// Setup (from 1200 px) the page has no Back to it, and there is nothing to do: the rows are there.
+async function back(pg) { if (await pg.isVisible('#sysback')) await pg.click('#sysback'); }
 async function home(t) {                                // the panel reads which modules are on when it loads
   await t.page.goto(t.base + '/');
   await t.page.waitForSelector((t.plain ? '' : 'html[data-style="signal"] ') + 'main.ws');      // t.plain: the caller is in the default look (the width sweep)
@@ -193,7 +210,7 @@ async function other(t, hash, route) {
 }
 async function closeOthers(t) { while (t.contexts.length) await t.contexts.pop().close().catch(() => {}); }
 
-async function playClip(t) {                             // a clip on the display, no shader: the effects strip can be used
+async function playClip(t) {                             // a clip on the display, no shader: an effect can be put on
   await post(t, '/api/vibes', { on: false });
   await post(t, '/api/control', { action: 'stop' });
   await post(t, '/api/play', { pad: [0, 0] });
@@ -314,40 +331,28 @@ function pages() {
     await soft(t, 'Delete', t.page.locator('.item:has-text("logo.png") button:text-is("Delete")').first().click({ timeout: 8000 }));
   }, { quick: true, done: async (t) => { await t.page.unroute('**/api/media'); } });
 
-  // ---- Shape: Controls, Effect, Picture, Mapping, Sound ----
-  add('controls', 'mix', async (t) => {                 // a clip playing with an effect over it: the effect strip with Amount, Speed, Loop
-    await playClip(t);
-    await putEffectOn(t);
-    await go(t.page, 'shape/controls');
-    await has(t, t.page, '#live-fx-amount', 15000);
-  }, { light: true });
-  add('controls-shader', 'mix', async (t) => {          // a shader chosen by hand: its strip
-    await post(t, '/api/effects', { off: true });
-    await post(t, '/api/vibes', { on: false });
-    await post(t, '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
-    await go(t.page, 'shape/controls');
-    await has(t, t.page, '#liveshader:visible', 15000);
-  });
-  add('controls-idle', 'mix', async (t) => {            // nothing playing: empty states, the effect strip saying why
+  // ---- Shape: Effect, Picture, Sound, and Mapping ----
+  add('effect-idle', 'mix', async (t) => {              // nothing playing: empty states, the Effects card saying why
     await post(t, '/api/vibes', { on: false });
     await post(t, '/api/control', { action: 'stop' });
     await go(t.page, 'play/pads');
-    await go(t.page, 'shape/controls');
-    await has(t, t.page, '#livefxwhy', 20000);
+    await go(t.page, 'shape/effect');
+    await has(t, t.page, '#fxwhy', 20000);
   });
   add('effect', 'mix', async (t) => {                   // an effect on in the Effects card
     await playClip(t);
     await putEffectOn(t);
   }, { light: true });
-  add('picture', 'mix', async (t) => {                  // the sliders, the transition, mirror, overlay, rotate
+  add('picture', 'mix', async (t) => {                  // the sliders, mirror, overlay, rotate
     await playClip(t);
     await go(t.page, 'shape/picture');
     await has(t, t.page, '#mo');
     await has(t, t.page, '#overlaybody > *');
   }, { light: true });
-  add('mapping', 'mix', async (t) => {                  // the mapping page with its switch and the card with its pointer
+  add('mapping', 'mix', async (t) => {                  // the mapping page with its switch, the card with its pointer, and Test pattern
     await go(t.page, 'shape/mapping');
     await has(t, t.page, '#mapcanvas');
+    await has(t, t.page, '#testpattern');
   });
   add('sound', 'mix', async (t) => {                    // Volume and Audio above the Sound page's card
     await go(t.page, 'shape/sound');
@@ -387,16 +392,17 @@ function pages() {
     await has(t, pg, '#accesslive');
     return pg;
   }, { done: closeOthers });
+  // (desk: where Play's screens share the page, the area keeps Play's colour and the Shaders column wears its own)
   add('shaders', 'shaders', async (t) => {              // Play > Shaders: the one screen that wears the Shaders colour
     await post(t, '/api/vibes', { on: true });
     await go(t.page, 'play/shaders');
     await has(t, t.page, '#shadercontrols', 15000);
-  }, { light: true });
+  }, { light: true, desk: 'clips' });
   add('shaders-from-index', 'shaders', async (t) => {   // the same page as the owner opens it from the Setup index: with a Back to it
     await sys(t.page, 'Shaders and Vibes');
     await has(t, t.page, '#sysback');
     await has(t, t.page, '#shadercontrols', 15000);
-  });
+  }, { desk: 'clips' });
   add('midi', 'system', async (t) => {                  // the drawn controllers with their lights on: the switch, the brightness, Test lights
     await sys(t.page, 'MIDI controller');
     await has(t, t.page, '.ctlgrid', 15000);
@@ -455,16 +461,19 @@ function pages() {
   return list;
 }
 
-module.exports = { setUp, pages, closeOthers, sys, sysIndex, go, at, stripOpen, WALLS };
+module.exports = { setUp, pages, closeOthers, sys, sysIndex, go, at, back, stripOpen, WALLS };
 
 // What one screen must hold in Signal (the rules are in pvj/THEMES.md). Returns what is wrong, as sentences; an
-// empty list is a pass. o: { area (null before pairing), light (Signal light) }.
+// empty list is a pass. o: { area (null before pairing), desk (the area where the screen is a column of a desk,
+// when that is another), light (Signal light) }.
 async function check(pg, o) {
-  return pg.evaluate(async ([wantArea, light]) => {
+  return pg.evaluate(async ([area, deskArea, light]) => {
     const out = [];
     const root = document.documentElement, shell = document.querySelector('.shell');
     if (!shell) return ['there is no screen'];
     if (root.getAttribute('data-style') !== 'signal') out.push('the style is gone');
+    const beside = Array.prototype.filter.call(document.querySelectorAll('main.ws > .desk > .deskcol'), (c) => c.getClientRects().length > 0).length > 1;
+    const wantArea = beside && deskArea ? deskArea : area;
     if ((root.getAttribute('data-area') || null) !== wantArea) out.push('area is ' + root.getAttribute('data-area') + ', not ' + wantArea);
     const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
     const name = (el) => (el.id ? '#' + el.id + ' ' : '') + (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 28);
@@ -567,8 +576,8 @@ async function check(pg, o) {
     };
     Array.prototype.forEach.call(shell.querySelectorAll('input[type=range]'), (el) => { const off = shown(el) && fillOff(el); if (off) out.push(off); });
     // the title: whole, inside the window, in the area's colour. Before pairing it is the screen's own heading; in
-    // the Workspace shell (D65) it is the title bar, and the open screen's item (the area's tab under 600 px, the
-    // side menu's item from 600 px) is that colour too. Exactly one heading of the first rank is shown, and the
+    // the Workspace shell (D65, D72) it is the title bar, and the open area's button (its tab under 600 px, its
+    // button of the rail from 600 px) is that colour too. Exactly one heading of the first rank is shown, and the
     // transport strip is on every screen with the four buttons that never fold away.
     const bg = (el) => (el ? getComputedStyle(el).backgroundColor : '');
     const bar = document.getElementById('wshead');
@@ -589,7 +598,7 @@ async function check(pg, o) {
       if (!h1 || [bg(h1), bg(top)].indexOf(areaRgb) < 0) out.push('the title block is not the area colour ' + areaRgb + ': ' + JSON.stringify([bg(h1), bg(top)]));
     }
     return out;
-  }, [o.area, !!o.light]);
+  }, [o.area, o.desk || null, !!o.light]);
 }
 module.exports.check = check;
 

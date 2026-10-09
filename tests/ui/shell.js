@@ -1,25 +1,34 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: Apache-2.0
-// The Workspace shell (D65), held by the browser test: four areas with screens that have one job, tabs under 600
-// px and a side menu from 600 px, one transport strip on every screen, fewer screens for a presenter and a guest,
-// and no control lost in the move.
+// The Workspace shell (D65) with its rail, tabs and area desks (D72), held by the browser test: four areas, tabs
+// at the foot under 600 px, a rail of the areas from 600 px with the open area's screens as tabs, an area's
+// screens side by side from 1200 px, one transport strip on every screen, fewer screens for a presenter and a
+// guest, and no control lost in the move.
 //
-//   reach(pg, how)        every screen of the menu is opened at 390, 768 and 1366 px, by a press ('tap') or with
-//                         the keyboard ('keys'), and on each: the right screen is drawn, the title bar names its
-//                         area, one item of the menus is marked as open, the strip is whole, exactly one first
-//                         heading is shown, and the cursor is not lost (it is on the item pressed, or on the screen)
+//   screens(pg)           every screen this device has, as keys, found as a person finds them: each area's button,
+//                         its row of tabs, and the rows of the Setup index
+//   reach(pg, how)        every screen is opened at 390, 768 and 1366 px, by a press ('tap') or with the keyboard
+//                         ('keys'), and on each: the right screen is drawn, the title bar names its area, the
+//                         area's button and the screen's tab are marked as open, the strip is whole, exactly one
+//                         first heading is shown, the cursor is not lost (it is on the item pressed, or on the
+//                         screen), and the columns that are shown are the ones this width has: one under 1200
+//                         px, the area's whole desk from 1200 px (in Setup: the index beside the open page)
 //   tabWalk(pg)           the Tab key alone, pressed from the top of the page at 390, 768 and 1366 px, comes to
-//                         every item of the menus that is shown and to the strip's buttons, the side menu before
-//                         the screen (reach() by 'keys' puts the cursor on an item and presses Enter: it shows that
-//                         Enter opens the screen, this shows that the keyboard gets there)
-//   menus(pg)             which menu is shown at 390, 599, 600, 768 and 1366 px
+//                         every item of the menus that is shown and to the strip's buttons, the rail and the tabs
+//                         before the screen (reach() by 'keys' puts the cursor on an item and presses Enter: it
+//                         shows that Enter opens the screen, this shows that the keyboard gets there)
+//   menus(pg)             which menu is shown at 390, 599, 600, 768, 1199, 1200 and 1366 px: the tabs at the foot,
+//                         the rail, the tabs of the screens, the desk with its columns as named regions and its
+//                         one tab; the cursor is handed on when a tab goes with the width; a name typed in one
+//                         column is still there after a tab, and after the window was made narrower and wider
 //   strip(pg)             the strip is ONE line of buttons at every width from 600 px, with Freeze, Stop and
-//                         Blackout at its right end: all nine and the place in the clip from 1200 px; under that
-//                         it folds behind More (from 1000 px the place in the clip, Previous, Next and those
-//                         three; from 800 px without the place in the clip; from 600 px those three alone), and
-//                         More opens the rest under the line; on a phone four buttons, and More opens the rest
-//                         in place, stays open on the next screen, and closes
-//   narrow(pg, post, get) no text overruns at 320, 390, 600 and 768 px and on a phone held sideways (740 by 360),
+//                         Blackout at its right end: everything from 1440 px; under that it folds behind More
+//                         (from 1200 px Speed and Loop; from 1000 px also back and forward 10 s and the fades;
+//                         from 800 px also the place in the clip; from 600 px also Previous and Next), and More
+//                         opens the rest under the line; on a phone four buttons, and More opens the rest in
+//                         place, stays open on the next screen, and closes
+//   narrow(pg, post, get) no text overruns at 320, 390, 600 and 768 px, on a phone held sideways (740 by 360) and
+//                         at the desk's widths (1200, 1366, 1440 and 1920 px),
 //                         on every screen, in the default look and in Signal, with long names (a clip, a
 //                         shader, an effect, presets, scenes, walls, projectors, devices, a USB drive) put into
 //                         the box's answers on their way to the page: the page does not scroll sideways, no
@@ -27,8 +36,8 @@
 //                         text in a title, no two texts lie on one another, a title is not cut inside a word;
 //                         and from 600 px the strip is one line with Freeze, Stop and Blackout on it.
 //                         The failure names each element (overruns() is the measuring function, in the page)
-//   roles(pages)          what the owner, a presenter and a guest have in their menus, where each lands, and that
-//                         a switched-off module's page is not in the menu while the owner's Setup index has its row
+//   roles(pages)          what the owner, a presenter and a guest have, where each lands, and that a switched-off
+//                         module's screen is gone while the owner's Setup index keeps its row
 //   inventory(o)          the controls of every screen, by role, against the list of the panel before the shell
 //                         (tests/ui/fixtures/controls-before.json): nothing may be missing
 //
@@ -42,7 +51,12 @@ const inv = require('./inventory.js');
 
 const AREAS = { play: 'Play', shape: 'Shape', room: 'Room', setup: 'Setup' };
 const SIZES = [[390, 844], [768, 1024], [1366, 768]];
+const DESK = 1200;                 // from this width of the panel an area's screens share the page
+// the screens that are columns of one page there (the others have the whole width: Mapping, and Setup's pages)
+const DESKS = { play: ['pads', 'library', 'shaders'], shape: ['effect', 'picture', 'sound'], room: ['scenes', 'walls', 'guests'] };
+const HOMES = ['vibes', 'mapping', 'sound'];      // rows of the Setup index that open a screen of another area
 const STRIP = ['prev', 'back10', 'fwd10', 'next', 'fadein', 'fade', 'freeze', 'stop', 'black'];
+const SPEED = ['mv', 'loop'];      // Speed and Loop, on the strip since D72 (Loop has no id: it is found by its class)
 const ALWAYS = ['prev', 'next', 'stop', 'black'];
 // (what the closed strip shows whatever the width: under 600 px those four, from 600 px Freeze, Stop and Blackout, with Previous and Next from 800 px)
 const kept = (width) => (width < 600 ? ALWAYS : ['freeze', 'stop', 'black'].concat(width >= 800 ? ['prev', 'next'] : []));
@@ -50,12 +64,13 @@ const kept = (width) => (width < 600 ? ALWAYS : ['freeze', 'stop', 'black'].conc
 /* eslint-disable no-undef */
 function look(strip) {
   const shown = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
-  const id = (q) => document.getElementById(q);
+  const id = (q) => (q === 'loop' ? document.querySelector('#wstp .tploop') : document.getElementById(q));
   const main = document.querySelector('main.ws'), a = document.activeElement;
-  const open = Array.prototype.filter.call(document.querySelectorAll('#wsside [aria-current="page"], #wstabs [aria-current="page"], #wssub [aria-current="page"]'), shown);
+  const open = Array.prototype.filter.call(document.querySelectorAll('#wsside [aria-current="page"], #wstabs [aria-current="page"], #wssub [aria-current="page"], .deskcol.ix [aria-current="page"]'), shown);
   const buttons = {};
   strip.concat(['seek', 'wsmore']).forEach((b) => { buttons[b] = shown(id(b)); });
   const dock = id('wsdock') ? id('wsdock').getBoundingClientRect() : null;
+  const cols = Array.prototype.filter.call(document.querySelectorAll('main.ws > .desk > .deskcol'), shown);
   return {
     screen: main ? main.getAttribute('data-screen') : null,
     title: id('wstitle') ? id('wstitle').textContent : null,
@@ -65,39 +80,83 @@ function look(strip) {
     buttons, more: id('wsmore') ? id('wsmore').getAttribute('aria-expanded') : null,
     dockAtFoot: !!dock && Math.abs(dock.bottom - window.innerHeight) <= 1,
     focus: !a || a === document.body ? '' : a.id || a.tagName.toLowerCase(),
-    menu: Array.prototype.map.call(document.querySelectorAll('#wsside [data-go]'), (b) => b.getAttribute('data-go')),
+    cols: cols.map((c) => c.getAttribute('data-col')),
+    regions: cols.map((c) => [c.getAttribute('role') || c.tagName.toLowerCase(), c.getAttribute('aria-label')]),
+    colHeads: cols.map((c) => Array.prototype.filter.call(c.querySelectorAll(':scope > .deskhead, .syshead h2'), shown).map((x) => x.textContent)[0] || ''),
+    rail: Array.prototype.map.call(document.querySelectorAll('#wsside button'), (b) => [b.id, b.textContent]),
+    subs: Array.prototype.filter.call(document.querySelectorAll('#wssub button'), shown).map((b) => b.id),
+    job: Array.prototype.filter.call(document.querySelectorAll('.wsjob'), shown).map((x) => x.textContent).join(' | '),
+    back: shown(id('sysback')),
     tabNames: Array.prototype.map.call(document.querySelectorAll('#wstabs button'), (b) => b.textContent),
-    rows: Array.prototype.map.call(document.querySelectorAll('.navrow .navname'), (b) => b.textContent),
+    rows: Array.prototype.map.call(document.querySelectorAll('#sysindex .navrow .navname'), (b) => b.textContent),
     disabled: strip.filter((b) => id(b) && id(b).disabled),
     landmarks: { nav: Array.prototype.map.call(document.querySelectorAll('.shell nav'), (n) => n.getAttribute('aria-label')), main: document.querySelectorAll('.shell main').length, header: document.querySelectorAll('.shell header').length },
   };
 }
 /* eslint-enable no-undef */
-const see = (pg) => pg.evaluate(look, STRIP);
-const ready = (pg) => pg.waitForFunction(() => !!document.querySelector('#wsside [data-go]'), null, { timeout: 15000 });
+const see = (pg) => pg.evaluate(look, STRIP.concat(SPEED));
+const ready = (pg) => pg.waitForFunction(() => !!document.querySelector('#wsside [data-ar]'), null, { timeout: 15000 });
 const frames = (pg) => pg.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+
+// Every screen this device has. An area's screens are the tabs of its row (all of them are in the page, whatever
+// the width shows); an area with no row has one screen. Setup's are its index and the rows of it, apart from the
+// three that open a screen of another area (while their module is on; off, they open a page of Setup with the switch).
+async function screens(pg) {
+  await ready(pg);
+  const out = [];
+  const areas = await pg.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#wstabs [data-ar]'), (b) => b.getAttribute('data-ar')));
+  for (const area of areas) {
+    if (area === 'setup') continue;
+    if (((await at(pg)) || '').split('/')[0] !== area) {
+      await pg.evaluate((a) => { const b = Array.prototype.filter.call(document.querySelectorAll('#side-' + a + ', #tab-' + a), (x) => x.getClientRects().length)[0]; if (b) b.click(); }, area);
+      await pg.waitForFunction((a) => (document.querySelector('main.ws').getAttribute('data-screen') || '').indexOf(a + '/') === 0, area, { timeout: 15000 });
+    }
+    const tabs = await pg.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#wssub [data-go]'), (b) => b.getAttribute('data-go')));
+    (tabs.length ? tabs : [await at(pg)]).forEach((k) => out.push(k));
+  }
+  if (areas.indexOf('setup') >= 0) {
+    await go(pg, 'setup/index');
+    await pg.waitForFunction(() => !!document.querySelector('#sysindex .navrow'), null, { timeout: 15000 });
+    out.push('setup/index');
+    (await pg.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#sysindex .navrow'), (b) => b.id.replace(/^nav-/, ''))))
+      .forEach((id) => { if (HOMES.indexOf(id) < 0) out.push('setup/' + id); });
+  }
+  return out;
+}
 
 async function reach(pg, how) {
   await ready(pg);
   let count = 0;
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await frames(pg);
+  const keys = await screens(pg);
+  assert(keys.length >= 4, 'this device has screens: ' + keys.join(' '));
   for (const [width, height] of SIZES) {
     await pg.setViewportSize({ width, height });
     await frames(pg);
-    const keys = (await see(pg)).menu;
-    assert(keys.length >= 4, 'the menu lists screens at ' + width + ' px: ' + keys.join(' '));
     for (const key of keys) {
       const where = key + ' at ' + width + ' px by ' + how;
       await go(pg, key, how);
       const s = await see(pg);
-      const area = key.split('/')[0];
+      const area = key.split('/')[0], id = key.split('/')[1];
+      const desk = (DESKS[area] || []).filter((x) => keys.indexOf(area + '/' + x) >= 0);
+      const inDesk = desk.length > 1 && desk.indexOf(id) >= 0, wide = width >= DESK;
       assert.strictEqual(s.screen, key, where + ': the screen that is open');
       assert.strictEqual(s.title, AREAS[area], where + ': the title bar names the area');
       assert(s.bar, where + ': the title bar is shown');
       assert.strictEqual(s.heads.length, 1, where + ': one first heading is shown, not ' + JSON.stringify(s.heads));
-      // the open item: the side menu's from 600 px; on a phone the area's tab, and the screen in the row under the title
-      if (width >= 600) assert.deepStrictEqual(s.open, ['side-' + key.replace('/', '-')], where + ': the open item of the side menu');
-      else assert.deepStrictEqual(s.open.filter((x) => x.indexOf('tab-') === 0), ['tab-' + area], where + ': the open tab');
-      if (width < 600 && area !== 'setup') assert(s.open.indexOf('sub-' + key.replace('/', '-')) >= 0, where + ': the open screen in the row under the title, of ' + JSON.stringify(s.open));
+      // the open items: the area's button (the rail from 600 px, the tab at the foot under that), and the screen's
+      // tab. A desk's screens have one tab between them, and none where the desk is all the area has.
+      const marks = [(width >= 600 ? 'side-' : 'tab-') + area];
+      const own = keys.filter((k) => k.split('/')[0] === area).length;
+      if (area === 'setup') { if (wide && id !== 'index') marks.push('nav-' + id); }
+      else if (own > 1 && !(wide && inDesk)) marks.push('sub-' + area + '-' + id);
+      else if (own > desk.length && wide && inDesk) marks.push('sub-' + area + '-desk');
+      assert.deepStrictEqual(s.open.slice().sort(), marks.slice().sort(), where + ': what is marked as open');
+      // the columns on the page: the desk from 1200 px, one screen under that; in Setup the index beside a page
+      const cols = wide && inDesk ? desk : area === 'setup' && wide && id !== 'index' ? ['index', id] : [id];
+      assert.deepStrictEqual(s.cols, cols, where + ': the columns that are shown');
+      if (area === 'setup' && id !== 'index') assert.strictEqual(s.back, !wide, where + ': Back to the index is ' + (wide ? 'not shown beside the index' : 'shown'));
       kept(width).forEach((b) => assert(s.buttons[b], where + ': the strip has ' + b));
       assert(s.dockAtFoot, where + ': the strip is at the foot of the window');
       assert(s.focus, where + ': the cursor is not lost');
@@ -119,23 +178,36 @@ async function tabWalk(pg) {
       const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
       window.scrollTo(0, 0);
-      return Array.prototype.filter.call(document.querySelectorAll('#wsside button, #wssub button, #wstabs button, #wstp button'), (b) => shown(b) && !b.disabled).map((b) => b.id);
+      return Array.prototype.filter.call(document.querySelectorAll('#wsside button, #wssub button, #wstabs button, #wstp button, #wstp input'), (b) => shown(b) && !b.disabled).map((b) => b.id || 'loop');
     });
-    const seen = [];
-    for (let i = 0; i < 200; i++) {
+    let seen = [];
+    const stops = [];
+    for (let i = 0; i < 400; i++) {
       await pg.keyboard.press('Tab');
-      const id = await pg.evaluate(() => { const a = document.activeElement; return !a || a === document.body ? '' : a.id || (a.closest('main') ? 'main:' : '') + a.tagName.toLowerCase(); });
-      if (seen.length && id === seen[0]) break;          // round again
+      // (each stop is told from the others by a number given to its element: many buttons of a screen have no id)
+      const [id, n] = await pg.evaluate(() => { const a = document.activeElement; if (!a || a === document.body) return ['', 0]; window.pvjWalk = window.pvjWalk || 0; if (!a.pvjWalk) a.pvjWalk = ++window.pvjWalk;
+        return [(a.closest('main') ? 'main:' : '') + (a.id || (a.classList.contains('tploop') ? 'loop' : a.tagName.toLowerCase())), a.pvjWalk]; });
+      if (stops.length && n === stops[0]) break;          // round again
+      stops.push(n);
       seen.push(id);
     }
+    // (the walk begins after the item that was pressed to get here: the round is turned so that it begins where the page does)
+    const top = seen.indexOf(width < 600 ? 'sub-shape-effect' : 'side-play');
+    if (top > 0) seen = seen.slice(top).concat(seen.slice(0, top));
     const missed = want.filter((id) => seen.indexOf(id) < 0);
     assert.deepStrictEqual(missed, [], 'at ' + width + ' px the Tab key never comes to: ' + missed.join(', ') + ' (it came to ' + seen.join(' ') + ')');
-    kept(width).concat(width < 600 ? ['wsmore', 'tab-play', 'tab-setup', 'sub-shape-sound'] : ['side-play-pads', 'side-setup-index', 'side-shape-sound']).forEach((id) => {
+    const menu = width < 600 ? ['wsmore', 'tab-play', 'tab-setup', 'sub-shape-sound'] : ['side-play', 'side-setup'].concat(width < DESK ? ['sub-shape-sound'] : ['sub-shape-desk', 'sub-shape-mapping']);
+    kept(width).concat(menu).forEach((id) => {
       if (id !== 'prev' && id !== 'next') assert(seen.indexOf(id) >= 0, 'at ' + width + ' px the Tab key comes to ' + id);
     });
-    const inMain = seen.findIndex((id) => id.indexOf('main:') === 0 || id === 'mvol');
-    if (width >= 600) assert(inMain > seen.indexOf('side-setup-index') && seen.indexOf('side-play-pads') >= 0, 'at ' + width + ' px the side menu comes before the screen in the Tab order');
+    const inMain = seen.findIndex((id) => id.indexOf('main:') === 0);
+    // the order follows the eye: the rail, the tabs of the screens, the screen, the strip
+    if (width >= 600) assert(seen.indexOf('side-play') >= 0 && seen.indexOf('side-setup') < seen.indexOf(menu[2]) && seen.indexOf(menu[menu.length - 1]) < inMain, 'at ' + width + ' px the rail comes before the tabs and the tabs before the screen in the Tab order: ' + seen.join(' '));
     assert(inMain >= 0 && inMain < seen.indexOf('stop'), 'at ' + width + ' px the screen comes before the strip in the Tab order');
+    if (width >= DESK) {                                  // a desk: its columns from left to right
+      const first = (col) => seen.findIndex((id) => id === 'main:' + col);
+      assert(first('fxfilter') >= 0 && first('fxfilter') < first('mo') && first('mo') < first('mvol'), 'at ' + width + ' px the Tab key goes through Effect, Picture and Sound in that order: ' + seen.filter((id) => /^main:(fxfilter|mo|mvol)$/.test(id)).join(' '));
+    }
     out[width] = seen.length;
   }
   return out;
@@ -143,17 +215,85 @@ async function tabWalk(pg) {
 
 async function menus(pg) {
   await ready(pg);
-  for (const [width, tabs] of [[390, true], [599, true], [600, false], [768, false], [1366, false]]) {
+  for (const [width, tabs] of [[390, true], [599, true], [600, false], [768, false], [1199, false], [1200, false], [1366, false]]) {
     await pg.setViewportSize({ width, height: 900 });
     await frames(pg);
     await go(pg, 'shape/picture');
-    const s = await see(pg);
+    const s = await see(pg), wide = width >= DESK, at = 'at ' + width + ' px ';
     assert.strictEqual(s.tabs, tabs, 'the area tabs at ' + width + ' px');
-    assert.strictEqual(s.side, !tabs, 'the side menu at ' + width + ' px');
-    assert.strictEqual(s.sub, tabs, 'the row of the area\'s screens at ' + width + ' px');
-    assert.deepStrictEqual(s.landmarks.nav.slice().sort(), ['Areas', 'Every screen', 'Screens of Shape'], 'the menus are named landmarks');
+    assert.strictEqual(s.side, !tabs, 'the rail at ' + width + ' px');
+    assert.deepStrictEqual(s.rail, [['side-play', 'Play'], ['side-shape', 'Shape'], ['side-room', 'Room'], ['side-setup', 'Setup']], 'the rail has one button per area and nothing else');
+    assert.strictEqual(s.sub, true, 'the tabs of Shape\'s screens at ' + width + ' px');
+    assert.deepStrictEqual(s.subs, wide ? ['sub-shape-desk', 'sub-shape-mapping'] : ['sub-shape-effect', 'sub-shape-picture', 'sub-shape-sound', 'sub-shape-mapping'], at + 'the tabs of Shape');
+    assert.deepStrictEqual(s.cols, wide ? ['effect', 'picture', 'sound'] : ['picture'], at + 'the columns of Shape');
+    assert.deepStrictEqual(s.regions, (wide ? ['Effect', 'Picture', 'Sound'] : ['Picture']).map((n) => ['region', n]), at + 'every column is a region with its name');
+    assert.deepStrictEqual(s.colHeads, wide ? ['Effect', 'Picture', 'Sound'] : [''], at + (wide ? 'every column of the desk has its heading' : 'one screen has no column heading'));
+    // where the screens share the page the title bar speaks of the area, and no column is named as the open one
+    assert(wide ? !/^(Effect|Picture|Sound): /.test(s.job) && s.job.length > 0 : /^Picture: /.test(s.job), at + 'what the title bar says: ' + s.job);
+    assert.deepStrictEqual(s.landmarks.nav.slice().sort(), ['Areas', 'Areas', 'Screens of Shape'], 'the menus are named landmarks');
     assert(s.landmarks.main === 1 && s.landmarks.header === 1, 'one main part and one title bar: ' + JSON.stringify(s.landmarks));
+    // Play: all of its screens share the page from 1200 px, so it has no tabs there; and the link from the pads to
+    // the Shaders screen is there only where Shaders is another tab
+    await go(pg, 'play/pads');
+    const p = await see(pg);
+    assert.deepStrictEqual(p.cols, wide ? ['pads', 'library', 'shaders'] : ['pads'], at + 'the columns of Play');
+    assert.strictEqual(p.sub, !wide, at + 'the tabs of Play\'s screens');
+    assert.strictEqual(await pg.isVisible('#shaderslink'), !wide, at + 'the link from the pads to the Shaders screen');
   }
+  // each card is on the page once, whatever is shown: one build per area
+  for (const [key, ids] of [['play/pads', ['pads', 'libraryscreen', 'shaderpage', 'vibes', 'transitioncard', 'msg']], ['shape/picture', ['fxcard', 'mo', 'mvol', 'overlaycard', 'msg']], ['room/scenes', ['roomscenes', 'roomgroups', 'msg']]]) {
+    for (const width of [390, 1366]) {
+      await pg.setViewportSize({ width, height: 900 });
+      await go(pg, key);
+      const n = await pg.evaluate((list) => list.map((i) => document.querySelectorAll('[id="' + i + '"]').length), ids);
+      assert.deepStrictEqual(n, ids.map(() => 1), 'on ' + key + ' at ' + width + ' px each of ' + ids.join(', ') + ' is in the page once: ' + n.join(' '));
+      const twice = await pg.evaluate(() => { const seen = {}, out = []; document.querySelectorAll('.shell [id]').forEach((el) => { if (seen[el.id]) out.push(el.id); seen[el.id] = 1; }); return out; });
+      assert.deepStrictEqual(twice, [], 'on ' + key + ' at ' + width + ' px no id is in the page twice');
+    }
+  }
+  // What is typed survives a tab of the same area, and the window made narrower and wider again; the cursor stays
+  // in the field. (The Effect screen's search field; then the Picture tab and back; then across 1200 and 600 px.)
+  await pg.setViewportSize({ width: 768, height: 900 });
+  await go(pg, 'shape/effect');
+  await pg.waitForFunction(() => !!document.getElementById('fxfilter'), null, { timeout: 15000 });
+  const typed = () => pg.evaluate(() => { const f = document.getElementById('fxfilter'), r = f.getBoundingClientRect(); return [f.value, r.width > 0 && r.height > 0, document.activeElement === f]; });
+  await pg.evaluate(() => { const f = document.getElementById('fxfilter'); f.focus(); f.value = 'zz typed'; f.dispatchEvent(new Event('input', { bubbles: true })); });
+  await go(pg, 'shape/picture');
+  await go(pg, 'shape/effect');
+  assert.strictEqual((await typed())[0], 'zz typed', 'a name typed on Effect is still there after the Picture tab and back');
+  await pg.evaluate(() => document.getElementById('fxfilter').focus());
+  for (const width of [1366, 1199, 599, 390, 1200, 768]) {
+    await pg.setViewportSize({ width, height: 900 });
+    await frames(pg);
+    assert.deepStrictEqual(await typed(), ['zz typed', true, true], 'at ' + width + ' px, after the window changed, the field is shown with what was typed and the cursor in it');
+    assert.strictEqual((await see(pg)).screen, 'shape/effect', 'at ' + width + ' px the column that was in use is the open screen');
+  }
+  // in a desk the column that is used last is the one a narrower window shows
+  await pg.setViewportSize({ width: 1366, height: 900 });
+  await frames(pg);
+  await pg.evaluate(() => { document.getElementById('mvol').focus(); });
+  assert.strictEqual((await see(pg)).screen, 'shape/sound', 'the column the cursor went into is the open screen');
+  await pg.setViewportSize({ width: 768, height: 900 });
+  await frames(pg);
+  assert.deepStrictEqual((await see(pg)).cols, ['sound'], 'and it is the one a narrower window shows');
+  await pg.evaluate(() => { const f = document.getElementById('fxfilter'); f.value = ''; f.dispatchEvent(new Event('input', { bubbles: true })); });
+  // the cursor on a tab that goes with the width is handed on, never left nowhere
+  await pg.focus('#sub-shape-sound');
+  await pg.setViewportSize({ width: 1366, height: 900 });
+  await frames(pg);
+  assert.strictEqual((await see(pg)).focus, 'sub-shape-desk', 'the cursor on a screen\'s tab goes to the desk\'s tab when the area becomes a desk');
+  await pg.setViewportSize({ width: 768, height: 900 });
+  await frames(pg);
+  assert.strictEqual((await see(pg)).focus, 'sub-shape-sound', 'and back to the open screen\'s tab');
+  await pg.focus('#side-shape');
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await frames(pg);
+  assert.strictEqual((await see(pg)).focus, 'tab-shape', 'the cursor on the rail goes to the area\'s tab at the foot on a phone');
+  await pg.setViewportSize({ width: 768, height: 900 });
+  await frames(pg);
+  assert.strictEqual((await see(pg)).focus, 'side-shape', 'and back to the rail');
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await frames(pg);
 }
 
 /* eslint-disable no-undef */
@@ -163,7 +303,7 @@ function lie(strip) {
   const vw = document.documentElement.clientWidth;
   const at = {}, lines = [];
   strip.concat(['wsmore']).forEach((b) => {
-    const el = document.getElementById(b);
+    const el = b === 'loop' ? document.querySelector('#wstp .tploop') : document.getElementById(b);
     if (!shown(el)) return;
     const r = el.getBoundingClientRect(), mid = Math.round(r.top + r.height / 2);
     at[b] = { left: Math.round(r.left), right: Math.round(r.right), mid };
@@ -179,13 +319,15 @@ async function strip(pg) {
   await pg.setViewportSize({ width: 1366, height: 768 });
   await frames(pg);
   if ((await see(pg)).more === 'true') await pg.evaluate(() => document.getElementById('wsmore').click());
-  // From 600 px: one line, whatever is folded. [width, height, the place in the clip, Previous and Next, the other four]
-  const FOLDED = ['back10', 'fwd10', 'fadein', 'fade'];
-  for (const [width, height, seek, steps, rest] of [[600, 900, false, false, false], [667, 375, false, false, false], [768, 1024, false, false, false], [799, 900, false, false, false],
-    [800, 900, false, true, false], [999, 900, false, true, false], [1000, 800, true, true, false], [1199, 800, true, true, false], [1200, 800, true, true, true], [1366, 768, true, true, true]]) {
+  // From 600 px: one line, whatever is folded. [width, height, Previous and Next, the place in the clip, back and
+  // forward 10 s and the fades, Speed and Loop]
+  const FOLDED = ['back10', 'fwd10', 'fadein', 'fade'], ALL = STRIP.concat(SPEED);
+  for (const [width, height, steps, seek, rest, speed] of [[600, 900, false, false, false, false], [667, 375, false, false, false, false], [768, 1024, false, false, false, false], [799, 900, false, false, false, false],
+    [800, 900, true, false, false, false], [999, 900, true, false, false, false], [1000, 800, true, true, false, false], [1199, 800, true, true, false, false], [1200, 800, true, true, true, false], [1366, 768, true, true, true, false],
+    [1439, 900, true, true, true, false], [1440, 900, true, true, true, true], [1920, 1080, true, true, true, true]]) {
     await pg.setViewportSize({ width, height });
     await frames(pg);
-    const s = await see(pg), l = await pg.evaluate(lie, STRIP);
+    const s = await see(pg), l = await pg.evaluate(lie, ALL);
     const where = 'at ' + width + ' px the strip ';
     assert.strictEqual(l.lines, 1, where + 'is one line of buttons, not ' + l.lines + ': ' + JSON.stringify(l.at));
     ['freeze', 'stop', 'black'].forEach((b) => assert(s.buttons[b], where + 'shows ' + b));
@@ -197,39 +339,54 @@ async function strip(pg) {
     assert.strictEqual(s.buttons.seek, seek, where + (seek ? 'shows' : 'folds') + ' the place in the clip');
     ['prev', 'next'].forEach((b) => assert.strictEqual(s.buttons[b], steps, where + (steps ? 'shows ' : 'folds ') + b));
     FOLDED.forEach((b) => assert.strictEqual(s.buttons[b], rest, where + (rest ? 'shows ' : 'folds ') + b));
-    assert.strictEqual(s.buttons.wsmore, !rest, where + (rest ? 'has no More' : 'has More'));
+    SPEED.forEach((b) => assert.strictEqual(s.buttons[b], speed, where + (speed ? 'shows ' : 'folds ') + (b === 'mv' ? 'Speed' : 'Loop')));
+    assert.strictEqual(s.buttons.wsmore, !speed, where + (speed ? 'has no More' : 'has More'));
+  }
+  // Speed and Loop are on the strip and nowhere else, on a screen of every area
+  for (const key of ['play/pads', 'shape/picture', 'room/scenes', 'setup/index']) {
+    await go(pg, key);
+    const n = await pg.evaluate(() => [document.querySelectorAll('#wstp #mv').length, document.querySelectorAll('#mv').length, document.querySelectorAll('#wstp .tploop').length,
+      Array.prototype.filter.call(document.querySelectorAll('button'), (b) => /^Loop: /.test(b.textContent)).length]);
+    assert.deepStrictEqual(n, [1, 1, 1, 1], 'on ' + key + ' Speed and Loop are on the strip, once: ' + n.join(' '));
   }
   // More at 768 px: what was folded comes under the line, and the three keep their place
   await pg.setViewportSize({ width: 768, height: 1024 });
   await frames(pg);
-  const before = await pg.evaluate(lie, STRIP);
+  const before = await pg.evaluate(lie, ALL);
   await pg.click('#wsmore');
   let s = await see(pg);
-  const open = await pg.evaluate(lie, STRIP);
-  STRIP.concat(['seek', 'wsmore']).forEach((b) => assert(s.buttons[b], 'at 768 px with More open the strip shows ' + b));
+  const open = await pg.evaluate(lie, ALL);
+  ALL.concat(['seek', 'wsmore']).forEach((b) => assert(s.buttons[b], 'at 768 px with More open the strip shows ' + b));
   assert.strictEqual(s.more, 'true', 'at 768 px More says it is open');
   ['freeze', 'stop', 'black'].forEach((b) => assert(open.at[b].left === before.at[b].left && open.at[b].mid < open.at.fade.mid, 'at 768 px ' + b + ' keeps its place when More opens: ' + JSON.stringify([before.at[b], open.at[b]])));
   await pg.click('#wsmore');
   s = await see(pg);
-  assert(s.more === 'false' && !s.buttons.fade && !s.buttons.seek && s.buttons.freeze, 'at 768 px More closes it again');
+  assert(s.more === 'false' && !s.buttons.fade && !s.buttons.seek && !s.buttons.mv && s.buttons.freeze, 'at 768 px More closes it again');
+  // More at 1366 px opens Speed and Loop, which is all that is folded there
+  await pg.setViewportSize({ width: 1366, height: 768 });
+  await frames(pg);
+  await pg.click('#wsmore');
+  s = await see(pg);
+  assert(s.buttons.mv && s.buttons.loop && s.buttons.fade && s.buttons.seek, 'at 1366 px More opens Speed and Loop');
+  await pg.click('#wsmore');
   await pg.setViewportSize({ width: 390, height: 844 });
   await frames(pg);
   await go(pg, 'play/pads');
   if ((await see(pg)).more === 'true') await pg.click('#wsmore');
   s = await see(pg);
-  const folded = STRIP.filter((b) => ALWAYS.indexOf(b) < 0).concat(['seek']);
+  const folded = ALL.filter((b) => ALWAYS.indexOf(b) < 0).concat(['seek']);
   ALWAYS.concat(['wsmore']).forEach((b) => assert(s.buttons[b], 'a phone\'s strip shows ' + b));
   folded.forEach((b) => assert(!s.buttons[b], 'a phone\'s strip keeps ' + b + ' behind More'));
   assert.strictEqual(s.more, 'false', 'More says it is closed');
   await pg.click('#wsmore');
   s = await see(pg);
-  STRIP.concat(['seek', 'wsmore']).forEach((b) => assert(s.buttons[b], 'with More open the strip shows ' + b));
+  ALL.concat(['seek', 'wsmore']).forEach((b) => assert(s.buttons[b], 'with More open the strip shows ' + b));
   assert.strictEqual(s.more, 'true', 'More says it is open');
   assert.strictEqual(s.screen, 'play/pads', 'More opens in place');
   await go(pg, 'shape/picture');
   await go(pg, 'play/library');
   s = await see(pg);
-  assert(s.more === 'true' && s.buttons.fade && s.buttons.seek, 'the strip stays open on the next screen');
+  assert(s.more === 'true' && s.buttons.fade && s.buttons.seek && s.buttons.mv, 'the strip stays open on the next screen');
   await pg.click('#wsmore');
   s = await see(pg);
   assert(s.more === 'false' && !s.buttons.fade && s.buttons.stop, 'More closes it again');
@@ -356,7 +513,7 @@ function longNames(url, d) {
   else if (/\/api\/pads$/.test(url)) { if (d.banks && d.banks[0] && d.banks[0].pads && d.banks[0].pads[0] && d.banks[0].pads[0].file) d.banks[0].pads[0].label = LONG.pad; }
   return d;
 }
-const NARROW = [[320, 568], [390, 844], [600, 800], [768, 1024], [740, 360]];
+const NARROW = [[320, 568], [390, 844], [600, 800], [768, 1024], [740, 360], [1200, 800], [1366, 768], [1440, 900], [1920, 1080]];      // (the last four: an area is a desk)
 const FAKED = ['status', 'shaders', 'effects', 'media', 'room', 'projectors', 'devices', 'streams', 'pads'];
 // pg: the owner's page, with every module on. post(url, body), get(url): calls of the box as the owner, each
 // resolving with the answer's data. Both looks are gone through, and the look the box had is put back.
@@ -383,27 +540,27 @@ async function narrow(pg, post, get) {
       await pg.setViewportSize({ width: 390, height: 844 });
       await pg.goto(home);
       await ready(pg);
-      await pg.waitForFunction(() => document.querySelectorAll('#wsside [data-go^="room/"]').length > 0, null, { timeout: 15000 });
-      const keys = (await see(pg)).menu;
-      assert(keys.length >= 20, 'the menu lists the screens for the narrow widths: ' + keys.join(' '));
+      await pg.waitForFunction(() => !!document.querySelector('#wsside [data-ar="room"]'), null, { timeout: 15000 });
+      const keys = await screens(pg);
+      assert(keys.length >= 20, 'the screens for the narrow widths: ' + keys.join(' '));
       for (const key of keys) {
         await pg.setViewportSize({ width: 390, height: 844 });
         await frames(pg);
         await go(pg, key);
         // its cards have their data (the same wait for every screen: a poll of the status is one second), the folds
         // are opened, and on a phone the strip is open too: More shows the most there is
-        await pg.waitForFunction(() => !!document.querySelector('main.ws > .screen') && !/Checking\.\.\./.test(document.querySelector('main.ws').textContent) && /A_very_long_clip_name/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
+        await pg.waitForFunction(() => !!document.querySelector('main.ws .screen') && !/Checking\.\.\./.test(document.querySelector('main.ws').textContent) && /A_very_long_clip_name/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
         await pg.evaluate(() => { document.querySelectorAll('main.ws details').forEach((x) => { x.open = true; }); });
         for (const [width, height] of NARROW) {
           await pg.setViewportSize({ width, height });
-          for (const more of width < 600 ? [false, true] : [false]) {
+          for (const more of width < 600 || width === 1366 ? [false, true] : [false]) {        // (at 1366 px More holds Speed and Loop)
             if ((await pg.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded') === 'true')) !== more) await pg.evaluate(() => document.getElementById('wsmore').click());
             await frames(pg);
             const got = await pg.evaluate(overruns);
             looked++;
             // from 600 px the strip is one line with Freeze, Stop and Blackout on it, in this look and with this name too
-            if (width >= 600) {
-              const l = await pg.evaluate(lie, STRIP);
+            if (width >= 600 && !more) {
+              const l = await pg.evaluate(lie, STRIP.concat(SPEED));
               if (l.lines !== 1 || !l.at.freeze || !l.at.stop || !l.at.black || l.at.black.right > l.vw) got.push({ kind: 'the strip is not one line with Freeze, Stop and Blackout on it', name: '', detail: l.lines + ' lines: ' + JSON.stringify(l.at) });
             }
             got.forEach((f) => found.push(lookName + ', ' + key + ' at ' + width + ' by ' + height + (more ? ' with More open' : '') + ': ' + f.kind + (f.name ? ': ' + f.name : '') + (f.detail ? ' (' + f.detail + ')' : '')));
@@ -426,7 +583,7 @@ async function narrow(pg, post, get) {
 // What each role has, with every module on (tests/ui/signal-pages.js setUp). A presenter has no page of Setup that
 // is for the owner, and the mapping card without its page; a guest has no way to let anyone in.
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];
-const SHAPE = ['shape/controls', 'shape/effect', 'shape/picture', 'shape/mapping', 'shape/sound'];
+const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
   owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'sync', 'midi', 'dmx', 'osc',
     'network', 'updates', 'support', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
@@ -438,62 +595,102 @@ async function roles(pages, post) {
   for (const who of ['owner', 'presenter', 'guest']) {
     const pg = pages[who];
     await ready(pg);
-    // The modules have been read once the Room screens are in the menu. If they do not come: say what the device
+    // The modules have been read once the Room area is on the rail. If it does not come: say what the device
     // had, and fail. A file of the page that did not arrive is asked for again by the page itself (load.js, D68),
-    // so a menu without Room screens is a failure, of the panel or of that loader; "files" says which file it was.
-    const roomIn = () => pg.waitForFunction(() => document.querySelectorAll('#wsside [data-go^="room/"]').length > 0, null, { timeout: 8000 });
+    // so a panel without the Room area is a failure, of the panel or of that loader; "files" says which file it was.
+    const roomIn = () => pg.waitForFunction(() => !!document.querySelector('#wsside [data-ar="room"]'), null, { timeout: 8000 });
     try { await roomIn(); } catch (e) {
       const had = await pg.evaluate(() => fetch('/api/modules').then((r) => r.json().then((d) => ({ status: r.status, on: (d.modules || []).filter((m) => m.enabled).map((m) => m.id) })), () => ({ status: 0 }))
         .then((box) => ({ box, roomScript: !!window.pvjRoom, loaded: document.readyState,
           files: performance.getEntriesByType('resource').filter((x) => /\.(js|css)$/.test(x.name)).map((x) => x.name.replace(/^.*\//, '') + ': ' + x.responseStatus + ', ' + x.decodedBodySize + ' bytes'),
-          menu: Array.prototype.map.call(document.querySelectorAll('#wsside [data-go]'), (b) => b.getAttribute('data-go')) })));
-      throw new Error('the menu of a ' + who + ' has no Room screens: ' + JSON.stringify(had));
+          areas: Array.prototype.map.call(document.querySelectorAll('#wsside [data-ar]'), (b) => b.getAttribute('data-ar')) })));
+      throw new Error('the panel of a ' + who + ' has no Room area: ' + JSON.stringify(had));
     }
     const s = await see(pg);
-    assert.deepStrictEqual(s.menu, MENUS[who], 'the screens in a ' + who + '\'s menu');
-    assert.deepStrictEqual(s.tabNames, ['Play', 'Shape', 'Room', 'Setup'], 'the areas a ' + who + ' has');
     // staff and guests land on the Room; the owner on the pads
     assert.strictEqual(s.screen, who === 'owner' ? 'play/pads' : 'room/scenes', 'where a ' + who + ' lands');
-    assert.deepStrictEqual(s.disabled, who === 'guest' ? STRIP : s.disabled.filter((b) => b === 'prev' || b === 'next'), 'which of the strip\'s buttons a ' + who + ' cannot press');
+    assert.deepStrictEqual(s.tabNames, ['Play', 'Shape', 'Room', 'Setup'], 'the areas a ' + who + ' has');
+    assert.deepStrictEqual(s.disabled, who === 'guest' ? STRIP.concat(SPEED) : s.disabled.filter((b) => b === 'prev' || b === 'next'), 'which of the strip\'s controls a ' + who + ' cannot use');
+    assert.deepStrictEqual(await screens(pg), MENUS[who], 'the screens a ' + who + ' has');
+    // a desk has the columns the role has: at 1366 px the Room of a guest is two columns, of the others three
+    await pg.setViewportSize({ width: 1366, height: 800 });
+    await go(pg, 'room/scenes');
+    assert.deepStrictEqual((await see(pg)).cols, who === 'guest' ? ['scenes', 'walls'] : ['scenes', 'walls', 'guests'], 'the columns of a ' + who + '\'s Room at 1366 px');
+    await go(pg, 'play/pads');
+    assert.deepStrictEqual((await see(pg)).cols, ['pads', 'library', 'shaders'], 'the columns of a ' + who + '\'s Play at 1366 px');
+    await go(pg, 'shape/picture');
+    assert.deepStrictEqual((await see(pg)).cols, ['effect', 'picture', 'sound'], 'the columns of a ' + who + '\'s Shape at 1366 px');
+    await pg.setViewportSize({ width: 390, height: 844 });
   }
-  // a presenter's mapping is the card without the page and its switch; a guest's Sound is Volume and Audio alone
+  // a presenter's mapping is the card without the page and its switch; a guest's Sound is Volume and Audio alone;
+  // both have Test pattern on Mapping, which a guest cannot press
   await go(pages.presenter, 'shape/mapping');
-  assert(await pages.presenter.evaluate(() => !!document.querySelector('#plainpage #mapcard') && !document.getElementById('sysswitch')), 'a presenter has the mapping card and no switch');
+  assert(await pages.presenter.evaluate(() => !!document.querySelector('#plainpage #mapcard') && !document.getElementById('sysswitch') && !!document.querySelector('#plainpage #testpattern')), 'a presenter has the mapping card, Test pattern and no switch');
+  await go(pages.guest, 'shape/mapping');
+  assert(await pages.guest.evaluate(() => { const t = document.querySelector('#plainpage #testpattern'); return !!t && t.disabled; }), 'a guest sees Test pattern on Mapping, and cannot press it');
   await go(pages.guest, 'shape/sound');
   assert(await pages.guest.evaluate(() => !!document.querySelector('#plainpage #mvol') && !document.getElementById('audiocard') && document.getElementById('mvol').disabled), 'a guest has the Volume slider, and cannot move it');
   await go(pages.guest, 'room/scenes');
   await go(pages.presenter, 'room/scenes');
-  // a module that is switched off: its page leaves the menu, and the owner's Setup index keeps its row, with the switch
+  // a module that is switched off: its screens are gone (no tab, no column), and the owner's Setup index keeps its
+  // row, which opens a page of Setup with the switch; a desk with one column left is just that screen; and with
+  // no Mapping screen, Test pattern is on Picture
   await post('/api/modules/inputs-srt', { enabled: false });
   await post('/api/modules/shaders', { enabled: false });
+  await post('/api/modules/mapper', { enabled: false });
   try {
     const pg = pages.owner;
     await pg.goto(await pg.evaluate(() => location.origin + '/'));
     await ready(pg);
-    await pg.waitForFunction(() => document.querySelectorAll('#wsside [data-go^="room/"]').length > 0, null, { timeout: 15000 });
+    await pg.waitForFunction(() => !!document.querySelector('#wsside [data-ar="room"]'), null, { timeout: 15000 });
+    const keys = await screens(pg);
+    ['play/shaders', 'shape/effect', 'shape/mapping'].forEach((k) => assert(keys.indexOf(k) < 0, 'with its module off, ' + k + ' is not a screen'));
+    await pg.setViewportSize({ width: 1366, height: 800 });
+    await go(pg, 'play/pads');
+    assert.deepStrictEqual((await see(pg)).cols, ['pads', 'library'], 'with Shaders off, Play\'s desk is the pads and the library');
+    await go(pg, 'shape/picture');
+    let s = await see(pg);
+    assert.deepStrictEqual([s.cols, s.sub], [['picture', 'sound'], false], 'with Shaders and Mapping off, Shape\'s desk is Picture and Sound, with no tabs');
+    assert(await pg.isVisible('#picturescreen #testpattern'), 'with no Mapping screen, Test pattern is on Picture');
+    await pg.setViewportSize({ width: 390, height: 844 });
     await go(pg, 'setup/index');
     await pg.waitForFunction(() => !!document.querySelector('.navrow'), null, { timeout: 15000 });
-    const s = await see(pg);
-    ['setup/streams', 'play/shaders', 'shape/effect'].forEach((k) => assert(s.menu.indexOf(k) < 0, 'with its module off, ' + k + ' is not in the menu'));
-    ['Streams', 'Shaders and Vibes'].forEach((n) => assert(s.rows.indexOf(n) >= 0, 'the owner\'s Setup index still has the row ' + n));
+    s = await see(pg);
+    ['Streams', 'Shaders and Vibes', 'Projection mapping'].forEach((n) => assert(s.rows.indexOf(n) >= 0, 'the owner\'s Setup index still has the row ' + n));
+    assert.deepStrictEqual(await pg.evaluate(() => ['streams', 'vibes', 'mapping'].map((id) => !!document.querySelector('#nav-' + id + ' .chip-off:not([hidden])'))), [true, true, true], 'each of those rows says Off');
     await pg.click('#nav-vibes');
     await pg.waitForFunction(() => !!document.getElementById('sysswitchon') && (document.querySelector('#syspage h1') || {}).textContent === 'Shaders and Vibes', null, { timeout: 15000 });
     const off = await see(pg);
-    assert.strictEqual(off.screen, 'play/shaders', 'the page that is off opens where it lives');
-    assert.deepStrictEqual(off.open.filter((x) => x.indexOf('side-') === 0 || x.indexOf('sub-') === 0), [], 'and no item of the menu is marked for it');
+    assert.strictEqual(off.screen, 'setup/vibes', 'the page that is off is a page of Setup');
+    assert.deepStrictEqual(off.open, ['tab-setup'], 'and Setup is the area that is open');
     assert.strictEqual(await pg.evaluate(() => document.getElementById('sysback').textContent), '‹ Setup', 'with a Back to the index');
   } finally {
     await post('/api/modules/inputs-srt', { enabled: true });
     await post('/api/modules/shaders', { enabled: true });
+    await post('/api/modules/mapper', { enabled: true });
   }
   await pages.owner.goto(await pages.owner.evaluate(() => location.origin + '/'));
   await ready(pages.owner);
 }
 
-// Controls that are gone on purpose, with the reason. Everything else that was in the panel before must be there.
-const MOVED = {
-  presenter: { '#nav-room': 'the row "Room" of a presenter\'s System index led to the Room screen\'s own cards; they are the screens of the Room area now' },
+// Controls that are gone on purpose, with the reason and the place where the same thing is now. Everything else
+// that was in the panel before must be there. (D72: the effect strip that stood on Live, then on Shape >
+// Controls, was a second copy of the head of the Effects card. The playing shader's strip was the other copy that
+// went; it has no entry here because nothing plays while the list is taken, so none of its controls is in it:
+// panel.test.js holds each of them on the Shaders screen while a shader plays.)
+const FX_STRIP = {
+  '#livefxprev': 'the effect strip was a copy: the same control is #fxprev on Shape > Effect',
+  '#livefxon': 'the effect strip was a copy: the same control is #fxon on Shape > Effect (#fxoff while an effect is on)',
+  '#livefxnext': 'the effect strip was a copy: the same control is #fxnext on Shape > Effect',
+  '#livefxmore': 'the effect strip\'s link to the Effects card: the card is the Effect screen, a tab of Shape (a column of its desk from 1200 px)',
 };
+const MOVED = {
+  owner: FX_STRIP,
+  presenter: Object.assign({ '#nav-room': 'the row "Room" of a presenter\'s System index led to the Room screen\'s own cards; they are the screens of the Room area now' }, FX_STRIP),
+  guest: { '#livefxmore': FX_STRIP['#livefxmore'] },
+};
+// What stands for each of them: the list fails if a control that replaced a removed copy is not there.
+const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext'], presenter: ['#fxprev', '#fxon', '#fxnext'], guest: [] };
 // o: { open(token) -> a page loaded with that token (null: the owner's, already paired), prepare: the t for
 // inventory.prepare (its page is the owner's), log(text) }. The box behind it has no player (see inventory.js).
 async function inventory(o) {
@@ -512,6 +709,9 @@ async function inventory(o) {
       lost = inv.compare(before.roles[role], after, MOVED[role]);
     }
     const fresh = Object.keys(after).filter((k) => !before.roles[role][k]);
+    IN_PLACE[role].forEach((k) => { if (!after[k]) lost.push(k + '  (it stands for a copy that was removed on purpose, and is not there)'); });
+    // an exception is for what is gone: one that names a control which is still there is out of date
+    Object.keys(MOVED[role] || {}).forEach((k) => { if (after[k]) lost.push(k + '  (listed as removed on purpose, and it is there: take it off the list)'); });
     out[role] = { before: Object.keys(before.roles[role]).length, after: Object.keys(after).length, lost, fresh };
     if (o.log) o.log('controls of the ' + role + ': ' + out[role].before + ' before the shell, ' + out[role].after + ' now' + (fresh.length ? '; new: ' + fresh.join(', ') : ''));
     if (lost.length) failed.push('controls ' + (role === 'owner' ? 'an ' : 'a ') + role + ' could reach before the Workspace shell and cannot now:\n  ' + lost.join('\n  '));
@@ -521,4 +721,4 @@ async function inventory(o) {
   return out;
 }
 
-module.exports = { reach, tabWalk, menus, strip, narrow, overruns, longNames, roles, inventory, MENUS, MOVED };
+module.exports = { screens, reach, tabWalk, menus, strip, narrow, overruns, longNames, roles, inventory, MENUS, MOVED };

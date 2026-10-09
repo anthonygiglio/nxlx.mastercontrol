@@ -14,7 +14,7 @@ function describe() {
   // The sections of a screen: each becomes a named group at the top of the SVG and a layer group in the PSD. A System
   // page has a Back button, a header with the switch, a description, a message and a state line above its cards.
   // The Workspace shell (D65) adds its own parts round the screen: the title bar, the row of the area's screens (a
-  // phone), the side menu (from 600 px), the transport strip and the area tabs (a phone).
+  // phone, tabs from 600 px), the rail of the areas (from 600 px), the transport strip and the area tabs (a phone).
   const SECTIONS = '#wshead, #wssub, #wsside, #wstp, .top, .pads, .card, nav.tabs, .btn.back, #sysblurb, #sysstate, #msg, .danger-h, .support-banner, .banks';
   const CONTROL = 'button, input, select, textarea, canvas, img, svg, .pad';
   const used = {};
@@ -33,7 +33,7 @@ function describe() {
     if (el.matches('.card')) { const h = el.querySelector('h2'); return 'Card: ' + (h ? h.textContent : el.id || 'untitled'); }
     if (el.matches('#wshead')) return 'Title bar';
     if (el.matches('#wssub')) return 'Screens of the area';
-    if (el.matches('#wsside')) return 'Side menu';
+    if (el.matches('#wsside')) return 'Rail';
     if (el.matches('#wstp')) return 'Transport strip';
     if (el.matches('.top.syshead')) return 'Page header';
     if (el.matches('.top')) return 'Header';

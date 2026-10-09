@@ -8,10 +8,11 @@ const path = require('path');
 const assert = require('assert');
 const net = require('net');
 const crypto = require('crypto');
-// Moving about in the Workspace shell (D65): go(page, 'area/screen') presses what a person would at the page's width,
-// at(page) is the open screen's key, stripOpen(page) opens the transport strip's More on a phone.
+// Moving about in the Workspace shell (D65, D72): go(page, 'area/screen') presses what a person would at the page's
+// width, at(page) is the open screen's key, back(page) is a page's own Back where it has one, stripOpen(page) opens
+// the transport strip's More on a phone.
 const shell = require('./signal-pages');
-const { go, at, stripOpen } = shell;
+const { go, at, back, stripOpen } = shell;
 
 // One PJLink question to the harness's fake projector, straight over TCP (not through the panel): what it really did.
 function pjlink(port, password, body) {
@@ -86,7 +87,7 @@ function startServer(env) {          // env: more for the harness's environment 
           const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + ' [...]' : t; };
           const text = (el) => (el ? cut(el.innerText || el.textContent, 1500) : null);
           const one = (q) => document.querySelector(q);
-          const screen = one('main.ws > .screen') || one('.shell > .screen') || one('#app > *');
+          const screen = one('main.ws') || one('.shell > .screen') || one('#app > *');
           const active = document.activeElement;
           const tab = one('main.ws');
           return {
@@ -174,8 +175,9 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForFunction(() => document.getElementById('black').textContent === 'Show');
     await page.click('#black');
     await page.waitForFunction(() => document.getElementById('black').textContent === 'Blackout');
-    // Transport: the position slider is on the strip (under More on a phone); the test pattern, on Shape > Picture,
-    // switches on and off
+    // Transport: the position slider is on the strip (under More on a phone); the test pattern switches on and off
+    // (it is on Shape > Mapping; on this new box the mapper is off, there is no Mapping screen, and it is on
+    // Shape > Picture, where it was)
     await page.waitForSelector('#seek');
     assert(await page.isVisible('#fade') && await page.isVisible('#freeze') && await page.isVisible('#back10') && await page.isVisible('#fwd10') && await page.isVisible('#fadein'), 'More opens the rest of the strip in place');
     await go(page, 'shape/picture');
@@ -284,7 +286,7 @@ function startServer(env) {          // env: more for the harness's environment 
     const sys = (name) => shell.sys(page, name);
     async function chip(name, word) { await page.waitForSelector(`${rowOf(name)} .chip:text-is("${word}")`, { timeout: 8000 }); }
     async function onPage(name) {
-      assert.strictEqual(await page.textContent('#syspage h1'), name, 'still on the ' + name + ' page');
+      assert.strictEqual(await page.textContent('#syspage .syshead :is(h1, h2)'), name, 'still on the ' + name + ' page');
       await fitsCard('.card, #syspage', name + ' page');
       await fitsPhone(name + ' page');
     }
@@ -297,7 +299,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#sysoff');
       await page.waitForFunction(() => /Switched off/.test(document.getElementById('msg').textContent));
       assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', name + ' is off');
-      assert.strictEqual(await page.textContent('#syspage h1'), name, 'switching off keeps the ' + name + ' page open');
+      assert.strictEqual(await page.textContent('#syspage .syshead :is(h1, h2)'), name, 'switching off keeps the ' + name + ' page open');
     }
     // The page's switch: off shows only the description and one big button; switching on keeps the person there
     async function switchOn(name) {
@@ -309,7 +311,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#sysswitch[aria-checked="true"]');
       await page.waitForFunction(() => /Switched on/.test(document.getElementById('msg').textContent));
       assert.strictEqual(await page.textContent('#sysswitchlabel'), 'On');
-      assert.strictEqual(await page.textContent('#syspage h1'), name, 'switching on keeps the ' + name + ' page open');
+      assert.strictEqual(await page.textContent('#syspage .syshead :is(h1, h2)'), name, 'switching on keeps the ' + name + ' page open');
     }
 
     // Shape > Picture (what Mix held): drag a slider and check the throttle keeps request count sane
@@ -444,12 +446,12 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForFunction(() => !document.getElementById('netreverting') && !document.getElementById('netpending'));
     await onPage('Network');
     // Back returns to the index (the button, and the phone's own back), and the row now tells the truth
-    await page.click('#sysback');
+    await back(page);
     await page.waitForSelector('#sysindex');
     await chip('Network', 'Ready');
     await page.waitForSelector(`${rowOf('Network')} .navstate:has-text("192.168.1.9/24")`);
     await page.click(rowOf('Network'));
-    await page.waitForSelector('#syspage h1:text-is("Network")');
+    await page.waitForSelector('#syspage .syshead :is(h1, h2):text-is("Network")');
     await page.evaluate(() => history.back());
     await page.waitForSelector('#sysindex');
     // OSC has no module: the page's switch is OSC itself, and there is no second switch inside the card
@@ -788,7 +790,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForFunction(() => !document.getElementById('schedoff') && /Vibes is switched on/.test(document.getElementById('msg').textContent));
     assert(await moduleIsOn('shaders'), 'the button switched Vibes on in place');
     assert.strictEqual(await page.textContent('#schedaction option[value="vibes"]'), 'Start Vibes', 'the mark is gone once it is on');
-    assert.strictEqual(await page.textContent('#syspage h1'), 'Schedule', 'still on the Schedule page');
+    assert.strictEqual(await page.textContent('#syspage .syshead :is(h1, h2)'), 'Schedule', 'still on the Schedule page');
     // Days: three shortcuts above seven chips
     await page.click('#schedshort button:text-is("Weekdays")');
     assert.deepStrictEqual(await schedDays(), ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], 'Weekdays');
@@ -1113,9 +1115,9 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.locator('#roomambience, #roomamb').count(), 0, 'no ambience control while Shaders and Vibes is off');
     assert.strictEqual(await page.textContent('#roomamboff .hint'), 'Ambience (Vibes) is switched off.');
     await page.click('#roomambopen');
-    await page.waitForSelector('#syspage h1:text-is("Shaders and Vibes")');
-    await page.click('#sysback');
-    await page.waitForSelector('#roomscreen.screen #roomamboff');
+    await page.waitForSelector('#syspage .syshead :is(h1, h2):text-is("Shaders and Vibes")');
+    await back(page);
+    await page.waitForSelector('#roomscreen #roomamboff');
     await page.click('.room-scene:has-text("Console night")');
     await page.waitForFunction(() => /Main wall: on, input Box, sound muted\. Painting wall: switching on \(warming up\)\. Box: playing tunnel\.mkv\./.test((document.getElementById('roomjob') || {}).textContent || ''), null, { timeout: 20000 });
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '32') problems.push('the scene did not switch the main wall to input 32');
@@ -1613,12 +1615,12 @@ function startServer(env) {          // env: more for the harness's environment 
       await guest.setViewportSize({ width, height: 844 });
       await guest.waitForSelector('#boxcard .kvv');
       await fitsOn(guest, "a guest's About and power page at " + width);
-      await guest.click('#sysback');
+      await back(guest);
       await guest.click('.navrow:has-text("Health")');
       await guest.waitForSelector('#healthpower');
       await fitsOn(guest, "a guest's Health page at " + width);
       assert.strictEqual(await guest.locator('#healthshowaddr, #sysswitch').count(), 0, 'nothing to press on a guest\'s Health page');
-      await guest.click('#sysback');
+      await back(guest);
       await guest.click('.navrow:has-text("About and power")');
     }
     await guest.setViewportSize({ width: 390, height: 844 });
@@ -1707,7 +1709,7 @@ function startServer(env) {          // env: more for the harness's environment 
         assert.strictEqual(how, '', what + ': the Shaders page drew an answer that had no set: ' + how);
         assert.strictEqual(await page.getAttribute('#sysswitch', 'aria-checked'), 'false', what + ': the switch says Off');
         assert.strictEqual(await page.locator('#shaderpage').count(), 0, what + ': none of the cards is left to tap');
-        assert.strictEqual(await page.textContent('#syspage h1'), 'Shaders and Vibes', what + ': still on its page');
+        assert.strictEqual(await page.textContent('#syspage .syshead :is(h1, h2)'), 'Shaders and Vibes', what + ': still on its page');
       };
       const backOn = async () => {
         await page.click('#sysswitchon');
@@ -1766,14 +1768,14 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(await page.isVisible('#liveprev'), 'and Previous is beside it');
     await fitsPhone('Pads while Vibes is playing');
     if (shots) await page.screenshot({ path: path.join(shots, '8-live-vibes.png') });
-    // The link lands on the same page (Play > Shaders), and Back returns to Pads
+    // The link lands on the same page (Play > Shaders): another tab of Play, so there is no Back; the Pads tab leads back
     await page.click('#shaderslink');
-    await page.waitForSelector('#syspage h1:text-is("Shaders and Vibes")');
+    await page.waitForSelector('#syspage .syshead :is(h1, h2):text-is("Shaders and Vibes")');
     await page.waitForFunction(() => /Vibes is playing/.test((document.getElementById('shaderline') || {}).textContent));
     assert.strictEqual(await page.textContent('#vibesbtn'), 'Stop Vibes');
     assert.strictEqual(await page.textContent('#shadernext'), 'Next \u203a');
     assert.strictEqual(await at(page), 'play/shaders', 'the Shaders link opens Play > Shaders');
-    assert.strictEqual(await page.textContent('#sysback'), '‹ Pads');
+    assert.strictEqual(await page.locator('#sysback').count(), 0, 'a tab of the same area has no Back');
     if (shots) await page.screenshot({ path: path.join(shots, '9-shaders.png'), fullPage: true });
     // A guest sees what is playing, and nothing to press
     await go(guest, 'play/pads');
@@ -1783,9 +1785,9 @@ function startServer(env) {          // env: more for the harness's environment 
     await guest.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
     assert(/Vibes is playing/.test(await guest.textContent('#shaderline')), 'a guest sees that Vibes is playing');
     assert.strictEqual(await guest.locator('#shaderpage button, #shaderpage input[type=range], #vibesdwell, #shaderheight, #sysswitch').count(), 0, 'a guest gets nothing to press on the Shaders page (only the filter of the list)');
-    await page.click('#sysback');
-    await page.waitForSelector('.pads');
-    assert.strictEqual(await at(page), 'play/pads', 'Back from the Shaders page returns to Pads');
+    await go(page, 'play/pads');
+    await page.waitForSelector('.pads:visible');
+    assert.strictEqual(await at(page), 'play/pads', 'the Pads tab leads back from the Shaders screen');
     // Switching the module off while Vibes is on the screen asks first, in place; "no" puts the switch back and changes nothing
     await sysIndex();
     await chip('Shaders and Vibes', 'Active');
@@ -2329,18 +2331,23 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#confirmyes');
     await page.waitForFunction(() => document.querySelectorAll('#setlist .setrow').length === 2);
     assert.deepStrictEqual((await get('/api/shaders')).sets.map((e) => e.name), ['Ambient', 'Show']);
-    // Shape > Controls: a strip of Speed and the shader's first four controls. Play > Pads: the shader before and
-    // the next one beside the Vibes button, and the set to play
+    // The shader that is on has ONE place for its controls, the Controls card of Play > Shaders. Until D72 a strip
+    // on Shape > Controls (before the shell: on Live) carried a copy of five of them, Speed and the shader's first
+    // four; each of those five is on the card, and the strip is not in the page any more. Play > Pads: the shader
+    // before and the next one beside the Vibes button, and the set to play
     assert.strictEqual(await post('/api/shaders/play', { id: AID }), 200);
-    await go(page, 'shape/controls');
-    await page.waitForSelector('#liveshader:visible', { timeout: 20000 });
-    await page.waitForFunction(() => document.getElementById('livename').textContent === 'All inputs', null, { timeout: 20000 });
-    assert.deepStrictEqual(await page.$$eval('#livectls .ctl', (cs) => cs.map((x) => x.dataset.common || x.dataset.input)), ['speed', 'level', 'lit', 'mode', 'shape'], 'the strip: Speed and the first four controls');
-    await setRange('live-level', 0.8, ['input', 'change']);
-    await wasSent(VALUES, V({ level: 0.8 }), 'a slider on the strip of Shape > Controls');
-    await fitsPhone('Shape > Controls with the shader strip');
-    await fitsCard('#liveshader', 'the shader strip on Shape > Controls');
-    if (shots) await page.screenshot({ path: path.join(shots, '10-live-shader.png'), fullPage: true });
+    await go(page, 'play/shaders');
+    await page.waitForSelector('#shadercontrols:visible', { timeout: 20000 });
+    await page.waitForFunction(() => (document.getElementById('shaderplaying') || {}).textContent === 'All inputs', null, { timeout: 20000 });
+    {
+      const have = await page.$$eval('#shadercontrols .ctl', (cs) => cs.map((x) => x.dataset.common || x.dataset.input));
+      const want = ['speed', 'level', 'lit', 'mode', 'shape'];
+      assert.deepStrictEqual(want.filter((c) => have.indexOf(c) < 0), [], 'the Controls card has Speed and the shader\'s first four controls, which the strip carried: ' + have.join(' '));
+      assert.strictEqual(await page.locator('#liveshader, #livectls, #livename, #livemore, [id^="live-"]').count(), 0, 'the strip is not in the page');
+    }
+    await setRange('shin-level', 0.8, ['input', 'change']);
+    await wasSent(VALUES, V({ level: 0.8 }), 'a slider of the Controls card on Play > Shaders');
+    await fitsPhone('Play > Shaders with a shader on');
     await go(page, 'play/pads');
     await page.waitForSelector('#liveprev:visible', { timeout: 20000 });
     assert(await page.isVisible('#liveprev') && await page.isVisible('#vibesskip'), 'Previous and Next are beside the Vibes button while a shader is on');
@@ -2405,9 +2412,9 @@ function startServer(env) {          // env: more for the harness's environment 
       const wide = await presenter.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert(wide <= 1, 'a presenter\'s Shaders page: ' + wide + ' px wider than the phone');
     }
-    assert.strictEqual(await presenter.textContent('#sysback'), '‹ Pads');
-    await presenter.click('#sysback');
-    await presenter.waitForSelector('.pads');
+    assert.strictEqual(await presenter.locator('#sysback').count(), 0, 'a tab of the same area has no Back');
+    await go(presenter, 'play/pads');
+    await presenter.waitForSelector('.pads:visible');
     await go(presenter, 'setup/index');
     await presenter.waitForSelector('#sysindex');
     assert.deepStrictEqual(await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent)),
@@ -2481,14 +2488,14 @@ function startServer(env) {          // env: more for the harness's environment 
     await presenter.waitForSelector('#nocodes');
     assert.deepStrictEqual((await get('/api/access')).codes.map((c) => c.role), ['live'], 'the guest code is ended, the presenter code is still the owner\'s');
     assert.strictEqual(await post('/api/access/cancel', { all: true }), 200);
-    await presenter.click('#sysback');
+    await back(presenter);
     await presenter.waitForSelector('#sysindex');
     await presenter.waitForSelector(`${rowOf('People and codes')} .navstate:has-text("No guest code")`);
     await presenter.click('.navrow:has-text("Projectors")');
     await presenter.waitForSelector('#projline');
     assert.strictEqual(await presenter.locator('.switch').count(), 0, 'a presenter gets no switch');
     assert.strictEqual(await presenter.locator('#projadd, #projopen').count(), 0, 'and no form to add a projector');
-    await presenter.click('#sysback');
+    await back(presenter);
     await presenter.waitForSelector('#sysindex');
     // A presenter's view of every page this pass changed, on a phone and on a laptop: it fits, and nothing on it sets
     // the box up (no switch, no Add form, no Save, no Edit or Remove, no power action)
@@ -2501,14 +2508,14 @@ function startServer(env) {          // env: more for the harness's environment 
         await fitsOn(presenter, `a presenter's ${name} page at ${width}`);
         assert.strictEqual(await presenter.locator('#sysswitch, .addform, .addopen, .savebar, #powercard, #audiodev, #syncroles, #devicescard, #syspage button:text-is("Remove"), #syspage button:text-is("Edit")').count(), 0,
           `nothing to set the box up with on a presenter's ${name} page`);
-        await presenter.click('#sysback');
+        await back(presenter);
         await presenter.waitForSelector('#sysindex');
       }
     }
     await presenter.click(`.navrow:has(.navname:text-is("Sound"))`);
     await presenter.waitForSelector('#tone-both');
     assert.strictEqual(await presenter.locator('#tonerow button:disabled').count(), 0, 'a presenter can play the test sound');
-    await presenter.click('#sysback');
+    await back(presenter);
     await presenter.waitForSelector('#sysindex');
     await liveCtx.close();
 
@@ -2594,28 +2601,28 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('.pads');
     assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
 
-    // Effects: a filter over what plays. Shape > Controls has a compact strip (the effect's name, Previous, On or
-    // Off, Next, and Amount while one is on); Shape > Effect has the card with the list, the controls of the one that is on and its presets.
+    // Effects: a filter over what plays. Shape > Effect has the card: the effect that is on with Previous, On or
+    // Off and Next, the list, the controls of the one that is on (Amount first) and its presets. It is the one place:
+    // the compact strip that Shape > Controls carried until D72 (before the shell: Live) was a copy of the card's
+    // head and its Amount, and each of those is held here on the card.
     // The harness player draws nothing (--vo=null), so this checks the panel and the API, not the picture; that is
     // tests/test_effects_gpu.py.
     {
       const fxName = (id, want) => page.waitForFunction(([i, w]) => (document.getElementById(i) || {}).textContent === w, [id, want], { timeout: 20000 });
       assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
-      await go(page, 'shape/controls');
-      await page.waitForSelector('#livefxwhy', { timeout: 20000 });
-      assert(/Nothing with a picture is playing/.test(await page.textContent('#livefxwhy')), 'with nothing playing the strip says why no effect can go on');
-      assert((await page.isDisabled('#livefxon')) && (await page.isDisabled('#livefxnext')) && (await page.isDisabled('#livefxprev')), 'and its buttons are not to be pressed');
+      await go(page, 'shape/effect');
+      await page.waitForSelector('#fxwhy', { timeout: 20000 });
+      assert(/Nothing with a picture is playing/.test(await page.textContent('#fxwhy')), 'with nothing playing the card says why no effect can go on');
+      assert((await page.isDisabled('#fxon')) && (await page.isDisabled('#fxnext')) && (await page.isDisabled('#fxprev')), 'and its buttons are not to be pressed');
+      assert.strictEqual(await page.locator('#livefx, [id^="livefx"], #live-fx-amount').count(), 0, 'the effect strip is not in the page');
       assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
-      await page.waitForSelector('#livefxon:not([disabled])', { timeout: 20000 });
-      assert.strictEqual(await page.textContent('#livefxname'), 'None');
-      assert.strictEqual(await page.locator('#live-fx-amount').count(), 0, 'no Amount while no effect is on');
-      const low = await page.$$eval('#livefx button', (els) => els.filter((e) => e.getBoundingClientRect().height < 44).map((e) => e.id));
-      assert.deepStrictEqual(low, [], 'every button of the strip is at least 44 px high');
-      await fitsPhone('Shape > Controls with the effects strip');
-      // the way to the card, on Shape > Effect
-      await page.click('#livefxmore');
+      await page.waitForSelector('#fxon:not([disabled])', { timeout: 20000 });
+      assert.strictEqual(await page.locator('#fx-amount').count(), 0, 'no Amount while no effect is on');
+      const low = await page.$$eval('#fxhead button', (els) => els.filter((e) => e.getBoundingClientRect().height < 44).map((e) => e.id));
+      assert.deepStrictEqual(low, [], 'every button of the card\'s head is at least 44 px high');
+      await fitsPhone('Shape > Effect with no effect on');
       await page.waitForSelector('#fxlist [data-effect="fx-vignette.fs"]', { timeout: 20000 });
-      assert.strictEqual(await at(page), 'shape/effect', 'the Effects link on the strip opens Shape > Effect');
+      assert.strictEqual(await at(page), 'shape/effect');
       const fxs = (await get('/api/effects')).effects;
       assert(fxs.length >= 29 && fxs.filter((s) => s.pack === 'nxlx').length === 12 && fxs.every((s) => !s.error), 'the project\'s twelve filters and the pack are listed');
       assert.strictEqual(await page.locator('#fxlist [data-effect]').count(), fxs.length, 'every filter has a row');
@@ -2701,24 +2708,20 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.fill('#fxpresetname', 'Soft');
       await page.click('#fxpresetsave');
       await page.waitForSelector('#fxpresets [data-preset="Soft"]', { timeout: 15000 });
-      // Shape > Controls: the strip has the name, Amount and Off, and the transport strip says an effect is on
-      await go(page, 'shape/controls');
-      await fxName('livefxname', 'Vignette');
-      await page.waitForSelector('#live-fx-amount');
+      // The card's head has the name, Off, Previous and Next, and Amount is the first of its controls (what the
+      // strip carried); the transport strip says an effect is on
+      await fxName('fxname', 'Vignette');
+      await page.waitForSelector('#fx-amount');
       await page.waitForFunction(() => /effect: Vignette/.test((document.getElementById('np') || {}).textContent), null, { timeout: 15000 });
-      assert.strictEqual(await page.locator('#livefxoff').count(), 1, 'Off is on the strip while an effect is on');
-      await fitsPhone('Shape > Controls with an effect on');
+      assert.strictEqual(await page.locator('#fxoff').count(), 1, 'Off is on the card while an effect is on');
       const stepped = page.waitForResponse((r) => r.url().endsWith('/api/effects/step') && r.request().postData() === '{"dir":1}');
-      await page.click('#livefxnext');
-      assert.strictEqual((await stepped).status(), 200, 'Next on the strip goes to the next effect');
-      await fxName('livefxname', 'Wash');
-      // a generator shader takes the screen: the effect comes off, and both places say plainly why none can go on
+      await page.click('#fxnext');
+      assert.strictEqual((await stepped).status(), 200, 'Next on the card goes to the next effect');
+      await fxName('fxname', 'Wash');
+      // a generator shader takes the screen: the effect comes off, and the card says plainly why none can go on
       assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
-      await page.waitForSelector('#livefxwhy', { timeout: 20000 });
-      assert(/A generator shader has the screen/.test(await page.textContent('#livefxwhy')), 'the strip says why effects are not available');
-      assert(await page.isDisabled('#livefxon'), 'and offers nothing to press');
-      await page.click('#livefxmore');
       await page.waitForSelector('#fxwhy', { timeout: 20000 });
+      assert(await page.isDisabled('#fxon'), 'and offers nothing to press');
       assert(/A generator shader has the screen/.test(await page.textContent('#fxwhy')), 'the card says why effects are not available');
       assert(/a generator shader took the screen/.test(await page.textContent('#fxlast')), 'and why the last one came off');
       assert(await page.isDisabled('#fxlist [data-put="fx-vignette.fs"]'), 'Put on waits for a picture');
@@ -2736,34 +2739,31 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('.pads');
     }
 
-    // A laptop: the Shaders page is a workspace. The library is a column that scrolls by itself, what is playing and
-    // its controls are beside it and in view, the settings and controllers are a third column; nothing sticks out at
-    // any width, on this page, on Pads or on Shape > Controls. (Before the Workspace shell the playing shader's strip
-    // stood beside the pads on Live; it is a card of Shape > Controls now, so what is held is that it is drawn there,
-    // beside the side menu and inside the window.)
+    // A laptop (D72): Play is a desk. At 1366 px the pads, the library and the Shaders screen stand side by side
+    // beside the rail, each in its phone's form, inside the window; the link from the pads to the Shaders screen is
+    // not shown, the screen being the column beside them. On a very wide panel (1920 px) the Shaders column has the
+    // room its own laptop form was written for: its library a column that scrolls by itself, what is playing and
+    // its controls beside it and in view, the settings and controllers a third column. Nothing sticks out at any width.
     await page.setViewportSize({ width: 1366, height: 768 });
     assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
-    await go(page, 'shape/controls');
-    {
-      // The strip follows the box's answer, which may say "nothing on" for a moment right after a Play: wait for the
-      // layout to hold, and say what it was if it never does.
-      const measure = () => {
-        const r = (id) => { const el = document.getElementById(id), b = el ? el.getBoundingClientRect() : { left: -1, right: -1, top: -1 }; return { left: b.left, right: b.right, top: b.top }; };
-        return { side: r('wsside'), strip: r('liveshader'), speed: r('mv'), name: (document.getElementById('livename') || {}).textContent, tabs: r('wstabs'), vw: window.innerWidth };
-      };
-      const ok = await page.waitForFunction(() => {
-        const g = (id) => document.getElementById(id).getBoundingClientRect(), strip = g('liveshader'), side = g('wsside');
-        return strip.width > 0 && (document.getElementById('livename') || {}).textContent === 'Tide' && side.width > 0 && side.right <= strip.left && strip.right <= window.innerWidth && g('wstabs').width === 0;
-      }, null, { timeout: 20000 }).then(() => true, () => false);
-      assert(ok, 'on a laptop Shape > Controls has the side menu on the left, no tabs, and the shader strip beside the menu, inside the window: ' + JSON.stringify(await page.evaluate(measure)) +
-        ' box: ' + JSON.stringify(await get('/api/shaders').then((d) => [d.playing && d.playing.id, d.vibes])));
-    }
-    await fitsPhone('Shape > Controls at 1366 px');
     await go(page, 'play/pads');
-    await page.waitForSelector('#shaderslink');
-    assert(await page.evaluate(() => { const g = (id) => document.getElementById(id).getBoundingClientRect(), side = g('wsside'); return side.right <= g('pads').left && side.right <= g('vibes').left && g('pads').right <= window.innerWidth; }), 'on a laptop the pads and the Vibes button are beside the side menu');
-    await fitsPhone('Pads at 1366 px');
-    await page.click('#shaderslink');
+    await page.waitForSelector('#shadercontrols #shin-speed', { timeout: 20000 });
+    {
+      const desk = await page.evaluate(() => {
+        const r = (el) => { const b = el ? el.getBoundingClientRect() : { left: -1, right: -1, width: 0 }; return { left: Math.round(b.left), right: Math.round(b.right), width: Math.round(b.width) }; };
+        const col = (id) => r(document.querySelector('main.ws > .desk > .deskcol[data-col="' + id + '"]'));
+        return { side: r(document.getElementById('wsside')), pads: col('pads'), library: col('library'), shaders: col('shaders'), tabs: r(document.getElementById('wstabs')), sub: r(document.getElementById('wssub')),
+          link: r(document.getElementById('shaderslink')), vibes: r(document.getElementById('vibes')), ctl: r(document.getElementById('shadercontrols')), vw: window.innerWidth };
+      });
+      assert(desk.side.width > 0 && desk.side.right <= desk.pads.left && desk.pads.right <= desk.library.left && desk.library.right <= desk.shaders.left && desk.shaders.right <= desk.vw,
+        'on a laptop Play is the rail, then the pads, the library and the shaders side by side, inside the window: ' + JSON.stringify(desk));
+      assert(Math.min(desk.pads.width, desk.library.width, desk.shaders.width) >= 320, 'no column of the desk is narrower than a phone: ' + JSON.stringify(desk));
+      assert(desk.tabs.width === 0 && desk.sub.width === 0 && desk.link.width === 0, 'no tabs at the foot, no tabs of the screens and no link to the Shaders screen where the three share the page: ' + JSON.stringify(desk));
+      assert(desk.vibes.left >= desk.pads.left && desk.vibes.right <= desk.pads.right && desk.ctl.left >= desk.shaders.left && desk.ctl.right <= desk.shaders.right, 'the Vibes button is in the pads\' column and the playing shader\'s controls in the shaders\': ' + JSON.stringify(desk));
+    }
+    await fitsPhone('Play at 1366 px');
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await go(page, 'play/shaders');
     await page.waitForSelector('#shadercontrols #shin-speed');
     await page.waitForSelector('#shaderdmxline');
     const lay = await page.evaluate(() => {
@@ -2772,17 +2772,17 @@ function startServer(env) {          // env: more for the harness's environment 
       return { lib: r('shadercard'), now: r('shadernow'), ctl: r('shadercontrols'), set: r('vibessettings'), remote: r('shaderremote'), vh: window.innerHeight,
         overflow: getComputedStyle(list).overflowY, listShown: list.clientHeight, listAll: list.scrollHeight };
     });
-    assert(lay.lib.right <= lay.now.left && lay.now.right <= lay.set.left, 'three columns at 1366 px: library, stage, settings: ' + JSON.stringify(lay));
+    assert(lay.lib.right <= lay.now.left && lay.now.right <= lay.set.left, 'three columns of the Shaders screen at 1920 px: library, stage, settings: ' + JSON.stringify(lay));
     assert(Math.abs(lay.ctl.left - lay.now.left) < 1 && lay.ctl.top >= lay.now.bottom, 'the controls are under what is playing, in the middle column');
     assert(Math.abs(lay.remote.left - lay.set.left) < 1, 'the controllers are under the settings');
     assert(lay.overflow === 'auto' && lay.listAll > lay.listShown, 'the library scrolls by itself: ' + JSON.stringify(lay));
     assert(lay.ctl.top < lay.vh && lay.lib.top < lay.vh, 'the playing shader\'s controls are in view without scrolling the library');
-    for (const w of [900, 1100, 1366, 1600]) {
+    for (const w of [900, 1100, 1200, 1366, 1600, 1720, 1920]) {
       await page.setViewportSize({ width: w, height: 768 });
       await page.waitForTimeout(150);
-      await fitsPhone('Shaders page at ' + w + ' px');
+      await fitsPhone('Play > Shaders at ' + w + ' px');
     }
-    await fitsCard('#shaderpage .card', 'Shaders page on a laptop');
+    await fitsCard('#shaderpage .card', 'Shaders screen on a laptop');
     assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
 
     // A laptop: every page of the Setup index this pass changed, as the box is at the end of this test, fits its cards and the
@@ -2852,7 +2852,7 @@ function startServer(env) {          // env: more for the harness's environment 
         const got = await page.evaluate((u) => fetch(u).then(async (r) => [r.status, r.headers.get('content-type'), (await r.arrayBuffer()).byteLength]), f);
         assert(got[0] === 200 && got[1] === 'font/woff2' && got[2] > 4000, f + ' is served by the box as a font: ' + JSON.stringify(got));
       }
-      assert(/^"?Archivo/.test(await page.evaluate(() => getComputedStyle(document.querySelector('#syspage h1')).fontFamily)), 'titles are set in Archivo');
+      assert(/^"?Archivo/.test(await page.evaluate(() => getComputedStyle(document.querySelector('#syspage .syshead :is(h1, h2)')).fontFamily)), 'titles are set in Archivo');
 
       // Every screen, page and state in the list of tests/ui/signal-pages.js (the same list the pictures are taken
       // from), at 390 and at 1366 px in the dark and at 390 px in the light, each held to the rules of the look by
@@ -2886,7 +2886,7 @@ function startServer(env) {          // env: more for the harness's environment 
           try {
             const on = (await p.open(st)) || page;
             if (!p.quick) await on.waitForTimeout(1000);          // a page's own cards arrive after it opens
-            const found = await signal.check(on, { area: p.area, light });
+            const found = await signal.check(on, { area: p.area, desk: p.desk, light });
             if (found.length) signalBad.push('Signal, ' + p.name + label + ': ' + found.join('; '));
             if (swept) await sweepHere(on, p.name, 'Signal');
           } catch (e) { signalBad.push('Signal, ' + p.name + label + ' could not be looked at: ' + e.message.split('\n')[0]); }
@@ -3017,12 +3017,15 @@ function startServer(env) {          // env: more for the harness's environment 
         + ' s, and the round in the default look ' + (sweepCost.plainRound / 1000).toFixed(1) + ' s in all (opening its screens included)');
       assert.deepStrictEqual(sweepBad, [], 'the width sweep (' + sweepBad.length + '):\n' + sweepBad.join('\n'));
 
-      // ---- The Workspace shell (D65, tests/ui/shell.js), in the look a box comes with and with every module on:
-      // every area and screen is reached by a press and with the keyboard at 390, 768 and 1366 px, with the title
-      // bar, the open item, one heading, the strip and the cursor held on each; the tabs are there under 600 px and
-      // the side menu from 600 px; the strip is one line from 600 px (whole from 1200 px, folded behind More under that) and on a phone four buttons with More;
-      // an owner, a presenter and a guest each have the screens they should, and a module that is off has no screen
-      // in the menu while the owner's index keeps its row.
+      // ---- The Workspace shell with its rail, tabs and desks (D65, D72, tests/ui/shell.js), in the look a box comes
+      // with and with every module on: every screen is reached by a press and with the keyboard at 390, 768 and
+      // 1366 px, with the title bar, the open items, one heading, the columns that width has, the strip and the
+      // cursor held on each; the tabs at the foot are there under 600 px, the rail and the tabs of the screens
+      // from 600 px, the desks from 1200 px; each card is in the page once; what is typed survives a tab and a
+      // resize; the strip is one line from 600 px (whole from 1440 px, folded behind More under that) and on a
+      // phone four buttons with More, with Speed and Loop on it and nowhere else; an owner, a presenter and a guest
+      // each have the screens and the columns they should, and a module that is off has no screen while the
+      // owner's index keeps its row.
       {
         const ws = require('./shell');
         const began = Date.now();
@@ -3035,11 +3038,11 @@ function startServer(env) {          // env: more for the harness's environment 
         await ws.menus(page);
         await ws.strip(page);
         const call = (url, body) => page.evaluate(([u, b]) => fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b || {}) }).then((r) => r.json().catch(() => ({}))), [url, body]);
-        // no text overruns on any screen at 320, 390, 600 and 768 px and on a phone held sideways, in both looks,
-        // with long names in the box's answers (2026-10-09)
+        // no text overruns on any screen at 320, 390, 600 and 768 px, on a phone held sideways and at the desk's
+        // widths (1200, 1366, 1440 and 1920 px), in both looks, with long names in the box's answers (2026-10-09)
         const narrowBegan = Date.now();
         const narrowLooks = await ws.narrow(page, call, (url) => page.evaluate((u) => fetch(u, { credentials: 'same-origin' }).then((r) => r.json().catch(() => ({}))), url));
-        console.log('text at narrow widths: ' + narrowLooks + ' looks at every screen with long names, in both looks, nothing overran (' + ((Date.now() - narrowBegan) / 1000).toFixed(1) + ' s)');
+        console.log('text at narrow and at desk widths: ' + narrowLooks + ' looks at every screen with long names, in both looks, nothing overran (' + ((Date.now() - narrowBegan) / 1000).toFixed(1) + ' s)');
         const people = [];
         const person = async (name, role) => {
           const token = (await call('/api/devices/invite', { name, role })).token;
@@ -3056,7 +3059,7 @@ function startServer(env) {          // env: more for the harness's environment 
           await page.goto(base + '/');
           await ws.roles({ owner: page, presenter: await person('Shell presenter', 'live'), guest: await person('Shell guest', 'view') }, call);
         } finally { for (const c of people) await c.close().catch(() => {}); }
-        console.log('the Workspace shell: ' + taps + ' screens opened by a press and ' + keys + ' with the keyboard, at 390, 768 and 1366 px; the Tab key alone came to every menu item and the strip (' + JSON.stringify(walked) + ' stops); menus, strip and roles held (' + ((Date.now() - began) / 1000).toFixed(1) + ' s)');
+        console.log('the Workspace shell: ' + taps + ' screens opened by a press and ' + keys + ' with the keyboard, at 390, 768 and 1366 px; the Tab key alone came to every menu item and the strip (' + JSON.stringify(walked) + ' stops); menus, desks, strip and roles held (' + ((Date.now() - began) / 1000).toFixed(1) + ' s)');
         await page.goto(base + '/');
         await page.waitForSelector('main.ws');
       }

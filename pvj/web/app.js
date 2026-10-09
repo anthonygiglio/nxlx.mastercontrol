@@ -4213,7 +4213,13 @@
       S.tab = home.tab; S.part[home.tab] = home.part; S.sys = null;
     }
     var mine = list.filter(function (x) { return x.tab === S.tab && x.part; });
-    if (!mine.some(function (x) { return x.part === S.part[S.tab]; })) S.part[S.tab] = mine[0].part;
+    if (mine.some(function (x) { return x.part === S.part[S.tab]; })) return;
+    // The open column is gone. If it was a page whose module has just been switched off (Shaders and Vibes), the
+    // owner stays with that page: it is a page of Setup now, with its switch and nothing else.
+    var key = S.tab + '/' + S.part[S.tab], id = Object.keys(HOMES).filter(function (k) { return HOMES[k] === key; })[0];
+    var row = id && sysRows().filter(function (r) { return r.id === id; })[0];
+    S.part[S.tab] = mine[0].part;
+    if (row && rowShown(row)) { S.tab = 'system'; S.sys = id; S.sysFrom = 'index'; }
   }
   // ---- an area's one build ----
   var PARTS = {
@@ -4223,8 +4229,46 @@
   // One column: a named region with its screen in it. Its heading is shown where the columns stand side by side; a
   // column that is a page has the page's own title.
   function column(x, screen) {
-    return h('section', { class: 'deskcol' + (x.part === S.part[x.tab] ? ' cur' : ''), 'data-col': x.part, role: 'region', 'aria-label': x.name, tabindex: -1 },
+    var col = h('section', { class: 'deskcol' + (x.part === S.part[x.tab] ? ' cur' : ''), 'data-col': x.part, role: 'region', 'aria-label': x.name, tabindex: -1 },
       screen.id === 'syspage' ? null : h('h2', { class: 'deskhead', text: x.name }), screen);
+    col.drawnFrom = stamp(x.part);
+    return col;
+  }
+  // What a column that does not follow the box by itself was drawn from (the others ask the box themselves).
+  function stamp(part) {
+    var st = S.status || {}, pl = st.player || {}, m = st.mix || {};
+    if (part === 'pads') return JSON.stringify([S.banks, m.transition, m.duration]);
+    if (part === 'library') return JSON.stringify([S.media, S.mediaInfo]);
+    if (part === 'picture') return JSON.stringify(m);
+    if (part === 'sound') return JSON.stringify([pl.volume, pl.muted]);
+    return '';
+  }
+  // Somebody is at work in this part of the page: a name is being typed, a list is open, a question waits for its
+  // answer, a file is on its way up.
+  function inUse(el) {
+    var a = document.activeElement;
+    var field = a && el.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' ||
+      (a.tagName === 'INPUT' && !/^(range|checkbox|radio|button|submit|reset|color|file)$/.test(a.type)));
+    return !!field || asking(el) || (!!S.uploading && !!el.querySelector('#uploads'));
+  }
+  // A tab of the build that is on the page was pressed. Nothing is drawn again for that, but the box's lists are
+  // read again, as a tap on a tab always read them, and a column whose own list or setting has changed meanwhile
+  // (from another phone, a controller, the schedule) is drawn again by itself, unless somebody is at work in it.
+  // The workspace says it is busy while the box is asked (aria-busy).
+  var freshening = 0;
+  function freshen() {
+    var main = document.getElementById('wsmain'), n = ++freshening;
+    if (main) main.setAttribute('aria-busy', 'true');
+    return loadAll().then(function () {
+      if (n !== freshening) return;
+      var now = document.getElementById('wsmain');
+      if (now) now.removeAttribute('aria-busy');
+      if (!S.device || !now || menuKey() !== S.menu) return render();
+      Array.prototype.forEach.call(now.querySelectorAll(':scope > .desk > .deskcol[data-col]'), function (col) {
+        var part = col.getAttribute('data-col');
+        if (PARTS[S.tab] && PARTS[S.tab][part] && stamp(part) !== col.drawnFrom && !inUse(col)) redrawPart(part);
+      });
+    });
   }
   function areaDesk() {
     var mine = screenList().filter(function (x) { return x.tab === S.tab && x.part; });
@@ -4238,6 +4282,7 @@
     var col = S.device && PARTS[S.tab] && PARTS[S.tab][part] && app.querySelector('main.ws > .desk > .deskcol[data-col="' + part + '"]');
     if (!col) return render();
     keepCursor(col, function () { col.replaceChild(PARTS[S.tab][part](), col.lastChild); });
+    col.drawnFrom = stamp(part);
     patchLive();
   }
   // The open column of the build that is on the page: marked, and the menus with it; nothing is drawn again.
@@ -4263,10 +4308,12 @@
       S.msg = ''; say('');
       var beside = Array.prototype.filter.call(desk.children, colShown).length > 1;
       showPart(sc.part);
-      if (!beside) return wsScrollTop();
-      col.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      if (!document.activeElement || document.activeElement === document.body) col.focus({ preventScroll: true });
-      return;
+      if (!beside) wsScrollTop();
+      else {
+        col.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        if (!document.activeElement || document.activeElement === document.body) col.focus({ preventScroll: true });
+      }
+      return freshen();
     }
     // a page of Setup is one to come back from (the phone's back gesture returns to the index)
     if (sc.sys && !HOMES[sc.sys]) { if (history.state && history.state.sys) history.replaceState({ sys: sc.sys }, ''); else history.pushState({ sys: sc.sys }, ''); }
@@ -4442,17 +4489,12 @@
     // a question waiting for its answer (confirmRow) or a slider being dragged would be gone. Then the drawing
     // waits: it looks again when the field is left, and a few times a second for the rest.
     var late = null, pressed = false;
-    function inUse() {
-      var a = document.activeElement;
-      var field = a && app.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' ||
-        (a.tagName === 'INPUT' && !/^(range|checkbox|radio|button|submit|reset|color|file)$/.test(a.type)));
-      return !!field || pressed || asking(app);
-    }
+    function busy() { return pressed || inUse(app); }
     function drawLate() {
       clearTimeout(late);
       late = null;
       if (!S.device || !app.firstChild) return;
-      if (inUse()) { late = setTimeout(drawLate, 400); return; }
+      if (busy()) { late = setTimeout(drawLate, 400); return; }
       render();
     }
     document.addEventListener('pvjfile', drawLate);

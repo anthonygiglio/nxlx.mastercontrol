@@ -8,13 +8,15 @@
 //                      opened in turn; returns the union
 //   prepare(t)         puts the box in the state both lists are taken in (see below)
 //   walk(pg)           goes through every screen of the panel as it is now and returns { key: [where it was seen] }
+//                      (pg also needs setViewportSize)
 //   walkBefore(pg)     the same for the panel before the Workspace shell (five tabs, System and its pages); it is how
 //                      tests/ui/fixtures/controls-before.json was made, and runs only on a tree from before D65
 //   compare(before, after, moved)   what is in before and not in after, apart from the keys in `moved`
 //
 // A key is the control's id when it has one, else its kind and its label (aria-label, else its words), with digits
 // replaced so that a code or a count does not make two runs differ. Navigation is not counted: the old tab bar, the
-// new menus, and the Back button of a page; the rows of the Setup index are (they were rows of the System index).
+// new menus (the rail, the tabs, the index where it stands beside an open page), and the Back button of a page;
+// the rows of the Setup index on its own screen are (they were rows of the System index).
 //
 // The state: tests/ui/signal-pages.js setUp (modules on, projectors, walls, scenes, a schedule, streams, codes, a
 // mapping, two controllers), with nothing playing, Vibes off and no effect on, in a harness that has NO player
@@ -122,33 +124,59 @@ async function prepare(t) {
 
 function note(found, where, keys) { keys.forEach((k) => { (found[k] = found[k] || []); if (found[k].indexOf(where) < 0) found[k].push(where); }); }
 
-// ---- the panel as it is now: the Workspace shell ----
-// Every screen is in the side menu (which is in the page at every width, shown or not): each item is pressed in turn.
-// The Setup index lists pages that the menu does not (a page whose module is off): those rows are opened as well.
+// ---- the panel as it is now: the Workspace shell, with its rail, tabs and desks (D72) ----
+// Each area's button of the rail is pressed in turn, and each tab of the area's screens; where the area is a desk
+// (the list is taken at 1366 px) its screens are columns of one page, which is gathered once. Every row of the
+// Setup index is opened, the ones whose module is off and the three that lead to a screen of another area too. The
+// strip is taken once more with its More open. And the pads are looked at once at 768 px: the link from the pads to
+// the Shaders screen is shown only where Shaders is another tab, not where it is the column beside the pads.
 async function walk(pg) {
   const found = {};
-  await pg.waitForFunction(() => !!document.querySelector('#wsside [data-go]'), null, { timeout: 15000 });
-  const items = await pg.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#wsside [data-go]'), (b) => [b.getAttribute('data-go'), b.textContent.trim()]));
-  const at = async (go) => pg.waitForFunction((g) => { const m = document.querySelector('main.ws'); return m && m.getAttribute('data-screen') === g; }, go, { timeout: 15000 });
-  for (const [go, name] of items) {
-    await pg.evaluate((g) => { document.querySelector('#wsside [data-go="' + g + '"]').click(); }, go);
-    await at(go);
-    note(found, go + ' (' + name + ')', await gather(pg));
+  await pg.waitForFunction(() => !!document.querySelector('#wsside [data-ar]'), null, { timeout: 15000 });
+  const press = (sel) => pg.evaluate((s) => { const el = Array.prototype.filter.call(document.querySelectorAll(s), (x) => x.getClientRects().length)[0]; if (el) el.click(); return !!el; }, sel);
+  const screen = () => pg.evaluate(() => document.querySelector('main.ws').getAttribute('data-screen'));
+  const at = (go) => pg.waitForFunction((g) => { const m = document.querySelector('main.ws'), now = m && m.getAttribute('data-screen'); return !!now && !m.hasAttribute('aria-busy') && (g.slice(-1) === '/' ? now.indexOf(g) === 0 : now === g); }, go, { timeout: 15000 });
+  const shown = () => pg.evaluate(() => Array.prototype.filter.call(document.querySelectorAll('main.ws > .desk > .deskcol'), (c) => c.getClientRects().length).map((c) => c.getAttribute('data-col')).join(' '));
+  const areas = await pg.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#wsside [data-ar]'), (b) => [b.getAttribute('data-ar'), b.textContent.trim()]));
+  for (const [area, areaName] of areas) {
+    if (area === 'setup') continue;
+    await press('#side-' + area);
+    await at(area + '/');
+    const tabs = await pg.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#wssub [data-go]'), (b) => [b.getAttribute('data-go'), b.textContent.trim()]));
+    const seen = {};
+    for (const [go, name] of tabs.length ? tabs : [[await screen(), areaName]]) {
+      if (await press('#wssub [data-go="' + go + '"]')) await at(go);                     // its own tab
+      else if (!(await pg.evaluate((id) => { const c = document.querySelector('main.ws > .desk > .deskcol[data-col="' + id + '"]'); return !!c && c.getClientRects().length > 0; }, go.split('/')[1]))) {
+        await press('#sub-' + area + '-desk');             // a column of the desk, while a tool with the whole width is open
+        await at(area + '/');
+      }
+      const page = await shown();
+      if (seen[page]) { note(found, go + ' (' + name + ')', seen[page]); continue; }     // (a column of a desk that has been gathered)
+      seen[page] = await gather(pg);
+      note(found, go + ' (' + name + ')', seen[page]);
+    }
   }
-  // the strip is on every screen: taken once more with its More open, as a phone has it
-  await pg.evaluate(() => { const m = document.getElementById('wsmore'); if (m && m.getAttribute('aria-expanded') !== 'true') m.click(); });
-  note(found, 'the transport strip', await pg.evaluate(collect));
-  const index = async () => { await pg.evaluate(() => { document.querySelector('#wsside [data-go="setup/index"]').click(); }); await at('setup/index'); await pg.waitForFunction(() => !!document.querySelector('.navrow'), null, { timeout: 15000 }); };
+  const index = async () => { await press('#side-setup'); await at('setup/index'); await pg.waitForFunction(() => !!document.querySelector('#sysindex .navrow'), null, { timeout: 15000 }); };
   await index();
-  const rows = await pg.evaluate(() => Array.prototype.map.call(document.querySelectorAll('.navrow'), (b) => [b.id, b.querySelector('.navname').textContent]));
-  const menu = items.map((x) => x[1]);
+  note(found, 'setup/index (Setup)', await gather(pg));
+  const rows = await pg.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#sysindex .navrow'), (b) => [b.id, b.querySelector('.navname').textContent]));
   for (const [id, name] of rows) {
-    if (menu.indexOf(name) >= 0) continue;
-    await index();
-    await pg.evaluate((i) => { document.getElementById(i).click(); }, id);
-    await pg.waitForFunction((n) => { const h1 = document.querySelector('#syspage h1'); return h1 && h1.textContent === n; }, name, { timeout: 15000 });
+    if (!(await pg.evaluate((i) => { const r = document.querySelector('#sysindex #' + i); return !!r && r.getClientRects().length > 0; }, id))) await index();
+    await pg.evaluate((i) => { document.querySelector('#sysindex #' + i).click(); }, id);
+    await pg.waitForFunction((n) => { const h = document.querySelector('#syspage .syshead h1, #syspage .syshead h2'); return h && h.textContent === n && h.getClientRects().length > 0; }, name, { timeout: 15000 });
     note(found, 'Setup index > ' + name, await gather(pg));
   }
+  // the strip is on every screen: taken once more with its More open, as a phone has it
+  await pg.evaluate(() => { const m = document.getElementById('wsmore'); if (m && m.getClientRects().length && m.getAttribute('aria-expanded') !== 'true') m.click(); });
+  note(found, 'the transport strip', await pg.evaluate(collect));
+  await pg.evaluate(() => { const m = document.getElementById('wsmore'); if (m && m.getAttribute('aria-expanded') === 'true') m.click(); });
+  const size = await pg.evaluate(() => [window.innerWidth, window.innerHeight]);
+  await pg.setViewportSize({ width: 768, height: size[1] });
+  await press('#side-play');
+  await at('play/');
+  if (await press('#sub-play-pads')) await at('play/pads');
+  note(found, 'play/pads (Pads) at 768 px', await gather(pg));
+  await pg.setViewportSize({ width: size[0], height: size[1] });
   return found;
 }
 

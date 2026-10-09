@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-// Moving about in the Workspace shell (D65): go(page, 'area/screen'), and stripOpen(page) for the transport strip's More.
+// Moving about in the Workspace shell (D65, D72): go(page, 'area/screen'), and stripOpen(page) for the transport strip's More.
 const { go, stripOpen, sys: sysOf, sysIndex: sysIndexOf } = require('./signal-pages');
 
 const out = process.env.SHOTS || path.join(__dirname, '..', '..', 'docs', 'images', 'ui');
@@ -301,8 +301,8 @@ function startServer() {
     });
     await shot('shaders-page-laptop', async (f) => {
       await page.setViewportSize({ width: 1366, height: 768 });
-      try {
-        await page.click('#shaderslink');
+      try {                                                   // (at this width Play is a desk: the Shaders screen is the column beside the pads and the library)
+        await go(page, 'play/shaders');
         await soft('shaders page on a laptop', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
         await page.waitForTimeout(800);
         await page.screenshot({ path: f, fullPage: true });
@@ -312,7 +312,8 @@ function startServer() {
       }
     });
     // The instrument: one shader chosen by hand (a switch, a choice, two colours and numbers), with a preset saved;
-    // the page on a phone, and Shape > Controls on a laptop with the shader's strip (it stood beside the pads on Live).
+    // the page on a phone, and Play on a laptop, where the shader's controls stand beside the pads and the library
+    // (the picture keeps its name: until D72 it was of a strip of five of those controls, on Live and then on Shape > Controls).
     await api('POST', '/api/vibes', { on: false });
     await api('POST', '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
     await api('POST', '/api/shaders/presets', { action: 'save', name: 'Warm' });
@@ -326,8 +327,8 @@ function startServer() {
     await shot('live-shader-laptop', async (f) => {
       await page.setViewportSize({ width: 1366, height: 768 });
       try {
-        await go(page, 'shape/controls');
-        await soft('the strip on Shape > Controls', page.waitForSelector('#liveshader:visible', { timeout: 15000 }));
+        await go(page, 'play/pads');
+        await soft('the shader\'s controls beside the pads', page.waitForSelector('#shadercontrols:visible', { timeout: 15000 }));
         await page.waitForTimeout(600);
         await page.screenshot({ path: f, fullPage: true });
       } finally {
@@ -397,10 +398,10 @@ function startServer() {
         await page.waitForTimeout(900);
         await mock(device, 'room');
       } catch (e) { failures.push('mock-up ' + device + ' room: ' + e.message.split('\n')[0]); }
-      try {                                                   // Shape > Controls while a shader plays: the shader's strip (it was on Live)
+      try {                                                   // Play > Shaders while a shader plays: its controls (the file keeps the name of the strip that was on Live)
         await api('POST', '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
-        await go(page, 'shape/controls');
-        await page.waitForSelector('#liveshader', { timeout: 15000 }).catch(() => failures.push('mock-up ' + device + ' live-shader: no shader strip'));
+        await go(page, 'play/shaders');
+        await page.waitForSelector('#shadercontrols', { timeout: 15000 }).catch(() => failures.push('mock-up ' + device + ' live-shader: no controls of the shader'));
         await page.waitForTimeout(900);
         await mock(device, 'live-shader');
       } catch (e) { failures.push('mock-up ' + device + ' live-shader: ' + e.message.split('\n')[0]); }

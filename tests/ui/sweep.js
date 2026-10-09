@@ -13,7 +13,7 @@
 // out of it or of its card; a control is 44 px tall and wide where its token says 44 (in Signal every control; 56
 // px for what staff press on Room and Live); no words are clipped inside a button, a chip or a pad, run out of it,
 // or are broken in the middle of a word on a button; there is a way to the other screens that is shown, whole and
-// inside the window (the area tabs under 600 px, the side menu from 600 px: the Workspace shell, D65); and the
+// inside the window (the area tabs under 600 px, the rail of the areas from 600 px: the Workspace shell, D65 and D72); and the
 // transport strip's buttons and every item of the menus can be brought into view and pressed. In a short window
 // (under 480 px) that last rule is held for every control, and the bars that stay put leave at least half of the
 // window's height to the page. A screen on which no control at all was measured is a fault of the sweep itself.
@@ -118,16 +118,16 @@ function measure(o) {
     }
   });
 
-  // 5. the way to the other screens is shown: the tab bar under 600 px, whole and in the window, or the side menu;
+  // 5. the way to the other screens is shown: the tab bar under 600 px, whole and in the window, or the rail;
   //    the transport and the menus can be brought into view and pressed (in a short window: every control), and
   //    the bars that stay put leave half the window to the page
   const tabs = document.querySelector('nav.tabs'), side = document.getElementById('wsside');
   const was = [window.scrollX, window.scrollY];
   const paired = !!document.getElementById('wstp');
-  if (paired && !(tabs && shown(tabs)) && !(side && shown(side))) add('there is no way to another screen', null, 'neither the tabs nor the side menu is shown');
-  if (paired && tabs && shown(tabs) && side && shown(side)) add('the tabs and the side menu are both shown', null, vw + ' px');
+  if (paired && !(tabs && shown(tabs)) && !(side && shown(side))) add('there is no way to another screen', null, 'neither the tabs nor the rail is shown');
+  if (paired && tabs && shown(tabs) && side && shown(side)) add('the tabs and the rail are both shown', null, vw + ' px');
   if (paired && (vw < 600) !== !!(tabs && shown(tabs))) add(vw < 600 ? 'under 600 px there are no tabs' : 'from 600 px the tabs are still there', null, vw + ' px');
-  if (side && shown(side)) { const r = side.getBoundingClientRect(); if (r.right > vw / 2 || r.left < -1) add('the side menu is cut off or takes half the window', null, px(r.left) + ' to ' + px(r.right)); }
+  if (side && shown(side)) { const r = side.getBoundingClientRect(); if (r.right > vw / 2 || r.left < -1) add('the rail is cut off or takes half the window', null, px(r.left) + ' to ' + px(r.right)); }
   if (tabs && shown(tabs)) {
     const r = tabs.getBoundingClientRect();
     if (r.bottom > vh + 1 || r.top < -1 || r.right > vw + 1 || r.left < -1) add('the tab bar is cut off', null, px(r.top) + ' to ' + px(r.bottom) + ' in a window ' + vh + ' px high');

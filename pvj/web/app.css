@@ -186,7 +186,7 @@ details.fold { display: block; }
 .fold summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600; font-size: 14px; color: var(--mu); }
 .btn.back { align-self: flex-start; }
 .syshead { flex-wrap: wrap; }
-.syshead :is(h1, h2) { font-size: 22px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.syshead h1, .syshead h2 { margin: 0; font-size: 22px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }      /* (h2: a page that is a column of an area, D72) */
 .switchwrap { flex: none; }
 .switchlabel { font-weight: 600; font-size: 14px; }
 /* The switch: a 52 by 32 track inside a 44 px tall button, so a thumb finds it */
@@ -335,7 +335,7 @@ div.ctl.compact { padding: 4px 0; }
 }
 .msg.inmsg:empty { min-height: 0; }
 .shadername { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
-/* Effects: the strip on Live and the card on Mix (effects.js). On a laptop the card is two columns: what is on and its
+/* Effects: the card on Shape > Effect (effects.js). On a laptop the card is two columns: what is on and its
    controls beside the list of effects, which scrolls by itself so the controls stay in view. */
 .fxname { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
 .fxtitle { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 8rem; }
@@ -661,6 +661,13 @@ main.ws:focus, .deskcol:focus { outline: none; }
    screens that share the page are one tab; an area whose screens all share it has no tabs. Setup keeps its index
    as a column at the left of the open page, which scrolls by itself as the rail does, and the page's own Back to
    the index is not shown. */
+/* (from 1720 px the Shaders column of Play has the room its own laptop form was written for, the library of
+   shaders beside what plays, 900 px, and from 1916 px its three columns, 1100 px: the pads and the library keep
+   340 and 380 px and the rest is the shaders') */
+@container app (min-width: 1720px) {
+  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="pads"] { flex: 0 0 340px; }
+  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="library"] { flex: 0 0 380px; }
+}
 @container app (min-width: 1200px) {
   .desk:not([data-cols="1"]) { display: flex; align-items: stretch; }
   .desk:not([data-cols="1"]) > .deskcol { display: block; flex: 1 1 0; }
@@ -700,7 +707,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .wstitle { flex: 1 1 auto; }
   .wsjob { order: 3; flex: 1 1 100%; }
 }
-.syshead :is(h1, h2) { overflow-wrap: break-word; }
+.syshead h1, .syshead h2 { overflow-wrap: break-word; }
 .k, .field { overflow-wrap: break-word; }
 /* (the buttons that carry a name someone typed: a preset of an effect, a projector of a group. Not every button of a row
    that wraps: one that may be cut anywhere has no least width, and a row of sources then squeezed "Console" where it had wrapped) */
@@ -761,7 +768,7 @@ html[data-style="signal"] .screen { gap: 16px; }
 html[data-style="signal"] .screen > h1 { font-size: 30px; margin: 0; }
 html[data-style="signal"] .wshead .pill, html[data-style="signal"] .roomnote .pill { border: 0; border-radius: var(--tk-r, 0); padding: 4px 8px; background: var(--on); color: var(--ac); font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
 html[data-style="signal"] .syshead { align-items: stretch; gap: 10px; }
-html[data-style="signal"] .syshead :is(h1, h2) { font-size: 30px; line-height: 1.15; padding: 6px 14px; background: var(--ac); color: var(--on); flex: 1 1 12rem; }
+html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { font-size: 30px; line-height: 1.15; padding: 6px 14px; background: var(--ac); color: var(--on); flex: 1 1 12rem; }
 html[data-style="signal"] .switchwrap { align-self: center; }
 html[data-style="signal"] .switchwrap .switchlabel { display: none; }      /* the switch says Off and On itself */
 
@@ -957,7 +964,7 @@ html[data-style="signal"] .ctlgrid .ctl.lit .ctlname, html[data-style="signal"] 
 
 /* -- a laptop: panels with a 3 px rule round them, the title block as a label at the top left -- */
 @container ws (min-width: 900px) {
-  html[data-style="signal"] .syshead :is(h1, h2) { flex: 0 1 auto; padding: 4px 14px; line-height: 1.35; }
+  html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { flex: 0 1 auto; padding: 4px 14px; line-height: 1.35; }
   html[data-style="signal"] .card { border: var(--rule) solid var(--fg); padding: calc(16px * var(--tk-density, 1)); gap: calc(12px * var(--tk-density, 1)); }
   html[data-style="signal"] .navgroup { padding: calc(16px * var(--tk-density, 1)); }
   html[data-style="signal"] .card .card { border: 0; padding: 0; }
@@ -1006,7 +1013,7 @@ html[data-style="signal"] .fxbuttons > .btn, html[data-style="signal"] .fxbutton
 
 /* -- a page under System on a phone: the title a little smaller than on a laptop, so "Projectors" and its switch
    share a line; a title is never cut inside a word (the switch goes under it first) -- */
-html[data-style="signal"] .syshead :is(h1, h2) { font-size: 28px; min-width: min-content; }
+html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { font-size: 28px; min-width: min-content; }
 html[data-style="signal"] .switchwrap { margin-left: auto; }
 
 /* -- before pairing: the same title block, and labels as labels -- */
@@ -1077,7 +1084,7 @@ html[data-style="signal"] #roomsetup .item .addr { font-size: 13px; }
 
 /* -- a laptop and a wall tablet: columns -- */
 @container ws (min-width: 900px) {
-  html[data-style="signal"] .syshead :is(h1, h2) { font-size: 30px; }
+  html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { font-size: 30px; }
   html[data-style="signal"] .moreacts, html[data-style="signal"] #lookthemes, html[data-style="signal"] #roomgmembers { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
   html[data-style="signal"] #netmodes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
   html[data-style="signal"] details.card.fold { border: 0; padding: 0; }
@@ -1188,7 +1195,7 @@ html[data-style="signal"] .livecols .switch, html[data-style="signal"] .livecols
    The rules below give a radius to the blocks that had none to set (each is 0 without the token). ---- */
 html[data-style="signal"] .switch::before { border-radius: var(--tk-r, 0) 0 0 var(--tk-r, 0); }
 html[data-style="signal"] .switch::after { border-radius: 0 var(--tk-r, 0) var(--tk-r, 0) 0; }
-html[data-style="signal"] #msg, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .syshead :is(h1, h2), html[data-style="signal"] .screen > .top:first-child h1,
+html[data-style="signal"] #msg, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2, html[data-style="signal"] .screen > .top:first-child h1,
 html[data-style="signal"] .slider label .k, html[data-style="signal"] .ctlhead .slidervalue, html[data-style="signal"] .seg, html[data-style="signal"] .banks, html[data-style="signal"] #netmodes, html[data-style="signal"] .daychips,
 html[data-style="signal"] #roomscreen .room-amb > h2, html[data-style="signal"] #roomscreen #roomscenes > h2, html[data-style="signal"] .proj-entry .lname::after, html[data-style="signal"] .danger-h, html[data-style="signal"] #roomscreen .room-result { border-radius: var(--tk-r, 0); }
 
@@ -1265,6 +1272,6 @@ html[data-style="signal"] .navrow.on .navname { color: var(--fg); text-decoratio
    also made its least width one letter, so "Projectors" beside its switch became "PROJECTOR" and "S". It is cut
    between words; a title that does not fit beside the switch has the line, and the switch goes under it. The
    area's name in the bar likewise. */
-html[data-style="signal"] .syshead :is(h1, h2) { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
+html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
 html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
-html[data-style="signal"] .tp .tpmore { min-width: 64px; }      /* (this look takes a button's least width away; More is a column of the line that says what plays) */
+html[data-style="signal"] .tp .tpmore { min-width: max-content; }      /* (this look takes a button's least width away; More is a column of the line that says what plays, and is never narrower than its word: at 1200 px, where the line is fullest, it was 3 px short) */
