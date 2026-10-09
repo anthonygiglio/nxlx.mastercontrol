@@ -2159,6 +2159,29 @@ class QueueTest(Base):
         self.player.quit()
         self.assertEqual(self.player.clears, clears + 2)
 
+    def test_five_quick_steps_against_the_real_worker_thread(self):
+        """The same on two real threads: the worker runs by itself and the steps come as fast as a held button
+        sends them, with small pauses drawn from a seed, so that they fall into every window by chance."""
+        cfg = self.gen.config()
+        cfg["faster"] = True                            # no gap between two switches: the worker is as quick as it can be
+        self.gen._save(cfg)
+        self.fx._tap = FakeTap
+        self.fx.changer._use_thread = True
+        rng = random.Random(7)
+        for trial in range(12):
+            self.fx.put(self.ids[2])
+            count = rng.choice((2, 3, 5))
+            for _ in range(count):
+                self.fx.step(1)
+                time.sleep(rng.choice((0.0, 0.0, 0.001, 0.004, 0.012)))
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and (self.fx.changer.queued() is not None or self.fx.changer.working is not None or self.fx._intent):
+                time.sleep(0.005)
+            self.assertEqual(self.on(), self.ids[(2 + count) % len(self.ids)], "trial %d: %d steps" % (trial, count))
+            self.assertIsNone(self.fx.error)
+        self.fx.changer._use_thread = False
+        self.fx.off()
+
     def test_a_wish_that_cannot_be_carried_out_says_why(self):
         self.fx.put(self.ids[2])
         self.fx.step(1)
@@ -2533,6 +2556,144 @@ class OverShaderTest(Base):
         self.assertNotIn("effect", self.gen.watch())
         self.assertIsNone(self.gen.state()["playing"]["effect"])
         self.assertIn(current, self.settings.data["shaders"]["heavy"])
+
+    def heavy_seconds(self, now, n, rate=5):
+        """`n` seconds in which the player drops `rate` frames each and the worker looks once; True once the box has
+        taken the effect off."""
+        for _ in range(n):
+            now[0] += 1.0
+            self.mpv.drops += rate
+            self.fx.adjust("anchor")
+            if self.fx.on is None:
+                return True
+        return False
+
+    def floor_clock(self):
+        now = [500.0]
+        for guard in (self.fx.guard, self.fx.pair_guard, self.gen.guard):
+            guard._clock = lambda: now[0]
+        return now
+
+    def test_a_pair_that_stays_too_heavy_loses_its_effect_and_the_shader_plays_on(self):
+        """The floor under the suspended guard: nobody need be watching (the worker's look does it)."""
+        self.assertEqual((E.PAIR_LIMIT, E.PAIR_SECONDS, E.PairGuard.SETTLE), (L.Guard.LIMIT, 20.0, L.Guard.SETTLE))
+        now = self.floor_clock()
+        self.show()
+        self.fx.put("fx-wash.fs")
+        gen = self.mpv.loaded[:1]
+        self.assertIs(self.heavy_seconds(now, 22), False)                              # 3 seconds to settle and not yet 20 of dropping
+        self.assertEqual(self.state()["on"]["load"], "heavy")                          # the card has said so for a while
+        self.assertIs(self.heavy_seconds(now, 3), True)
+        s = self.state()
+        self.assertEqual((s["on"], self.mpv.loaded, self.texts()), (None, gen, []))
+        self.assertEqual(s["last"], "it was too heavy over the shader on this box: frames were dropping for 20 seconds, so the box took it off. The shader plays on")
+        self.assertEqual(self.gen.on_screen()["id"], "nxlx-silk.fs")                   # the shader was never touched,
+        self.assertEqual(self.settings.data.get("shaders", {}).get("heavy", {}), {})   # and nothing is marked against it
+        self.assertEqual(self.player.effect_ended, "heavy")
+        # it does not come back by itself; by hand it goes on again, with a count of its own
+        self.assertIs(self.heavy_seconds(now, 30), True)
+        self.assertEqual(self.mpv.loaded, gen)
+        self.fx.put("fx-wash.fs")
+        self.assertIs(self.heavy_seconds(now, 10), False)
+        self.assertIsNone(self.state()["last"])
+
+    def test_the_floor_counts_across_the_steps_of_a_rotation_and_leaves_a_light_pair_alone(self):
+        now = self.floor_clock()
+        vibes = self.api.vibes
+        vibes.start()
+        vibes.tick()
+        self.mpv.video, self.mpv.fps = dict(CARRIER_VIDEO), 30.0
+        self.fx.put("fx-wash.fs")
+        # a light pair through four steps, each with the hitch of a new shader (twelve frames in its first second)
+        for _ in range(4):
+            self.assertIs(self.heavy_seconds(now, 1, rate=12), False)
+            self.assertIs(self.heavy_seconds(now, 9, rate=0), False)
+            vibes.skip()
+            vibes.tick()
+        self.assertEqual(self.state()["on"]["id"], "fx-wash.fs")
+        # a heavy pair under a short dwell: the effect's own guard starts over at each shader and never says
+        # heavy (three seconds to settle, six to judge, and the next shader is there), but the floor's count goes on
+        self.fx.put("fx-wash.fs")
+        said, gone = set(), False
+        for _ in range(6):
+            for _ in range(5):
+                gone = gone or self.heavy_seconds(now, 1)
+                said.add((self.fx.guard.verdict or {}).get("state"))
+            if gone:
+                break
+            vibes.skip()
+            vibes.tick()
+        self.assertTrue(gone, "a heavy pair kept its effect through a rotation of short dwells")
+        self.assertNotIn("heavy", said)
+        self.assertTrue(vibes.running)
+        self.assertEqual((self.kinds(), self.settings.data.get("shaders", {}).get("heavy", {}), vibes._marked), (["shader"], {}, []))
+        self.assertIn("too heavy over the shader", self.state()["last"])
+
+    def test_the_floor_is_for_a_pair_only_and_goes_with_the_guards_switch(self):
+        now = self.floor_clock()
+        self.clip()
+        self.fx.put("fx-wash.fs")
+        self.assertIs(self.heavy_seconds(now, 40), False)                              # over a clip the card says so and a person decides, as before
+        self.assertEqual(self.state()["on"]["load"], "heavy")
+        self.show()
+        cfg = self.gen.config()
+        cfg["guard"] = False                                                           # "watch the load" switched off: nothing is taken off
+        self.gen._save(cfg)
+        self.assertIs(self.heavy_seconds(now, 40), False)
+        cfg["guard"] = True
+        self.gen._save(cfg)
+        self.assertIs(self.heavy_seconds(now, 22), False)                              # and its count began when the switch came back
+        self.assertIs(self.heavy_seconds(now, 3), True)
+
+    def test_the_size_is_said_while_the_gpu_still_looks_at_a_generator_that_has_just_come(self):
+        """The generators' record is then still the one before (its epoch is old): the size is what the box draws
+        generators at. Only with no record at all (black) is no size said."""
+        self.show()
+        self.fx.put("fx-wash.fs")
+        size = self.state()["on"]["working"]["clip"]
+        self.player.play_source(self.player.source_shader, self.gen.playing["carrier"])    # the player has the next one; the record follows after the look
+        self.assertNotEqual(self.gen.playing["epoch"], self.player.source_epoch)
+        self.fx.adjust("anchor")
+        self.assertEqual(self.state()["on"]["working"]["clip"], size)
+        self.assertIsNotNone(size)
+
+    def test_a_complaint_with_no_name_is_nobodys_while_both_are_in_the_player(self):
+        """A listener that began in the middle of the other shader's text hears numbered lines and a complaint, and
+        no name. Alone in the player that is one's own, as before; with both there it is not claimed."""
+        tail = [row for row in DUMP if "// %s" not in row[2] and "shader source" not in row[2]]
+        self.assertEqual(S.shader_errors(tail), "line 40: `oops' undeclared")
+        self.assertEqual(S.about(tail, "nxlx effect 7 3"), tail)
+        self.assertEqual(S.about(tail, "nxlx effect 7 3", True), [])
+        self.assertEqual(S.about(REFUSAL, "nxlx effect 7 3", True), [])
+        named = [(p, level, t % "nxlx effect 7 3" if "%s" in t else t) for p, level, t in DUMP]
+        self.assertEqual(S.about(tail + named, "nxlx effect 7 3", True), named)
+        # the engines: over a generator an unnamed complaint refuses neither
+        self.show()
+        FxTap.lines = list(tail)
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.kinds(), self.state()["error"]), (["shader", "effect"], None))
+        GenTap.lines = list(tail)
+        self.assertTrue(self.gen.show("nxlx-ember.fs")["ok"])
+        GenTap.lines = []
+        self.fx.off()
+        FxTap.lines = []
+        self.clip()                                                                    # alone in the player it is heard as before
+        FxTap.lines = list(REFUSAL)
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-vignette.fs")
+
+    def test_a_generator_that_comes_makes_the_effects_worker_look_at_once(self):
+        """Not at its next round up to a second away: the GPU's word about the effect over the new picture is
+        listened for from the generator's arrival."""
+        self.clip()
+        self.fx.put("fx-wash.fs")
+        self.fx.changer._clock = lambda: 1000.0
+        self.fx.changer.keep()
+        self.assertEqual(self.fx.changer._refresh, 1000.0 + E.WATCH)
+        self.show()
+        self.assertEqual(self.fx.changer._refresh, 1000.0)
+        self.assertTrue(self.fx.changer.pump())                                        # due now: the look, with a text for the new picture
+        self.assertEqual(self.state()["on"]["working"]["under"], "shader")
 
     def test_values_the_gpu_refused_over_a_generator_are_not_sent_again(self):
         """The memory of refused values has the generator in its key, and the request that notes a change looks under
