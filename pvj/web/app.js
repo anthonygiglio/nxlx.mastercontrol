@@ -476,6 +476,7 @@
     if (pl.capture) np.textContent = 'Live input' + (pl.capture.device ? ' (' + pl.capture.device + ', ' + pl.capture.mode + ')' : '');
     if (window.pvjShaders) window.pvjShaders.patch(shaderCtx(), pl, np);
     if (pl.effect && window.pvjEffects && pl.running && typeof pl.shader !== 'string') np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
+    np.title = np.textContent;          // the line is cut with dots where it is long: the whole of it is here
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     var pill = document.getElementById('pill');
     if (pill) pill.textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');

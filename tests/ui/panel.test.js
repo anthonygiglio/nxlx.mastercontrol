@@ -2957,14 +2957,14 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.setViewportSize({ width: 1366, height: 800 });
       await signalRound(' at 1366', false);
       // The place in the clip is on the strip of every screen, and the box moves it once a second: its fill follows
-      // it at every moment, at each width where it shows (from 600 px always; under that with More open).
+      // it at every moment, at each width where it shows (from 1000 px always; under that with More open).
       // A clip has to be playing for this to try anything: one is started if none is, and a frozen one is let go.
       await signal.go(page, 'play/pads');
       await page.waitForSelector('.pads');
       const nowPl = (await get('/api/status')).player || {};
       if (!(nowPl.duration > 0)) { assert.strictEqual(await post('/api/play', { file: 'tunnel.mkv' }), 200); await page.waitForTimeout(2500); }
       else if (nowPl.paused) { assert.strictEqual(await post('/api/control', { action: 'pause' }), 200); await page.waitForTimeout(1500); }
-      for (const [w, more] of [[1366, false], [768, false], [390, true]]) {
+      for (const [w, more] of [[1366, false], [768, true], [390, true]]) {       // (under 1000 px the place in the clip is behind More)
         await page.setViewportSize({ width: w, height: 800 });
         if (more) await signal.stripOpen(page);
         const f = await signal.seekFill(page);
@@ -3020,7 +3020,7 @@ function startServer(env) {          // env: more for the harness's environment 
       // ---- The Workspace shell (D65, tests/ui/shell.js), in the look a box comes with and with every module on:
       // every area and screen is reached by a press and with the keyboard at 390, 768 and 1366 px, with the title
       // bar, the open item, one heading, the strip and the cursor held on each; the tabs are there under 600 px and
-      // the side menu from 600 px; the strip is whole from 600 px and on a phone folds to four buttons with More;
+      // the side menu from 600 px; the strip is one line from 600 px (whole from 1200 px, folded behind More under that) and on a phone four buttons with More;
       // an owner, a presenter and a guest each have the screens they should, and a module that is off has no screen
       // in the menu while the owner's index keeps its row.
       {

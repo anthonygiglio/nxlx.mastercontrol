@@ -553,9 +553,18 @@ main.ws:focus { outline: none; }
    So the open strip and the tabs are under half of a 568 px phone. (On a phone the rows are placed by `order`,
    so the cursor's order there is the laptop's: Previous, back, forward, Next, the fades, Freeze, Stop, Blackout.) */
 .tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 16px; border-top: 1.5px solid var(--ln); }
-.tpinfo { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px 10px; min-width: 0; }
-.tpinfo #np { flex: 1 1 0; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpinfo { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(min-content, 1fr) auto; align-items: center; min-width: 0; }
+/* What plays, "Clip 11 of 12", the time and More stood on one line, and the name was what gave way: to one letter
+   at 600 px, to nothing at 768 (where the time then ran into the place in the clip), to 19 px at 1280. Now the
+   name has a line and the clip count and the time stand under it, beside More, which is as tall as both; the strip
+   is no taller for it. The name is as wide as the two columns under it, with no say in how wide they are; it is
+   cut with dots, and whole in its title (app.js). */
+.tpinfo #np { grid-column: 1 / 3; grid-row: 1; width: 0; min-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpinfo #plpos { grid-column: 1; grid-row: 2; }
+.tpinfo #plpos:not(:empty) { margin-right: 10px; }
+.tpinfo #time { grid-column: 2; grid-row: 2; }
 .tpinfo #time, .tpinfo #plpos { white-space: nowrap; }
+.tpinfo .tpmore { grid-column: 3; grid-row: 1 / span 2; margin-left: 10px; }
 .tpscrub { grid-column: span 3; order: 4; display: flex; min-width: 0; }
 .tp .tpx { order: 2; }
 .tp #freeze { order: 3; }
@@ -567,6 +576,9 @@ main.ws:focus { outline: none; }
 .tp .tpmore { flex: none; min-width: 64px; }
 .tp:not(.open) .tpx { display: none; }
 /* (a 320 px phone: "Blackout" needs 69 px in the widest of the faces this look is drawn in, and gets 75) */
+/* (under 1000 px, where the place in the clip is behind More: if the clip count and the time have no room on one
+   line, as in larger text, the time goes to a second line; it is not cut and no button is sent down) */
+@container app (max-width: 999px) { .tpinfo { grid-template-columns: auto minmax(0, 1fr) auto; } .tpinfo #time { white-space: normal; } }
 @container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } .tp .tpb { font-size: 13px; } }      /* (13 px: room to spare in a wider face than the one it was measured in) */
 @container app (min-width: 600px) {
   .frame { grid-template-columns: 168px minmax(0, 1fr); grid-template-rows: auto 1fr auto; grid-template-areas: "head head" "side main" "dock dock"; }
@@ -583,14 +595,37 @@ main.ws:focus { outline: none; }
   .wsside .wsit { color: var(--mu); font-size: 15px; padding-left: 14px; }
   .wsside .on { background: var(--ac); color: var(--on); font-weight: 600; }
   .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  .tpinfo { flex: 1 1 200px; }
-  .tpscrub, .tp:not(.open) .tpscrub { display: flex; flex: 2 1 200px; order: 0; }
+  .tpinfo { flex: 1 1 0; min-width: auto; }
+  .tpscrub, .tp:not(.open) .tpscrub { display: flex; flex: 2 1 0; min-width: 3rem; order: 0; }
   .tp .tpx, .tp #freeze { order: 0; }
   .tp:not(.open) button.tpx { display: inline-block; }
   .tpgrp { display: flex; gap: 6px; }
   .tp .tpb { min-height: 44px; padding: 0 10px; font-size: inherit; }
   .tp .tpb.keep { min-height: 56px; }
   .tp .tpmore { display: none; }
+}
+/* One line from 600 px. Nine buttons, the place in the clip and what plays need about 1150 px; under that the
+   strip took two rows, or three, and Stop and Blackout (or Freeze with them) were the ones sent down to the left of
+   the next row. So under 1200 px it folds as a phone's does, and Freeze, Stop and Blackout keep the right end of
+   the one line at every width: from 1000 px it shows what plays, the place in the clip, Previous, Next and those
+   three; from 800 px the place in the clip is behind More as well; from 600 px Previous and Next too. More opens
+   what is folded in a second line under the first, in place. (If the words are much larger than the panel's own,
+   the line wraps and nothing is cut.) */
+@container app (min-width: 600px) and (max-width: 1199px) {
+  .tp { column-gap: 8px; }
+  .tpgrp { display: contents; }
+  .tp .tpmore { display: block; }
+  .tp .tpx { order: 2; }
+  .tp #freeze { order: 0; }
+  .tp:not(.open) button.tpx:not(#freeze), .tp:not(.open) .tpscrub { display: none; }
+  .tp.open::before { content: ""; order: 1; flex: 0 0 100%; height: 0; margin-top: -6px; }
+}
+@container app (min-width: 600px) and (max-width: 799px) {
+  .tp #prev, .tp #next { order: 2; }
+  .tp:not(.open) #prev, .tp:not(.open) #next { display: none; }
+}
+@container app (min-width: 1000px) and (max-width: 1199px) {
+  .tp .tpscrub, .tp:not(.open) .tpscrub { display: flex; order: 0; }
 }
 @container app (min-width: 900px) { .frame { grid-template-columns: 200px minmax(0, 1fr); } }
 @container app (min-width: 1200px) { .frame { grid-template-columns: 224px minmax(0, 1fr); } }
@@ -599,6 +634,33 @@ main.ws:focus { outline: none; }
   .wshead { padding-top: 4px; padding-bottom: 4px; }
   .tp { padding-top: 4px; padding-bottom: 4px; }
 }
+
+/* ---- Narrow widths: text that overran (2026-10-09; measured from 320 to 768 px and 740 by 360, with long names
+   and with the text a quarter larger). Under 900 px of panel:
+   - The title bar. The line that says the screen's job stood in one box with the area's name, and the status
+     beside that box squeezed it to a column of three lines. Now the name and the status share the first line (the
+     status goes under the name when there is no room, the name is never narrowed) and the job has a line of its
+     own, as wide as the bar.
+   - A page's title is cut between words, never inside one: the switch goes under it first.
+   - A name with no space in it (a preset, a projector, a USB drive, a group) is cut where the box ends.
+   The strip's own line at every width is with its rules, above. ---- */
+@container app (max-width: 899px) {
+  .wsheadmain { display: contents; }
+  .wstitle { flex: 1 1 auto; }
+  .wsjob { order: 3; flex: 1 1 100%; }
+}
+@container app (min-width: 600px) and (max-width: 899px) {
+  /* (the side menu is 168 px here: less air round its words, so that "Projectors" stays whole in larger text) */
+  .wsside { padding-left: 6px; padding-right: 6px; }
+  .wsside button { padding-left: 6px; padding-right: 4px; }
+  .wsside .wsit { padding-left: 10px; }
+}
+.syshead h1 { overflow-wrap: break-word; }
+.k, .field { overflow-wrap: break-word; }
+.row.wrap > .btn { max-width: 100%; overflow-wrap: anywhere; }
+/* (a phone: a row of choices that share the width, "Cut", "Dip to black", "Crossfade (soon)", goes to a second line in larger text; it ran out of its card) */
+@container app (max-width: 599px) { .row:has(> .btn.grow) { flex-wrap: wrap; } }
+.preset > span { min-width: 0; }
 
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
@@ -1147,3 +1209,11 @@ html[data-style="signal"] .tp #freeze.solid { background: var(--ac); border-colo
   html[data-style="signal"] .wstitle { font-size: 20px; }
   html[data-style="signal"] .tp { padding-top: 4px; padding-bottom: 4px; }
 }
+/* Narrow widths, text that overran (2026-10-09). A page's title: this look had asked for it to be cut anywhere, which
+   also made its least width one letter, so "Projectors" beside its switch became "PROJECTOR" and "S". It is cut
+   between words; a title that does not fit beside the switch has the line, and the switch goes under it. The
+   area's name in the bar likewise. */
+html[data-style="signal"] .syshead h1 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
+html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
+html[data-style="signal"] .tp .tpmore { min-width: 64px; }      /* (this look takes a button's least width away; More is a column of the line that says what plays) */
+html[data-style="signal"] .row.wrap > .btn, html[data-style="signal"] .row.wrap > .btn.small { min-width: 0; }

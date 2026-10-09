@@ -13,8 +13,12 @@
 //                         the screen (reach() by 'keys' puts the cursor on an item and presses Enter: it shows that
 //                         Enter opens the screen, this shows that the keyboard gets there)
 //   menus(pg)             which menu is shown at 390, 599, 600, 768 and 1366 px
-//   strip(pg)             the strip's nine buttons and the place in the clip from 600 px; on a phone four of
-//                         them, and More opens the rest in place, stays open on the next screen, and closes
+//   strip(pg)             the strip is ONE line of buttons at every width from 600 px, with Freeze, Stop and
+//                         Blackout at its right end: all nine and the place in the clip from 1200 px; under that
+//                         it folds behind More (from 1000 px the place in the clip, Previous, Next and those
+//                         three; from 800 px without the place in the clip; from 600 px those three alone), and
+//                         More opens the rest under the line; on a phone four buttons, and More opens the rest
+//                         in place, stays open on the next screen, and closes
 //   roles(pages)          what the owner, a presenter and a guest have in their menus, where each lands, and that
 //                         a switched-off module's page is not in the menu while the owner's Setup index has its row
 //   inventory(o)          the controls of every screen, by role, against the list of the panel before the shell
@@ -31,6 +35,8 @@ const AREAS = { play: 'Play', shape: 'Shape', room: 'Room', setup: 'Setup' };
 const SIZES = [[390, 844], [768, 1024], [1366, 768]];
 const STRIP = ['prev', 'back10', 'fwd10', 'next', 'fadein', 'fade', 'freeze', 'stop', 'black'];
 const ALWAYS = ['prev', 'next', 'stop', 'black'];
+// (what the closed strip shows whatever the width: under 600 px those four, from 600 px Freeze, Stop and Blackout, with Previous and Next from 800 px)
+const kept = (width) => (width < 600 ? ALWAYS : ['freeze', 'stop', 'black'].concat(width >= 800 ? ['prev', 'next'] : []));
 
 /* eslint-disable no-undef */
 function look(strip) {
@@ -83,7 +89,7 @@ async function reach(pg, how) {
       if (width >= 600) assert.deepStrictEqual(s.open, ['side-' + key.replace('/', '-')], where + ': the open item of the side menu');
       else assert.deepStrictEqual(s.open.filter((x) => x.indexOf('tab-') === 0), ['tab-' + area], where + ': the open tab');
       if (width < 600 && area !== 'setup') assert(s.open.indexOf('sub-' + key.replace('/', '-')) >= 0, where + ': the open screen in the row under the title, of ' + JSON.stringify(s.open));
-      ALWAYS.forEach((b) => assert(s.buttons[b], where + ': the strip has ' + b));
+      kept(width).forEach((b) => assert(s.buttons[b], where + ': the strip has ' + b));
       assert(s.dockAtFoot, where + ': the strip is at the foot of the window');
       assert(s.focus, where + ': the cursor is not lost');
       count++;
@@ -115,7 +121,7 @@ async function tabWalk(pg) {
     }
     const missed = want.filter((id) => seen.indexOf(id) < 0);
     assert.deepStrictEqual(missed, [], 'at ' + width + ' px the Tab key never comes to: ' + missed.join(', ') + ' (it came to ' + seen.join(' ') + ')');
-    ALWAYS.concat(width < 600 ? ['wsmore', 'tab-play', 'tab-setup', 'sub-shape-sound'] : ['side-play-pads', 'side-setup-index', 'side-shape-sound']).forEach((id) => {
+    kept(width).concat(width < 600 ? ['wsmore', 'tab-play', 'tab-setup', 'sub-shape-sound'] : ['side-play-pads', 'side-setup-index', 'side-shape-sound']).forEach((id) => {
       if (id !== 'prev' && id !== 'next') assert(seen.indexOf(id) >= 0, 'at ' + width + ' px the Tab key comes to ' + id);
     });
     const inMain = seen.findIndex((id) => id.indexOf('main:') === 0 || id === 'mvol');
@@ -141,20 +147,67 @@ async function menus(pg) {
   }
 }
 
+/* eslint-disable no-undef */
+// The strip's buttons as they lie: which are shown, on how many lines, and where the last one ends.
+function lie(strip) {
+  const shown = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+  const vw = document.documentElement.clientWidth;
+  const at = {}, lines = [];
+  strip.concat(['wsmore']).forEach((b) => {
+    const el = document.getElementById(b);
+    if (!shown(el)) return;
+    const r = el.getBoundingClientRect(), mid = Math.round(r.top + r.height / 2);
+    at[b] = { left: Math.round(r.left), right: Math.round(r.right), mid };
+    if (!lines.some((y) => Math.abs(y - mid) <= 4)) lines.push(mid);
+  });
+  const np = document.getElementById('np').getBoundingClientRect();
+  return { vw, at, lines: lines.length, name: Math.round(np.width), page: document.documentElement.scrollWidth };
+}
+/* eslint-enable no-undef */
+
 async function strip(pg) {
   await ready(pg);
-  for (const [width, height] of [[768, 1024], [1366, 768], [667, 375]]) {           // from 600 px: everything, and no More
+  await pg.setViewportSize({ width: 1366, height: 768 });
+  await frames(pg);
+  if ((await see(pg)).more === 'true') await pg.evaluate(() => document.getElementById('wsmore').click());
+  // From 600 px: one line, whatever is folded. [width, height, the place in the clip, Previous and Next, the other four]
+  const FOLDED = ['back10', 'fwd10', 'fadein', 'fade'];
+  for (const [width, height, seek, steps, rest] of [[600, 900, false, false, false], [667, 375, false, false, false], [768, 1024, false, false, false], [799, 900, false, false, false],
+    [800, 900, false, true, false], [999, 900, false, true, false], [1000, 800, true, true, false], [1199, 800, true, true, false], [1200, 800, true, true, true], [1366, 768, true, true, true]]) {
     await pg.setViewportSize({ width, height });
     await frames(pg);
-    const s = await see(pg);
-    STRIP.concat(['seek']).forEach((b) => assert(s.buttons[b], 'at ' + width + ' px the strip shows ' + b));
-    assert(!s.buttons.wsmore, 'at ' + width + ' px there is no More');
+    const s = await see(pg), l = await pg.evaluate(lie, STRIP);
+    const where = 'at ' + width + ' px the strip ';
+    assert.strictEqual(l.lines, 1, where + 'is one line of buttons, not ' + l.lines + ': ' + JSON.stringify(l.at));
+    ['freeze', 'stop', 'black'].forEach((b) => assert(s.buttons[b], where + 'shows ' + b));
+    assert(l.at.freeze.left < l.at.stop.left && l.at.stop.left < l.at.black.left && l.at.black.right <= l.vw && l.at.black.right >= l.vw - 24,
+      where + 'ends with Freeze, Stop and Blackout at the right edge: ' + JSON.stringify(l.at));
+    Object.keys(l.at).forEach((b) => assert(l.at[b].left >= 0 && l.at[b].right <= l.vw + 1, where + 'keeps ' + b + ' inside the window: ' + JSON.stringify(l.at[b])));
+    assert(l.page <= l.vw + 1, where + 'does not make the page scroll sideways (' + l.page + ' px)');
+    assert(l.name >= 60, where + 'leaves room for what plays: ' + l.name + ' px');
+    assert.strictEqual(s.buttons.seek, seek, where + (seek ? 'shows' : 'folds') + ' the place in the clip');
+    ['prev', 'next'].forEach((b) => assert.strictEqual(s.buttons[b], steps, where + (steps ? 'shows ' : 'folds ') + b));
+    FOLDED.forEach((b) => assert.strictEqual(s.buttons[b], rest, where + (rest ? 'shows ' : 'folds ') + b));
+    assert.strictEqual(s.buttons.wsmore, !rest, where + (rest ? 'has no More' : 'has More'));
   }
+  // More at 768 px: what was folded comes under the line, and the three keep their place
+  await pg.setViewportSize({ width: 768, height: 1024 });
+  await frames(pg);
+  const before = await pg.evaluate(lie, STRIP);
+  await pg.click('#wsmore');
+  let s = await see(pg);
+  const open = await pg.evaluate(lie, STRIP);
+  STRIP.concat(['seek', 'wsmore']).forEach((b) => assert(s.buttons[b], 'at 768 px with More open the strip shows ' + b));
+  assert.strictEqual(s.more, 'true', 'at 768 px More says it is open');
+  ['freeze', 'stop', 'black'].forEach((b) => assert(open.at[b].left === before.at[b].left && open.at[b].mid < open.at.fade.mid, 'at 768 px ' + b + ' keeps its place when More opens: ' + JSON.stringify([before.at[b], open.at[b]])));
+  await pg.click('#wsmore');
+  s = await see(pg);
+  assert(s.more === 'false' && !s.buttons.fade && !s.buttons.seek && s.buttons.freeze, 'at 768 px More closes it again');
   await pg.setViewportSize({ width: 390, height: 844 });
   await frames(pg);
   await go(pg, 'play/pads');
   if ((await see(pg)).more === 'true') await pg.click('#wsmore');
-  let s = await see(pg);
+  s = await see(pg);
   const folded = STRIP.filter((b) => ALWAYS.indexOf(b) < 0).concat(['seek']);
   ALWAYS.concat(['wsmore']).forEach((b) => assert(s.buttons[b], 'a phone\'s strip shows ' + b));
   folded.forEach((b) => assert(!s.buttons[b], 'a phone\'s strip keeps ' + b + ' behind More'));
