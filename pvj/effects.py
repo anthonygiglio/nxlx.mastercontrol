@@ -851,6 +851,7 @@ def estimate(parsed):
 class Effects(S.Engine):
     """The library of filters and the one effect that is on. See the top of this file for where it sits."""
     KIND = S.FILTER
+    LOCK = "effects.engine"
     STEM = "effect"
 
     def __init__(self, api, log=print, clock=time.monotonic, tap=S.LogTap, thread=True):

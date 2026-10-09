@@ -31,7 +31,7 @@ import time
 import unicodedata
 import uuid
 
-from . import projector as projector_mod
+from . import locks, projector as projector_mod
 from .api import ApiError, MEDIA_EXTENSIONS, bad, valid_name
 
 MAX_GROUPS = 8
@@ -246,7 +246,7 @@ class Room:
         self.lock = threading.Lock()          # never held while talking to a projector or the player
         self._slots = {}                      # projector id -> _Slot, only while it has work
         self.stuck = STUCK
-        self._order = threading.Lock()        # one scene at a time decides what the box and the projectors do
+        self._order = locks.make("room.order")      # one scene at a time decides what the box and the projectors do
         self._left = []                       # threads left behind inside a command that never came back
         self._last_box = None                 # (scene id, its box, time.monotonic(), the result)
         self._power = {}                      # projector id -> its last power step that no status check has agreed with yet

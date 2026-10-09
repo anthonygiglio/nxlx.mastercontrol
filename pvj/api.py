@@ -22,7 +22,7 @@ import unicodedata
 
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
-from . import paths
+from . import locks, paths
 from . import transitions as transitions_mod
 from .auth import Auth, AuthError
 from .modules import ModuleError
@@ -103,12 +103,12 @@ class Fader:
         # `_lock` guards the token and the label, and nothing else is ever done while it is held: no callback, no
         # call to the player, no other lock. (A callback that ran under it once made every Blackout, opacity change
         # and Stop wait for a clip's load, and could deadlock against the start of a live input.)
-        self._lock = threading.Lock()
+        self._lock = locks.make("fader.lock")
         # `stepping` is held over one write of the picture's level: a step of a ramp, or a level somebody sets by
         # hand (Api takes it for Blackout, the Opacity slider, a Reset and a play's own level). A step looks at the
         # token inside it, so a step that was on its way cannot land after a level that was set since; whoever sets
         # a level waits for at most the one step that is in the player. Taken before `_lock`, never inside it.
-        self.stepping = threading.Lock()
+        self.stepping = locks.make("fader.stepping")
         self.label = None       # "out" from a fade out until something else sets the picture, "in" while a fade in runs (read by the controller lights)
 
     def cancel(self):
@@ -242,7 +242,7 @@ class Api:
     # already running at the tap is older than the tap and is ended by it, when the load is done and not before.
     def _player_lock(self):
         """The player's own lock (Player._lock), or a stand-in for a player that has none (tests)."""
-        return getattr(self.player, "_lock", None) or threading.Lock()
+        return getattr(self.player, "_lock", None) or locks.make("player")
 
     def _level_mark(self):
         mark = getattr(self.fader, "mark", None)
@@ -289,10 +289,21 @@ class Api:
             if mark is not None:
                 self._level_back(mark)
 
+    def restore_level(self):
+        """A player that has just started (the panel restarted it, or it came back by itself) shows its picture at
+        its own full brightness, whatever the mix says: under a Blackout the next clip would be lit. The watcher
+        that puts the overlay and the mapping back on a new player calls this: the level is written as the mix
+        has it, dark under Blackout and after the operator's Fade out. The fader is not taken: a ramp that runs
+        goes on from its next step, and this is nobody's wish for a level. (Found by the stress test: a load that
+        leaves the level to a newer wish, as it must, left it at the new process's own.)"""
+        with self._levels():
+            dark = self.mix["blackout"] or getattr(self.fader, "label", None) == "out"
+            self._apply_opacity(0 if dark else self.mix["opacity"])
+
     def _levels(self):
         """The lock one write of the picture's level is made under (Fader.stepping): a ramp's step that was on its
         way cannot land after a level set under it."""
-        return getattr(self.fader, "stepping", None) or threading.Lock()
+        return getattr(self.fader, "stepping", None) or locks.make("fader.stepping")
 
     def _show_level(self, mark=None):
         """Set the picture's level to what the mix says now (dark under Blackout, the mix opacity otherwise) and
@@ -1103,8 +1114,15 @@ class Api:
                     self.log("pvj-web: a clip did not start after its dip to black: %s" % e)
                 if not done:
                     self._level_back(way_down[0])
+            current = getattr(self.fader, "current", None)
             with self._levels():        # the ramp's first step waits for this: its token is noted before any callback can run
-                way_down.append(self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=dipped, cancelled=lambda: dipped(True)))
+                # only if nobody has taken the fader since the tap: a Fade out that came between the two is the
+                # newer wish for the level, and the way down must not take its place
+                if tapped is None or current is None or current(tapped):
+                    way_down.append(self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=dipped, cancelled=lambda: dipped(True)))
+            if not way_down:
+                loaded = start()        # no dip: the clip loads now, and the level stays as that wish set it
+                return {"playing": name} if loaded else {"playing": None, "superseded": name}
             return {"playing": name, "pending": True}       # asked for, not loaded yet, as a controller's blend
         else:
             loaded = start()
@@ -1236,7 +1254,7 @@ class Api:
             self.levels["volume"] = min(130.0, max(0.0, self.levels["volume"] + float(body["value"])))
         elif action == "reset":
             flipped = [k for k in ("flip_h", "flip_v") if self.mix[k]]
-            self.mix.update(opacity=100, size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)
+            self.mix.update(size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)     # the opacity: below, in its lock
             for k in flipped:
                 self._player_call(p.flip, k == "flip_h", False)
             self.transitions.end()
@@ -1276,6 +1294,7 @@ class Api:
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
         self.transitions.end()
+        self.fader.cancel()                     # once before the lock, as the other four wishes for a level do
         with self._levels():
             # Under Blackout the screen is dark already and there is nothing to fade: a ramp would begin at the
             # mix's level and show the picture during a Blackout (older than the transitions; found by the stress
@@ -1550,7 +1569,8 @@ class Api:
 
     def stop_player(self, body, device, client):
         # The systemd unit (Restart=always) brings the player straight back.
-        self._as_newest("the player's restart", self.player.ipc.request, "quit")
+        quit_player = getattr(self.player, "quit", None)        # Player.quit: what was loaded goes with the process
+        self._as_newest("the player's restart", quit_player or (lambda: self.player.ipc.request("quit")))
         self._stop_capture()
         return {"ok": True}
 

@@ -32,7 +32,7 @@ import threading
 import time
 import unicodedata
 
-from . import paths
+from . import locks, paths
 from .api import ApiError, valid_name
 from .player import PlayerError
 
@@ -848,6 +848,7 @@ def default_config():
 
 
 class Engine:
+    LOCK = "shaders.engine"        # the place of this engine's lock among the locks (pvj/locks.py)
     """The library of shaders and the one that is on screen. Everything the player reads is written to its runtime
     folder under a fresh name; a shader the GPU refuses is replaced by the one before it, or by black."""
     KIND = GENERATOR            # what its files are read as (effects.py keeps a library of filters the same way)
@@ -862,7 +863,7 @@ class Engine:
         # What an upload cut off by a power cut left (D70). Nothing is uploading yet: this is the panel starting.
         paths.remove_leftovers(self.dir, UPLOAD_TEMP)
         self.bundled_dir = BUNDLED_DIR
-        self._lock = threading.RLock()          # one change at a time
+        self._lock = locks.make(self.LOCK, reentrant=True)      # one change at a time; its place: pvj/locks.py
         self._serial = 0
         self._cache = {}                        # path -> (mtime, size, parsed or ShaderError)
         self._checked = set()                   # (source hash, shape of the values) the GPU has taken
@@ -1240,7 +1241,7 @@ class Engine:
                     # One step under the player's lock: the generator takes the screen, and with that it is the
                     # newest wish. A clip's transition does not go on over it, and a clip that was still on its way
                     # (its still being taken) looks under this same lock and does not load over it (Api.play).
-                    with (getattr(player, "_lock", None) or threading.Lock()):
+                    with (getattr(player, "_lock", None) or locks.make("player")):
                         new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
                         if new is not None and ending is not None:
                             ending.end("a generator", newer=True)

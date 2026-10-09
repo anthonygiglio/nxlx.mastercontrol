@@ -24,6 +24,8 @@ import struct
 import threading
 import uuid
 
+from . import locks
+
 MAX_SURFACES = 16
 MAX_CELLS = 64            # all cells of all surfaces (a quad or triangle is one cell); bounds the work per pixel
 MAX_GRID = 8              # columns and rows of a grid surface
@@ -682,8 +684,8 @@ class Engine:
         self.status = {"state": "off", "message": ""}
         self._gen = 0
         self._serial = 0                       # file names
-        self._lock = threading.Lock()          # the counters and the status
-        self._apply_lock = threading.Lock()    # the newest-change check and the switch, together
+        self._lock = locks.make("mapper.state")       # the counters and the status
+        self._apply_lock = locks.make("mapper.apply")  # the newest-change check and the switch, together
         self._job = None                       # the newest build waiting for the worker
         self._building = False
 

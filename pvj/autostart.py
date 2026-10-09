@@ -209,6 +209,12 @@ class Autostart:
                 apply_audio()
             except Exception as e:
                 self.log("pvj-web: could not set the sound output: %s" % e)
+        restore_level = getattr(self.api, "restore_level", None)
+        if restore_level:               # a new player shows at its own full brightness: Blackout and the opacity go back on
+            try:
+                restore_level()
+            except Exception as e:
+                self.log("pvj-web: could not put the picture's level back: %s" % e)
         apply_overlay = getattr(self.api, "apply_overlay", None)
         if apply_overlay and self.settings.data.get("overlay", {}).get("on"):   # a restarted player lost the picture
             try:

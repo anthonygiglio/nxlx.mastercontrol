@@ -26,6 +26,7 @@ import random
 import threading
 import time
 
+from . import locks
 from .api import ApiError
 from .player import PlayerError
 
@@ -55,8 +56,8 @@ class Vibes:
         self._clock, self._sleep = clock, sleep
         self._rng = rng or random.Random(random.SystemRandom().getrandbits(64))
         self._use_thread = thread
-        self._state = threading.Lock()      # the fields below; held for moments only, never across a call to the player
-        self._work = threading.Lock()       # one change at a time; nobody waits for it (tick gives up if it is taken)
+        self._state = locks.make("vibes.state")    # the fields below; held for moments only, never across a call to the player
+        self._work = locks.make("vibes.work")     # one change at a time; nobody waits for it (tick gives up if it is taken)
         self._wake = threading.Event()
         self._thread = None
         self._clear = None          # the epoch of a screen that stop() wants cleared as soon as no change is in progress
@@ -252,8 +253,8 @@ class Vibes:
         path = self._path()
         if path is None or self.engine.is_carrier(path):
             levels = getattr(self.api, "_levels", None)
-            with (levels() if levels else threading.Lock()):
-                if not self.api.mix["blackout"]:
+            with (levels() if levels else locks.make("fader.stepping")):
+                if not self.api.mix["blackout"] and getattr(getattr(self.api, "fader", None), "label", None) != "out":
                     self.api._apply_opacity(self.api.mix["opacity"])
 
     def _level(self):
@@ -287,13 +288,19 @@ class Vibes:
             level = self.api.mix["opacity"] * i / steps if up else start * (steps - i) / steps
             # One write of the level at a time (Api._levels), with the look at Blackout inside it: a step that was
             # on its way when the operator blacked out could land after the Blackout's own dark and show the picture.
-            levels = getattr(self.api, "_levels", None)
+            # The player's lock first, then the level's (the order of the locks, pvj/locks.py): `source_opacity` needs
+            # the player's lock for its look at the epoch, and whoever holds the level's lock may not wait for the
+            # player's, or a Blackout would wait behind a load and a Stop could wait for this for ever.
+            levels, players = getattr(self.api, "_levels", None), getattr(self.api, "_player_lock", None)
             try:
-                with (levels() if levels else threading.Lock()):
-                    if self.api.mix["blackout"]:
-                        return True
-                    if not self.api.player.source_opacity(int(round(min(100, max(0, level)) * 2.55)), self.epoch):
-                        return False
+                with (players() if players else locks.make("player")):
+                    with (levels() if levels else locks.make("fader.stepping")):
+                        # dark by the operator's wish (Blackout, or a Fade out, which the fader's label says): the
+                        # rotation's own dip leaves the screen as it is
+                        if self.api.mix["blackout"] or getattr(getattr(self.api, "fader", None), "label", None) == "out":
+                            return True
+                        if not self.api.player.source_opacity(int(round(min(100, max(0, level)) * 2.55)), self.epoch):
+                            return False
             except PlayerError:
                 return False
         if up:

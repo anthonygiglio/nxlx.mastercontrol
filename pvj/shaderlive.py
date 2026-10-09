@@ -32,7 +32,7 @@ import threading
 import time
 import unicodedata
 
-from . import shaders as S
+from . import locks, shaders as S
 from .api import ApiError
 from .shaders import ShaderError
 
@@ -450,7 +450,7 @@ class Guard:
 
     def __init__(self, engine, clock=time.monotonic, stats=v3d_stats):
         self.engine, self._clock, self._stats = engine, clock, stats
-        self._lock = threading.Lock()
+        self._lock = locks.make("shaderlive.queue")
         self._desc = None           # the shader text the numbers below belong to
         self._since = 0.0
         self._last = None           # (time, drop count)
@@ -703,7 +703,7 @@ class LiveEngine(S.Engine):
         self._refusals = {}                         # source hash -> what the GPU said; a changed file has another hash
         # Settings are edited under this lock, never under the engine's own: that one is held while the GPU looks at a
         # shader (up to four seconds), and a dwell knob, a preset or a set must not wait for it.
-        self._cfg = threading.RLock()
+        self._cfg = locks.make("shaderlive.cfg", reentrant=True)
         self._bad = {}                              # (source hash, shape of the values) -> what the GPU said about it
 
     def board(self):

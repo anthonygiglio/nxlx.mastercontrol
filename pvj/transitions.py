@@ -47,7 +47,7 @@ import threading
 import time
 import zlib
 
-from . import paths
+from . import locks, paths
 from .player import PlayerError
 
 OLD = ("cut", "dip")            # what every release knows
@@ -232,9 +232,11 @@ class Transitions:
     | `_io`      | one overlay command at a time, each after a look at the token    | a step, a still being laid, end() for its one removal |
     | `_mark`    | the counters and the fields beside them                         | nobody for long: never held over a question to the player |
 
-    The order is `_holding`, then `_io`, then `_mark`. One lock that is not this class's comes before all three:
-    the player's own (`Player._lock`), under which `Api.play` claims the screen with its ticket and later looks
-    and loads as one step, and under which a generator takes the screen.
+    Their places among all the locks of playing, stopping and the picture's level are in pvj/locks.py, which is the
+    one written order (and which the tests check at every taking): `_holding`, then the player's own lock
+    (`Player._lock`, under which `Api.play` claims the screen with its ticket and later looks and loads as one
+    step, and under which every newer wish is made), then `_io`, then `_mark`. A still is never taken with the
+    player's lock held, and a hold never waits for the player's lock.
 
     | counter  | goes up at                                                    | who looks at it                                   |
     | -------- | ------------------------------------------------------------- | ------------------------------------------------- |
@@ -249,9 +251,9 @@ class Transitions:
         self.api = api
         self._clock, self._sleep, self._thread = clock, sleep, thread
         self.log = log or (lambda line: None)
-        self._holding = threading.Lock()
-        self._io = threading.Lock()
-        self._mark = threading.Lock()
+        self._holding = locks.make("transitions.holding")        # their places among all the locks: pvj/locks.py
+        self._io = locks.make("transitions.io")
+        self._mark = locks.make("transitions.mark")
         self._token = 0                     # goes up at every hold and every end: who holds an older one stops
         self._still = None                  # (width, height, pixels) while a transition holds or runs
         self._up = False                    # an overlay of ours may be on the player

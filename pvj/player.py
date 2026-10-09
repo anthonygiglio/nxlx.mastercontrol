@@ -17,7 +17,7 @@ import subprocess
 import threading
 import time
 
-from . import paths
+from . import locks, paths
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".ts", ".wmv")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
@@ -144,11 +144,10 @@ class Ipc:
 
 class Player:
     # Defaults for a Player made without __init__ (some tests do); __init__ gives every player its own lock.
-    _lock = threading.RLock()
+    _lock = locks.make("player", reentrant=True)
     _mapping_shaders, _mapping_mode, _source, _source_pid, _carrier, source_epoch = [], False, None, None, None, 0
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit = None, None, 0, "", False
-    pipe_playing = False        # True from a live input's pipe being loaded until anything else is loaded or the screen
-                                # is cleared: set and cleared under the lock with each of those (see Api._stop_capture)
+    _pipe, _pipe_pid = False, None      # a live input's pipe is what was loaded last, and the mpv it was loaded into
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
         self.mpv_bin = mpv_bin
@@ -165,7 +164,7 @@ class Player:
         self._proc = None
         # The player's shader list has two layers: a shader source (a generator drawn in place of a clip, see
         # pvj/shaders.py) and the projection mapping. Both are kept here so neither wipes the other.
-        self._lock = threading.RLock()
+        self._lock = locks.make("player", reentrant=True)        # its place among the locks: pvj/locks.py
         self._mapping_shaders = []
         self._mapping_mode = False
         self._source = None         # the generator shader file, only while its carrier picture is playing
@@ -247,7 +246,7 @@ class Player:
         picture, so it must never stay over a clip."""
         with self._lock:
             self._end_source()
-            self.pipe_playing = False
+            self._pipe = False
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
 
     def _play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
@@ -301,8 +300,9 @@ class Player:
         """Play raw YUYV frames from a pipe (a live input read by a separate helper; see pvj/capture.py)."""
         with self._lock:
             self._end_source()
-            self._play_pipe(path, width, height, fps)
-            self.pipe_playing = True
+            self._pipe = False
+            self._play_pipe(path, width, height, fps)       # raises if the pipe was not loaded: then it is not what plays
+            self._pipe, self._pipe_pid = True, self.ipc.request("get_property", "pid")
 
     def _play_pipe(self, path, width, height, fps):
         if not self.is_running():
@@ -366,6 +366,32 @@ class Player:
             except OSError:
                 pass
 
+    @property
+    def pipe_playing(self):
+        """True from a live input's pipe being loaded until anything else is loaded, the screen is cleared or the
+        player is another process (it was restarted, by the panel or by itself: the new one never had the pipe).
+        Set and cleared under the lock with each load and clear, so it says what this side loaded last and does not
+        wait for mpv's own `path` to follow. Api._stop_capture stops the live input's helper by it."""
+        with self._lock:
+            if not self._pipe:
+                return False
+            try:
+                same = self.ipc.request("get_property", "pid") == self._pipe_pid
+            except PlayerError:
+                same = False
+            if not same:
+                self._pipe = False
+            return self._pipe
+
+    def quit(self):
+        """End the mpv process (the service's unit starts a new one). What was loaded goes with it."""
+        with self._lock:
+            self._pipe = False
+            if self._source is not None or self._carrier is not None:      # as _check_source does when it notices by itself
+                self._source = self._carrier = None
+            self.source_epoch += 1          # the screen has changed hands: a rotation's next change is not for this one
+            self.ipc.request("quit")
+
     def _pid(self):
         try:
             with open(self.pid_path) as f:
@@ -415,7 +441,7 @@ class Player:
         an idle player does not report the last clip's looping (the panel's Loop button read "on" with nothing
         playing, seen on the Pi after the test pattern); every play sets them again."""
         with self._lock:
-            self.pipe_playing = False
+            self._pipe = False
             try:
                 self.ipc.request("stop")
             finally:
@@ -680,7 +706,7 @@ class Player:
         with self._lock:
             if epoch is not None and epoch != self.source_epoch:
                 return None
-            self.pipe_playing = False
+            self._pipe = False
             if not self.is_running():
                 if not spawn:
                     raise PlayerError("player service is not running (systemctl start pvj-player)")
