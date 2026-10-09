@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09 (the shell brought up to master with D68's loader; its reload in the roles check taken out)
+
+Pull request #102, branch `workspace-shell`. Not merged: the owner looks at the shell first.
+
+- **Merged in: `origin/place-back-test-race`** (master with #105, and the three small pull requests about to merge: #109, #110, with #106 inside), so that the log files do not conflict a second time. A merge, not a rebase (06b5f6b). Conflicts: this journal and `LESSONS.md` (every entry of both sides kept; `git diff <side> -- <file> | grep -c '^-[^-]'` is 0 against both parents for the journal, the lessons and the decisions, which merged by itself), and `HANDOFF.md` in two places: the NDI licence and the Testing section are master's newer text, the layout point and the browser test's line are the shell's. In `LESSONS.md` master's lines stand before the heading "A new shell around old cards", so that heading holds the shell's lessons only. `pvj/web/app.js`, `tests/ui/harness.py` and `tests/ui/panel.test.js` merged with no conflict.
+- **What D68 asks of this merge, point by point.**
+  - *The page and the end of `app.js` are as on master.* They are: `index.html` is the same file as on master (the shell adds no script and no style sheet to it, and none of the page's scripts makes a `script`, `link` or `style` element), and `app.js` ends with `boot();` and `window.pvjApp = true;`. `tests/test_page_files.py` passes on the merged tree as it is; nothing in it was changed or excused.
+  - *The second load in `tests/ui/shell.js`, `roles()` (commit b81259e), is taken out*, as D68 spells it: `const again = {};` is gone, the `throw` is unconditional, the five statements after it are gone, and the comment says that the page itself asks again for a missing file, so a menu without Room screens is a failure. `had.files` stays in the message. One thing more than D68 lists: the `log` argument of `roles()` had no other use, so it and the third argument at its one call in `panel.test.js` went too (both came with b81259e). The wait of 8 s for the Room screens is left: the loader's two further requests are over within about 2.4 s.
+- **Read, not run: `tests/ui/delivery.js` against the shell's panel.** Nobody has run it there. What it leans on was read in the merged `app.js`: `render()` still empties `#app` and builds its one child anew (the check marks `#app > *` and waits for the mark to go), `input.pin`, `#joincode` and `#confirmrow` are where they were, and the page still has exactly two style sheets. CI's browser test is the first real run of the two together.
+- **Run on the Mac:** `node --check` on every script in `pvj/web/` and `tests/ui/`; `python3 -m py_compile tests/ui/harness.py`; and the test modules that read the page's files or were close to the merge (`tests.test_000_tmp`, `test_figma_theme`, `test_license`, `test_modules_themes`, `test_page_files`, `test_server`, `test_theme_api`, `test_themes`): 163 tests, all passed, one skipped.
+- **Not run here:** the whole unit suite (the Mac has no mpv) and the browser test (no Playwright). CI runs both.
+
 ## 2026-10-08, the night (the fourth CI run of the shell: nine controls "lost" that were not)
 
 Pull request #102, branch `workspace-shell`. Master was merged in first (b13b858, #104's change of mirror; the journal keeps both sides).
