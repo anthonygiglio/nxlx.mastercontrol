@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the night (the third review of #111: a rotation against a tap, and the dip)
+
+Branch `transitions`, pull request #111, still a draft. A third independent read, of the play generation alone, found one high fault, two medium, some low, and one that is older than the branch. All answered; D71 has "After the third review" with the table of who claims and who is a newer wish. **Nothing was run on hardware.**
+
+- **High:** a Vibes rotation could beat the operator's tap. The screen's claim and the ticket are one step under the player's lock now; a rotation after a tap is refused by its epoch and never counts.
+- **Medium:** a Stop during a dip puts the picture's level back; a clip that is overtaken no longer stops the live input that overtook it.
+- **The dip, older than this branch:** a Blackout, a fade, a Reset or an opacity change during the way down no longer drops the tapped clip; it loads as a cut at the level that was set.
+- **Lows:** `abandon` is not an end; a freeze is handed on and always thawed by somebody; Next and Previous are newer wishes; a play that was overtaken says so in its answer; a play that fails stays the newest wish (stated).
+- **Tests** (`tests/test_transitions.py`, 102 now): the fake player has the real one's lock, epoch and `claim_screen` and notes any change made without the lock; the generator test drives the real `Engine.show`; a rotation is parked exactly between the tap's ticket and its claim; the five actions during a dip; a Stop during and after the way down; a live input started during a still; an older play that finds a newer one waiting; unique names in the flood; the sleeps that guessed are events. Tried against the old ordering after a commit: six fail there.
+- **Still three locks and three counters**, with a table in the class's docstring.
+
 ## 2026-10-09, the evening (the second review of #111: ordering)
 
 Branch `transitions`, pull request #111, still a draft. A second independent read found the pictures and the arithmetic sound and the ordering weak: four medium findings and some low. All answered; D71 has "After the second review". **Nothing was run on hardware.**
