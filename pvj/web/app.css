@@ -227,7 +227,7 @@ details.fold { display: block; }
 .shaderslot { min-width: 0; }
 .stageline { font-size: 16px; font-weight: 600; }
 .shaderstage .shadername { font-size: 26px; }
-.shaderfind { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.shaderfind { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: 8px; }      /* (two choosers side by side where each has room for its words, else each on a row of its own: a narrow column of a desk cut "From anywhere") */
 .shaderfind > input { grid-column: 1 / -1; }
 .slidervalue { font: 600 14px ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre; }
 .dmxzones { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -319,7 +319,7 @@ div.ctl.compact { padding: 4px 0; }
   .shaderlist { max-height: calc(100dvh - 330px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
   .keyshint { display: block; }
   .detailrow { grid-template-columns: minmax(0, 1fr) minmax(0, 14rem); align-items: center; }
-  .pickrow { grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); }      /* (side by side where each has room for its words; a chooser that has not goes to a row of its own) */
+  .pickrow { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr)); }      /* (side by side where each has room for its words; a chooser that has not goes to a row of its own) */
   /* a laptop keeps the controls in view: the page's own description and state line give way (the Now card says both) */
   .syspage[data-page="vibes"] #sysblurb, .syspage[data-page="vibes"] #sysstate { display: none !important; }
   .midirow .keyshint { flex: 1 1 12rem; }
@@ -666,7 +666,6 @@ main.ws:focus, .deskcol:focus { outline: none; }
 /* (from 1440 px every button is on the line and nothing is left for More; from 1640 px the place in the clip is on
    the line as well, a slider like the others) */
 @container app (min-width: 1440px) { .tp .tpmore { display: none; } }
-}
 /* A desk, from 1200 px of panel (D72): the columns of the area that is built stand side by side, all of them
    equally live, each under its name. 1200 px is where the narrowest column is no narrower than a phone: beside the
    96 px rail the workspace has 1104 px, and its columns come to 344, 345 and 414 px in Play, 453, 325 and 325 px

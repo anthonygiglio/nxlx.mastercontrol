@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the night (a third round on the area desks: the place in the clip along the strip's edge)
+
+Branch `area-desks`, pull request #112. Not merged: the owner looks first. The coordinator: the place in the clip must not be behind More on laptops, and two small things. D72 has a second addition.
+
+- **Built.** Under 1640 px the place in the clip is a slim bar along the strip's top edge (4 px of line in a 24 px target, 8 px with its handle under the pointer or with the cursor), the same `#seek`, placed by the stylesheet on the dock; from 1640 px on the line. More is gone from 1440 px, where nothing is folded. On a phone Freeze, Loop and Speed share a row. The Shaders list's choosers wrap to rows of their own; the low window's fade has its line in Signal too.
+- **Checks.** `strip()` holds the bar at each of its 19 widths, `seekBar()` uses it at 390, 768, 1280, 1366, 1440 and 1920 px with a clip put into the box's answer (filled to a quarter, moved by the arrow key, a seek asked of the box each time, Freeze, Stop and Blackout unmoved). Put back behind More on purpose, `strip()` failed at 600 px. The sweep and Signal's check ask 24 px of this bar by name.
+- **A fault of my own on the way:** a brace left behind by a scripted cut of the stylesheet dropped the rule for the Shaders column's room from 1700 px; seen in the 1920 px picture, which had three columns the round before and one now. A unit test counts the braces of `app.css` (it fails on the commit that had the fault, f83d664, which was never pushed alone).
+- **Run on the Mac** after the last change: `reach`, `tabWalk`, `menus`, `strip`, `seekBar`, `stripText` (246 looks), `roles`, `narrow` (672 looks), the width sweep, the pads with More open, the inventory (owner 595 of 600, presenter 232, guest 66, as before), the strip in three typefaces at every 20 px, and the unit tests of the modules that read the panel's files.
+- **Looked at** (in `/tmp/area-desks/`, taken again): Play at 390, 1280, 1366 and 1920 px in both looks, with a clip and with nothing playing (the bar empty), the Shaders column at 1920 in Signal with a shader (its three columns, the choosers whole), and the open strip at 667 by 375.
+- **Still for his eye:** the bar's handle shows only under the pointer or with the cursor, so on a phone it is a line until it is touched; the bar lies on the border between the page and the strip, 12 px of its target over the foot of the page. Nobody has seen it on a phone, in Safari or on the box, and how a finger finds a 24 px bar is the first thing to try there.
+
 ## 2026-10-09, the evening (a second round on the area desks: the strip's words, Speed and Loop on the line, column heads alike)
 
 Branch `area-desks`, pull request #112. Not merged: the owner looks first. The coordinator read the pictures of the entry below and sent six points; D72 has an addition for what they change.
