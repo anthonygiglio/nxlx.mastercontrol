@@ -296,3 +296,7 @@ After `gh auth refresh` and then `gh auth login`, `gh auth status` in the sessio
 
 `zlib`'s `decompress(data, max_length)` was called once for every piece of a PNG, each time with the whole picture as the bound, to be safe against a file that unpacks to more than a screen. On the dev machine a still came as one piece and it cost nothing. The Pi 4's mpv writes a 2560 x 1440 still as 2701 pieces of 4 KB, and the 2701 calls took a second, which alone was the limit after which the box gives up on crossfades. Eight reviews and a stress test could not see it: it is a matter of time, on a board, with the real player's file. What we do now: join the pieces and unpack once with one bound; and a figure for time in a docstring says where it was measured, or it is a guess.
 
+## A test on a fast clock held a limit of real time (2026-10-09)
+
+The stress test of the transitions runs its clock ten times fast and still held the rule "the box did not give up", so the one-second limit for a still was a tenth of a second there. A runner that stalled for 80 ms failed a round with "the still took 1.0 seconds": once on a loaded desk, and in one unit job of four on three pushes of a branch stacked on this one, where it looked like that branch's fault. What we do now: a test that speeds the clock up takes limits of real time out of the way (here `SLOW` is raised for the stress test only) and leaves them to the test that has a clock of its own.
+

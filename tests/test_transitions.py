@@ -2394,6 +2394,13 @@ class Stress(ServerBase):
         self.threading, self.time, self.re = threading, time, re_module
         # the REAL player (pvj/player.py), talking to a stand-in for mpv on its socket: its lock, what it remembers
         # of what it loaded and the order of its questions are what is tested, and a fault put into player.py shows
+        # The limit after which the box gives up on transitions is a matter of time on a real clock, and this test
+        # runs its clock ten times fast: a still had a tenth of a second, and a runner that stalled for 80 ms failed
+        # the round with "the still took 1.0 seconds" (seen in CI on a branch stacked on this one, and on a loaded
+        # desk). The limit itself is held by the test with a clock of its own above; here it is out of the way.
+        slow = T.SLOW
+        T.SLOW = 600.0
+        self.addCleanup(setattr, T, "SLOW", slow)
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"), lag=self.lag)
         self.addCleanup(self.mpv.stop)
         self.player = self.api.player = Player(rundir=self.rundir)
