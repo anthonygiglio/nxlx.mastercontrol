@@ -2734,11 +2734,14 @@ class Stress(ServerBase):
                 self.one_round(seed, i)
         print("stress: %d rounds in %.1f s" % (len(self.SEEDS) * self.ROUNDS, self.time.monotonic() - began))
 
-    def test_an_effect_beside_everything_an_operator_can_do(self):
+    def test_with_an_effect_beside_everything_an_operator_can_do(self):
         """The same rounds with one or two actions of an effect added to each (on, off, the next one), and one more
         thing that must hold in them: the player is never given the effect before the generator (setUp's look at
         every shader list). An effect is no wish and sets no level, so everything else is held as in the first test,
-        but for one thing: see row r."""
+        but for one thing: see row r. Named to run after the first test, which so runs as it did before this one
+        existed; and it leaves no worker behind for whatever runs next."""
+        self.addCleanup(self.api.effects.changer.clear)
+        self.addCleanup(self.api.effects.off)
         began = self.time.monotonic()
         for seed in self.SEEDS:
             for i in range(self.ROUNDS):
