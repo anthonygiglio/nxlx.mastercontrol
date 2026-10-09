@@ -835,7 +835,33 @@ class Api:
     def get_pads(self, body, device, client):
         return {"banks": self.settings.data["pads"]["banks"]}
 
+    @staticmethod
+    def pad_shader(pad):
+        """(shader id, preset name or None) of a pad that holds a generator shader, else None (D73). Such a pad keeps
+        `file` empty and names the shader under `shader`, with `preset` beside it if one was chosen: no new schema,
+        and a release that does not know the keys sees an empty pad. A pad with a clip is a clip pad whatever else
+        it carries."""
+        if not isinstance(pad, dict) or pad.get("file"):
+            return None
+        sid = pad.get("shader")
+        if not isinstance(sid, str) or not sid:
+            return None
+        preset = pad.get("preset")
+        return sid, (preset if isinstance(preset, str) and preset else None)
+
+    def _shader_preset(self, sid, preset):
+        """The preset of `sid` that is called `preset`, by its stored name, or 404."""
+        from . import shaderlive
+        if isinstance(preset, str) and shaderlive.name_ok(preset):
+            want = shaderlive.name_key(preset)
+            for row in self.shaders.config().get("presets", {}).get(sid, []):
+                if shaderlive.name_key(row["name"]) == want:
+                    return row["name"]
+        raise ApiError(404, "%s has no preset of that name" % sid)
+
     def set_pad(self, body, device, client):
+        """{"bank", "index", "label"?, "file"?, "ending"?} for a clip, or {"bank", "index", "label"?, "shader",
+        "preset"?} for a generator shader (D73). A shader pad stores no ending: a shader has no end."""
         bank = number(body, "bank", 0, len(self.settings.data["pads"]["banks"]) - 1, integer=True)
         index = number(body, "index", 0, 11, integer=True)
         label, file = body.get("label", ""), body.get("file", "")
@@ -847,10 +873,58 @@ class Api:
         if file != "":
             if not valid_name(file) or not file.lower().endswith(MEDIA_EXTENSIONS):
                 raise bad("invalid file name")
+        pad = {"label": label, "file": file, "ending": ending}
+        shader = body.get("shader", "")
+        if shader != "":
+            if file != "":
+                raise bad("a pad holds a clip or a shader, not both")
+            path, _ = self.shaders._path(shader)            # 400 for a name that is none, 404 for one that is not here
+            try:
+                self.shaders._parsed(path)
+            except ValueError as e:
+                raise ApiError(422, "%s cannot be shown: %s" % (shader, e))
+            pad = {"label": label, "file": "", "shader": shader}
+            if body.get("preset") not in (None, ""):
+                pad["preset"] = self._shader_preset(shader, body["preset"])
+        elif body.get("preset") not in (None, ""):
+            raise bad("a preset belongs to a shader: name the shader too")
         with self.settings.lock:
-            self.settings.data["pads"]["banks"][bank]["pads"][index] = {"label": label, "file": file, "ending": ending}
+            self.settings.data["pads"]["banks"][bank]["pads"][index] = pad
             self.settings.save()
         return {"banks": self.settings.data["pads"]["banks"]}
+
+    def _play_shader_pad(self, held, device):
+        """A pad that holds a generator shader (D73): the shader is shown exactly as choosing it by hand on the
+        Shaders screen shows it, through the one path a generator has (LiveEngine.play, which ends the rotation,
+        takes the screen under the player's lock as the newest wish and sets the level by the level's rule). It is
+        called before this play has claimed anything: the engine's lock stands before the player's (pvj/locks.py),
+        and a ticket taken here would be a second newest wish.
+
+        From the panel, the autostart and anything else that waits for its answer, the answer says whether the GPU
+        took the shader. A controller (MIDI, OSC, DMX, a Room scene) must not wait while the GPU looks at a shader
+        it has not seen: its tap is queued for the engine's worker, as its own shader actions are (apply_preset),
+        and a refusal is kept where the Shaders screen shows it. What can be said at once is said at once either
+        way: the module off, the shader gone, the preset gone."""
+        sid, preset = held
+        engine = self.shaders
+        engine._need()
+        try:
+            engine._path(sid)
+        except ApiError as e:
+            if e.status != 404:
+                raise
+            raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+        if preset is not None:
+            try:
+                preset = self._shader_preset(sid, preset)
+            except ApiError:
+                raise ApiError(404, "this pad's preset of %s is gone (deleted or renamed): choose another for the pad" % sid)
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            self.vibes.yield_screen()               # now, at the tap: the worker never ends a rotation
+            engine.changer.show({"id": sid, "preset": preset, "epoch": self.player.source_epoch})
+            return {"playing": sid, "shader": sid, "pending": True}
+        engine.play(sid, None, None, preset)
+        return {"playing": sid, "shader": sid}
 
     @staticmethod
     def _ending(body, default):
@@ -978,6 +1052,9 @@ class Api:
             banks = self.settings.data["pads"]["banks"]
             if not (0 <= pad[0] < len(banks) and 0 <= pad[1] < 12):
                 raise bad("no such pad")
+            held = self.pad_shader(banks[pad[0]]["pads"][pad[1]])
+            if held:                    # before anything is claimed: see _play_shader_pad
+                return self._play_shader_pad(held, device)
             name = banks[pad[0]]["pads"][pad[1]]["file"]
             if not name:
                 raise bad("pad is empty")
@@ -2307,11 +2384,11 @@ class Api:
                 new = autostart_mod.validate(body, self.settings.data["autostart"])
             except autostart_mod.AutostartError as e:
                 raise bad(str(e))
-            if new["mode"] == "pad":           # a pad that exists and has a clip, or it would fail at every start
+            if new["mode"] == "pad":           # a pad that exists and has a clip or a shader, or it would fail at every start
                 banks = self.settings.data["pads"]["banks"]
                 b, i = new["pad"]
-                if not (b < len(banks) and i < 12 and banks[b]["pads"][i].get("file")):
-                    raise bad("choose a pad that has a clip")
+                if not (b < len(banks) and i < 12 and (banks[b]["pads"][i].get("file") or self.pad_shader(banks[b]["pads"][i]))):
+                    raise bad("choose a pad that has a clip or a shader")
             self.settings.data["autostart"] = new
             self.settings.save()
         return self.autostart.status()

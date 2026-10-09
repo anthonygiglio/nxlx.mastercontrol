@@ -504,7 +504,13 @@ def light_state(action, snap, bank=0):
         except (IndexError, KeyError, TypeError):
             name = ""
         if not name:
-            return "off"
+            try:
+                held = snap["pad_shaders"][b][action["index"]]      # a pad that holds a shader (D73)
+            except (IndexError, KeyError, TypeError):
+                held = ""
+            if not held:
+                return "off"
+            return "active" if snap["shader"] == held else "on"
         return "active" if snap["running"] and snap["playing"] == name else "on"
     if a.startswith("shader_preset_"):
         n = ACTIONS[a][1]
@@ -1451,11 +1457,13 @@ class MidiHub:
         LIGHT_PLAYER_EVERY seconds for all lights together. Runs on the lights thread only, never under the hub's lock,
         and never takes the shader engine's lock. A part that cannot be read keeps its quiet default."""
         api = self.api
-        snap = {"pads": [], "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
+        snap = {"pads": [], "pad_shaders": [], "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
                 "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
                 "scenes": [], "applying": None, "effect": None, "effect_ready": False}
         try:
             snap["pads"] = [[str(p.get("file") or "") for p in b["pads"]] for b in api.settings.data["pads"]["banks"]]
+            snap["pad_shaders"] = [[("" if p.get("file") else str(p.get("shader") or "")) for p in b["pads"]]
+                                   for b in api.settings.data["pads"]["banks"]]
         except Exception:
             pass
         if fresh or self._player_seen is None or now - self._player_seen[0] >= LIGHT_PLAYER_EVERY:

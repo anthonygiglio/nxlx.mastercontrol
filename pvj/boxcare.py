@@ -190,10 +190,24 @@ def check_pads(v, care):
         for pad in pads:
             _obj(pad, "a pad")
             item = {"label": _text(pad.get("label", ""), 40, "a pad label"), "file": _media_name(pad.get("file", ""), "a pad's clip")}
-            if "ending" in pad:
+            held = pad.get("shader") not in (None, "")
+            if "ending" in pad and not (held and item["file"] == ""):       # a shader has no end: nothing is kept for it
                 if pad["ending"] not in ("loop", "stop", "hold"):
                     raise ValueError("a pad ends with loop, stop or hold")
                 item["ending"] = pad["ending"]
+            if held:
+                # A pad that holds a generator shader (D73). Its name is checked as a name, not looked up: the file
+                # may come to the box after the settings, and a pad whose shader is not there says so when tapped.
+                sid = pad["shader"]
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or a shader, not both")
+                if not isinstance(sid, str) or not shaders_mod.FILE.fullmatch(sid) or not valid_name(sid):
+                    raise ValueError("a pad's shader is not a shader file name")
+                item["shader"] = sid
+                if pad.get("preset") not in (None, ""):
+                    if not shaderlive_mod.name_ok(pad["preset"]):
+                        raise ValueError("a pad's preset must be a name of 1 to 40 characters")
+                    item["preset"] = pad["preset"]
             clean.append(item)
         name = _text(bank.get("name", ""), 40, "a bank name")
         if not name:
@@ -658,8 +672,8 @@ class BoxCare:
             b, i = a["pad"]
             with self.settings.lock:
                 banks = copy.deepcopy((clean if "pads" in clean else self.settings.data)["pads"]["banks"])
-            if not (b < len(banks) and banks[b]["pads"][i].get("file")):
-                raise bad("autostart: the pad it starts has no clip")
+            if not (b < len(banks) and (banks[b]["pads"][i].get("file") or banks[b]["pads"][i].get("shader"))):
+                raise bad("autostart: the pad it starts has no clip and no shader")
         return clean, list(self._notes), passwords
 
     def _check_themes(self, envelope):

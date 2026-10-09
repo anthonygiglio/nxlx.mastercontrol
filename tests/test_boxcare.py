@@ -197,6 +197,27 @@ class ExportTest(Base):
 
 
 class ImportTest(Base):
+    def test_a_shader_pad_and_an_autostart_on_it_come_back_as_exported(self):
+        # D73: a pad that holds a generator shader keeps `file` empty and names the shader in a key of its own
+        d = self.settings.data
+        d["pads"]["banks"][1]["pads"][5] = {"label": "Glow", "file": "", "shader": "nxlx-aurora.fs", "preset": "Slow"}
+        d["autostart"] = dict(d["autostart"], mode="pad", pad=[1, 5])
+        self.settings.save()
+        file = self.export()
+        self.assertEqual(file["settings"]["pads"]["banks"][1]["pads"][5], {"label": "Glow", "file": "", "shader": "nxlx-aurora.fs", "preset": "Slow"})
+        d["pads"]["banks"][1]["pads"][5] = {"label": "", "file": ""}
+        d["autostart"] = dict(d["autostart"], mode="off")
+        self.settings.save()
+        st, out = self.send(file)
+        self.assertEqual((st, out.get("problems")), (200, []), out)
+        self.assertEqual(self.settings.data["pads"]["banks"][1]["pads"][5], {"label": "Glow", "file": "", "shader": "nxlx-aurora.fs", "preset": "Slow"})
+        self.assertEqual((self.settings.data["autostart"]["mode"], self.settings.data["autostart"]["pad"]), ("pad", [1, 5]))
+        empty = copy.deepcopy(file)
+        empty["settings"]["pads"]["banks"][1]["pads"][5] = {"label": "", "file": ""}
+        st, out = self.send(empty)
+        self.assertEqual(st, 400, out)
+        self.assertIn("the pad it starts has no clip and no shader", out["error"])
+
     def test_round_trip_keeps_access_and_a_backup(self):
         from pvj import autostart
         file = self.export()
