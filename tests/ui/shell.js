@@ -24,7 +24,8 @@
 //                         shader, an effect, presets, scenes, walls, projectors, devices, a USB drive) put into
 //                         the box's answers on their way to the page: the page does not scroll sideways, no
 //                         text leaves its box or the window or is clipped, a line cut with dots has its whole
-//                         text in a title, no two texts lie on one another, a title is not cut inside a word.
+//                         text in a title, no two texts lie on one another, a title is not cut inside a word;
+//                         and from 600 px the strip is one line with Freeze, Stop and Blackout on it.
 //                         The failure names each element (overruns() is the measuring function, in the page)
 //   roles(pages)          what the owner, a presenter and a guest have in their menus, where each lands, and that
 //                         a switched-off module's page is not in the menu while the owner's Setup index has its row
@@ -338,13 +339,14 @@ const LONG = { clip: 'A_very_long_clip_name_without_any_spaces_2026-10-09_final_
 function longNames(url, d) {
   const first = (list, key, value) => { if (Array.isArray(list) && list[0] && typeof list[0][key] === 'string') list[0][key] = value; };
   if (/\/api\/status$/.test(url)) {         // a clip of a playlist plays, an hour in, with the long effect over it
-    d.player = Object.assign({}, d.player, { running: true, path: '/media/' + LONG.clip, duration: 5400, position: 3723, playlist_count: 12, playlist_pos: 10, effect: LONG.effect + '.fs' });
-    delete d.player.shader;
+    // (the whole answer about the player is this one: a stream, a live input, a test pattern or a shader that an
+    // earlier step left on would be named on the strip in place of the clip)
+    d.player = { running: true, path: '/media/' + LONG.clip, duration: 5400, position: 3723, playlist_count: 12, playlist_pos: 10, effect: LONG.effect + '.fs', volume: (d.player || {}).volume, paused: false };
     d.system = Object.assign({}, d.system, { board: 'Raspberry Pi 4 Model B', temp_c: 61.4 });
   } else if (/\/api\/shaders$/.test(url)) {
-    (d.shaders || []).slice(0, 2).forEach((x, i) => { if (!i) { x.id = LONG.shader + '.fs'; x.name = LONG.shader; } x.presets = [LONG.preset, 'Short']; });
+    (d.shaders || []).slice(0, 2).forEach((x, i) => { if (!i) x.name = LONG.shader; x.presets = [LONG.preset, 'Short']; });       // (the name is what is shown; the id stays)
   } else if (/\/api\/effects$/.test(url)) {
-    (d.effects || []).slice(0, 1).forEach((x) => { x.id = LONG.effect + '.fs'; x.name = LONG.effect; x.presets = [LONG.preset, 'Short']; });
+    (d.effects || []).slice(0, 1).forEach((x) => { x.name = LONG.effect; x.presets = [LONG.preset, 'Short']; });
   } else if (/\/api\/media$/.test(url)) {
     d.usb = [{ drive: LONG.drive, files: [{ name: 'festival_reel_2026_with_a_very_long_file_name_final_master_copy.mp4', size: 734003200 }, { name: 'poster.png', size: 2097152 }] }];
   } else if (/\/api\/room$/.test(url)) { first(d.scenes, 'name', LONG.scene); first(d.groups, 'name', LONG.wall); first(d.projectors, 'name', LONG.projector); }
@@ -361,13 +363,16 @@ const FAKED = ['status', 'shaders', 'effects', 'media', 'room', 'projectors', 'd
 async function narrow(pg, post, get) {
   const was = ((await get('/api/theme')) || {}).theme || { name: 'dark-stage', accent: null };
   const home = await pg.evaluate(() => location.origin + '/');
+  // (a request that is under way when the page moves on ends in an error of its own: it is let go, not reported)
   const handler = async (route) => {
-    if (route.request().method() !== 'GET') return route.continue();
-    const r = await route.fetch();
-    let d = null;
-    try { d = await r.json(); } catch (e) { d = null; }
-    if (!d || r.status() !== 200) return route.fulfill({ response: r });
-    return route.fulfill({ response: r, json: longNames(route.request().url().split('?')[0], d) });
+    try {
+      if (route.request().method() !== 'GET') return await route.continue();
+      const r = await route.fetch();
+      let d = null;
+      try { d = await r.json(); } catch (e) { d = null; }
+      if (!d || r.status() !== 200) return await route.fulfill({ response: r });
+      return await route.fulfill({ response: r, json: longNames(route.request().url().split('?')[0], d) });
+    } catch (e) { return route.continue().catch(() => {}); }
   };
   const found = [];
   let looked = 0;
@@ -396,6 +401,11 @@ async function narrow(pg, post, get) {
             await frames(pg);
             const got = await pg.evaluate(overruns);
             looked++;
+            // from 600 px the strip is one line with Freeze, Stop and Blackout on it, in this look and with this name too
+            if (width >= 600) {
+              const l = await pg.evaluate(lie, STRIP);
+              if (l.lines !== 1 || !l.at.freeze || !l.at.stop || !l.at.black || l.at.black.right > l.vw) got.push({ kind: 'the strip is not one line with Freeze, Stop and Blackout on it', name: '', detail: l.lines + ' lines: ' + JSON.stringify(l.at) });
+            }
             got.forEach((f) => found.push(lookName + ', ' + key + ' at ' + width + ' by ' + height + (more ? ' with More open' : '') + ': ' + f.kind + (f.name ? ': ' + f.name : '') + (f.detail ? ' (' + f.detail + ')' : '')));
           }
         }

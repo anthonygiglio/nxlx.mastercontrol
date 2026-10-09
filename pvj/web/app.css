@@ -564,7 +564,7 @@ main.ws:focus { outline: none; }
 .tpinfo #plpos:not(:empty) { margin-right: 10px; }
 .tpinfo #time { grid-column: 2; grid-row: 2; }
 .tpinfo #time, .tpinfo #plpos { white-space: nowrap; }
-.tpinfo .tpmore { grid-column: 3; grid-row: 1 / span 2; margin-left: 10px; }
+.tpinfo .tpmore { grid-column: 3; grid-row: 1 / span 2; margin-left: 10px; white-space: nowrap; }      /* ("Less" is one word in any look) */
 .tpscrub { grid-column: span 3; order: 4; display: flex; min-width: 0; }
 .tp .tpx { order: 2; }
 .tp #freeze { order: 3; }
