@@ -657,7 +657,9 @@ main.ws:focus { outline: none; }
 }
 .syshead h1 { overflow-wrap: break-word; }
 .k, .field { overflow-wrap: break-word; }
-.row.wrap > .btn { max-width: 100%; overflow-wrap: anywhere; }
+/* (the buttons that carry a name someone typed: a preset of an effect, a projector of a group. Not every button of a row
+   that wraps: one that may be cut anywhere has no least width, and a row of sources then squeezed "Console" where it had wrapped) */
+#fxpresets > .btn, #roomgmembers > .btn { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 /* (a phone: a row of choices that share the width, "Cut", "Dip to black", "Crossfade (soon)", goes to a second line in larger text; it ran out of its card) */
 @container app (max-width: 599px) { .row:has(> .btn.grow) { flex-wrap: wrap; } }
 .preset > span { min-width: 0; }
@@ -1216,4 +1218,3 @@ html[data-style="signal"] .tp #freeze.solid { background: var(--ac); border-colo
 html[data-style="signal"] .syshead h1 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
 html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
 html[data-style="signal"] .tp .tpmore { min-width: 64px; }      /* (this look takes a button's least width away; More is a column of the line that says what plays) */
-html[data-style="signal"] .row.wrap > .btn, html[data-style="signal"] .row.wrap > .btn.small { min-width: 0; }
