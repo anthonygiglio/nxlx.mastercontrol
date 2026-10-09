@@ -542,9 +542,10 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .deskcol { min-width: 0; container: ws / inline-size; }
 .deskcol:not(.cur) { display: none; }
 .deskhead { display: none; margin: 0; padding: 14px 16px 0; font-size: 17px; font-weight: 700; }
-.ws > #msg { position: sticky; top: 0; z-index: 5; padding: 0 16px; }
-.ws > #msg:empty { min-height: 0; }
-.ws > #msg:not(:empty) { padding-top: 6px; padding-bottom: 6px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
+/* (the default look only: a style that floats the message, as Signal does, places it itself) */
+html:not([data-style]) .ws > #msg { position: sticky; top: 0; z-index: 5; padding: 0 16px; }
+html:not([data-style]) .ws > #msg:empty { min-height: 0; }
+html:not([data-style]) .ws > #msg:not(:empty) { padding-top: 6px; padding-bottom: 6px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
 .navrow.on .navname { color: var(--ac); }
 .deskcol > .screen { max-width: 1100px; width: 100%; margin: 0 auto; padding-bottom: 24px; }
 .deskcol > .screen:has(#shaderpage) { max-width: 1600px; }

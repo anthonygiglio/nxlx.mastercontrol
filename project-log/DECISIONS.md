@@ -504,7 +504,7 @@ Cost / rules out:
 - **A press on a tab of Play or Shape no longer draws the screen**: what a card shows that the box changed meanwhile comes with the refresh described above (pads, clips, the picture's sliders, volume), not with a full redraw. Where the screens share the page there is no tab to press, and those columns show what they were drawn with until something in them is used or the area is opened again.
 - **The owner is moved when a module goes off under him**: on Play > Shaders with Shaders and Vibes switched off (by him or from another phone), he is on the page of Setup with its switch, as before; a presenter or a guest is on the area's first screen.
 - **`go()` with an old name is not held by a test**: it is not reachable from outside the panel's script.
-- **In Room's desk the column "Scenes" has a card "Scenes" under it** (the heading twice), and the Sound column's own title stands a little lower than its neighbours' headings. Left for his eye.
+- **In Room's desk the column "Scenes" has a card "Scenes" under it** (the heading twice), and a column that is a page (Sound, Shaders) has the page's own, larger title where its neighbours have a small heading. Left for his eye.
 - **Words that named the old places** were changed in the panel, the manual, `docs/UI.md`, `pvj/THEMES.md`, `pvj/MAPPER.md` and HANDOFF. No message of the box named Shape > Controls. The pictures in `docs/images/ui` are older than the shell; new ones come from CI.
 - **Measured in headless Edge (the dev Mac) and headless Chromium (CI). Nobody has seen it on a phone, in Safari or on the box.**
 

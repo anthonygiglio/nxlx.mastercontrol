@@ -45,7 +45,7 @@ function startServer() {
       const r = await fetch(u, { method: m, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: m === 'POST' ? JSON.stringify(b || {}) : undefined });
       return r.json().catch(() => ({}));
     }, [method, url, body]);
-    const card = (title) => page.locator('.card', { has: page.locator('h2', { hasText: new RegExp('^' + title) }) }).first();
+    const card = (title) => page.locator('.card:visible', { has: page.locator('h2', { hasText: new RegExp('^' + title) }) }).first();      // (shown: the Setup index is in the page beside an open page, D72, and its groups have headings too)
     const shell = () => page.locator('.shell').first();
     // A screen taller than the phone: the strip and the tabs, which stay at the foot of the window, would land in the
     // middle of the picture, so for the shot they sit in the page flow, at the bottom of the screen.
