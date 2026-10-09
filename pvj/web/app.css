@@ -617,7 +617,11 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .wssub { position: sticky; top: 0; z-index: 11; padding: 8px 16px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
   .wssub .segbtn { flex: 0 1 auto; min-width: 6.5rem; }
   .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  .tpinfo { flex: 1 1 0; min-width: 13rem; }      /* (what plays keeps a width of its own: the place in the clip is what gives way) */
+  /* (what plays is never under 13rem and shares what is left with the place in the clip, so its time stands on
+     one line wherever there is room; a time that must wrap wraps at its spaces. The 13rem is its base size, not
+     more: a line of a strip that wraps is filled by base sizes, and a larger one sent Blackout down) */
+  .tpinfo { flex: 2 1 13rem; min-width: 13rem; }
+  .tpinfo #time { overflow-wrap: normal; }
   .tpscrub, .tp:not(.open) .tpscrub { display: flex; flex: 2 1 0; min-width: 3rem; order: 0; }
   .tp .tpx, .tp #freeze { order: 0; }
   .tp:not(.open) button.tpx { display: inline-block; }
