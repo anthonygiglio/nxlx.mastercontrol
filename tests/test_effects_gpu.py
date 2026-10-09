@@ -618,139 +618,170 @@ def rm(r, oid):
         say("ov overlay-remove %d failed: %s" % (oid, e))
 
 
-def overlay():
-    """The other candidate: the still as the player's overlay, its alpha changed step by step."""
-    r = Rig("ov")
+def mid(r):
+    return r.shot("window").px(WW // 2, WH // 2)
+
+
+def overlay2():
+    """Round 2: a still of the whole window as the overlay (round 1 drew a quarter and looked beside it)."""
+    r = Rig("o2")
     try:
         r.start(clip())
-        for comp in (0, 1):
-            say("ov a window screenshot %dx%d, png compression %d: %s" % (WW, WH, comp, r.timed_shot("window", "png", comp, 5)))
-        a = time.monotonic()
         img = r.shot("window")
-        t_shot = time.monotonic() - a
-        a = time.monotonic()
-        rgb = img.rgb()
-        t_rgb = time.monotonic() - a
-        a = time.monotonic()
-        w, h, full = rgb_to(rgb, img.w, img.h, 1, order=(2, 1, 0))
-        t_full = time.monotonic() - a
-        a = time.monotonic()
-        hw, hh, half = rgb_to(rgb, img.w, img.h, 2, order=(2, 1, 0))
-        t_half = time.monotonic() - a
-        say("ov the still: screenshot and decode %.0f ms, rows %.1f ms, to BGRA at %dx%d %.1f ms, at %dx%d %.1f ms" % (t_shot * 1000, t_rgb * 1000, w, h, t_full * 1000, hw, hh, t_half * 1000))
         s_px = img.px(WW // 2, WH // 2)
-        r.load(FLAT_B)
-        b_px = r.shot("window").px(WW // 2, WH // 2)
-        say("ov the still's middle", s_px, "the new clip's middle", b_px)
-        path = r.write(half, binary=True)
-        scaled = True
-        try:
-            r.req("overlay-add", 63, 0, 0, path, 0, "bgra", hw, hh, hw * 4, WW, WH)
-        except Exception as e:
-            scaled = False
-            say("ov overlay-add with a display size (dw, dh) refused:", e)
-        r.settle(0.1)
-        got = r.shot("window")
-        say("ov a %dx%d still drawn at %dx%d (scaled=%s): middle %s, a quarter %s (the still had %s), size of the drawn still judged at the far corner %s"
-            % (hw, hh, WW, WH, scaled, got.px(WW // 2, WH // 2), got.px(WW // 4, WH // 4), img.px(WW // 4, WH // 4), got.px(WW - 8, WH - 8)))
+        w, h, full = rgb_to(img.rgb(), img.w, img.h, 1, order=(2, 1, 0))
         tables = [bytes((v * k + 127) // 255 for v in range(256)) for k in range(256)]
-        for alpha in (0.5, 0.25):
-            p2 = r.write(half.translate(tables[int(round(alpha * 255))]), binary=True)
-            r.req(*(["overlay-add", 63, 0, 0, p2, 0, "bgra", hw, hh, hw * 4] + ([WW, WH] if scaled else [])))
-            r.settle(0.1)
-            got = r.shot("window").px(WW // 2, WH // 2)
-            want = tuple(int(round(s * alpha + b * (1 - alpha))) for s, b in zip(s_px, b_px))
-            say("ov alpha %.2f: middle %s, a plain mix would be %s" % (alpha, got, want))
-        # which overlay is on top
-        box = r.write(bytes([0, 0, 255, 255]) * (200 * 200), binary=True)
-        for low, high in ((5, 63), (63, 5), (0, 10), (10, 0)):
-            for i in (0, 5, 10, 63):
-                rm(r, i)
-            r.req(*(["overlay-add", low, 0, 0, path, 0, "bgra", hw, hh, hw * 4] + ([WW, WH] if scaled else [])))
-            r.req("overlay-add", high, WW // 2 - 100, WH // 2 - 100, box, 0, "bgra", 200, 200, 800)
-            r.settle(0.1)
-            say("ov the still as overlay %d and a red box as overlay %d, added in that order: middle %s (red means the box is on top)" % (low, high, r.shot("window").px(WW // 2, WH // 2)))
-        for i in (0, 5, 10, 63):
-            rm(r, i)
-        # the cost of a step at four sizes of the still
-        r.load(clip("1280x720"))
-        r.settle(0.5)
-        for sw, sh in ((640, 360), (960, 540), (1280, 720), (1920, 1080)):
-            try:
-                buf = (full * 3)[:sw * sh * 4]
-                target = os.path.join(r.tmp, "step.bgra")
-                c0 = r.counters()
-                parts = [[], [], []]
-                began = time.monotonic()
-                steps = 25
-                for i in range(steps):
-                    a = time.monotonic()
-                    data = buf.translate(tables[255 - (255 * (i + 1)) // steps])
-                    b = time.monotonic()
-                    with open(target, "wb") as f:
-                        f.write(data)
-                    c = time.monotonic()
-                    r.req(*(["overlay-add", 63, 0, 0, target, 0, "bgra", sw, sh, sw * 4] + ([WW, WH] if scaled else [])))
-                    d = time.monotonic()
-                    for lst, v in zip(parts, (b - a, c - b, d - c)):
-                        lst.append(v * 1000)
-                total = time.monotonic() - began
-                say("ov 25 steps of a %dx%d still (%.1f MB) over a playing 1280x720 clip: all in %.2f s; per step the bytes %.1f ms (max %.1f), the file %.1f ms (max %.1f), "
-                    "overlay-add %.1f ms (max %.1f); counters %s -> %s"
-                    % (sw, sh, sw * sh * 4 / 1e6, total, sum(parts[0]) / steps, max(parts[0]), sum(parts[1]) / steps, max(parts[1]), sum(parts[2]) / steps, max(parts[2]),
-                       c0, r.counters()))
-                a = time.monotonic()
-                r.req("overlay-remove", 63)
-                say("ov overlay-remove %.1f ms" % ((time.monotonic() - a) * 1000))
-            except Exception:
-                say("ov steps at %dx%d failed:\n%s" % (sw, sh, traceback.format_exc()))
-        # does a step show while the clip is frozen, over a still picture, and with nothing playing
+        target = os.path.join(r.tmp, "still.bgra")
+
+        def put(level, oid=63):
+            with open(target, "wb") as f:
+                f.write(full.translate(tables[level]))
+            r.req("overlay-add", oid, 0, 0, target, 0, "bgra", w, h, w * 4)
+
         r.load(FLAT_B)
+        b_px = mid(r)
+        say("o2 the still's middle", s_px, "the new clip's middle", b_px)
+        for level in (255, 191, 128, 64, 13):
+            put(level); r.settle(0.12)
+            want = tuple(int(round(s * level / 255.0 + b * (1 - level / 255.0))) for s, b in zip(s_px, b_px))
+            say("o2 level %3d of 255: middle %s, a plain mix would be %s" % (level, mid(r), want))
+        # is the file read at the command, or later? write other bytes into the same file and add nothing
+        put(255); r.settle(0.1)
+        with open(target, "wb") as f:
+            f.write(bytes([0, 255, 0, 255]) * (w * h))
+        r.settle(0.3)
+        say("o2 the file rewritten green with no new command: middle %s (the still's %s means the player kept its own copy)" % (mid(r), s_px))
+        rm(r, 63); r.settle(0.1)
+        say("o2 removed: middle", mid(r))
+        # which is on top
+        box = r.write(bytes([0, 0, 255, 255]) * (200 * 200), binary=True)
+        for still_id, box_id, first in ((63, 10, "still"), (63, 10, "box"), (0, 10, "still"), (0, 10, "box"), (63, 1, "box")):
+            for i in (0, 1, 10, 63):
+                rm(r, i)
+            order = [("still", still_id), ("box", box_id)] if first == "still" else [("box", box_id), ("still", still_id)]
+            for what, oid in order:
+                if what == "still":
+                    put(255, oid)
+                else:
+                    r.req("overlay-add", oid, WW // 2 - 100, WH // 2 - 100, box, 0, "bgra", 200, 200, 800)
+            r.settle(0.12)
+            say("o2 the still as overlay %d, a red box as overlay %d, the %s added first: middle %s (red: the box is on top)" % (still_id, box_id, first, mid(r)))
+        for i in (0, 1, 10, 63):
+            rm(r, i)
+        # brightness
+        put(255); r.req("set_property", "brightness", -100); r.settle(0.2)
+        say("o2 brightness -100 under an opaque still: middle %s (the still's %s means Blackout does not cover it)" % (mid(r), s_px))
+        r.req("set_property", "brightness", 0); rm(r, 63)
+        # a frozen clip: does each step show?
         r.req("set_property", "pause", True); r.settle(0.3)
-        r.req(*(["overlay-add", 63, 0, 0, path, 0, "bgra", hw, hh, hw * 4] + ([WW, WH] if scaled else [])))
-        r.settle(0.15)
-        say("ov frozen clip, the still added: middle", r.shot("window").px(WW // 2, WH // 2))
-        r.req("overlay-remove", 63); r.settle(0.15)
-        say("ov frozen clip, the still removed: middle", r.shot("window").px(WW // 2, WH // 2))
+        seen = []
+        for level in (255, 128, 0):
+            if level:
+                put(level)
+            else:
+                rm(r, 63)
+            r.settle(0.12)
+            seen.append(mid(r))
+        say("o2 frozen clip, the still at 255, 128 and removed: middle", seen)
         r.req("set_property", "pause", False)
+        # a still picture as what plays
         still = os.path.join(r.tmp, "still.png")
         write_png(still, 320, 180, (90, 120, 60))
         r.p.play([still], windowed=True); r.settle(0.6)
-        say("ov a still picture plays: middle", r.shot("window").px(WW // 2, WH // 2))
-        r.req(*(["overlay-add", 63, 0, 0, path, 0, "bgra", hw, hh, hw * 4] + ([WW, WH] if scaled else [])))
-        r.settle(0.15)
-        say("ov still picture, the overlay added: middle", r.shot("window").px(WW // 2, WH // 2))
+        seen = [mid(r)]
+        for level in (255, 128, 0):
+            if level:
+                put(level)
+            else:
+                rm(r, 63)
+            r.settle(0.12)
+            seen.append(mid(r))
+        say("o2 a png plays: middle before, then the still at 255, 128 and removed:", seen)
+        # the outgoing clip paused, the still on, the new clip loaded under it: a whole run, every look printed
+        r.p.play([clip()], windowed=True); r.playing()
+        fifo = os.path.join(r.tmp, "in.fifo")
+        os.mkfifo(fifo)
+        frame = bytes([150, 60, 150, 190]) * (320 * 180 // 2)
+
+        def writer():
+            time.sleep(1.5)
+            fd, deadline = None, time.monotonic() + 8
+            while fd is None and time.monotonic() < deadline:
+                try:
+                    fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                except OSError:
+                    time.sleep(0.05)
+            if fd is None:
+                say("o2 writer: nobody opened the pipe")
+                return
+            os.set_blocking(fd, True)
+            say("o2 writer: first frame goes in now")
+            try:
+                for _ in range(60):
+                    os.write(fd, frame)
+                    time.sleep(0.04)
+            except OSError as e:
+                say("o2 writer stopped:", e)
+            finally:
+                os.close(fd)
+
+        threading.Thread(target=writer, daemon=True).start()
+        r.p.ipc.timeout = 3.0
+        began = time.monotonic()
+        r.p.play_pipe(fifo, 320, 180, 25)
+        last = None
+        while time.monotonic() - began < 3.2:
+            row = (r.get("path")[-8:], r.get("time-pos"), r.get("seeking"), r.get("idle-active"), r.get("core-idle"), r.get("playback-time"), r.get("estimated-frame-number"), r.get("video-params/w"))
+            try:
+                c = mid(r)
+                what = "A" if all(abs(a - b) <= 14 for a, b in zip(c, s_px)) else str(c)
+            except Exception as e:
+                what = "no-shot"
+            key = (what,) + row[:1] + row[2:5] + (isinstance(row[1], (int, float)) and row[1] > 0,)
+            if key != last:
+                say("o2 pipe at %.2f s: picture %s path=%s time-pos=%s seeking=%s idle=%s core-idle=%s playback-time=%s n=%s w=%s" % ((time.monotonic() - began, what) + row))
+            last = key
+            time.sleep(0.03)
+        r.p.ipc.timeout = 30.0
+        r.p.play([clip()], windowed=True); r.playing()
+        # a file the panel made, in a folder the player may not write into
+        d = os.path.join(r.tmp, "locked")
+        os.mkdir(d)
+        f = os.path.join(d, "transition.png")
+        os.close(os.open(f, os.O_WRONLY | os.O_CREAT, 0o660))
+        ino = os.stat(f).st_ino
+        os.chmod(d, 0o500)
         try:
-            v = r.shot("video")
-            say("ov a video-mode screenshot with the overlay on: %dx%d middle %s" % (v.w, v.h, v.px(v.w // 2, v.h // 2)))
-        except Exception as e:
-            say("ov video-mode screenshot failed:", e)
-        r.req("stop"); r.settle(0.4)
-        try:
-            say("ov nothing playing, the overlay still added: middle", r.shot("window").px(WW // 2, WH // 2))
-        except Exception as e:
-            say("ov a window screenshot with nothing playing failed:", e)
-        r.req("overlay-remove", 63); r.settle(0.2)
-        try:
-            say("ov nothing playing, the overlay removed: middle", r.shot("window").px(WW // 2, WH // 2))
-        except Exception as e:
-            say("ov a window screenshot with nothing playing failed:", e)
-        # a shader at OUTPUT (the mapper) and brightness against the overlay
-        r.load(clip())
-        mp = r.write(MAP)
-        r.shaders([mp]); r.settle(0.3)
-        m = r.shot("window")
-        say("ov mirror at OUTPUT: window left %s right %s (plain is about (99,76,160) left, (57,76,98) right)" % (m.px(WW // 4, WH // 4), m.px(3 * WW // 4, WH // 4)))
-        _, _, mb = rgb_to(m.rgb(), m.w, m.h, 2, order=(2, 1, 0))
-        mpath = r.write(mb, binary=True)
-        r.load(FLAT_B)
-        r.req(*(["overlay-add", 63, 0, 0, mpath, 0, "bgra", hw, hh, hw * 4] + ([WW, WH] if scaled else [])))
-        r.settle(0.15)
-        m2 = r.shot("window")
-        say("ov that screenshot as the overlay, mirror still on: left %s right %s (the same as the line before means it is not warped twice)" % (m2.px(WW // 4, WH // 4), m2.px(3 * WW // 4, WH // 4)))
-        r.req("set_property", "brightness", -100); r.settle(0.2)
-        say("ov brightness -100 with the overlay on: middle %s (not black means Blackout does not cover an overlay)" % (r.shot("window").px(WW // 2, WH // 2),))
-        r.req("set_property", "brightness", 0)
+            try:
+                r.req("screenshot-to-file", f, "window")
+                st = os.stat(f)
+                say("o2 a screenshot into an existing file in a folder nobody may write into: %d bytes, the same file: %s, other names there: %s" % (st.st_size, st.st_ino == ino, sorted(os.listdir(d))))
+            except Exception as e:
+                say("o2 a screenshot into an existing file in a folder nobody may write into FAILED:", e)
+        finally:
+            os.chmod(d, 0o700)
+        # the cost of whole runs at the window's size: 1 second at 20 steps a second over a playing clip
+        r.load(clip("1280x720")); r.settle(0.5)
+        for size_w, size_h in ((1280, 720), (1920, 1080), (2560, 1440)):
+            buf = (full * 4)[:size_w * size_h * 4]
+            c0 = r.counters()
+            began = time.monotonic()
+            steps, worst = 0, 0.0
+            while True:
+                a = time.monotonic()
+                p = (a - began) / 1.0
+                if p >= 1:
+                    break
+                with open(target, "wb") as fh:
+                    fh.write(buf.translate(tables[int(round(255 * (1 - p)))]))
+                r.req("overlay-add", 63, 0, 0, target, 0, "bgra", size_w, size_h, size_w * 4)
+                steps += 1
+                worst = max(worst, time.monotonic() - a)
+                wait = began + (int((time.monotonic() - began) * 20) + 1) / 20.0 - time.monotonic()
+                if wait > 0:
+                    time.sleep(wait)
+            rm(r, 63)
+            say("o2 one second at 20 steps a second with a %dx%d still: %d steps, the slowest %.0f ms, counters %s -> %s" % (size_w, size_h, steps, worst * 1000, c0, r.counters()))
     finally:
         r.close()
 
@@ -759,7 +790,7 @@ def main():
     if not shutil.which("mpv"):
         say("no mpv here")
         return
-    for step in (versions, q3_frame, q5_gap, q1_stills, q4_stages, q2_texture, overlay):
+    for step in (versions, overlay2):
         say("==== %s (ES %s) ====" % (step.__name__, ES))
         try:
             step()
