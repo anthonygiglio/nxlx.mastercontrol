@@ -592,13 +592,27 @@ class Changer:
             self._show, self._adjust = job, None
             self._wake()
 
+    def step(self, direction, epoch, mark):
+        """Note a step to the next shader (+1) or the one before (-1), away from the caller's thread. A step is kept
+        as what it is, a move from wherever the screen is when the worker comes to it, with the epoch and the
+        level's mark of its own moment; steps that wait are kept together, each with its own, and the worker adds
+        up the ones that are still good. Nothing is worked out here from what is on the screen now. A step after a
+        whole shader that waits replaces it, as any newer wish does. Returns how many steps wait."""
+        with self._cond:
+            if self._show is None or "steps" not in self._show:
+                self._show = {"steps": []}
+            self._show["steps"].append((direction, epoch, mark))
+            self._adjust = None
+            self._wake()
+            return len(self._show["steps"])
+
     def queued(self):
         with self._cond:
             return self._show
 
     def newest(self):
         """The whole shader that was asked for last and is not on yet: the one waiting, else the one the worker is
-        putting on right now. A step to "the next one" counts from it."""
+        putting on right now."""
         with self._cond:
             return self._show or self._doing
 
@@ -760,6 +774,11 @@ class LiveEngine(S.Engine):
         list into the set Ambient: everything that was not switched off, uploads included, without the two heavy
         shaders (see _first_set). A box with no saved section has nothing to turn: its first set stays computed
         until someone edits a set. A key that could not be read at all is left in the file as it is."""
+        super()._save(self._prepared(cfg))
+
+    def _prepared(self, cfg):
+        """`cfg` as it is to be written (see _save): for a caller that writes the section together with something
+        else in one save (preset_rename, with the pads)."""
         saved = self._saved()
         if cfg.get("v") != 2:
             if saved is not None and "sets" not in cfg:
@@ -768,7 +787,7 @@ class LiveEngine(S.Engine):
         for key, read in READ:                  # a key that could not be read at all is left as it is, never written over
             if saved and key in saved and key not in cfg and read(saved[key]) is None:
                 cfg[key] = saved[key]
-        super()._save(cfg)
+        return cfg
 
     # -- the library --
     def refused(self, sid, digest, message):
@@ -916,7 +935,7 @@ class LiveEngine(S.Engine):
             # that is gone, and a write that fails leaves the file as it was.
             follow = getattr(self.api, "pads_follow_preset", None)
             with self.api.settings.lock:
-                self.api.settings.data["shaders"] = cfg
+                self.api.settings.data["shaders"] = self._prepared(cfg)     # with _save's own rules, and still one write
                 if follow is not None:
                     follow(sid, was, to)
                 self.api.settings.save()
@@ -1230,10 +1249,11 @@ class LiveEngine(S.Engine):
         # also if something raises afterwards), and the worker keeps them with the last of them: a job that carries
         # any of them is given the last. Anything else that took the screen in between (a clip, a Stop, a shader
         # from the panel) moved the epoch to one the job did not make, and refuses the next job as before.
-        epoch = job["epoch"]
-        if self._chain is not None and epoch in self._chain[0]:
-            epoch = self._chain[1]
-        job["made"] = [epoch]                       # what it starts from, then what it makes; `step` reads it meanwhile
+        if "steps" in job:
+            if not self._resolve_steps(job):
+                return
+        epoch = self._alias(job["epoch"])
+        job["made"] = [epoch]                       # what it starts from, then what it makes
         self._job.doing = job
         try:
             self.play(job["id"], job.get("values"), job.get("controls"), job.get("preset"), epoch=epoch, queued=True,
@@ -1244,6 +1264,40 @@ class LiveEngine(S.Engine):
             self._job.doing = None
             if len(job["made"]) > 1:                # it took the screen, whatever came of it afterwards
                 self._chain = (frozenset(job["made"]), job["made"][-1])
+
+    def _alias(self, epoch):
+        """`epoch` as the queue reads it: one that the worker's last job itself made stands for the one it left."""
+        return self._chain[1] if self._chain is not None and epoch in self._chain[0] else epoch
+
+    def _resolve_steps(self, job):
+        """Turn the steps that waited into one shader to show, now, in the worker: the only place that knows what
+        the job before this one did. A step is still good if nothing but the queue's own jobs took the screen since
+        it was pressed (its epoch, read through _alias, is the player's now); a step pressed before a clip, a Stop
+        or a shader from the panel is dropped, as a queued shader is refused. The good ones add up, so two Next make
+        two and a Next and a Previous make none. They count from the shader on the screen, which is what the
+        step before them showed (a shader the GPU refused has left the set and the one before it is back on, so
+        the next step goes past it); with none on, or one the set does not hold, a Next starts at the first of the
+        set and a Previous at the last. The set is read here too, so a set changed between two steps is the one stepped through.
+        Fills in the job's id, epoch and mark; False if there is nothing to show."""
+        now = self.api.player.source_epoch
+        good = [s for s in job["steps"] if self._alias(s[1]) == now]
+        n = sum(s[0] for s in good)
+        if not n:
+            return False
+        ids = self.vibes_ids()
+        if not ids:
+            self.error = {"id": None, "message": "the active set has no shader that can be shown", "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+            return False
+        on = self.on_screen()                       # the worker does one job at a time: the job before this one is
+        at = on["id"] if on else None               # over, and what it showed (or what came back when the GPU
+        if at in ids:                               # refused it) is what is on the screen
+            job["id"] = ids[(ids.index(at) + n) % len(ids)]
+        else:
+            job["id"] = ids[(n - 1) % len(ids)] if n > 0 else ids[n % len(ids)]
+        job["epoch"] = now
+        if good[-1][2] is not S.Engine.NOW:
+            job["mark"] = good[-1][2]               # the level's mark of the newest of them
+        return True
 
     def _made(self, epoch):
         job = getattr(self._job, "doing", None)
@@ -1263,10 +1317,10 @@ class LiveEngine(S.Engine):
 
     def queue_show(self, sid, preset=None, moment=None):
         """Put a whole shader on from the worker, for a caller that must not wait for the GPU (a controller's pad, a
-        preset of another shader, a step). What belongs to the moment of asking is taken here and carried with the
+        preset of another shader). What belongs to the moment of asking is taken here and carried with the
         job: the player's epoch (what is played or stopped after this keeps the screen) and the level's mark (a
-        Fade out, a Blackout or the slider moved after this stands when the shader comes). A caller that has
-        already looked at the epoch (a step) hands in the `moment` it read, so there is one reading."""
+        Fade out, a Blackout or the slider moved after this stands when the shader comes). `moment` is for a
+        caller that has read it already. (A step is not queued here: it has no shader yet, see Changer.step.)"""
         epoch, mark = moment or self.moment()
         job = {"id": sid, "epoch": epoch}
         if preset is not None:
@@ -1439,19 +1493,11 @@ class LiveEngine(S.Engine):
         ids = self.vibes_ids()
         if not ids:
             raise ApiError(409, "the active set has no shader that can be shown")
-        on = self.on_screen()
-        moment = self.moment()
-        epoch = moment[0]
-        # counted from the step before it if that one is not on yet: waiting, or in the worker's hands right now.
-        # The one in the worker's hands is still the wish while the player's epoch is one that job itself made (it
-        # has taken the screen and the GPU is looking at it: `playing` does not say so yet).
-        wish = self.changer.newest()
-        mine = wish is not None and (wish.get("epoch") == epoch or epoch in wish.get("made", ()))
-        wish = wish if mine else None               # a step asked for before something else played is dead
-        at = (wish or {}).get("id") or (on["id"] if on else None)
-        nxt = ids[(ids.index(at) + direction) % len(ids)] if at in ids else ids[0 if direction == 1 else -1]
-        self.queue_show(nxt, moment=moment)
-        return {"ok": True, "id": nxt}
+        # Queued as what it is, a move, and turned into a shader by the worker when it comes to it
+        # (_resolve_steps). Which shader that is cannot be known here: it depends on what the jobs before it will
+        # have shown, so the answer says how many steps wait and names none.
+        epoch, mark = self.moment()
+        return {"ok": True, "steps": self.changer.step(direction, epoch, mark)}
 
     # -- delete also clears what was kept for the file --
     def delete(self, sid):

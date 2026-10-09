@@ -466,11 +466,10 @@ class Queued(PadBase):
         looking, on = self.hold_in_the_look()
         self.engine.step(1)
         self.assertTrue(looking.wait(5))
-        got = self.engine.step(1)
+        self.engine.step(1)
         on.set()
         self.assertTrue(self.wait(lambda: self.engine.changer.newest() is None and self.on() == self.ids[2]),
-                        "two steps from %s ended on %s (the second was told %s)" % (self.ids[0], self.on(), got["id"]))
-        self.assertEqual(got["id"], self.ids[2])
+                        "two steps from %s ended on %s" % (self.ids[0], self.on()))
 
     def test_a_second_tap_during_the_look_of_a_first_that_is_then_refused(self):
         taps = []
@@ -590,6 +589,266 @@ class Queued(PadBase):
         self.assertTrue(self.wait(lambda: self.engine.changer.newest() is None))
         time.sleep(0.2)
         self.assertEqual((self.on(), self.player.source_shader), (None, None))
+
+
+class Steps(PadBase):
+    """Next and Previous from a controller (the third read of #114). A step is queued as a move and turned into a
+    shader by the worker when it comes to it; the steps that wait add up. However many are pressed, and whatever
+    the worker is doing when each comes, the screen ends that many on from where it was."""
+
+    def setUp(self):
+        super().setUp()
+        self.ids = self.engine.vibes_ids()
+        self.assertGreaterEqual(len(self.ids), 6)
+        self.player.vo = "gpu"                      # so the GPU looks at a shader it has not seen: the long window
+        FakeTap.lines = []
+        ch = self.engine.changer
+        self.gate = threading.Event()               # closed: the worker has not taken its job yet
+        self.before, self.go_on, self.looking, self.look_over = (threading.Event() for _ in range(4))
+        self.busy = []
+        real_pump, real_play, real_watch = ch.pump, type(self.engine).play.__get__(self.engine), self.engine._watch
+        held = {"play": False, "watch": False}
+
+        def pump():
+            self.gate.wait(10)
+            self.busy.append(1)
+            try:
+                return real_pump()
+            finally:
+                self.busy.pop()
+
+        def play(*a, **k):
+            if k.get("queued") and not held["play"]:
+                held["play"] = True
+                self.before.set()
+                self.go_on.wait(10)                 # taken by the worker, the screen not yet
+            return real_play(*a, **k)
+
+        def watch(tap, desc):
+            if not held["watch"] and threading.current_thread() is not threading.main_thread():
+                held["watch"] = True
+                self.looking.set()
+                self.look_over.wait(10)             # on the screen, the GPU looking: the engine does not say so yet
+            return real_watch(tap, desc)
+        ch.pump, self.engine.play, self.engine._watch = pump, play, watch
+        for e in (self.gate, self.go_on, self.look_over):
+            self.addCleanup(e.set)
+
+    def idle(self):
+        ch = self.engine.changer
+        return self.wait(lambda: ch.newest() is None and not self.busy and ch.newest() is None, 10)
+
+    def press(self, moves):
+        for d in moves:
+            self.assertTrue(self.engine.step(d)["ok"])
+
+    def run_windows(self, start, w0, w1=(), w2=(), w3=()):
+        """Start on ids[start]; press w0 before the worker takes anything, w1 once it has taken the first job and
+        not yet the screen, w2 while the GPU looks at that job's shader, w3 after it is on. Returns what is on."""
+        self.engine.play(self.ids[start])
+        self.press(w0)
+        self.gate.set()
+        if w1 or w2 or w3:
+            self.assertTrue(self.before.wait(5), "the first job never ran: nothing is tested")
+        self.press(w1)
+        self.go_on.set()
+        if w2 or w3:
+            self.assertTrue(self.looking.wait(5), "the GPU never looked: nothing is tested")
+        self.press(w2)
+        self.look_over.set()
+        if w3:
+            self.assertTrue(self.wait(lambda: self.on() == self.ids[(start + sum(w0[:1]) ) % len(self.ids)] or self.on() is not None))
+            self.assertTrue(self.idle())
+        self.press(w3)
+        self.assertTrue(self.idle())
+        time.sleep(0.05)
+        self.assertTrue(self.idle())
+        return self.on()
+
+    def check(self, start, *windows):
+        got = self.run_windows(start, *windows)
+        want = self.ids[(start + sum(sum(w) for w in windows)) % len(self.ids)]
+        self.assertEqual(got, want, "from %s (place %d) with %r: on %s (place %s), expected place %d" % (
+            self.ids[start], start, windows, got, self.ids.index(got) if got in self.ids else None, (start + sum(sum(w) for w in windows)) % len(self.ids)))
+
+
+def _step_case(start, *windows):
+    def test(self):
+        self.check(start, *windows)
+    return test
+
+
+N, P = 1, -1
+LAST = -1           # the last shader of the set: `ids[-1]`
+_CASES = {
+    # two, three, four and five quick steps, landing in each window
+    "two_before_the_worker_takes_any": (0, (N, N)),
+    "two_the_second_before_the_screen": (0, (N,), (N,)),
+    "two_the_second_during_the_look": (0, (N,), (), (N,)),
+    "two_the_second_after_it_is_on": (0, (N,), (), (), (N,)),
+    "three_one_in_each_window": (0, (N,), (N,), (N,)),                         # the third read's probe: it landed on the first
+    "three_before_the_screen": (0, (N,), (N, N)),
+    "three_during_the_look": (0, (N,), (), (N, N)),
+    "four_spread": (0, (N,), (N,), (N,), (N,)),
+    "four_two_and_two": (0, (N, N), (), (N, N)),
+    "five_spread": (0, (N, N), (N,), (N,), (N,)),
+    "five_all_while_the_gpu_looks": (0, (N,), (), (N, N, N, N)),
+    # the other way, and round both ends of the list
+    "previous_three_one_in_each_window": (4, (P,), (P,), (P,)),
+    "previous_round_the_start": (1, (P,), (P,), (P,)),
+    "previous_five_round_the_start": (2, (P,), (P, P), (P, P)),
+    "next_round_the_end": (LAST, (N,), (N,), (N,)),
+    "next_five_round_the_end": (LAST - 2, (N,), (N, N), (N, N)),
+    # Next and Previous mixed
+    "next_then_previous_during_the_look_goes_back": (2, (N,), (), (P,)),
+    "next_next_previous": (2, (N,), (N,), (P,)),
+    "previous_then_two_next": (2, (P,), (N,), (N,)),
+    "two_next_and_two_previous_while_the_first_is_on_its_way": (2, (N,), (N, P), (P, N)),
+    "next_and_previous_that_wait_together_make_none": (2, (N,), (N, P)),
+}
+for _name, _case in _CASES.items():
+    setattr(Steps, "test_" + _name, _step_case(_case[0] % 1000 if _case[0] >= 0 else _case[0], *_case[1:]))
+
+
+class StepsBesides(Steps):
+    """What a step owes to everything else: it cancels with its opposite, it is dropped by what was played after
+    it, it steps over a shader the GPU refused, and it reads the set when it runs."""
+
+    def test_a_next_and_a_previous_before_the_worker_comes_show_nothing_new(self):
+        self.engine.play(self.ids[2])
+        shown = len([c for c in self.player.calls if c[0] == "play_source"])
+        self.press((N, P))
+        self.gate.set()
+        self.assertTrue(self.idle())
+        self.assertEqual((self.on(), len([c for c in self.player.calls if c[0] == "play_source"])), (self.ids[2], shown))
+
+    def test_a_clip_played_after_the_steps_keeps_the_screen(self):
+        clip = os.path.join(self.media, "a.mp4")
+        for stop in (False, True):
+            self.engine.play(self.ids[2])
+            self.gate.clear()
+            self.press((N, N))
+            self.api.control({"action": "stop"}, None, "t") if stop else self.player.play([clip])
+            self.gate.set()
+            self.assertTrue(self.idle())
+            time.sleep(0.1)
+            self.assertEqual((self.on(), self.player.source_shader), (None, None), "after a Stop" if stop else "after a clip")
+
+    def test_a_clip_played_while_the_first_step_is_on_its_way_drops_the_ones_behind_it(self):
+        # pressed before the clip: the first step shows its shader, the clip takes the screen, and the second step,
+        # which was pressed before the clip, does not come over it
+        clip = os.path.join(self.media, "a.mp4")
+        self.engine.play(self.ids[0])
+        self.press((N,))
+        self.gate.set()
+        self.assertTrue(self.before.wait(5))
+        self.press((N,))
+        self.go_on.set()
+        self.assertTrue(self.looking.wait(5))
+        self.player.play([clip])
+        self.look_over.set()
+        self.assertTrue(self.idle())
+        time.sleep(0.1)
+        self.assertEqual((self.on(), os.path.basename(self.player.path)), (None, "a.mp4"))
+        # and a Next pressed after the clip is a new wish: with no shader on, it starts at the first of the set
+        self.press((N,))
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[0]), self.on())
+        self.engine.play(self.ids[3])
+        self.player.play([clip])
+        self.press((P,))
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[-1]), self.on())
+
+    def test_a_step_goes_over_a_shader_the_gpu_refused(self):
+        # before, Next after a refused shader counted from the one that came back and tried the refused one again
+        taps = []
+
+        def refuse_the_first_only(path):
+            FakeTap.lines = [] if taps else REFUSAL
+            taps.append(1)
+            return FakeTap(path)
+        self.engine.play(self.ids[0])
+        self.engine._checked.clear()
+        self.engine._tap = refuse_the_first_only
+        self.gate.set()
+        self.go_on.set()
+        self.look_over.set()
+        self.press((N,))
+        self.assertTrue(self.wait(lambda: (self.engine.error or {}).get("id") == self.ids[1]), "the first was not refused: nothing is tested")
+        self.assertEqual(self.on(), self.ids[0])
+        self.press((N,))
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[2]), self.on())
+
+    def test_three_steps_with_a_refusal_in_the_middle(self):
+        taps = []
+
+        def refuse_the_second(path):
+            taps.append(1)
+            FakeTap.lines = REFUSAL if len(taps) == 2 else []
+            return FakeTap(path)
+        self.engine.play(self.ids[0])
+        self.engine._checked.clear()
+        self.engine._tap = refuse_the_second
+        self.press((N,))
+        self.gate.set()
+        self.assertTrue(self.before.wait(5))
+        self.go_on.set()
+        self.assertTrue(self.looking.wait(5))
+        self.look_over.set()
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[1]))
+        self.assertTrue(self.idle())
+        self.press((N,))                            # refused: ids[1] comes back
+        self.assertTrue(self.wait(lambda: (self.engine.error or {}).get("id") == self.ids[2]))
+        self.press((N,))
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[3]), self.on())
+
+    def test_the_set_is_read_when_the_step_runs(self):
+        ids = list(self.ids)
+        other = [ids[4], ids[0], ids[2]]
+        self.engine.play(ids[0])
+        self.press((N,))
+        self.gate.set()
+        self.assertTrue(self.before.wait(5))
+        self.press((N,))                            # waits; the set changes before the worker comes to it
+        self.engine.vibes_ids = lambda: list(other)
+        self.go_on.set()
+        self.look_over.set()
+        self.assertTrue(self.idle())
+        # the first went to ids[1] in the old set; the second counts from ids[1], which the new set does not hold:
+        # a Next then starts at the new set's first
+        self.assertTrue(self.wait(lambda: self.on() == other[0]), self.on())
+        self.press((N,))
+        self.assertTrue(self.wait(lambda: self.on() == other[1]), self.on())
+
+    def test_a_fade_out_after_the_last_step_stands(self):
+        self.engine.play(self.ids[0])
+        self.press((N, N))
+        self.api.fadeout({"seconds": 0.1}, None, "t")
+        self.assertTrue(self.wait(lambda: self.api.fader.label == "out" and self.player.level == 0.0))
+        self.gate.set()
+        self.go_on.set()
+        self.look_over.set()
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[2]))
+        time.sleep(0.1)
+        self.assertEqual((self.player.level, self.api.fader.label), (0.0, "out"))
+
+    def test_a_rename_keeps_a_part_of_the_shaders_settings_that_cannot_be_read(self):
+        # a regression of the round before: the one write went past LiveEngine._save and its rule that a key which
+        # cannot be read is left in the file as it is
+        self.gate.set()
+        self.a_preset(name="Slow")
+        self.give(0, ONE, preset="Slow")
+        self.settings.data["shaders"]["sets"] = "damaged by hand"
+        saves, real = [], self.settings.save
+        self.settings.save = lambda: (saves.append(1), real())[1]
+        self.engine.preset_rename(ONE, "Slow", "Gentle")
+        self.assertEqual(self.settings.data["shaders"].get("sets"), "damaged by hand")
+        self.assertEqual((self.settings.data["shaders"].get("v"), len(saves), pad_of(self.api).get("preset")), (2, 1, "Gentle"))
+        self.engine.preset_delete(ONE, "Gentle")    # the usual road, for comparison
+        self.assertEqual(self.settings.data["shaders"].get("sets"), "damaged by hand")
+
+
+for _name in list(_CASES):
+    setattr(StepsBesides, "test_" + _name, None)    # the table's cases are Steps' own: not run a second time here
 
 
 class FromEverywhere(PadBase):
