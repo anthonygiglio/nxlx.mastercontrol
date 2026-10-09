@@ -1930,7 +1930,7 @@ class RealFaderTest(Base):
         answer = []
         self.hook = lambda: answer.append(self.api.play({"file": "a.mp4"}, None, "t"))
         self.assertFalse(self.vibes.tick())
-        self.assertEqual(answer, [{"playing": "a.mp4"}])
+        self.assertEqual(answer, [{"playing": "a.mp4", "pending": True}])      # a dip answers before its clip has loaded (D71)
         self.wait_for_clip("a.mp4")
         self.assertFalse(self.vibes.running)
         import time
@@ -1945,7 +1945,7 @@ class RealFaderTest(Base):
         self.vibes.start()
         self.vibes.tick()
         self.now[0] += 180
-        self.assertEqual(self.api.play({"file": "a.mp4"}, None, "t"), {"playing": "a.mp4"})    # its dip has begun
+        self.assertEqual(self.api.play({"file": "a.mp4"}, None, "t"), {"playing": "a.mp4", "pending": True})    # its dip has begun
         self.assertFalse(self.vibes.tick())                            # the change is due, but the screen is taken
         self.assertFalse(self.vibes.running)
         self.wait_for_clip("a.mp4")

@@ -43,6 +43,7 @@ class Screen(FakePlayer):
         self._lock = threading.RLock()
         self.source_epoch, self.source_shader, self.path, self.carrier = 0, None, None, None
         self.socket_path = os.path.join(rundir, "player.sock")
+        self.overlay_up = False
         self.unlocked = []              # changes of what plays that were made without the lock (there must be none)
         self.before_play = None         # called by play(), inside it, before the clip is noted
 
@@ -54,6 +55,13 @@ class Screen(FakePlayer):
         self._held("claim_screen")
         with self._lock:
             self.source_epoch += 1
+
+    def play_pipe(self, path, width, height, fps):
+        with self._lock:
+            self.source_epoch += 1
+            self.source_shader, self.path, self.carrier = None, path, None
+            self.calls.append(("play_pipe", path))
+            self.props["pause"] = False
 
     def play_source(self, shader, carrier, epoch=None, spawn=False):
         with self._lock:
@@ -117,6 +125,7 @@ class Screen(FakePlayer):
             raise PlayerError("no reply from mpv")
         assert len(pixels) == w * h * 4
         self.calls.append(("overlay", oid, x, y, w, h))
+        self.overlay_up = True
         self.levels.append(pixels[3])
         self.pixels = pixels
         with open(os.path.join(self.rundir, "overlay-%d.bgra" % oid), "wb") as f:
@@ -130,6 +139,7 @@ class Screen(FakePlayer):
         size = os.path.getsize(path)
         assert offset + h * stride <= size, "the player maps offset + height x stride bytes: %d of %d" % (offset + h * stride, size)
         self.calls.append(("overlay_part", oid, x, y, offset, w, h, stride))
+        self.overlay_up = True
         self.parts.append((x, y, offset, w, h))
         self.levels.append(255)
         if self.on_overlay:
@@ -137,11 +147,37 @@ class Screen(FakePlayer):
 
     def overlay_remove(self, oid):
         self.calls.append(("overlay_remove", oid))
+        self.overlay_up = False
         self.levels.append(None)
         try:
             os.unlink(os.path.join(self.rundir, "overlay-%d.bgra" % oid))
         except OSError:
             pass
+
+
+class Helper:
+    """A live input's helper as pvj.capture.Capture is to the panel: prepare stops the one before, start runs one."""
+
+    def __init__(self, rundir):
+        import threading
+        self.lock = threading.RLock()
+        self.fifo = os.path.join(rundir, "capture.fifo")
+        self.running, self.most, self.stops = 0, 0, 0
+        self.on_prepare = None
+
+    def prepare(self, device, mode):
+        if self.on_prepare:
+            self.on_prepare()
+        self.stop()
+        return 1280, 720, 30
+
+    def start(self, device, mode):
+        self.running += 1
+        self.most = max(self.most, self.running)
+
+    def stop(self):
+        self.stops += 1
+        self.running = 0
 
 
 class Names(unittest.TestCase):
@@ -1092,7 +1128,7 @@ class Threads(ServerBase):
         sid = self.shader()
         self.settings.data["mix"] = {"transition": "dip", "duration": 0.4}
         epoch = self.player.source_epoch
-        self.assertEqual(self.api.play({"file": "a.mp4"}, None, "t"), {"playing": "a.mp4"})    # on its way down
+        self.assertEqual(self.api.play({"file": "a.mp4"}, None, "t"), {"playing": "a.mp4", "pending": True})    # on its way down
         self.assertIsNone(self.api.shaders.show(sid, epoch=epoch, cut=False))
         self.assertTrue(self.played.wait(5), "the tapped clip was never loaded: the screen stays black")
         self.assertEqual(self.loaded(), ["a.mp4"])
@@ -1303,7 +1339,7 @@ class Threads(ServerBase):
             self.api.fader.cancel()
             self.played.clear()
             del self.player.calls[:], self.player.plays[:]
-            self.assertEqual(self.dip(), {"playing": "a.mp4"})
+            self.assertEqual(self.dip(), {"playing": "a.mp4", "pending": True}, "a dip answers before its clip has loaded")
             act()
             self.assertTrue(self.played.wait(5), "%s during the dip: the tapped clip was never loaded" % what)
             self.assertEqual(self.loaded(), ["a.mp4"], what)
@@ -1360,85 +1396,367 @@ class Threads(ServerBase):
         self.assertEqual(self.loaded(), ["b.mov"])
 
     def test_a_live_input_started_during_a_still_is_not_stopped_by_the_clip_it_overtook(self):
-        # M2 of the third review: the overtaken play still called "something started playing", which stops a live input
-        stops = []
-
-        class Capture:
-            lock = self.threading.RLock()
-            fifo = os.path.join(self.rundir, "capture.fifo")
-
-            def prepare(self, device, mode):
-                return 1280, 720, 30
-
-            def start(self, device, mode):
-                pass
-
-            def stop(self):
-                stops.append(1)
-        self.api.capture = Capture()
+        helper = self.api.capture = Helper(self.rundir)
         self.player.still = self.slow_still
         t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
         self.assertTrue(self.inside.wait(5))
         self.api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "t")
-        del stops[:]
+        before = helper.stops
         self.gate.set()
         t.join(5)
         self.assertEqual(out, [{"playing": None, "superseded": "a.mp4"}])
-        self.assertEqual(stops, [], "the clip that was overtaken stopped the live input that overtook it")
+        self.assertEqual((helper.stops, helper.running), (before, 1), "the clip that was overtaken stopped the live input that overtook it")
+
+    def clip_parked_before_it_stops_the_helper(self):
+        """A clip that has loaded and has come to the look at the live input's helper, where it waits for the lock a
+        live input is started under: the test holds it. Returns the clip's thread."""
+        helper = self.api.capture = Helper(self.rundir)
+        helper.start("video0", "720p30")                                # a live input is what was on the screen
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+        self.assertTrue(helper.lock.acquire(timeout=1))
+        t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+        self.assertTrue(self.played.wait(5))
+        return helper, t
+
+    def test_a_live_input_started_after_a_clip_loaded_and_before_its_look_is_left_alone(self):
+        # the case the first version of this test did not reach: the clip HAS loaded, and looks afterwards
+        helper, t = self.clip_parked_before_it_stops_the_helper()
+        self.api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "t")      # this thread has the lock (it is re-entrant)
+        before = helper.stops
+        helper.lock.release()
+        t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertEqual((helper.stops, helper.running), (before, 1), "the clip stopped a live input that was started after it had loaded")
+
+    def test_a_clip_that_loaded_stops_the_old_helper_even_when_a_newer_wish_came_since(self):
+        # low, fourth review: decided by "is this still the newest wish", a Next a moment after the load left the
+        # live input's helper running under the clip, with the device open
+        helper, t = self.clip_parked_before_it_stops_the_helper()
+        self.api.control({"action": "next"}, None, "t")
+        helper.lock.release()
+        t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(helper.running, 0, "a live input's helper was left running under a clip")
 
     def test_a_clip_that_loads_stops_the_live_input_it_replaces(self):
-        stops = []
-
-        class Capture:
-            lock = self.threading.RLock()
-
-            def stop(self):
-                stops.append(1)
-        self.api.capture = Capture()
+        helper = self.api.capture = Helper(self.rundir)
+        helper.start("video0", "720p30")
         self.api.play({"file": "a.mp4"}, None, "t")
         self.settle()
-        self.assertEqual(stops, [1])
+        self.assertEqual(helper.running, 0)
 
-    def test_a_player_that_goes_away_during_the_still_is_no_reason_to_give_up(self):
-        for message in ("player is not running", "ipc error: [Errno 32] Broken pipe"):
-            def still(path, message=message):
-                raise PlayerError(message)
-            self.player.still = still
-            self.assertEqual(self.tr.hold("crossfade"), 0)
-            self.assertEqual(self.tr.given_up, "", message)
+    # -- the fourth review: nothing is done under the fader's lock --
+    def test_a_dips_clip_that_is_loading_holds_nobody_up_at_the_fader(self):
+        # H1: the callback ran under Fader._lock, so every cancel() and ramp(), which is the first line of
+        # Blackout, opacity, Stop and every play, waited for the clip's load
+        loading, let_go = self.threading.Event(), self.threading.Event()
 
-    def test_a_crossfade_step_scales_the_still_once(self):
-        # M4: the step was worked out twice, once to see whether there was one and once to draw it
-        count = []
-        real = T.faded
-        T.faded = lambda pixels, level: count.append(level) or real(pixels, level)
-        self.addCleanup(setattr, T, "faded", real)
-        token = self.tr.hold("crossfade")
-        del count[:]
-        for progress in (0.2, 0.5, 0.9):
-            self.assertEqual(self.tr._draw(token, progress), "drawn")
-        self.assertEqual(len(count), 3)
-        self.tr.end()
+        def slow_load():
+            loading.set()
+            let_go.wait(10)
+        self.dip()
+        self.player.before_play = slow_load
+        self.api.control({"action": "opacity", "value": 60}, None, "t")        # cuts the dip short: its clip loads now
+        self.assertTrue(loading.wait(5), "the dip's clip never came to load")
+        try:
+            for what, act in (("fader.cancel()", self.api.fader.cancel), ("fader.ramp()", lambda: self.api.fader.ramp(0, 10, 0.1)),
+                              ("Blackout", lambda: self.api.blackout({"on": True}, None, "t")),
+                              ("an opacity change", lambda: self.api.control({"action": "opacity", "value": 50}, None, "t")),
+                              ("Fade out", lambda: self.api.fadeout({"seconds": 0.1}, None, "t"))):
+                done = self.threading.Event()
+                thread = self.threading.Thread(target=lambda: (act(), done.set()), daemon=True)
+                thread.start()
+                self.assertTrue(done.wait(2), "%s waited for the clip's load: something is done under the fader's lock" % what)
+        finally:
+            let_go.set()
+        self.api.fader.cancel()
 
-    def test_a_command_the_player_did_not_answer_is_followed_by_one_more_removal(self):
-        self.tr._thread = False
-        token = self.tr.hold("crossfade")
-        self.player.fail.add("overlay")
-        self.tr._clock, self.tr._sleep = (lambda t=[0.0]: t.__setitem__(0, t[0] + 0.01) or t[0]), (lambda s: None)
-        self.tr.run(token, 0.2)
-        self.assertEqual(len(self.tr.late), 1)
+    def test_a_callback_is_never_called_under_the_faders_lock(self):
+        from pvj.api import Fader
+        seen = []
+        fader = Fader(lambda level: None)
+        done = self.threading.Event()
+        fader.ramp(0, 1, 0.05, then=lambda: (seen.append(fader._lock.locked()), done.set()))
+        self.assertTrue(done.wait(5))
+        done.clear()
+        applied = self.threading.Event()
+        fader = Fader(lambda level: applied.set())
+        fader.ramp(0, 1, 5.0, cancelled=lambda: (seen.append(fader._lock.locked()), done.set()))
+        self.assertTrue(applied.wait(5))
+        fader.cancel()
+        self.assertTrue(done.wait(5))
+        self.assertEqual(seen, [False, False], "a callback of the fader was called while its lock was held")
+
+    def test_a_dip_cut_short_while_a_live_input_is_being_started_does_not_hang(self):
+        # H1, the deadlock: the start of a live input held the capture lock and wanted the fader's; the dip's
+        # callback held the fader's and wanted the capture lock
+        helper = self.api.capture = Helper(self.rundir)
+        in_prepare, go = self.threading.Event(), self.threading.Event()
+        helper.on_prepare = lambda: (in_prepare.set(), go.wait(10))
+        self.dip()
+        live, _ = self.background(lambda: self.api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "t"))
+        self.assertTrue(in_prepare.wait(5))                                     # it has the capture lock
+        self.played.clear()
+        self.api.control({"action": "opacity", "value": 60}, None, "t")        # the dip is cut short: its clip loads,
+        self.assertTrue(self.played.wait(5))                                    # and comes to wait for the capture lock
+        go.set()                                                                # the live input goes on to the fader
+        live.join(5)
+        self.assertFalse(live.is_alive(), "the start of a live input and a dip's clip wait for each other for ever")
+        self.settle()
+        self.assertEqual(helper.running, 1)
+
+    def test_a_step_that_was_on_its_way_does_not_land_after_a_level_that_was_set(self):
+        from pvj.api import Fader
+        written, in_step, let_go = [], self.threading.Event(), self.threading.Event()
+
+        def apply(level):
+            in_step.set()
+            let_go.wait(10)
+            written.append(("step", level))
+        fader = Fader(apply)
+        fader.ramp(0, 100, 1.0)
+        self.assertTrue(in_step.wait(5))                                # a step is in the player
+
+        def set_level():
+            with fader.stepping:                                        # as Blackout and the Opacity slider do
+                fader.cancel()
+                written.append(("set", 0))
+        setter = self.threading.Thread(target=set_level, daemon=True)
+        setter.start()
+        setter.join(0.3)
+        self.assertTrue(setter.is_alive(), "a level was set while a step was still on its way: the step lands after it")
+        let_go.set()
+        setter.join(5)
+        self.assertEqual(written[-1], ("set", 0))
+        self.assertEqual(len(written), 2, "a step went on after the level was set")
+
+    def test_next_and_previous_during_a_dip_do_not_leave_the_picture_dark(self):
+        # M1 of the fourth review: they count as newer wishes and do not touch the fader, so the way down went on
+        # to black, the clip was dropped and nobody brought the picture back
+        for action in ("next", "prev"):
+            del self.player.calls[:], self.player.plays[:]
+            self.dip(0.2)
+            del self.looks[:]
+            self.api.control({"action": action}, None, "t")
+            import time
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not self.looks:
+                time.sleep(0.005)
+            self.assertTrue(self.looks, "the dip's clip never came to look")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and self.player.calls[-1] != ("opacity", 255):
+                time.sleep(0.005)
+            self.assertEqual(self.loaded(), [], action)
+            self.assertEqual(self.player.calls[-1], ("opacity", 255), "%s during a dip left the picture dark" % action)
+
+    def test_next_after_the_way_down_does_not_leave_the_picture_dark(self):
+        at_black = self.threading.Event()
+        real = self.player.opacity
+        self.player.opacity = lambda value: (real(value), at_black.set() if value == 0 else None)
+        with self.player._lock:                                         # the clip's look and load wait here
+            self.dip(0.2)
+            self.assertTrue(at_black.wait(5))
+            self.api.control({"action": "next"}, None, "t")
+        import time
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and self.player.calls[-1] != ("opacity", 255):
+            time.sleep(0.005)
+        self.assertEqual(self.loaded(), [])
+        self.assertEqual(self.player.calls[-1], ("opacity", 255))
+
+    def test_a_clip_that_fails_to_load_after_its_dip_is_logged_and_the_picture_comes_back(self):
+        lines = []
+        self.api.log = lines.append
+        self.player.fail = {"play"}
+        self.dip(0.2)
+        import time
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not lines:
+            time.sleep(0.005)
+        self.assertTrue(lines and "did not start after its dip" in lines[0], lines)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and self.player.calls[-1] != ("opacity", 255):
+            time.sleep(0.005)
+        self.assertEqual(self.player.calls[-1], ("opacity", 255), "the old clip was left dark")
+
+    def test_a_dip_after_a_fade_out_does_not_flash_the_old_picture(self):
+        done = self.threading.Event()
+        self.api.fader.ramp(100, 0, 0.05, label="out", then=done.set)   # the operator's Fade out, to its end
+        self.assertTrue(done.wait(5))
         del self.player.calls[:]
-        self.tr.late.pop()()
-        self.assertEqual(self.player.calls, [("overlay_remove", T.OVERLAY_ID)])
-        # but not when a newer still is up by then
-        self.player.fail.clear()
-        self.tr.given_up = ""
-        self.tr._once_more()
-        newer = self.tr.hold("crossfade")
-        del self.player.calls[:]
-        self.tr.late.pop()()
-        self.assertEqual(self.player.calls, [])
-        self.tr.abandon(newer)
+        self.dip(0.2)
+        self.assertTrue(self.played.wait(5))
+        before = [c[1] for c in self.player.calls[:self.names().index("play")] if c[0] == "opacity"]
+        self.assertEqual(before, [], "the way down began again from the mix's level over a dark screen: %s" % before)
+        self.api.fader.cancel()
+
+    def test_the_generation_moves_before_the_fader_is_taken(self):
+        # low: the other way round, a clip whose dip was cut short came to load before it was the older wish
+        order = []
+        end, cancel = self.tr.end, self.api.fader.cancel
+        self.tr.end = lambda *a, **k: order.append("generation") or end(*a, **k)
+        self.api.fader.cancel = lambda: order.append("fader") or cancel()
+        self.api._settle(newer=True)
+        self.assertEqual(order, ["generation", "fader"])
+        del order[:]
+        self.assertTrue(self.api.shaders.show(self.shader())["ok"])
+        self.assertEqual(order[:2], ["generation", "fader"])
+
+    def test_a_stop_clears_the_screen_before_the_level_goes_back(self):
+        self.dip(0.2)
+        self.api.control({"action": "stop"}, None, "t")
+        names = self.names()
+        last_level = max(i for i, c in enumerate(self.player.calls) if c == ("opacity", 255))
+        self.assertLess(names.index("clear"), last_level, "the old picture was shown at full before it was cleared")
+
+
+class Stress(ServerBase):
+    """A test of another kind (after four reviews that each found an order of events the hand-written tests did not
+    have): random actions from several threads against the fake player, which has the real one's lock and epoch,
+    and after each round what must hold whatever the order was. The seed and the actions are in the failure's
+    message, so a failure can be run again: Stress().replay(seed, round)."""
+    SEEDS = (20261009, 1, 7, 4242, 99)
+    ROUNDS = 60
+    FAST = 10.0                             # the fader's and the transitions' clocks run this much faster
+
+    def setUp(self):
+        super().setUp()
+        import threading
+        import time
+        self.threading, self.time = threading, time
+        self.player = self.api.player = Screen(self.rundir)
+        self.player.running = True
+        self.helper = self.api.capture = Helper(self.rundir)
+        self.tr = self.api.transitions
+        self.tr.log = lambda line: None
+        self.api.log = lambda line: None
+        fast = self.FAST
+        self.tr._clock, self.tr._sleep = (lambda: time.monotonic() * fast), (lambda s: time.sleep(s / fast))
+        self.api.fader = type(self.api.fader)(self.api._apply_opacity, clock=lambda: time.monotonic() * fast, sleep=lambda s: time.sleep(s / fast))
+        self.api.registry.set_enabled("shaders", True)
+        self.api.shaders.log = lambda *_: None
+        self.sid = self.api.shaders.library()[0]["id"]
+        for name in ("c1.mp4", "c2.mp4", "c3.mp4", "c4.mp4"):
+            open(os.path.join(self.media, name), "w").close()
+        self.epoch = 0
+
+    def actions(self):
+        from pvj.midi import MIDI_DEVICE
+        api = self.api
+
+        def play(name, kind, device=None):
+            def act():
+                self.settings.data["mix"] = T.stored(kind, 0.3)
+                api.play({"file": name}, device, "stress")
+            return act
+        return {
+            "play c1 cut": play("c1.mp4", "cut"), "play c2 dip": play("c2.mp4", "dip"),
+            "play c3 crossfade": play("c3.mp4", "crossfade"), "play c4 wipe": play("c4.mp4", "wipe-from-left"),
+            "controller plays c1 crossfade": play("c1.mp4", "crossfade", MIDI_DEVICE),
+            "controller plays c2 slide": play("c2.mp4", "slide-up", MIDI_DEVICE),
+            "stop": lambda: api.control({"action": "stop"}, None, "stress"),
+            "blackout on": lambda: api.blackout({"on": True}, None, "stress"),
+            "blackout off": lambda: api.blackout({"on": False}, None, "stress"),
+            "fade out": lambda: api.fadeout({"seconds": 0.3}, None, "stress"),
+            "fade in": lambda: api.fadein({"seconds": 0.3}, None, "stress"),
+            "opacity 40": lambda: api.control({"action": "opacity", "value": 40}, None, "stress"),
+            "opacity 100": lambda: api.control({"action": "opacity", "value": 100}, None, "stress"),
+            "next": lambda: api.control({"action": "next"}, None, "stress"),
+            "generator by hand": lambda: api.shaders.show(self.sid),
+            "rotation tick": lambda: api.shaders.show(self.sid, epoch=self.epoch, cut=False),
+            "live input": lambda: api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "stress"),
+        }
+
+    def quiet(self, baseline, what):
+        """Every thread a round started has ended, within a time no round needs: or something waits for ever."""
+        deadline = self.time.monotonic() + 10
+        while self.time.monotonic() < deadline:
+            left = [t for t in self.threading.enumerate() if t not in baseline and t.is_alive()
+                    and not t.name.startswith(("shader", "effect"))]        # the engines' own workers live on by design
+            if not left and self.tr.running is None:
+                return
+            self.time.sleep(0.002)
+        self.fail("%s: threads that never ended: %s" % (what, [t.name for t in left]))
+
+    def one_round(self, rng, what):
+        api, player, time = self.api, self.player, self.time
+        acts = self.actions()
+        names = sorted(acts)
+        baseline = set(self.threading.enumerate())
+        # a clean start: something plays, lit, nothing on its way
+        api.control({"action": "stop"}, None, "stress")
+        api.blackout({"on": False}, None, "stress")
+        api.control({"action": "opacity", "value": 100}, None, "stress")
+        self.settings.data["mix"] = T.stored("cut", 0.3)
+        api.play({"file": "c1.mp4"}, None, "stress")
+        self.quiet(baseline, what + " (before the round)")
+        self.epoch = player.source_epoch
+        chosen = [rng.choice(names) for _ in range(rng.randint(3, 6))]
+        delays = [rng.random() * 0.004 for _ in chosen]
+        what = "%s, actions %s" % (what, chosen)
+        errors = []
+
+        def run(name, delay):
+            time.sleep(delay)
+            try:
+                acts[name]()
+            except Exception as e:
+                errors.append("%s raised %r" % (name, e))
+        threads = [self.threading.Thread(target=run, args=(n, d), daemon=True) for n, d in zip(chosen[:-1], delays)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+            self.assertFalse(t.is_alive(), "%s: a call never returned (a deadlock)" % what)
+        last = chosen[-1]
+        final = self.threading.Thread(target=run, args=(last, delays[-1]), daemon=True)
+        final.start()
+        final.join(10)
+        self.assertFalse(final.is_alive(), "%s: the last call never returned (a deadlock)" % what)
+        self.quiet(baseline, what)
+        self.assertEqual(errors, [], what)
+        # -- what must hold, whatever the order was --
+        self.assertEqual(player.unlocked, [], what)
+        self.assertFalse(player.overlay_up, "%s: a still was left on the screen" % what)
+        self.assertFalse(player.props["pause"], "%s: the clip was left frozen" % what)
+        self.assertEqual([n for n in os.listdir(self.rundir) if n.startswith("transition-") or n.startswith("overlay-")], [], what)
+        path = os.path.basename(player.path or "")
+        if last == "stop":
+            self.assertEqual((player.path, player.source_shader), (None, None), "%s: something was loaded after the last Stop" % what)
+        elif "play" in last:
+            clip = [w for w in last.split() if len(w) == 2 and w[0] == "c" and w[1].isdigit()][0] + ".mp4"
+            self.assertEqual(path, clip, "%s: the last wish was %s and what plays is %s" % (what, clip, path or "nothing"))
+        elif last == "generator by hand":
+            self.assertIsNotNone(player.source_shader, "%s: the generator chosen last is not on the screen" % what)
+        elif last == "live input":
+            self.assertEqual(player.path, self.helper.fifo, "%s: the live input started last is not what plays" % what)
+        dark = api.mix["blackout"] or api.fader.label == "out"
+        want = 0 if dark else int(round(api.mix["opacity"] * 2.55))
+        level = [c[1] for c in player.calls if c[0] == "opacity"][-1]
+        self.assertEqual(level, want, "%s: the picture's level is %d and the mix says %d (blackout %s, fader %s, opacity %s)"
+                         % (what, level, want, api.mix["blackout"], api.fader.label, api.mix["opacity"]))
+        self.assertLessEqual(self.helper.most, 1, "%s: two helpers of a live input at once" % what)
+        if player.path == self.helper.fifo:
+            self.assertEqual(self.helper.running, 1, "%s: a live input plays and its helper does not run" % what)
+        else:
+            self.assertEqual(self.helper.running, 0, "%s: a live input's helper runs under something else" % what)
+        del player.calls[:]
+        player.calls.append(("opacity", level))
+
+    def replay(self, seed, number):
+        import random
+        rng = random.Random(seed)                   # the rounds before it are run too: they draw from the same numbers
+        for i in range(number + 1):
+            self.one_round(rng, "seed %d round %d" % (seed, i))
+
+    def test_random_orders_of_everything_an_operator_can_do(self):
+        import random
+        began = self.time.monotonic()
+        for seed in self.SEEDS:
+            rng = random.Random(seed)
+            for i in range(self.ROUNDS):
+                self.one_round(rng, "seed %d round %d" % (seed, i))
+        print("stress: %d rounds in %.1f s" % (len(self.SEEDS) * self.ROUNDS, self.time.monotonic() - began))
 
 
 class OddSizes(unittest.TestCase):

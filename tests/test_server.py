@@ -252,7 +252,9 @@ class ServerTest(ServerBase):
     def test_stop_volume_step_and_legacy_presets(self):
         token, _ = self.pair()
         self.assertEqual(self.call("POST", "/api/control", {"action": "stop"}, token=token)[0], 200)
-        self.assertEqual(self.player.calls[-1], ("clear",))
+        # the screen is cleared, and then the picture's level is put back to what the mix says (D71: a clip that was
+        # on its way down a dip must not leave the next thing dark)
+        self.assertEqual(self.player.calls[-2:], [("clear",), ("opacity", 255)])
         self.assertEqual(self.call("POST", "/api/control", {"action": "volume_step", "value": -10}, token=token)[0], 200)
         self.assertEqual(self.player.calls[-1], ("volume_step", -10.0))
         self.assertEqual(self.call("POST", "/api/control", {"action": "volume_step", "value": 99}, token=token)[0], 400)

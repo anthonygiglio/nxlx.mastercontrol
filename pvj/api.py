@@ -100,7 +100,15 @@ class Fader:
         self._apply = apply
         self._clock, self._sleep = clock, sleep
         self._token = 0
+        # `_lock` guards the token and the label, and nothing else is ever done while it is held: no callback, no
+        # call to the player, no other lock. (A callback that ran under it once made every Blackout, opacity change
+        # and Stop wait for a clip's load, and could deadlock against the start of a live input.)
         self._lock = threading.Lock()
+        # `stepping` is held over one write of the picture's level: a step of a ramp, or a level somebody sets by
+        # hand (Api takes it for Blackout, the Opacity slider, a Reset and a play's own level). A step looks at the
+        # token inside it, so a step that was on its way cannot land after a level that was set since; whoever sets
+        # a level waits for at most the one step that is in the player. Taken before `_lock`, never inside it.
+        self.stepping = threading.Lock()
         self.label = None       # "out" from a fade out until something else sets the picture, "in" while a fade in runs (read by the controller lights)
 
     def cancel(self):
@@ -108,9 +116,15 @@ class Fader:
             self._token += 1
             self.label = None
 
+    def current(self, token):
+        """True while nobody has taken the fader since the ramp that returned `token`."""
+        with self._lock:
+            return token is not None and token == self._token
+
     def ramp(self, start, end, seconds, then=None, label=None, cancelled=None):
         """`then` is called when the ramp has run to its end, `cancelled` when something else took the fader first
-        (within a step). A play that dips hangs its clip on both: the clip must load either way (D71)."""
+        (within a step). A play that dips hangs its clip on both: the clip must load either way (D71). Both are
+        called with no lock held. Returns the ramp's token (see `current`)."""
         with self._lock:
             self._token += 1
             token = self._token
@@ -120,10 +134,13 @@ class Fader:
 
         def run():
             for i in range(1, steps + 1):
-                with self._lock:
-                    if token != self._token:
-                        return cancelled() if cancelled else None
-                self._apply(start + (end - start) * i / steps)
+                with self.stepping:
+                    with self._lock:
+                        live = token == self._token
+                    if live:
+                        self._apply(start + (end - start) * i / steps)
+                if not live:
+                    return cancelled() if cancelled else None
                 wait = began + seconds * i / steps - self._clock()      # what is left of this step, if anything
                 if wait > 0:
                     self._sleep(wait)
@@ -136,6 +153,7 @@ class Fader:
             if then:
                 then()
         threading.Thread(target=run, daemon=True).start()
+        return token
 
 
 class Api:
@@ -212,8 +230,8 @@ class Api:
         comes, and the still of a transition must not lie over it (the player's brightness does not reach it).
         `newer`: this is another way of playing, so a clip that is still on its way to the player (its still is
         being taken, or it waits its turn) is no longer the newest wish and loads nothing (Transitions.newer)."""
+        self.transitions.end(newer=newer)       # first: a clip whose dip the next line cuts short must find itself overtaken
         self.fader.cancel()
-        self.transitions.end(newer=newer)
 
     def _level_back(self):
         """At a Stop: a clip that was on its way down a dip, and is now never loaded, must not leave the picture at
@@ -222,8 +240,22 @@ class Api:
         not after the operator's own Fade out, which Stop never undid."""
         if getattr(self.fader, "label", None) == "out":
             return
-        self.fader.cancel()
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._show_level(take=True)
+
+    def _levels(self):
+        """The lock one write of the picture's level is made under (Fader.stepping): a ramp's step that was on its
+        way cannot land after a level set under it."""
+        return getattr(self.fader, "stepping", None) or threading.Lock()
+
+    def _show_level(self, take=False):
+        """Set the picture's level to what the mix says now: dark under Blackout, the mix opacity otherwise. The mix
+        is read inside the lock, so of two of these that meet (a play and a Blackout) the later one has the last
+        word and reads the newer state. `take`: the fader is taken first, inside the same lock, so no ramp that
+        somebody starts at this moment (a play's way up) goes on over the level set here."""
+        with self._levels():
+            if take:
+                self.fader.cancel()
+            self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
 
     def _mix_settings(self):
         """The Mix settings as the API gives them: the transition by its name (see pvj/transitions.py for how it is
@@ -784,7 +816,7 @@ class Api:
             random.SystemRandom().shuffle(paths)
         self._settle(newer=True)
         self._player_call(self.player.play, paths, ending == "loop", None, False, self.spawn, ending, image_seconds)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._show_level()
         self._started_playing()
         return paths
 
@@ -913,7 +945,10 @@ class Api:
                 claim()
             ticket = self.transitions.claim()
         faded_out = getattr(self.fader, "label", None) == "out"     # the operator's Fade out: the screen is dark or going dark
-        self.fader.cancel()  # a fade still running from an earlier action must not darken the new clip
+        # A fade still running from an earlier action must not darken the new clip: the fader is taken when the clip
+        # loads (in `start`), not here at the tap. A clip that is overtaken before it loads (its still was being
+        # taken, a Next came) would otherwise have stopped a Fade in half way with nobody to finish it (found by
+        # the stress test).
 
         kind = transitions_mod.named(transition)
         # A crossfade, a wipe or a slide lays a still of the screen over the new clip (pvj/transitions.py). A screen
@@ -947,20 +982,22 @@ class Api:
                         self.transitions.abandon(token)
                         return False
                     self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
-                # A live input that was on the screen until now: its helper goes, unless a newer play has started
-                # one since (looked at under the lock a live input is started under).
-                if self.capture is not None:
-                    with self.capture.lock:
-                        if self.transitions.newest(ticket):
-                            self.capture.stop()
+                # This clip plays now, so a live input that was on the screen is not shown any more and its helper
+                # goes (see _stop_capture for how it is decided; not by "is this still the newest wish": a Next a
+                # moment later is newer, and the helper would have stayed with the device open).
+                self._stop_capture()
                 # A Blackout, a fade or an opacity change that came while a blend's still was taken or waited for
-                # has set the picture's brightness since this play was asked for: it is left as they set it.
-                if not self.mix["blackout"] and not as_set and not (blend and self.transitions.ended_since(ticket)):
-                    if dip:
-                        self._apply_opacity(0)
-                        self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
-                    else:
-                        self._apply_opacity(self.mix["opacity"])
+                # has set the picture's brightness since this play was asked for: it is left as they set it. The
+                # look and the write are one step under the lock a level is written under, so a Blackout that comes
+                # at this moment either was seen or comes after and has the last word.
+                with self._levels():
+                    if not self.mix["blackout"] and not as_set and not (blend and self.transitions.ended_since(ticket)):
+                        if dip:
+                            self._apply_opacity(0)
+                            self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
+                        else:
+                            self.fader.cancel()
+                            self._apply_opacity(self.mix["opacity"])
             except BaseException:
                 # Whatever it was: no still stays over a clip that did not start, and the old clip, which the still
                 # froze, plays on.
@@ -993,12 +1030,30 @@ class Api:
             return {"playing": name, "pending": True}       # asked for, not loaded yet: see the manual
         elif blend:
             loaded = blended()
-        elif playing and dip:
+        elif playing and dip and not faded_out:
             # The clip hangs on the ramp's end and on its being cut short alike. Before, it hung on the end only:
             # a Blackout, a fade, a Reset or an opacity change during the way down (a MIDI fader that moves) took
             # the fader, and the tapped clip was silently never loaded. Now it loads then as a cut, at the level
             # that action set; only a newer play or a Stop drops it, by the ticket.
-            self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=start, cancelled=lambda: start(as_set=True))
+            # (After the operator's Fade out there is no way down to go: the screen is dark. The clip comes up
+            # from black by the branch below. The way down used to begin at the mix's level: a flash.)
+            way_down = []
+
+            def dipped(as_set=False):
+                """The dip's clip, on the fader's thread. If it does not load (a newer wish overtook it, or the
+                load failed) and nobody has taken the fader since the way down, the picture is still at the dark
+                the dip left it at with nobody to bring it back: the level goes back to what the mix says. That
+                covers every newer wish, also one that does not touch the fader (Next, Previous) and any added
+                later."""
+                try:
+                    done = start(as_set=as_set)
+                except Exception as e:
+                    done = False
+                    self.log("pvj-web: a clip did not start after its dip to black: %s" % e)
+                if not done and way_down and self.fader.current(way_down[0]):
+                    self._level_back()
+            way_down.append(self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=dipped, cancelled=lambda: dipped(True)))
+            return {"playing": name, "pending": True}       # asked for, not loaded yet, as a controller's blend
         else:
             loaded = start()
         if not loaded:
@@ -1019,7 +1074,7 @@ class Api:
             raise ApiError(404, "no such stream")
         self._settle(newer=True)
         self._player_call(self.player.play, [match[0]["url"]], False, None, False, self.spawn)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._show_level()
         self._started_playing()
         return {"playing": match[0]["name"]}
 
@@ -1073,9 +1128,10 @@ class Api:
         elif action == "opacity":
             self.mix["opacity"] = number(body, "value", 0, 100)
             self.transitions.end()
-            if not self.mix["blackout"]:
-                self.fader.cancel()
-                self._player_call(p.opacity, round(self.mix["opacity"] * 2.55))
+            with self._levels():                # the fader is taken and the level written as one step (see Fader.stepping)
+                if not self.mix["blackout"]:
+                    self.fader.cancel()
+                    self._player_call(p.opacity, round(self.mix["opacity"] * 2.55))
         elif action == "size":
             self.mix["size"] = number(body, "value", 1, 200)
             self._player_call(p.size, self.mix["size"])
@@ -1106,8 +1162,10 @@ class Api:
             self._player_call(p.mute, body["value"])
         elif action == "stop":
             self.transitions.end("Stop", newer=True)
-            self._level_back()
-            self._player_call(p.clear)
+            try:
+                self._player_call(p.clear)
+            finally:
+                self._level_back()          # after the screen is cleared: the old picture is not shown at full first
             self._stop_capture()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
             if self.effects.on is not None:     # a Stop takes the effect off (the player did); its text goes too. Only
@@ -1128,10 +1186,12 @@ class Api:
             self.mix.update(opacity=100, size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)
             for k in flipped:
                 self._player_call(p.flip, k == "flip_h", False)
-            self._settle()
+            self.transitions.end()
             # During a blackout the screen must stay dark: reset changes the stored mix, not the picture.
-            shown = 0 if self.mix["blackout"] else 255
-            for fn, arg in ((p.opacity, shown), (p.size, 100), (p.position, 0), (p.speed, 1), (p.rotate, 0)):
+            with self._levels():
+                self.fader.cancel()
+                self._player_call(p.opacity, 0 if self.mix["blackout"] else 255)
+            for fn, arg in ((p.size, 100), (p.position, 0), (p.speed, 1), (p.rotate, 0)):
                 self._player_call(fn, arg)
             self.levels["speed"] = 1.0
         else:
@@ -1142,10 +1202,14 @@ class Api:
         on = body.get("on")
         if not isinstance(on, bool):
             raise bad("on must be true or false")
-        self.fader.cancel()
-        self.mix["blackout"] = on
         try:
-            self._player_call(self.player.opacity, 0 if on else round(self.mix["opacity"] * 2.55))
+            # The switch, the fader and the level are one step (see Fader.stepping): a Fade in that meets a Blackout
+            # either comes first and is ended by it, or comes after and ends it. (Found by the stress test: with the
+            # switch outside, a Fade in's ramp could go up under a Blackout that the mix said was on.)
+            with self._levels():
+                self.mix["blackout"] = on
+                self.fader.cancel()
+                self._player_call(self.player.opacity, 0 if self.mix["blackout"] else round(self.mix["opacity"] * 2.55))
         finally:
             # After the picture went dark, not before: ending a transition can wait for a still that is being
             # taken, and the dark must not wait with it. (A still taken meanwhile is not laid down: it sees the end.)
@@ -1156,7 +1220,12 @@ class Api:
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
         self.transitions.end()
-        self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
+        with self._levels():
+            # Under Blackout the screen is dark already and there is nothing to fade: a ramp would begin at the
+            # mix's level and show the picture during a Blackout (older than the transitions; found by the stress
+            # test). One step with the look, so a Blackout that comes now ends the ramp or is seen by it.
+            if not self.mix["blackout"]:
+                self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
         return {"ok": True}
 
     def fadein(self, body, device, client):
@@ -1164,10 +1233,11 @@ class Api:
         a fade in; until now the only way back from black here was an instant Show."""
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
-        self._settle()
-        self.mix["blackout"] = False
-        self._apply_opacity(0)
-        self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
+        self.transitions.end()
+        with self._levels():                    # the switch, the level and the ramp as one step, as in blackout()
+            self.mix["blackout"] = False
+            self._apply_opacity(0)
+            self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
         return {"ok": True}
 
     def test_tone(self, body, device, client):
@@ -1402,13 +1472,15 @@ class Api:
             raise bad("on must be true or false")
         if not on:
             self.transitions.end("Stop", newer=True)
-            self._level_back()
-            self._player_call(self.player.clear)
+            try:
+                self._player_call(self.player.clear)
+            finally:
+                self._level_back()
             self._stop_capture()
             return {"test_pattern": False}
         self._settle(newer=True)
         self._player_call(self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._show_level()
         self._started_playing()
         return {"test_pattern": True}
 
@@ -2080,14 +2152,26 @@ class Api:
                 self.capture.start(spec["device"], mode)
             except capture_mod.CaptureError as e:
                 raise ApiError(409, str(e))
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._show_level()
         self._started_playing(capture=True)
         return {"playing": "capture", "device": spec["device"], "mode": mode}
 
     def _stop_capture(self):
+        """Stop the live input's helper, unless the live input is what the player plays. Whoever has just put
+        something else on the screen (a clip, a list, a generator, a Stop) calls this afterwards. It is decided by
+        what plays now, under the lock a live input is started under from its first step to its helper's start: so
+        a live input that somebody started in the same moment is either not begun (and what plays is not its pipe)
+        or complete (and its helper is left alone), never half. Before, the helper was stopped whatever played: a
+        Stop or a clip that met the start of a live input could leave the pipe playing with nothing writing into it
+        (older than the transitions; found by the stress test)."""
         if self.capture is not None:
             with self.capture.lock:
-                self.capture.stop()
+                try:
+                    shown = self.player.ipc.request("get_property", "path") == getattr(self.capture, "fifo", None)
+                except Exception:
+                    shown = False           # a player that cannot say plays nothing
+                if not shown:
+                    self.capture.stop()
 
     def get_inputs(self, body, device, client):
         if self.capture is None:

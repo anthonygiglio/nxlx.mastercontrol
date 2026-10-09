@@ -1230,8 +1230,6 @@ class Engine:
                 except OSError:
                     tap = None
             try:
-                if cut:
-                    self.api.fader.cancel()
                 ending = getattr(self.api, "transitions", None)
                 try:
                     # One step under the player's lock: the generator takes the screen, and with that it is the
@@ -1241,6 +1239,10 @@ class Engine:
                         new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
                         if new is not None and ending is not None:
                             ending.end("a generator", newer=True)
+                    if cut:
+                        # After the generation moved, not before: a clip whose dip this cuts short comes to load at
+                        # once, and must find the generator newer than itself (it flashed up otherwise).
+                        self.api.fader.cancel()
                     fx = getattr(self.api, "effects", None)
                     if new is not None and fx is not None and fx is not self and fx.on is not None:
                         fx.sweep()                  # the generator took an effect off the screen: its text goes too
@@ -1280,7 +1282,11 @@ class Engine:
                             "checked": True if (verdict == "ok" or key in self._checked) else None}
             self._cleanup({out})
             if cut:
-                self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
+                show = getattr(self.api, "_show_level", None)
+                if show is not None:
+                    show()
+                else:
+                    self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
             self.api._started_playing()
             return {"ok": True, "epoch": new, "id": sid}
 
