@@ -37,7 +37,7 @@ import re
 import threading
 import time
 
-from . import hardware, shaderlive as L, shaders as S
+from . import hardware, paths, shaderlive as L, shaders as S
 from .api import ApiError
 from .player import PlayerError
 from .shaders import ShaderError
@@ -856,6 +856,7 @@ class Effects(S.Engine):
     def __init__(self, api, log=print, clock=time.monotonic, tap=S.LogTap, thread=True):
         super().__init__(api, log, clock, tap)
         self.dir = os.path.join(os.path.dirname(api.settings.path), "effects")
+        paths.remove_leftovers(self.dir, S.UPLOAD_TEMP)     # as the shaders' folder, a line up in Engine (D70)
         self.bundled_dir = EFFECTS_DIR
         self.changer = L.Changer(self, clock, thread, refresh=WATCH)
         self.guard = L.Guard(self, clock)

@@ -6,15 +6,28 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 from pvj import update
 from pvj.update import UpdateError, Updater
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 HAVE_SSH = bool(shutil.which("ssh-keygen"))
+
+
+def root_for_main():
+    """A patch under which update.main() believes it runs as root (it refuses anybody else) while everything it
+    calls still sees who we are. The lock compares the owner of its folder and its file with the effective user,
+    so saying "root" to everybody would make every file here somebody else's."""
+    real = os.geteuid
+
+    def geteuid():
+        return 0 if sys._getframe(1).f_code.co_name == "main" else real()
+    return mock.patch("os.geteuid", geteuid)
 
 
 def make_tree(version, schema=None):
