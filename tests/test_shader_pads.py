@@ -202,6 +202,18 @@ class Tapped(PadBase):
         self.tap(1)
         self.assertEqual(self.on(), TWO)
 
+    def test_a_tap_is_one_newest_wish_as_a_shader_chosen_by_hand_is(self):
+        # the pad's branch of Api.play comes before the play claims anything: a ticket taken there, and the
+        # generator's own taking of the screen after it, would be two newest wishes for one tap
+        tr = self.api.transitions
+        before = tr._gen
+        self.engine.api_play({"id": ONE}, None, "t")
+        by_hand = tr._gen - before
+        self.give(1, TWO)
+        before, epoch = tr._gen, self.player.source_epoch
+        self.tap(1)
+        self.assertEqual((tr._gen - before, self.player.source_epoch - epoch), (by_hand, 1))
+
     def test_blackout_stays_dark_under_a_shader_pad(self):
         self.give()
         self.api.blackout({"on": True}, None, "t")
@@ -369,6 +381,80 @@ class FromEverywhere(PadBase):
         self.tap()
         self.player.ipc.request = lambda *c: self.player.path if c[:2] == ("get_property", "path") else None
         self.assertEqual(self.api.sync.state(), {"st": "stop", "bk": False})
+
+
+class Mixed(ServerBase):
+    """The Mix transition around a shader pad, on the real player over the stand-in for mpv: it is whatever it is
+    around a shader chosen by hand. Into a generator is a cut (no still is taken: the generator takes the screen and
+    ends a transition that runs). Out of one, the clip blends from a still of the generator, or dips."""
+
+    def setUp(self):
+        super().setUp()
+        from pvj import transitions as T
+        from pvj.player import Player
+        from tests.fakempv import FakeMpv
+        self.T = T
+        self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))
+        self.addCleanup(self.mpv.stop)
+        self.player = self.api.player = Player(rundir=self.rundir)
+        self.api.log = self.api.transitions.log = lambda line: None
+        self.api.registry.set_enabled("shaders", True)
+        self.api.shaders.log = lambda *_: None
+        self.api.set_pad({"bank": 0, "index": 0, "shader": ONE}, None, "t")
+        self.api.set_pad({"bank": 0, "index": 1, "file": "a.mp4"}, None, "t")
+
+    def choose(self, how):
+        if how == "pad":
+            self.api.play({"pad": [0, 0]}, None, "t")
+        else:
+            self.api.shaders.api_play({"id": ONE}, None, "t")
+
+    def settle(self):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and (self.api.transitions.running is not None or self.mpv.overlays):
+            time.sleep(0.01)
+        self.assertEqual((self.api.transitions.running, self.mpv.overlays), (None, {}))
+
+    def test_into_a_shader_is_a_cut_by_pad_as_by_hand(self):
+        for style in ("crossfade", "dip", "wipe-from-left"):
+            for how in ("hand", "pad"):
+                self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+                self.api.play({"pad": [0, 1]}, None, "t")
+                self.settings.data["mix"] = self.T.stored(style, 0.2)
+                del self.mpv.commands[:], self.mpv.levels[:]
+                self.choose(how)
+                what = "%s, by %s" % (style, how)
+                self.assertNotIn("screenshot-to-file", self.mpv.commands, what)
+                self.assertNotIn("overlay-add", self.mpv.commands, what)
+                self.assertEqual([v for v in self.mpv.levels if v != 0], [], "the picture was dipped on the way into a shader (%s)" % what)
+                self.assertEqual((self.mpv.log[-1][1], self.api.shaders.on_screen()["id"]), ("carrier", ONE), what)
+
+    def test_out_of_a_shader_a_clip_blends_from_a_still_of_it_by_pad_as_by_hand(self):
+        seen = {}
+        for how in ("hand", "pad"):
+            self.settings.data["mix"] = self.T.stored("crossfade", 0.2)
+            self.choose(how)
+            del self.mpv.commands[:]
+            self.assertEqual(self.api.play({"pad": [0, 1]}, None, "t")["playing"], "a.mp4")
+            self.settle()
+            seen[how] = [c for c in self.mpv.commands if c in ("screenshot-to-file", "loadfile", "overlay-remove")]
+            self.assertEqual(seen[how][:2], ["screenshot-to-file", "loadfile"], how)
+            self.assertIn("overlay-add", self.mpv.commands, how)
+            self.assertEqual((os.path.basename(self.mpv.path), self.player.source_shader, self.api.transitions.given_up), ("a.mp4", None, ""), how)
+        self.assertEqual(seen["pad"], seen["hand"])
+
+    def test_out_of_a_shader_a_clip_dips_by_pad_as_by_hand(self):
+        for how in ("hand", "pad"):
+            self.settings.data["mix"] = {"transition": "dip", "duration": 0.2}
+            self.choose(how)
+            del self.mpv.levels[:], self.mpv.log[:]
+            self.api.play({"pad": [0, 1]}, None, "t")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not (self.mpv.log and self.mpv.levels and self.mpv.levels[-1] == 0 and self.api.fader.label is None):
+                time.sleep(0.01)
+            self.assertEqual(os.path.basename(self.mpv.path), "a.mp4", how)
+            self.assertIn(-100, self.mpv.levels, "the generator was not dipped to black before the clip (%s)" % how)
+            self.assertEqual(self.mpv.levels[-1], 0, how)
 
 
 if __name__ == "__main__":

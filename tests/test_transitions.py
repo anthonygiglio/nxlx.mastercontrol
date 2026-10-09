@@ -2410,6 +2410,7 @@ class Stress(ServerBase):
         self.settings.data["streams"] = [{"id": "bbbb0001", "name": "Camera", "url": "rtsp://192.168.1.60/live"}]
         self.api.shaders.log = lambda *_: None
         self.sid = self.api.shaders.library()[0]["id"]
+        self.settings.data["pads"]["banks"][self.SHADER_PAD[0]]["pads"][self.SHADER_PAD[1]] = {"label": "", "file": "", "shader": self.sid}
         for i in range(6):
             open(os.path.join(self.media, "r%d.mp4" % i), "w").close()
         self.epoch = 0
@@ -2501,8 +2502,11 @@ class Stress(ServerBase):
     CORE = PLAYS + ("stop", "blackout on", "blackout off", "fade out", "fade in", "opacity 40", "opacity 100", "next",
                     "generator by hand", "rotation tick", "live input")
     # what an operator does most, twice as often as the rest; the rare ones that matter (a restart, Vibes' own dip) too
-    KINDS = CORE + CORE + ("reset", "vibes dip", "vibes dip", "list", "stream", "test pattern", "test pattern off", "tone", "restart", "restart")
-    TAPS = ("generator by hand", "rotation tick", "live input", "list", "stream", "test pattern")     # besides the clips: who notes the level's mark
+    KINDS = CORE + CORE + ("reset", "vibes dip", "vibes dip", "list", "stream", "test pattern", "test pattern off", "tone", "restart", "restart",
+                           "shader pad", "shader pad")
+    GENERATORS = ("generator by hand", "shader pad")       # a pad that holds a shader is the same choosing by hand (D73)
+    TAPS = GENERATORS + ("rotation tick", "live input", "list", "stream", "test pattern")     # besides the clips: who notes the level's mark
+    SHADER_PAD = [2, 11]
 
     def vibes_dip(self):
         """Vibes' own dip between two shaders, as its rotation makes it: only over a generator, down and up again,
@@ -2532,6 +2536,7 @@ class Stress(ServerBase):
             "reset": lambda: api.control({"action": "reset"}, None, "stress"),
             "next": lambda: api.control({"action": "next"}, None, "stress"),
             "generator by hand": lambda: api.shaders.show(self.sid),
+            "shader pad": lambda: api.play({"pad": list(self.SHADER_PAD)}, None, "stress"),     # from the panel: it waits for its answer
             "rotation tick": lambda: api.shaders.show(self.sid, epoch=self.epoch, cut=False),
             "vibes dip": self.vibes_dip,
             "live input": lambda: api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "stress"),
@@ -2650,7 +2655,7 @@ class Stress(ServerBase):
                 self.assertTrue(not later or later[-1] <= at + 1, "something was loaded after the newest wish (%s) and its own change\n%s" % (kind, said))
                 if kind in ("stop", "test pattern off", "restart"):
                     self.assertEqual((mpv.path, player.source_shader), (None, None), "something plays after the %s that came last\n%s" % (kind, said))
-                elif kind == "generator by hand":
+                elif kind in self.GENERATORS:
                     self.assertIsNotNone(player.source_shader, "the generator chosen last is not on the screen\n" + said)
                 elif kind == "live input":
                     self.assertTrue(player.pipe_playing, "the live input started last is not what plays\n" + said)
