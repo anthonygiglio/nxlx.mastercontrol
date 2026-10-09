@@ -295,6 +295,25 @@ class ReadStill(unittest.TestCase):
         with self.assertRaises(T.StillError):
             T.read_still(self.path, (3, 2))
 
+    def test_a_still_written_in_many_small_pieces_reads_the_same(self):
+        # the Pi 4's mpv 0.40 writes a 2560 x 1440 still as some 2700 pieces of 4 KB (measured 2026-10-09)
+        w, h = 64, 48
+        raw = b"".join(b"\x00" + os.urandom(w * 3) for _ in range(h))
+        packed = zlib.compress(raw, 0)
+
+        def chunk(kind, body):
+            return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xffffffff)
+        head = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+        self.put(head + chunk(b"IDAT", packed) + chunk(b"IEND", b""))
+        whole = T.read_still(self.path, (w, h))
+        self.put(head + b"".join(chunk(b"IDAT", packed[i:i + 97]) for i in range(0, len(packed), 97)) + chunk(b"IEND", b""))
+        self.assertEqual(T.read_still(self.path, (w, h)), whole)
+        # and one row too many, spread over the pieces, is still refused
+        more = zlib.compress(raw + b"\x00" + bytes(w * 3), 0)
+        self.put(head + b"".join(chunk(b"IDAT", more[i:i + 97]) for i in range(0, len(more), 97)) + chunk(b"IEND", b""))
+        with self.assertRaises(T.StillError):
+            T.read_still(self.path, (w, h))
+
     def test_reading_holds_about_the_file_and_its_rows_and_no_more(self):
         # finding 6: about 74 MB were alive at the end for a 2560 x 1440 screen, five times the picture
         import tracemalloc

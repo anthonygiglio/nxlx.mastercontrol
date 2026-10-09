@@ -97,10 +97,15 @@ def read_still(path, size):
     filter), so that reading it is a few copies and no arithmetic in Python. Anything else is refused with a
     StillError, a file cut short anywhere too, and no more is unpacked than such a picture holds.
 
-    Memory: the file, its unpacked rows and the result are never all alive at once (the file goes before the
-    result is made, and the rows are copied straight into it through a view). Measured with tracemalloc: at most
-    2.3 times the picture's own bytes, which is about 34 MB for a 2560 x 1440 screen (the picture is 14.7), where
-    the first version held about five times the picture."""
+    Memory: the file goes before its rows are unpacked, and the packed rows go before the result is made.
+    Measured with tracemalloc: at most 2.3 times the picture's own bytes, which is about 34 MB for a 2560 x 1440
+    screen (the picture is 14.7), where the first version held about five times the picture.
+
+    Time, measured on a Pi 4 at 2560 x 1440 on 2026-10-09: the player's own screenshot took 0.6 seconds and this
+    function 1.3, of which a second went into unpacking the file piece by piece; the box gave up on crossfades
+    at once. Unpacking in one call and stepping through plain bytes took 0.13 seconds in a trial beside the
+    panel. The player's 0.6 seconds are the freeze the audience sees before a blend, and they stay.
+    """
     try:
         with open(path, "rb") as f:
             data = f.read(size[0] * size[1] * 4 + size[1] + (1 << 20))
@@ -110,7 +115,7 @@ def read_still(path, size):
         raise StillError("the still is not a PNG")
     view = memoryview(data)
     pos, w, h, bpp = 8, 0, 0, 0
-    unpacker, got = zlib.decompressobj(), []
+    parts = []
     try:
         while pos + 8 <= len(data):
             n, kind = struct.unpack(">I4s", view[pos:pos + 8])
@@ -122,31 +127,37 @@ def read_still(path, size):
             elif kind == b"IDAT":
                 if not bpp:
                     raise StillError("the still has no header")
-                room = (w * bpp + 1) * h + 1 - sum(len(x) for x in got)
-                got.append(unpacker.decompress(view[pos + 8:pos + 8 + n], max(1, room)))
-                if unpacker.unconsumed_tail:
-                    raise StillError("the still holds more than a screen")
+                parts.append(view[pos + 8:pos + 8 + n])
             pos += 12 + n
-    except (struct.error, zlib.error) as e:
+        packed = b"".join(parts)
+    except struct.error as e:
         raise StillError("the still is damaged: %s" % e)
     finally:
+        del parts
         view.release()
     del data
     if not bpp:
         raise StillError("the still has no header")
     stride = w * bpp + 1
-    raw = got[0] if len(got) == 1 else b"".join(got)
-    del got
+    # Unpacked in one call with one bound. A call for each piece of the file, each with the bound, took a second
+    # on a Pi 4 for a 2560 x 1440 screen (the player writes some 2700 pieces of 4 KB, and every call made room for
+    # the whole picture); this takes a twentieth of that.
+    unpacker = zlib.decompressobj()
+    try:
+        raw = unpacker.decompress(packed, stride * h + 1)
+    except zlib.error as e:
+        raise StillError("the still is damaged: %s" % e)
+    if unpacker.unconsumed_tail or len(raw) > stride * h:
+        raise StillError("the still holds more than a screen")
+    del packed, unpacker
     if len(raw) != stride * h or raw[0::stride].count(0) != h:
         raise StillError("the still's rows are not plain bytes")
-    out = bytearray(w * h * 4)
-    rows, pixels = memoryview(raw), memoryview(out)
+    # Row by row on plain bytes: a step through bytes is a copy in C, the same step through a view was four times
+    # slower on a Pi 4. The alpha is there from the start.
+    out = bytearray(b"\xff") * (w * h * 4)
     for y in range(h):
-        row, a, b = rows[y * stride + 1:(y + 1) * stride], y * w * 4, (y + 1) * w * 4
-        pixels[a:b:4], pixels[a + 1:b:4], pixels[a + 2:b:4] = row[2::bpp], row[1::bpp], row[0::bpp]
-    pixels.release()
-    rows.release()
-    out[3::4] = b"\xff" * (w * h)
+        row, a, b = raw[y * stride + 1:(y + 1) * stride], y * w * 4, (y + 1) * w * 4
+        out[a:b:4], out[a + 1:b:4], out[a + 2:b:4] = row[2::bpp], row[1::bpp], row[0::bpp]
     return w, h, out
 
 
