@@ -4,6 +4,19 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the evening (a second round on the area desks: the strip's words, Speed and Loop on the line, column heads alike)
+
+Branch `area-desks`, pull request #112. Not merged: the owner looks first. The coordinator read the pictures of the entry below and sent six points; D72 has an addition for what they change.
+
+- **The strip's words.** In the picture of Setup > Projectors at 1280 px in Signal the time stood as "01:", "02", "/", "03:", "05" and the name was "intro.mkv · effe...". I had listed that picture as read. The clip count and the time are each one piece now, with figures of one width; the name has at least 180 px from 600 px; `stripText()` holds it at 41 widths from 320 to 1920 px in each of the box's six looks (246 looks, 9 s here), and failed with 140 lines when the rule was taken out on purpose.
+- **The fold of the strip follows one order**, the owner's of who has the room first. On the line from: Previous and Next 800 px, Loop 940, Speed 1080, the fades 1280, back and forward 10 s 1440, the place in the clip 1640. At 1200: Speed, Loop, Previous, Next, Freeze, Stop, Blackout. At 1280 and 1366: those and Fade in, Fade out. At 1440: those and back and forward 10 s. More holds the rest. Checked at every 20 px from 600 to 1920 in both looks in the panel's face, in Verdana and in Verdana with wider letters: one line and 180 px of name at each.
+- **Column heads.** Sound and Shaders have the small heading their neighbours have on a desk; their own title and sentence show where the screen stands alone; Shaders' switch is at the right of its heading. Room's Scenes card has no second "Scenes". The link beside the Vibes button is not shown at any width.
+- **Low windows.** The open strip's lower edge fades while more is below.
+- **Master merged in** (cd80330): the three log files conflicted, as expected; every line of both sides is kept (`git diff <side> -- <file> | grep -c '^-[^-]'` is 0 for each file against each parent). D70 stands before D72.
+- **Run on the Mac** after the last change: `reach` by a press and by the keyboard, `tabWalk`, `menus`, `strip`, `stripText`, `roles`, `narrow` (672 looks), the width sweep, the pads with More open at every size of the sweep, and the inventory (owner 595 of 600, presenter 232 of 238, guest 66 of 68: the five keys D72 names, and the presenter's row of D65). The inventory failed once on the way: its walk waited for a page's title to be shown, and on a desk that title is now left out. The unit tests of the modules that read the panel's files pass.
+- **Looked at again, each one**, in `/tmp/area-desks/` (288 pictures, taken again): Setup > Projectors at 1280 in Signal (the one with the broken time), Play at 1200 (default) and 1280 (Signal), Shape at 1200 (Signal), 1280 (default) and 1366 (a guest), Shape at 600 in Signal, Room at 1280 as a presenter and at 1440, the Shaders column at 1920, the pads at 390, and the open strip at 320 by 568 and 667 by 375. This time the strip's words were read in each.
+- **Still for his eye:** on a laptop the place in the clip is behind More up to 1639 px; at 1920 px in Signal a chooser of the Shaders list cuts its words ("From anywhe"), inside the card; nobody has seen any of it on a phone, in Safari or on the box. What CI said of this round is at the end of this entry once it has run.
+
 ## 2026-10-09, later still (the navigation the owner chose for wide screens: a rail, tabs, area desks; D72)
 
 Branch `area-desks`, stacked on the shell (#102), with its own pull request. Not merged: the owner looks first. He had looked at a click-through sketch of four ways to get about on a wide screen and chose: "i do like the Area Desks. The Rail and Tbs is my second favourite." His other words, and what was decided, are in D72.

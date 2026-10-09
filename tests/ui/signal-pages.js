@@ -95,7 +95,9 @@ async function sysIndex(pg) {
 async function sys(pg, name) {
   await sysIndex(pg);
   await pg.click('#sysindex .navrow:has(.navname:text-is("' + name + '"))');
-  await pg.waitForSelector('#syspage .syshead :is(h1, h2):text-is("' + name + '")');
+  // (the page's own title is in the page and not shown where the page is a column of a desk: the column's heading names it there)
+  await pg.waitForSelector('#syspage .syshead :is(h1, h2):text-is("' + name + '")', { state: 'attached' });
+  await pg.waitForSelector('#syspage');
 }
 // Back from a page to where it was opened from, by the page's own Back. Where the index stands beside a page of
 // Setup (from 1200 px) the page has no Back to it, and there is nothing to do: the rows are there.

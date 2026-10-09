@@ -162,7 +162,7 @@ async function walk(pg) {
   for (const [id, name] of rows) {
     if (!(await pg.evaluate((i) => { const r = document.querySelector('#sysindex #' + i); return !!r && r.getClientRects().length > 0; }, id))) await index();
     await pg.evaluate((i) => { document.querySelector('#sysindex #' + i).click(); }, id);
-    await pg.waitForFunction((n) => { const h = document.querySelector('#syspage .syshead h1, #syspage .syshead h2'); return h && h.textContent === n && h.getClientRects().length > 0; }, name, { timeout: 15000 });
+    await pg.waitForFunction((n) => { const h = document.querySelector('#syspage .syshead h1, #syspage .syshead h2'); return h && h.textContent === n && document.getElementById('syspage').getClientRects().length > 0; }, name, { timeout: 15000 });
     note(found, 'Setup index > ' + name, await gather(pg));
   }
   // the strip is on every screen: taken once more with its More open, as a phone has it
