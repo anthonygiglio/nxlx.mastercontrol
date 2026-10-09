@@ -146,7 +146,7 @@ class Player:
     # Defaults for a Player made without __init__ (some tests do); __init__ gives every player its own lock.
     _lock = locks.make("player", reentrant=True)
     _mapping_shaders, _mapping_mode, _source, _source_pid, _carrier, source_epoch = [], False, None, None, None, 0
-    _effect, _effect_pid, effect_serial, effect_ended, effect_8bit = None, None, 0, "", False
+    _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
     _pipe, _pipe_pid = False, None      # a live input's pipe is what was loaded last, and the mpv it was loaded into
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
@@ -180,6 +180,11 @@ class Player:
         self.effect_serial = 0      # goes up each time an effect goes on or comes off; the effect's worker checks it
         self.effect_ended = ""      # why the last one came off: "off", "stop", "cleared", "restart", "refused", "format"
         self.effect_8bit = False    # 8-bit GPU buffers while an effect is on (the effects engine says: see _apply_fbo)
+        # Goes up each time the screen is cleared (Stop, a shader taken off) and when the panel ends the player: the
+        # moments after which an effect that was asked for before must not arrive. A change of what plays does not
+        # move it, since an effect stays through that (D74); `effect_serial` does not do for it, since it moves on a
+        # clearing only when an effect was on.
+        self.clears = 0
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
@@ -393,6 +398,7 @@ class Player:
             if self._source is not None or self._carrier is not None:      # as _check_source does when it notices by itself
                 self._source = self._carrier = None
             self.source_epoch += 1          # the screen has changed hands: a rotation's next change is not for this one
+            self.clears += 1                # and an effect that waits to go on is not for the next player
             self.ipc.request("quit")
 
     def _pid(self):
@@ -446,6 +452,7 @@ class Player:
         picture it was over; `why` is what its record then says (see effect_ended)."""
         with self._lock:
             self._pipe = False
+            self.clears += 1
             try:
                 self.ipc.request("stop")
             finally:
@@ -607,14 +614,17 @@ class Player:
             self._check_effect()
             return self._effect
 
-    def put_effect(self, shader, serial=None, epoch=None):
+    def put_effect(self, shader, serial=None, epoch=None, clears=None):
         """Put the filter shader file `shader` on over whatever plays (a clip, a live input, a shader source), in
-        place of the effect that is on. Returns the new effect serial, or None, with nothing changed, when `serial`
-        or `epoch` are given and an effect went on or off, or something was played or stopped, since they were
-        handed out."""
+        place of the effect that is on. Returns the new effect serial, or None, with nothing changed, when `clears`
+        is given and the screen was cleared since it was handed out (what a wish that waited for the worker
+        carries: see `clears`), or when `serial` or `epoch` are given and an effect went on or off, or something
+        was played or stopped, since they were handed out (the stricter rule, which the effects no longer use)."""
         with self._lock:
             self._check_source()
             self._check_effect()
+            if clears is not None and clears != self.clears:
+                return None
             if (serial is not None and serial != self.effect_serial) or (epoch is not None and epoch != self.source_epoch):
                 return None
             previous, pid = self._effect, self.ipc.request("get_property", "pid")

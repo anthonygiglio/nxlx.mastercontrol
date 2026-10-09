@@ -79,8 +79,27 @@ MATRICES = {"bt.601": (0.299, 0.114), "bt.709": (0.2126, 0.0722), "bt.2020-ncl":
 ENDED = {"stop": "Stop was pressed", "cleared": "the shader under it was taken off the screen", "restart": "the player was restarted",
          "module": "the module was switched off", "panel": "the panel was restarted", "format": "a picture came that cannot take an effect",
          "pair": "the GPU refused it over the shader that came on"}
+         # (two more reasons are made where they happen: PAIR_HEAVY_WORDS below, and OVERTAKEN for a wish)
 SHADER = "shader"               # what `under` says while a generator shader is the picture under the effect
 STAYS = "The shader stays on the screen."
+OVERTAKEN = "The screen was cleared (Stop) after it was asked for, so it was not put on. Ask again."
+# The floor under an effect over a generator shader (D74, after the review). While an effect is on, Vibes marks no shader
+# heavy (the frames are the pair's), so without this a heavy pair that nobody watches (ambience started by the
+# schedule, by autostart or by staff from the Room screen) would stutter for ever. The pair is judged by the guard's
+# own rule (PAIR_LIMIT dropped frames a second on average, one look counting for at most the guard's PEAK), but over
+# PAIR_SECONDS and across the steps of a rotation, where the effect's own guard starts over at each new shader.
+# When it says heavy, the EFFECT comes off: never the shader, and no mark on it. Nothing puts it back by itself.
+# BOTH NUMBERS ARE GUESSES made without a board: the limit is the generators' (shaderlive.Guard.LIMIT), the time is
+# a little over three of its windows, and under the shortest dwell of a rotation a step's own hitch (at most PEAK
+# frames in one look) stays under the limit. To be set from rows E1 and following of tools/DEVICE-TESTING.md.
+PAIR_LIMIT = L.Guard.LIMIT      # dropped frames a second, averaged
+PAIR_SECONDS = 20.0             # over this long
+PAIR_HEAVY_WORDS = "it was too heavy over the shader on this box: frames were dropping for %d seconds, so the box took it off. The shader plays on"
+
+
+class PairGuard(L.Guard):
+    """The guard's count for an effect over generator shaders, kept across the shaders that come and go under it."""
+    LIMIT, WINDOW = PAIR_LIMIT, PAIR_SECONDS
 
 
 # Measured on a real board: a Raspberry Pi 4 (mpv 0.40, desktop OpenGL 3.1 on V3D, a 2560 x 1440 screen at 75 Hz), every
@@ -867,6 +886,7 @@ class Effects(S.Engine):
         self.bundled_dir = EFFECTS_DIR
         self.changer = L.Changer(self, clock, thread, refresh=WATCH)
         self.guard = L.Guard(self, clock)
+        self.pair_guard = PairGuard(self, clock)    # the floor under an effect over a shader (see PAIR_SECONDS)
         self._refusals = {}                         # source hash -> what the GPU said about the file
         self._bad = {}                              # (source hash, shape of the values) -> what the GPU said
         # the effect that is on: {"id", "values", "held", "controls", "picture", "path", "desc", "epoch", "digest",
@@ -886,6 +906,8 @@ class Effects(S.Engine):
         self.estimated = False                      # its frame rate is the player's estimate (a stream, a live input)
         self.size = None                            # (width, height) of the playing picture as it is stored, when the player says
         self.under = None                           # SHADER while a generator shader is the picture (then `size` is its drawing size)
+        self.pair = None                            # then also (the generator's file, the shape of its values), or None if unknown
+        self._flying = None                         # the effect the worker is putting on at this moment (what a forecast counts from)
         self._waiting = None                        # the `error` that says an effect could not go on for want of a picture
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
@@ -1141,7 +1163,7 @@ class Effects(S.Engine):
         """What the player says of the picture that plays, as an effect's text needs it, or None when nothing with a
         picture is playing or the picture is one the hooks cannot take (`self.unfit` says which)."""
         self.unfit = self.estimated = False
-        self.size = self.under = None
+        self.size = self.under = self.pair = None
         try:
             ipc = self.api.player.ipc
             params = ipc.request("get_property", "video-params")
@@ -1160,9 +1182,24 @@ class Effects(S.Engine):
         if carrier:
             # A generator shader is the picture: what the effect meets is the generator's drawing, not the carrier
             # the player speaks of (64 x 36 in CI). Its size is in the generators' record, read without their lock
-            # (see Engine.on_screen); with no record (black after a refused generator) no size is said.
-            self.under, shown = SHADER, self._live().playing
-            size = shown.get("size") if shown and shown.get("epoch") == getattr(self.api.player, "source_epoch", None) else None
+            # (see Engine.on_screen). While the GPU still looks at a generator that has just come (seconds), the
+            # record is the one before it: the size is then what the box draws generators at, which is what the
+            # new one has. With no record at all (black after a refused generator) no size is said.
+            live = self._live()
+            self.under, shown = SHADER, live.playing
+            size = None
+            if shown:
+                size = shown.get("size")
+                if shown.get("epoch") != getattr(self.api.player, "source_epoch", None):
+                    try:
+                        size = S.render_size(live.screen(), live.config()["height"])
+                    except Exception:
+                        size = None
+                else:
+                    try:                # which generator, in which shape: what a refused pair is remembered by
+                        self.pair = (shown["digest"], S.shape_of(live._parsed(live._path(shown["id"])[0])[0], dict(shown["values"], **shown.get("held", {}))))
+                    except Exception:
+                        self.pair = None
             self.size = (int(size[0]), int(size[1])) if size else None
         try:                        # what the output was given, after the player's own video filters, if it says
             out = ipc.request("get_property", "video-out-params")
@@ -1282,11 +1319,14 @@ class Effects(S.Engine):
 
     def _key(self, parsed, digest, state):
         """What the GPU's word about a text is remembered under: the file, the shape of its values, the working size,
-        whether a generator shader is under it (then the text's other hook runs, the one for RGB: a text the GPU took
-        over a clip has not been looked at as the pair, and a pair it refused is not a refusal over a clip) and, last,
-        whether it is drawn at all (at amount 0 the player leaves the hook out, and has then looked at nothing)."""
+        what is under it, and, last, whether it is drawn at all (at amount 0 the player leaves the hook out, and has
+        then looked at nothing). "What is under it" is False for a clip and for a generator shader the pair: the
+        generator's file and the shape of its values (True when those cannot be said). Over a generator the text's
+        other hook runs, the one for RGB, so a text the GPU took over a clip has not been looked at as a pair, and a
+        pair it refused is no refusal over a clip, nor over another generator."""
         work = state.get("work") or {}
-        return (digest, S.shape_of(parsed, dict(state["values"], **state.get("held", {}))), work.get("lines"), state.get("under") == SHADER,
+        under = (state.get("pair") or True) if state.get("under") == SHADER else False
+        return (digest, S.shape_of(parsed, dict(state["values"], **state.get("held", {}))), work.get("lines"), under,
                 state["controls"]["amount"] > 0)
 
     def _now(self):
@@ -1301,17 +1341,21 @@ class Effects(S.Engine):
             return 0.0
         return max(0.0, self._switched + SWITCH_GAP - self._clock())
 
-    def put(self, sid, values=None, controls=None, preset=None, serial=None, epoch=None, queued=False, gen=None):
+    def put(self, sid, values=None, controls=None, preset=None, serial=None, epoch=None, queued=False, gen=None, clears=None):
         """Put an effect on over what plays (in place of the one that is on, if any). Without values or a preset it
-        uses the preset called default, else the file's defaults. With `serial` and `epoch` (the worker's call),
-        only if no effect went on or off and nothing was played or stopped since they were handed out; None is
-        returned then. Returns {"ok": True, "id"}; raises 409 when there is no picture to put it on, 422 when the
+        uses the preset called default, else the file's defaults. With `clears` (the worker's call: the player's
+        count of clearings when the wish was made), only if the screen was not cleared since; None is returned
+        then, and also when `gen` says an Off or an effect put on by hand came after the wish. A call without
+        `gen` is somebody putting an effect on by hand: it is the newest wish, and what waits for the worker from
+        before it is dropped. Returns {"ok": True, "id"}; raises 409 when there is no picture to put it on, 422 when the
         file cannot be translated or the GPU refuses it (the effect before it stays on, else none; a generator shader
         under it stays on the screen either way, and a pair the GPU refused is not sent to it again: see _key)."""
         self._need()
         path, _ = self._path(sid)
+        if gen is None:
+            self._gen += 1                              # by hand: newer than every wish that waits
         with self._lock:
-            if gen is not None and gen != self._gen:    # something was asked for after this (an Off, another effect)
+            if gen is not None and gen != self._gen:    # something was asked for after this (an Off, an effect by hand)
                 return None
             ok, why = self.available()
             if not ok:
@@ -1328,7 +1372,7 @@ class Effects(S.Engine):
                          "held": {n: True for n, v in start.items() if n in events and v},
                          "controls": self.limit(parsed, L.clean_fx_controls(controls, stored)),
                          "picture": self.picture() or clean_picture()}
-                state.update(clip=self.size, under=self.under, work=self.work(sid, state["controls"], cfg))
+                state.update(clip=self.size, under=self.under, pair=self.pair, work=self.work(sid, state["controls"], cfg))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
                 key = self._key(parsed, digest, state)
@@ -1339,7 +1383,7 @@ class Effects(S.Engine):
                 # The GPU refused this effect over a shader before: it is not sent again (each look of the GPU at a
                 # text it refuses flashes the screen), until its file or its values are others.
                 self.error = {"id": sid, "message": self._bad[key], "at": self._now()}
-                raise ApiError(422, "the GPU refused %s over a shader before (%s); it was not sent again. %s" % (sid, self._bad[key], STAYS))
+                raise ApiError(422, "the GPU refused %s over this shader before (%s); it was not sent again. %s" % (sid, self._bad[key], STAYS))
             player = self.api.player
             before = self.current()
             try:
@@ -1355,13 +1399,13 @@ class Effects(S.Engine):
             try:
                 try:
                     player.effect_8bit = self.eight_bit()
-                    new = player.put_effect(out, serial, epoch)
+                    new = player.put_effect(out, serial, epoch, clears)
                 except PlayerError as e:
                     self._cleanup({before["path"]} if before else set())
                     raise ApiError(503, str(e))
                 if new is None:                         # the screen changed hands meanwhile
                     self._cleanup({before["path"]} if before else set())
-                    if serial is None:
+                    if serial is None and clears is None:
                         raise ApiError(409, self.available()[1] or "the screen changed hands; try again")
                     return None
                 if gen is not None and gen != self._gen:    # an Off came while the player was taking it: it does not stay
@@ -1403,7 +1447,7 @@ class Effects(S.Engine):
             self._refusals.pop(digest, None)
             self.error = None                           # an effect is on: whatever went wrong before it is over
             self.on = {"id": sid, "values": state["values"], "held": state["held"], "controls": state["controls"], "picture": state["picture"],
-                       "clip": state["clip"], "work": state["work"], "under": state["under"],
+                       "clip": state["clip"], "work": state["work"], "under": state["under"], "pair": state["pair"],
                        "path": out, "desc": desc, "epoch": new, "digest": digest, "preset": name,
                        "checked": True if (verdict == "ok" or key in self._checked) else None}
             self.recent, self.last = sid, None
@@ -1414,9 +1458,43 @@ class Effects(S.Engine):
             self.changer.keep()                         # look at the picture under it from now on
             return {"ok": True, "id": sid}
 
+    def _resolve(self, job, at, ids):
+        """The effect a waiting wish means, now: its own (`id`), else the one that is on (`at`; none for a wish made
+        after an Off, `fresh`), moved by its steps through `ids`, the library's order. From none, the first step
+        forward is the first effect and the first step back the last. None when there is nothing to put on."""
+        target = job.get("id") or (None if job.get("fresh") else at)
+        n = job.get("step", 0)
+        if n and ids:
+            if target in ids:
+                target = ids[(ids.index(target) + n) % len(ids)]
+            else:
+                target = ids[(n - 1) % len(ids)] if n > 0 else ids[n % len(ids)]
+        return target
+
+    def _heading(self):
+        """The effect that is on or on its way, as far as memory says (no question to the player, no lock): what
+        Next and a preset answer with. A forecast: the worker decides when it runs."""
+        on = self._seen()
+        at = on["id"] if on else None
+        try:
+            ids = self.order()
+            held = self.changer.working             # the worker has taken it: where it leads, if it has not said yet
+            if self._flying:
+                at = self._flying
+            elif held is not None:
+                at = None if held.get("off") else self._resolve(held, at, ids)
+            job = self.changer.queued()
+            if job is None:
+                return at
+            return None if job.get("off") else self._resolve(job, at, ids)
+        except Exception:
+            return at
+
     def play_job(self, job):
-        """The worker's call for a switch that was asked for without waiting: a whole effect (a step, on, a preset
-        of another effect), or Off from a controller's one button."""
+        """The worker's call for a switch that was asked for without waiting: a whole effect (steps, On, a preset
+        of another effect), or Off from a controller's one button. What the wish means is worked out here, when it
+        runs, from the effect that is on now (see _wish). A wish that comes to nothing says why in `error`."""
+        sid = None
         try:
             if job.get("off"):
                 if job["gen"] == self._gen:
@@ -1425,15 +1503,24 @@ class Effects(S.Engine):
             if not self.enabled():
                 return
             try:
-                self.put(job["id"], job.get("values"), job.get("controls"), job.get("preset"), serial=job["serial"], epoch=job["epoch"], queued=True,
-                         gen=job.get("gen"))
+                ids = self.order()
+                if not ids and not job.get("id"):
+                    raise ApiError(409, "there is no effect that can be put on")
+                on = self._seen()
+                sid = self._flying = self._resolve(job, on["id"] if on else None, ids)
+                done = self.put(sid, None, None, job.get("preset"), queued=True, gen=job.get("gen"), clears=job.get("clears", getattr(self.api.player, "clears", 0)))
+                if done is None and job.get("gen") == self._gen:
+                    # Not overtaken by an Off or by an effect put on by hand (those are newer wishes and need no
+                    # word): the screen was cleared after the wish. Said, not swallowed.
+                    self.error = {"id": sid, "message": OVERTAKEN, "at": self._now(), "kind": "wish"}
             except ApiError as e:
-                self.error = {"id": job["id"], "message": e.message, "at": self._now()}
+                self.error = {"id": sid or "", "message": e.message, "at": self._now(), "kind": "gpu" if e.status == 422 else "wish"}
                 # There was no picture to put it on: that is over once there is one. It is this error that is over
                 # then, and no other: whatever is said after it (a refusal by the GPU) is another object and stays.
                 self._waiting = self.error if (e.status == 409 and e.message.startswith(NO_PICTURE)) else None
         finally:
-            if job.get("gen") == self._gen:
+            self._flying = None
+            if job.get("gen") == self._gen and self.changer.queued() is None:
                 self._intent = None                     # carried out, or it could not be: the player's word counts again
 
     def adjust(self, job):
@@ -1469,10 +1556,13 @@ class Effects(S.Engine):
                          "picture": seen or p["picture"]}
                 state["clip"] = (self.size or p.get("clip")) if seen else p.get("clip")
                 state["under"] = self.under if seen else p.get("under")
+                state["pair"] = self.pair if seen else p.get("pair")
                 state["work"] = self.work(p["id"], state["controls"])
                 if look:
                     self.changer.keep()
                     self.guard.sample(self._guarded(p))
+                    if self._floor(dict(p, under=state["under"])):
+                        return False
                     # a frame rate that only wobbles, or that no line of this filter uses, is no reason for a new text
                     steady = steady_picture(state["picture"], p["picture"], parsed.get("clock"), self.estimated)
                     if steady == p["picture"] and state["controls"] == p["controls"] and state["work"] == p.get("work"):
@@ -1482,8 +1572,8 @@ class Effects(S.Engine):
                         known = state["picture"]
                         if self.estimated and abs(known["fps"] - p["picture"]["fps"]) <= FPS_SAME * p["picture"]["fps"]:
                             known = p["picture"]
-                        if (known, state["clip"], state["under"]) != (p["picture"], p.get("clip"), p.get("under")) and self.on is p:
-                            self.on = dict(p, picture=known, clip=state["clip"], under=state["under"])
+                        if (known, state["clip"], state["under"], state["pair"]) != (p["picture"], p.get("clip"), p.get("under"), p.get("pair")) and self.on is p:
+                            self.on = dict(p, picture=known, clip=state["clip"], under=state["under"], pair=state["pair"])
                         return bool(p.get("held"))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
@@ -1544,7 +1634,7 @@ class Effects(S.Engine):
             if self.error and self.error["id"] == p["id"]:
                 self.error = None                       # the new text was taken: what was refused before it is not on
             self.on = dict(p, values=state["values"], held=state["held"], controls=state["controls"], picture=state["picture"], path=out, desc=desc,
-                           clip=state["clip"], work=state["work"], under=state["under"],
+                           clip=state["clip"], work=state["work"], under=state["under"], pair=state["pair"],
                            digest=digest, preset=preset, checked=True if (verdict == "ok" or key in self._checked) else p["checked"])
             self._cleanup({out})
             return bool(state["held"])
@@ -1563,6 +1653,28 @@ class Effects(S.Engine):
             pass
         self.on, self.last, self._switched = None, ENDED["pair"], self._clock()
         self._cleanup(set())
+
+    def _floor(self, rec):
+        """The floor under an effect over a generator shader (see PAIR_SECONDS): look once, and if the pair has
+        dropped frames for that long, take the effect off, leave the shader, mark nothing, and say why. True if it
+        was taken off. Called with the engine's lock held, from the worker's look once a second, so it acts with
+        nobody at a panel. Off with the generators' guard switched off (the same switch: "watch the load")."""
+        if rec.get("under") != SHADER or not self._live().config().get("guard", True):
+            self.pair_guard.sample(None)
+            return False
+        seen = self.pair_guard.sample({"desc": "the effect %s over shaders" % rec["epoch"]})    # one count for as long as this effect is on
+        if seen["state"] != "heavy" or self.on is None or self.on.get("epoch") != rec["epoch"]:
+            return False
+        try:
+            self.api.player.clear_effect(rec["epoch"], "heavy")
+        except Exception:
+            return False
+        self.on, self._switched = None, self._clock()
+        self.last = PAIR_HEAVY_WORDS % PAIR_SECONDS
+        self.pair_guard.sample(None)
+        self._cleanup(set())
+        self.log("pvj-web: effect %s taken off: over a shader the box dropped %s frames a second for %d seconds" % (rec["id"], seen["drops_per_second"], PAIR_SECONDS))
+        return True
 
     def _guarded(self, rec):
         """The record the guard is shown: over a generator shader the text's name with the shader's, so the count
@@ -1641,7 +1753,7 @@ class Effects(S.Engine):
         after = {"values": dict(on["values"], **dict(wish.get("values", {}), **values)), "held": held,
                  "controls": dict(on["controls"], **dict(wish.get("controls", {}), **controls)),
                  # what the worker's key will hold too: the working size and whether a generator shader is under it
-                 "work": on.get("work"), "under": on.get("under")}
+                 "work": on.get("work"), "under": on.get("under"), "pair": on.get("pair")}
         if self._bad:
             said = self._bad.get(self._key(parsed, on["digest"], after))
             if said:
@@ -1651,13 +1763,30 @@ class Effects(S.Engine):
         return {"ok": True, "id": on["id"], "values": dict(self.current_values(parsed, on), **after["values"]),
                 "controls": self.limit(parsed, after["controls"])}
 
-    def _queue(self, sid, preset=None):
-        """Note that this effect is to go on and return: the worker puts it on. Nothing here asks the player."""
-        player = self.api.player
-        self._gen += 1
+    def _wish(self, merge):
+        """Note a wish for an effect to go on and return: the worker puts it on. Nothing here asks the player.
+        `merge(waiting)` returns the job: {"id"?: a named effect, "step"?: so many places on from it (or from the
+        one that is on when the job RUNS), "fresh"?: count from none, "preset"?}. `waiting` is the job that waits,
+        if it is of the same moment (no Off, no effect by hand and no clearing of the screen since), else None.
+
+        Why a step is kept as a move and not as a name: a name worked out here would come from a reading of what
+        is on, and the worker may be changing that at this very moment (it holds the wish before this one: before
+        its call to the player, during the GPU's look, just after). Then two quick Nexts named the same effect and
+        one was lost. So steps that wait add up, and the worker counts them from what is on when it gets there.
+        The job carries the player's count of clearings: a Stop before the worker comes round keeps the screen
+        clear, and the wish says so (play_job). A clip, a generator or a Vibes step in between does not stop it:
+        an effect stays through those (D74), so a wish for one does too."""
+        clears, gen = getattr(self.api.player, "clears", 0), self._gen
         self._intent = True
-        self.changer.show({"id": sid, "preset": preset, "serial": getattr(player, "effect_serial", 0), "epoch": getattr(player, "source_epoch", 0),
-                           "gen": self._gen})
+
+        def merged(waiting):
+            same = waiting and not waiting.get("off") and (waiting.get("gen"), waiting.get("clears")) == (gen, clears)
+            return dict(merge(dict(waiting) if same else None), gen=gen, clears=clears)
+        self.changer.merge(merged)
+
+    def _queue(self, sid, preset=None):
+        """A named effect is to go on (in place of whatever waits)."""
+        self._wish(lambda waiting: {"id": sid, "preset": preset})
 
     def off_soon(self):
         """Off, noted for the worker (a controller's button: its thread asks the player nothing). What was asked for
@@ -1673,7 +1802,10 @@ class Effects(S.Engine):
         whether another effect could go on at all (see _ask)."""
         self._need()
         on = self._seen()
-        sid = body.get("id") if body.get("id") is not None else (on["id"] if on else None)
+        # a switch that waits or that the worker is carrying out: the preset is then meant for the effect that is
+        # coming, and goes on with it, after it in the queue (applied to the one on the screen it would be lost)
+        busy = any(job is not None and not job.get("off") for job in (self.changer.working, self.changer.queued()))
+        sid = body.get("id") if body.get("id") is not None else (self._heading() if busy else (on["id"] if on else None))
         if sid is None:
             raise ApiError(409, "no effect is on")
         path, _ = self._path(sid)
@@ -1694,7 +1826,7 @@ class Effects(S.Engine):
         except ShaderError as e:
             raise ApiError(422, "%s: %s" % (sid, e))
         values, controls, name = self.start(parsed, cfg, sid, name)
-        if on and on["id"] == sid:
+        if on and on["id"] == sid and not busy:
             full = {i["name"]: i["default"] for i in parsed["inputs"] if i["type"] != "event"}      # a preset sets every input
             self.changer.submit(on, dict(full, **values), controls)
             with self.changer._cond:
@@ -1707,8 +1839,9 @@ class Effects(S.Engine):
 
     def step(self, direction, ask=False):
         """The next filter of the library, or the one before, put on in place of the one that is on (the first or the
-        last when none is). Answers at once; the worker puts it on, and only if nothing was played, stopped or put
-        on in between. With `ask` (a panel's call) the player is asked first whether one could go on (see _ask)."""
+        last when none is). Answers at once; the worker puts it on. Quick steps add up and none is lost (see
+        _wish); "id" in the answer is the effect they lead to as far as can be said now. A Stop in between keeps
+        the screen clear. With `ask` (a panel's call) the player is asked first whether one could go on (see _ask)."""
         self._need()
         if isinstance(direction, bool) or not isinstance(direction, int) or direction not in (1, -1):
             raise ApiError(400, "dir must be 1 (next) or -1 (the one before)")
@@ -1716,14 +1849,10 @@ class Effects(S.Engine):
         if not ids:
             raise ApiError(409, "there is no effect that can be put on")
         self._ask(ask)
-        on = self._seen() if self._intent is not False else None
-        player = self.api.player
-        wish = self.changer.queued()
-        wish = wish if wish and (wish.get("serial"), wish.get("epoch")) == (getattr(player, "effect_serial", 0), getattr(player, "source_epoch", 0)) else None
-        at = (wish or {}).get("id") or (on["id"] if on else None)
-        nxt = ids[(ids.index(at) + direction) % len(ids)] if at in ids else ids[0 if direction == 1 else -1]
-        self._queue(nxt)
-        return {"ok": True, "id": nxt}
+        fresh = self._intent is False               # an Off was the last wish: count from none, as after it
+        self._wish(lambda waiting: dict(waiting, step=waiting.get("step", 0) + direction, preset=None) if waiting
+                   else {"step": direction, "fresh": fresh})
+        return {"ok": True, "id": self._heading()}
 
     def toggle(self, ask=False):
         """On or off from one button (a controller's): off if an effect is on or on its way, otherwise the one that
@@ -1788,6 +1917,7 @@ class Effects(S.Engine):
             showing.update(load=seen["state"], drops_per_second=seen["drops_per_second"])
         else:
             self.guard.sample(None)
+            self.pair_guard.sample(None)
         return {"enabled": enabled, "effects": rows, "on": showing, "available": ok, "unavailable": why, "error": self.error, "last": self.last,
                 "controls": {"amount": {"min": 0.0, "max": 1.0, "default": 1.0}, "speed": {"min": S.SPEED_MIN, "max": S.SPEED_MAX, "default": 1.0},
                              "half": {"default": False, "superseded": "detail"}},

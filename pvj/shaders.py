@@ -846,26 +846,30 @@ _DUMP = re.compile(r"shader source:\s*$")
 _NAMED = re.compile(r"^\[\s*\d+\] // (nxlx (?:shader|effect) \d+ \d+)\s*$")
 
 
-def about(lines, desc):
-    """Of the player's log, what is not about another shader than `desc`. A generator and an effect can be in the
+def about(lines, desc, strict=False):
+    """Of the player's log, what is not about another shader than `desc`; with `strict`, only what names `desc`. A generator and an effect can be in the
     player together (D74), each looked at by its own engine under its own lock, and both listen to the one log: a
     refused generator of a Vibes step must not be taken for a refusal of the effect whose text went to the player
     in the same moment, nor the other way round. The player prints a refused shader's whole text before the
     compiler's log, and every text of ours carries its name in a comment (see translate): a stretch of the log from
-    one "shader source:" to the next that names another shader is left out. A stretch that names none (a hand
-    written hook, a player that prints no text) is kept, as before."""
+    one "shader source:" to the next that names another shader is left out. A stretch that names none is kept
+    while this shader is the only one of the two in the player (a player that prints no text is heard as before).
+    While both are in the player (`strict`) it is left out: a listener that began in the middle of the other
+    shader's text, after its name, hears numbered lines and a complaint with no name, and must not take them for
+    its own. One's own text is always heard whole, since the listener is there before the text is sent."""
     out, part, owner = [], [], None
+    mine = lambda: owner == desc or (owner is None and not strict)
     for row in lines:
         text = str(row[2])
         if _DUMP.search(text):
-            if owner in (None, desc):
+            if mine():
                 out += part
             part, owner = [], None
         if owner is None:
             m = _NAMED.match(text.strip())
             owner = m.group(1) if m else None
         part.append(row)
-    return out + (part if owner in (None, desc) else [])
+    return out + (part if mine() else [])
 
 
 # ---- the engine ----------------------------------------------------------------------------------------------------------
@@ -1185,10 +1189,12 @@ class Engine:
         """Wait until the player has drawn a frame with the shader called `desc` or has complained.
         ("ok" | "refused" | "unknown", message)."""
         lines, drawn, listed = [], False, None
+        player = self.api.player       # a generator and an effect together: only what names this shader is its own (see about)
+        both = bool(getattr(player, "source_shader", None) and getattr(player, "effect_shader", None))
         deadline = self._clock() + VERIFY_SECONDS
         while self._clock() < deadline and not drawn:
             lines += tap.drain(0.1)
-            if shader_errors(about(lines, desc)):
+            if shader_errors(about(lines, desc, both)):
                 break
             named = re.compile(re.escape(desc) + r"(?![0-9])")
             mine = [x for x in self._passes() if named.search(str(x.get("desc", "")))]
@@ -1200,7 +1206,7 @@ class Engine:
                 if self._clock() - listed >= 1.0:
                     break
         lines += tap.drain(0.2)
-        message = shader_errors(about(lines, desc))
+        message = shader_errors(about(lines, desc, both))
         if message:
             return "refused", message
         return ("ok" if drawn else "unknown"), ""
@@ -1307,6 +1313,12 @@ class Engine:
                             "digest": digest, "size": size, "preset": preset, "held": state["held"],
                             "checked": True if (verdict == "ok" or key in self._checked) else None}
             self._cleanup({out})
+            fx = getattr(self.api, "effects", None)
+            if fx is not None and fx is not self and fx.on is not None:
+                # An effect is on over what was there before (D74): its worker looks at the new picture now, not at
+                # its next round up to a second away, so that the GPU's word about the effect over this picture is
+                # listened for at once. Noted only: nothing of the effect is waited for here.
+                fx.changer.keep(0)
             if cut:
                 show = getattr(self.api, "_show_level", None)
                 if show is not None:

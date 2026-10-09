@@ -565,6 +565,7 @@ class Changer:
         self._release = None                        # when a pressed event is to be let go
         self._refresh = None                        # when the shader on screen is due for a new anchor
         self._thread = None
+        self.working = None                         # the whole shader the worker is putting on at this moment (a "show" job), or None
         self.applied = 0                            # how many times the GPU was given a new text (for tests and curiosity)
 
     def pending(self):
@@ -591,6 +592,14 @@ class Changer:
             self._show, self._adjust = job, None
             self._wake()
 
+    def merge(self, change):
+        """Put `change(what waits)` in the place of the whole shader that waits (None: none does), as one step:
+        a wish that adds to the one before it (the effects' Next and Previous, which add up) can lose none and can
+        never be computed from a reading that the worker has since made old."""
+        with self._cond:
+            self._show, self._adjust = change(self._show), None
+            self._wake()
+
     def queued(self):
         with self._cond:
             return self._show
@@ -600,11 +609,11 @@ class Changer:
         with self._cond:
             self._show = self._adjust = self._release = self._refresh = None
 
-    def keep(self):
+    def keep(self, after=None):
         """A shader has just come on or been changed: come back in two days to give it a new anchor, if nobody has
-        touched it by then."""
+        touched it by then. `after`: in so many seconds instead (0: now)."""
         with self._cond:
-            self._refresh = self._clock() + self.refresh
+            self._refresh = self._clock() + (self.refresh if after is None else after)
             self._wake()
 
     def _wake(self):
@@ -650,12 +659,17 @@ class Changer:
         """Apply what is due (the worker's one step; tests call it with a fake clock). True if something was done."""
         with self._cond:
             job, _ = self._take()
+            if job is not None and job[0] == "show":
+                self.working = job[1]               # taken and not yet done: no longer waiting, not yet on the screen
         if job is None:
             return False
         kind, body = job
         try:
             if kind == "show":
-                self.engine.play_job(body)
+                try:
+                    self.engine.play_job(body)
+                finally:
+                    self.working = None
             else:
                 held = self.engine.adjust(body)
                 self.applied += 1

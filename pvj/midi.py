@@ -513,8 +513,8 @@ def light_state(action, snap, bank=0):
         return "active" if snap["preset"] is not None and snap["presets"][n - 1] == snap["preset"] else "on"
     if a.startswith("shader_control_"):
         return "on" if snap["shader"] else "off"
-    # Effects (a filter over what plays): the one button is lit while an effect could go on (something plays: a clip,
-    # a live input or a generator shader, D74) and is "on now" while one is on; the two that step are lit then too; a
+    # Effects (a filter over what plays): the one button is lit while the player runs (whether something with a
+    # picture plays is not asked here; pvj/MIDI.md says so) and is "on now" while one is on; the two that step are lit then too; a
     # control of the effect is lit while an effect is on (not checked per input, as for a shader's).
     if a == "effect_toggle":
         return "active" if snap.get("effect") else ("on" if snap.get("effect_ready") and snap["running"] else "off")

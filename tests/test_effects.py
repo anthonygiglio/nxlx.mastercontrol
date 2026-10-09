@@ -1208,13 +1208,16 @@ class ValuesTest(Base):
             ask()
             with self.fx.changer._cond:                                                # the worker takes the job ...
                 job, self.fx.changer._show = self.fx.changer._show, None
-            self.assertEqual(job["serial"], serial)
+            self.assertEqual((job["gen"], job["clears"]), (self.fx._gen, self.player.clears))
             self.fx.off()                                                              # ... and Off arrives before it reaches the player
             self.assertGreater(self.player.effect_serial, serial)
             self.fx.play_job(job)
-            self.assertEqual((self.mpv.loaded, self.fx.on, self.state()["on"]), ([], None, None))
-            # the player's own rule, without the engine's count: the same job is refused by its serial alone
-            self.assertIsNone(self.fx.put(job["id"], serial=job["serial"], epoch=job["epoch"], queued=True))
+            self.assertEqual((self.mpv.loaded, self.fx.on, self.state()["on"], self.fx.error), ([], None, None, None))
+            # the player's own rule, without the engine's count: a job from before a clearing of the screen is
+            # refused by the count of clearings alone
+            self.player.clear()
+            self.player.play(["/media/a.mp4"])
+            self.assertIsNone(self.fx.put("all.fs", queued=True, gen=self.fx._gen, clears=job["clears"]))
             self.assertEqual(self.mpv.loaded, [])
         # and through the player directly
         serial = self.player.effect_serial
@@ -1328,28 +1331,7 @@ class ValuesTest(Base):
         self.fx.step(1)
         self.assertTrue(self.fx.changer.pump())
 
-    def test_what_was_asked_for_before_the_screen_changed_hands_is_dropped(self):
-        """The epoch rule: a step, an "on" or a change that waits for the worker belongs to the moment it was asked
-        for. Whatever is played, stopped, put on or taken off before the worker comes round keeps the screen."""
-        for name, between in (("a clip was played", lambda: self.player.play(["/media/b.mov"])),
-                              ("Stop was pressed", lambda: (self.player.clear(), self.player.play(["/media/a.mp4"]))),
-                              ("a generator took the screen", lambda: self.gen.show("nxlx-silk.fs")),
-                              ("another effect was put on", lambda: self.fx.put("fx-wash.fs")),
-                              ("the effect was taken off", lambda: self.fx.off())):
-            self.player.play(["/media/a.mp4"])
-            self.fx.off()
-            self.fx.put("all.fs")
-            self.fx.step(1)
-            before = self.fx.changer.queued()
-            self.assertIsNotNone(before, name)
-            between()
-            was = self.mpv.loaded
-            if name != "the effect was taken off":
-                self.fx.changer.show(before)                                           # (off forgets what waits; put it back to see it refused)
-            self.fx.changer._last = -1e9
-            self.fx.changer.pump()
-            self.assertEqual(self.mpv.loaded, was, name)
-            self.assertNotEqual((self.state()["on"] or {}).get("id"), "moves.fs", name)
+    def test_a_change_of_a_value_meant_for_an_effect_that_has_gone_is_dropped(self):
         # a change of a value meant for an effect that has gone
         self.player.play(["/media/a.mp4"])
         self.fx.put("all.fs")
@@ -1985,6 +1967,222 @@ class ReviewTest(Base):
         self.assertEqual(self.text().count("//!WHEN 0\n"), 2)
 
 
+
+class WishTap:
+    """A listener during whose listening (the GPU's look at a new text) the wishes in `during` are made."""
+    during = []
+
+    def __init__(self, path, level="error"):
+        pass
+
+    def drain(self, seconds):
+        while WishTap.during:
+            WishTap.during.pop(0)()
+        return []
+
+    def close(self):
+        pass
+
+
+WINDOWS = ("before the worker takes any", "while the worker holds the one before", "at its call to the player", "during the GPU's look", "after it")
+
+
+class QueueTest(Base):
+    """Wishes that wait for the worker (a controller's Next, Previous, On, a preset): of two, three or five quick
+    ones the older never wins and none is lost, wherever the worker is with the one before. The windows are made
+    here on one thread: the wishes after the first are made at the named moment of the first one's way."""
+    def setUp(self):
+        super().setUp()
+        self.fx.upload("all.fs", ALL)
+        self.fx._tap = WishTap
+        WishTap.during = []
+        self.at_player, self.at_start = [], []
+        job = self.fx.play_job                          # the worker has taken the job and has done nothing with it yet
+
+        def play_job(body):
+            while self.at_start:
+                self.at_start.pop(0)()
+            return job(body)
+        self.fx.play_job = play_job
+        real = self.player.put_effect                   # the real one, lock and all, with the wishes made just before it
+
+        def put_effect(*args, **kwargs):
+            while self.at_player:
+                self.at_player.pop(0)()
+            return real(*args, **kwargs)
+        self.player.put_effect = put_effect
+        self.ids = self.fx.order()
+        self.assertGreater(len(self.ids), 6)
+
+    def drain(self):
+        for _ in range(20):
+            if self.fx.changer.queued() is None and self.fx.changer.pending() is None:
+                return
+            self.pump()
+        self.fail("the queue never emptied")
+
+    def make(self, window, wishes):
+        """Make the wishes, the ones after the first in `window` of the first one's way, and let the worker finish."""
+        first, rest = wishes[0], list(wishes[1:])
+        self.fx._checked.clear()                        # so that the GPU "looks" (and the listener is there) each time
+        if window == WINDOWS[0]:
+            for w in wishes:
+                w()
+        elif window == WINDOWS[1]:
+            first()
+            self.at_start = rest
+            self.pump()
+        elif window == WINDOWS[2]:
+            first()
+            self.at_player = rest
+            self.pump()
+        elif window == WINDOWS[3]:
+            first()
+            WishTap.during = rest
+            self.pump()
+        else:
+            for w in wishes:
+                w()
+                self.drain()
+        self.assertEqual((self.at_start, self.at_player, WishTap.during), ([], [], []), "the wishes were not made in the window: %s" % window)
+        self.drain()
+
+    def on(self):
+        return (self.state()["on"] or {}).get("id")
+
+    def test_quick_steps_add_up_in_every_window(self):
+        nxt, prev = (lambda: self.fx.step(1)), (lambda: self.fx.step(-1))
+        for window in WINDOWS:
+            for wishes, moved in (([nxt] * 2, 2), ([nxt] * 3, 3), ([nxt] * 5, 5), ([prev] * 3, -3), ([nxt, nxt, prev], 1), ([nxt, prev, prev, prev, nxt], -1)):
+                self.fx.put(self.ids[2])
+                self.make(window, wishes)
+                self.assertEqual(self.on(), self.ids[(2 + moved) % len(self.ids)], "%d wishes %s: %+d" % (len(wishes), window, moved))
+                self.assertIsNone(self.fx.error, window)
+                self.assertIsNone(self.fx._intent, window)
+            # from nothing on: the first step forward is the first effect, and the others count on from it
+            self.fx.off()
+            self.make(window, [nxt] * 3)
+            self.assertEqual(self.on(), self.ids[2], window)
+            self.fx.off()
+            self.make(window, [prev] * 2)
+            self.assertEqual(self.on(), self.ids[-2], window)
+
+    def test_the_answer_names_the_effect_the_steps_lead_to(self):
+        self.fx.put(self.ids[2])
+        self.assertEqual([self.fx.step(1)["id"] for _ in range(3)], self.ids[3:6])
+        self.assertEqual(self.fx.step(-1)["id"], self.ids[4])
+        self.drain()
+        self.assertEqual(self.on(), self.ids[4])
+
+    def test_on_then_a_preset_and_a_step_then_a_preset_in_every_window(self):
+        self.fx.put("all.fs", {"k": 1.5})
+        self.fx.preset_save("One")
+        for window in WINDOWS:
+            # the one button, then a preset by its place: the preset is meant for the effect that is coming
+            self.fx.put("all.fs")
+            self.fx.off()                               # all.fs was on last: it is what the one button puts back
+            self.make(window, [lambda: self.fx.toggle(), lambda: self.fx.apply_preset({"index": 1})])
+            on = self.state()["on"]
+            self.assertEqual((on["id"], on["preset"], on["values"]["k"]), ("all.fs", "One", 1.5), window)
+            # a step, then a preset of a named effect: the newer wish names where to go
+            self.fx.put(self.ids[2])
+            self.make(window, [lambda: self.fx.step(1), lambda: self.fx.apply_preset({"id": "all.fs", "name": "One"})])
+            on = self.state()["on"]
+            self.assertEqual((on["id"], on["preset"]), ("all.fs", "One"), window)
+            # a preset of a named effect, then a step: one on from that effect, without its preset
+            self.fx.put(self.ids[2])
+            self.make(window, [lambda: self.fx._queue(self.ids[4]), lambda: self.fx.step(1)])
+            self.assertEqual(self.on(), self.ids[5], window)
+            self.assertIsNone(self.fx.error, window)
+
+    def test_off_and_an_effect_by_hand_are_newer_than_what_waits_in_every_window(self):
+        nxt = lambda: self.fx.step(1)
+        for window in WINDOWS[:4]:
+            self.fx.put(self.ids[2])
+            self.make(window, [nxt, nxt, lambda: self.fx.off()])
+            self.assertEqual((self.on(), self.mpv.loaded, self.fx.error), (None, [], None), window)
+            self.fx.put(self.ids[2])
+            self.make(window, [nxt, nxt, lambda: self.fx.toggle()])                    # a controller's Off
+            self.assertEqual((self.on(), self.mpv.loaded, self.fx.error), (None, [], None), window)
+        for window in WINDOWS[:2]:                                                     # (by hand waits for the engine's lock: not from inside the worker)
+            self.fx.put(self.ids[2])
+            self.make(window, [nxt, nxt, lambda: self.fx.put("all.fs")])
+            self.assertEqual((self.on(), len(self.mpv.loaded), self.fx.error), ("all.fs", 1, None), window)
+
+    def test_a_clip_a_generator_and_a_vibes_step_in_between_do_not_drop_a_wish(self):
+        """An effect stays through a change of what plays (D74), so a wish for one does too. Before, the wish was
+        stamped with the player's epoch, a rotation's step moved it, and the controller's Next came to nothing
+        without a word."""
+        for name, between in (("a clip", lambda: self.player.play(["/media/b.mov"])),
+                              ("a generator", lambda: self.gen.show("nxlx-silk.fs")),
+                              ("a rotation's step", lambda: self.gen.show("nxlx-ember.fs", epoch=self.player.source_epoch, cut=False))):
+            self.fx.put(self.ids[2])
+            self.fx.step(1)
+            self.fx.step(1)
+            between()
+            path = self.mpv.props["path"]
+            self.drain()
+            self.assertEqual((self.on(), self.fx.error), (self.ids[4], None), name)
+            self.assertEqual(self.mpv.props["path"], path, name)                       # and what was played keeps the screen
+            self.player.play(["/media/a.mp4"])
+
+    def test_a_stop_in_between_keeps_the_screen_clear_and_the_wish_says_so(self):
+        for wish in (lambda: self.fx.step(1), lambda: (self.fx.off(), self.fx.toggle()), lambda: (self.fx.off(), self.fx.apply_preset({"id": "all.fs", "index": 1}))):
+            self.player.play(["/media/a.mp4"])
+            self.fx.put("all.fs")
+            self.fx.preset_save("One")
+            self.fx.error = None
+            wish()
+            self.api.control({"action": "stop"}, None, "t")
+            self.player.play(["/media/a.mp4"])                                         # and a clip after the Stop: it starts clean
+            self.drain()
+            s = self.state()
+            self.assertEqual((s["on"], self.mpv.loaded), (None, []))
+            self.assertEqual((s["error"]["message"], s["error"]["kind"]), (E.OVERTAKEN, "wish"))
+            self.assertIsNone(self.fx._intent)
+            # with nothing playing after the Stop it is the other answer, also said
+            self.fx.error = None
+            wish()
+            self.api.control({"action": "stop"}, None, "t")
+            self.drain()
+            self.assertIn("Nothing with a picture is playing", self.state()["error"]["message"])
+            self.assertEqual(self.state()["error"]["kind"], "wish")
+        # the player's side by itself: only a clearing and the panel's restart move the count
+        clears = self.player.clears
+        self.player.play(["/media/b.mov"])
+        self.gen.show("nxlx-silk.fs")
+        self.fx.put("all.fs")
+        self.fx.off()
+        self.assertEqual(self.player.clears, clears)
+        self.player.clear()
+        self.assertEqual(self.player.clears, clears + 1)
+        self.player.quit()
+        self.assertEqual(self.player.clears, clears + 2)
+
+    def test_a_wish_that_cannot_be_carried_out_says_why(self):
+        self.fx.put(self.ids[2])
+        self.fx.step(1)
+        with self.assertRaises(ApiError) as c:                                         # a preset the coming effect does not have: said at once
+            self.fx.apply_preset({"name": "nobody saved this"})
+        self.assertEqual(c.exception.status, 404)
+        self.assertIn(self.ids[3], c.exception.message)
+        self.drain()
+        self.assertEqual(self.on(), self.ids[3])
+        self.fx.upload("bad.fs", GOOD.replace("* k", "* oops"))                        # a step onto a file the GPU refuses: said, the one before stays
+        ids = self.fx.order()
+        self.fx.put(ids[ids.index("bad.fs") - 1])
+        self.fx._tap = FakeTap
+        FakeTap.lines = list(REFUSAL)
+        self.fx.step(1)
+        self.drain()
+        FakeTap.lines = []
+        s = self.state()
+        self.assertEqual((s["on"]["id"], s["error"]["id"], s["error"]["kind"]), (ids[ids.index("bad.fs") - 1], "bad.fs", "gpu"))
+        self.fx.step(1)                                                                # and the next Next passes it by
+        self.drain()
+        self.assertEqual(self.on(), ids[(ids.index("bad.fs") + 1) % len(ids)])
+
+
 CARRIER_VIDEO = {"colormatrix": "rgb", "colorlevels": "full", "pixelformat": "rgb0", "w": 64, "h": 36}     # what a real mpv said in CI (the spike)
 DUMP = [("vo/gpu/opengl", "error", "fragment shader source:"), ("vo/gpu/opengl", "error", "[  1] #version 140"),
         ("vo/gpu/opengl", "error", "[ 12] // %s"), ("vo/gpu/opengl", "error", "[ 40] gl_FragColor = oops;"),
@@ -2037,6 +2235,11 @@ class OverShaderTest(Base):
 
     def kinds(self):
         return [n.split("-")[0] for n in self.mpv.loaded]
+
+    def refuse(self):
+        """The GPU refuses the next text of the effect, as a real player says it: the text with its name in it, then
+        the compiler's words. (Over a generator a complaint that names no shader is nobody's: shaders.about.)"""
+        FxTap.lines = [(p, level, t % ("nxlx effect %d %d" % (os.getpid(), self.fx._serial + 1)) if "%s" in t else t) for p, level, t in DUMP]
 
     def lists(self, since):
         return [[os.path.basename(x).split("-")[0] for x in c[2]] for c in self.mpv.commands[since:] if c[:2] == ("set_property", "glsl-shaders")]
@@ -2184,7 +2387,7 @@ class OverShaderTest(Base):
     def test_a_pair_the_gpu_refuses_leaves_the_generator_on_and_is_not_sent_again(self):
         self.show()
         gen = self.mpv.loaded
-        FxTap.lines = list(REFUSAL)
+        self.refuse()
         with self.assertRaises(ApiError) as c:
             self.fx.put("fx-wash.fs")
         self.assertEqual(c.exception.status, 422)
@@ -2199,19 +2402,25 @@ class OverShaderTest(Base):
         with self.assertRaises(ApiError) as c:
             self.fx.put("fx-wash.fs")
         self.assertEqual(c.exception.status, 422)
-        self.assertIn("refused fx-wash.fs over a shader before", c.exception.message)
+        self.assertIn("refused fx-wash.fs over this shader before", c.exception.message)
         self.assertIn("not sent again", c.exception.message)
         self.fx._queue("fx-wash.fs")
         self.pump()
         self.assertIn("not sent again", self.state()["error"]["message"])
         self.assertEqual((self.lists(before), self.mpv.loaded, self.texts()), ([], gen, []))
-        self.show("nxlx-ember.fs")                                                     # another generator under it: the same pair for the GPU
-        with self.assertRaises(ApiError):
-            self.fx.put("fx-wash.fs")
-        # another shape of its values is another text, and is tried; over a clip it is tried too (the other hook runs there)
+        # the memory is of the pair: another effect over this generator is tried, and so is this effect over
+        # another generator (one refusal does not refuse it over every shader), and over a clip (another hook runs)
         self.fx.put("fx-vignette.fs")
         self.assertEqual(self.kinds(), ["shader", "effect"])
         self.fx.off()
+        self.show("nxlx-ember.fs")
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.kinds(), self.state()["on"]["id"]), (["shader", "effect"], "fx-wash.fs"))
+        self.fx.off()
+        self.show()                                                                    # the first generator again: still not sent
+        with self.assertRaises(ApiError) as c:
+            self.fx.put("fx-wash.fs")
+        self.assertIn("not sent again", c.exception.message)
         self.clip()
         self.fx.put("fx-wash.fs")
         self.assertEqual((self.kinds(), self.state()["on"]["id"], self.state()["error"]), (["effect"], "fx-wash.fs", None))
@@ -2220,7 +2429,7 @@ class OverShaderTest(Base):
         self.show()
         self.fx.put("fx-vignette.fs")
         was = self.mpv.loaded
-        FxTap.lines = list(REFUSAL)
+        self.refuse()
         with self.assertRaises(ApiError) as c:
             self.fx.put("fx-wash.fs")
         self.assertIn("The effect before it is back on. The shader stays on the screen.", c.exception.message)
@@ -2234,7 +2443,7 @@ class OverShaderTest(Base):
         self.fx.put("fx-wash.fs")
         self.show()
         gen = self.mpv.loaded[:1]
-        FxTap.lines = list(REFUSAL)
+        self.refuse()
         self.fx.adjust("anchor")
         self.assertEqual((self.mpv.loaded, self.texts()), (gen, []))
         s = self.state()
@@ -2332,7 +2541,7 @@ class OverShaderTest(Base):
         self.fx.upload("all.fs", ALL)
         self.show()
         self.fx.put("all.fs")
-        FxTap.lines = list(REFUSAL)
+        self.refuse()
         self.fx.change({"values": {"mode": 2}})
         self.pump()
         self.assertIn("undeclared", self.state()["error"]["message"])
@@ -2541,6 +2750,8 @@ class RolesTest(Base):
         self.assertEqual((st, body["on"]["id"], body["on"]["controls"]["amount"]), (200, "fx-wash.fs", 0.5))
         self.assertEqual(self.call("POST", "/api/effects/values", {"controls": {"amount": 0.2}}, token=live)[1]["controls"]["amount"], 0.2)
         self.assertEqual(self.call("POST", "/api/effects/step", {"dir": 1}, token=live)[0], 200)
+        self.pump()                                                                    # the worker carries the step out (a preset asked for while
+        #                                                                                one waits is meant for the effect that is coming)
         self.assertEqual(self.call("POST", "/api/effects/presets", {"action": "save", "name": "x"}, token=live)[0], 403)
         self.assertEqual(self.call("POST", "/api/effects/library", upload, token=live)[0], 403)
         self.assertEqual(self.call("POST", "/api/effects/presets", {"action": "save", "name": "x"}, token=full)[0], 200)

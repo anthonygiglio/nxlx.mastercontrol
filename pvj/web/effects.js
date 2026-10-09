@@ -314,7 +314,7 @@
       if (on) el.appendChild(h('div', { class: 'loadbox', id: 'fxload' }, h('span', { class: 'loadmeter', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), h('span', { id: 'fxloadwords', role: 'status' })));
       if (!d.available) el.appendChild(h('div', { class: 'msg', id: 'fxwhy', role: 'status', text: d.unavailable || 'Not available now.' }));
       if (!on && d.last) el.appendChild(h('div', { class: 'hint', id: 'fxlast', text: 'The last effect came off: ' + d.last + '.' }));
-      if (d.error) el.appendChild(h('div', { class: 'msg err', id: 'fxerror', text: 'The GPU refused ' + nice(d.error.id) + ': ' + d.error.message }));
+      if (d.error) el.appendChild(h('div', { class: 'msg err', id: 'fxerror', text: (d.error.kind === 'wish' ? (d.error.id ? nice(d.error.id) : 'The effect') + ' did not go on. ' : 'The GPU refused ' + nice(d.error.id) + ': ') + d.error.message }));
       if (live) {
         var blocked = !on && !d.available;
         var prev = teacher(c, 'effect_prev', 'The effect before', 'a pad or a button'), tog = teacher(c, 'effect_toggle', 'Effect on / off', 'a pad or a button'),
