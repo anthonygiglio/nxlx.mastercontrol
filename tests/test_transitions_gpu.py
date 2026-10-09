@@ -298,6 +298,31 @@ class CrossCase(FxCase):
         self.watch()
         self.assertTrue(all(far(p, BLUE) <= 30 for p in grid(self.still(flat=True))))
 
+    def test_from_a_generator_with_an_effect_on_to_a_clip(self):
+        """D74: the still is the window, so it is the generator as the effect shows it; the effect then stays on over
+        the clip that comes (an effect stays when what plays changes), and the generator goes."""
+        self.engine.upload("gradient.fs", "/*{}*/\nvoid main() { gl_FragColor = vec4(isf_FragNormCoord, 0.25, 1.0); }\n")
+        self.fx.upload("invert.fs", INVERT)
+        self.assertTrue(self.engine.show("gradient.fs")["ok"])
+        self.settle(0.4)
+        plain = self.still()
+        self.put("invert.fs")
+        old = self.still()
+        d = differ(old, [[tuple(255 - c for c in p) for p in row] for row in plain])
+        self.assertLessEqual(d[0], 3, "the pair is not the generator's negative: %s" % (d,))
+        self.token = self.tr.hold("crossfade")
+        self.assertTrue(self.token, self.tr.last)
+        d = differ(self.shot(), old)
+        self.assertLessEqual(d[0], 3, "the still of a generator under an effect is not the screen: %s" % (d,))
+        self.under()
+        self.assertIsNone(self.real.source_shader)
+        self.assertTrue(self.loaded() and self.loaded()[0].startswith("effect-"), self.loaded())
+        self.tr.run(self.token, 0.8)
+        seen = self.watch()
+        self.through(seen, old[H // 2][W // 2], tuple(255 - c for c in BLUE), "from a generator under an effect")
+        self.assertEqual(self.fx.state()["on"]["id"], "invert.fs")
+        self.fx.off()
+
     def half_way(self, name, new, old_at, old_from):
         """Lay the still for `name`, start the flat clip under it and draw the transition at its half: the point
         `new` (of "left", "right", "top", "bottom": the middle of that half of the screen) must show the new clip and

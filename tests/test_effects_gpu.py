@@ -716,7 +716,7 @@ class FxCase(GpuCase):
         self.assertGreaterEqual(len(timed), 9, "the player timed too few filter passes")
 
     # -- its life --
-    def test_it_stays_over_the_next_clip_and_comes_off_with_stop_a_generator_and_a_restart(self):
+    def test_it_stays_over_the_next_clip_and_a_generator_and_comes_off_with_stop_and_a_restart(self):
         self.fx.upload("invert.fs", INVERT)
         self.put("invert.fs")
         self.assertEqual(self.real.ipc.request("get_property", "fbo-format"), "rgba8")      # as on a Pi 4 (see Player._apply_fbo)
@@ -742,19 +742,15 @@ class FxCase(GpuCase):
         with self.assertRaises(ApiError) as c:
             self.fx.put("invert.fs")
         self.assertEqual(c.exception.status, 409)
-        # a generator takes the screen: the effect comes off with it, and none goes on over it
+        # a generator takes the screen: the effect stays on, over it (D74; the picture is judged in tests/test_pair_gpu.py)
         self.play(CLIP)
         self.put("invert.fs")
         self.engine.show("nxlx-silk.fs")
-        names = self.loaded()
-        self.assertTrue(len(names) == 1 and names[0].startswith("shader-"), names)
-        self.assertIsNone(self.fx.state()["on"])
-        self.assertIn("generator", self.fx.state()["last"])
-        with self.assertRaises(ApiError) as c:
-            self.fx.put("invert.fs")
-        self.assertEqual(c.exception.status, 409)
-        self.assertIn("generator", c.exception.message)
-        self.assertFalse(self.fx.state()["available"])
+        self.assertEqual([n.split("-")[0] for n in self.loaded()], ["shader", "effect"])
+        s = self.fx.state()
+        self.assertEqual((s["on"]["id"], s["last"], s["available"]), ("invert.fs", None, True))
+        self.put("invert.fs")                                                        # and one goes on over it
+        self.assertEqual([n.split("-")[0] for n in self.loaded()], ["shader", "effect"])
         # the player is restarted: the new one never had the effect, and the record says so
         self.play(CLIP)
         self.put("invert.fs")
@@ -933,11 +929,11 @@ if ONLY != "gles":
 if __name__ == "__main__":
     # The crossfade's tests (tests/test_transitions_gpu.py) run here too: the workflow's three effects-gpu jobs name
     # this module, and they stand on this rig. Loaded only when this module is run, since that one imports this one.
-    # An effect over a generator (tests/test_pair_gpu.py) the same way, and first: its answers are wanted soonest.
+    # An effect over a generator (tests/test_pair_gpu.py, D74) the same way.
     from tests import test_pair_gpu, test_transitions_gpu
-    suite = unittest.defaultTestLoader.loadTestsFromModule(test_pair_gpu)
-    suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]))
+    suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
     suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(test_transitions_gpu))
+    suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(test_pair_gpu))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     ran = result.testsRun - len(result.skipped)
     print("effect GPU tests: %d run, %d skipped" % (ran, len(result.skipped)))

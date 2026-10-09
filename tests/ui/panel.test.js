@@ -2689,16 +2689,32 @@ function startServer() {
       await page.click('#livefxnext');
       assert.strictEqual((await stepped).status(), 200, 'Next on Live goes to the next effect');
       await fxName('livefxname', 'Wash');
-      // a generator shader takes the screen: the effect comes off, and both places say plainly why none can go on
+      // a generator shader takes the screen: the effect stays on, over it (D74), and both places go on offering everything
       assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
-      await page.waitForSelector('#livefxwhy', { timeout: 20000 });
-      assert(/A generator shader has the screen/.test(await page.textContent('#livefxwhy')), 'the strip says why effects are not available');
-      assert(await page.isDisabled('#livefxon'), 'and offers nothing to press');
+      await page.waitForFunction(() => /Shader: Tide.*effect: Wash/.test((document.getElementById('np') || {}).textContent), null, { timeout: 20000 });
+      await fxName('livefxname', 'Wash');
+      assert.strictEqual(await page.locator('#livefxwhy').count(), 0, 'the strip has no reason why none can go on: one is on, over the shader');
+      assert.strictEqual(await page.locator('#livefxoff').count(), 1, 'Off is on the strip while an effect is on over a shader');
+      assert(!(await page.isDisabled('#livefxnext')), 'Next is offered over a shader');
+      const over = await get('/api/effects');
+      assert.deepStrictEqual([over.available, over.on && over.on.id, over.on && over.on.working.under], [true, 'fx-wash.fs', 'shader']);
+      await fitsPhone('Live with an effect on over a shader');
+      await page.setViewportSize({ width: 320, height: 844 });         // the narrowest phone: no text runs out of its card
+      await fitsOn(page, 'Live at 320 with an effect on over a shader');
       await page.click('#livefxmore');
-      await page.waitForSelector('#fxwhy', { timeout: 20000 });
-      assert(/A generator shader has the screen/.test(await page.textContent('#fxwhy')), 'the card says why effects are not available');
-      assert(/a generator shader took the screen/.test(await page.textContent('#fxlast')), 'and why the last one came off');
-      assert(await page.isDisabled('#fxlist [data-put="fx-vignette.fs"]'), 'Put on waits for a picture');
+      await page.waitForSelector('#fxrule', { timeout: 20000 });
+      await fxName('fxname', 'Wash');
+      assert.strictEqual(await page.locator('#fxwhy').count(), 0, 'the card has no reason why none can go on');
+      assert(/over a shader and Vibes; Stop takes it off/.test(await page.textContent('#fxrule')), 'the card says the effect stays over a shader');
+      await page.waitForFunction(() => /line shader/.test((document.getElementById('fxworking') || {}).textContent || ''), null, { timeout: 20000 });
+      await fitsOn(page, 'the effect card at 320 with an effect on over a shader');
+      await page.setViewportSize({ width: 390, height: 844 });
+      // another effect is put on over the shader from the list, and the shader plays on under it
+      assert(!(await page.isDisabled('#fxlist [data-put="fx-vignette.fs"]')), 'Put on is offered over a shader');
+      await page.click('#fxlist [data-put="fx-vignette.fs"]');
+      await fxName('fxname', 'Vignette');
+      const st = (await get('/api/status')).player;
+      assert.deepStrictEqual([st.shader, st.effect], ['nxlx-tide', 'fx-vignette'], 'the shader plays on under the new effect');
       // a clip again: an effect goes on and comes off with Off
       assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
       await page.waitForSelector('#fxlist [data-put="fx-wash.fs"]:not([disabled])', { timeout: 20000 });
