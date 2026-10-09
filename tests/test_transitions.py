@@ -2344,8 +2344,10 @@ class Stress(ServerBase):
     | m  a generator setting the level whatever was asked for since it was chosen               | 3 of 3       | yes               |
     | n  the level put back after a Stop whoever has taken the fader since                      | 0 of 3       | yes               |
     | o  Vibes' step taking the level's lock before the player's (the deadlock of round six)    | 3 of 3       | yes               |
-    | p  the player forgetting nothing at its restart (the pipe "plays" on)                     | 0 of 3       | yes               |
+    | p  the player forgetting nothing at its restart (the pipe "plays" on)                     | 3 of 3       | yes               |
     | q  a clip that is loaded leaving the pipe "playing" (a fault inside pvj/player.py)        | 3 of 3       | yes               |
+    | r  a shader pad's shader shown while the play holds the player's lock (D73)               | 3 of 3       | yes               |
+    | s  a shader pad taking the play's ticket before its shader: two newest wishes for one tap | 0 of 3       | yes               |
 
     What the rows say that is not "caught":
     * h needs a level wish that runs (a Fade in, a Fade out), a clip tapped with a blend, and then something newer
@@ -2362,8 +2364,18 @@ class Stress(ServerBase):
       Stop's clear and its putting-back of the level was cancelled by it, and the level snapped to full. The rounds
       do not draw that meeting (none of three, twice). The test by hand that kills it was added then:
       `Threads.test_a_stop_that_meets_a_fade_in_does_not_cut_it_short`.
-    * p needs a live input that plays, then a restart, then nothing else loaded. A restart is quick and a live
-      input slow, so in a round they come the other way round. By hand: three tests of the real player.
+    * p was caught none of three times when the table was first made and is caught three of three since the whole
+      table was run again for the shader pad (the seventh review's changes to the restart and to `pipe_playing`
+      came between the two runs; which of them did it was not looked for). By hand: three tests of the real player.
+    * r and s came with the pad that holds a shader (D73, tests/test_shader_pads.py), which is one more kind of
+      action here ("shader pad", from the panel: a controller's tap is queued for the engine's worker, which lives
+      on after a round, so it is tested by hand only). r is caught by the locks themselves, here and in eighteen
+      tests by hand. s changes nothing that the end of a round can see (the second wish is the same action's); the
+      test by hand counts the wishes of one tap (`Tapped.test_a_tap_is_one_newest_wish_as_a_shader_chosen_by_hand_is`).
+    * The whole table, a to s, was run again when "shader pad" was added: the rows above are from that run. One of
+      n's three runs failed, not for n's fault but with "the box gave up on transitions: the still took 1.3
+      seconds", while a browser was taking pictures on the same machine: A MACHINE THAT STALLS FOR A SECOND MAKES
+      THIS TEST FAIL THAT WAY, since the code under test measures its still by the real clock.
     * o is caught by the locks themselves (tests/lockrank.py), in this test and in single-threaded tests by hand:
       no interleaving is needed for it.
     * e is not the fifth review's e, "the fader taken before the generation moves": no way of playing takes the

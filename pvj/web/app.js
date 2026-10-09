@@ -308,14 +308,26 @@
   }
 
   // ---- live -----------------------------------------------------------
+  // A pad that holds a generator shader instead of a clip (D73): `file` is empty, `shader` names the shader's file
+  // and `preset` may stand beside it. Everything the pads know of such a pad is in these three functions and in
+  // padKinds below; padButton, live and sheet only call them.
+  function padShader(pad) { return !pad.file && typeof pad.shader === 'string' && pad.shader ? pad.shader : ''; }
+  function padShaderName(pad) { return padShader(pad).replace(/\.fs$/, ''); }
+  function padShaderNice(id) { return window.pvjShaders && window.pvjShaders.nice ? window.pvjShaders.nice(id) : String(id || '').replace(/\.fs$/, ''); }
+  function padPlaying(pad, pl) {
+    if (padShader(pad)) return typeof pl.shader === 'string' && pl.shader === padShaderName(pad);
+    return !!(pl.path && pad.file && base(pl.path) === pad.file);
+  }
   function padButton(bank, index, pad) {
-    var playing = S.status && S.status.player && S.status.player.path && pad.file && base(S.status.player.path) === pad.file;
-    var label = pad.label || (pad.file ? pad.file.replace(/\.[^.]+$/, '') : 'Empty');
-    var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file ? '' : ' empty'), 'aria-pressed': playing ? 'true' : 'false', 'data-pad': index },
-      h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }), h('span', { class: 't', text: label }));
+    var held = padShader(pad);
+    var playing = padPlaying(pad, (S.status && S.status.player) || {});
+    var label = pad.label || (pad.file ? pad.file.replace(/\.[^.]+$/, '') : held ? padShaderNice(held) : 'Empty');
+    var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file || held ? '' : ' empty') + (held ? ' shader' : ''), 'aria-pressed': playing ? 'true' : 'false', 'data-pad': index,
+      title: held ? 'Shader: ' + padShaderNice(held) + (pad.preset ? ', preset ' + pad.preset : '') : null },
+      h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }, held ? h('span', { class: 'padkind', text: 'Shader' }) : null), h('span', { class: 't', text: label }));
     b.addEventListener('click', function () {
       if (S.editing && can('full')) return openSheet(bank, index);
-      if (!pad.file) return say(can('full') ? 'Empty pad. Tap "Edit pads" to assign a clip.' : 'Empty pad.', true);
+      if (!pad.file && !held) return say(can('full') ? 'Empty pad. Tap "Edit pads" to assign a clip or a shader.' : 'Empty pad.', true);
       if (!can('live')) return say('This device is view only.', true);
       act('POST', '/api/play', { pad: [bank, index] }, function () { say(''); poll(); });
     });
@@ -470,7 +482,7 @@
       S.banks[S.bank].pads.forEach(function (p, i) {
         var el = pads.children[i];
         if (!el) return;
-        var playing = pl.path && p.file && base(pl.path) === p.file;
+        var playing = padPlaying(p, pl);
         el.classList.toggle('on', !!playing);
         el.setAttribute('aria-pressed', playing ? 'true' : 'false');
       });
@@ -478,6 +490,57 @@
   }
   function openSheet(bank, index) { S.sheet = { bank: bank, index: index }; render(); }
   var ENDINGS = [['loop', 'Loop'], ['stop', 'Play once, then black'], ['hold', 'Play once, hold the last frame']];
+  // The pad editor's choice between a clip and a shader (D73), put into the sheet that `sheet` has built: two
+  // buttons under the heading, and a second list beside the clips'. The clip's own parts (the ending and the list)
+  // are found by what they are and hidden while the shaders show. A shader with presets asks which one next.
+  function padKinds(el, s, close) {
+    var box = el.querySelector('.sheet'), clips = [box.querySelector('label[for="padending"]'), box.querySelector('#padending'), box.querySelector('.list')];
+    var current = (S.banks[s.bank] && S.banks[s.bank].pads[s.index]) || {};
+    var list = h('div', { class: 'list', id: 'padshaders' });
+    var save = function (id, preset) {
+      var body = { bank: s.bank, index: s.index, label: padShaderNice(id).slice(0, 40), shader: id };
+      if (preset) body.preset = preset;
+      act('POST', '/api/pads', body, function (d) { S.banks = d.banks; close(); });
+    };
+    var row = function (text, title, go, on) { return h('button', { class: 'btn padpick' + (on ? ' on' : ''), title: title, onclick: go }, h('span', { class: 't', text: text })); };
+    var presets = function (sh) {
+      list.textContent = '';
+      list.appendChild(h('div', { class: 'k', id: 'padpresethead', text: padShaderNice(sh.id) + ': start with' }));
+      list.appendChild(row('Its own start', 'The preset called default if there is one, else the values of the file', function () { save(sh.id, ''); }, padShader(current) === sh.id && !current.preset));
+      sh.presets.forEach(function (name) { list.appendChild(row(name, name, function () { save(sh.id, name); }, padShader(current) === sh.id && current.preset === name)); });
+    };
+    var fill = function () {
+      list.textContent = '';
+      if (!moduleOn('shaders')) { list.appendChild(h('div', { class: 'k', id: 'padshadersoff', text: 'Shaders are off. Turn on the Shaders and Vibes module in System, then give the pad a shader.' })); return; }
+      list.appendChild(h('div', { class: 'k', text: 'Loading the shaders…' }));
+      api('GET', '/api/shaders').then(function (r) {
+        if (!list.isConnected) return;
+        list.textContent = '';
+        var all = r.ok && r.data.shaders ? r.data.shaders.filter(function (x) { return !x.error; }) : [];
+        if (!all.length) { list.appendChild(h('div', { class: 'k', text: r.ok ? 'No shaders on the box yet.' : (r.data.error || 'The shaders could not be read.') })); return; }
+        all.forEach(function (sh) {
+          list.appendChild(row(padShaderNice(sh.id), padShaderNice(sh.id), function () { if (sh.presets && sh.presets.length) presets(sh); else save(sh.id, ''); }, padShader(current) === sh.id));
+        });
+      });
+    };
+    var show = function (kind) {
+      clips.forEach(function (c) { if (c) c.hidden = kind !== 'clip'; });
+      list.hidden = kind !== 'shader';
+      seg.children[0].classList.toggle('on', kind === 'clip');
+      seg.children[1].classList.toggle('on', kind === 'shader');
+      seg.children[0].setAttribute('aria-pressed', kind === 'clip' ? 'true' : 'false');
+      seg.children[1].setAttribute('aria-pressed', kind === 'shader' ? 'true' : 'false');
+      if (kind === 'shader') fill();
+    };
+    var seg = h('div', { class: 'seg', id: 'padkind', role: 'group', 'aria-label': 'What this pad plays' },
+      h('button', { class: 'btn segbtn', id: 'padkindclip', text: 'Clip', onclick: function () { show('clip'); } }),
+      h('button', { class: 'btn segbtn', id: 'padkindshader', text: 'Shader', onclick: function () { show('shader'); } }));
+    var head = box.querySelector('h2');
+    box.insertBefore(seg, head.nextSibling);
+    box.insertBefore(list, clips[2] ? clips[2].nextSibling : null);
+    show(padShader(current) ? 'shader' : 'clip');
+    return el;
+  }
   function sheet() {
     var s = S.sheet;
     var close = function () { S.sheet = null; render(); };
@@ -488,7 +551,7 @@
       var label = file ? file.replace(/\.[^.]+$/, '').slice(0, 40) : '';
       act('POST', '/api/pads', { bank: s.bank, index: s.index, label: label, file: file, ending: ending.value }, function (d) { S.banks = d.banks; close(); });
     };
-    return h('div', { class: 'picker', onclick: function (e) { if (e.target.className === 'picker') close(); } },
+    return padKinds(h('div', { class: 'picker', onclick: function (e) { if (e.target.className === 'picker') close(); } },
       h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Choose a clip for this pad' },
         h('h2', { text: 'Pad ' + (s.index + 1) }),
         h('label', { class: 'k', for: 'padending', text: 'When the clip ends' }), ending,
@@ -496,7 +559,7 @@
           return h('button', { class: 'btn', text: f, onclick: function () { pick(f); } });
         }) : h('div', { class: 'k', text: 'No clips in the media folder yet.' })),
         h('button', { class: 'btn', text: 'Clear pad', onclick: function () { pick(''); } }),
-        h('button', { class: 'btn', text: 'Cancel', onclick: close })));
+        h('button', { class: 'btn', text: 'Cancel', onclick: close }))), s, close);
   }
 
   // ---- mix ------------------------------------------------------------
@@ -2283,7 +2346,7 @@
       ['pad', 'Play a pad'], ['usb', 'Play the USB stick (and any stick plugged in later)'], ['vibes', 'Start Vibes'], ['preset', 'Old start script']];
     function padName(p) {
       var b = (S.banks || [])[p[0]], pad = b && b.pads && b.pads[p[1]];
-      return 'Bank ' + (p[0] + 1) + ', pad ' + (p[1] + 1) + (pad && (pad.label || pad.file) ? ': ' + (pad.label || pad.file) : '');
+      return 'Bank ' + (p[0] + 1) + ', pad ' + (p[1] + 1) + (pad && (pad.label || pad.file || padShaderNice(padShader(pad))) ? ': ' + (pad.label || pad.file || padShaderNice(padShader(pad))) : '');
     }
     function draw(d) {
       body.textContent = '';
@@ -2304,10 +2367,10 @@
         S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === (c.file || S.media[0]) }); }) : [h('option', { value: '', text: 'No clips on the box yet' })]);
       var preset = h('input', { class: 'text-input mono', id: 'autopreset', placeholder: 'startlessonce05', value: c.preset, autocomplete: 'off' });
       var pads = [];
-      (S.banks || []).forEach(function (bk, bi) { (bk.pads || []).forEach(function (pd, pi) { if (pd.file) pads.push([bi, pi]); }); });
+      (S.banks || []).forEach(function (bk, bi) { (bk.pads || []).forEach(function (pd, pi) { if (pd.file || padShader(pd)) pads.push([bi, pi]); }); });
       var pad = h('select', { class: 'text-input', id: 'autopad' }, pads.length ? pads.map(function (p) {
         return h('option', { value: p.join(','), text: padName(p), selected: p[0] === c.pad[0] && p[1] === c.pad[1] });
-      }) : [h('option', { value: '', text: 'No pad has a clip yet' })]);
+      }) : [h('option', { value: '', text: 'No pad has a clip or a shader yet' })]);
       var seconds = h('input', { class: 'text-input mono', id: 'autoseconds', type: 'number', min: 1, max: 3600, value: c.seconds });
       var shuffle = h('select', { class: 'text-input', id: 'autoshuffle' },
         [[false, 'In name order'], [true, 'Shuffled']].map(function (o) { return h('option', { value: String(o[0]), text: o[1], selected: o[0] === c.shuffle }); }));

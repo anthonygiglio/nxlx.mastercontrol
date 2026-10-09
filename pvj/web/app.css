@@ -49,6 +49,13 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .pad.on .n { color: var(--on); }
 .pad.empty { border-style: dashed; color: var(--mu); }
 .pad span.t { overflow-wrap: anywhere; }
+/* A pad that holds a shader (D73): the word beside its number, and a name of any length kept to two lines (the whole
+   name is in the title). The pad editor's rows keep a long name to one line. */
+.pad .padkind { margin-left: 6px; text-transform: uppercase; letter-spacing: .04em; }
+.pad.shader span.t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; }
+#padshaders { min-width: 0; max-width: 100%; }
+.padpick { min-width: 0; width: 100%; box-sizing: border-box; overflow: hidden; }
+.padpick .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
 
 .slider { display: flex; flex-direction: column; gap: 6px; }
 .slider label { display: flex; justify-content: space-between; font-weight: 600; font-size: 14px; }

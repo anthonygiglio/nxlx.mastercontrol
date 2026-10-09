@@ -2713,6 +2713,68 @@ function startServer() {
       await page.waitForSelector('.pads');
     }
 
+    // A pad can hold a generator shader instead of a clip (D73): the pad editor offers Clip or Shader and then the
+    // list; the pad says Shader and which; a tap shows it as choosing it on the Shaders page does; and a name of any
+    // length stays inside the pad, at a phone's narrowest width too.
+    {
+      assert(await moduleIsOn('shaders'), 'the shaders module is on for the shader pad');
+      await page.click('nav >> text=Live');
+      await page.waitForSelector('.pads');
+      await page.click('text=Edit pads');
+      await page.click('.pad >> nth=5');
+      await page.waitForSelector('#padkind');
+      assert(await page.isVisible('#padending'), 'the editor of an empty pad opens on Clip');
+      assert.strictEqual(await page.getAttribute('#padkindclip', 'aria-pressed'), 'true');
+      await page.click('#padkindshader');
+      await page.waitForSelector('#padshaders .padpick');
+      assert(!(await page.isVisible('#padending')), 'a shader has no ending to choose');
+      assert(!(await page.isVisible('.sheet >> text=intro.mkv')), 'the clips are put away while the shaders show');
+      await page.click('#padkindclip');
+      assert(await page.isVisible('.sheet >> text=intro.mkv'), 'and come back with Clip');
+      await page.click('#padkindshader');
+      await page.click('#padshaders .padpick:has-text("Aurora")');
+      await page.waitForSelector('.pad.shader');
+      await page.click('text=Done editing');
+      const shaderPad = page.locator('.pad >> nth=5');
+      assert.strictEqual(await shaderPad.locator('.padkind').textContent(), 'Shader');
+      assert.strictEqual(await shaderPad.locator('.t').textContent(), 'Aurora');
+      assert.strictEqual(await shaderPad.getAttribute('title'), 'Shader: Aurora');
+      assert.deepStrictEqual((await get('/api/pads')).banks[0].pads[5], { label: 'Aurora', file: '', shader: 'nxlx-aurora.fs' });
+      await shaderPad.click();
+      await page.waitForFunction(() => /Shader: Aurora/.test(document.getElementById('np').textContent), null, { timeout: 20000 });
+      await page.waitForSelector('.pad.shader.on');
+      assert.strictEqual((await get('/api/shaders')).playing.id, 'nxlx-aurora.fs');
+      // its editor opens on Shader, with its own row marked
+      await page.click('text=Edit pads');
+      await shaderPad.click();
+      await page.waitForSelector('#padshaders .padpick.on:has-text("Aurora")');
+      assert.strictEqual(await page.getAttribute('#padkindshader', 'aria-pressed'), 'true');
+      await page.click('.sheet >> text=Cancel');
+      await page.click('text=Done editing');
+      // a clip pad after it takes the screen, and the shader pad is no longer the one that is on
+      await page.click('.pad >> nth=0');
+      await page.waitForFunction(() => /intro/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
+      await page.waitForFunction(() => !document.querySelector('.pad.shader.on'));
+      // a long label and a long shader name: nothing sticks out of the pad or of the page, at 320 and as it was
+      assert.strictEqual(await post('/api/pads', { bank: 0, index: 6, label: 'Averyveryverylongshadernamewithnospaces', shader: 'nxlx-tide.fs' }), 200);
+      const before = page.viewportSize();
+      for (const width of [320, before.width]) {
+        await page.setViewportSize({ width, height: before.height });
+        await page.reload();
+        await page.waitForSelector('.pad.shader >> nth=1');
+        const out = await page.evaluate(() => Array.from(document.querySelectorAll('.pad')).map((el) => {
+          const b = el.getBoundingClientRect(), t = el.querySelector('.t').getBoundingClientRect(), n = el.querySelector('.n').getBoundingClientRect();
+          return { text: el.textContent, inside: t.right <= b.right + 0.5 && n.right <= b.right + 0.5 && t.bottom <= b.bottom + 0.5, page: document.documentElement.scrollWidth <= window.innerWidth };
+        }).filter((x) => !x.inside || !x.page));
+        assert.deepStrictEqual(out, [], 'a pad whose text sticks out at ' + width + ' px: ' + JSON.stringify(out));
+      }
+      assert.strictEqual(await post('/api/pads', { bank: 0, index: 5, label: '', file: '' }), 200);
+      assert.strictEqual(await post('/api/pads', { bank: 0, index: 6, label: '', file: '' }), 200);
+      assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
+      await page.reload();
+      await page.waitForSelector('.pads');
+    }
+
     // A laptop: the Shaders page is a workspace. The library is a column that scrolls by itself, what is playing and
     // its controls are beside it and in view, the settings and controllers are a third column; nothing sticks out at
     // any width, on this page or on Live.
