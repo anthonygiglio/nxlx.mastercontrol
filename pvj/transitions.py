@@ -26,10 +26,15 @@ What that costs, and the rules that follow:
   steps are paced against the clock: a slow box makes fewer steps, never a longer transition.
 * The outgoing clip is frozen before the still is taken: the still takes time (on a Pi 4 a screenshot of a
   2560 x 1440 screen took about 0.7 seconds), and a clip that played on meanwhile would jump back to the still.
-* A screen larger than MAX_PIXELS, a player that is too slow to take the still (SLOW seconds) or to make
-  MIN_RATE steps a second, a clip that drops more than MAX_DROPS frames a second under the steps: the box uses
-  the dip to black from then on, and says so in `GET /api/status` (mix.fallback), until the transition is chosen
-  again. While an access code is on the display it dips as well (the code's pixels would go into the still).
+* A screen larger than MAX_PIXELS, a player that is too slow to take the still or to make MIN_RATE steps a
+  second, a clip that drops more than MAX_DROPS frames a second under the steps: the box uses the dip to black
+  from then on, and says so in `GET /api/status` (mix.fallback) and under the panel's picker, until the transition
+  is chosen again (the panel's "Try again" does that) or RETRY seconds have passed, when it tries again by itself.
+  "Too slow to take the still" is SLOW_IN_A_ROW stills in a row over SLOW seconds each, or one still that took
+  longer than the transition asked for: a single slow still (a preview snapshot at the same moment, a heavy
+  decode, a busy card) is used, and the blend starts late that once. The still's time is the screenshot and its
+  reading alone (`last.still_ms`); the questions before it and the freeze are in `last.hold_ms`.
+  While an access code is on the display it dips as well (the code's pixels would go into the still).
 * The player draws no overlay with nothing to draw on, so a transition needs something playing.
 
 Rollback: an older release knows "cut" and "dip" only and refuses any other value when the transition or its
@@ -57,7 +62,9 @@ STYLES = ("crossfade",) + WIPES + SLIDES        # kept in mix.style, with mix.tr
 NAMES = OLD + STYLES
 OVERLAY_ID = 63                 # the last one: nothing of the panel's is drawn over the still
 MAX_PIXELS = 2560 * 1440        # of the screen; above it the box dips (a step would send more than 14 MB)
-SLOW = 1.0                      # seconds the still may take (the screenshot and its conversion) before the box gives up on crossfades
+SLOW = 1.0                      # seconds a still may take: the player's screenshot and its reading, and nothing else
+SLOW_IN_A_ROW = 2               # that many slow stills one after the other, and the box gives up (one slow one is just used)
+RETRY = 300.0                   # seconds after giving up until the box tries again by itself
 MIN_RATE = 5.0                  # steps a second a transition must manage, or the box gives up on crossfades
 MAX_DROPS = 5.0                 # frames a second the clip under it may drop meanwhile, or the box gives up on crossfades
 STEPS = 20.0                    # steps a second asked for by a crossfade (the Fader's rate)
@@ -274,7 +281,9 @@ class Transitions:
         self._gen = 0                       # the play generation: goes up at every play of any kind, Stop and quit (`claim`, `newer`)
         self._ends = 0                      # goes up at every end(): a play that waits its turn sees that its blend is off
         self.running = None                 # the name of the transition that holds or runs
-        self.given_up = ""                  # why this box dips instead, until the transition is chosen again
+        self.given_up = ""                  # why this box dips instead, until the transition is chosen again or RETRY has passed
+        self._gave_up_at = None             # when, by the clock
+        self._slow = []                     # the seconds of the slow stills in a row so far
         self._large = ""                    # the same for a screen that is too large, from the last look at it
         self.late = []                      # with no threads (tests): the removals `_once_more` would send later
         self.last = {}                      # what the last one did: {"name", "still_ms", "steps", "seconds", "dropped", "ended"}
@@ -282,7 +291,11 @@ class Transitions:
     # -- what the box will do --
     def fallback(self):
         """Why a transition would not be done now, or "": the reason the box gave up, or a screen too large at the
-        last look (`look`). Nothing is asked of the player: every status request comes through here."""
+        last look (`look`). Nothing is asked of the player: every status request comes through here. A box that
+        gave up RETRY seconds ago tries again from now on."""
+        if self.given_up and self._gave_up_at is not None and self._clock() - self._gave_up_at >= RETRY:
+            self.log("pvj-web: transitions: trying again, %d minutes after giving up" % int(RETRY // 60))
+            self.given_up, self._gave_up_at, self._slow = "", None, []
         return self.given_up or self._large
 
     def look(self):
@@ -294,9 +307,14 @@ class Transitions:
         self._large = "the screen is larger than 2560 x 1440" if size and size[0] * size[1] > MAX_PIXELS else ""
         return self.fallback()
 
+    def busy(self):
+        """True while a still is being taken or a transition holds or runs: the screen is a play's from its tap on.
+        Asks nothing and waits for nothing."""
+        return self.running is not None or self._holding.locked()
+
     def chosen_again(self):
-        """Somebody saved the transition: the box tries again."""
-        self.given_up = ""
+        """Somebody saved the transition (or pressed Try again, which saves it): the box tries again."""
+        self.given_up, self._gave_up_at, self._slow = "", None, []
         self.look()
 
     def current(self, token):
@@ -330,7 +348,7 @@ class Transitions:
             return ticket[1] != self._ends
 
     # -- one transition --
-    def hold(self, name, ticket=None, wanted=None):
+    def hold(self, name, ticket=None, wanted=None, seconds=None):
         """Lay a still of the screen over everything, in place of a transition that still runs. Returns a token
         (never 0) if it is there: then the new clip can be started under it, and `run(token, ...)` must follow.
         Returns 0, with no still on the screen, the clip thawed if this froze it and nothing left behind, if there
@@ -341,7 +359,8 @@ class Transitions:
         `ticket` is the play's own (`claim`). A play whose turn comes after a newer wish, or after an end(), returns
         0 at once and has touched nothing: it did not freeze the clip, take a still or stop the transition that
         runs. So of many plays that queue here only the newest takes a still. `wanted` is asked just before the
-        still is laid down: False (the screen went dark meanwhile) and it is not."""
+        still is laid down: False (the screen went dark meanwhile) and it is not. `seconds` is the duration the
+        transition is asked to take: a still that took longer than that makes the box give up at once."""
         blend = BLENDS.get(name)
         player = self.api.player
         if blend is None or not hasattr(player, "still"):
@@ -377,8 +396,10 @@ class Transitions:
                 # The player writes into this file, which is ours: it is made here, group-writable as the units'
                 # umask leaves every file of the panel, and removed here whatever happens.
                 os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o660))
+                shot = self._clock()            # the still alone: the player's screenshot and its reading
                 player.still(path)
                 w, h, pixels = read_still(path, size)
+                shot = self._clock() - shot
                 # An end() does not wait for a still (Stop and Blackout act at once), so the still looks for one:
                 # here, before it is laid down, and again under the overlay's lock, where end() takes it off.
                 stale = ticket is not None and (not self.newest(ticket) or self.ended_since(ticket))
@@ -414,9 +435,19 @@ class Transitions:
                 except OSError:
                     pass
             took = self._clock() - began
-            self.last = {"name": name, "still_ms": int(round(took * 1000)), "steps": 0, "seconds": 0.0, "ended": ""}
-            if took > SLOW:
-                self._give_up("the still took %.1f seconds" % took)
+            self.last = {"name": name, "still_ms": int(round(shot * 1000)), "hold_ms": int(round(took * 1000)), "steps": 0,
+                         "seconds": 0.0, "ended": ""}
+            # One slow still is used and nothing more: the blend starts late this once. The box gives up when
+            # stills are slow one after the other, or when one took longer than the whole transition is to take.
+            if shot > SLOW:
+                self._slow.append(shot)
+                self.log("pvj-web: transitions: the still took %.2f seconds (of %.2f from the tap)" % (shot, took))
+                if seconds is not None and shot > seconds:
+                    self._give_up("the still took %.1f seconds, longer than the %s second transition" % (shot, ("%.1f" % seconds).rstrip("0").rstrip(".")))
+                elif len(self._slow) >= SLOW_IN_A_ROW:
+                    self._give_up("%d stills in a row took over a second (%s)" % (len(self._slow), ", ".join("%.1f" % s for s in self._slow)))
+            else:
+                self._slow = []
             return token
 
     def _source(self):
@@ -573,7 +604,8 @@ class Transitions:
             self.late.append(again)
 
     def _give_up(self, why):
-        self.given_up = why + "; using the dip to black until the transition is chosen again"
+        self.given_up = why + "; dipping to black instead. The box tries again in %d minutes, or at once when the transition is chosen again" % int(RETRY // 60)
+        self._gave_up_at, self._slow = self._clock(), []
         self.log("pvj-web: transitions given up: %s" % why)
 
     def _first_frame(self):

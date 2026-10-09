@@ -200,7 +200,7 @@ Send back the output of `L` at every step, R0, and the output of R10. If any lin
 
 ### Crossfade (D71)
 
-**Nothing of this has run on a board.** In CI it ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. Ten minutes; the numbers matter more than the look, so please send them.
+**Run on the test Pi 4 by a script on 2026-10-09, with nobody at the monitor** (the journal of that afternoon): what a script can see of X2, X3, X4, X10, X11, X12, X14 and X16 held at 2560 x 1440, and a play answered after 0.93 to 1.09 s. **Everything that needs eyes is open**, and so is every row not named. In CI it ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. Ten minutes; the numbers matter more than the look, so please send them.
 
 Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between clips set to **Crossfade**, duration 2s. After each play, `GET /api/status` holds `mix.fallback` once the box has given up, and the panel's journal (`journalctl -u pvj-web`) says "crossfade given up: ..." with the reason.
 
@@ -216,8 +216,8 @@ Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between cli
 | X8 | On the 2560 x 1440 screen: X1 again | Either a fade, or a dip to black from the second play on | Which, and the journal's line |
 | X9 | Restart the player during a fade (`sudo systemctl restart pvj-player`) | The new player starts clean; no old picture over it | |
 | X10 | After all of it: `ls /run/pvj/web` | No `transition-*.png` and no `overlay-63.bgra` | The listing, if there is one |
-| X11 | While A1 plays, play A2 and press **Stop** at once, within the freeze | The screen clears and stays clear; A2 does not start after it | If A2 started, or how long Stop took: this is whether mpv answers while it takes the screenshot, which no test here can show |
-| X12 | The same with **Blackout**, from the panel and from a MIDI controller (a pad, then the Blackout button straight after) | Dark at once; A2 plays under the dark and is there when you show the picture again | How long the dark took to come from the controller |
+| X11 | While A1 plays, play A2 and press **Stop** at once, within the freeze | The screen clears and stays clear; A2 does not start after it | If A2 started, or how long Stop took: this is whether mpv answers while it takes the screenshot, which no test here can show. **Press it DURING the screenshot itself, the first 0.6 s or so after the tap** (the script on 2026-10-09 pressed 0.7 s in and right after the play had answered, both after the screenshot): that number is the one nobody has |
+| X12 | The same with **Blackout**, from the panel and from a MIDI controller (a pad, then the Blackout button straight after) | Dark at once; A2 plays under the dark and is there when you show the picture again | How long the dark took to come from the controller, **and from the panel when pressed within the first half second after the tap, while the player is still taking the screenshot**: that is the unmeasured number (pressed later, it answered in 0.08 to 0.09 s on 2026-10-09) |
 | X13 | During a crossfade at 1920 x 1080, move a MIDI fader for volume and watch a sync client if there is one | The fader answers as always; the client does not drift | Whether the controller felt slow during the fade: every crossfade step scales 8 MB in the panel |
 | X14 | Set the transition to **Wipe from left**, then **Slide off up**; play A1, A2 | An edge that moves evenly; the old picture stands still (wipe) or moves off as one piece (slide) | Whether the edge moved smoothly or in jumps, and the journal's line if the box gave up. A wipe should ask less of the box than a crossfade; say if it did not look so |
 | X15 | X8 again with a wipe on the 2560 x 1440 screen | | Whether a wipe holds where a crossfade gave up |

@@ -4,6 +4,16 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the evening (the ninth read of #111, by another model: the give-up rule)
+
+Branch `transitions`, #111, still a draft. Nothing high; D71 has "After the ninth read". **Nothing was run on hardware in this session**; what ran on the Pi 4 this afternoon is the entry below.
+
+- **The give-up rule:** the still is timed alone (`last.still_ms`, with `last.hold_ms` for the whole hold) and a slow one is a journal line; one slow still is used; two in a row, or one longer than the transition asked for, and the box dips; it tries again by itself after five minutes and at once when the transition is chosen again; the Mix screen says why under the picker with a Try again button. What the Pi measures for the still alone on this code is not known yet.
+- **Tests:** the hand test of "one step" counts the lock's takings now (a Stop in two takings passed every hand test before); a load thaws a hold's freeze, on the real player; eight tests of the give-up rules on the injected clock; a browser step for the reason at 320 px and Try again. Ten breakages put back one at a time, each seen to fail.
+- **Lows:** a crossfade, wipe or slide comes up from black after a Fade out; Vibes leaves the level alone while a tapped clip takes its still; HANDOFF, the manual and the device list say what ran on the Pi 4 and that nobody watched; X11 and X12 ask for Blackout and Stop during the screenshot itself.
+- **A test of this session's own was flaky at first** (the Fade out test, two runs in ten): it looked at the calls before the fade's thread had written its last step and started from a dip that was still on its way. It waits for the dark and starts from a cut; twelve runs of twelve since.
+- **Open:** X1 to X23 with somebody at the monitor.
+
 ## 2026-10-09, the evening (#113 after its independent review: the queue of wishes, a floor under the guard)
 
 Branch `effect-over-shader`, pull request #113, still a draft. The read found nothing above medium; D74 has "After the independent review". `transitions` was merged in first (4c1ee53): it holds the cure for the stress test that failed here in one unit job of four on three pushes. That test ran its clock ten times fast and still held the one-second limit for a still, so a still had a tenth of a second of real time; the limit is out of that test's way now, and the second stress test (an effect beside everything) holds every give-up again. **Nothing was run on hardware.**
