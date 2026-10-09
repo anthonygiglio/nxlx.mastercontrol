@@ -2280,38 +2280,74 @@ class OverShaderTest(Base):
         GenTap.lines = []
 
     def test_vibes_marks_no_shader_heavy_while_an_effect_is_on_and_the_effects_card_says_it(self):
+        """The real guards of both engines, on a clock of this test's and the stand-in's count of dropped frames:
+        five a second for twelve seconds is "heavy" by the rule (2 a second over 6, after 3 to settle)."""
+        now = [100.0]
+        for engine in (self.gen, self.fx):
+            engine.guard._clock = lambda: now[0]
         vibes = self.api.vibes
         vibes.start()
         vibes.tick()
         self.mpv.video, self.mpv.fps = dict(CARRIER_VIDEO), 30.0
         current = vibes.current
-        heavy = {"state": "heavy", "drops_per_second": 5.0, "gpu": None}
-        self.gen.guard.sample = lambda on: dict(heavy) if on else {"state": None, "drops_per_second": None, "gpu": None}
+
+        def seconds(n, judge=True):
+            """`n` seconds in which the player drops five frames each; True if Vibes found the shader too heavy."""
+            for _ in range(n):
+                now[0] += 1.0
+                self.mpv.drops += 5
+                self.fx.state()                                                        # the effects' card is asked, as a panel asks
+                if judge and vibes._guard():
+                    return True
+            return False
         self.fx.put("fx-wash.fs")
-        self.assertEqual(self.gen.watch()["effect"], "fx-wash.fs")
+        self.assertIs(seconds(14), False)                                              # the frames are the pair's: no mark, no skip
+        seen = self.gen.watch()
+        self.assertEqual((seen["state"], seen["drops_per_second"], seen["effect"]), ("heavy", 5.0, "fx-wash.fs"))
         self.assertEqual(self.gen.state()["playing"]["effect"], "fx-wash.fs")
-        self.assertIs(vibes._guard(), False)                                           # the frames are the pair's: no mark, no skip
         self.assertEqual((self.settings.data.get("shaders", {}).get("heavy", {}), vibes._marked, vibes._tight, vibes.current), ({}, [], set(), current))
-        self.gen.guard.sample = lambda on: dict(heavy, state="tight")
-        self.assertIs(vibes._guard(), False)
-        self.assertEqual(vibes._tight, set())                                          # nor is the palette turn taken from it
-        # the effect's own guard is the one that speaks, and it starts over when another shader comes under the effect
-        self.fx.state()
+        # the effect's own guard is the one that speaks: its card says the pair is too heavy
+        on = self.state()["on"]
+        self.assertEqual((on["load"], on["drops_per_second"], on["working"]["under"]), ("heavy", 5.0, "shader"))
+        # and it starts over when another shader comes under the effect (the GPU taking it costs frames)
         desc = self.fx.guard._desc
         self.assertEqual(desc, "%s over %s" % (self.fx.on["desc"], self.gen.playing["desc"]))
         vibes.skip()
         vibes.tick()
-        self.fx.state()
+        self.assertEqual(self.state()["on"]["load"], None)
         self.assertNotEqual(self.fx.guard._desc, desc)
         self.assertIn(self.fx.on["desc"], self.fx.guard._desc)
-        # the effect off: the guard judges the shader by itself again, as before
+        # the effect off: Vibes judges the shader by itself again, with a window of its own
         self.fx.off()
-        self.gen.guard.sample = lambda on: dict(heavy)
+        current = vibes.current
+        self.assertIs(seconds(14), True)
         self.assertNotIn("effect", self.gen.watch())
         self.assertIsNone(self.gen.state()["playing"]["effect"])
-        current = vibes.current
-        self.assertIs(vibes._guard(), True)
         self.assertIn(current, self.settings.data["shaders"]["heavy"])
+
+    def test_values_the_gpu_refused_over_a_generator_are_not_sent_again(self):
+        """The memory of refused values has the generator in its key, and the request that notes a change looks under
+        the same key as the worker that learned of the refusal."""
+        self.api.board = dict(self.api.board, kind="pi4")                              # with a cap in the key too (Automatic)
+        self.fx.upload("all.fs", ALL)
+        self.show()
+        self.fx.put("all.fs")
+        FxTap.lines = list(REFUSAL)
+        self.fx.change({"values": {"mode": 2}})
+        self.pump()
+        self.assertIn("undeclared", self.state()["error"]["message"])
+        FxTap.lines = []
+        before = len(self.mpv.commands)
+        with self.assertRaises(ApiError) as c:
+            self.fx.change({"values": {"mode": 2}})
+        self.assertEqual(c.exception.status, 422)
+        self.assertIn("refused these values before", c.exception.message)
+        self.assertEqual(self.lists(before), [])
+        self.clip()                                                                    # over a clip they are another text, and are tried
+        self.fx.adjust("anchor")
+        self.assertTrue(self.fx.change({"values": {"mode": 2}})["ok"])
+        self.pump()
+        self.assertEqual((self.state()["on"]["values"]["mode"], self.state()["error"]), (2, None))
 
     def test_a_rotation_and_a_performer_on_the_effect_at_once(self):
         """Two threads for a second: one shows generator after generator (a rotation's steps), the other puts an

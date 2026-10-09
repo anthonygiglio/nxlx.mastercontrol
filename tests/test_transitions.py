@@ -2409,7 +2409,11 @@ class Stress(ServerBase):
         self.api.registry.set_enabled("inputs-srt", True)
         self.settings.data["streams"] = [{"id": "bbbb0001", "name": "Camera", "url": "rtsp://192.168.1.60/live"}]
         self.api.shaders.log = lambda *_: None
+        self.api.effects.log = lambda *_: None
         self.sid = self.api.shaders.library()[0]["id"]
+        self.fid = self.api.effects.order()[0]
+        self.effects_on = 0                 # how often an effect really went on, over all rounds (the actions prove nothing otherwise)
+        self.pairs = 0                      # and how often the player was given a generator and an effect together
         for i in range(6):
             open(os.path.join(self.media, "r%d.mp4" % i), "w").close()
         self.epoch = 0
@@ -2433,6 +2437,13 @@ class Stress(ServerBase):
                 self.bad.append("%s was sent to the player without the player's lock" % command[0])
             if command[:2] == ("set_property", "brightness"):
                 self.wait("opacity")        # on its way to the player: a level that was decided too early lands late
+            if command[:2] == ("set_property", "glsl-shaders"):
+                # a generator and an effect together (D74): the generator is first, or the effect filters nothing
+                kinds = [os.path.basename(p).split("-")[0] for p in command[2]]
+                if "shader" in kinds and "effect" in kinds:
+                    self.pairs += 1
+                    if kinds.index("effect") < kinds.index("shader"):
+                        self.bad.append("the player was given the effect before the generator: %s" % (kinds,))
             return ask(*command)
         self.player.ipc.request = asked
         # -- the wishes, written into the stand-in's own list as they are made --
@@ -2503,6 +2514,10 @@ class Stress(ServerBase):
     # what an operator does most, twice as often as the rest; the rare ones that matter (a restart, Vibes' own dip) too
     KINDS = CORE + CORE + ("reset", "vibes dip", "vibes dip", "list", "stream", "test pattern", "test pattern off", "tone", "restart", "restart")
     TAPS = ("generator by hand", "rotation tick", "live input", "list", "stream", "test pattern")     # besides the clips: who notes the level's mark
+    # An effect over whatever plays, a generator included (D74). It neither plays, stops nor sets the level, so it is
+    # no wish and no tap; what it adds is the effects' engine and its lock beside everything above. These are drawn
+    # from numbers of their own and added to a round's actions, so the rounds of every seed keep the actions they had.
+    EFFECTS = ("effect on", "effect on", "effect off", "effect next")
 
     def vibes_dip(self):
         """Vibes' own dip between two shaders, as its rotation makes it: only over a generator, down and up again,
@@ -2541,7 +2556,14 @@ class Stress(ServerBase):
             "test pattern off": lambda: api.test_pattern({"on": False}, None, "stress"),
             "tone": lambda: api.test_tone({"channel": "left"}, None, "stress"),
             "restart": lambda: (api.stop_player({}, None, "stress"), api.restore_level()),      # and the watcher sees the new one
+            "effect on": self.effect_on,
+            "effect off": lambda: api.effects.off(),
+            "effect next": lambda: api.effects.step(1),
         }[kind]()
+
+    def effect_on(self):
+        self.api.effects.put(self.fid)
+        self.effects_on += 1
 
     def quiet(self, baseline, what):
         """Every thread a round started has ended, within a time no round needs: or something waits for ever."""
@@ -2564,6 +2586,10 @@ class Stress(ServerBase):
         rng = random.Random("%d/%d" % (seed, number))           # this round's own numbers, whatever came before it
         chosen = [rng.choice(self.KINDS) for _ in range(rng.randint(3, 6))]
         delays = [rng.random() * 0.006 for _ in chosen]
+        more = random.Random("%d/%d/effects" % (seed, number))  # the effect's actions, from numbers of their own
+        for _ in range(more.choice((0, 1, 1, 2))):
+            chosen.append(more.choice(self.EFFECTS))
+            delays.append(more.random() * 0.006)
         what = "seed %d round %d" % (seed, number)
         baseline = set(self.threading.enumerate())
         # a clean start: a clip plays, lit, nothing on its way
@@ -2596,7 +2622,8 @@ class Stress(ServerBase):
             try:
                 self.act(chosen[index], index)
             except ApiError as e:
-                if not (chosen[index] == "next" and e.status == 409):       # nothing to step to: an honest answer
+                # nothing to step to, and no picture to put an effect on (a Stop came first): honest answers
+                if not ((chosen[index] == "next" or chosen[index] in self.EFFECTS) and e.status == 409):
                     errors.append("%s raised %r" % (self.me.action, e))
             except Exception as e:
                 errors.append("%s raised %r" % (self.me.action, e))
@@ -2693,7 +2720,10 @@ class Stress(ServerBase):
         for seed in self.SEEDS:
             for i in range(self.ROUNDS):
                 self.one_round(seed, i)
-        print("stress: %d rounds in %.1f s" % (len(self.SEEDS) * self.ROUNDS, self.time.monotonic() - began))
+        print("stress: %d rounds in %.1f s; an effect went on %d times, and the player was given a generator and an effect together %d times"
+              % (len(self.SEEDS) * self.ROUNDS, self.time.monotonic() - began, self.effects_on, self.pairs))
+        self.assertGreater(self.effects_on, 40, "the effect's actions put next to nothing on: they prove nothing")
+        self.assertGreater(self.pairs, 20, "a generator and an effect were hardly ever on together")
 
 
 class OddSizes(unittest.TestCase):

@@ -214,6 +214,15 @@ class FakeMpv:
             if self.path is None:
                 raise Unavailable()
             return False
+        if prop in ("video-params", "video-out-params", "container-fps"):
+            # what a real mpv said in CI: of a generator's carrier a small RGB picture, of a clip its own
+            if self.path is None or self.kind(self.path) == "tone":
+                raise Unavailable()
+            if prop == "container-fps":
+                return 30.0
+            if self.kind(self.path) == "carrier":
+                return {"pixelformat": "rgb0", "w": 64, "h": 36, "colormatrix": "rgb", "colorlevels": "full"}
+            return {"pixelformat": "yuv420p", "w": 1920, "h": 1080, "colormatrix": "bt.709", "colorlevels": "limited"}
         if prop == "osd-width":
             return self.size[0]
         if prop == "osd-height":

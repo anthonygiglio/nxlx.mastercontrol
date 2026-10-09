@@ -2696,7 +2696,12 @@ function startServer() {
       assert.strictEqual(await page.locator('#livefxwhy').count(), 0, 'the strip has no reason why none can go on: one is on, over the shader');
       assert.strictEqual(await page.locator('#livefxoff').count(), 1, 'Off is on the strip while an effect is on over a shader');
       assert(!(await page.isDisabled('#livefxnext')), 'Next is offered over a shader');
-      const over = await get('/api/effects');
+      let over = null;                                                 // the worker's look at the picture under the effect comes once a second
+      for (let i = 0; i < 40; i++) {
+        over = await get('/api/effects');
+        if (over.on && over.on.working.under === 'shader') break;
+        await page.waitForTimeout(250);
+      }
       assert.deepStrictEqual([over.available, over.on && over.on.id, over.on && over.on.working.under], [true, 'fx-wash.fs', 'shader']);
       await fitsPhone('Live with an effect on over a shader');
       await page.setViewportSize({ width: 320, height: 844 });         // the narrowest phone: no text runs out of its card

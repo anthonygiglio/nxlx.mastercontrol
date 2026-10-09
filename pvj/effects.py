@@ -1639,7 +1639,9 @@ class Effects(S.Engine):
         held = {n: True for n, v in values.items() if n in events and v}
         values = {n: v for n, v in values.items() if n not in events}
         after = {"values": dict(on["values"], **dict(wish.get("values", {}), **values)), "held": held,
-                 "controls": dict(on["controls"], **dict(wish.get("controls", {}), **controls))}
+                 "controls": dict(on["controls"], **dict(wish.get("controls", {}), **controls)),
+                 # what the worker's key will hold too: the working size and whether a generator shader is under it
+                 "work": on.get("work"), "under": on.get("under")}
         if self._bad:
             said = self._bad.get(self._key(parsed, on["digest"], after))
             if said:
