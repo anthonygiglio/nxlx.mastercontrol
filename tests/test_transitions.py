@@ -728,24 +728,145 @@ class Crossfade(Base):
         self.assertIn("larger than", self.api.status({}, None, "t")["mix"]["fallback"])
         self.assertEqual(self.api.status({}, None, "t")["mix"]["transition"], "crossfade")
 
-    def test_a_still_that_takes_too_long_is_used_once_and_then_the_box_dips(self):
-        real = self.player.still
+    # -- when the box gives up on stills (the ninth read: it was one strike, measured with the questions before the
+    #    still, and nothing in the panel said so) --
+    def slow_stills(self, *seconds):
+        """The player's next stills take these seconds each on the test's clock (then no time)."""
+        real, left = self.player.still, list(seconds)
 
-        def slow(path):
-            self.now[0] += T.SLOW + 0.2
+        def still(path):
+            self.now[0] += left.pop(0) if left else 0.0
             real(path)
-        self.player.still = slow
+        self.player.still = still
+        if self.settings.data["mix"]["duration"] == 1.0:
+            self.settings.data["mix"] = T.stored("crossfade", 2.0)    # longer than the stills here: that rule has its own test
+
+    def test_one_slow_still_is_used_and_the_box_does_not_give_up(self):
+        self.slow_stills(T.SLOW + 0.2)
         self.play()
+        self.assertEqual((self.tr.last["ended"], self.tr.given_up), ("done", ""))
+        self.assertEqual(self.tr.last["still_ms"], 1200)
+        self.assertNotIn("fallback", self.api.status({}, None, "t")["mix"])
+        self.assertTrue(any("the still took 1.20 seconds" in line for line in self.lines), self.lines)
+        del self.player.calls[:]
+        self.play("b.mov")                                                      # the next one blends as ever
+        self.assertEqual(self.names()[:4], ["pause", "still", "overlay", "play"])
+        self.assertEqual(self.tr.given_up, "")
+
+    def test_two_slow_stills_in_a_row_and_the_box_dips(self):
+        self.slow_stills(T.SLOW + 0.2, T.SLOW + 0.4)
+        self.play()
+        self.assertEqual(self.tr.given_up, "")
+        self.play("b.mov")
         self.assertEqual(self.tr.last["ended"], "done")                          # this one was already paid for
-        self.assertIn("the still took", self.tr.given_up)
-        self.assertIn("the still took", self.api.status({}, None, "t")["mix"]["fallback"])
+        self.assertIn("2 stills in a row took over a second (1.2, 1.4)", self.tr.given_up)
+        said = self.api.status({}, None, "t")["mix"]["fallback"]
+        self.assertIn("2 stills in a row", said)
+        self.assertIn("tries again in 5 minutes, or at once when the transition is chosen again", said)
         del self.player.calls[:]
         self.play()
         self.assertNotIn("pause", self.names())
+        self.assertNotIn("still", self.names())
         self.assertTrue(any("given up" in line for line in self.lines))
         # choosing the transition again lets the box try again
         self.assertNotIn("fallback", self.api.set_mix({"transition": "crossfade", "duration": 1}, None, "t"))
         self.assertEqual(self.tr.given_up, "")
+
+    def test_a_quick_still_between_two_slow_ones_starts_the_count_again(self):
+        self.slow_stills(T.SLOW + 0.2, 0.1, T.SLOW + 0.3, 0.1, T.SLOW + 0.2)
+        for name in ("a.mp4", "b.mov", "a.mp4", "b.mov", "a.mp4"):
+            self.play(name)
+            self.assertEqual(self.tr.given_up, "", name)
+
+    def test_a_still_that_took_longer_than_the_transition_is_to_take_gives_up_at_once(self):
+        self.settings.data["mix"] = T.stored("crossfade", 0.5)
+        self.slow_stills(T.SLOW + 0.1)
+        self.play()
+        self.assertIn("the still took 1.1 seconds, longer than the 0.5 second transition", self.tr.given_up)
+        self.tr.chosen_again()
+        self.settings.data["mix"] = T.stored("crossfade", 2.0)                    # the same still against two seconds: used
+        self.slow_stills(T.SLOW + 0.1)
+        self.play("b.mov")
+        self.assertEqual(self.tr.given_up, "")
+
+    def test_the_stills_time_is_the_screenshot_and_its_reading_alone(self):
+        # the questions before it, the freeze and the file were counted too: on the Pi 4 a play answered after
+        # 0.93 to 1.09 s at 2560 x 1440 against the limit of one second
+        real_pause, real_size, real_still = self.player.pause, self.player.osd_size, self.player.still
+
+        def pause(value=None):
+            self.now[0] += 0.6
+            return real_pause(value)
+
+        def osd_size():
+            self.now[0] += 0.5
+            return real_size()
+
+        def still(path):
+            self.now[0] += 0.7
+            real_still(path)
+        self.player.pause, self.player.osd_size, self.player.still = pause, osd_size, still
+        for name in ("a.mp4", "b.mov", "a.mp4"):
+            self.play(name)
+            self.assertEqual(self.tr.given_up, "", "the questions before the still were counted as the still's time")
+        self.assertEqual(self.tr.last["still_ms"], 700)
+        self.assertGreaterEqual(self.tr.last["hold_ms"], 1700)
+
+    def test_a_box_that_gave_up_tries_again_by_itself_after_a_while(self):
+        self.slow_stills(T.SLOW + 0.2, T.SLOW + 0.2)
+        self.play()
+        self.play("b.mov")
+        self.assertTrue(self.tr.given_up)
+        self.now[0] += T.RETRY - 20
+        self.assertIn("fallback", self.api.status({}, None, "t")["mix"])
+        self.assertTrue(self.tr.look())
+        self.now[0] += 30
+        self.assertNotIn("fallback", self.api.status({}, None, "t")["mix"])
+        self.assertTrue(any("trying again" in line for line in self.lines))
+        del self.player.calls[:]
+        self.play("b.mov")
+        self.assertEqual(self.names()[:4], ["pause", "still", "overlay", "play"])
+        self.assertEqual(self.tr.given_up, "")
+        # and it is given no credit for before: one slow still after the pause is one, not the second
+        self.slow_stills(T.SLOW + 0.2)
+        self.play()
+        self.assertEqual(self.tr.given_up, "")
+
+    def test_every_reason_for_giving_up_is_tried_again_after_a_while(self):
+        self.tr._give_up("12 steps in 3.0 seconds")
+        self.assertIn("12 steps", self.tr.fallback())
+        self.now[0] += T.RETRY + 1
+        self.assertEqual(self.tr.fallback(), "")
+
+    def test_after_a_fade_out_a_crossfade_a_wipe_and_a_slide_come_up_from_black_as_the_dip_does(self):
+        # low, the ninth read: with one of them chosen the new clip snapped to full brightness at once
+        ramps = {}
+        for style in ("dip", "crossfade", "wipe-from-left", "slide-up"):
+            self.settings.data["mix"] = {"transition": "cut", "duration": 2.0}
+            self.api.mix.update(blackout=False, opacity=100)
+            self.api.fader.cancel()
+            self.play("a.mp4")                                          # something plays, put there with a cut
+            self.settings.data["mix"] = T.stored(style, 2.0)
+            self.api.fadeout({"seconds": 0.1}, None, "t")
+            self.assertEqual(self.api.fader.label, "out")
+            self.now[0] += 1.0                                          # the Fade out has run to its end, by the fader's clock
+            import time
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and self.player.calls[-1:] != [("opacity", 0)]:
+                time.sleep(0.005)
+            time.sleep(0.05)                                            # and its thread has written its last step
+            self.assertEqual(self.player.calls[-1:], [("opacity", 0)], style)
+            del self.player.calls[:]
+            self.play("b.mov")
+            names = self.names()
+            self.assertNotIn("still", names, style)
+            after = [c for c in self.player.calls[names.index("play"):] if c[0] == "opacity"]
+            self.assertEqual(after[0], ("opacity", 0), "%s: the clip did not start from black after a Fade out" % style)
+            self.assertNotEqual(after[:2], [("opacity", 0), ("opacity", 255)], style)
+            ramps[style] = after
+            self.assertIsNone(self.api.fader.label, style)
+        for style in ("crossfade", "wipe-from-left", "slide-up"):
+            self.assertEqual(ramps[style][:1], ramps["dip"][:1], style)
 
     def test_too_few_steps_a_second_and_the_box_dips_from_then_on(self):
         self.player.on_overlay = lambda: self.now.__setitem__(0, self.now[0] + 0.3)     # every step costs 0.3 seconds
@@ -1351,8 +1472,8 @@ class Threads(ServerBase):
         first_token = []
         real_hold = self.tr.hold
 
-        def hold(name, ticket=None, wanted=None):
-            token = real_hold(name, ticket, wanted)
+        def hold(name, ticket=None, wanted=None, seconds=None):
+            token = real_hold(name, ticket, wanted, seconds)
             if not first_token:
                 first_token.append(token)
                 holding.set()
@@ -1707,6 +1828,27 @@ class Threads(ServerBase):
         seen = self.owner_watch()
         loads = []
         self.player.before_play = lambda: loads.append(len([x for x in seen if x[0] == "newest"]))
+        # ONE step means one taking of the player's lock for the wish and for its change of what plays, not two
+        # takings one after the other (the ninth read: with the wish under one and the clear under a second, every
+        # test by hand passed, and a clip asked for between the two was cleared by a Stop that came before it).
+        # The lock's takings from free are counted, and the wish and every change are noted with the count.
+        lock, takings, wished, changed = self.player._lock, [0], [], []
+        take = lock.acquire
+
+        def counted(*a, **k):
+            got = take(*a, **k)
+            if got and lock._count == 1:
+                takings[0] += 1
+            return got
+        lock.acquire = counted
+        end = self.tr.end
+        self.tr.end = lambda why="ended", newer=False: (wished.append(takings[0]) if newer else None, end(why, newer))[1]
+
+        class Noted(list):
+            def append(self_, entry):
+                changed.append((takings[0], lock._is_owned(), entry))
+                list.append(self_, entry)
+        self.player.log = Noted()
         for what, act in (("Stop", lambda: self.api.control({"action": "stop"}, None, "t")),
                           ("Next", lambda: self.api.control({"action": "next"}, None, "t")),
                           ("a preset", lambda: self.api.play({"preset": "startless"}, None, "t")),
@@ -1716,11 +1858,17 @@ class Threads(ServerBase):
                           ("a tone", lambda: self.api.test_tone({"channel": "left"}, None, "t")),
                           ("a live input", lambda: self.api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "t")),
                           ("a generator", lambda: self.api.shaders.show(self.shader()))):
-            del seen[:], self.player.unlocked[:]
+            del seen[:], self.player.unlocked[:], wished[:], changed[:]
             act()
             wishes = [x for x in seen if x[0] == "newest"]
             self.assertEqual(wishes, [("newest", True)], "%s became the newest wish outside the player's lock, apart from its own change" % what)
             self.assertEqual(self.player.unlocked, [], "%s changed what plays outside the lock it became the newest wish under" % what)
+            self.assertEqual(len(wished), 1, what)
+            apart = [c for c in changed if c[0] != wished[0] or not c[1]]
+            self.assertEqual(apart, [], "%s: the wish was made in taking %d of the player's lock and its change of what plays in another"
+                             % (what, wished[0]))
+            if what in ("Stop", "a stream", "the test pattern", "a tone", "a live input", "a generator"):
+                self.assertTrue(changed, "%s changed nothing that the test saw: nothing is tested" % what)
 
     def test_the_blackout_switch_is_set_inside_the_levels_lock(self):
         # the fifth review's mutation a: set outside, a Fade in that had the lock could go up under a Blackout the
@@ -2175,6 +2323,30 @@ class RealPlayer(ServerBase):
         watcher.tick()
         self.assertEqual(self.mpv.props["brightness"], -100, "the restarted player stays lit under a Blackout")
 
+    def test_a_load_thaws_the_freeze_a_hold_made(self):
+        # the ninth read: without the player's own "pause off" at a load the clip came in frozen under the still,
+        # and only the stress test said so
+        self.player.play([self.clip], spawn=False)
+        self.settings.data["mix"] = T.stored("crossfade", 0.2)
+        frozen = []
+        ask = self.player.ipc.request
+
+        def asked(*command):
+            if command and command[0] == "loadfile":
+                frozen.append(self.mpv.props["pause"])
+            return ask(*command)
+        self.player.ipc.request = asked
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertEqual(frozen, [True], "the hold did not freeze the clip before the load: nothing is tested")
+        self.assertIs(self.mpv.props["pause"], False, "the new clip was loaded frozen under the still")
+        deadline = self.time.monotonic() + 10
+        while self.time.monotonic() < deadline and (self.api.transitions.running is not None or self.mpv.overlays):
+            self.time.sleep(0.01)
+        self.assertIs(self.mpv.props["pause"], False)
+        self.mpv.props["pause"] = True                                  # and by the player alone: frozen by anybody, a load plays
+        self.player.play([self.clip], spawn=False)
+        self.assertIs(self.mpv.props["pause"], False)
+
     # -- Vibes' own dip, through the real player's own source_opacity (which takes the player's lock) --
     def vibes(self):
         vibes = self.api.vibes
@@ -2204,6 +2376,27 @@ class RealPlayer(ServerBase):
         del self.mpv.levels[:]
         self.assertTrue(vibes._fade(0, True, 0.2))
         self.assertEqual(self.mpv.levels, [], "Vibes wrote a level over the operator's Fade out")
+
+    def test_vibes_does_not_bring_the_level_back_while_a_tapped_clip_takes_its_still(self):
+        # low, the ninth read: a rotation's dip overtaken by a tap put the level back to full while the still was
+        # taken, so the picture went bright, then the half-dark still came over it, then the blend ran
+        vibes = self.vibes()
+        self.assertTrue(vibes._fade(100, False, 0.2))                  # its own dip, down: the screen is dark
+        self.assertEqual(self.mpv.levels[-1], -100)
+        tr = self.api.transitions
+        self.assertFalse(tr.busy())
+        tr._holding.acquire()                                           # a play is taking its still
+        try:
+            self.assertTrue(tr.busy())
+            del self.mpv.levels[:]
+            vibes._dipped = True
+            vibes._undip()
+            self.assertEqual(self.mpv.levels, [], "Vibes wrote the level while a play's still was being taken")
+        finally:
+            tr._holding.release()
+        vibes._dipped = True                                            # with no play on its way it puts the level back, as before
+        vibes._undip()
+        self.assertEqual(self.mpv.levels[-1:], [0])
 
     def test_a_stop_and_vibes_own_dip_do_not_wait_for_each_other(self):
         # the sixth review's high finding: Stop held the player's lock and waited for the level's; Vibes' step held

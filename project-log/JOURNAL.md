@@ -4,6 +4,16 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the evening (the ninth read of #111, by another model: the give-up rule)
+
+Branch `transitions`, #111, still a draft. Nothing high; D71 has "After the ninth read". **Nothing was run on hardware in this session**; what ran on the Pi 4 this afternoon is the entry below.
+
+- **The give-up rule:** the still is timed alone (`last.still_ms`, with `last.hold_ms` for the whole hold) and a slow one is a journal line; one slow still is used; two in a row, or one longer than the transition asked for, and the box dips; it tries again by itself after five minutes and at once when the transition is chosen again; the Mix screen says why under the picker with a Try again button. What the Pi measures for the still alone on this code is not known yet.
+- **Tests:** the hand test of "one step" counts the lock's takings now (a Stop in two takings passed every hand test before); a load thaws a hold's freeze, on the real player; eight tests of the give-up rules on the injected clock; a browser step for the reason at 320 px and Try again. Ten breakages put back one at a time, each seen to fail.
+- **Lows:** a crossfade, wipe or slide comes up from black after a Fade out; Vibes leaves the level alone while a tapped clip takes its still; HANDOFF, the manual and the device list say what ran on the Pi 4 and that nobody watched; X11 and X12 ask for Blackout and Stop during the screenshot itself.
+- **A test of this session's own was flaky at first** (the Fade out test, two runs in ten): it looked at the calls before the fade's thread had written its last step and started from a dip that was still on its way. It waits for the dark and starts from a cut; twelve runs of twelve since.
+- **Open:** X1 to X23 with somebody at the monitor.
+
 ## 2026-10-09, the afternoon (#111 on the test Pi 4 for the first time: every crossfade was given up, and why)
 
 The owner said "deploy to the Pi" in the session. At about 14:01 UTC the box's schema 15 settings were copied to `/root/pvj-backups/settings-schema15-ndi-2026-10-09.json`, the schema 14 copy of 2026-10-08 was put back, and `transitions` at `fcd6bd0` was installed through `pvj-dev` with `install.sh --offline` (five files compared by hash, the five services active, `pvj-selftest` with no failed check, the panel answering 200). The deploy restarted the panel and the player. A full-access device `claude-transitions-test` was paired with the box's PIN to drive the API from the box (its token is in `/home/pvj-dev/.transitions-test-token`); it is to be revoked when the trial ends. The NDI test's device is gone with the schema 15 settings. **Nobody looked at the monitor**; all of the following is from the API, the journal and timings over SSH.

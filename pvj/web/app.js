@@ -542,6 +542,11 @@
           [['Slide off left', 'slide-left'], ['Slide off right', 'slide-right']], [['Slide off up', 'slide-up'], ['Slide off down', 'slide-down']]].map(function (pair) {
           return choice(pair.map(function (o) { return { label: o[0], value: o[1] }; }), m.transition, function (v) { setMix({ transition: v }); });
         }),
+        // The box gave up on this transition and dips to black instead (mix.fallback, D71): why, in the box's own
+        // words, and Try again, which does what choosing the transition again does.
+        m.fallback ? h('div', { class: 'mixfallback', id: 'mixfallback', role: 'status' },
+          h('div', { class: 'hint warn', id: 'mixfallbackwhy', text: 'This box is not doing that transition now: ' + m.fallback + '.' }),
+          can('live') ? h('button', { class: 'btn small', id: 'mixretry', text: 'Try again', onclick: function () { setMix({}); } }) : null) : null,
         h('div', { class: 'k', text: 'Duration' }),
         choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); })),
       h('div', { class: 'card' },

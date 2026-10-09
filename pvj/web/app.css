@@ -49,6 +49,9 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .pad.on .n { color: var(--on); }
 .pad.empty { border-style: dashed; color: var(--mu); }
 .pad span.t { overflow-wrap: anywhere; }
+/* Why the box dips instead of the chosen transition, under the picker (D71): its words wrap at any width. */
+.mixfallback { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; margin: 4px 0; }
+.mixfallback .hint { overflow-wrap: anywhere; min-width: 0; max-width: 100%; }
 
 .slider { display: flex; flex-direction: column; gap: 6px; }
 .slider label { display: flex; justify-content: space-between; font-weight: 600; font-size: 14px; }

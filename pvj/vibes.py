@@ -250,6 +250,12 @@ class Vibes:
         dipped, self._dipped = self._dipped, False
         if not dipped or self.api.mix["blackout"]:
             return
+        # A clip that was tapped during our dip is taking its still of the screen as it is, half dark: the level is
+        # that play's from here (it sets it when its clip loads, or puts it back if it never does). Brought back
+        # up now, the frozen picture went bright, then the half-dark still was laid over it, then the blend ran.
+        busy = getattr(getattr(self.api, "transitions", None), "busy", None)
+        if busy is not None and busy():
+            return
         path = self._path()
         if path is None or self.engine.is_carrier(path):
             levels = getattr(self.api, "_levels", None)
