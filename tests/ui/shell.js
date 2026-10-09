@@ -183,28 +183,21 @@ const MENUS = {
   presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'access', 'streams', 'sync', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
 };
-// pages: { owner, presenter, guest }, each a page that has just been loaded. post(url, body): as the owner. log(text): optional.
-async function roles(pages, post, log) {
-  const again = {};
+// pages: { owner, presenter, guest }, each a page that has just been loaded. post(url, body): as the owner.
+async function roles(pages, post) {
   for (const who of ['owner', 'presenter', 'guest']) {
     const pg = pages[who];
     await ready(pg);
     // The modules have been read once the Room screens are in the menu. If they do not come: say what the device
-    // had. One cause is not the panel's: a file of the page that the box never delivered (room.js with no answer at
-    // all, seen about once in ten runs on the dev Mac with three browsers on one address; the server's queue for
-    // new connections is five). Then the page is loaded once more, and that is said; anything else fails here.
+    // had, and fail. A file of the page that did not arrive is asked for again by the page itself (load.js, D68),
+    // so a menu without Room screens is a failure, of the panel or of that loader; "files" says which file it was.
     const roomIn = () => pg.waitForFunction(() => document.querySelectorAll('#wsside [data-go^="room/"]').length > 0, null, { timeout: 8000 });
     try { await roomIn(); } catch (e) {
       const had = await pg.evaluate(() => fetch('/api/modules').then((r) => r.json().then((d) => ({ status: r.status, on: (d.modules || []).filter((m) => m.enabled).map((m) => m.id) })), () => ({ status: 0 }))
         .then((box) => ({ box, roomScript: !!window.pvjRoom, loaded: document.readyState,
           files: performance.getEntriesByType('resource').filter((x) => /\.(js|css)$/.test(x.name)).map((x) => x.name.replace(/^.*\//, '') + ': ' + x.responseStatus + ', ' + x.decodedBodySize + ' bytes'),
           menu: Array.prototype.map.call(document.querySelectorAll('#wsside [data-go]'), (b) => b.getAttribute('data-go')) })));
-      if (had.roomScript || again[who]) throw new Error('the menu of a ' + who + ' has no Room screens: ' + JSON.stringify(had));
-      again[who] = true;
-      if (log) log('the Workspace shell, ' + who + ': a file of the page was not delivered (' + had.files.filter((f) => !/: 200,/.test(f)).join('; ') + '); the page is loaded once more');
-      await pg.goto(await pg.evaluate(() => location.origin + '/'));
-      await ready(pg);
-      await roomIn();
+      throw new Error('the menu of a ' + who + ' has no Room screens: ' + JSON.stringify(had));
     }
     const s = await see(pg);
     assert.deepStrictEqual(s.menu, MENUS[who], 'the screens in a ' + who + '\'s menu');
