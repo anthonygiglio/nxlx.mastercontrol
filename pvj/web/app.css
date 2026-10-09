@@ -693,7 +693,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
    tabs under it), and what More opened scrolls inside it. */
 @media (max-height: 599px) {
   .tp.open { max-height: calc(50dvh - 70px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
-  @container app (min-width: 600px) { .tp.open { max-height: 50dvh; } }
+  @container app (min-width: 600px) { .tp.open { max-height: 44dvh; } }      /* (under half: a control brought to the middle of the window is then clear of the strip) */
 }
 /* short: the title bar gives way, the controls keep their height */
 @media (max-height: 479px) {
