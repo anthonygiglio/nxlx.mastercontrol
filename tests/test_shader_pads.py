@@ -831,6 +831,162 @@ class StepsBesides(Steps):
         time.sleep(0.1)
         self.assertEqual((self.player.level, self.api.fader.label), (0.0, "out"))
 
+    # -- the fourth read of #114: the order of the wishes, the newest mark, the place after a black refusal, no growth --
+    def open_all(self):
+        self.gate.set()
+        self.go_on.set()
+        self.look_over.set()
+
+    def test_a_pad_between_steps_is_shown_and_the_steps_after_it_count_from_it(self):
+        # it was dropped without a word: the step after it replaced it, though its tap had already ended Vibes
+        midi_device = {"id": "midi"}
+        self.give(0, self.ids[7])
+        self.engine.play(self.ids[0])
+        shown, real = [], self.engine.show
+        self.engine.show = lambda sid, *a, **k: (shown.append(sid), real(sid, *a, **k))[1]
+        self.press((N,))
+        self.gate.set()
+        self.assertTrue(self.before.wait(5))        # the first step is in the worker's hands
+        self.press((N,))                            # waits
+        self.tap(0, device=midi_device)             # the pad: supersedes the step that waits
+        self.press((N,))                            # behind the pad
+        self.go_on.set()
+        self.look_over.set()
+        self.assertTrue(self.idle())
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[8]), "on %s; the pad's shader is %s" % (self.on(), self.ids[7]))
+        self.assertEqual(shown, [self.ids[1], self.ids[7], self.ids[8]], "the pad's shader was never on the screen")
+
+    def test_a_preset_of_another_shader_between_steps(self):
+        self.engine.play(self.ids[7])
+        self.engine.preset_save("P")
+        self.engine.play(self.ids[0])
+        self.press((N,))
+        self.gate.set()
+        self.assertTrue(self.before.wait(5))
+        self.engine.apply_preset({"id": self.ids[7], "name": "P"})
+        self.press((N,))
+        self.go_on.set()
+        self.look_over.set()
+        self.assertTrue(self.idle())
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[8]), self.on())
+
+    def test_steps_after_a_pad_that_waits_count_from_the_pad(self):
+        self.give(0, self.ids[7])
+        self.engine.play(self.ids[0])
+        self.tap(0, device={"id": "midi"})
+        self.press((N, N))
+        self.assertEqual(self.engine.changer.queued().get("id"), self.ids[7], "the steps went before the pad that was tapped first")
+        self.open_all()
+        self.assertTrue(self.idle())
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[9]), self.on())
+
+    def test_a_pad_after_steps_that_wait_is_what_is_shown(self):
+        self.give(0, self.ids[7])
+        self.engine.play(self.ids[0])
+        self.press((N, N))
+        self.tap(0, device={"id": "midi"})
+        self.open_all()
+        self.assertTrue(self.idle())
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[7]), self.on())
+
+    def test_the_summed_steps_carry_the_level_mark_of_the_newest_press(self):
+        # the code was right and nothing held it: with the OLDEST press's mark every test passed
+        self.engine.play(self.ids[0])
+        self.press((N, N))
+        self.api.fadeout({"seconds": 0.1}, None, "t")
+        self.assertTrue(self.wait(lambda: self.api.fader.label == "out" and self.player.level == 0.0))
+        self.press((P,))                            # pressed after the Fade out: like any play after it, it brings the picture back
+        self.open_all()
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[1]), self.on())
+        self.assertTrue(self.wait(lambda: self.player.level == 100.0 and self.api.fader.label is None),
+                        "a step pressed after the Fade out came up dark (level %s, label %s)" % (self.player.level, self.api.fader.label))
+
+    def test_a_fade_out_with_steps_that_add_up_to_none_stays_dark(self):
+        self.engine.play(self.ids[0])
+        self.press((N,))
+        self.api.fadeout({"seconds": 0.1}, None, "t")
+        self.assertTrue(self.wait(lambda: self.api.fader.label == "out" and self.player.level == 0.0))
+        self.press((P,))
+        self.open_all()
+        self.assertTrue(self.idle())
+        time.sleep(0.1)
+        self.assertEqual((self.on(), self.player.level, self.api.fader.label), (self.ids[0], 0.0, "out"))
+
+    def refuse_once(self):
+        taps = []
+
+        def refuse_the_first_only(path):
+            FakeTap.lines = [] if taps else REFUSAL
+            taps.append(1)
+            return FakeTap(path)
+        self.engine._checked.clear()
+        self.engine._tap = refuse_the_first_only
+
+    def test_after_a_refusal_into_black_the_next_step_goes_on_from_that_place(self):
+        # with nothing to go back to the screen is black and no shader is on: the place was lost and Next began
+        # again at the first of the set
+        for move, where in ((N, 4), (P, 2)):
+            self.api.control({"action": "stop"}, None, "t")
+            self.assertTrue(self.idle())
+            ids = list(self.engine.vibes_ids())
+            self.engine.error = None
+            self.refuse_once()
+            self.gate.clear()
+            self.press((N, N, N, N))                # from nothing on: the fourth of the set, which the GPU refuses
+            self.open_all()
+            self.assertTrue(self.wait(lambda: (self.engine.error or {}).get("id") == ids[3]), "the fourth was not refused: nothing is tested")
+            self.assertTrue(self.idle())
+            self.assertEqual((self.on(), self.player.source_shader), (None, None))
+            self.press((move,))
+            self.assertTrue(self.wait(lambda: self.on() == ids[where]), "after %+d: on %s, expected %s" % (move, self.on(), ids[where]))
+            self.engine.unmark([ids[3]])            # back into the set for the second turn
+            self.engine._refusals.clear()
+
+    def test_something_else_played_after_a_black_refusal_forgets_the_place(self):
+        ids = list(self.ids)
+        self.api.control({"action": "stop"}, None, "t")
+        self.refuse_once()
+        self.press((N, N, N, N))
+        self.open_all()
+        self.assertTrue(self.wait(lambda: (self.engine.error or {}).get("id") == ids[3]))
+        self.assertTrue(self.idle())
+        self.player.play([os.path.join(self.media, "a.mp4")])
+        self.press((N,))
+        self.assertTrue(self.wait(lambda: self.on() == self.engine.vibes_ids()[0]), self.on())
+
+    def test_the_steps_that_wait_do_not_grow_with_the_presses(self):
+        ch = self.engine.changer
+        self.engine.play(self.ids[0])
+        for _ in range(300):
+            self.engine.step(1)
+        waiting = ch.queued()
+        self.assertEqual((len(waiting["steps"]), waiting["presses"], waiting["steps"][0][0]), (1, 300, 300))
+        self.open_all()
+        self.assertTrue(self.idle())
+        self.assertTrue(self.wait(lambda: self.on() == self.ids[300 % len(self.ids)]), self.on())
+        from pvj import shaderlive
+        self.gate.clear()
+        for epoch in range(1000, 1040):             # something else took the screen between every two presses
+            ch.step(1, epoch, None)
+        self.assertEqual(len(ch.queued()["steps"]), shaderlive.STEP_ENTRIES)
+        self.assertEqual(ch.queued()["steps"][-1][1], 1039, "the newest presses are the ones kept")
+        before = self.on()
+        self.gate.set()
+        self.assertTrue(self.idle())
+        self.assertEqual(self.on(), before, "presses made before something else took the screen were shown")
+
+    def test_a_set_emptied_before_the_worker_comes_is_said_in_the_log_and_names_no_shader(self):
+        said = []
+        self.engine.log = lambda *a: said.append(" ".join(str(x) for x in a))
+        self.engine.play(self.ids[0])
+        self.engine.error = None
+        self.press((N,))
+        self.engine.vibes_ids = lambda: []
+        self.open_all()
+        self.assertTrue(self.idle())
+        self.assertIsNone(self.engine.error)
+        self.assertEqual((self.on(), [x for x in said if "found none in the active set" in x] != []), (self.ids[0], True))
+
     def test_a_rename_keeps_a_part_of_the_shaders_settings_that_cannot_be_read(self):
         # a regression of the round before: the one write went past LiveEngine._save and its rule that a key which
         # cannot be read is left in the file as it is

@@ -42,6 +42,7 @@ MAX_SETS = 16
 MAX_SET_ENTRIES = 128
 SET_ID = re.compile(r"[0-9a-f]{8}")
 DEFAULT_PRESET = "default"
+STEP_ENTRIES = 8                # waiting steps are kept as at most this many sums (see Changer.step)
 
 
 def name_ok(name):
@@ -561,6 +562,7 @@ class Changer:
         self._cond = threading.Condition()          # guards the fields below; never held across a call to the player
         self._adjust = None                         # {"epoch", "id", "values", "controls", "held"}: the newest wish
         self._show = None                           # {"id", "values", "controls", "preset"}: a whole shader to put on
+        self._steps = None                          # {"steps": [[net, epoch, mark], ...], "presses"}: steps that wait, BEHIND _show
         self._doing = None                          # the whole shader the worker is putting on right now, if any
         self._last = -1e9                           # when the last change was applied
         self._release = None                        # when a pressed event is to be let go
@@ -587,39 +589,54 @@ class Changer:
     def show(self, job):
         """Put a whole shader on (the newest wish wins), away from the caller's thread. The job carries the player's
         epoch of the moment it was asked for: whatever is played or stopped before the worker comes round keeps the
-        screen."""
+        screen. What waited before it is superseded, a whole shader and steps alike: the wishes keep their order,
+        and a shader that is named does not depend on where the steps before it would have ended."""
         with self._cond:
-            self._show, self._adjust = job, None
+            self._show, self._adjust, self._steps = job, None, None
             self._wake()
 
     def step(self, direction, epoch, mark):
         """Note a step to the next shader (+1) or the one before (-1), away from the caller's thread. A step is kept
         as what it is, a move from wherever the screen is when the worker comes to it, with the epoch and the
-        level's mark of its own moment; steps that wait are kept together, each with its own, and the worker adds
-        up the ones that are still good. Nothing is worked out here from what is on the screen now. A step after a
-        whole shader that waits replaces it, as any newer wish does. Returns how many steps wait."""
+        level's mark of its own moment. Nothing is worked out here from what is on the screen now.
+
+        The wishes keep their order. Steps wait BEHIND a whole shader that waits (a pad's tap, a preset of another
+        shader): that shader is shown first and the steps count from it; and a whole shader asked for after them
+        supersedes them (Changer.show). So what waits is at most one whole shader and one batch of steps after it.
+
+        The batch does not grow with the presses (a knob can send hundreds): presses made under the same epoch of
+        the player are one entry, [their sum, the epoch, the level's mark of the newest of them]. A new entry
+        begins only when something else has taken the screen in between, and the oldest go beyond STEP_ENTRIES
+        (they are the ones the worker would drop anyway). Returns how many presses wait."""
         with self._cond:
-            if self._show is None or "steps" not in self._show:
-                self._show = {"steps": []}
-            self._show["steps"].append((direction, epoch, mark))
+            if self._steps is None:
+                self._steps = {"steps": [], "presses": 0}
+            rows = self._steps["steps"]
+            if rows and rows[-1][1] == epoch:
+                rows[-1][0] += direction
+                rows[-1][2] = mark
+            else:
+                rows.append([direction, epoch, mark])
+                del rows[:-STEP_ENTRIES]
+            self._steps["presses"] += 1
             self._adjust = None
             self._wake()
-            return len(self._show["steps"])
+            return self._steps["presses"]
 
     def queued(self):
+        """The wish that the worker takes next: the whole shader that waits, else the steps that wait."""
         with self._cond:
-            return self._show
+            return self._show or self._steps
 
     def newest(self):
-        """The whole shader that was asked for last and is not on yet: the one waiting, else the one the worker is
-        putting on right now."""
+        """What was asked for and is not on yet: what waits, else what the worker is putting on right now."""
         with self._cond:
-            return self._show or self._doing
+            return self._show or self._steps or self._doing
 
     def clear(self):
         """Forget what is waiting (the module went off, Vibes was started, the box was reset)."""
         with self._cond:
-            self._show = self._adjust = self._release = self._refresh = None
+            self._show = self._steps = self._adjust = self._release = self._refresh = None
 
     def keep(self):
         """A shader has just come on or been changed: come back in two days to give it a new anchor, if nobody has
@@ -644,6 +661,9 @@ class Changer:
             if hold <= 0:
                 job, self._show = self._show, None
                 return ("show", job), 0.0
+        elif self._steps is not None:               # behind the whole shader, never before it
+            job, self._steps = self._steps, None
+            return ("show", job), 0.0
 
         def sooner(wait):
             return None, (wait if hold is None else min(wait, hold))
@@ -709,7 +729,9 @@ class Changer:
                         self._cond.wait(min(wait, 30.0))
                     continue
                 # put it back for pump(), which takes it again outside the lock
-                if job[0] == "show":
+                if job[0] == "show" and "steps" in job[1]:
+                    self._steps = job[1]
+                elif job[0] == "show":
                     self._show = job[1]
                 elif job[0] == "adjust":
                     self._adjust = job[1]
@@ -730,6 +752,7 @@ class LiveEngine(S.Engine):
         # and written with no lock, because ONLY THE WORKER calls play_job (Changer.pump): do not call it from
         # anywhere else.
         self._chain = None
+        self._place = None                          # (epoch, place in the set, shader) of a step whose shader did not stay: the worker's too
         self._job = threading.local()               # .doing: the queued job this thread is carrying out (the worker only)
         self.guard = Guard(self, clock)
         self._refusals = {}                         # source hash -> what the GPU said; a changed file has another hash
@@ -1263,7 +1286,17 @@ class LiveEngine(S.Engine):
         finally:
             self._job.doing = None
             if len(job["made"]) > 1:                # it took the screen, whatever came of it afterwards
-                self._chain = (frozenset(job["made"]), job["made"][-1])
+                # If it started from where the job before it left, the epochs that job made stand for this one's
+                # last too: a wish that waited through both (a step behind a pad's tap, pressed while the worker
+                # was busy with the job before the tap) is still only behind the queue's own jobs.
+                before = self._chain[0] if self._chain is not None and self._chain[1] == epoch else frozenset()
+                self._chain = (before | frozenset(job["made"]), job["made"][-1])
+            if "steps" in job:
+                # Where the next step counts from if this one's shader did not stay (the GPU refused it): its place
+                # in the set, good while nothing else takes the screen. A shown shader needs none: it is on.
+                on = self.on_screen()
+                stays = on is not None and on["id"] == job["id"]
+                self._place = None if stays else (job["made"][-1], job["place"], job["id"])
 
     def _alias(self, epoch):
         """`epoch` as the queue reads it: one that the worker's last job itself made stands for the one it left."""
@@ -1285,15 +1318,25 @@ class LiveEngine(S.Engine):
         if not n:
             return False
         ids = self.vibes_ids()
-        if not ids:
-            self.error = {"id": None, "message": "the active set has no shader that can be shown", "at": time.strftime("%Y-%m-%d %H:%M:%S")}
-            return False
+        if not ids:                                 # emptied since the press, which had one: said in the log, as it
+            self.log("pvj-web: a step to the next shader found none in the active set that can be shown")
+            return False                            # is nobody's shader that failed (`error` names a shader)
         on = self.on_screen()                       # the worker does one job at a time: the job before this one is
         at = on["id"] if on else None               # over, and what it showed (or what came back when the GPU
+        place = self._place if self._place is not None and self._place[0] == now else None
         if at in ids:                               # refused it) is what is on the screen
-            job["id"] = ids[(ids.index(at) + n) % len(ids)]
+            at = ids.index(at) + n
+        elif place is not None and place[2] in ids:
+            at = ids.index(place[2]) + n
+        elif place is not None:
+            # The step before this one went to a shader the GPU refused, with nothing to go back to: the screen is
+            # black and that shader has left the set. Its place is kept: the one that stood after it stands there
+            # now, so a Next goes on from where it was and a Previous back from there.
+            at = place[1] + (n - 1 if n > 0 else n)
         else:
-            job["id"] = ids[(n - 1) % len(ids)] if n > 0 else ids[n % len(ids)]
+            at = n - 1 if n > 0 else n              # no shader on: a Next starts at the first, a Previous at the last
+        job["place"] = at % len(ids)
+        job["id"] = ids[job["place"]]
         job["epoch"] = now
         if good[-1][2] is not S.Engine.NOW:
             job["mark"] = good[-1][2]               # the level's mark of the newest of them
