@@ -2165,10 +2165,15 @@ class QueueTest(Base):
         cfg = self.gen.config()
         cfg["faster"] = True                            # no gap between two switches: the worker is as quick as it can be
         self.gen._save(cfg)
-        self.fx._tap = FakeTap
+        class SlowTap(WishTap):                         # the GPU's look takes a moment, so steps pile up behind it
+            def drain(self, seconds):
+                time.sleep(0.03)
+                return []
+        self.fx._tap = SlowTap
         self.fx.changer._use_thread = True
         rng = random.Random(7)
         for trial in range(12):
+            self.fx._checked.clear()
             self.fx.put(self.ids[2])
             count = rng.choice((2, 3, 5))
             for _ in range(count):
@@ -2651,11 +2656,14 @@ class OverShaderTest(Base):
         self.show()
         self.fx.put("fx-wash.fs")
         size = self.state()["on"]["working"]["clip"]
+        self.assertIsNotNone(size)
+        self.fx.off()
         self.player.play_source(self.player.source_shader, self.gen.playing["carrier"])    # the player has the next one; the record follows after the look
         self.assertNotEqual(self.gen.playing["epoch"], self.player.source_epoch)
+        self.fx.put("fx-wash.fs")                                                      # an effect put on in that moment
+        self.assertEqual(self.state()["on"]["working"]["clip"], size)
         self.fx.adjust("anchor")
         self.assertEqual(self.state()["on"]["working"]["clip"], size)
-        self.assertIsNotNone(size)
 
     def test_a_complaint_with_no_name_is_nobodys_while_both_are_in_the_player(self):
         """A listener that began in the middle of the other shader's text hears numbered lines and a complaint, and
