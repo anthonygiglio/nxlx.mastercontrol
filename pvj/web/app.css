@@ -61,7 +61,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .pin-row input { width: 56px; height: 64px; border: 1.5px solid var(--ln); background: var(--cd); border-radius: 6px; font: 500 28px ui-monospace, Menlo, monospace; text-align: center; color: var(--fg); }
 .text-input { border: 1.5px solid var(--ln); background: var(--cd); border-radius: 6px; min-height: 44px; padding: 0 10px; width: 100%; }
 .msg { min-height: 1.4em; font-size: 14px; }
-.msg.err { color: var(--ac); font-weight: 600; }
+.msg.err { color: var(--ac); font-weight: 600; overflow-wrap: anywhere; }
 .list { display: flex; flex-direction: column; }
 .list .item { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--ln); padding: 8px 0; font-size: 14px; }
 .list .item:first-child { border-top: 0; }

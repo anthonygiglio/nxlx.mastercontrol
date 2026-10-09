@@ -147,6 +147,7 @@ class Player:
     _lock = locks.make("player", reentrant=True)
     _mapping_shaders, _mapping_mode, _source, _source_pid, _carrier, source_epoch = [], False, None, None, None, 0
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
+    cleared_by, _seen_pid = "", None
     _pipe, _pipe_pid = False, None      # a live input's pipe is what was loaded last, and the mpv it was loaded into
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
@@ -185,14 +186,26 @@ class Player:
         # move it, since an effect stays through that (D74); `effect_serial` does not do for it, since it moves on a
         # clearing only when an effect was on.
         self.clears = 0
+        self.cleared_by = ""        # what moved it last: "stop", "cleared" (a shader taken off), "restart"
+        self._seen_pid = None       # the mpv last heard from: another one is a new player, with nothing on its screen
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
         try:
-            self.ipc.request("get_property", "pid")
+            self._note_pid(self.ipc.request("get_property", "pid"))
             return True
         except PlayerError:
             return False
+
+    def _note_pid(self, pid):
+        """Another mpv than the one last heard from (it crashed and its service started a new one, or the panel
+        ended it): its screen began empty, which is a clearing for whatever was asked for before (see `clears`).
+        Every play and every status asks for the pid, so it is noticed by whoever comes first."""
+        if self._seen_pid is not None and pid != self._seen_pid:
+            self.clears += 1
+            self.cleared_by = "restart"
+        self._seen_pid = pid
+        return pid
 
     def mpv_command(self, audio_device=None, windowed=False):
         args = [self.mpv_bin, "--idle=yes", "--input-ipc-server=" + self.socket_path,
@@ -399,6 +412,7 @@ class Player:
                 self._source = self._carrier = None
             self.source_epoch += 1          # the screen has changed hands: a rotation's next change is not for this one
             self.clears += 1                # and an effect that waits to go on is not for the next player
+            self.cleared_by = "restart"
             self.ipc.request("quit")
 
     def _pid(self):
@@ -453,6 +467,7 @@ class Player:
         with self._lock:
             self._pipe = False
             self.clears += 1
+            self.cleared_by = why
             try:
                 self.ipc.request("stop")
             finally:
@@ -623,11 +638,12 @@ class Player:
         with self._lock:
             self._check_source()
             self._check_effect()
+            pid = self._note_pid(self.ipc.request("get_property", "pid"))      # before the look at `clears`: a new mpv moves it
             if clears is not None and clears != self.clears:
                 return None
             if (serial is not None and serial != self.effect_serial) or (epoch is not None and epoch != self.source_epoch):
                 return None
-            previous, pid = self._effect, self.ipc.request("get_property", "pid")
+            previous = self._effect
             self._effect, self._effect_pid = shader, pid
             try:
                 self._push_shaders()

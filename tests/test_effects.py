@@ -2138,7 +2138,7 @@ class QueueTest(Base):
             self.drain()
             s = self.state()
             self.assertEqual((s["on"], self.mpv.loaded), (None, []))
-            self.assertEqual((s["error"]["message"], s["error"]["kind"]), (E.OVERTAKEN, "wish"))
+            self.assertEqual((s["error"]["message"], s["error"]["kind"]), ("Stop was pressed after it was asked for, so it was not put on. Ask again.", "wish"))
             self.assertIsNone(self.fx._intent)
             # with nothing playing after the Stop it is the other answer, also said
             self.fx.error = None
@@ -2186,6 +2186,65 @@ class QueueTest(Base):
             self.assertIsNone(self.fx.error)
         self.fx.changer._use_thread = False
         self.fx.off()
+
+    def test_a_wish_says_what_cleared_the_screen_and_a_player_that_came_back_by_itself_is_a_clearing(self):
+        # Vibes stopped (a shader taken off the screen) is not "Stop"
+        self.gen.show("nxlx-silk.fs")
+        self.fx.step(1)
+        self.gen.off()
+        self.player.play(["/media/a.mp4"])
+        self.drain()
+        self.assertEqual((self.on(), self.mpv.loaded), (None, []))
+        self.assertEqual(self.state()["error"]["message"], "The shader was taken off the screen (Vibes stopped or ended) after it was asked for, so it was not put on. Ask again.")
+        # the player crashed and its service started a new one, which nobody here asked for; something plays on
+        # the new one before the worker comes round. The wish was for the old one's screen.
+        for noticed_by in ("the next play", "the worker itself"):
+            self.fx.error = None
+            self.player.play(["/media/a.mp4"])
+            clears = self.player.clears
+            self.fx.step(1)
+            self.mpv.restart()
+            if noticed_by == "the next play":
+                self.player.play(["/media/b.mov"])
+                self.assertEqual(self.player.clears, clears + 1)
+            else:
+                self.mpv.props["path"] = "/media/b.mov"                                # (what its autostart put there)
+            self.drain()
+            self.assertEqual((self.on(), self.mpv.loaded), (None, []), noticed_by)
+            self.assertEqual(self.state()["error"]["message"], "The player was restarted after it was asked for, so it was not put on. Ask again.", noticed_by)
+            self.assertEqual(self.player.clears, clears + 1, noticed_by)
+        self.fx.step(1)                                                                # and a wish made after it goes on
+        self.drain()
+        self.assertEqual(self.on(), self.ids[0])
+
+    def test_an_off_from_a_controller_holds_when_the_next_behind_it_comes_to_nothing(self):
+        """Off, then Next, quickly: the Next takes the Off's place in the queue, and the Off had not reached the
+        player. The Off comes first all the same, so the old effect is off whatever becomes of the Next."""
+        self.fx.upload("bad.fs", GOOD.replace("* k", "* oops"))
+        ids = self.fx.order()
+        self.assertEqual(ids[-1], "bad.fs")                                            # an upload: the last, so Previous from none goes to it
+        self.fx._tap = FakeTap
+        for name, lines, want in (("a Next that goes on", [], ids[0]), ("a Previous the GPU refuses", list(REFUSAL), None)):
+            self.fx.put("all.fs")
+            self.fx._refusals.clear()
+            self.assertEqual(self.fx.toggle(), {"ok": True, "on": False})
+            self.assertEqual(len(self.mpv.loaded), 1)                                  # noted only: the player has heard nothing yet
+            FakeTap.lines = lines
+            self.fx.step(1 if want else -1)
+            self.assertTrue(self.fx.changer.queued()["off_first"], name)
+            self.drain()
+            FakeTap.lines = []
+            self.assertEqual(self.on(), want, name)
+            self.assertEqual(len(self.mpv.loaded), 1 if want else 0, name)             # never the old effect left on
+            self.assertEqual((self.state()["error"] or {}).get("id"), None if want else "bad.fs", name)
+        # and with no picture to put the Next on: the Off still held
+        self.fx.put("all.fs")
+        self.fx.toggle()
+        self.fx.step(1)
+        self.mpv.video = None
+        self.drain()
+        self.assertEqual((self.on(), self.mpv.loaded), (None, []))
+        self.assertIn("Nothing with a picture is playing", self.state()["error"]["message"])
 
     def test_a_wish_that_cannot_be_carried_out_says_why(self):
         self.fx.put(self.ids[2])
@@ -2453,6 +2512,54 @@ class OverShaderTest(Base):
         self.fx.put("fx-wash.fs")
         self.assertEqual((self.kinds(), self.state()["on"]["id"], self.state()["error"]), (["effect"], "fx-wash.fs", None))
 
+    def test_a_pairs_refusal_stays_with_the_pair_in_the_library_and_for_next(self):
+        """Not by hand: through the library's rows, `order()` and Next. A refusal over one generator said the file
+        was refused, for good and everywhere: the row said so over a clip, and Next passed it by over every picture."""
+        ids = self.fx.order()
+        at = ids.index("fx-wash.fs")
+        before, after = ids[at - 1], ids[(at + 1) % len(ids)]
+        row = lambda: next(r for r in self.state()["effects"] if r["id"] == "fx-wash.fs")
+        step = lambda: (self.fx.step(1), self.pump())
+        self.show()
+        self.fx.put(before)
+        self.refuse()
+        step()                                                                         # Next onto it over silk: the GPU refuses the pair
+        FxTap.lines = []
+        s = self.state()
+        self.assertEqual((s["on"]["id"], s["error"]["id"], s["error"]["kind"]), (before, "fx-wash.fs", "gpu"))
+        self.assertEqual((row()["refused"], "undeclared" in row()["refused_pair"]), (None, True))    # said of the pair, while silk is under it
+        self.assertIn("fx-wash.fs", self.fx.order())
+        self.assertNotIn("fx-wash.fs", self.fx.order(self.fx.pair))
+        sent = len(self.mpv.commands)
+        step()                                                                         # Next again over silk: past it, and the GPU is not shown it
+        self.assertEqual((self.state()["on"]["id"], self.kinds()), (after, ["shader", "effect"]))
+        self.assertFalse(any("effect" in kinds and len(kinds) != 2 for kinds in self.lists(sent)))
+        # over a clip: the row says nothing, and Next goes onto it
+        self.clip()
+        self.fx.put(before)
+        self.assertEqual((row()["refused"], row()["refused_pair"]), (None, None))
+        step()
+        self.assertEqual((self.state()["on"]["id"], self.state()["error"]), ("fx-wash.fs", None))
+        # over another generator: the same
+        self.show("nxlx-ember.fs")
+        self.fx.put(before)
+        self.assertEqual((row()["refused"], row()["refused_pair"]), (None, None))
+        step()
+        self.assertEqual((self.state()["on"]["id"], self.state()["error"]), ("fx-wash.fs", None))
+        # and back over silk it is still that pair's
+        self.show()
+        self.fx.put(before)
+        self.assertIn("undeclared", row()["refused_pair"])
+        step()
+        self.assertEqual(self.state()["on"]["id"], after)
+        # a file the GPU refuses over a clip is the file's, as before
+        self.clip()
+        self.fx.put(before)
+        self.fx._checked.clear()                                                       # (the GPU looks again: it has taken this text before)
+        self.refuse()
+        step()
+        self.assertEqual((row()["refused_pair"], "undeclared" in row()["refused"], "fx-wash.fs" in self.fx.order()), (None, True, False))
+
     def test_an_effect_refused_over_a_generator_gives_way_to_the_effect_before_it(self):
         self.show()
         self.fx.put("fx-vignette.fs")
@@ -2591,13 +2698,28 @@ class OverShaderTest(Base):
         self.assertIs(self.heavy_seconds(now, 3), True)
         s = self.state()
         self.assertEqual((s["on"], self.mpv.loaded, self.texts()), (None, gen, []))
-        self.assertEqual(s["last"], "it was too heavy over the shader on this box: frames were dropping for 20 seconds, so the box took it off. The shader plays on")
+        said = "the picture was dropping frames with it on over the shader for 20 seconds, so the box took the effect off to lighten the load. The shader plays on"
+        self.assertEqual(s["last"], said)                                              # what is known, and no more: not "it was too heavy"
         self.assertEqual(self.gen.on_screen()["id"], "nxlx-silk.fs")                   # the shader was never touched,
         self.assertEqual(self.settings.data.get("shaders", {}).get("heavy", {}), {})   # and nothing is marked against it
         self.assertEqual(self.player.effect_ended, "heavy")
-        # it does not come back by itself; by hand it goes on again, with a count of its own
+        # it does not come back by itself
         self.assertIs(self.heavy_seconds(now, 30), True)
         self.assertEqual(self.mpv.loaded, gen)
+        # the shader alone, judged by the generators' own guard from then on: while it holds, nothing is added; when
+        # it goes on dropping frames without the effect, the card says that too, once
+        for _ in range(12):
+            now[0] += 1.0
+            self.gen.watch()
+        self.assertEqual((self.gen.guard.verdict["state"], self.state()["last"]), ("ok", said))
+        for _ in range(12):
+            now[0] += 1.0
+            self.mpv.drops += 5
+            self.gen.watch()
+        self.assertEqual(self.gen.guard.verdict["state"], "heavy")
+        self.assertEqual(self.state()["last"], said + ". Frames are still dropping without it, so the effect may not have been the cause")
+        self.assertEqual(self.state()["last"].count("still dropping"), 1)
+        # by hand it goes on again, with a count of its own
         self.fx.put("fx-wash.fs")
         self.assertIs(self.heavy_seconds(now, 10), False)
         self.assertIsNone(self.state()["last"])
@@ -2632,7 +2754,7 @@ class OverShaderTest(Base):
         self.assertNotIn("heavy", said)
         self.assertTrue(vibes.running)
         self.assertEqual((self.kinds(), self.settings.data.get("shaders", {}).get("heavy", {}), vibes._marked), (["shader"], {}, []))
-        self.assertIn("too heavy over the shader", self.state()["last"])
+        self.assertIn("was dropping frames with it on over the shader", self.state()["last"])
 
     def test_the_floor_is_for_a_pair_only_and_goes_with_the_guards_switch(self):
         now = self.floor_clock()
@@ -2728,17 +2850,17 @@ class OverShaderTest(Base):
         self.assertEqual((self.state()["on"]["values"]["mode"], self.state()["error"]), (2, None))
 
     def test_a_rotation_and_a_performer_on_the_effect_at_once(self):
-        """Two threads for a second: one shows generator after generator (a rotation's steps), the other puts an
+        """Two threads, eight rounds each: one shows generator after generator (a rotation's steps), the other puts an
         effect on, changes it, looks and takes it off. The two engines hold different locks and meet in the
         player's. Nothing may hang, nothing may raise, and no list the player was given has the effect before the
         generator. (The order of the locks is checked at every taking by tests/lockrank.py, here as everywhere.)"""
         self.show()
-        stop, errors = threading.Event(), []
+        errors = []
+
+        rounds = 8                                      # each thread does this many and ends: the machine's speed decides nothing
 
         def rotate():
-            n = 0
-            while not stop.is_set():
-                n += 1
+            for n in range(1, rounds + 1):
                 try:
                     if not self.gen.show(("nxlx-silk.fs", "nxlx-ember.fs")[n % 2])["ok"]:
                         errors.append("a generator was refused: %s" % (self.gen.error,))
@@ -2746,9 +2868,7 @@ class OverShaderTest(Base):
                     errors.append("show: %r" % (e,))
 
         def perform():
-            n = 0
-            while not stop.is_set():
-                n += 1
+            for n in range(1, rounds + 1):
                 try:
                     self.fx.put(("fx-wash.fs", "fx-vignette.fs")[n % 2])
                     self.fx.change({"controls": {"amount": 0.25 + 0.5 * (n % 2)}})
@@ -2765,14 +2885,12 @@ class OverShaderTest(Base):
         before = len(self.mpv.commands)
         for t in threads:
             t.start()
-        time.sleep(1.0)
-        stop.set()
         for t in threads:
-            t.join(30)
+            t.join(60)
         self.assertEqual([t.is_alive() for t in threads], [False, False], "a thread never ended (a deadlock)")
         self.assertEqual(errors, [])
         lists = self.lists(before)
-        self.assertGreater(len(lists), 6)
+        self.assertGreaterEqual(len(lists), 2 * rounds)             # a list for every generator shown and for every effect put on
         self.assertEqual(sorted(set(tuple(x) for x in lists) - {("shader",), ("shader", "effect")}), [], "a list with no generator, or the effect first")
         self.assertIsNotNone(self.gen.on_screen())
         self.assertEqual(self.fx.error, None)

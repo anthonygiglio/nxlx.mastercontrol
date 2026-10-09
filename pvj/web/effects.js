@@ -452,7 +452,7 @@
     var h = c.h, el = document.getElementById('fxlist'), live = c.can('live'), full = c.can('full');
     if (!el) return;
     var rows = shownRows(d), onId = d.on && d.on.id;
-    var shape = JSON.stringify([rows.map(function (s) { return [s.id, s.weight, s.refused, s.error]; }), onId, d.available, live, full]);
+    var shape = JSON.stringify([rows.map(function (s) { return [s.id, s.weight, s.refused, s.refused_pair, s.error]; }), onId, d.available, live, full]);
     if (shape === card.list || busyIn(el)) return;
     card.list = shape;
     el.textContent = '';
@@ -466,7 +466,8 @@
           h('span', { class: 'hint', text: facts }),
           s.description ? h('span', { class: 'hint fxdesc', text: s.description }) : null,
           s.error ? h('span', { class: 'msg err', text: 'This file cannot be used: ' + s.error }) : null,
-          s.refused ? h('span', { class: 'msg err', text: 'The GPU of this box refused it: ' + s.refused }) : null),
+          s.refused ? h('span', { class: 'msg err', text: 'The GPU of this box refused it: ' + s.refused })
+            : (s.refused_pair ? h('span', { class: 'msg err', text: 'The GPU of this box refused it over this shader: ' + s.refused_pair }) : null)),
         h('div', { class: 'row' },
           live && !s.error ? (isOn ? h('button', { class: 'btn', 'data-off': s.id, text: 'Off', 'aria-label': 'Take ' + name + ' off', onclick: function () { send(c, '/api/effects', { off: true }); } })
             : h('button', { class: 'btn', 'data-put': s.id, text: 'Put on', 'aria-label': 'Put ' + name + ' on', disabled: !d.available, onclick: function (ev) {

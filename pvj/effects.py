@@ -82,7 +82,8 @@ ENDED = {"stop": "Stop was pressed", "cleared": "the shader under it was taken o
          # (two more reasons are made where they happen: PAIR_HEAVY_WORDS below, and OVERTAKEN for a wish)
 SHADER = "shader"               # what `under` says while a generator shader is the picture under the effect
 STAYS = "The shader stays on the screen."
-OVERTAKEN = "The screen was cleared (Stop) after it was asked for, so it was not put on. Ask again."
+OVERTAKEN = "%s after it was asked for, so it was not put on. Ask again."
+CLEARED_BY = {"stop": "Stop was pressed", "cleared": "The shader was taken off the screen (Vibes stopped or ended)", "restart": "The player was restarted"}
 # The floor under an effect over a generator shader (D74, after the review). While an effect is on, Vibes marks no shader
 # heavy (the frames are the pair's), so without this a heavy pair that nobody watches (ambience started by the
 # schedule, by autostart or by staff from the Room screen) would stutter for ever. The pair is judged by the guard's
@@ -94,7 +95,11 @@ OVERTAKEN = "The screen was cleared (Stop) after it was asked for, so it was not
 # frames in one look) stays under the limit. To be set from rows E1 and following of tools/DEVICE-TESTING.md.
 PAIR_LIMIT = L.Guard.LIMIT      # dropped frames a second, averaged
 PAIR_SECONDS = 20.0             # over this long
-PAIR_HEAVY_WORDS = "it was too heavy over the shader on this box: frames were dropping for %d seconds, so the box took it off. The shader plays on"
+# What is known is that frames dropped while it was on over a shader, not that it was the cause (a hitch of the box
+# or a heavy mapping drop frames too): the words say that much, and STILL_DROPPING is added when the shader goes on
+# dropping frames without it.
+PAIR_HEAVY_WORDS = "the picture was dropping frames with it on over the shader for %d seconds, so the box took the effect off to lighten the load. The shader plays on"
+STILL_DROPPING = ". Frames are still dropping without it, so the effect may not have been the cause"
 
 
 class PairGuard(L.Guard):
@@ -887,7 +892,8 @@ class Effects(S.Engine):
         self.changer = L.Changer(self, clock, thread, refresh=WATCH)
         self.guard = L.Guard(self, clock)
         self.pair_guard = PairGuard(self, clock)    # the floor under an effect over a shader (see PAIR_SECONDS)
-        self._refusals = {}                         # source hash -> what the GPU said about the file
+        self._refusals = {}                         # source hash -> what the GPU said about the file (not over a generator: see _bad)
+        self._shed = False                          # the floor took an effect off, and no effect was put on since
         self._bad = {}                              # (source hash, shape of the values) -> what the GPU said
         # the effect that is on: {"id", "values", "held", "controls", "picture", "path", "desc", "epoch", "digest",
         # "preset", "checked"}; "epoch" is the player's effect serial (the name the worker looks for)
@@ -1050,19 +1056,31 @@ class Effects(S.Engine):
             s.update(weight=PI4[sid][0] if seen else e["weight"], measured=seen,
                      estimate={"reads": e["reads"], "rounds": e["rounds"], "weight": e["weight"], "sure": e["sure"], "why": e["why"]},
                      moves=bool(parsed.get("clock")), flashes=bool(parsed.get("flashes")), speed_max=self.speed_max(parsed),
-                     refused=self._refusals.get(digest))
+                     refused=self._refusals.get(digest), refused_pair=self._pair_said(digest))
             now = self.current_values(parsed, on) if (on and on["id"] == sid) else self.start(parsed, cfg, sid)[0]
             for i in s["inputs"]:
                 i["value"] = now.get(i["name"], i["default"])
         return rows
 
-    def order(self):
-        """The filters that can be put on, in the library's order: what Previous and Next step through."""
+    def _pair_said(self, digest, pair=None):
+        """What the GPU said when it refused this file over the generator shader that is under the effects now (or
+        over `pair`), or None. A refusal over a generator is a word about that pair only: over a clip and over
+        another generator the file is as good as ever."""
+        pair = pair or self.pair
+        if not pair:
+            return None
+        return next((said for key, said in list(self._bad.items()) if key[0] == digest and key[3] == pair), None)
+
+    def order(self, pair=None):
+        """The filters that can be put on, in the library's order: what Previous and Next step through. Without the
+        files the GPU refused, and with `pair` (the generator shader under the effects now) without the ones it
+        refused over that generator."""
         out = []
         for s in S.Engine.library(self):
             if not s["error"]:
                 try:
-                    if self._parsed(self._path(s["id"])[0])[1] not in self._refusals:
+                    digest = self._parsed(self._path(s["id"])[0])[1]
+                    if digest not in self._refusals and not (pair and self._pair_said(digest, pair)):
                         out.append(s["id"])
                 except (ShaderError, ApiError):
                     pass
@@ -1431,11 +1449,14 @@ class Effects(S.Engine):
                 self.on = dict(back, epoch=new) if back else None
                 self._cleanup({self.on["path"]} if self.on else set())
                 self.error = {"id": sid, "message": message, "at": self._now()}
-                if len(self._refusals) > 4 * S.MAX_UPLOADS:
-                    self._refusals.clear()
-                self._refusals[digest] = message
                 if over:
+                    # a word about the pair, not about the file: the library and Next go on offering it over a clip
+                    # and over every other generator
                     self._remember_bad(key, message)
+                else:
+                    if len(self._refusals) > 4 * S.MAX_UPLOADS:
+                        self._refusals.clear()
+                    self._refusals[digest] = message
                 self.log("pvj-web: effect %s refused by the player%s: %s" % (sid, " over a shader" if over else "", message))
                 raise ApiError(422, "the player refused %s%s: %s. %s%s" % (
                     sid, " over the shader" if over else "", message, "The effect before it is back on." if self.on else "No effect is on.",
@@ -1450,7 +1471,7 @@ class Effects(S.Engine):
                        "clip": state["clip"], "work": state["work"], "under": state["under"], "pair": state["pair"],
                        "path": out, "desc": desc, "epoch": new, "digest": digest, "preset": name,
                        "checked": True if (verdict == "ok" or key in self._checked) else None}
-            self.recent, self.last = sid, None
+            self.recent, self.last, self._shed = sid, None, False
             self._switched = self._clock()
             if gen is None:
                 self._intent = None                     # put on directly: what the player has is what was wanted
@@ -1503,7 +1524,12 @@ class Effects(S.Engine):
             if not self.enabled():
                 return
             try:
-                ids = self.order()
+                if job.get("off_first"):
+                    # An Off waited when this wish was made, and the wish took its place in the queue: the Off is
+                    # carried out first, so that it holds whatever becomes of the wish (refused, no picture).
+                    self.off(asked=job["gen"])
+                self.picture()                          # what is under the effects now (the worker may ask the player)
+                ids = self.order(self.pair)
                 if not ids and not job.get("id"):
                     raise ApiError(409, "there is no effect that can be put on")
                 on = self._seen()
@@ -1512,7 +1538,8 @@ class Effects(S.Engine):
                 if done is None and job.get("gen") == self._gen:
                     # Not overtaken by an Off or by an effect put on by hand (those are newer wishes and need no
                     # word): the screen was cleared after the wish. Said, not swallowed.
-                    self.error = {"id": sid, "message": OVERTAKEN, "at": self._now(), "kind": "wish"}
+                    why = CLEARED_BY.get(getattr(self.api.player, "cleared_by", ""), "The screen was cleared")
+                    self.error = {"id": sid, "message": OVERTAKEN % why, "at": self._now(), "kind": "wish"}
             except ApiError as e:
                 self.error = {"id": sid or "", "message": e.message, "at": self._now(), "kind": "gpu" if e.status == 422 else "wish"}
                 # There was no picture to put it on: that is over once there is one. It is this error that is over
@@ -1670,7 +1697,7 @@ class Effects(S.Engine):
         except Exception:
             return False
         self.on, self._switched = None, self._clock()
-        self.last = PAIR_HEAVY_WORDS % PAIR_SECONDS
+        self.last, self._shed = PAIR_HEAVY_WORDS % PAIR_SECONDS, True
         self.pair_guard.sample(None)
         self._cleanup(set())
         self.log("pvj-web: effect %s taken off: over a shader the box dropped %s frames a second for %d seconds" % (rec["id"], seen["drops_per_second"], PAIR_SECONDS))
@@ -1781,7 +1808,10 @@ class Effects(S.Engine):
 
         def merged(waiting):
             same = waiting and not waiting.get("off") and (waiting.get("gen"), waiting.get("clears")) == (gen, clears)
-            return dict(merge(dict(waiting) if same else None), gen=gen, clears=clears)
+            job = dict(merge(dict(waiting) if same else None), gen=gen, clears=clears)
+            if waiting and waiting.get("gen") == gen and (waiting.get("off") or waiting.get("off_first")):
+                job["off_first"] = True                 # an Off that has not reached the player yet: it comes first (play_job)
+            return job
         self.changer.merge(merged)
 
     def _queue(self, sid, preset=None):
@@ -1918,6 +1948,8 @@ class Effects(S.Engine):
         else:
             self.guard.sample(None)
             self.pair_guard.sample(None)
+            if self._shed and self.last and not self.last.endswith(STILL_DROPPING) and (self._live().guard.verdict or {}).get("state") == "heavy":
+                self.last += STILL_DROPPING             # the generators' own guard, judging the shader alone since
         return {"enabled": enabled, "effects": rows, "on": showing, "available": ok, "unavailable": why, "error": self.error, "last": self.last,
                 "controls": {"amount": {"min": 0.0, "max": 1.0, "default": 1.0}, "speed": {"min": S.SPEED_MIN, "max": S.SPEED_MAX, "default": 1.0},
                              "half": {"default": False, "superseded": "detail"}},
