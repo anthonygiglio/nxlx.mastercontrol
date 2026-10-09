@@ -112,7 +112,7 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 - **If the pad says its shader or its preset is gone**, it was deleted or renamed after the pad was set: Edit pads, then choose again. If it says to turn on the Shaders and Vibes module, do that in System.
 - **At power-up** a shader pad can be the pad that starts (System > At power-up). The schedule plays files and Vibes, not pads.
 - **A box that syncs others** sends them nothing for a shader, as for any shader: the other boxes go black while it is on.
-- **Going back to an older version of the box's software:** it shows a shader pad as an empty pad with its label and leaves it alone, so the pad works again after the next update; but if you edit that pad, or export and import the settings, on the older version, the shader is gone from the pad.
+- **Going back to an older version of the box's software:** it shows a shader pad as an empty pad with its label and leaves it alone, so the pad works again after the next update; but if you edit that pad, or export and import the settings, on the older version, the shader is gone from the pad. If **At power-up** is set to a shader pad, the older version starts with a black screen (its card says "pad is empty"), and it refuses to import a settings file in which the power-up pad is a shader pad: set At power-up to something else before going back.
 
 **Slideshow** (Media, like the old Presenter tab): the pictures of the media folder or of a USB drive, each for 0.1 second to a minute, then start again, keep the last picture, or go black; optionally in a random order. Prev and Next on Live step through them.
 

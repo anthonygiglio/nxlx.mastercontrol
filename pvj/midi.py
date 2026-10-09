@@ -510,7 +510,7 @@ def light_state(action, snap, bank=0):
                 held = ""
             if not held:
                 return "off"
-            return "active" if snap["shader"] == held else "on"
+            return "active" if snap["shader"] == held and snap.get("shader_on") else "on"
         return "active" if snap["running"] and snap["playing"] == name else "on"
     if a.startswith("shader_preset_"):
         n = ACTIONS[a][1]
@@ -1457,7 +1457,7 @@ class MidiHub:
         LIGHT_PLAYER_EVERY seconds for all lights together. Runs on the lights thread only, never under the hub's lock,
         and never takes the shader engine's lock. A part that cannot be read keeps its quiet default."""
         api = self.api
-        snap = {"pads": [], "pad_shaders": [], "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
+        snap = {"pads": [], "pad_shaders": [], "shader_on": False, "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
                 "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
                 "scenes": [], "applying": None, "effect": None, "effect_ready": False}
         try:
@@ -1494,6 +1494,10 @@ class MidiHub:
                 on = api.shaders.playing
                 if on:
                     snap["shader"], snap["preset"] = on["id"], on.get("preset")
+                    # What the engine showed last is remembered after a clip has taken the screen. A shader pad is
+                    # "the one on now" only while the screen is still that shader's: the player's count of what took
+                    # the screen is compared, a plain number, so the player is not asked and no lock is taken.
+                    snap["shader_on"] = getattr(api.player, "source_epoch", None) == on.get("epoch")
                     snap["presets"] = [p["name"] for p in cfg.get("presets", {}).get(on["id"], [])]
                 fx = getattr(api, "effects", None)          # from what the engine remembers: the player is not asked
                 if fx is not None:

@@ -355,6 +355,14 @@ class FromEverywhere(PadBase):
         self.assertEqual(midi.light_state(action, hub._snapshot(time.monotonic(), True)), "active")
         self.give(3, TWO)
         self.assertEqual(midi.light_state({"action": "pad", "bank": 0, "index": 3}, hub._snapshot(time.monotonic(), True)), "on")
+        # a clip takes the screen: the engine still remembers the shader it showed last, and the pad must not go on
+        # saying it is the one that plays
+        self.player.play([os.path.join(self.media, "a.mp4")])
+        self.assertEqual(midi.light_state(action, hub._snapshot(time.monotonic(), True)), "on", "a shader pad stays lit as playing under a clip")
+        self.tap(2)
+        self.assertEqual(midi.light_state(action, hub._snapshot(time.monotonic(), True)), "active")
+        self.api.control({"action": "stop"}, None, "t")
+        self.assertEqual(midi.light_state(action, hub._snapshot(time.monotonic(), True)), "on")
         self.assertEqual(midi.light_state(action, {"pads": [[""] * 12], "shader": None, "running": False, "playing": None}), "off")
 
     def test_osc_dmx_and_a_room_scene_name_a_pad_by_its_place_only(self):

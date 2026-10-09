@@ -524,6 +524,7 @@
       });
     };
     var show = function (kind) {
+      s.kind = kind;        // kept on the open sheet: a redraw of the page while it is open must not flip it back
       clips.forEach(function (c) { if (c) c.hidden = kind !== 'clip'; });
       list.hidden = kind !== 'shader';
       seg.children[0].classList.toggle('on', kind === 'clip');
@@ -538,7 +539,7 @@
     var head = box.querySelector('h2');
     box.insertBefore(seg, head.nextSibling);
     box.insertBefore(list, clips[2] ? clips[2].nextSibling : null);
-    show(padShader(current) ? 'shader' : 'clip');
+    show(s.kind || (padShader(current) ? 'shader' : 'clip'));
     return el;
   }
   function sheet() {
