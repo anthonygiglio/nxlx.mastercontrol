@@ -2246,6 +2246,51 @@ class QueueTest(Base):
         self.assertEqual((self.on(), self.mpv.loaded), (None, []))
         self.assertIn("Nothing with a picture is playing", self.state()["error"]["message"])
 
+    def test_an_effect_put_on_by_hand_after_an_off_and_a_next_is_not_taken_off_by_that_off(self):
+        """A on; a controller's Off; a controller's Next (which carries the Off before it); and within the gap
+        between two switches somebody puts B on by hand. B is the newest wish: the Off the Next carries is older."""
+        self.fx.put(self.ids[2])
+        self.fx.toggle()
+        self.fx.step(1)
+        self.assertTrue(self.fx.changer.queued()["off_first"])
+        self.fx.put("all.fs")                                                          # by hand, while the two wait
+        self.drain()
+        self.assertEqual((self.on(), len(self.mpv.loaded), self.fx.error), ("all.fs", 1, None))
+
+    def test_a_restart_is_counted_once_and_a_wish_made_after_the_panels_own_restart_is_for_the_new_player(self):
+        # status polls from several threads meet a new mpv: one clearing, not one for each
+        self.player.is_running()
+        for trial in range(30):
+            clears = self.player.clears
+            self.mpv.restart()
+            gate = threading.Barrier(6)
+
+            def poll():
+                gate.wait()
+                self.player.is_running()
+            threads = [threading.Thread(target=poll) for _ in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(10)
+            self.assertEqual(self.player.clears, clears + 1, trial)
+        # the panel ends the player (counted then); a wish made before anyone has heard of the new one is for the
+        # new one, and is not dropped as "the player was restarted"
+        self.player.play(["/media/a.mp4"])
+        clears = self.player.clears
+        self.player.quit()
+        self.assertEqual((self.player.clears, self.player.cleared_by), (clears + 1, "restart"))
+        self.fx.error = None
+        self.fx.step(1)                                                                # after the quit, before the new mpv is heard
+        self.mpv.restart()
+        self.player.play(["/media/b.mov"])                                             # the new one plays
+        self.assertEqual(self.player.clears, clears + 1)
+        self.drain()
+        self.assertEqual((self.on(), self.fx.error), (self.ids[0], None))
+        self.mpv.restart()                                                             # and a restart nobody asked for, later, counts again
+        self.player.is_running()
+        self.assertEqual(self.player.clears, clears + 2)
+
     def test_a_wish_that_cannot_be_carried_out_says_why(self):
         self.fx.put(self.ids[2])
         self.fx.step(1)
@@ -2534,8 +2579,9 @@ class OverShaderTest(Base):
         step()                                                                         # Next again over silk: past it, and the GPU is not shown it
         self.assertEqual((self.state()["on"]["id"], self.kinds()), (after, ["shader", "effect"]))
         self.assertFalse(any("effect" in kinds and len(kinds) != 2 for kinds in self.lists(sent)))
-        # over a clip: the row says nothing, and Next goes onto it
+        # over a clip: the row says nothing (at the first look, not one poll later), and Next goes onto it
         self.clip()
+        self.assertEqual((row()["refused"], row()["refused_pair"]), (None, None))
         self.fx.put(before)
         self.assertEqual((row()["refused"], row()["refused_pair"]), (None, None))
         step()
@@ -2675,6 +2721,7 @@ class OverShaderTest(Base):
         for _ in range(n):
             now[0] += 1.0
             self.mpv.drops += rate
+            self.gen.watch()                            # the generators' guard counts too, as it does while Vibes ticks or a panel is open
             self.fx.adjust("anchor")
             if self.fx.on is None:
                 return True
@@ -2703,6 +2750,12 @@ class OverShaderTest(Base):
         self.assertEqual(self.gen.on_screen()["id"], "nxlx-silk.fs")                   # the shader was never touched,
         self.assertEqual(self.settings.data.get("shaders", {}).get("heavy", {}), {})   # and nothing is marked against it
         self.assertEqual(self.player.effect_ended, "heavy")
+        # In the second of the shed the generators' guard still holds the pair's window, and says heavy: that is no
+        # word about the shader alone, and nothing is added to the sentence from it
+        self.assertEqual(self.gen.guard.verdict["state"], "heavy")
+        self.assertEqual(self.state()["last"], said)
+        self.gen.watch()                                                               # its next look: the effect has left, and it starts over
+        self.assertEqual((self.gen.guard.verdict["state"], self.state()["last"]), (None, said))
         # it does not come back by itself
         self.assertIs(self.heavy_seconds(now, 30), True)
         self.assertEqual(self.mpv.loaded, gen)
@@ -2723,6 +2776,58 @@ class OverShaderTest(Base):
         self.fx.put("fx-wash.fs")
         self.assertIs(self.heavy_seconds(now, 10), False)
         self.assertIsNone(self.state()["last"])
+
+    def test_no_word_about_a_shader_alone_is_made_from_frames_dropped_under_a_pair(self):
+        """The floor takes the effect off; Vibes' guard is no longer suspended; and its window of six seconds was
+        full of the pair's dropped frames: in that same second it marked the SHADER heavy, for good, and skipped it.
+        The same after a plain Off and after a refusal. The guard starts over whenever an effect leaves a shader."""
+        now = self.floor_clock()
+        vibes = self.api.vibes
+        vibes.start()
+        vibes.tick()
+        self.mpv.video, self.mpv.fps = dict(CARRIER_VIDEO), 30.0
+        marks = lambda: self.settings.data.get("shaders", {}).get("heavy", {})
+
+        def second(rate):
+            now[0] += 1.0
+            self.mpv.drops += rate
+            self.fx.adjust("anchor")
+            return vibes._guard()
+
+        def refused():
+            with self.fx._lock:
+                self.fx._pair_refused(self.fx.on)
+        for name, leave in (("the floor", None), ("Off", lambda: self.fx.off()), ("a refusal over the shader", refused),
+                            ("a controller's Off", lambda: (self.fx.toggle(), self.pump()))):
+            current = vibes.current
+            self.fx.put("fx-wash.fs")
+            for n in range(40):                                                        # a heavy pair
+                self.assertIs(second(5), False, name)
+                if self.fx.on is None or (leave and n == 11):
+                    break
+            if leave:
+                self.assertEqual(self.gen.guard.verdict["state"], "heavy", name)       # the pair's window, full
+                leave()
+            self.assertIsNone(self.fx.on, name)
+            self.assertIs(vibes._guard(), False, "%s: the shader was judged in the second the effect left" % name)
+            self.assertEqual(self.gen.guard.verdict["state"], None, name)              # a window of its own has begun
+            for _ in range(8):                                                         # the shader alone holds: never marked, never skipped
+                self.assertIs(second(0), False, name)
+            self.assertEqual((marks(), vibes._marked, vibes.current, self.gen.guard.verdict["state"]), ({}, [], current, "ok"), name)
+        # and a shader that really is heavy by itself is marked, after a whole window of its own and not sooner
+        self.gen.guard.sample(None)
+        took = next(n for n in range(1, 20) if second(5))
+        self.assertGreaterEqual(took, 9)                                               # three seconds to settle, six to judge
+        self.assertEqual(list(marks()), [current])
+        # an effect that comes over a shader starts the count over too (what the pair drops is not carried in)
+        vibes.skip()
+        vibes.tick()
+        for _ in range(8):
+            second(0)
+        self.assertEqual(self.gen.guard.verdict["state"], "ok")
+        self.fx.put("fx-wash.fs")
+        self.gen.watch()
+        self.assertEqual((self.gen.guard.verdict["state"], " under effect " in self.gen.guard._desc), (None, True))
 
     def test_the_floor_counts_across_the_steps_of_a_rotation_and_leaves_a_light_pair_alone(self):
         now = self.floor_clock()

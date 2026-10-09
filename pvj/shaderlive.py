@@ -1082,9 +1082,14 @@ class LiveEngine(S.Engine):
         if not self.config().get("guard", True):
             return None
         on = self.on_screen()
-        seen = self.guard.sample(on) if on else self.guard.sample(None)
         fx = getattr(self.api, "effects", None)
         over = fx._seen() if (on and fx is not None and fx is not self) else None
+        # The count belongs to what was on the screen while it was made. When an effect comes over the shader,
+        # leaves it (Off, the floor, a refusal) or is exchanged for another, the name the guard keeps its window
+        # by changes, and the guard starts over: no word about the shader alone is ever made from frames that were
+        # dropped under a pair. (Without this the floor took the effect off and, in the same second, Vibes marked
+        # the shader heavy from the pair's six seconds: the mark the suspension is there to prevent.)
+        seen = self.guard.sample(dict(on, desc="%s under effect %s" % (on["desc"], over["epoch"])) if over else on) if on else self.guard.sample(None)
         return dict(seen, effect=over["id"]) if over else seen
 
     # -- changing what is on --

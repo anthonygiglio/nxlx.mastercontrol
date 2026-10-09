@@ -147,7 +147,8 @@ class Player:
     _lock = locks.make("player", reentrant=True)
     _mapping_shaders, _mapping_mode, _source, _source_pid, _carrier, source_epoch = [], False, None, None, None, 0
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
-    cleared_by, _seen_pid = "", None
+    cleared_by, _seen_pid, _new_expected = "", None, False
+    _pid_lock = locks.make("player.pid")
     _pipe, _pipe_pid = False, None      # a live input's pipe is what was loaded last, and the mpv it was loaded into
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
@@ -188,6 +189,8 @@ class Player:
         self.clears = 0
         self.cleared_by = ""        # what moved it last: "stop", "cleared" (a shader taken off), "restart"
         self._seen_pid = None       # the mpv last heard from: another one is a new player, with nothing on its screen
+        self._new_expected = False  # the panel ended the player (quit): the next new one is that restart, already counted
+        self._pid_lock = locks.make("player.pid")       # a leaf: the look at the pid and the count are one step
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
@@ -201,10 +204,16 @@ class Player:
         """Another mpv than the one last heard from (it crashed and its service started a new one, or the panel
         ended it): its screen began empty, which is a clearing for whatever was asked for before (see `clears`).
         Every play and every status asks for the pid, so it is noticed by whoever comes first."""
-        if self._seen_pid is not None and pid != self._seen_pid:
-            self.clears += 1
-            self.cleared_by = "restart"
-        self._seen_pid = pid
+        with self._pid_lock:                # status polls come from several threads, unlocked: one restart is counted once
+            if self._seen_pid is not None and pid != self._seen_pid:
+                if self._new_expected:
+                    # The panel itself ended the old one (quit), which was counted then. A wish made since is for
+                    # the new player: it is not dropped for a restart it came after.
+                    self._new_expected = False
+                else:
+                    self.clears += 1
+                    self.cleared_by = "restart"
+            self._seen_pid = pid
         return pid
 
     def mpv_command(self, audio_device=None, windowed=False):
@@ -411,8 +420,10 @@ class Player:
             if self._source is not None or self._carrier is not None:      # as _check_source does when it notices by itself
                 self._source = self._carrier = None
             self.source_epoch += 1          # the screen has changed hands: a rotation's next change is not for this one
-            self.clears += 1                # and an effect that waits to go on is not for the next player
-            self.cleared_by = "restart"
+            with self._pid_lock:
+                self.clears += 1            # and an effect that waits to go on is not for the next player
+                self.cleared_by = "restart"
+                self._new_expected = self._seen_pid is not None
             self.ipc.request("quit")
 
     def _pid(self):

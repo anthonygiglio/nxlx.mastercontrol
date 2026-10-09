@@ -893,7 +893,7 @@ class Effects(S.Engine):
         self.guard = L.Guard(self, clock)
         self.pair_guard = PairGuard(self, clock)    # the floor under an effect over a shader (see PAIR_SECONDS)
         self._refusals = {}                         # source hash -> what the GPU said about the file (not over a generator: see _bad)
-        self._shed = False                          # the floor took an effect off, and no effect was put on since
+        self._shed = None                           # when the floor took an effect off (the generators' guard's clock), until one goes on
         self._bad = {}                              # (source hash, shape of the values) -> what the GPU said
         # the effect that is on: {"id", "values", "held", "controls", "picture", "path", "desc", "epoch", "digest",
         # "preset", "checked"}; "epoch" is the player's effect serial (the name the worker looks for)
@@ -1471,7 +1471,7 @@ class Effects(S.Engine):
                        "clip": state["clip"], "work": state["work"], "under": state["under"], "pair": state["pair"],
                        "path": out, "desc": desc, "epoch": new, "digest": digest, "preset": name,
                        "checked": True if (verdict == "ok" or key in self._checked) else None}
-            self.recent, self.last, self._shed = sid, None, False
+            self.recent, self.last, self._shed = sid, None, None
             self._switched = self._clock()
             if gen is None:
                 self._intent = None                     # put on directly: what the player has is what was wanted
@@ -1524,12 +1524,16 @@ class Effects(S.Engine):
             if not self.enabled():
                 return
             try:
+                if job.get("gen") != self._gen:         # an Off or an effect by hand came after this wish: it is not for now,
+                    return                              # and neither is the Off it carries (an effect put on by hand since stays)
                 if job.get("off_first"):
                     # An Off waited when this wish was made, and the wish took its place in the queue: the Off is
                     # carried out first, so that it holds whatever becomes of the wish (refused, no picture).
                     self.off(asked=job["gen"])
-                self.picture()                          # what is under the effects now (the worker may ask the player)
-                ids = self.order(self.pair)
+                with self._lock:                        # the look writes what a by-hand put reads under this lock
+                    self.picture()                      # what is under the effects now (the worker may ask the player)
+                    pair = self.pair
+                ids = self.order(pair)
                 if not ids and not job.get("id"):
                     raise ApiError(409, "there is no effect that can be put on")
                 on = self._seen()
@@ -1697,7 +1701,7 @@ class Effects(S.Engine):
         except Exception:
             return False
         self.on, self._switched = None, self._clock()
-        self.last, self._shed = PAIR_HEAVY_WORDS % PAIR_SECONDS, True
+        self.last, self._shed = PAIR_HEAVY_WORDS % PAIR_SECONDS, self._live().guard._clock()
         self.pair_guard.sample(None)
         self._cleanup(set())
         self.log("pvj-web: effect %s taken off: over a shader the box dropped %s frames a second for %d seconds" % (rec["id"], seen["drops_per_second"], PAIR_SECONDS))
@@ -1926,8 +1930,8 @@ class Effects(S.Engine):
     def state(self):
         enabled = self.enabled()
         on = self.current() if enabled else None
-        rows = self.library() if enabled else []
-        ok, why = self.available() if enabled else (False, "The Shaders and Vibes module is off.")
+        ok, why = self.available() if enabled else (False, "The Shaders and Vibes module is off.")     # first: it looks at what is under the effects
+        rows = self.library() if enabled else []        # and the rows say a pair's refusal by that (not one poll late)
         if self.error is not None and self.error is self._waiting and ok:      # "nothing is playing" is no longer so
             self.error = None
         if self.error is not self._waiting:
@@ -1948,8 +1952,10 @@ class Effects(S.Engine):
         else:
             self.guard.sample(None)
             self.pair_guard.sample(None)
-            if self._shed and self.last and not self.last.endswith(STILL_DROPPING) and (self._live().guard.verdict or {}).get("state") == "heavy":
-                self.last += STILL_DROPPING             # the generators' own guard, judging the shader alone since
+            alone = self._live().guard              # the generators' own guard, which started over when the effect left (watch)
+            if (self._shed is not None and self.last and not self.last.endswith(STILL_DROPPING) and (alone.verdict or {}).get("state") == "heavy"
+                    and alone._since >= self._shed and " under effect " not in (alone._desc or "")):
+                self.last += STILL_DROPPING             # only on a word made from a window that began after the effect went
         return {"enabled": enabled, "effects": rows, "on": showing, "available": ok, "unavailable": why, "error": self.error, "last": self.last,
                 "controls": {"amount": {"min": 0.0, "max": 1.0, "default": 1.0}, "speed": {"min": S.SPEED_MIN, "max": S.SPEED_MAX, "default": 1.0},
                              "half": {"default": False, "superseded": "detail"}},

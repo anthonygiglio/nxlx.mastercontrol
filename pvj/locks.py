@@ -35,7 +35,7 @@ one thread, for an inversion to show; the interleaving that would hang is not ne
 | 12    | fader.lock           | the fader's token and label; nothing at all is done while it is held                   |
 | 13    | shaderlive.cfg       | the shaders' settings                                                                  |
 | 14    | pinscreen            | what is drawn of the pairing codes                                                     |
-| 15    | leaves               | vibes.state, shaderlive.queue, mapper.state: a few fields each, never held over a call |
+| 15    | leaves               | vibes.state, shaderlive.queue, mapper.state, player.pid: a few fields each, never held over a call |
 
 Not in the order, because their holders never call into these paths while holding them (read, not checked by the
 machine): the settings' lock, the MIDI, DMX, OSC and sync managers' own locks, the Room's `lock` ("never held while
@@ -51,8 +51,8 @@ import threading
 
 ORDER = ("room.order", "vibes.work", "shaders.engine", "effects.engine", "mapper.apply", "capture", "transitions.holding",
          "player", "transitions.io", "transitions.mark", "fader.stepping", "fader.lock", "shaderlive.cfg", "pinscreen",
-         "vibes.state", "shaderlive.queue", "mapper.state")
-LEAVES = ("vibes.state", "shaderlive.queue", "mapper.state")       # share the last place: none is held with another
+         "vibes.state", "shaderlive.queue", "mapper.state", "player.pid")
+LEAVES = ("vibes.state", "shaderlive.queue", "mapper.state", "player.pid")       # share the last place: none is held with another
 
 
 def plain(name, reentrant=False):
