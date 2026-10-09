@@ -945,7 +945,7 @@
           onclick: function () { send('/api/shaders/play', { id: s.id }, null, 'shaderlibmsg'); } }),
         full ? h('label', { class: 'rot' }, h('span', { text: label }), sw) : null,
         full && s.source === 'uploaded' ? h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + name, onclick: function (ev) {
-          c.confirmRow('Remove ' + name + '? The file is deleted from the box.', 'Remove', 'Keep it', function () { send('/api/shaders', { action: 'delete', id: s.id }, null, 'shaderlibmsg'); }, ev.target);
+          c.confirmRow('Remove ' + name + '? The file is deleted from the box.' + (s.pads ? ' ' + (s.pads === 1 ? 'One pad plays it' : s.pads + ' pads play it') + ' and will say that it is gone.' : ''), 'Remove', 'Keep it', function () { send('/api/shaders', { action: 'delete', id: s.id }, null, 'shaderlibmsg'); }, ev.target);
         } }) : null));
       return row;
     }

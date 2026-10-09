@@ -566,6 +566,7 @@ class Api:
         if self.shaders.is_carrier(path):                 # a shader source: the blank picture under it is not a clip
             showing = self.shaders.on_screen()
             status["path"], status["shader"], status["vibes"] = None, (showing["id"][:-3] if showing else ""), self.vibes.running
+            status["shader_preset"] = (showing.get("preset") if showing else None) or ""        # for the pad that started it (D73)
             return status
         effect = self.effects.current()                   # an effect over the picture: its name, for the Live screen
         if effect is not None:
@@ -893,6 +894,20 @@ class Api:
             self.settings.save()
         return {"banks": self.settings.data["pads"]["banks"]}
 
+    def pads_follow_preset(self, sid, was, to):
+        """A preset of `sid` was renamed: the pads that start the shader with it follow, as a clip's pads follow the
+        clip's new name."""
+        from . import shaderlive
+        with self.settings.lock:
+            changed = False
+            for bank in self.settings.data["pads"]["banks"]:
+                for pad in bank["pads"]:
+                    held = self.pad_shader(pad)
+                    if held and held[0] == sid and held[1] is not None and shaderlive.name_key(held[1]) == shaderlive.name_key(was):
+                        pad["preset"], changed = to, True
+            if changed:
+                self.settings.save()
+
     def _play_shader_pad(self, held, device):
         """A pad that holds a generator shader (D73): the shader is shown exactly as choosing it by hand on the
         Shaders screen shows it, through the one path a generator has (LiveEngine.play, which ends the rotation,
@@ -909,7 +924,7 @@ class Api:
         engine = self.shaders
         engine._need()
         try:
-            engine._path(sid)
+            path, _ = engine._path(sid)
         except ApiError as e:
             if e.status != 404:
                 raise
@@ -919,9 +934,13 @@ class Api:
                 preset = self._shader_preset(sid, preset)
             except ApiError:
                 raise ApiError(404, "this pad's preset of %s is gone (deleted or renamed): choose another for the pad" % sid)
+        try:
+            engine._parsed(path)                    # before Vibes is ended: a file that no longer reads shows nothing
+        except ValueError as e:
+            raise ApiError(422, "this pad's shader, %s, cannot be shown: %s" % (sid, e))
         if isinstance(device, dict) and device.get("id") in CONTROLLERS:
             self.vibes.yield_screen()               # now, at the tap: the worker never ends a rotation
-            engine.changer.show({"id": sid, "preset": preset, "epoch": self.player.source_epoch})
+            engine.queue_show(sid, preset)          # with the epoch and the level's mark of this moment
             return {"playing": sid, "shader": sid, "pending": True}
         engine.play(sid, None, None, preset)
         return {"playing": sid, "shader": sid}

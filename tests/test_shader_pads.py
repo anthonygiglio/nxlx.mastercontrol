@@ -5,6 +5,7 @@ pad can be tapped from, and what it refuses."""
 import copy
 import os
 import random
+import threading
 import time
 import unittest
 
@@ -79,7 +80,11 @@ class Stored(PadBase):
         for body, status in (({"shader": "../x.fs"}, 400), ({"shader": "nothing-here.fs"}, 404), ({"shader": 7}, 400),
                              ({"shader": ONE, "preset": "no such"}, 404), ({"shader": ONE, "preset": 3}, 404),
                              ({"shader": ONE, "file": "a.mp4"}, 400), ({"file": "a.mp4", "preset": "Slow"}, 400),
-                             ({"preset": "Slow"}, 400), ({"shader": TWO, "preset": "Slow"}, 404)):
+                             ({"preset": "Slow"}, 400), ({"shader": TWO, "preset": "Slow"}, 404),
+                             ({"shader": ["a.fs"]}, 400), ({"shader": {"a": 1}}, 400), ({"shader": "a\x00.fs"}, 400),
+                             ({"shader": "a\nb.fs"}, 400), ({"shader": "a\\b.fs"}, 400), ({"shader": "x" * 300 + ".fs"}, 400),
+                             ({"shader": "a\u202eb.fs"}, 400), ({"shader": True}, 400), ({"shader": ONE, "preset": ["x"]}, 404),
+                             ({"shader": ONE, "preset": {"a": 1}}, 404)):
             with self.assertRaises(ApiError, msg=body) as c:
                 self.api.set_pad(dict({"bank": 0, "index": 0}, **body), None, "t")
             self.assertEqual(c.exception.status, status, body)
@@ -135,7 +140,14 @@ class Stored(PadBase):
         self.assertEqual(kept["banks"][0]["pads"][0], {"label": "", "file": "", "shader": "comes-later.fs"})
         for bad in ({"file": "", "shader": "../x.fs"}, {"file": "", "shader": 3}, {"file": "a.mp4", "shader": ONE},
                     {"file": "", "shader": ONE, "preset": " x "}, {"file": "", "shader": ONE, "preset": "x" * 41},
-                    {"file": "", "shader": "x.glsl"}):
+                    {"file": "", "shader": "x.glsl"},
+                    # the review of #114: with the check weakened to "ends with .fs and has no slash" nothing failed
+                    {"file": "", "shader": "a\x00b.fs"}, {"file": "", "shader": "a\nb.fs"}, {"file": "", "shader": "a\\b.fs"},
+                    {"file": "", "shader": "x" * 300 + ".fs"}, {"file": "", "shader": "a\u202eb.fs"}, {"file": "", "shader": ".hidden.fs"},
+                    {"file": "", "shader": "a:b.fs"}, {"file": "", "shader": "caf\u00e9.fs"}, {"file": "", "shader": ".fs"},
+                    {"file": "", "shader": ["a.fs"]}, {"file": "", "shader": {"a": 1}}, {"file": "", "shader": 0.5}, {"file": "", "shader": True},
+                    {"file": "", "shader": ONE, "preset": "a\u202eb"}, {"file": "", "shader": ONE, "preset": ["x"]},
+                    {"file": "", "shader": ONE, "preset": 7}, {"file": "", "shader": ONE, "preset": "a\nb"}):
             with self.assertRaises(ValueError, msg=bad):
                 boxcare.check_pads(pads(dict({"label": ""}, **bad)), None)
         self.assertEqual(boxcare.check_pads(pads({"label": "", "file": "", "shader": "", "ending": "stop"}), None)["banks"][0]["pads"][0],
@@ -257,6 +269,45 @@ class Tapped(PadBase):
         self.assertIn("this pad's preset of %s is gone" % ONE, c.exception.message)
         self.assertEqual(self.player.calls, [])
 
+    def test_a_shader_that_no_longer_reads_is_said_at_the_tap_and_vibes_goes_on(self):
+        # low, the review of #114: a controller's tap answered "pending", ended Vibes and showed nothing
+        os.makedirs(self.engine.dir, exist_ok=True)
+        path = os.path.join(self.engine.dir, "mine.fs")
+        with open(self.engine._path(ONE)[0]) as src, open(path, "w") as f:
+            f.write(src.read())
+        self.give(shader="mine.fs")
+        time.sleep(0.02)
+        with open(path, "w") as f:
+            f.write("not a shader at all {{{ and more")
+        self.vibes.start()
+        del self.player.calls[:]
+        for device in ({"id": "midi"}, None):
+            with self.assertRaises(ApiError) as c:
+                self.tap(device=device)
+            self.assertEqual(c.exception.status, 422, device)
+            self.assertIn("this pad's shader, mine.fs, cannot be shown", c.exception.message)
+            self.assertTrue(self.vibes.running, "a pad whose shader no longer reads ended the rotation (%s)" % (device,))
+        self.assertIsNone(self.engine.changer.queued())
+
+    def test_a_shader_pad_takes_a_pairing_pin_off_the_screen_when_its_shader_is_on(self):
+        # as a shader chosen on the Shaders screen does (Engine.show ends in Api._started_playing). A clip takes it
+        # off at the tap; a shader when it is on the screen, so a shader the GPU refuses leaves the PIN where it is
+        cleared = []
+        self.api.pinscreen = type("Pin", (), {"clear": lambda self_: cleared.append(1), "status": lambda self_: {}})()
+        self.give()
+        self.tap()
+        self.assertEqual(len(cleared), 1)
+        self.api.control({"action": "stop"}, None, "t")
+        self.tap(device={"id": "midi"})
+        self.assertTrue(self.wait(lambda: len(cleared) >= 2), "a controller's shader pad left the PIN on the screen")
+        self.player.vo = "gpu"
+        FakeTap.lines = REFUSAL
+        self.give(1, TWO)
+        before = len(cleared)
+        with self.assertRaises(ApiError):
+            self.tap(1)
+        self.assertEqual(len(cleared), before, "a shader the GPU refused took the PIN off")
+
     def test_a_tap_while_vibes_runs_that_is_refused_at_once_leaves_vibes_running(self):
         self.give(shader=ONE)
         pad_of(self.api)["shader"] = "gone.fs"
@@ -289,6 +340,152 @@ class Tapped(PadBase):
         st, body, _ = self.call("POST", "/api/play", {"pad": [0, 0]}, token=tokens["live"])
         self.assertEqual((st, body), (200, {"playing": ONE, "shader": ONE}))
         self.assertEqual(self.on(), ONE)
+
+
+class Queued(PadBase):
+    """The review of #114: what a controller's tap, which is queued for the engine's worker, owes to the moment of
+    the tap. The same holds for the controllers' own shader actions, which use the same queue: a preset of another
+    shader (apply_preset) and a step to the next one."""
+
+    def setUp(self):
+        super().setUp()
+        self.give(0, ONE)
+        self.give(1, TWO)
+        self.ids = self.engine.vibes_ids()
+        self.after_first = None
+        self.hold_first()
+
+    def hold_first(self):
+        """From now on the worker's next job stops between being taken and taking the screen, until `go`."""
+        if getattr(self, "go", None) is not None:
+            self.go.set()
+        self.inside, self.go = threading.Event(), threading.Event()
+        real, first = type(self.engine).play.__get__(self.engine), []
+        inside, go = self.inside, self.go
+
+        def held(*a, **k):
+            mine = k.get("queued") and not first
+            if mine:
+                first.append(1)
+                inside.set()
+                go.wait(5)                          # the worker has taken its job and not yet the screen
+            out = real(*a, **k)
+            if mine and self.after_first:
+                self.after_first()
+            return out
+        self.engine.play = held
+        self.addCleanup(go.set)
+
+    def taps(self, how):
+        """Two wishes of the kind `how`, the second while the worker is on its way with the first. Returns what
+        must be on the screen in the end."""
+        midi_device = {"id": "midi"}
+        if how == "pad":
+            first, second, want = (lambda: self.tap(0, device=midi_device)), (lambda: self.tap(1, device=midi_device)), TWO
+        elif how == "preset":
+            first = lambda: self.engine.apply_preset({"id": ONE, "name": "P"})
+            second, want = (lambda: self.engine.apply_preset({"id": TWO, "name": "P"})), TWO
+        else:
+            start = self.ids[0]
+            first, second, want = (lambda: self.engine.step(1)), (lambda: self.engine.step(1)), self.ids[2]
+            self.engine.play(start)
+        return first, second, want
+
+    def presets(self):
+        for sid in (ONE, TWO):
+            self.engine.play(sid)
+            self.engine.preset_save("P")
+        self.api.control({"action": "stop"}, None, "t")
+
+    def test_of_two_quick_wishes_the_newer_one_is_on_the_screen(self):
+        # M1: the second carried the epoch that the first then moved, and the player refused it: the OLDER stayed
+        self.presets()
+        for how in ("pad", "preset", "step"):
+            self.api.control({"action": "stop"}, None, "t")
+            self.assertTrue(self.wait(lambda: self.engine.changer.newest() is None))
+            self.hold_first()
+            first, second, want = self.taps(how)
+            first()
+            self.assertTrue(self.inside.wait(5), how)
+            second()
+            self.go.set()
+            self.assertTrue(self.wait(lambda: self.on() == want), "%s: %s is on the screen, the newer wish was %s" % (how, self.on(), want))
+            self.assertIsNone(self.engine.changer.queued(), how)
+
+    def test_a_clip_played_between_the_two_still_wins(self):
+        # the other side of the same rule: the second wish is let past the queue's own first job, and past nothing else
+        clip = os.path.join(self.media, "a.mp4")
+        self.after_first = lambda: self.player.play([clip])
+        self.tap(0, device={"id": "midi"})
+        self.assertTrue(self.inside.wait(5))
+        self.tap(1, device={"id": "midi"})
+        self.go.set()
+        self.assertTrue(self.wait(lambda: self.engine.changer.queued() is None and self.engine.changer.newest() is None))
+        time.sleep(0.1)
+        self.assertEqual((self.on(), os.path.basename(self.player.path)), (None, "a.mp4"))
+
+    def test_a_second_wish_after_a_first_that_the_gpu_refused(self):
+        # the first leaves the screen black by its own stop, which moves the player's count once more: the second
+        # is let past that too, and is not dropped without a word
+        self.player.vo = "gpu"
+        taps = []
+
+        def refuse_the_first_only(path):
+            FakeTap.lines = [] if taps else REFUSAL
+            taps.append(1)
+            return FakeTap(path)
+        self.engine._tap = refuse_the_first_only
+        self.tap(0, device={"id": "midi"})
+        self.assertTrue(self.inside.wait(5))
+        self.tap(1, device={"id": "midi"})
+        self.go.set()
+        self.assertTrue(self.wait(lambda: self.on() == TWO), (self.on(), self.engine.error))
+
+    def test_a_fade_out_pressed_after_the_wish_stands_when_the_shader_comes(self):
+        # M2: the level's mark was taken by the worker when it showed the shader, not at the tap
+        self.presets()
+        for how in ("pad", "preset", "step"):
+            self.api.control({"action": "stop"}, None, "t")
+            self.api.control({"action": "reset"}, None, "t")
+            self.player.play([os.path.join(self.media, "a.mp4")])
+            first, _, _ = self.taps(how)
+            if how == "step":
+                self.wait(lambda: self.on() is not None)
+            with self.engine._lock:                 # the worker cannot show anything yet
+                before = self.on()
+                first()
+                self.api.fadeout({"seconds": 0.1}, None, "t")
+                self.assertTrue(self.wait(lambda: self.api.fader.label == "out" and self.player.level == 0.0), how)
+            self.go.set()
+            self.assertTrue(self.wait(lambda: self.on() not in (None, before) and self.engine.changer.newest() is None), how)
+            time.sleep(0.1)
+            self.assertEqual((self.player.level, self.api.fader.label), (0.0, "out"), "%s: the shader came up lit over a Fade out pressed after it was asked for" % how)
+            self.api.fadein({"seconds": 0.1}, None, "t")
+            self.wait(lambda: self.api.fader.label is None)
+
+    def test_a_fade_out_pressed_before_the_wish_is_undone_by_it_as_by_any_play(self):
+        self.api.fadeout({"seconds": 0.1}, None, "t")
+        self.assertTrue(self.wait(lambda: self.player.level == 0.0))
+        self.go.set()
+        self.tap(0, device={"id": "midi"})
+        self.assertTrue(self.wait(lambda: self.on() == ONE and self.player.level == 100.0))
+
+    def test_a_blackout_after_the_wish_stays_dark_and_a_stop_after_it_stays_stopped(self):
+        with self.engine._lock:
+            self.tap(0, device={"id": "midi"})
+            self.api.blackout({"on": True}, None, "t")
+        self.go.set()
+        self.assertTrue(self.wait(lambda: self.on() == ONE))
+        time.sleep(0.1)
+        self.assertEqual(self.player.level, 0.0)
+        self.api.blackout({"on": False}, None, "t")
+        self.api.control({"action": "stop"}, None, "t")
+        with self.engine._lock:
+            self.tap(1, device={"id": "midi"})
+            self.api.control({"action": "stop"}, None, "t")
+        self.assertTrue(self.wait(lambda: self.engine.changer.newest() is None))
+        time.sleep(0.2)
+        self.assertEqual((self.on(), self.player.source_shader), (None, None))
 
 
 class FromEverywhere(PadBase):
@@ -364,6 +561,64 @@ class FromEverywhere(PadBase):
         self.api.control({"action": "stop"}, None, "t")
         self.assertEqual(midi.light_state(action, hub._snapshot(time.monotonic(), True)), "on")
         self.assertEqual(midi.light_state(action, {"pads": [[""] * 12], "shader": None, "running": False, "playing": None}), "off")
+
+    def test_only_the_pad_that_started_what_is_on_is_the_one_playing(self):
+        # low, the review of #114: every pad that held the shader on the screen was lit as playing, whatever its
+        # preset, and also while Vibes showed that shader. The rule: the shader is on, with the preset this pad
+        # starts it with (a pad without one: the preset called default, or none), and Vibes is not running.
+        self.a_preset(name="Slow")
+        self.give(0, ONE)
+        self.give(1, ONE, preset="Slow")
+        self.give(2, TWO)
+        hub = midi.MidiHub(self.api, self.settings, log=lambda *_: None, lister=lambda: [], clock=time.monotonic)
+
+        def lights():
+            snap = hub._snapshot(time.monotonic(), True)
+            return [midi.light_state({"action": "pad", "bank": 0, "index": i}, snap) for i in range(3)]
+        self.tap(0)
+        self.assertEqual(lights(), ["active", "on", "on"])
+        self.assertEqual(self.api.status({}, None, "t")["player"]["shader_preset"], "")
+        self.tap(1)
+        self.assertEqual(lights(), ["on", "active", "on"])
+        self.assertEqual(self.api.status({}, None, "t")["player"]["shader_preset"], "Slow")
+        self.vibes.start()
+        self.assertTrue(self.vibes.tick())
+        self.assertEqual(lights(), ["on", "on", "on"], "a pad is lit as playing while Vibes shows a shader")
+        self.vibes.stop()
+
+    def test_the_preset_lights_are_off_under_a_clip(self):
+        # from the first round's own list: the engine remembers the shader it showed last, and the lights of its
+        # presets stayed on under a clip played after it
+        self.a_preset(name="Slow")
+        hub = midi.MidiHub(self.api, self.settings, log=lambda *_: None, lister=lambda: [], clock=time.monotonic)
+        action = {"action": "shader_preset_1"}
+        self.engine.play(ONE, preset="Slow")
+        self.assertEqual(midi.light_state(action, hub._snapshot(time.monotonic(), True)), "active")
+        self.player.play([os.path.join(self.media, "a.mp4")])
+        snap = hub._snapshot(time.monotonic(), True)
+        self.assertEqual((midi.light_state(action, snap), snap["shader"], snap["presets"]), ("off", None, []))
+
+    def test_a_renamed_preset_carries_the_pads_that_start_with_it(self):
+        self.a_preset(name="Slow")
+        self.a_preset(TWO, name="Slow")
+        self.give(0, ONE, preset="Slow")
+        self.give(1, TWO, preset="Slow")
+        self.give(2, ONE)
+        self.engine.preset_rename(ONE, "slow", "Gentle")
+        pads = self.settings.data["pads"]["banks"][0]["pads"]
+        self.assertEqual((pads[0].get("preset"), pads[1].get("preset"), pads[2].get("preset")), ("Gentle", "Slow", None))
+        again = Settings(self.settings.path)
+        again.load()
+        self.assertEqual(again.data["pads"]["banks"][0]["pads"][0]["preset"], "Gentle")
+        self.tap(0)
+        self.assertEqual(self.engine.on_screen()["preset"], "Gentle")
+
+    def test_the_library_says_how_many_pads_hold_a_shader(self):
+        self.give(0, ONE)
+        self.give(5, ONE)
+        self.api.set_pad({"bank": 1, "index": 0, "file": "a.mp4"}, None, "t")
+        rows = {s["id"]: s["pads"] for s in self.engine.state()["shaders"]}
+        self.assertEqual((rows[ONE], rows[TWO]), (2, 0))
 
     def test_osc_dmx_and_a_room_scene_name_a_pad_by_its_place_only(self):
         # none of them reads what the pad holds: each sends {"pad": [bank, index]} to the same play

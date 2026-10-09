@@ -315,7 +315,12 @@
   function padShaderName(pad) { return padShader(pad).replace(/\.fs$/, ''); }
   function padShaderNice(id) { return window.pvjShaders && window.pvjShaders.nice ? window.pvjShaders.nice(id) : String(id || '').replace(/\.fs$/, ''); }
   function padPlaying(pad, pl) {
-    if (padShader(pad)) return typeof pl.shader === 'string' && pl.shader === padShaderName(pad);
+    // a shader pad is the one playing while its shader is on with the preset the pad starts it with (a pad without
+    // one starts the preset called default, or none), and not while Vibes shows that shader: that is nobody's pad
+    if (padShader(pad)) {
+      var got = String(pl.shader_preset || '').toLowerCase(), want = String(pad.preset || '').toLowerCase();
+      return typeof pl.shader === 'string' && pl.shader === padShaderName(pad) && !pl.vibes && (want ? got === want : got === '' || got === 'default');
+    }
     return !!(pl.path && pad.file && base(pl.path) === pad.file);
   }
   function padButton(bank, index, pad) {

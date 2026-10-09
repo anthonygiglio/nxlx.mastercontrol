@@ -561,6 +561,7 @@ class Changer:
         self._cond = threading.Condition()          # guards the fields below; never held across a call to the player
         self._adjust = None                         # {"epoch", "id", "values", "controls", "held"}: the newest wish
         self._show = None                           # {"id", "values", "controls", "preset"}: a whole shader to put on
+        self._doing = None                          # the whole shader the worker is putting on right now, if any
         self._last = -1e9                           # when the last change was applied
         self._release = None                        # when a pressed event is to be let go
         self._refresh = None                        # when the shader on screen is due for a new anchor
@@ -594,6 +595,12 @@ class Changer:
     def queued(self):
         with self._cond:
             return self._show
+
+    def newest(self):
+        """The whole shader that was asked for last and is not on yet: the one waiting, else the one the worker is
+        putting on right now. A step to "the next one" counts from it."""
+        with self._cond:
+            return self._show or self._doing
 
     def clear(self):
         """Forget what is waiting (the module went off, Vibes was started, the box was reset)."""
@@ -655,7 +662,13 @@ class Changer:
         kind, body = job
         try:
             if kind == "show":
-                self.engine.play_job(body)
+                with self._cond:
+                    self._doing = body
+                try:
+                    self.engine.play_job(body)
+                finally:
+                    with self._cond:
+                        self._doing = None
             else:
                 held = self.engine.adjust(body)
                 self.applied += 1
@@ -699,6 +712,8 @@ class LiveEngine(S.Engine):
     def __init__(self, api, log=print, clock=time.monotonic, tap=S.LogTap, thread=True):
         super().__init__(api, log, clock, tap)
         self.changer = Changer(self, clock, thread)
+        self._chain = None                          # (the epoch the worker's last job started from, the one it left): see play_job
+        self._job = threading.local()               # .left: what a call of play() itself made of the player's epoch
         self.guard = Guard(self, clock)
         self._refusals = {}                         # source hash -> what the GPU said; a changed file has another hash
         # Settings are edited under this lock, never under the engine's own: that one is held while the GPU looks at a
@@ -774,11 +789,20 @@ class LiveEngine(S.Engine):
         members = {e["id"] for e in self.rotation(None, cfg, rows)["shaders"]}
         heavy = self.heavy_here(cfg)
         on = self.on_screen() if self.enabled() else None
+        pads = {}
+        try:
+            for bank in self.api.settings.data["pads"]["banks"]:
+                for pad in bank["pads"]:
+                    if not pad.get("file") and isinstance(pad.get("shader"), str):
+                        pads[pad["shader"]] = pads.get(pad["shader"], 0) + 1
+        except (AttributeError, KeyError, TypeError):
+            pads = {}
         for s in rows:
             sid = s["id"]
             s["weight"], s["measured"] = weight_of(sid, s["cost"]), measured(sid)
             s["heavy"] = heavy.get(sid)
             s["presets"] = [p["name"] for p in cfg.get("presets", {}).get(sid, [])]
+            s["pads"] = pads.get(sid, 0)            # how many pads hold it (D73): a Remove says so before it is done
             s["refused"] = None
             if not s["error"]:
                 try:
@@ -881,9 +905,13 @@ class LiveEngine(S.Engine):
                 for row in e["shaders"]:
                     if row["id"] == sid and name_key(row.get("preset", "")) == name_key(hit["name"]):
                         row["preset"] = to
+            was = hit["name"]
             hit["name"] = to
             cfg["presets"][sid] = rows
             self._save(cfg)
+        follow = getattr(self.api, "pads_follow_preset", None)
+        if follow is not None:
+            follow(sid, was, to)                    # a pad that starts this shader with it follows too (D73)
 
     def preset_delete(self, sid, name):
         self._path(sid)
@@ -1185,17 +1213,44 @@ class LiveEngine(S.Engine):
         only if nothing was played or stopped since it was asked for."""
         if not self.enabled():
             return                                  # the module went off meanwhile: nothing to show, nothing to report
+        # "Nothing was played since" must not count the queue's own job before this one. A second tap that came
+        # while the worker was on its way with the first (it had taken the job and not yet the screen) carries the
+        # epoch the first one then moved, and the player refused it: the OLDER tap stayed on the screen. The worker
+        # remembers the epoch its last job started from and the one that job itself left behind; a job that carries
+        # the first is given the second. Anything else that took the screen in between (a clip, a Stop, a shader
+        # from the panel) moved the epoch further, and refuses the job as before.
+        epoch = job["epoch"]
+        if self._chain is not None and epoch == self._chain[0]:
+            epoch = self._chain[1]
+        self._job.left = None
         try:
-            self.play(job["id"], job.get("values"), job.get("controls"), job.get("preset"), epoch=job["epoch"], queued=True)
+            self.play(job["id"], job.get("values"), job.get("controls"), job.get("preset"), epoch=epoch, queued=True,
+                      mark=job["mark"] if "mark" in job else S.Engine.NOW)
         except ApiError as e:
             self.error = {"id": job["id"], "message": e.message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        finally:
+            if self._job.left is not None:
+                self._chain = (epoch, self._job.left)
+
+    def queue_show(self, sid, preset=None):
+        """Put a whole shader on from the worker, for a caller that must not wait for the GPU (a controller's pad, a
+        preset of another shader, a step). What belongs to the moment of asking is taken here and carried with the
+        job: the player's epoch (what is played or stopped after this keeps the screen) and the level's mark (a
+        Fade out, a Blackout or the slider moved after this stands when the shader comes)."""
+        marker = getattr(self.api, "_level_mark", None)
+        job = {"id": sid, "epoch": self.api.player.source_epoch}
+        if preset is not None:
+            job["preset"] = preset
+        if marker is not None:
+            job["mark"] = marker()
+        self.changer.show(job)
 
     def off(self, epoch=None):
         if epoch is None:                           # the module was switched off: what was waiting goes too
             self.changer.clear()
-        super().off(epoch)
+        return super().off(epoch)
 
-    def play(self, sid, values=None, controls=None, preset=None, epoch=None, queued=False):
+    def play(self, sid, values=None, controls=None, preset=None, epoch=None, queued=False, mark=S.Engine.NOW):
         """Show one shader by hand: with the values given, else its named preset, else its "default" preset, else the
         file's defaults. The rotation ends. Raises 422 if the player refuses it. With `epoch`, only if nothing else
         was played or stopped since (None is returned then); `queued` is the worker's call, whose request already
@@ -1218,14 +1273,16 @@ class LiveEngine(S.Engine):
             if same and stored is None:
                 stored = on["controls"]
             result = self.show(sid, start, hue=on["hue"] if same else 0.0, offset=self.time_of(on)[0] if same else 0.0,
-                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch)
+                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch, mark=mark)
         except ShaderError as e:
             raise ApiError(422, "%s: %s" % (sid, e))
         if result is None:
             return None                             # the screen went to something else: it keeps it
+        self._job.left = result["epoch"]            # what this call itself made of the player's epoch (see play_job)
         if not result["ok"]:
             if not result["showing"]:
-                self.off(result["epoch"])           # nothing to go back to: stop, which leaves the screen black
+                # nothing to go back to: stop, which leaves the screen black
+                self._job.left = self.off(result["epoch"]) or self._job.left
             raise ApiError(422, "the player refused %s: %s. %s" % (
                 result["id"], result["error"], "The shader before it is back on." if result["showing"] else "The screen is black."))
         self._refusals.pop(self.playing["digest"] if self.playing else None, None)
@@ -1339,7 +1396,7 @@ class LiveEngine(S.Engine):
             vibes = getattr(self.api, "vibes", None)
             if vibes:
                 vibes.yield_screen()                # now, at the request: the worker never ends a rotation
-            self.changer.show({"id": sid, "preset": name, "epoch": self.api.player.source_epoch})
+            self.queue_show(sid, name)
         return {"ok": True, "id": sid, "preset": name}
 
     def step(self, direction):
@@ -1356,11 +1413,12 @@ class LiveEngine(S.Engine):
             raise ApiError(409, "the active set has no shader that can be shown")
         on = self.on_screen()
         epoch = self.api.player.source_epoch
-        wish = self.changer.queued()
+        # counted from the step before it if that one is not on yet: waiting, or in the worker's hands right now
+        wish = self.changer.newest()
         wish = wish if wish and wish.get("epoch") == epoch else None       # a step asked for before something else played is dead
         at = (wish or {}).get("id") or (on["id"] if on else None)
         nxt = ids[(ids.index(at) + direction) % len(ids)] if at in ids else ids[0 if direction == 1 else -1]
-        self.changer.show({"id": nxt, "epoch": epoch})
+        self.queue_show(nxt)
         return {"ok": True, "id": nxt}
 
     # -- delete also clears what was kept for the file --
