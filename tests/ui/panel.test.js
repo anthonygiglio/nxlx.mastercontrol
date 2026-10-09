@@ -313,6 +313,38 @@ function startServer() {
       await page.waitForFunction((v) => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === v), value);
       await page.waitForSelector('button.on:has-text("' + label + '")');
     }
+    // A box that gave up on the transition says why under the picker, in words that stay inside a phone's width, and
+    // Try again does what choosing the transition again does. (The box's answer is given a reason here: nothing in
+    // the harness is slow enough to make one.)
+    {
+      const why = '2 stills in a row took over a second (1.2, 1.4); dipping to black instead. The box tries again in 5 minutes, or at once when the transition is chosen again';
+      assert.strictEqual(await page.locator('#mixfallback').count(), 0, 'nothing is said while the box does the transition');
+      let giveUp = true;
+      await page.route('**/api/status', async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        if (giveUp) body.mix.fallback = why;
+        await route.fulfill({ response, json: body });
+      });
+      const before = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: before.height });
+      await page.click('nav >> text=Live');
+      await page.click('nav >> text=Mix');
+      await page.waitForSelector('#mixfallbackwhy');
+      assert.strictEqual(await page.textContent('#mixfallbackwhy'), 'This box is not doing that transition now: ' + why + '.');
+      const fits = await page.evaluate(() => {
+        const box = document.getElementById('mixfallback').getBoundingClientRect(), text = document.getElementById('mixfallbackwhy').getBoundingClientRect();
+        return { right: Math.max(box.right, text.right), wide: window.innerWidth, page: document.documentElement.scrollWidth };
+      });
+      assert(fits.right <= fits.wide && fits.page <= fits.wide, 'the reason sticks out at 320 px: ' + JSON.stringify(fits));
+      const sent = page.waitForRequest((r) => r.url().endsWith('/api/mix') && r.method() === 'POST');
+      giveUp = false;
+      await page.click('#mixretry');
+      assert.deepStrictEqual(JSON.parse((await sent).postData()), { transition: 'slide-down', duration: (await get('/api/status')).mix.duration });
+      await page.waitForFunction(() => !document.getElementById('mixfallback'));
+      await page.unroute('**/api/status');
+      await page.setViewportSize(before);
+    }
     await page.click('button:has-text("Dip to black")');
     await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'dip'));
     await page.waitForSelector('button.on:has-text("Dip to black")');

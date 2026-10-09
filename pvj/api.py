@@ -1122,6 +1122,9 @@ class Api:
         if not blend:
             self.transitions.end()
         dip = kind == "dip" and not self.mix["blackout"]
+        # After the operator's Fade out there is no picture to blend from: a crossfade, a wipe or a slide then
+        # brings the new clip up from black as the dip does (it used to snap to full brightness at once).
+        rise = dip or (kind in transitions_mod.STYLES and faded_out and not self.mix["blackout"])
         if self.pinscreen is not None:
             self.pinscreen.clear()          # an on-screen pairing PIN goes at the tap, as it always did
 
@@ -1149,7 +1152,7 @@ class Api:
                 current = getattr(self.fader, "current", None)
                 with self._levels():
                     if mark is None or current is None or current(mark):
-                        if dip and not self.mix["blackout"]:
+                        if rise and not self.mix["blackout"]:
                             self._apply_opacity(0)
                             self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
                         else:
@@ -1171,7 +1174,7 @@ class Api:
             """The still, then the clip under it. The still takes time and nothing waits for it, so the ticket says
             what came meanwhile: after a newer wish (a Stop, any other play) nothing is loaded; after an end() the
             clip loads without the blend."""
-            return start(self.transitions.hold(kind, ticket, lit))
+            return start(self.transitions.hold(kind, ticket, lit, transition["duration"]))
 
         loaded = True
         if blend and isinstance(device, dict) and device.get("id") in CONTROLLERS:
