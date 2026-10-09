@@ -295,10 +295,11 @@ class Api:
         that puts the overlay and the mapping back on a new player calls this: the level is written as the mix
         has it, dark under Blackout and after the operator's Fade out. The fader is not taken: a ramp that runs
         goes on from its next step, and this is nobody's wish for a level. (Found by the stress test: a load that
-        leaves the level to a newer wish, as it must, left it at the new process's own.)"""
+        leaves the level to a newer wish, as it must, left it at the new process's own.) Returns False if the
+        player did not take the level (it was not up yet): the watcher then tries again on its next rounds."""
         with self._levels():
             dark = self.mix["blackout"] or getattr(self.fader, "label", None) == "out"
-            self._apply_opacity(0 if dark else self.mix["opacity"])
+            return self._apply_opacity(0 if dark else self.mix["opacity"])
 
     def _levels(self):
         """The lock one write of the picture's level is made under (Fader.stepping): a ramp's step that was on its
@@ -331,8 +332,9 @@ class Api:
     def _apply_opacity(self, percent):
         try:
             self.player.opacity(round(min(100, max(0, percent)) * 2.55))
+            return True
         except PlayerError:
-            pass
+            return False
 
     def resolve_media(self, name):
         """A media file by name, guaranteed to live inside the media folder."""
@@ -1570,8 +1572,12 @@ class Api:
     def stop_player(self, body, device, client):
         # The systemd unit (Restart=always) brings the player straight back.
         quit_player = getattr(self.player, "quit", None)        # Player.quit: what was loaded goes with the process
-        self._as_newest("the player's restart", quit_player or (lambda: self.player.ipc.request("quit")))
-        self._stop_capture()
+        try:
+            self._as_newest("the player's restart", quit_player or (lambda: self.player.ipc.request("quit")))
+        finally:
+            # also when the player did not answer (it may have gone all the same, and Player.quit has put the pipe
+            # down as not playing before it asked): a helper must never be left writing into a pipe nobody reads
+            self._stop_capture()
         return {"ok": True}
 
     def get_modules(self, body, device, client):

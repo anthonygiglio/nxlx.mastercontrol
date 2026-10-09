@@ -1923,6 +1923,17 @@ class Threads(ServerBase):
         self.api.control({"action": "stop"}, None, "t")
         self.assertEqual((self.api.fader.label, self.level_now()), ("out", 0))
 
+    def test_a_stop_that_meets_a_fade_in_does_not_cut_it_short(self):
+        # the seventh review: the mark in Stop's putting-back was called an equivalent mutation (row n of the stress
+        # test's table). It is not: a Fade in that comes between Stop's clear and its putting-back was cancelled,
+        # and the level snapped to full
+        real = self.player.clear
+        self.player.clear = lambda: (self.api.fadein({"seconds": 30}, None, "t"), real())
+        self.api.control({"action": "stop"}, None, "t")
+        self.assertEqual(self.api.fader.label, "in", "Stop took the fader from a Fade in that was asked for after it")
+        self.assertLess(self.level_now(), 128, "the Fade in snapped to full")
+        self.api.fader.cancel()
+
     def test_a_tap_that_is_overtaken_before_it_loads_leaves_a_running_fade_alone(self):
         # found by the first stress test, and caught by nothing afterwards (the fifth review's mutation h): the
         # fader taken at the tap, the tap then overtaken, and a Fade in left half way with nobody to finish it
@@ -2076,6 +2087,75 @@ class RealPlayer(ServerBase):
         self.assertEqual(self.mpv.log[-1][:2], ("load", "quit"))
         self.assertIsNone(self.player.source_shader)
 
+    def test_a_restart_the_player_does_not_answer_stops_the_helper_all_the_same(self):
+        # the seventh review's M2: Player.quit raised, and the stopping of the helper after it was skipped
+        from pvj.api import ApiError
+        self.live_input()
+        self.mpv.dies = True                        # the process goes at once: no answer, the connection closes
+        with self.assertRaises(ApiError):
+            self.api.stop_player({}, None, "t")
+        self.assertEqual(self.mpv.log[-1][:2], ("load", "quit"))
+        self.assertEqual(self.helper.running, 0, "the helper goes on writing into a pipe that nobody reads")
+        self.assertFalse(self.player.pipe_playing)
+
+    def test_a_restart_that_is_refused_stops_the_helper_too(self):
+        from pvj.api import ApiError
+        self.live_input()
+        self.mpv.fail.add("quit")
+        with self.assertRaises(ApiError):
+            self.api.stop_player({}, None, "t")
+        self.assertEqual(self.helper.running, 0)
+
+    def test_a_question_the_player_does_not_answer_does_not_end_the_live_input(self):
+        # the seventh review: one lost answer made the pipe "not playing" for good, and the next _stop_capture
+        # stopped the helper of a live input that was on the screen
+        self.live_input()
+        self.mpv.mute.add("pid")
+        self.assertTrue(self.player.pipe_playing)
+        self.api._stop_capture()
+        self.assertEqual(self.helper.running, 1)
+        self.mpv.mute.clear()
+        self.assertTrue(self.player.pipe_playing)
+        self.mpv.pid += 1                           # but a player that answers as another process never had it
+        self.mpv._reset()
+        self.assertFalse(self.player.pipe_playing)
+
+    # -- the level on a player that has just started (the watcher's call, pvj/autostart.py) --
+    def test_the_level_goes_back_on_a_restarted_player_as_the_mix_has_it(self):
+        # on the real Player, so the locks' checker sees this path too (the seventh review's M3)
+        self.player.play([self.clip], spawn=False)
+        for wish, level in ((lambda: self.api.blackout({"on": True}, None, "t"), -100),
+                            (lambda: self.api.blackout({"on": False}, None, "t"), 0),
+                            (lambda: self.api.control({"action": "opacity", "value": 50}, None, "t"), -50)):
+            wish()
+            self.mpv.pid += 1
+            self.mpv._reset()                       # a new process: its own full brightness
+            self.assertEqual(self.mpv.props["brightness"], 0)
+            self.assertTrue(self.api.restore_level())
+            self.assertEqual(self.mpv.props["brightness"], level)
+
+    def test_a_level_the_restarted_player_did_not_take_is_said_so(self):
+        self.api.blackout({"on": True}, None, "t")
+        self.mpv.fail.add("set_property")
+        self.assertIs(self.api.restore_level(), False)
+        self.mpv.fail.clear()
+        self.assertTrue(self.api.restore_level())
+        self.assertEqual(self.mpv.props["brightness"], -100)
+
+    def test_the_watcher_puts_the_level_back_after_the_panels_restart(self):
+        from pvj import autostart
+        watcher = autostart.Autostart(self.api, self.settings, log=lambda *_: None, sleep=lambda s: None)
+        watcher.tick()                              # the player it knows
+        self.api.blackout({"on": True}, None, "t")
+        self.api.stop_player({}, None, "t")
+        self.assertEqual(self.mpv.props["brightness"], 0)
+        self.mpv.fail.add("set_property")           # not ready for it at the first sight
+        watcher.tick()
+        self.mpv.fail.clear()
+        self.assertEqual(self.mpv.props["brightness"], 0)
+        watcher.tick()
+        self.assertEqual(self.mpv.props["brightness"], -100, "the restarted player stays lit under a Blackout")
+
     # -- Vibes' own dip, through the real player's own source_opacity (which takes the player's lock) --
     def vibes(self):
         vibes = self.api.vibes
@@ -2132,9 +2212,16 @@ class RealPlayer(ServerBase):
         self.assertFalse(black.is_alive(), "a Blackout after them hangs too")
 
     # -- a Blackout waits for nothing but one write of the level --
-    BOUND = 0.5         # seconds: a level that is on its way to the player, and the Blackout's own (an answer takes 2 at the worst)
+    # What a Blackout may wait for: a level that is on its way to the player, and its own. So the bound is two
+    # writes of a level as the stand-in answers them (LEVEL: at once in these tests, which make only the path late)
+    # plus MARGIN, the time a busy machine may take to run a thread at all. The margin is the one number that is
+    # not derived from anything; what it must be is far below the load the Blackout would otherwise wait behind,
+    # so the load is made four bounds long.
+    LEVEL, MARGIN = 0.0, 0.5
+    BOUND = 2 * LEVEL + MARGIN
+    LOAD = 4 * BOUND
 
-    def slow_load(self, seconds=2.0):
+    def slow_load(self, seconds=LOAD):
         """A clip whose load holds the player's lock for `seconds` (mpv says the old path for that long, and the
         player waits for the new one). Returns the thread, once the load has the lock."""
         self.mpv.lag = lambda kind: seconds if kind == "path" else 0.0
@@ -2230,27 +2317,29 @@ class Stress(ServerBase):
     | e  a newer wish and its own change of what plays not one step (no player's lock)          | 3 of 3       | yes               |
     | f  a callback of the fader called under its lock                                          | 3 of 3       | the run hangs     |
     | g  a clip's last look at the newest wish outside the player's lock                        | 3 of 3       | yes               |
-    | h  the fader taken at the tap, before the clip has loaded                                 | 0 of 3       | yes               |
+    | h  the fader taken at the tap, before the clip has loaded                                 | 0 to 3 of 3  | yes               |
     | i  a play's own level written outside the level's lock                                    | 3 of 3       | yes               |
     | j  a load setting the level whatever was asked for since its tap                          | 3 of 3       | yes               |
     | k  Stop's wish and its clearing of the screen in two steps                                | 3 of 3       | yes               |
     | l  the Opacity slider's value set outside the level's lock                                | 3 of 3       | yes               |
     | m  a generator setting the level whatever was asked for since it was chosen               | 3 of 3       | yes               |
-    | n  the level put back after a Stop whoever has taken the fader since                      | 0 of 3       | no: see below     |
+    | n  the level put back after a Stop whoever has taken the fader since                      | 0 of 3       | yes               |
     | o  Vibes' step taking the level's lock before the player's (the deadlock of round six)    | 3 of 3       | yes               |
     | p  the player forgetting nothing at its restart (the pipe "plays" on)                     | 0 of 3       | yes               |
     | q  a clip that is loaded leaving the pipe "playing" (a fault inside pvj/player.py)        | 3 of 3       | yes               |
 
     What the rows say that is not "caught":
-    * h needs a Fade in that runs, a clip tapped with a blend, and then a Next before that clip loads; every other
-      newer wish puts the level right again by itself. The five seeds do not draw it. The test by hand makes it
-      (`test_a_tap_that_is_overtaken_before_it_loads_leaves_a_running_fade_alone`). The first stress test, with
-      seventeen kinds of action instead of twenty-five, drew it three times of three: more kinds of action, with the
-      same number of rounds, means fewer of each meeting.
-    * n is an equivalent mutation as far as the end can tell. Whoever takes the fader between a Stop's clear and
-      its putting-back of the level is a Fade out (which the look at the label stops anyway), a Blackout, the
-      Opacity slider or a Reset (which have set the very level that would be written), or another play's way down
-      (which is cut short, so that clip comes up at once and not out of the dark: a look, not a state).
+    * h needs a level wish that runs (a Fade in, a Fade out), a clip tapped with a blend, and then something newer
+      before that clip loads. The spelling tried here was the line `self.fader.cancel()` put in before
+      `tapped = self._level_mark()` in Api.play; the seventh review spelled it `tapped = self.fader.cancel()`,
+      which is the same program (cancel returns the token that mark reads). It was caught none of six times here on
+      an idle machine and three of three on the reviewer's, which ran other suites beside it: how the threads meet
+      decides, as said above, and "0 of 3" in this column means "not on this machine, this time", never "cannot".
+      The test by hand makes it (`test_a_tap_that_is_overtaken_before_it_loads_leaves_a_running_fade_alone`).
+    * n was called an equivalent mutation here until the seventh review, wrongly: a Fade in that comes between a
+      Stop's clear and its putting-back of the level was cancelled by it, and the level snapped to full. The rounds
+      do not draw that meeting (none of three, twice). The test by hand that kills it was added then:
+      `Threads.test_a_stop_that_meets_a_fade_in_does_not_cut_it_short`.
     * p needs a live input that plays, then a restart, then nothing else loaded. A restart is quick and a live
       input slow, so in a round they come the other way round. By hand: three tests of the real player.
     * o is caught by the locks themselves (tests/lockrank.py), in this test and in single-threaded tests by hand:
@@ -2267,7 +2356,11 @@ class Stress(ServerBase):
     ROUNDS = 50
     FAST = 10.0                             # the fader's, the transitions' and Vibes' clocks run this much faster
     LAGS = {"opacity": 0.003, "play": 0.006, "still": 0.008, "path": 0.004, "look": 0.002, "helper": 0.005}
-    BLACKOUT = 1.0                          # seconds a Blackout may take here, whatever else goes on (see the hand test for the bound)
+    # Seconds a Blackout may take here, whatever else goes on: two writes of a level at the stand-in's slowest (one
+    # on its way, and its own; see RealPlayer.BOUND) and a margin for a machine that runs a dozen threads of the
+    # round at once, twice the hand test's. What it would wait for if the rule were broken is a load's wait for
+    # its path (three seconds in pvj/player.py) or for ever.
+    BLACKOUT = 2 * LAGS["opacity"] + 2 * 0.5
 
     def setUp(self):
         super().setUp()

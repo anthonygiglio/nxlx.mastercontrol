@@ -369,7 +369,8 @@ class Player:
     @property
     def pipe_playing(self):
         """True from a live input's pipe being loaded until anything else is loaded, the screen is cleared or the
-        player is another process (it was restarted, by the panel or by itself: the new one never had the pipe).
+        player is another process (it was restarted, by the panel or by itself: the new one never had the pipe;
+        a player that does not answer has not said that, and the answer stays what it was).
         Set and cleared under the lock with each load and clear, so it says what this side loaded last and does not
         wait for mpv's own `path` to follow. Api._stop_capture stops the live input's helper by it."""
         with self._lock:
@@ -378,7 +379,7 @@ class Player:
             try:
                 same = self.ipc.request("get_property", "pid") == self._pipe_pid
             except PlayerError:
-                same = False
+                return True         # no answer is no news: one lost question must not make the pipe "not playing" for good
             if not same:
                 self._pipe = False
             return self._pipe

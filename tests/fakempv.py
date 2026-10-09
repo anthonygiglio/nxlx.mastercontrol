@@ -43,7 +43,8 @@ class FakeMpv:
         self.levels = []            # every brightness that was set
         self.commands = []          # the name of every command, in order
         self.fail = set()           # names of commands that are answered with an error
-        self.mute = set()           # names of commands that are not answered at all (the client's wait runs out)
+        self.mute = set()           # names of commands that are not answered at all (the connection is closed)
+        self.dies = False           # True: `quit` ends the process without an answer, as a player that goes at once
         self._reset()
         self._stop = threading.Event()
         try:
@@ -110,6 +111,9 @@ class FakeMpv:
         name = command[0] if command else ""
         self.commands.append(name if name not in ("get_property", "set_property") else "%s %s" % (name, command[1]))
         if name in self.mute or (len(command) > 1 and command[1] in self.mute):
+            return None
+        if name == "quit" and self.dies:
+            self._do(name, command[1:])
             return None
         if name in self.fail:
             return {"error": "error running command"}

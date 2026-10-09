@@ -71,6 +71,48 @@ class AutostartTest(unittest.TestCase):
     def cfg(self, **kw):
         self.settings.data["autostart"] = autostart.validate(kw, self.settings.data["autostart"])
 
+    def test_the_level_is_offered_to_a_restarted_player_until_it_lands(self):
+        # the seventh review: one try, at the first sight of the new player, and a failure nobody heard of
+        said, answers, asked = [], [False, False, True], []
+        self.a.log = said.append
+        self.api.restore_level = lambda: (asked.append(1), answers.pop(0))[1]
+        self.api.pid = 100
+        for _ in range(6):
+            self.a.tick()
+        self.assertEqual(len(asked), 3, "the level was not offered again until the player took it, or went on being offered")
+        self.assertEqual([s for s in said if "level" in s], [])
+
+    def test_a_level_that_never_lands_is_given_up_and_logged_once(self):
+        said, asked = [], []
+        self.a.log = said.append
+
+        def never():
+            asked.append(1)
+            if len(asked) % 2:
+                return False
+            raise RuntimeError("the player is away")
+        self.api.restore_level = never
+        self.api.pid = 100
+        for _ in range(autostart.LEVEL_TRIES + 4):
+            self.a.tick()
+        self.assertEqual(len(asked), autostart.LEVEL_TRIES)
+        self.assertEqual(len([s for s in said if "could not put the picture's level back" in s]), 1, said)
+        self.api.pid = 101                                  # the next player gets its own tries
+        self.a.tick()
+        self.assertEqual(len(asked), autostart.LEVEL_TRIES + 1)
+
+    def test_a_level_owed_to_a_player_that_is_gone_waits_for_the_next_one(self):
+        asked = []
+        self.api.restore_level = lambda: (asked.append(self.api.pid), False)[1]
+        self.api.pid = 100
+        self.a.tick()
+        self.api.pid = None
+        self.a.tick(), self.a.tick()
+        self.assertEqual(asked, [100])
+        self.api.pid = 101
+        self.a.tick()
+        self.assertEqual(asked, [100, 101])
+
     def test_off_by_default_does_nothing(self):
         self.api.pid = 100
         self.assertFalse(self.a.tick())
