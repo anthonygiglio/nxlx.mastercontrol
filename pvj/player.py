@@ -716,14 +716,22 @@ class Player:
             if self._effect is not None:            # a generator has no picture to filter: the effect comes off with
                 self._drop_effect("generator")      # the same push that puts the source on
             try:
-                self._source, self._source_pid = shader, self.ipc.request("get_property", "pid")
+                pid = self.ipc.request("get_property", "pid")
+                # The carrier is left alone only if this side loaded it last, into this mpv, and mpv says it plays.
+                # mpv's `path` alone is not enough: it lags a load (a live input's pipe is loaded without waiting
+                # for it, so `path` could still name the carrier of the generator before, and the pipe then stayed
+                # on screen with its helper stopped). The record alone is not enough either: a carrier mpv has
+                # dropped must be loaded again. When the two disagree it is loaded, which costs a restart of a
+                # blank picture and nothing else.
+                mine = self._carrier == carrier and self._source_pid == pid
+                self._source, self._source_pid = shader, pid
                 self._push_shaders()
                 self._apply_fbo()
                 try:
                     current = self.ipc.request("get_property", "path")
                 except PlayerError:
                     current = None
-                if current != carrier:
+                if not mine or current != carrier:
                     self.ipc.request("loadfile", carrier, "replace")
                     self._wait_for_path(carrier)
                     if self.ipc.request("get_property", "path") != carrier:

@@ -1983,7 +1983,7 @@ class RealPlayer(ServerBase):
         import time
         from pvj.player import Player
         from tests.fakempv import FakeMpv
-        self.threading, self.time = threading, time
+        self.threading, self.time, self.FakeMpv = threading, time, FakeMpv
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))
         self.addCleanup(self.mpv.stop)
         self.player = self.api.player = Player(rundir=self.rundir)
@@ -2016,6 +2016,41 @@ class RealPlayer(ServerBase):
             self.assertFalse(self.player.pipe_playing, "after %s the player still says the live input's pipe plays" % what)
             self.api._stop_capture()
             self.assertEqual(self.helper.running, 0, "after %s the live input's helper was left running" % what)
+
+    def test_a_generator_just_after_a_live_input_takes_the_screen_from_the_pipe(self):
+        # the seventh review's M1: the pipe is loaded without waiting for mpv's `path` to follow, so `path` still
+        # named the carrier of the generator before; the next generator saw "the carrier plays", loaded nothing, and
+        # the pipe stayed on the screen with its helper stopped
+        first, second = [g["id"] for g in self.api.shaders.library()[:2]]
+        self.assertTrue(self.api.shaders.show(first)["ok"])
+        self.assertEqual(self.mpv.log[-1][1], "carrier")
+        self.mpv.lag = lambda kind: 5.0 if kind == "path" else 0.0      # mpv goes on saying the old path
+        self.live_input()
+        self.assertEqual(self.mpv.log[-1][1], "pipe")
+        self.mpv.lag = None
+        self.assertEqual(self.FakeMpv.kind(self.mpv._get("path")), "carrier", "the stand-in does not lag: nothing is tested")
+        self.assertTrue(self.api.shaders.show(second)["ok"])
+        self.assertEqual(self.mpv.log[-1][1], "carrier", "the generator was put on over the live input's pipe, which goes on playing")
+        self.assertFalse(self.player.pipe_playing)
+        self.api._stop_capture()
+        self.assertEqual(self.helper.running, 0)
+
+    def test_a_generator_after_a_generator_does_not_load_the_carrier_again(self):
+        # the other half of the same rule: the carrier this side loaded last, and that mpv says plays, is left alone
+        first, second = [g["id"] for g in self.api.shaders.library()[:2]]
+        self.assertTrue(self.api.shaders.show(first)["ok"])
+        loads = len(self.mpv.log)
+        self.assertTrue(self.api.shaders.show(second)["ok"])
+        self.assertEqual(len(self.mpv.log), loads, "the picture restarted between two generators")
+
+    def test_a_carrier_the_player_has_dropped_is_loaded_again(self):
+        first, second = [g["id"] for g in self.api.shaders.library()[:2]]
+        self.assertTrue(self.api.shaders.show(first)["ok"])
+        self.mpv.path = None                                            # mpv went idle by itself
+        loads = len(self.mpv.log)
+        self.assertTrue(self.api.shaders.show(second)["ok"])
+        self.assertEqual(len(self.mpv.log), loads + 1)
+        self.assertEqual(self.mpv.log[-1][1], "carrier")
 
     def test_a_player_that_restarted_by_itself_never_had_the_pipe(self):
         self.live_input()
