@@ -251,7 +251,10 @@ class Vibes:
             return
         path = self._path()
         if path is None or self.engine.is_carrier(path):
-            self.api._apply_opacity(self.api.mix["opacity"])
+            levels = getattr(self.api, "_levels", None)
+            with (levels() if levels else threading.Lock()):
+                if not self.api.mix["blackout"]:
+                    self.api._apply_opacity(self.api.mix["opacity"])
 
     def _level(self):
         """The opacity on the screen now (0 to 100): the mix value, unless the player says otherwise (a Fade out)."""
@@ -282,9 +285,15 @@ class Vibes:
             if self.api.mix["blackout"]:
                 return True                         # the operator blacked out meanwhile: leave the screen dark
             level = self.api.mix["opacity"] * i / steps if up else start * (steps - i) / steps
+            # One write of the level at a time (Api._levels), with the look at Blackout inside it: a step that was
+            # on its way when the operator blacked out could land after the Blackout's own dark and show the picture.
+            levels = getattr(self.api, "_levels", None)
             try:
-                if not self.api.player.source_opacity(int(round(min(100, max(0, level)) * 2.55)), self.epoch):
-                    return False
+                with (levels() if levels else threading.Lock()):
+                    if self.api.mix["blackout"]:
+                        return True
+                    if not self.api.player.source_opacity(int(round(min(100, max(0, level)) * 2.55)), self.epoch):
+                        return False
             except PlayerError:
                 return False
         if up:

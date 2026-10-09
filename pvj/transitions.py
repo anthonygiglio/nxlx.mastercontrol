@@ -304,6 +304,7 @@ class Transitions:
         a play that is still on its way (taking its still, or waiting its turn to) loads nothing after this."""
         with self._mark:
             self._gen += 1
+            return self._gen
 
     def newest(self, ticket):
         with self._mark:
@@ -518,10 +519,12 @@ class Transitions:
             if had:
                 self.last["ended"] = why
             up = self._up
+            gen = self._gen
         if up:
             with self._io:
                 if not self._newer_up(0):
                     self._remove()
+        return gen
 
     def abandon(self, token):
         """The clip of the play that holds `token` did not start after all (it failed, or a newer wish came): its

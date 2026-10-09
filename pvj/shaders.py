@@ -1230,6 +1230,11 @@ class Engine:
                 except OSError:
                     tap = None
             try:
+                # The fader is not taken here: it is taken when the generator is on the screen and its level is
+                # set, at the end (Api._show_level). Taken here, a generator the GPU then refused had stopped a
+                # fade for nothing, and a clip's dip that it overtook stayed at the level it had reached.
+                marker = getattr(self.api, "_level_mark", None)
+                level_mark = marker() if marker else None
                 ending = getattr(self.api, "transitions", None)
                 try:
                     # One step under the player's lock: the generator takes the screen, and with that it is the
@@ -1239,10 +1244,6 @@ class Engine:
                         new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
                         if new is not None and ending is not None:
                             ending.end("a generator", newer=True)
-                    if cut:
-                        # After the generation moved, not before: a clip whose dip this cuts short comes to load at
-                        # once, and must find the generator newer than itself (it flashed up otherwise).
-                        self.api.fader.cancel()
                     fx = getattr(self.api, "effects", None)
                     if new is not None and fx is not None and fx is not self and fx.on is not None:
                         fx.sweep()                  # the generator took an effect off the screen: its text goes too
@@ -1284,7 +1285,7 @@ class Engine:
             if cut:
                 show = getattr(self.api, "_show_level", None)
                 if show is not None:
-                    show()
+                    show(level_mark)                # unless a wish for the level came while the GPU looked at it
                 else:
                     self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
             self.api._started_playing()

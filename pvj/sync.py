@@ -452,15 +452,11 @@ class SyncManager:
 
             def stop(self):
                 try:
-                    ending = getattr(api, "transitions", None)
-                    if ending is not None:
-                        ending.end("Stop", newer=True)      # a clip of this box's own that is on its way loads nothing after it
-                    try:
+                    stop = getattr(api, "_stop_screen", None)
+                    if stop is not None:
+                        stop()      # as the panel's Stop: a clip of this box's own that is on its way loads nothing
+                    else:           # after it, and its dip does not leave the picture dark
                         api.player.clear()
-                    finally:
-                        back = getattr(api, "_level_back", None)
-                        if back is not None:
-                            back()                          # and its dip does not leave the picture dark (after the clear)
                 except Exception:
                     pass
 

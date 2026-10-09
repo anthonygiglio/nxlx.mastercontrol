@@ -147,6 +147,8 @@ class Player:
     _lock = threading.RLock()
     _mapping_shaders, _mapping_mode, _source, _source_pid, _carrier, source_epoch = [], False, None, None, None, 0
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit = None, None, 0, "", False
+    pipe_playing = False        # True from a live input's pipe being loaded until anything else is loaded or the screen
+                                # is cleared: set and cleared under the lock with each of those (see Api._stop_capture)
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
         self.mpv_bin = mpv_bin
@@ -245,6 +247,7 @@ class Player:
         picture, so it must never stay over a clip."""
         with self._lock:
             self._end_source()
+            self.pipe_playing = False
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
 
     def _play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
@@ -298,7 +301,8 @@ class Player:
         """Play raw YUYV frames from a pipe (a live input read by a separate helper; see pvj/capture.py)."""
         with self._lock:
             self._end_source()
-            return self._play_pipe(path, width, height, fps)
+            self._play_pipe(path, width, height, fps)
+            self.pipe_playing = True
 
     def _play_pipe(self, path, width, height, fps):
         if not self.is_running():
@@ -411,6 +415,7 @@ class Player:
         an idle player does not report the last clip's looping (the panel's Loop button read "on" with nothing
         playing, seen on the Pi after the test pattern); every play sets them again."""
         with self._lock:
+            self.pipe_playing = False
             try:
                 self.ipc.request("stop")
             finally:
@@ -675,6 +680,7 @@ class Player:
         with self._lock:
             if epoch is not None and epoch != self.source_epoch:
                 return None
+            self.pipe_playing = False
             if not self.is_running():
                 if not spawn:
                     raise PlayerError("player service is not running (systemctl start pvj-player)")
