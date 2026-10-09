@@ -1152,7 +1152,7 @@
   // guest's "View only" stays, above the columns. The element keeps its id, which the stylesheet and room.js know.
   function roomDesk(mine) {
     var el = window.pvjRoom.screen(roomCtx());
-    var top = el.querySelector('.top'), msg = el.querySelector('#msg'), cols = {};
+    var top = el.querySelector('.top'), msg = el.querySelector('#msg'), cols = {}, rest = [];
     if (msg && msg.parentNode === el) el.removeChild(msg);
     if (top && top.parentNode === el) {
       var h1 = top.querySelector('h1');
@@ -1163,9 +1163,10 @@
     Array.prototype.slice.call(el.children).forEach(function (x) {
       var part = ROOM_PARTS[x.id];
       if (cols[part]) cols[part].lastChild.appendChild(x);
-      else if (part) x.hidden = true;                 // the set-up card (Setup > Room), and Guests for a device that has no such screen
+      else if (part) { x.hidden = true; rest.push(x); }       // the set-up card (Setup > Room), and Guests for a device that has no such screen
     });
     mine.forEach(function (x) { el.appendChild(cols[x.part]); });
+    rest.forEach(function (x) { el.appendChild(x); });       // (after the columns: what is first in the page is what is shown)
     el.className = 'desk';
     el.setAttribute('data-area', 'room');
     el.setAttribute('data-cols', mine.length);
