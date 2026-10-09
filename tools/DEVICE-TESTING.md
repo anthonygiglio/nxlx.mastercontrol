@@ -216,6 +216,11 @@ Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between cli
 | X8 | On the 2560 x 1440 screen: X1 again | Either a fade, or a dip to black from the second play on | Which, and the journal's line |
 | X9 | Restart the player during a fade (`sudo systemctl restart pvj-player`) | The new player starts clean; no old picture over it | |
 | X10 | After all of it: `ls /run/pvj/web` | No `transition-*.png` and no `overlay-63.bgra` | The listing, if there is one |
+| X11 | While A1 plays, play A2 and press **Stop** at once, within the freeze | The screen clears and stays clear; A2 does not start after it | If A2 started, or how long Stop took: this is whether mpv answers while it takes the screenshot, which no test here can show |
+| X12 | The same with **Blackout**, from the panel and from a MIDI controller (a pad, then the Blackout button straight after) | Dark at once; A2 plays under the dark and is there when you show the picture again | How long the dark took to come from the controller |
+| X13 | During a crossfade at 1920 x 1080, move a MIDI fader for volume and watch a sync client if there is one | The fader answers as always; the client does not drift | Whether the controller felt slow during the fade: every crossfade step scales 8 MB in the panel |
+| X14 | Set the transition to **Wipe from left**, then **Slide off up**; play A1, A2 | An edge that moves evenly; the old picture stands still (wipe) or moves off as one piece (slide) | Whether the edge moved smoothly or in jumps, and the journal's line if the box gave up. A wipe should ask less of the box than a crossfade; say if it did not look so |
+| X15 | X8 again with a wipe on the 2560 x 1440 screen | | Whether a wipe holds where a crossfade gave up |
 
 ### What to send back
 

@@ -4,6 +4,16 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, later (the review of #111 answered; the wipes and the slides)
+
+Branch `transitions`, pull request #111, still a draft. #108 had merged, so master was merged in first and the pull request shows this change alone. **Nothing was run on hardware.**
+
+- **The review** (an independent read of the branch, on the pull request): no high finding, six medium, some low. All answered, each with a test that fails without the fix; the thread findings with real threads (`tests/test_transitions.py`, class `Threads`: a still stuck in the player while Stop, Blackout, Fade out, Opacity and a controller's play and Blackout are timed; two plays through a barrier; a hold that waits its turn behind another). What changed and why is in D71, "After the review". The largest: `end()` no longer waits behind a still, a Stop during the still loads nothing after it, a hold has its own token, and a controller's play takes its still on another thread (MIDI itself untouched).
+- **Lost and redone.** The rewrite of `pvj/transitions.py` was thrown away once by a `git checkout` of the file after a test had been tried against broken code, before any commit (LESSONS). It was written again from the session's own record and the tests passed as before.
+- **Wipes and slides.** Eight more transitions on the same still: `class Move` in `pvj/transitions.py`, `Player.overlay_part`, eight buttons in the panel's picker (two more rows of the same control). A step names a rectangle of a file written once. D71, "The wipes and the slides". Tests: nine in class `Moves` (the geometry of each at its start, half and end; the file written once and one row longer; the limits; the stored form), and on a real mpv the picture at the half of each of the eight (a wipe from the left: the left half is the new clip, the right half the old picture where it was; a slide to the left: the left half shows the old picture's right half) and a wipe through the panel's play with a Blackout in the middle.
+- **Not built, with the reason in D71:** a luma dissolve, a push, the scaled overlay.
+- **Open.** As before, everything a board has to say; the list in `tools/DEVICE-TESTING.md` has the review's four items and the wipes now (X11 to X15). A panel that dies while a still is being taken leaves the player frozen until the next play.
+
 ## 2026-10-09 (crossfade: a spike, a decision, and the first transition, as a draft)
 
 Branch `transitions`, a draft pull request to master, based on `product-leftovers` (#108). The owner asked on 2026-10-08 to put crossfade and other transitions first and was away; the choices were made here and are in D71. **Nothing was run on hardware; the test Pi was not available.**
