@@ -38,7 +38,7 @@ import threading
 import time
 
 from . import hardware, paths, shaderlive as L, shaders as S
-from .api import ApiError
+from .api import ApiError, CONTROLLERS as api_controllers
 from .player import PlayerError
 from .shaders import ShaderError
 
@@ -65,7 +65,7 @@ NO_PICTURE = "Nothing with a picture is playing"
 # The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
 # dmx.DMX_DEVICE, room.ROOM_DEVICE). Their calls run on the thread that reads the controller and never ask the player
 # (see Effects._seen). A paired device's id is eight hex digits, so none of these can be one.
-CONTROLLERS = ("midi", "osc", "dmx", "room")
+CONTROLLERS = api_controllers
 # Kr and Kb of the colour matrices mpv names in video-params/colormatrix. Anything else is treated as BT.709.
 MATRICES = {"bt.601": (0.299, 0.114), "bt.709": (0.2126, 0.0722), "bt.2020-ncl": (0.2627, 0.0593),
             "bt.2020-cl": (0.2627, 0.0593), "smpte-240m": (0.212, 0.087)}

@@ -134,7 +134,8 @@ class ReadStill(unittest.TestCase):
     def test_anything_but_the_players_own_kind_of_file_is_refused(self):
         for what, data in (("another size", png(4, 2, (1, 2, 3))), ("rows with a filter", png(3, 2, (1, 2, 3), filtered=True)),
                            ("16 bit", png(3, 2, (1, 2, 3), depth=16)), ("not a PNG", b"\xff\xd8\xff\xe0 a jpeg"), ("nothing", b""),
-                           ("cut short", png(3, 2, (1, 2, 3))[:40])):
+                           ("cut short", png(3, 2, (1, 2, 3))[:40]), ("cut inside its header", png(3, 2, (1, 2, 3))[:20]),
+                           ("cut inside a chunk's name", png(3, 2, (1, 2, 3))[:14]), ("the header only", png(3, 2, (1, 2, 3))[:33])):
             self.put(data)
             with self.assertRaises(T.StillError, msg=what):
                 T.read_still(self.path, (3, 2))
@@ -148,6 +149,27 @@ class ReadStill(unittest.TestCase):
         self.put(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 3, 2, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(100 << 20), 1)))
         with self.assertRaises(T.StillError):
             T.read_still(self.path, (3, 2))
+
+    def test_reading_holds_about_the_file_and_its_rows_and_no_more(self):
+        # finding 6: about 74 MB were alive at the end for a 2560 x 1440 screen, five times the picture
+        import tracemalloc
+        w, h = 640, 360
+        raw = b"".join(b"\x00" + os.urandom(w * 3) for _ in range(h))
+
+        def chunk(kind, body):
+            return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xffffffff)
+        self.put(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 0)) + chunk(b"IEND", b""))
+        tracemalloc.start()
+        try:
+            got = T.read_still(self.path, (w, h))
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        picture = w * h * 4
+        self.assertEqual((got[0], got[1], len(got[2])), (w, h, picture))
+        self.assertEqual(bytes(got[2][:4]), bytes([raw[3], raw[2], raw[1], 255]))
+        self.assertEqual(bytes(got[2][-4:]), bytes([raw[-1], raw[-2], raw[-3], 255]))
+        self.assertLess(peak, 2.5 * picture, "reading a still held %.1f times the picture" % (peak / float(picture)))
 
     def test_a_level_scales_every_byte_the_alpha_too(self):
         self.assertEqual(T.faded(bytes([30, 20, 10, 255]), 255), bytes([30, 20, 10, 255]))
@@ -406,12 +428,99 @@ class Crossfade(Base):
     def test_a_still_that_fails_is_a_cut_with_the_clip_playing_and_nothing_left(self):
         for what in ("still", "overlay"):
             self.player.fail = {what}
+            self.tr.given_up = ""
             del self.player.calls[:]
             self.assertEqual(self.play(), {"playing": "a.mp4"})
             self.assertEqual(self.names()[-2:], ["play", "opacity"], what)
             self.assertFalse(self.player.props["pause"])
             self.assertEqual(self.left(), [], what)
             self.assertIsNone(self.tr.running)
+            # and the box gives up: a still that fails would freeze and cut at every play (finding 3 of the review)
+            self.assertIn("the still failed", self.api.status({}, None, "t")["mix"]["fallback"], what)
+            del self.player.calls[:]
+            self.player.fail = set()
+            self.play()
+            self.assertNotIn("pause", self.names(), "the next play dips: no freeze, no still")
+            self.assertNotIn("still", self.names())
+
+    def test_any_kind_of_failure_in_the_still_is_cleaned_up_after(self):
+        # finding 1: only three kinds of exception were caught; any other left the clip frozen and answered 500
+        for boom in (RuntimeError("anything"), MemoryError(), ValueError("x")):
+            self.tr.given_up = ""
+            del self.player.calls[:]
+
+            def still(path, boom=boom):
+                raise boom
+            self.player.still = still
+            self.assertEqual(self.play(), {"playing": "a.mp4"})
+            self.assertFalse(self.player.props["pause"], repr(boom))
+            self.assertIn("play", self.names())
+            self.assertEqual(self.left(), [])
+            self.assertIsNone(self.tr.running)
+
+    def test_a_failure_between_the_still_and_its_steps_takes_the_still_off(self):
+        # finding 1, in Api.play: nothing would ever have removed overlay 63
+        def boom(percent):
+            raise RuntimeError("anything")
+        self.api._apply_opacity = boom
+        with self.assertRaises(RuntimeError):
+            self.play()
+        self.assertEqual(self.player.levels, [255, None])
+        self.assertIsNone(self.tr.running)
+        self.assertEqual(self.left(), [])
+
+    def test_a_still_that_ended_meanwhile_is_no_reason_to_give_up(self):
+        real = self.player.still
+
+        def during(path):
+            real(path)
+            self.tr.end("Blackout")
+        self.player.still = during
+        self.play()
+        self.assertNotIn("overlay", self.names())
+        self.assertEqual(self.tr.given_up, "")
+
+    def test_a_step_the_player_does_not_answer_makes_the_box_give_up(self):
+        def stall():
+            self.player.fail.add("overlay")         # "no reply from mpv" from the next step on
+        self.hook = stall
+        self.play()
+        self.assertIn("a step failed", self.tr.given_up)
+        self.assertIn("a step failed", self.api.status({}, None, "t")["mix"]["fallback"])
+        self.assertEqual(self.left(), [])
+
+    def test_an_access_code_that_comes_up_while_the_still_is_taken_keeps_it_off_the_screen(self):
+        seen = []
+
+        def shown():
+            seen.append(1)
+            return len(seen) > 2                    # not at the play's look, not at the hold's first, then yes
+        self.api.access_on_screen = shown
+        self.play()
+        self.assertIn("still", self.names())
+        self.assertNotIn("overlay", self.names())
+        self.assertEqual((self.left(), self.tr.given_up), ([], ""))
+        self.assertFalse(self.player.props["pause"])
+
+    def test_a_status_request_asks_the_player_nothing(self):
+        asked = []
+        real = self.player.osd_size
+        self.player.osd_size = lambda: asked.append(1) or real()
+        for _ in range(5):
+            self.api.status({}, None, "t")
+        self.assertEqual(asked, [])
+        self.player.size = (3840, 2160)
+        self.play()                                 # a play looks
+        self.assertIn("larger than", self.api.status({}, None, "t")["mix"]["fallback"])
+
+    def test_a_clip_the_operator_froze_after_a_good_crossfade_stays_frozen_when_the_next_play_fails(self):
+        from pvj.api import ApiError
+        self.play()                                 # a good one: it froze a clip that was playing
+        self.player.props["pause"] = True           # Freeze
+        self.player.fail = {"play"}
+        with self.assertRaises(ApiError):
+            self.play("b.mov")
+        self.assertTrue(self.player.props["pause"], "the failed play unfroze what the operator froze")
 
     def test_a_still_that_is_not_the_screen_is_a_cut(self):
         self.player.still_bytes = png(9, 9, (1, 2, 3))
@@ -533,3 +642,153 @@ class Settings(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Threads(ServerBase):
+    """The findings of the review that are about threads, with real threads and the real clock."""
+
+    def setUp(self):
+        super().setUp()
+        import threading
+        self.threading = threading
+        self.player = self.api.player = Screen(self.rundir)
+        self.player.running = True
+        self.tr = self.api.transitions
+        self.tr.log = lambda line: None
+        self.settings.data["mix"] = T.stored("crossfade", 0.3)
+        self.gate, self.inside = threading.Event(), threading.Event()
+        real = self.player.still
+
+        def still(path):
+            self.inside.set()
+            self.assertTrue(self.gate.wait(10), "the test never let the still go")
+            real(path)
+        self.slow_still = still
+        self.addCleanup(self.gate.set)
+
+    def background(self, fn):
+        out = []
+        t = self.threading.Thread(target=lambda: out.append(fn()), daemon=True)
+        t.start()
+        self.addCleanup(t.join, 5)
+        return t, out
+
+    def timed(self, fn):
+        import time
+        began = time.monotonic()
+        fn()
+        return time.monotonic() - began
+
+    def names(self):
+        return [c[0] for c in self.player.calls]
+
+    def settle(self):
+        import time
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (self.tr.running is not None or any(t.name.startswith("transition") for t in self.threading.enumerate())):
+            time.sleep(0.01)
+
+    def test_two_plays_between_a_still_and_its_steps_make_one_set_of_steps(self):
+        # finding 2: run() took the current token, so the first play's run started a second worker on the
+        # second play's still, and the two sent different alpha in turn
+        first = self.tr.hold("crossfade")
+        second = self.tr.hold("crossfade")
+        self.assertTrue(first and second and first != second)
+        del self.player.levels[:]
+        self.tr.run(first, 0.3)                     # the first play gets to its run late: it must do nothing
+        self.tr.run(second, 0.3)
+        self.assertLessEqual(sum(1 for t in self.threading.enumerate() if t.name == "transition"), 1)
+        self.settle()
+        steps = [v for v in self.player.levels if v is not None]
+        self.assertGreaterEqual(len(steps), 3)
+        self.assertEqual(steps, sorted(steps, reverse=True), "two workers stepped in turn: %s" % steps)
+        self.assertEqual(self.player.levels[-1], None)
+
+    def test_two_plays_at_once_end_with_one_clean_transition(self):
+        barrier = self.threading.Barrier(2)
+
+        def play(name):
+            barrier.wait(5)
+            return self.api.play({"file": name}, None, "t")
+        a, _ = self.background(lambda: play("a.mp4"))
+        b, _ = self.background(lambda: play("b.mov"))
+        a.join(5), b.join(5)
+        self.settle()
+        self.assertIsNone(self.tr.running)
+        self.assertEqual(self.player.levels[-1], None, "a still was left on the screen")
+        last = len(self.player.levels) - 1 - self.player.levels[::-1].index(255)
+        steps = [v for v in self.player.levels[last:] if v is not None]
+        self.assertEqual(steps, sorted(steps, reverse=True), "after the last still the steps went up and down: %s" % steps)
+        self.assertEqual([n for n in os.listdir(self.rundir) if n.startswith("transition") or n.startswith("overlay")], [])
+
+    def test_stop_does_not_wait_for_a_still_and_nothing_loads_after_it(self):
+        # finding 5: Stop waited behind the still, and the clip could load after it
+        self.player.still = self.slow_still
+        t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+        self.assertTrue(self.inside.wait(5))
+        took = self.timed(lambda: self.api.control({"action": "stop"}, None, "t"))
+        self.assertLess(took, 1.0, "Stop waited for the still")
+        self.assertIn("clear", self.names())
+        self.gate.set()
+        t.join(5)
+        self.assertEqual(out, [{"playing": "a.mp4"}])
+        self.assertNotIn("play", self.names(), "the clip was loaded after the Stop")
+        self.assertNotIn("overlay", self.names(), "the still was laid over the cleared screen")
+        self.assertFalse(self.player.props["pause"])
+        self.assertEqual(self.tr.given_up, "")
+
+    def test_blackout_fade_out_and_opacity_do_not_wait_for_a_still(self):
+        for act in (lambda: self.api.blackout({"on": True}, None, "t"), lambda: self.api.fadeout({"seconds": 0.1}, None, "t"),
+                    lambda: self.api.control({"action": "opacity", "value": 40}, None, "t")):
+            self.api.mix.update(blackout=False, opacity=100)
+            self.api.fader.cancel()
+            self.gate.clear(), self.inside.clear()
+            del self.player.calls[:]
+            self.player.still = self.slow_still
+            t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+            self.assertTrue(self.inside.wait(5))
+            self.assertLess(self.timed(act), 1.0, "it waited for the still")
+            self.gate.set()
+            t.join(5)
+            self.assertNotIn("overlay", self.names(), "the still was laid down after the picture changed")
+            self.assertIn("play", self.names(), "the clip still plays: only the blend is given up")
+            self.assertEqual(self.tr.given_up, "")
+            self.api.fader.cancel()
+
+    def test_a_controllers_play_answers_at_once_and_its_blackout_is_not_held_behind_the_still(self):
+        from pvj.midi import MIDI_DEVICE
+        self.player.still = self.slow_still
+        took = self.timed(lambda: self.api.play({"file": "a.mp4"}, MIDI_DEVICE, "midi"))
+        self.assertLess(took, 1.0, "the controller's thread waited for the still")
+        self.assertTrue(self.inside.wait(5))
+        self.assertLess(self.timed(lambda: self.api.blackout({"on": True}, MIDI_DEVICE, "midi")), 1.0)
+        self.assertIn(("opacity", 0), self.player.calls)
+        self.gate.set()
+        import time
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "play" not in self.names():
+            time.sleep(0.01)
+        self.assertIn("play", self.names())
+        self.assertNotIn("overlay", self.names())
+
+    def test_a_panels_play_still_answers_after_the_clip_was_asked_for(self):
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.assertIn("play", self.names(), "a play from the panel hears of a clip that does not start")
+        self.settle()
+
+    def test_the_time_a_play_waited_behind_another_still_is_not_its_stills_time(self):
+        # finding 4: the clock started before the lock, so a double tap could make the box give up for the show
+        now = [100.0]
+        self.tr._clock = lambda: now[0]
+        self.assertTrue(self.tr._holding.acquire(timeout=1))        # another play is taking its still
+        t, out = self.background(lambda: self.tr.hold("crossfade"))
+        import time
+        time.sleep(0.2)
+        self.assertEqual(out, [], "the hold did not wait its turn")
+        now[0] += T.SLOW + 5
+        self.tr._holding.release()
+        t.join(5)
+        self.assertTrue(out and out[0])
+        self.assertEqual(self.tr.given_up, "")
+        self.assertLess(self.tr.last["still_ms"], 1000)
+        self.tr.end()

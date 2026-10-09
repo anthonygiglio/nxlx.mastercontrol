@@ -37,6 +37,11 @@ _USB_LABEL = re.compile(r"[A-Za-z0-9._-]{1,64}")
 USB_SCAN_LIMIT = 2000          # directory entries looked at per drive; a hostile drive can hold millions
 USB_CACHE_SECONDS = 2.0
 PRESET_MAX_FILES = 200         # files a preset will queue in the player
+# The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
+# dmx.DMX_DEVICE, room.ROOM_DEVICE). Each runs its calls one after the other on the thread that reads the controller,
+# so a call of theirs must not wait for the player longer than a question takes. A paired device's id is eight hex
+# digits, so none of these can be one.
+CONTROLLERS = ("midi", "osc", "dmx", "room")
 
 
 def _usb_label_ok(label):
@@ -210,7 +215,7 @@ class Api:
         kept), the duration, and `fallback` with the reason while the box dips instead of a crossfade."""
         mix = self.settings.data["mix"]
         out = {"transition": transitions_mod.named(mix), "duration": mix["duration"]}
-        why = self.transitions.fallback() if out["transition"] in transitions_mod.STYLES else ""
+        why = self.transitions.fallback() if out["transition"] in transitions_mod.STYLES else ""      # asks the player nothing
         if why:
             out["fallback"] = why
         return out
@@ -893,33 +898,57 @@ class Api:
         blend = False
         if kind in transitions_mod.STYLES:
             if playing and not self.mix["blackout"] and self.mix["opacity"] > 0 and not faded_out:
-                if self.transitions.fallback() or self.access_on_screen():
+                if self.transitions.look() or self.access_on_screen():
                     kind = "dip"
                 else:
-                    blend = self.transitions.hold(kind)
-            if not blend:
-                self.transitions.end()
-        else:
+                    blend = True
+        if not blend:
             self.transitions.end()
         dip = kind == "dip" and not self.mix["blackout"]
 
-        def start():
+        def start(token=0):
             try:
                 self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
-            except ApiError:
-                self.transitions.abandon()          # the old clip is still there: it plays on, with no still over it
+                if not self.mix["blackout"]:
+                    if dip:
+                        self._apply_opacity(0)
+                        self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
+                    else:
+                        self._apply_opacity(self.mix["opacity"])
+            except BaseException:
+                # Whatever it was: no still stays over a clip that did not start, and the old clip, which the still
+                # froze, plays on.
+                self.transitions.abandon()
                 raise
-            if self.mix["blackout"]:
-                return
-            if dip:
-                self._apply_opacity(0)
-                self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
-            else:
-                self._apply_opacity(self.mix["opacity"])
-            if blend:
-                self.transitions.run(transition["duration"])
+            self.transitions.run(token, transition["duration"])
 
-        if playing and dip:
+        def blended():
+            """The still, then the clip under it. The still takes time, and Stop does not wait for it: a Stop that
+            came meanwhile is the newer wish, and nothing is loaded after it."""
+            stops = self.transitions.stops
+            try:
+                token = self.transitions.hold(kind)
+            except BaseException:
+                self.transitions.abandon()
+                raise
+            if self.transitions.stops != stops:
+                self.transitions.abandon()
+                return
+            start(token)
+
+        if blend and isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            # A controller's actions come one after the other on one thread (MIDI, OSC, DMX, a Room scene): a pad
+            # that waited here for its still would hold the same controller's Blackout or Stop behind it. So the
+            # still and the clip are another thread's, as the clip after a dip's way down already is.
+            def later():
+                try:
+                    blended()
+                except Exception as e:
+                    self.log("pvj-web: a clip played from a controller did not start: %s" % e)
+            threading.Thread(target=later, name="transition-play", daemon=True).start()
+        elif blend:
+            blended()
+        elif playing and dip:
             self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=start)
         else:
             start()
@@ -1024,7 +1053,7 @@ class Api:
                 raise bad("value must be true or false")
             self._player_call(p.mute, body["value"])
         elif action == "stop":
-            self.transitions.end()
+            self.transitions.end("Stop", stop=True)
             self._player_call(p.clear)
             self._stop_capture()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
@@ -1318,7 +1347,7 @@ class Api:
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         if not on:
-            self.transitions.end()
+            self.transitions.end("Stop", stop=True)
             self._player_call(self.player.clear)
             self._stop_capture()
             return {"test_pattern": False}

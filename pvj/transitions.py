@@ -79,11 +79,20 @@ class StillError(Exception):
     pass
 
 
+class Gone(Exception):
+    """The player a still was given to is not there any more (it stopped, or it is another process)."""
+
+
 def read_still(path, size):
-    """The pixels of the player's screenshot at `path` as premultiplied BGRA, opaque: (width, height, bytes).
+    """The pixels of the player's screenshot at `path` as premultiplied BGRA, opaque: (width, height, bytearray).
     The file must be what Player.still writes: an 8-bit PNG of exactly `size` whose rows are plain bytes (no row
-    filter), so that reading it is a few copies and no arithmetic in Python. Anything else is refused, and no more
-    is unpacked than such a picture holds."""
+    filter), so that reading it is a few copies and no arithmetic in Python. Anything else is refused with a
+    StillError, a file cut short anywhere too, and no more is unpacked than such a picture holds.
+
+    Memory: the file, its unpacked rows and the result are never all alive at once (the file goes before the
+    result is made, and the rows are copied straight into it through a view). Measured with tracemalloc: at most
+    2.3 times the picture's own bytes, which is about 34 MB for a 2560 x 1440 screen (the picture is 14.7), where
+    the first version held about five times the picture."""
     try:
         with open(path, "rb") as f:
             data = f.read(size[0] * size[1] * 4 + size[1] + (1 << 20))
@@ -91,30 +100,46 @@ def read_still(path, size):
         raise StillError("the still could not be read: %s" % e)
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise StillError("the still is not a PNG")
-    pos, parts, w, h, bpp = 8, [], 0, 0, 0
-    while pos + 8 <= len(data):
-        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
-        if kind == b"IHDR" and n >= 13:
-            w, h, depth, ctype = struct.unpack(">IIBB", data[pos + 8:pos + 18])
-            bpp = {2: 3, 6: 4}.get(ctype, 0) if depth == 8 else 0
-        elif kind == b"IDAT":
-            parts.append(data[pos + 8:pos + 8 + n])
-        pos += 12 + n
-    if (w, h) != tuple(size) or not bpp:
-        raise StillError("the still is not an 8-bit picture of the screen's size")
-    stride = w * bpp + 1
-    unpacker = zlib.decompressobj()
+    view = memoryview(data)
+    pos, w, h, bpp = 8, 0, 0, 0
+    unpacker, got = zlib.decompressobj(), []
     try:
-        raw = unpacker.decompress(b"".join(parts), stride * h + 1)
-    except zlib.error as e:
+        while pos + 8 <= len(data):
+            n, kind = struct.unpack(">I4s", view[pos:pos + 8])
+            if kind == b"IHDR":
+                w, h, depth, ctype = struct.unpack(">IIBB", view[pos + 8:pos + 18])
+                bpp = {2: 3, 6: 4}.get(ctype, 0) if depth == 8 else 0
+                if (w, h) != tuple(size) or not bpp:
+                    raise StillError("the still is not an 8-bit picture of the screen's size")
+            elif kind == b"IDAT":
+                if not bpp:
+                    raise StillError("the still has no header")
+                room = (w * bpp + 1) * h + 1 - sum(len(x) for x in got)
+                got.append(unpacker.decompress(view[pos + 8:pos + 8 + n], max(1, room)))
+                if unpacker.unconsumed_tail:
+                    raise StillError("the still holds more than a screen")
+            pos += 12 + n
+    except (struct.error, zlib.error) as e:
         raise StillError("the still is damaged: %s" % e)
+    finally:
+        view.release()
+    del data
+    if not bpp:
+        raise StillError("the still has no header")
+    stride = w * bpp + 1
+    raw = got[0] if len(got) == 1 else b"".join(got)
+    del got
     if len(raw) != stride * h or raw[0::stride].count(0) != h:
         raise StillError("the still's rows are not plain bytes")
-    body = b"".join([raw[y * stride + 1:(y + 1) * stride] for y in range(h)])
     out = bytearray(w * h * 4)
-    out[0::4], out[1::4], out[2::4] = body[2::bpp], body[1::bpp], body[0::bpp]
+    rows, pixels = memoryview(raw), memoryview(out)
+    for y in range(h):
+        row, a, b = rows[y * stride + 1:(y + 1) * stride], y * w * 4, (y + 1) * w * 4
+        pixels[a:b:4], pixels[a + 1:b:4], pixels[a + 2:b:4] = row[2::bpp], row[1::bpp], row[0::bpp]
+    pixels.release()
+    rows.release()
     out[3::4] = b"\xff" * (w * h)
-    return w, h, bytes(out)
+    return w, h, out
 
 
 _TABLES = {}
@@ -149,147 +174,215 @@ BLENDS = {"crossfade": Crossfade}
 
 
 class Transitions:
+    """Who may wait for what. Three locks, never one inside another except `_mark` (which is never held over a
+    question to the player):
+    * `_holding`: one still is taken at a time. A second play waits here behind the first one's still. Nothing
+      else ever takes it: `end()` does not.
+    * `_io`: one overlay command at a time, each after a look whether its transition is still the current one.
+      `end()` takes it for its one command (the removal), so it waits for a step that is on its way, never for a
+      still.
+    * `_mark`: the token and the few fields beside it."""
+
     def __init__(self, api, clock=time.monotonic, sleep=time.sleep, thread=True, log=None):
         self.api = api
         self._clock, self._sleep, self._thread = clock, sleep, thread
         self.log = log or (lambda line: None)
-        self._lock = threading.RLock()      # the token, the still and every overlay command of a transition
-        self._token = 0
-        self._ended = 0                     # goes up at every end(), without the lock: a still being taken checks it
+        self._holding = threading.Lock()
+        self._io = threading.Lock()
+        self._mark = threading.Lock()
+        self._token = 0                     # goes up at every hold and every end: who holds an older one stops
         self._still = None                  # (width, height, pixels) while a transition holds or runs
+        self._up = False                    # an overlay of ours may be on the player
         self._pid = None                    # the player the still was given to: a restarted one never had it
-        self._frozen = True                 # False while the outgoing clip is frozen by the transition, not by somebody
+        self._froze = False                 # the newest hold froze a clip that was playing (to thaw if the play fails)
+        self.stops = 0                      # goes up at every Stop: a play that was taking its still loads nothing after it
         self.running = None                 # the name of the transition that holds or runs
         self.given_up = ""                  # why this box dips instead, until the transition is chosen again
+        self._large = ""                    # the same for a screen that is too large, from the last look at it
         self.last = {}                      # what the last one did: {"name", "still_ms", "steps", "seconds", "dropped", "ended"}
 
     # -- what the box will do --
     def fallback(self):
-        """Why a crossfade would not be done now, or "": the reason the box gave up, a screen too large."""
-        if self.given_up:
-            return self.given_up
-        size = self._size()
-        if size and size[0] * size[1] > MAX_PIXELS:
-            return "the screen is larger than %d x %d" % (2560, 1440)
-        return ""
+        """Why a transition would not be done now, or "": the reason the box gave up, or a screen too large at the
+        last look (`look`). Nothing is asked of the player: every status request comes through here."""
+        return self.given_up or self._large
+
+    def look(self):
+        """Look at the screen's size (one question to the player), then `fallback`. For a play, not for a status."""
+        try:
+            size = self.api.player.osd_size()
+        except Exception:
+            size = None
+        self._large = "the screen is larger than 2560 x 1440" if size and size[0] * size[1] > MAX_PIXELS else ""
+        return self.fallback()
 
     def chosen_again(self):
-        """Somebody saved the transition: the box tries a crossfade again."""
+        """Somebody saved the transition: the box tries again."""
         self.given_up = ""
+        self.look()
 
-    def _size(self):
-        try:
-            return self.api.player.osd_size()
-        except Exception:
-            return None
+    def current(self, token):
+        with self._mark:
+            return bool(token) and token == self._token
 
     # -- one transition --
     def hold(self, name):
-        """Lay a still of the screen over everything, in place of a transition that still runs. True if it is there:
-        then the new clip can be started under it, and `run` must follow. False, with nothing on the screen changed
-        and nothing left behind, if there is no such blend, the box dips instead (`fallback`), an access code is on
-        the display (its pixels would go into the still) or the player would not do it."""
+        """Lay a still of the screen over everything, in place of a transition that still runs. Returns a token
+        (never 0) if it is there: then the new clip can be started under it, and `run(token, ...)` must follow.
+        Returns 0, with no still on the screen, the clip thawed if this froze it and nothing left behind, if there
+        is no such blend, the box dips instead (`fallback`), nothing is loaded in the player, an access code is on
+        the display (its pixels would go into the still), an `end()` came meanwhile, or the still failed. A still
+        that failed or took the player too long makes the box give up (`given_up`): the next plays dip."""
         blend = BLENDS.get(name)
         player = self.api.player
         if blend is None or self.fallback() or not hasattr(player, "still"):
-            return False
-        try:
-            if self.api.access_on_screen():
-                return False
-        except Exception:
-            return False
-        began, ended = self._clock(), self._ended
-        path = os.path.join(player.rundir, "transition-%d.png" % os.getpid())
-        with self._lock:
-            self._token += 1
-            self._frozen = True
+            return 0
+        with self._holding:
+            with self._mark:
+                self._token += 1
+                token = self._token
+                self._froze = False
+            began = self._clock()               # from here: the wait behind another play's still is not this still's time
+            froze, laid = False, False
+            path = os.path.join(player.rundir, "transition-%d.png" % os.getpid())
             try:
+                if self.api.access_on_screen():
+                    return self._let_go(token, froze)
                 # A player that runs with nothing loaded (after Stop, at power-up: on a box the player always
                 # runs) has no picture to take a still of. No word in the log: this is the ordinary first play.
                 if player.ipc.request("get_property", "idle-active") is True:
-                    if self._still is not None:
-                        self._drop()
-                    return False
+                    return self._let_go(token, froze)
                 size = player.osd_size()
                 if not size or size[0] * size[1] > MAX_PIXELS:
                     raise StillError("no screen size")
                 pid = player.ipc.request("get_property", "pid")
-                self._frozen = player.ipc.request("get_property", "pause") is True
+                froze = player.ipc.request("get_property", "pause") is not True
                 player.pause(True)              # the outgoing picture stands still from the tap on (see the top)
                 # The player writes into this file, which is ours: it is made here, group-writable as the units'
                 # umask leaves every file of the panel, and removed here whatever happens.
-                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o660)
-                os.close(fd)
+                os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o660))
                 player.still(path)
                 w, h, pixels = read_still(path, size)
-                if ended != self._ended:        # a Blackout or a Stop came while the still was taken: it must not
-                    raise StillError("ended while the still was taken")     # be laid over the dark screen
-                player.overlay(OVERLAY_ID, 0, 0, w, h, pixels)
-            except (PlayerError, StillError, OSError) as e:
-                self.log("pvj-web: no %s, a cut instead: %s" % (name, e))
-                self._drop()
-                self._thaw()
-                return False
+                # An end() does not wait for a still (Stop and Blackout act at once), so the still looks for one:
+                # here, before it is laid down, and again under the overlay's lock, where end() takes it off.
+                if not self.current(token) or self.api.access_on_screen():
+                    return self._let_go(token, froze)
+                with self._io:
+                    if not self.current(token):
+                        return self._let_go(token, froze, locked=True)
+                    laid = True
+                    with self._mark:
+                        self._up = True
+                    self._lay(blend(), w, h, pixels)
+                    with self._mark:
+                        if token != self._token:        # cannot be an end(): that waits for `_io`. Kept for safety.
+                            raise StillError("overtaken")
+                        self._still, self.running, self._pid, self._froze = (w, h, pixels), name, pid, froze
+            except Exception as e:              # every kind: a frozen clip and a 500 are worse than any cause
+                ended = not self.current(token)
+                self._let_go(token, froze, remove=laid)
+                if not ended:
+                    self.log("pvj-web: no %s, a cut instead: %s" % (name, e))
+                    self._give_up("the still failed (%s)" % (str(e) or type(e).__name__)[:80])
+                return 0
             finally:
                 try:
                     os.unlink(path)
                 except OSError:
                     pass
-            self._still, self.running, self._pid = (w, h, pixels), name, pid
             took = self._clock() - began
             self.last = {"name": name, "still_ms": int(round(took * 1000)), "steps": 0, "seconds": 0.0, "ended": ""}
             if took > SLOW:
                 self._give_up("the still took %.1f seconds" % took)
-            return True
+            return token
 
-    def run(self, seconds):
-        """The new clip has been started under the still: wait for its first frame, then take the still away over
-        `seconds`. Returns at once; the work is a thread's."""
-        with self._lock:
-            if self._still is None:
-                return
-            token = self._token
-        if self._thread:
-            threading.Thread(target=self._work, args=(token, seconds), name="transition", daemon=True).start()
-        else:
-            self._work(token, seconds)
+    def _lay(self, blend, w, h, pixels):
+        """The whole still on the screen, as the blend's first moment (under `_io`)."""
+        self.api.player.overlay(OVERLAY_ID, *blend.step(w, h, pixels, 0.0))
 
-    def end(self, why="ended"):
-        """Take the still off now. Called by everything the still would be wrong over: Blackout, a fade, a change of
-        opacity, Stop, another way of playing. Nothing happens when no transition runs."""
-        self._ended += 1                    # seen at once by a still that is being taken (it holds the lock meanwhile)
-        with self._lock:
-            self._token += 1
-            if self._still is not None:
-                self.last["ended"] = why
-                self._drop()
-
-    def abandon(self):
-        """The new clip did not start after all: the still goes and the old clip plays on, unless it was frozen
-        before the transition froze it."""
-        with self._lock:
-            self.end("the new clip did not start")
-            self._thaw()
-
-    def _thaw(self):
-        if not self._frozen:
+    def _let_go(self, token, froze, remove=False, locked=False):
+        """A hold that does not come about: whatever still was on the screen before it goes (this hold took its
+        place), the clip plays on if this hold froze it, and 0 is returned. `locked`: the caller holds `_io`."""
+        with self._mark:
+            mine = token == self._token
+            if mine:
+                self._still, self.running = None, None
+            up = self._up and (mine or remove)
+        if up:
+            if locked:
+                self._remove()
+            else:
+                with self._io:
+                    if not self._newer_up(token):
+                        self._remove()
+        if froze:
             try:
                 self.api.player.pause(False)
             except Exception:
                 pass
-        self._frozen = True
+        return 0
 
-    def _drop(self):
-        """The still leaves the screen and its file goes (under the lock)."""
-        self._still, self.running = None, None
+    def _newer_up(self, token):
+        with self._mark:
+            return self._still is not None and self._token != token
+
+    def _remove(self):
+        """Take the overlay off the player and forget it (under `_io`). Its file goes with it."""
+        with self._mark:
+            self._up = False
         try:
             self.api.player.overlay_remove(OVERLAY_ID)
         except Exception:
             pass
 
+    def run(self, token, seconds):
+        """The new clip has been started under the still that `hold` returned `token` for: wait for its first
+        frame, then take the still away over `seconds`. Returns at once; the work is a thread's. Nothing happens
+        if that hold is no longer the current one (another play or an end() came since): two plays close together
+        must never both step."""
+        with self._mark:
+            if not token or token != self._token or self._still is None:
+                return
+            self._froze = False                 # the new clip plays: nothing to thaw any more
+            name = self.running
+        if self._thread:
+            threading.Thread(target=self._work, args=(token, seconds, name), name="transition", daemon=True).start()
+        else:
+            self._work(token, seconds, name)
+
+    def end(self, why="ended", stop=False):
+        """Take the still off now. Called by everything the still would be wrong over: Blackout, a fade, a change of
+        opacity, Stop (`stop`), another way of playing. It never waits for a still that is being taken: it marks
+        that hold as ended, which the hold sees before it lays anything down. It waits for at most one step that is
+        on its way to the player, and then sends one command. Nothing happens when no transition runs."""
+        with self._mark:
+            self._token += 1
+            if stop:
+                self.stops += 1
+            had = self._still is not None
+            self._still, self.running = None, None
+            if had:
+                self.last["ended"] = why
+            up = self._up
+        if up:
+            with self._io:
+                if not self._newer_up(0):
+                    self._remove()
+
+    def abandon(self):
+        """The new clip did not start after all: the still goes and the old clip plays on, if the hold froze it."""
+        with self._mark:
+            froze, self._froze = self._froze, False
+        self.end("the new clip did not start")
+        if froze:
+            try:
+                self.api.player.pause(False)
+            except Exception:
+                pass
+
     def _give_up(self, why):
         self.given_up = why + "; using the dip to black until the transition is chosen again"
-        self.log("pvj-web: crossfade given up: %s" % why)
+        self.log("pvj-web: transitions given up: %s" % why)
 
     def _first_frame(self):
         """True when the new clip's first frame is drawn, or nothing plays any more. Raises PlayerError."""
@@ -313,58 +406,89 @@ class Transitions:
             total += v if isinstance(v, int) and not isinstance(v, bool) else 0
         return total
 
-    def _work(self, token, seconds):
+    def _draw(self, token, progress):
+        """One step of the transition `token` at `progress`, if it is still the current one. "drawn", "over" (the
+        blend has nothing more to draw) or "ended". Raises PlayerError; Gone for a player that is another one."""
+        with self._io:
+            with self._mark:
+                if token != self._token or self._still is None:
+                    return "ended"
+                (w, h, pixels), name, pid = self._still, self.running, self._pid
+            part = BLENDS[name]().step(w, h, pixels, progress)
+            if part is None:
+                return "over"
+            try:
+                same = self.api.player.ipc.request("get_property", "pid") == pid
+            except PlayerError as e:
+                raise Gone(str(e))
+            if not same:
+                raise Gone("the player was restarted")
+            self.api.player.overlay(OVERLAY_ID, *part)
+            return "drawn"
+
+    def _work(self, token, seconds, name):
         deadline = self._clock() + FIRST_FRAME
+        mine = False
         try:
             while self._clock() < deadline:
-                with self._lock:
-                    if token != self._token:
-                        return
-                if self._first_frame():
-                    break
+                if not self.current(token):
+                    return
+                try:
+                    if self._first_frame():
+                        break
+                except PlayerError as e:
+                    raise Gone(str(e))
                 self._sleep(POLL)
             dropped = self._dropped()
+            blend = BLENDS[name]()
             began, steps, before = self._clock(), 0, 0.0
             while True:
                 progress = (self._clock() - began) / seconds if seconds > 0 else 1.0
-                with self._lock:
-                    if token != self._token:
+                if progress >= 1.0:
+                    break
+                if not steps or not blend.same(before, progress):
+                    did = self._draw(token, progress)
+                    if did == "ended":
                         return
-                    if progress >= 1.0:
+                    if did == "over":
                         break
-                    blend = BLENDS[self.running]()
-                    if not steps or not blend.same(before, progress):
-                        w, h, pixels = self._still
-                        part = blend.step(w, h, pixels, progress)
-                        if part is None:
-                            break
-                        if self.api.player.ipc.request("get_property", "pid") != self._pid:
-                            raise PlayerError("the player was restarted")
-                        self.api.player.overlay(OVERLAY_ID, *part)
-                        steps, before = steps + 1, progress
+                    steps, before = steps + 1, progress
+                elif not self.current(token):
+                    return
                 # until the next step's moment by the clock (not a step's length after this one: a step costs time)
                 wait = began + (int((self._clock() - began) * STEPS + 1e-6) + 1) / STEPS - self._clock()
-                self._sleep(max(wait, 0.002))       # always some: the lock must come free for whoever ends this
+                self._sleep(max(wait, 0.002))       # always some: whoever ends this must get the overlay's lock
             after = self._dropped()
             lost = after - dropped if dropped is not None and after is not None else 0
-            with self._lock:
-                if token != self._token:
-                    return
-                self.last.update(steps=steps, seconds=round(self._clock() - began, 3), dropped=lost, ended="done")
-                self._drop()
+            with self._io:
+                with self._mark:
+                    if token != self._token:
+                        return
+                    self.last.update(steps=steps, seconds=round(self._clock() - began, 3), dropped=lost, ended="done")
+                    self._still, self.running = None, None
+                self._remove()
             if seconds >= 0.5 and steps < MIN_RATE * seconds:
                 self._give_up("%d steps in %.1f seconds" % (steps, seconds))
             elif lost > MAX_DROPS * max(seconds, 1.0):
                 self._give_up("the clip dropped %d frames in %.1f seconds" % (lost, seconds))
-        except Exception as e:                  # a player that went away has lost the still with everything else
-            with self._lock:
-                if token == self._token:
-                    self.last["ended"] = "the player: %s" % e
-                    self._drop()
+        except Exception as e:
+            # A player that went away or was restarted has lost the still with everything else: nothing to learn.
+            # Any other failure of a step (no reply in time, a file that cannot be written) and the box gives up.
+            with self._io:
+                with self._mark:
+                    mine = token == self._token
+                    if mine:
+                        self.last["ended"] = "the player: %s" % e
+                        self._still, self.running = None, None
+                if mine:
+                    self._remove()
+            if mine and not isinstance(e, Gone) and "not running" not in str(e):
+                self._give_up("a step failed (%s)" % (str(e) or type(e).__name__)[:80])
 
     def tidy(self):
         """When the panel starts: a still an earlier panel process left on the player comes off (nobody would take
-        it away), and what that process left in the runtime folder goes (D70)."""
+        it away), and what that process left in the runtime folder goes (D70). On a box one panel owns that folder;
+        two panels started by hand in one folder on a desk would take each other's still away."""
         player = self.api.player
         try:
             player.overlay_remove(OVERLAY_ID)
