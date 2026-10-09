@@ -1571,9 +1571,11 @@ class Threads(ServerBase):
         self.assertEqual(self.player.calls[-1], ("opacity", 0))
         self.api.blackout({"on": False}, None, "t")
         self.api.fadeout({"seconds": 30}, None, "t")
-        del self.player.calls[:]
-        self.api._level_back()
-        self.assertNotIn(("opacity", 255), self.player.calls, "a Stop undid the operator's Fade out")
+        # Asked of the Stop itself, not read off the player's calls: the fade's own first step is 99.83 percent,
+        # which is 255 to the player, and on a slow runner it landed after the calls had been emptied and was
+        # taken for the Stop's (one failure in CI on a branch stacked on this one).
+        self.assertFalse(self.api._level_back(), "a Stop undid the operator's Fade out")
+        self.assertEqual(self.api.fader.label, "out")
         self.api.fader.cancel()
 
     def test_a_dip_that_is_overtaken_after_its_way_down_loads_nothing_and_the_picture_comes_back(self):
