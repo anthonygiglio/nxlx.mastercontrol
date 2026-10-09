@@ -198,6 +198,25 @@ L; ls /run/pvj
 
 Send back the output of `L` at every step, R0, and the output of R10. If any line differs from the table, stop and send it: do not "fix" an owner by hand.
 
+### Crossfade (D71)
+
+**Nothing of this has run on a board.** In CI it ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. Ten minutes; the numbers matter more than the look, so please send them.
+
+Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between clips set to **Crossfade**, duration 2s. After each play, `GET /api/status` holds `mix.fallback` once the box has given up, and the panel's journal (`journalctl -u pvj-web`) says "crossfade given up: ..." with the reason.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| X1 | Play A1, then A2 | A1 freezes, then melts into A2 over two seconds; A2 moves from its first frame | How long A1 stood still before the fade began (it should be well under a second), and whether the fade looked smooth or stepped |
+| X2 | The same again, three times, with `journalctl -u pvj-web -f` open | No line "crossfade given up" | The line, if one comes: it names the still's time, the steps or the dropped frames |
+| X3 | During a fade press **Blackout** | Black at once, no picture left behind | Anything that stayed lit |
+| X4 | During a fade press **Stop** | The screen clears at once | |
+| X5 | With **Freeze** on, play A2 | The frozen picture melts into A2, which plays | |
+| X6 | Put on an effect and a mapping, play A1 then A2 | The outgoing picture keeps its shape and its effect while it fades; nothing is drawn twice or in another place | A photo if a surface jumps |
+| X7 | Play a stream (or a live input), then a clip, then the stream again | The old picture waits for the stream's first frame, then fades | How long it waited |
+| X8 | On the 2560 x 1440 screen: X1 again | Either a fade, or a dip to black from the second play on | Which, and the journal's line |
+| X9 | Restart the player during a fade (`sudo systemctl restart pvj-player`) | The new player starts clean; no old picture over it | |
+| X10 | After all of it: `ls /run/pvj/web` | No `transition-*.png` and no `overlay-63.bgra` | The listing, if there is one |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

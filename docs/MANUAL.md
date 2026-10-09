@@ -128,7 +128,17 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 ![Box](images/ui/box.png)
 ![Sound output](images/ui/sound-output.png)
 
-**Mix** has opacity, volume, size, position, speed, rotate, loop and mute, and how one clip changes to the next: **Cut** or **Dip to black** (a real crossfade is not built; it needs a second player).
+**Mix** has opacity, volume, size, position, speed, rotate, loop and mute, and how one clip changes to the next: **Cut**, **Dip to black** or **Crossfade**, and how long it takes.
+
+**Crossfade** blends the picture that is on the screen into the clip you play. The player shows one picture at a time, so it is done with a still: at the tap the outgoing picture freezes (its sound stops), a still of the whole screen is laid over the new clip, and from the new clip's first frame the still fades away over the duration you chose. **The outgoing picture stands still for the length of the transition; only the incoming one moves.** What you should know:
+
+- It works from a clip, a picture, a stream, a live input or a shader, to a clip, a picture or a pad you play from the panel, a controller, the schedule or autostart. Playlists, slideshows, streams, live inputs, the test pattern and a shader start with a cut as before, and the clips inside a playlist follow each other with a cut. Vibes keeps its own dip between shaders.
+- The still is the screen as it is: an effect, a projection mapping, the opacity and a logo are in it. An effect you change during the transition changes the incoming clip only.
+- **Blackout, Fade out, Fade in, the Opacity slider, Stop, playing something else and changing the mapping end the transition at once**: the still goes and the new clip is there. (The still is drawn over the picture, where Blackout does not reach, so the box takes it away instead.)
+- With the screen dark (Blackout, a picture faded out, opacity 0) or nothing playing, the clip simply starts.
+- A stream that takes time to arrive: the old picture stays until its first frame, for ten seconds at most.
+- **When the box cannot keep up it uses Dip to black instead**, and goes on doing so until you choose the transition again: a screen larger than 2560 x 1440, a still that took more than a second to take, fewer than five steps a second, or a clip that dropped more than five frames a second during the fade. It also dips while a pairing code is on the display. A sync client cuts, as it does with a dip.
+- **Not run on a real board yet.** It is tested on a software GPU in a small window. How long the freeze before the fade is and how smooth the fade looks on a Raspberry Pi are not known; on a 2560 x 1440 screen a Pi 4 may well decide to dip.
 
 ![Mix screen](images/ui/mix.png)
 
@@ -371,6 +381,6 @@ Not tested on a real box yet (2026-10-03): the three cards were tested with the 
 
 ## 8. Not built yet
 
-Crossfade, updates from the network, a panel update button, NDI, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
+A crossfade in which both pictures move, other transitions (wipe, push, ISF transition files), updates from the network, a panel update button, NDI, AES67/Dante, the presenter, importing old mapper files and custom DMX layouts. See [ROADMAP.md](../ROADMAP.md).
 
 **SMPTE ST 2110** is not supported directly and not planned: use a converter from 2110 to HDMI into the live input (USB capture), or from 2110 to NDI once NDI is built.
