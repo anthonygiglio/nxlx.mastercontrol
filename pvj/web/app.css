@@ -186,7 +186,7 @@ details.fold { display: block; }
 .fold summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600; font-size: 14px; color: var(--mu); }
 .btn.back { align-self: flex-start; }
 .syshead { flex-wrap: wrap; }
-.syshead h1 { font-size: 22px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.syshead :is(h1, h2) { font-size: 22px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .switchwrap { flex: none; }
 .switchlabel { font-weight: 600; font-size: 14px; }
 /* The switch: a 52 by 32 track inside a 44 px tall button, so a thumb finds it */
@@ -213,7 +213,6 @@ details.fold { display: block; }
 /* The Room screen's ambience control: the same big button as Live; Next one and the set chooser share the row under it */
 #roomambnext, #roomambset { flex: 1 1 0; min-width: 0; min-height: 56px; }
 .room-amb .row .btn { min-height: 44px; }
-.liveside h2 { font-size: 20px; overflow-wrap: anywhere; min-width: 0; }
 @container ws (min-width: 900px) {
   .vibesbig { flex: 1 1 0; }
   #shaderslink, #vibesskip, #liveprev { flex: none; }
@@ -342,7 +341,6 @@ div.ctl.compact { padding: 4px 0; }
 .fxtitle { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 8rem; }
 .fxbuttons { flex-wrap: wrap; }
 .fxbuttons > .btn { flex: 1 1 0; min-width: 0; padding: 0 8px; }
-.fxstrip .fxbuttons > .btn { min-height: 56px; }
 .fxteachrow { margin-top: -2px; }
 .fxteachcell { display: flex; justify-content: center; flex: 1 1 0; min-width: 0; }
 .fxgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
@@ -507,16 +505,19 @@ table.chan .lvl { width: 36%; }
    tabs are the transport strip and the area tabs of the Workspace shell now, and the playing shader's strip no
    longer stands beside the pads. Their sizes are held by the same sweep.) */
 
-/* ---- The Workspace shell (D65): four areas (Play, Shape, Room, Setup), each with screens that have one job. A
-   title bar; under 600 px the area's screens in a row under it and the areas as tabs at the foot; from 600 px a
-   side menu that lists every area and its screens; and ONE transport strip at the foot of every screen at every
-   width. The size classes of the resizing study are asked of the panel itself, not of the window: the shell is
-   the container "app" (compact under 600, medium 600 to 899, expanded 900 to 1199, large 1200 to 1599, extra
-   large from 1600) and the workspace is the container "ws", which the cards ask how much room they have. A
+/* ---- The Workspace shell (D65, D72): four areas (Play, Shape, Room, Setup). A title bar; under 600 px the open
+   area's screens in a row under it and the areas as tabs at the foot; from 600 px a RAIL at the left with one
+   button per area and nothing else, and the open area's screens as tabs across the top of the workspace; from
+   1200 px an area is a DESK, its screens side by side as columns (and Setup keeps its index beside the open
+   page); and ONE transport strip at the foot of every screen at every width. The size classes of the resizing
+   study are asked of the panel itself, not of the window: the shell is the container "app" (compact under 600,
+   medium 600 to 899, expanded 900 to 1199, large 1200 to 1599, extra large from 1600), and every column of a
+   desk is a container "ws", which the cards ask how much room they have: a card in a column of 380 px takes
+   the form it has on a phone, whatever the window. A
    window under 480 px high is short; that one is asked of the window, because a panel that scrolls with the page
    has no height of its own. A browser that knows no container queries gets the phone's layout at every width.
    Control heights are the tokens (44 and 56), never scaled. The page scrolls, as it always did; the strip and the
-   tabs stay at the foot, the side menu at the left. Measured in headless Chromium and Edge only. ---- */
+   tabs stay at the foot, the rail at the left. Measured in headless Chromium and Edge only. ---- */
 .shell.wsp { display: block; max-width: none; margin: 0; min-height: 0; container: app / inline-size; }
 .frame { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; grid-template-areas: "head" "sub" "main" "dock"; min-height: 100dvh; }
 .wshead { grid-area: head; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 12px 16px 6px; min-width: 0; }
@@ -525,16 +526,28 @@ table.chan .lvl { width: 36%; }
 .wsjob { margin: 2px 0 0; font-size: 14px; line-height: 1.35; color: var(--mu); overflow-wrap: anywhere; }
 .wsbrand { display: none; font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--mu); white-space: nowrap; }
 .wshead .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.wsjob.all { display: none; }
 .wssub { grid-area: sub; padding: 6px 16px 0; min-width: 0; }
 /* (a screen's name is never cut: five of them go to a second line on a narrow phone) */
 .wssub .seg { flex-wrap: wrap; row-gap: 4px; }
 .wssub .segbtn { flex: 1 1 auto; min-width: min-content; padding: 0 10px; overflow-wrap: normal; }
+.wssub .dj { display: none; }
 .wsside { display: none; }
-main.ws { grid-area: main; min-width: 0; container: ws / inline-size; }
-main.ws:focus { outline: none; }
-.ws > .screen { max-width: 1100px; width: 100%; margin: 0 auto; padding-bottom: 24px; }
-.ws > .screen:has(#shaderpage) { max-width: 1600px; }
-.part { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+main.ws { grid-area: main; min-width: 0; }
+main.ws:focus, .deskcol:focus { outline: none; }
+/* An area is one build with a column per screen. Each column is the container "ws" of the cards in it. Under the
+   desk's width one column is shown, the open one; from it, all of them (below). The one message line of the build
+   is above the columns and stays at the top of the window, so that it is seen from any of them. */
+.desk { min-width: 0; }
+.deskcol { min-width: 0; container: ws / inline-size; }
+.deskcol:not(.cur) { display: none; }
+.deskhead { display: none; margin: 0; padding: 14px 16px 0; font-size: 17px; font-weight: 700; }
+.ws > #msg { position: sticky; top: 0; z-index: 5; padding: 0 16px; }
+.ws > #msg:empty { min-height: 0; }
+.ws > #msg:not(:empty) { padding-top: 6px; padding-bottom: 6px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
+.navrow.on .navname { color: var(--ac); }
+.deskcol > .screen { max-width: 1100px; width: 100%; margin: 0 auto; padding-bottom: 24px; }
+.deskcol > .screen:has(#shaderpage) { max-width: 1600px; }
 .libhead { justify-content: flex-end; }
 .wsdock { grid-area: dock; position: sticky; bottom: 0; z-index: 12; background: var(--bg); min-width: 0; }
 .wsdock .tabs { position: static; }
@@ -575,60 +588,98 @@ main.ws:focus { outline: none; }
 .tp .tpb { min-width: 0; min-height: 56px; padding: 0; font-size: 14px; }
 .tp .tpmore { flex: none; min-width: 64px; }
 .tp:not(.open) .tpx { display: none; }
+/* Speed and Loop (D72: they were on Shape > Controls). On a phone they are the last row that More opens: Loop, and
+   Speed beside it with its value over the slider's name. */
+.tp .tploop { order: 5; }
+.tp .tpspeed { order: 6; grid-column: span 3; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tp:not(.open) .tpspeed { display: none; }
+.tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }
+.tpspeed input { flex: 1 1 0; min-width: 0; margin: 0; height: 44px; }
 /* (a 320 px phone: "Blackout" needs 69 px in the widest of the faces this look is drawn in, and gets 75) */
 /* (under 1000 px, where the place in the clip is behind More: if the clip count and the time have no room on one
    line, as in larger text, the time goes to a second line; it is not cut and no button is sent down) */
 @container app (max-width: 999px) { .tpinfo { grid-template-columns: auto minmax(0, 1fr) auto; } .tpinfo #time { white-space: normal; } }
 @container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } .tp .tpb { font-size: 13px; } }      /* (13 px: room to spare in a wider face than the one it was measured in) */
 @container app (min-width: 600px) {
-  .frame { grid-template-columns: 168px minmax(0, 1fr); grid-template-rows: auto 1fr auto; grid-template-areas: "head head" "side main" "dock dock"; }
-  .wssub, .wsdock .wstabs { display: none; }
+  .frame { grid-template-columns: 96px minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; grid-template-areas: "head head" "side sub" "side main" "dock dock"; }
+  .wsdock .wstabs { display: none; }
   .wsbrand { display: block; }
   .wshead { padding: 8px 16px; border-bottom: 1.5px solid var(--ln); }
   .wsheadmain { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; }
   .wsjob { margin: 0; }
-  .wsside { grid-area: side; display: flex; flex-direction: column; gap: 10px; align-self: start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; padding: 10px 8px 16px; border-right: 1.5px solid var(--ln); }
-  .wsgroup { display: flex; flex-direction: column; gap: 2px; }
-  .wsside button { display: block; width: 100%; min-height: 44px; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--fg); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
-  .wsside .wsar { font-weight: 700; border-bottom: 1.5px solid var(--ln); border-radius: 0; }
-  .wsside .wsar.cur { border-bottom-color: var(--ac); }
-  .wsside .wsit { color: var(--mu); font-size: 15px; padding-left: 14px; }
-  .wsside .on { background: var(--ac); color: var(--on); font-weight: 600; }
+  /* the rail: one button per area, and nothing else */
+  .wsside { grid-area: side; display: flex; flex-direction: column; gap: 8px; align-self: start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; padding: 10px 8px 16px; }
+  .wsside .wsar { display: block; width: 100%; min-height: 56px; padding: 4px 2px; border: 1.5px solid var(--ln); border-radius: 8px; background: none; color: var(--fg); font-weight: 700; text-align: center; cursor: pointer; overflow-wrap: anywhere; }
+  .wsside .wsar.on { background: var(--ac); border-color: var(--ac); color: var(--on); }
+  main.ws, .wssub { border-left: 1.5px solid var(--ln); }
+  /* the open area's screens: tabs across the top of the workspace, which stay there while the screen scrolls */
+  .wssub { position: sticky; top: 0; z-index: 11; padding: 8px 16px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
+  .wssub .segbtn { flex: 0 1 auto; min-width: 6.5rem; }
   .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .tpinfo { flex: 1 1 0; min-width: auto; }
   .tpscrub, .tp:not(.open) .tpscrub { display: flex; flex: 2 1 0; min-width: 3rem; order: 0; }
   .tp .tpx, .tp #freeze { order: 0; }
   .tp:not(.open) button.tpx { display: inline-block; }
+  .tp .tpspeed, .tp:not(.open) .tpspeed { display: flex; flex: 0 1 150px; }
   .tpgrp { display: flex; gap: 6px; }
   .tp .tpb { min-height: 44px; padding: 0 10px; font-size: inherit; }
   .tp .tpb.keep { min-height: 56px; }
   .tp .tpmore { display: none; }
 }
-/* One line from 600 px. Nine buttons, the place in the clip and what plays need about 1150 px; under that the
+/* One line from 600 px. Eleven controls, the place in the clip and what plays need about 1440 px; under that the
    strip took two rows, or three, and Stop and Blackout (or Freeze with them) were the ones sent down to the left of
-   the next row. So under 1200 px it folds as a phone's does, and Freeze, Stop and Blackout keep the right end of
-   the one line at every width: from 1000 px it shows what plays, the place in the clip, Previous, Next and those
-   three; from 800 px the place in the clip is behind More as well; from 600 px Previous and Next too. More opens
-   what is folded in a second line under the first, in place. (If the words are much larger than the panel's own,
-   the line wraps and nothing is cut.) */
-@container app (min-width: 600px) and (max-width: 1199px) {
+   the next row. So under 1440 px it folds as a phone's does, and Freeze, Stop and Blackout keep the right end of
+   the one line at every width: from 1200 px it shows what plays, the place in the clip, Previous, back and forward
+   10 s, Next, the fades and those three, with Speed and Loop behind More; from 1000 px back and forward 10 s and
+   the fades are behind More as well; from 800 px the place in the clip too; from 600 px Previous and Next too. More
+   opens what is folded in a second line under the first, in place. (If the words are much larger than the panel's
+   own, the line wraps and nothing is cut.) */
+@container app (min-width: 600px) and (max-width: 1439px) {
   .tp { column-gap: 8px; }
   .tpgrp { display: contents; }
   .tp .tpmore { display: block; }
   .tp .tpx { order: 2; }
   .tp #freeze { order: 0; }
-  .tp:not(.open) button.tpx:not(#freeze), .tp:not(.open) .tpscrub { display: none; }
+  .tp:not(.open) button.tpx:not(#freeze), .tp:not(.open) .tpscrub, .tp:not(.open) .tpspeed { display: none; }
   .tp.open::before { content: ""; order: 1; flex: 0 0 100%; height: 0; margin-top: -6px; }
 }
 @container app (min-width: 600px) and (max-width: 799px) {
   .tp #prev, .tp #next { order: 2; }
   .tp:not(.open) #prev, .tp:not(.open) #next { display: none; }
 }
-@container app (min-width: 1000px) and (max-width: 1199px) {
+@container app (min-width: 1000px) and (max-width: 1439px) {
   .tp .tpscrub, .tp:not(.open) .tpscrub { display: flex; order: 0; }
 }
-@container app (min-width: 900px) { .frame { grid-template-columns: 200px minmax(0, 1fr); } }
-@container app (min-width: 1200px) { .frame { grid-template-columns: 224px minmax(0, 1fr); } }
+@container app (min-width: 1200px) and (max-width: 1439px) {
+  .tp #back10, .tp #fwd10, .tp #fadein, .tp #fade { order: 0; }
+  .tp:not(.open) button.tpx:is(#back10, #fwd10, #fadein, #fade) { display: inline-block; }
+}
+/* A desk, from 1200 px of panel (D72): the columns of the area that is built stand side by side, all of them
+   equally live, each under its name. 1200 px is where the narrowest column is no narrower than a phone: beside the
+   96 px rail the workspace has 1104 px, and its columns come to 345, 345 and 414 px in Play, 455, 325 and 325 px
+   in Shape and 368 px each in Room, while every card is held at 320 px by the width sweep. The tabs of the
+   screens that share the page are one tab; an area whose screens all share it has no tabs. Setup keeps its index
+   as a column at the left of the open page, which scrolls by itself as the rail does, and the page's own Back to
+   the index is not shown. */
+@container app (min-width: 1200px) {
+  .desk:not([data-cols="1"]) { display: flex; align-items: stretch; }
+  .desk:not([data-cols="1"]) > .deskcol { display: block; flex: 1 1 0; }
+  .desk:not([data-cols="1"]) > .deskcol + .deskcol { border-left: 1.5px solid var(--ln); }
+  .desk:not([data-cols="1"]) .deskhead { display: block; }
+  .desk > .deskcol[data-col="effect"] { flex-grow: 1.4; }
+  .desk > .deskcol[data-col="shaders"] { flex-grow: 1.2; }
+  .desk > .roomnote { display: none; }
+  .wssub .m { display: none; }
+  .wssub .dj { display: block; }
+  .wssub.all { display: none; }
+  .wsjob.one { display: none; }
+  .wsjob.all { display: block; }
+  #shaderslink { display: none; }          /* (the Shaders column stands beside the pads) */
+  .setupdesk { display: flex; align-items: stretch; }
+  .setupdesk > .deskcol.ix { display: block; flex: 0 0 272px; align-self: flex-start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; }
+  .setupdesk > .deskcol.cur { flex: 1 1 0; border-left: 1.5px solid var(--ln); }
+  .setupdesk .backrow.toindex { display: none; }
+}
 /* short: the title bar gives way, the controls keep their height */
 @media (max-height: 479px) {
   .wshead { padding-top: 4px; padding-bottom: 4px; }
@@ -649,13 +700,7 @@ main.ws:focus { outline: none; }
   .wstitle { flex: 1 1 auto; }
   .wsjob { order: 3; flex: 1 1 100%; }
 }
-@container app (min-width: 600px) and (max-width: 899px) {
-  /* (the side menu is 168 px here: less air round its words, so that "Projectors" stays whole in larger text) */
-  .wsside { padding-left: 6px; padding-right: 6px; }
-  .wsside button { padding-left: 6px; padding-right: 4px; }
-  .wsside .wsit { padding-left: 10px; }
-}
-.syshead h1 { overflow-wrap: break-word; }
+.syshead :is(h1, h2) { overflow-wrap: break-word; }
 .k, .field { overflow-wrap: break-word; }
 /* (the buttons that carry a name someone typed: a preset of an effect, a projector of a group. Not every button of a row
    that wraps: one that may be cut anywhere has no least width, and a row of sources then squeezed "Console" where it had wrapped) */
@@ -716,7 +761,7 @@ html[data-style="signal"] .screen { gap: 16px; }
 html[data-style="signal"] .screen > h1 { font-size: 30px; margin: 0; }
 html[data-style="signal"] .wshead .pill, html[data-style="signal"] .roomnote .pill { border: 0; border-radius: var(--tk-r, 0); padding: 4px 8px; background: var(--on); color: var(--ac); font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
 html[data-style="signal"] .syshead { align-items: stretch; gap: 10px; }
-html[data-style="signal"] .syshead h1 { font-size: 30px; line-height: 1.15; padding: 6px 14px; background: var(--ac); color: var(--on); flex: 1 1 12rem; }
+html[data-style="signal"] .syshead :is(h1, h2) { font-size: 30px; line-height: 1.15; padding: 6px 14px; background: var(--ac); color: var(--on); flex: 1 1 12rem; }
 html[data-style="signal"] .switchwrap { align-self: center; }
 html[data-style="signal"] .switchwrap .switchlabel { display: none; }      /* the switch says Off and On itself */
 
@@ -810,7 +855,7 @@ html[data-style="signal"] .load-heavy .loadmeter i { background: var(--st-proble
 /* -- rows: a 3 px rule above each, the name in capitals, one quiet line under it -- */
 html[data-style="signal"] .navrow { border-top: var(--rule) solid var(--fg); padding: calc(12px * var(--tk-density, 1)) 0; min-height: 56px; }
 html[data-style="signal"] .navgroup > .navrow:first-child { border-top: var(--rule) solid var(--fg); }
-html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .room-group h2, html[data-style="signal"] .liveside h2 { font: 900 20px/1.2 var(--sans); text-transform: uppercase; letter-spacing: 0; overflow-wrap: anywhere; }
+html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .room-group h2 { font: 900 20px/1.2 var(--sans); text-transform: uppercase; letter-spacing: 0; overflow-wrap: anywhere; }
 html[data-style="signal"] .list .item, html[data-style="signal"] .list .item:first-child { border-top: var(--rule) solid var(--fg); padding: calc(12px * var(--tk-density, 1)) 0; font-size: 16px; }
 html[data-style="signal"] .list.sp > .item { padding: 12px 0 4px; }
 html[data-style="signal"] .setrow, html[data-style="signal"] .setrow:first-child { border-top: var(--rule) solid var(--fg); padding: calc(12px * var(--tk-density, 1)) 0; }
@@ -912,13 +957,12 @@ html[data-style="signal"] .ctlgrid .ctl.lit .ctlname, html[data-style="signal"] 
 
 /* -- a laptop: panels with a 3 px rule round them, the title block as a label at the top left -- */
 @container ws (min-width: 900px) {
-  html[data-style="signal"] .syshead h1 { flex: 0 1 auto; padding: 4px 14px; line-height: 1.35; }
+  html[data-style="signal"] .syshead :is(h1, h2) { flex: 0 1 auto; padding: 4px 14px; line-height: 1.35; }
   html[data-style="signal"] .card { border: var(--rule) solid var(--fg); padding: calc(16px * var(--tk-density, 1)); gap: calc(12px * var(--tk-density, 1)); }
   html[data-style="signal"] .navgroup { padding: calc(16px * var(--tk-density, 1)); }
   html[data-style="signal"] .card .card { border: 0; padding: 0; }
   html[data-style="signal"] .shaderstage .shadername { font-size: 48px; }
-  html[data-style="signal"] .liveside h2 { font-size: 30px; }
-  html[data-style="signal"] .ws > .screen:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
+  html[data-style="signal"] .deskcol > .screen:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
 }
 
 /* ---- Signal everywhere (D57): every screen, page and state, looked at one by one in the pictures of
@@ -962,7 +1006,7 @@ html[data-style="signal"] .fxbuttons > .btn, html[data-style="signal"] .fxbutton
 
 /* -- a page under System on a phone: the title a little smaller than on a laptop, so "Projectors" and its switch
    share a line; a title is never cut inside a word (the switch goes under it first) -- */
-html[data-style="signal"] .syshead h1 { font-size: 28px; min-width: min-content; }
+html[data-style="signal"] .syshead :is(h1, h2) { font-size: 28px; min-width: min-content; }
 html[data-style="signal"] .switchwrap { margin-left: auto; }
 
 /* -- before pairing: the same title block, and labels as labels -- */
@@ -1033,7 +1077,7 @@ html[data-style="signal"] #roomsetup .item .addr { font-size: 13px; }
 
 /* -- a laptop and a wall tablet: columns -- */
 @container ws (min-width: 900px) {
-  html[data-style="signal"] .syshead h1 { font-size: 30px; }
+  html[data-style="signal"] .syshead :is(h1, h2) { font-size: 30px; }
   html[data-style="signal"] .moreacts, html[data-style="signal"] #lookthemes, html[data-style="signal"] #roomgmembers { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
   html[data-style="signal"] #netmodes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
   html[data-style="signal"] details.card.fold { border: 0; padding: 0; }
@@ -1089,7 +1133,7 @@ html[data-style="signal"] .room-group h2, html[data-style="signal"] .shaderstage
 html[data-style="signal"] label.field, html[data-style="signal"] label.k, html[data-style="signal"] .room-group .field, html[data-style="signal"] .detailbox > label, html[data-style="signal"] .screen:has(> h1:first-child) > .k, html[data-style="signal"] .screen:has(> h1:first-child) > label.k { font: 600 14px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] .screen:has(> h1:first-child) > .k:last-child { font-weight: var(--tk-xw, 400); }
 html[data-style="signal"] div.field { font: 700 16px/1.3 var(--sans); }
-html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .liveside h2, html[data-style="signal"] .shader-entry > span:first-child > b, html[data-style="signal"] #np { font: 700 18px/1.25 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .shader-entry > span:first-child > b, html[data-style="signal"] #np { font: 700 18px/1.25 var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] .slider label, html[data-style="signal"] .ctlhead, html[data-style="signal"] .ctllabel { font: 600 16px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] table.chan th { font: 600 13px var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] .pad { font-weight: 700; }
@@ -1144,7 +1188,7 @@ html[data-style="signal"] .livecols .switch, html[data-style="signal"] .livecols
    The rules below give a radius to the blocks that had none to set (each is 0 without the token). ---- */
 html[data-style="signal"] .switch::before { border-radius: var(--tk-r, 0) 0 0 var(--tk-r, 0); }
 html[data-style="signal"] .switch::after { border-radius: 0 var(--tk-r, 0) var(--tk-r, 0) 0; }
-html[data-style="signal"] #msg, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .syshead h1, html[data-style="signal"] .screen > .top:first-child h1,
+html[data-style="signal"] #msg, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .syshead :is(h1, h2), html[data-style="signal"] .screen > .top:first-child h1,
 html[data-style="signal"] .slider label .k, html[data-style="signal"] .ctlhead .slidervalue, html[data-style="signal"] .seg, html[data-style="signal"] .banks, html[data-style="signal"] #netmodes, html[data-style="signal"] .daychips,
 html[data-style="signal"] #roomscreen .room-amb > h2, html[data-style="signal"] #roomscreen #roomscenes > h2, html[data-style="signal"] .proj-entry .lname::after, html[data-style="signal"] .danger-h, html[data-style="signal"] #roomscreen .room-result { border-radius: var(--tk-r, 0); }
 
@@ -1175,8 +1219,7 @@ html[data-style="signal"] .wsjob { margin-top: 4px; font: 600 15px/1.35 var(--sa
 html[data-style="signal"] .wsbrand { font: 500 13px/1.35 var(--mono); color: var(--on); }
 html[data-style="signal"] .wssub { padding: 12px 16px 0; }
 html[data-style="signal"] .wssub .segbtn { min-height: var(--tk-ch, 44px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
-html[data-style="signal"] .part { gap: 16px; }
-html[data-style="signal"] .ws > .screen > .syshead:first-child, html[data-style="signal"] .ws > .screen > .row:first-child { margin-top: 0; }
+html[data-style="signal"] .deskcol > .screen > .syshead:first-child, html[data-style="signal"] .deskcol > .screen > .row:first-child { margin-top: 0; }
 html[data-style="signal"] .wsdock { border-top: var(--rule) solid var(--fg); }
 html[data-style="signal"] .tp { border-top: 0; padding: 8px 12px; }
 html[data-style="signal"] .tp .tpb { min-height: var(--tk-chl, 56px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
@@ -1196,15 +1239,22 @@ html[data-style="signal"] .tp #freeze.solid { background: var(--ac); border-colo
   html[data-style="signal"] .wshead { padding: 8px 16px; align-items: center; border-bottom: 0; }
   html[data-style="signal"] .wstitle { font-size: 26px; line-height: 1.15; }
   html[data-style="signal"] .wsjob { margin-top: 0; }
-  html[data-style="signal"] .wsside { border-right: var(--rule) solid var(--fg); gap: calc(14px * var(--tk-density, 1)); }
-  html[data-style="signal"] .wsside button { border-radius: var(--tk-r, 0); min-height: var(--tk-ch, 44px); font: 600 15px/1.2 var(--sans); }
-  html[data-style="signal"] .wsside .wsar { font: 900 14px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; border-bottom: var(--rule) solid var(--fg); }
-  html[data-style="signal"] .wsside .wsar.cur { border-bottom-color: var(--ink); }
-  html[data-style="signal"] .wsside .wsit { color: var(--fg); }
-  html[data-style="signal"] .wsside .on { background: var(--ac); color: var(--on); font-weight: 900; }
+  html[data-style="signal"] .wsside { gap: calc(10px * var(--tk-density, 1)); }
+  html[data-style="signal"] .wsside .wsar { border: var(--rule) solid var(--fg); border-radius: var(--tk-r, 0); min-height: var(--tk-chl, 56px); font: 900 14px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+  html[data-style="signal"] .wsside .wsar.on { background: var(--ac); border-color: var(--ac); color: var(--on); }
+  html[data-style="signal"] main.ws, html[data-style="signal"] .wssub { border-left: var(--rule) solid var(--fg); }
+  html[data-style="signal"] .wssub { padding: 10px 16px; border-bottom: var(--rule) solid var(--fg); }
   html[data-style="signal"] .tp { padding: 8px 16px; }
   html[data-style="signal"] .tp .tpb { min-height: var(--tk-ch, 44px); padding: 4px 10px; }
   html[data-style="signal"] .tp .tpb.keep { min-height: var(--tk-chl, 56px); }
+}
+/* A desk in this look: a column's name is a label in the area's colour, as a card's is; the Shaders column wears
+   its own colour beside the pads and the library, which wear Play's. */
+html[data-style="signal"] .deskhead { margin: 16px 16px 0; padding: 4px 8px; width: fit-content; background: var(--ac); color: var(--on); font: 900 15px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+html[data-style="signal"] .deskcol[data-col="shaders"] { --ac: var(--ar-shaders, #ff4fa3); --on: var(--ar-shaders-on, #0b0b0d); --ink: var(--ar-shaders-ink, var(--fg)); }
+html[data-style="signal"] .navrow.on .navname { color: var(--fg); text-decoration: underline; text-decoration-thickness: var(--rule); text-underline-offset: 4px; }
+@container app (min-width: 1200px) {
+  html[data-style="signal"] .desk:not([data-cols="1"]) > .deskcol + .deskcol, html[data-style="signal"] .setupdesk > .deskcol.cur { border-left: var(--rule) solid var(--fg); }
 }
 @media (max-height: 479px) {
   html[data-style="signal"] .wshead { padding-top: 4px; padding-bottom: 4px; }
@@ -1215,6 +1265,6 @@ html[data-style="signal"] .tp #freeze.solid { background: var(--ac); border-colo
    also made its least width one letter, so "Projectors" beside its switch became "PROJECTOR" and "S". It is cut
    between words; a title that does not fit beside the switch has the line, and the switch goes under it. The
    area's name in the bar likewise. */
-html[data-style="signal"] .syshead h1 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
+html[data-style="signal"] .syshead :is(h1, h2) { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
 html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
 html[data-style="signal"] .tp .tpmore { min-width: 64px; }      /* (this look takes a button's least width away; More is a column of the line that says what plays) */
