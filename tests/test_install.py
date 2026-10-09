@@ -30,7 +30,9 @@ def install(src, stage, *extra):
 class InstallTest(unittest.TestCase):
     def setUp(self):
         self.stage = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.stage, True)
         self.src = copy_source("9.9.1")
+        self.addCleanup(shutil.rmtree, self.src, True)       # a copy of the source, 3 MB a test (D69)
 
     @staticmethod
     def read(path):
@@ -168,6 +170,7 @@ class InstallTest(unittest.TestCase):
     def test_a_marker_that_is_a_link_or_a_folder_nobody_should_have_made_means_not_done(self):
         for plant in ("link", "folder"):
             stage = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, stage, True)
             self.stage = stage
             run = self.p("run/pvj")
             os.makedirs(os.path.join(run, "netd"))
@@ -223,6 +226,7 @@ class InstallTest(unittest.TestCase):
     def test_upgrade_records_previous_release_for_rollback(self):
         install(self.src, self.stage)
         newer = copy_source("9.9.2")
+        self.addCleanup(shutil.rmtree, newer, True)
         self.assertEqual(install(newer, self.stage).returncode, 0)
         self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.2")
         self.assertEqual(self.read(self.p("opt/pvj/previous")).strip(), "/opt/pvj/releases/9.9.1")
