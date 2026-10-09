@@ -308,6 +308,11 @@ function startServer() {
     await page.click('button:has-text("Crossfade")');
     await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'crossfade'));
     await page.waitForSelector('button.on:has-text("Crossfade")');
+    for (const [label, value] of [['Wipe from left', 'wipe-from-left'], ['Wipe from bottom', 'wipe-from-bottom'], ['Slide off left', 'slide-left'], ['Slide off down', 'slide-down']]) {
+      await page.click('button:has-text("' + label + '")');
+      await page.waitForFunction((v) => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === v), value);
+      await page.waitForSelector('button.on:has-text("' + label + '")');
+    }
     await page.click('button:has-text("Dip to black")');
     await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'dip'));
     await page.waitForSelector('button.on:has-text("Dip to black")');
