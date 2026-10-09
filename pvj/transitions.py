@@ -31,7 +31,7 @@ What that costs, and the rules that follow:
   from then on, and says so in `GET /api/status` (mix.fallback) and under the panel's picker, until the transition
   is chosen again (the panel's "Try again" does that) or RETRY seconds have passed, when it tries again by itself.
   "Too slow to take the still" is SLOW_IN_A_ROW stills in a row over SLOW seconds each, or one still that took
-  longer than the transition asked for: a single slow still (a preview snapshot at the same moment, a heavy
+  over HOPELESS seconds: a single slow still (a preview snapshot at the same moment, a heavy
   decode, a busy card) is used, and the blend starts late that once. The still's time is the screenshot and its
   reading alone (`last.still_ms`); the questions before it and the freeze are in `last.hold_ms`.
   While an access code is on the display it dips as well (the code's pixels would go into the still).
@@ -64,6 +64,7 @@ OVERLAY_ID = 63                 # the last one: nothing of the panel's is drawn 
 MAX_PIXELS = 2560 * 1440        # of the screen; above it the box dips (a step would send more than 14 MB)
 SLOW = 1.0                      # seconds a still may take: the player's screenshot and its reading, and nothing else
 SLOW_IN_A_ROW = 2               # that many slow stills one after the other, and the box gives up (one slow one is just used)
+HOPELESS = 3.0                  # seconds: one still that slow and the box gives up at once, whatever the duration asked for
 RETRY = 300.0                   # seconds after giving up until the box tries again by itself
 MIN_RATE = 5.0                  # steps a second a transition must manage, or the box gives up on crossfades
 MAX_DROPS = 5.0                 # frames a second the clip under it may drop meanwhile, or the box gives up on crossfades
@@ -438,12 +439,13 @@ class Transitions:
             self.last = {"name": name, "still_ms": int(round(shot * 1000)), "hold_ms": int(round(took * 1000)), "steps": 0,
                          "seconds": 0.0, "ended": ""}
             # One slow still is used and nothing more: the blend starts late this once. The box gives up when
-            # stills are slow one after the other, or when one took longer than the whole transition is to take.
+            # stills are slow one after the other, or when one took hopelessly long. The duration asked for is not
+            # part of the rule: at the box's own default of one second it made every slow still the last one.
             if shot > SLOW:
                 self._slow.append(shot)
                 self.log("pvj-web: transitions: the still took %.2f seconds (of %.2f from the tap)" % (shot, took))
-                if seconds is not None and shot > seconds:
-                    self._give_up("the still took %.1f seconds, longer than the %s second transition" % (shot, ("%.1f" % seconds).rstrip("0").rstrip(".")))
+                if shot > HOPELESS:
+                    self._give_up("the still took %.1f seconds" % shot)
                 elif len(self._slow) >= SLOW_IN_A_ROW:
                     self._give_up("%d stills in a row took over a second (%s)" % (len(self._slow), ", ".join("%.1f" % s for s in self._slow)))
             else:
