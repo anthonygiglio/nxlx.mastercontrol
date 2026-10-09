@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, late (the fourth review of #111, and a stress test that found four older faults)
+
+Branch `transitions`, pull request #111, still a draft. A fourth independent read found one high fault (a callback called under the fader's lock: a slip of the round before, with a deadlock in it where live inputs exist), one medium (Next during a dip left the picture dark) and some low. All answered; D71 has "After the fourth review, and a test of another kind". **Nothing was run on hardware.**
+
+- **The fixes:** nothing is done under `Fader._lock` (the rule is written at the lock); a dip whose clip does not load puts the level back by itself, whoever overtook it; one write of the picture's level at a time (`Fader.stepping`), with the Blackout switch inside it; the live input's helper is stopped by what plays; the generation moves before the fader is taken; clear before the level goes back; a dip answers `pending`; the fader is taken when a clip loads, not at the tap.
+- **The stress test** (`Stress` in `tests/test_transitions.py`; 300 rounds, five seeds, seven seconds; the seed and the actions are in a failure's message). It found five faults, four older than this branch: a Fade in's ramp under a Blackout; **a Fade out under Blackout showing the picture**; a Fade in stopped half way by a tap that was then overtaken; **a Stop or a clip that met the start of a live input killing the new helper**; and the first version of this round's own fix for the helper. All fixed. Then six runs and 2,400 rounds with forty other seeds: nothing.
+- **A mistake of this session's own:** a replace of a line "everywhere" also replaced it inside the helper that was meant to stand for it, which then called itself for ever; a watchdog on the test run (`faulthandler.dump_traceback_later`) showed it in a minute. Every local run of these tests has the watchdog now.
+- **Three existing tests changed with the behaviour they describe:** two in `tests/test_shaders.py` (a dip answers `pending`) and one in `tests/test_server.py` (Stop clears and then puts the level back).
+- **Tests:** `tests/test_transitions.py` has 112. New by hand: a clip loading while the fader is cancelled, ramped, blacked out and faded from other threads; the deadlock with a live input, with a bounded join; a step in the player while a level is set; Next and Previous during and after the way down; a failed load after the way down; a dip after a Fade out; the two orders; the live-input cases that the old test did not reach.
+- **Open:** Vibes' own dip against a clip's ramp (D71), and everything a board has to say.
+
 ## 2026-10-09, the night (the third review of #111: a rotation against a tap, and the dip)
 
 Branch `transitions`, pull request #111, still a draft. A third independent read, of the play generation alone, found one high fault, two medium, some low, and one that is older than the branch. All answered; D71 has "After the third review" with the table of who claims and who is a newer wish. **Nothing was run on hardware.**
