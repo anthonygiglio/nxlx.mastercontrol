@@ -474,6 +474,13 @@ class Player:
         """Draw a ready raw BGRA file (width x height, at 0, 0) over the picture until overlay_remove(oid)."""
         self.ipc.request("overlay-add", oid, 0, 0, path, 0, "bgra", int(width), int(height), int(width) * 4)
 
+    def overlay_part(self, oid, path, x, y, offset, width, height, stride):
+        """Draw a part of a raw BGRA file at x, y until overlay_remove(oid): `width` x `height` pixels, the first of
+        them `offset` bytes into the file, each row `stride` bytes after the one before. With the stride of the
+        whole picture this draws any rectangle of it without writing it anew (a wipe, pvj/transitions.py). The
+        file must hold `offset` plus `height` times `stride` bytes: that much the player maps."""
+        self.ipc.request("overlay-add", oid, int(x), int(y), path, int(offset), "bgra", int(width), int(height), int(stride))
+
     def set_mapping_mode(self, on):
         """While a projection mapping is shown: stretch the picture to the whole screen (the mapping is in screen
         pixels; mpv's final-picture shader only covers the picture's own area, so a letterboxed clip would move every

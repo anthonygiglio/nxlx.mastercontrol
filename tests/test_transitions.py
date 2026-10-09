@@ -34,6 +34,7 @@ class Screen(FakePlayer):
                       "frame-drop-count": 0, "decoder-frame-drop-count": 0}
         self.ipc = self
         self.levels = []                # the alpha of every overlay drawn, in order; None for a removal
+        self.parts = []                 # (x, y, offset, width, height) of every part of a still drawn
         self.still_bytes = None         # what the next still holds instead of the screen
         self.fail = set()               # names of calls that raise PlayerError
         self.on_overlay = None
@@ -82,6 +83,17 @@ class Screen(FakePlayer):
         self.pixels = pixels
         with open(os.path.join(self.rundir, "overlay-%d.bgra" % oid), "wb") as f:
             f.write(pixels)
+        if self.on_overlay:
+            self.on_overlay()
+
+    def overlay_part(self, oid, path, x, y, offset, w, h, stride):
+        if "overlay" in self.fail:
+            raise PlayerError("no reply from mpv")
+        size = os.path.getsize(path)
+        assert offset + h * stride <= size, "the player maps offset + height x stride bytes: %d of %d" % (offset + h * stride, size)
+        self.calls.append(("overlay_part", oid, x, y, offset, w, h, stride))
+        self.parts.append((x, y, offset, w, h))
+        self.levels.append(255)
         if self.on_overlay:
             self.on_overlay()
 
@@ -607,6 +619,97 @@ class Crossfade(Base):
         self.assertEqual(self.tr.given_up, "", "only this time")
 
 
+class Moves(Base):
+    """The wipes and the slides: the same still, of which a part is drawn."""
+
+    def go(self, name, seconds=1.0):
+        self.settings.data["mix"] = T.stored(name, seconds)
+        self.player.size = (40, 20)
+        self.play()
+
+    def test_what_each_draws_of_the_still_at_the_start_half_way_and_at_the_end(self):
+        w, h, row = 40, 20, 160
+        want = {"wipe-from-left": (20, 0, 80, 20, 20), "wipe-from-right": (0, 0, 0, 20, 20),
+                "wipe-from-top": (0, 10, 10 * row, 40, 10), "wipe-from-bottom": (0, 0, 0, 40, 10),
+                "slide-left": (0, 0, 80, 20, 20), "slide-right": (20, 0, 0, 20, 20),
+                "slide-up": (0, 0, 10 * row, 40, 10), "slide-down": (0, 10, 0, 40, 10)}
+        self.assertEqual(sorted(want), sorted(T.WIPES + T.SLIDES))
+        for name, half in want.items():
+            blend = T.BLENDS[name]()
+            self.assertEqual(blend.step(w, h, None, 0.0), (0, 0, 0, w, h), name)
+            self.assertEqual(blend.step(w, h, None, 0.5), half, name)
+            self.assertIsNone(blend.step(w, h, None, 1.0), name)
+            x, y, offset, pw, ph = half
+            self.assertTrue(0 <= x and x + pw <= w and 0 <= y and y + ph <= h, "%s draws outside the screen" % name)
+
+    def test_a_wipe_writes_the_still_once_and_then_only_names_parts_of_it(self):
+        self.go("wipe-from-left")
+        names = self.names()
+        self.assertEqual(names[:4], ["pause", "still", "overlay_part", "play"])
+        self.assertNotIn("overlay", names, "a wipe rewrote the still's bytes")
+        parts = self.player.parts
+        self.assertEqual(parts[0], (0, 0, 0, 40, 20))
+        self.assertEqual(len(parts) - 1, 30, "thirty steps a second for a wipe")
+        xs = [p[0] for p in parts[1:]]
+        self.assertEqual(xs, sorted(xs))
+        self.assertTrue(all(p[0] + p[3] == 40 and p[2] == p[0] * 4 for p in parts), "the right edge stays where it is")
+        self.assertEqual(self.player.levels[-1], None)
+        self.assertEqual(self.tr.last["ended"], "done")
+        self.assertEqual(self.left(), [], "the still's file is gone")
+
+    def test_the_stills_file_is_the_picture_and_one_row_more(self):
+        seen = []
+        self.player.on_overlay = lambda: seen.append(os.path.getsize(os.path.join(self.rundir, "transition-%d.bgra" % os.getpid())))
+        self.go("slide-left")
+        self.assertEqual(set(seen), {40 * 20 * 4 + 40 * 4})
+
+    def test_every_one_runs_whole_and_leaves_nothing(self):
+        for name in T.WIPES + T.SLIDES:
+            del self.player.calls[:], self.player.parts[:], self.player.levels[:]
+            self.now[0] = 50.0
+            self.go(name, 0.5)
+            self.assertEqual((self.tr.last["name"], self.tr.last["ended"], self.tr.last["steps"]), (name, "done", 15), name)
+            self.assertEqual(self.left(), [], name)
+            self.assertEqual(self.tr.given_up, "", name)
+
+    def test_blackout_and_stop_end_a_wipe_and_its_file_goes(self):
+        for act in (lambda: self.api.blackout({"on": True}, None, "t"), lambda: self.api.control({"action": "stop"}, None, "t")):
+            self.api.mix.update(blackout=False)
+            del self.player.levels[:]
+            self.hook = act
+            self.go("wipe-from-top")
+            self.assertEqual(self.player.levels[-1], None)
+            self.assertLess(len(self.player.levels), 6)
+            self.assertEqual(self.left(), [])
+
+    def test_a_second_play_during_a_wipe_starts_from_the_screen(self):
+        self.hook = lambda: self.play("b.mov")
+        self.go("slide-up")
+        self.assertEqual(self.names().count("still"), 2)
+        self.assertEqual(self.player.levels[-1], None)
+        self.assertEqual(self.left(), [])
+
+    def test_the_limits_are_the_crossfades(self):
+        self.player.on_overlay = lambda: self.now.__setitem__(0, self.now[0] + 0.3)
+        self.go("wipe-from-right")
+        self.assertIn("steps in", self.tr.given_up)
+        del self.player.calls[:]
+        self.play()
+        self.assertNotIn("still", self.names(), "the box dips from then on")
+
+    def test_each_is_kept_in_the_form_an_older_release_reads(self):
+        for name in T.WIPES + T.SLIDES:
+            self.assertEqual(self.api.set_mix({"transition": name, "duration": 1}, None, "t"), {"transition": name, "duration": 1.0})
+            self.assertEqual(self.settings.data["mix"], {"transition": "dip", "style": name, "duration": 1.0})
+            self.assertEqual(self.api.status({}, None, "t")["mix"]["transition"], name)
+
+    def test_the_panel_starting_removes_a_stills_file(self):
+        for n in ("transition-77.bgra", "transition-77.bgra.tmp", "transition-77.png"):
+            open(os.path.join(self.rundir, n), "w").close()
+        self.tr.tidy()
+        self.assertEqual(self.left(), [])
+
+
 class Settings(Base):
     def setUp(self):
         super().setUp()
@@ -625,7 +728,7 @@ class Settings(Base):
     def test_another_name_is_refused_with_the_three_there_are(self):
         st, out = self.call("POST", "/api/mix", {"transition": "wipe", "duration": 1}, token=self.full)[:2]
         self.assertEqual(st, 400)
-        self.assertIn("cut, dip or crossfade", out["error"])
+        self.assertIn("cut, dip, crossfade, wipe-from-left", out["error"])
         self.assertNotIn("not built", out["error"])
 
     def test_a_value_nobody_knows_in_the_file_plays_as_a_cut(self):

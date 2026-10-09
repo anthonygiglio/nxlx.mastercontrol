@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Transitions between clips that blend two pictures: the crossfade (D71).
+"""Transitions between clips that blend two pictures: the crossfade, the wipes and the slides (D71).
 
 The player shows one picture at a time, so the outgoing picture cannot go on moving under the incoming one. What
 is built: a still of the SCREEN as it is at the moment of the play is laid over everything as the player's own
@@ -34,7 +34,11 @@ What that costs, and the rules that follow:
 
 Rollback: an older release knows "cut" and "dip" only and refuses any other value when the transition or its
 duration is saved or a settings file is imported. So the settings keep `transition: "dip"` and name the newer
-transition beside it in `style`, a key older code never reads and drops at its next save.
+transition beside it in `style`, a key older code never reads. It stays in the file there, unread, until
+somebody saves the transition or its duration or imports a settings file, which writes `mix` without it.
+
+A wipe or a slide (class Move) is the same still, of which a smaller and smaller part is drawn: no byte of it is
+changed, so a step costs the panel one command and the player a copy of the part that is still to be seen.
 """
 import os
 import re
@@ -47,17 +51,20 @@ from . import paths
 from .player import PlayerError
 
 OLD = ("cut", "dip")            # what every release knows
-STYLES = ("crossfade",)         # kept in mix.style, with mix.transition "dip" beside it for an older release
+WIPES = ("wipe-from-left", "wipe-from-right", "wipe-from-top", "wipe-from-bottom")      # where the new picture comes in from
+SLIDES = ("slide-left", "slide-right", "slide-up", "slide-down")                         # where the old picture leaves to
+STYLES = ("crossfade",) + WIPES + SLIDES        # kept in mix.style, with mix.transition "dip" beside it for an older release
 NAMES = OLD + STYLES
 OVERLAY_ID = 63                 # the last one: nothing of the panel's is drawn over the still
 MAX_PIXELS = 2560 * 1440        # of the screen; above it the box dips (a step would send more than 14 MB)
 SLOW = 1.0                      # seconds the still may take (the screenshot and its conversion) before the box gives up on crossfades
 MIN_RATE = 5.0                  # steps a second a transition must manage, or the box gives up on crossfades
 MAX_DROPS = 5.0                 # frames a second the clip under it may drop meanwhile, or the box gives up on crossfades
-STEPS = 20.0                    # steps a second asked for (the Fader's rate)
+STEPS = 20.0                    # steps a second asked for by a crossfade (the Fader's rate)
+MOVES = 30.0                    # and by a wipe or a slide: a step of theirs rewrites nothing, and an edge that jumps shows
 FIRST_FRAME = 10.0              # seconds to wait for the new clip's first frame under the still (a stream that does not come)
 POLL = 0.03
-STILL_NAME = r"transition-\d+\.png"
+STILL_NAME = r"transition-\d+\.(?:png|bgra)(?:\.tmp)?"
 
 
 def named(mix):
@@ -156,10 +163,10 @@ def faded(pixels, level):
 
 
 class Crossfade:
-    """The one blend built so far: the whole still, more transparent at every step. Another transition is another
-    class with the same `step`: what to draw of the still at `progress` (0 to 1), as (x, y, width, height, pixels),
-    or None for nothing. (A wipe would give a narrower part of the same pixels and cost no arithmetic at all.)"""
-    name = "crossfade"
+    """The whole still, more transparent at every step. Every step is the still's bytes again, scaled: `step` gives
+    (x, y, width, height, pixels) for Player.overlay, or None for nothing."""
+    rate = STEPS
+    moves = False
 
     def step(self, width, height, pixels, progress):
         level = int(round(255 * (1.0 - progress)))
@@ -170,7 +177,48 @@ class Crossfade:
         return int(round(255 * (1.0 - a))) == int(round(255 * (1.0 - b)))
 
 
-BLENDS = {"crossfade": Crossfade}
+class Move:
+    """A wipe or a slide: the still is not changed, a smaller and smaller part of it is drawn. The still's bytes are
+    written to a file once; `step` gives (x, y, offset, width, height) for Player.overlay_part: draw `width` x
+    `height` pixels of the file, beginning `offset` bytes into it, at x, y. The rows keep the still's own length in
+    the file (the stride), which is how a part that begins in the middle of a row is read. Nothing is rewritten
+    and nothing is worked out in Python; the player copies the part that is still to be seen.
+
+    `cut` says which side of the still goes first and `shift` whether what is left moves there (a slide) or stays
+    where it was (a wipe): ("left", False) is the wipe from the left, ("left", True) the slide off to the left."""
+    rate = MOVES
+    moves = True
+
+    def __init__(self, cut, shift):
+        self.cut, self.shift = cut, shift
+
+    def gone(self, width, height, progress):
+        """Columns or rows of the still that are gone at `progress`."""
+        return int(round(max(0.0, min(1.0, progress)) * (width if self.cut in ("left", "right") else height)))
+
+    def step(self, width, height, pixels, progress):
+        n = self.gone(width, height, progress)
+        if self.cut in ("left", "right"):
+            if n >= width:
+                return None
+            first = self.cut == "left"                   # the still's left columns go: what is left begins n columns in
+            x = (0 if self.shift else n) if first else (n if self.shift else 0)
+            return (x, 0, n * 4 if first else 0, width - n, height)
+        if n >= height:
+            return None
+        first = self.cut == "top"
+        y = (0 if self.shift else n) if first else (n if self.shift else 0)
+        return (0, y, n * width * 4 if first else 0, width, height - n)
+
+    def same(self, a, b):
+        return int(round(a * 4096)) == int(round(b * 4096))     # finer than any screen's pixels: the worker's rate decides
+
+
+BLENDS = {"crossfade": Crossfade,
+          "wipe-from-left": lambda: Move("left", False), "wipe-from-right": lambda: Move("right", False),
+          "wipe-from-top": lambda: Move("top", False), "wipe-from-bottom": lambda: Move("bottom", False),
+          "slide-left": lambda: Move("left", True), "slide-right": lambda: Move("right", True),
+          "slide-up": lambda: Move("top", True), "slide-down": lambda: Move("bottom", True)}
 
 
 class Transitions:
@@ -296,9 +344,36 @@ class Transitions:
                 self._give_up("the still took %.1f seconds" % took)
             return token
 
+    def _source(self):
+        return os.path.join(self.api.player.rundir, "transition-%d.bgra" % os.getpid())
+
     def _lay(self, blend, w, h, pixels):
-        """The whole still on the screen, as the blend's first moment (under `_io`)."""
-        self.api.player.overlay(OVERLAY_ID, *blend.step(w, h, pixels, 0.0))
+        """The whole still on the screen, as the blend's first moment (under `_io`). For a wipe or a slide the
+        still's bytes go into a file first, once: every step then names a part of it. One more row of nothing
+        follows the picture, because the player maps `offset` plus `height` whole rows, and a part that begins in
+        the middle of a row would otherwise end past the file. The file comes by a rename: the player may still be
+        reading the one before it (a second play during a transition)."""
+        if blend.moves:
+            path = self._source()
+            fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
+            with os.fdopen(fd, "wb") as f:
+                os.fchmod(f.fileno(), 0o640)
+                f.write(pixels)
+                f.write(bytes(w * 4))
+            os.replace(path + ".tmp", path)
+        self._show(blend, w, h, pixels, 0.0)
+
+    def _show(self, blend, w, h, pixels, progress):
+        """Draw the blend at `progress` (under `_io`). False if it has nothing more to draw."""
+        part = blend.step(w, h, pixels, progress)
+        if part is None:
+            return False
+        if blend.moves:
+            x, y, offset, pw, ph = part
+            self.api.player.overlay_part(OVERLAY_ID, self._source(), x, y, offset, pw, ph, w * 4)
+        else:
+            self.api.player.overlay(OVERLAY_ID, *part)
+        return True
 
     def _let_go(self, token, froze, remove=False, locked=False):
         """A hold that does not come about: whatever still was on the screen before it goes (this hold took its
@@ -334,6 +409,11 @@ class Transitions:
             self.api.player.overlay_remove(OVERLAY_ID)
         except Exception:
             pass
+        for name in (self._source(), self._source() + ".tmp"):
+            try:
+                os.unlink(name)
+            except OSError:
+                pass
 
     def run(self, token, seconds):
         """The new clip has been started under the still that `hold` returned `token` for: wait for its first
@@ -414,8 +494,8 @@ class Transitions:
                 if token != self._token or self._still is None:
                     return "ended"
                 (w, h, pixels), name, pid = self._still, self.running, self._pid
-            part = BLENDS[name]().step(w, h, pixels, progress)
-            if part is None:
+            blend = BLENDS[name]()
+            if blend.step(w, h, pixels, progress) is None:
                 return "over"
             try:
                 same = self.api.player.ipc.request("get_property", "pid") == pid
@@ -423,7 +503,7 @@ class Transitions:
                 raise Gone(str(e))
             if not same:
                 raise Gone("the player was restarted")
-            self.api.player.overlay(OVERLAY_ID, *part)
+            self._show(blend, w, h, pixels, progress)
             return "drawn"
 
     def _work(self, token, seconds, name):
@@ -456,7 +536,7 @@ class Transitions:
                 elif not self.current(token):
                     return
                 # until the next step's moment by the clock (not a step's length after this one: a step costs time)
-                wait = began + (int((self._clock() - began) * STEPS + 1e-6) + 1) / STEPS - self._clock()
+                wait = began + (int((self._clock() - began) * blend.rate + 1e-6) + 1) / blend.rate - self._clock()
                 self._sleep(max(wait, 0.002))       # always some: whoever ends this must get the overlay's lock
             after = self._dropped()
             lost = after - dropped if dropped is not None and after is not None else 0

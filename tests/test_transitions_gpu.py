@@ -296,6 +296,66 @@ class CrossCase(FxCase):
         self.watch()
         self.assertTrue(all(far(p, BLUE) <= 30 for p in grid(self.still(flat=True))))
 
+    def half_way(self, name, new, old_at, old_from):
+        """Lay the still for `name`, start the flat clip under it and draw the transition at its half: the point
+        `new` (of "left", "right", "top", "bottom": the middle of that half of the screen) must show the new clip and
+        the point `old_at` what the old picture had at `old_from`. Then let it run to its end."""
+        at = {"left": (W // 4, H // 2), "right": (3 * W // 4, H // 2), "top": (W // 2, H // 4), "bottom": (W // 2, 3 * H // 4)}
+        self.play(CLIP)
+        old = self.still()
+        token = self.tr.hold(name)
+        self.assertTrue(token, "%s: %s %s" % (name, self.tr.last, self.tr.given_up))
+        whole = differ(self.shot(), old)
+        self.assertLessEqual(whole[0], 3, "%s: the still is not the screen: %s" % (name, whole))
+        self.under()
+        self.assertEqual(self.tr._draw(token, 0.5), "drawn", name)
+        time.sleep(0.15)
+        rows = self.shot()
+
+        def px(where, of=rows):
+            x, y = at[where]
+            return of[y][x]
+        print("%s, ES %s: half way: %s is %s (the new clip is about %s), %s is %s (the old picture had %s at %s)"
+              % (name, self.ES, new, px(new), BLUE, old_at, px(old_at), px(old_from, old), old_from))
+        self.assertLessEqual(far(px(new), BLUE), 30, "%s: at its half the %s of the screen is not the new clip" % (name, new))
+        self.assertLessEqual(far(px(old_at), px(old_from, old)), 18, "%s: at its half the %s of the screen is not the old picture's %s" % (name, old_at, old_from))
+        self.assertGreater(far(px(old_at), BLUE), 60)
+        self.tr.run(token, 0.5)
+        self.watch()
+        self.assertEqual((self.tr.last["ended"], self.tr.given_up), ("done", ""), name)
+        self.assertGreaterEqual(self.tr.last["steps"], 4, name)
+        print("%s, ES %s: %d steps in %.2f s, %d dropped" % (name, self.ES, self.tr.last["steps"], self.tr.last["seconds"], self.tr.last["dropped"]))
+        self.assertTrue(all(far(p, BLUE) <= 30 for p in grid(self.still(flat=True))), "%s: the new clip is not alone at the end" % name)
+        self.nothing_left()
+
+    def test_a_wipe_at_its_half_shows_the_new_clip_on_the_side_it_comes_from(self):
+        # the still stays where it is and is cut away: the other half still shows what the old picture had there
+        for name, new, old in (("wipe-from-left", "left", "right"), ("wipe-from-right", "right", "left"),
+                               ("wipe-from-top", "top", "bottom"), ("wipe-from-bottom", "bottom", "top")):
+            self.half_way(name, new, old, old)
+
+    def test_a_slide_at_its_half_shows_the_old_picture_moved_by_half_a_screen(self):
+        # the still moves off: the half it still covers shows what the old picture had in its other half
+        for name, new, old_at, old_from in (("slide-left", "right", "left", "right"), ("slide-right", "left", "right", "left"),
+                                            ("slide-up", "bottom", "top", "bottom"), ("slide-down", "top", "bottom", "top")):
+            self.half_way(name, new, old_at, old_from)
+
+    def test_a_wipe_through_the_panels_play_and_blackout_in_the_middle(self):
+        with open(os.path.join(self.media, "cyan.png"), "wb") as f:
+            f.write(png(320, 180, PICTURE))
+        self.settings.data["mix"] = T.stored("wipe-from-left", 3.0)
+        old = self.still()
+        self.api.play({"file": "cyan.png"}, None, "t")
+        time.sleep(1.5)
+        rows = self.shot()
+        self.assertLessEqual(far(rows[H // 2][8], PICTURE), 24, "the left edge is not the new picture half way through a wipe from the left")
+        self.assertLessEqual(far(rows[H // 2][W - 8], old[H // 2][W - 8]), 18, "the right edge is not the old picture")
+        self.api.blackout({"on": True}, None, "t")
+        self.assertLessEqual(max(max(p) for p in grid(self.still(flat=True))), 8, "a Blackout left light on the screen")
+        self.assertIsNone(self.tr.running)
+        self.api.blackout({"on": False}, None, "t")
+        self.nothing_left()
+
     def test_a_player_that_dies_during_it_leaves_nothing_behind(self):
         self.token = self.tr.hold("crossfade")
         self.assertTrue(self.token, self.tr.last)

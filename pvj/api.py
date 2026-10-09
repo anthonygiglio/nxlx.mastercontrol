@@ -1360,7 +1360,7 @@ class Api:
     def set_mix(self, body, device, client):
         mode, duration = body.get("transition"), body.get("duration")
         if mode not in transitions_mod.NAMES:
-            raise bad("transition must be cut, dip or crossfade")
+            raise bad("transition must be one of " + ", ".join(transitions_mod.NAMES))
         if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
             raise bad("duration must be 0.1 to 10 seconds")
         with self.settings.lock:
