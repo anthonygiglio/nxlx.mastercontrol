@@ -2581,7 +2581,8 @@ class OverShaderTest(Base):
         self.assertFalse(any("effect" in kinds and len(kinds) != 2 for kinds in self.lists(sent)))
         # over a clip: the row says nothing (at the first look, not one poll later), and Next goes onto it
         self.clip()
-        self.assertEqual((row()["refused"], row()["refused_pair"]), (None, None))
+        first = row()                                                                  # one request, the first after the clip
+        self.assertEqual((first["refused"], first["refused_pair"]), (None, None))
         self.fx.put(before)
         self.assertEqual((row()["refused"], row()["refused_pair"]), (None, None))
         step()
