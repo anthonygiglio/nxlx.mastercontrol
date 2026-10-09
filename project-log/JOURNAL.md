@@ -4,6 +4,14 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, late evening (the tenth read of #111: the rule against one strike had one strike in it)
+
+A re-check of the ninth read's answers by the second model found one high finding, in a rule the coordinator had asked for: "give up at once when a still took longer than the transition asked for". The box's default duration is one second and the limit for a slow still is one second, so at the default and at half a second (two of the panel's four choices) every slow still was again the last one for five minutes. The tests hid it: their helper raised the duration to two seconds. The Pi trial ran at two seconds, where the rule held.
+
+- **Now:** the duration is out of the rule. One slow still is used at every duration; two in a row and the box dips; one still over `HOPELESS` (3 seconds) and it dips at once. A test runs one slow still at each of 0.5, 1, 2 and 5 seconds, and the helper no longer changes the duration.
+- **Left as they are, from the same read (all low):** the give-up state is written without a lock from three places (a lost reset or a doubled "trying again" line at worst); the retry after five minutes is passive and a box that is truly too slow will freeze twice every five minutes while plays happen (a back-off would be kinder); a player restart does not start the count of slow stills again; Vibes forgets its own dip when it steps aside for a tapped clip, so if that clip then fails to load the old picture stays half dark until the next play; a second tap during the rise from black takes a still of a half-lit picture.
+- **Not run on hardware.** The Pi still has `cfcacc5`.
+
 ## 2026-10-09, the evening (the ninth read of #111, by another model: the give-up rule)
 
 Branch `transitions`, #111, still a draft. Nothing high; D71 has "After the ninth read". **Nothing was run on hardware in this session**; what ran on the Pi 4 this afternoon is the entry below.
