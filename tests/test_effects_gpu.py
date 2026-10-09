@@ -931,7 +931,12 @@ if ONLY != "gles":
 
 
 if __name__ == "__main__":
-    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]))
+    # The crossfade's tests (tests/test_transitions_gpu.py) run here too: the workflow's three effects-gpu jobs name
+    # this module, and they stand on this rig. Loaded only when this module is run, since that one imports this one.
+    from tests import test_transitions_gpu
+    suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+    suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(test_transitions_gpu))
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
     ran = result.testsRun - len(result.skipped)
     print("effect GPU tests: %d run, %d skipped" % (ran, len(result.skipped)))
     sys.exit(0 if result.wasSuccessful() and ran > 0 and not result.skipped else 1)
