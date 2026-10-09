@@ -1332,9 +1332,12 @@ class Engine:
                 epoch = self.playing["epoch"] if self.playing else None
             if epoch is not None:
                 try:                        # the player checks the epoch and stops in one step: a clip started
-                    player.clear_source(epoch)      # in between is never stopped
+                    cleared = player.clear_source(epoch)    # in between is never stopped
                 except PlayerError:
-                    pass
+                    cleared = False
+                fx = getattr(self.api, "effects", None)
+                if cleared and fx is not None and fx is not self and fx.on is not None:
+                    fx.sweep()              # an effect that was on over the shader went with it (D74): its text goes too
             if self.on_screen() is None:    # nothing of ours is showing (another shader may have taken the screen)
                 self.playing = None
                 self._cleanup({player.source_shader} if player.source_shader else set())

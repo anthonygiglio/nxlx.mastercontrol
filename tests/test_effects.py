@@ -909,43 +909,7 @@ class LifeTest(Base):
         self.fx.put("fx-wash.fs")
         self.assertIsNone(self.state()["last"])
 
-    def test_a_generator_shader_takes_it_off_in_the_same_step_and_none_goes_on_over_a_generator(self):
-        self.fx.put("fx-wash.fs")
-        before = len(self.mpv.commands)
-        self.gen.show("nxlx-silk.fs")
-        lists = [c[2] for c in self.mpv.commands[before:] if c[:2] == ("set_property", "glsl-shaders")]
-        self.assertTrue(lists and all(len(x) == 1 and os.path.basename(x[0]).startswith("shader-") for x in lists), lists)   # never both
-        self.assertEqual((self.state()["on"], self.state()["last"]), (None, "a generator shader took the screen"))
-        s = self.state()
-        self.assertEqual((s["available"], "A generator shader has the screen" in s["unavailable"]), (False, True))
-        for call in (lambda: self.fx.put("fx-wash.fs"), lambda: self.fx.step(1), lambda: self.fx.toggle()):
-            with self.assertRaises(ApiError) as c:
-                call()
-            self.assertEqual(c.exception.status, 409)
-            self.assertIn("generator", c.exception.message)
-        self.assertEqual(len(self.mpv.loaded), 1)
-        self.assertIsNotNone(self.gen.on_screen())                                     # the generator was never disturbed
-        self.player.play(["/media/a.mp4"])                                             # a clip again: effects are back, none is on
-        self.assertEqual((self.state()["available"], self.state()["on"], self.mpv.loaded), (True, None, []))
-
-    def test_the_effects_text_is_removed_when_a_generator_takes_the_screen(self):
-        """It stayed in the runtime folder until the next effect or Stop; nothing read it, and it is tidier gone."""
-        self.fx.put("fx-wash.fs")
-        self.assertEqual(len(self.texts()), 1)
-        self.gen.show("nxlx-silk.fs")
-        self.assertEqual(self.texts(), [])
-        self.assertEqual((self.fx.on, self.state()["last"]), (None, "a generator shader took the screen"))
-
-    def test_vibes_takes_it_off_and_the_module_going_off_too(self):
-        self.fx.put("fx-wash.fs")
-        self.api.vibes.start()
-        self.api.vibes.tick()
-        self.assertTrue(self.api.vibes.running)
-        self.assertEqual((self.state()["on"], [n.split("-")[0] for n in self.mpv.loaded]), (None, ["shader"]))
-        with self.assertRaises(ApiError):
-            self.fx.put("fx-wash.fs")
-        self.api.vibes.stop()
-        self.player.play(["/media/a.mp4"])
+    def test_the_module_going_off_takes_it_off(self):
         self.fx.put("fx-wash.fs")
         self.api.set_module("shaders", {"enabled": False}, None, "t")
         self.assertEqual((self.mpv.loaded, self.texts()), ([], []))
@@ -1575,7 +1539,7 @@ class DetailTest(Base):
         self.assertEqual(self.text().count("\n".join(E.size_lines(lines)) + "\n"), 2)
         on = self.state()["on"]
         self.assertEqual(on["working"], {"lines": lines, "auto": True, "clip": {"width": 1920, "height": 1080, "lines": 1080}, "width": w, "height": h,
-                                         "scaled": True, "lower": 540 if lines > 540 else None})
+                                         "scaled": True, "lower": 540 if lines > 540 else None, "under": "clip"})
         self.assertEqual(on["controls"], {"amount": 1.0, "speed": 1.0, "half": False})  # the controls are what they were
         # an upload nobody measured works at the careful value
         self.fx.put("mine.fs")
@@ -1903,12 +1867,12 @@ class ReviewTest(Base):
         # only the no-picture answer is ever cleared by a picture: another 409 from the worker stays
         self.fx.off()
         self.assertTrue(self.fx.step(1)["ok"])
-        real = self.fx.available
-        self.fx.available = lambda: (False, E.GENERATOR_HAS_IT)
+        real, other = self.fx.available, "Another reason why none can go on now."
+        self.fx.available = lambda: (False, other)
         self.pump()
         self.fx.available = real
         s = self.state()
-        self.assertEqual((s["available"], s["error"]["message"]), (True, E.GENERATOR_HAS_IT))
+        self.assertEqual((s["available"], s["error"]["message"]), (True, other))
         # and the no-picture answer still goes when a picture comes
         self.fx.off()
         self.player.clear()
@@ -2021,6 +1985,359 @@ class ReviewTest(Base):
         self.assertEqual(self.text().count("//!WHEN 0\n"), 2)
 
 
+CARRIER_VIDEO = {"colormatrix": "rgb", "colorlevels": "full", "pixelformat": "rgb0", "w": 64, "h": 36}     # what a real mpv said in CI (the spike)
+DUMP = [("vo/gpu/opengl", "error", "fragment shader source:"), ("vo/gpu/opengl", "error", "[  1] #version 140"),
+        ("vo/gpu/opengl", "error", "[ 12] // %s"), ("vo/gpu/opengl", "error", "[ 40] gl_FragColor = oops;"),
+        ("vo/gpu/opengl", "error", "fragment shader compile log (status=0):"), ("vo/gpu/opengl", "error", "0:40(16): error: `oops' undeclared")]
+
+
+class OwnTap:
+    """A tap whose lines are its class's own: FakeTap's are shared by both engines, and here one engine's shader is
+    refused while the other's is taken."""
+    lines = []
+
+    def __init__(self, path, level="error"):
+        self.sent = False
+
+    def drain(self, seconds):
+        out, self.sent = ([] if self.sent else list(type(self).lines)), True
+        return out
+
+    def close(self):
+        pass
+
+
+class GenTap(OwnTap):
+    lines = []
+
+
+class FxTap(OwnTap):
+    lines = []
+
+
+class OverShaderTest(Base):
+    """An effect over a generator shader (D74). What the player really draws for the pair is in tests/test_pair_gpu.py;
+    here is the engines' side, against the stand-in for mpv, which says of a carrier what the real one said in CI."""
+    def setUp(self):
+        super().setUp()
+        self.gen._tap, self.fx._tap = GenTap, FxTap
+        GenTap.lines, FxTap.lines = [], []
+        self.settings.data["mix"]["duration"] = 0.1
+        self.api.vibes._sleep = lambda s: None
+
+    def show(self, sid="nxlx-silk.fs"):
+        """A generator takes the screen, and the stand-in speaks of its carrier from then on."""
+        r = self.gen.show(sid)
+        self.mpv.video, self.mpv.fps = dict(CARRIER_VIDEO), 30.0
+        return r
+
+    def clip(self, path="/media/a.mp4"):
+        self.player.play([path])
+        self.mpv.video, self.mpv.fps = {"colormatrix": "bt.709", "colorlevels": "limited", "pixelformat": "yuv420p", "w": 1920, "h": 1080}, 25.0
+
+    def kinds(self):
+        return [n.split("-")[0] for n in self.mpv.loaded]
+
+    def lists(self, since):
+        return [[os.path.basename(x).split("-")[0] for x in c[2]] for c in self.mpv.commands[since:] if c[:2] == ("set_property", "glsl-shaders")]
+
+    def test_an_effect_goes_on_over_a_generator_and_the_generator_comes_first_in_the_list(self):
+        self.show()
+        s = self.state()
+        self.assertEqual((s["available"], s["unavailable"], s["on"]), (True, None, None))
+        epoch = self.player.source_epoch
+        self.assertEqual(self.fx.put("fx-wash.fs"), {"ok": True, "id": "fx-wash.fs"})
+        self.assertEqual(self.kinds(), ["shader", "effect"])
+        self.assertEqual(self.player.source_epoch, epoch)                              # the screen has not changed hands
+        self.assertEqual(self.gen.on_screen()["id"], "nxlx-silk.fs")                   # the generator was never disturbed
+        on = self.state()["on"]
+        self.assertEqual((on["id"], on["checked"], on["picture"]), ("fx-wash.fs", True, {"matrix": "rgb", "levels": "full", "fps": 30.0}))
+        st = self.api.status({}, None, "t")["player"]
+        self.assertEqual((st["shader"], st["effect"], st["path"]), ("nxlx-silk", "fx-wash", None))
+        # Next, Previous and the one button work over a generator too (they were refused with 409)
+        self.assertTrue(self.fx.step(1, ask=True)["ok"])
+        self.pump()
+        self.assertEqual(self.kinds(), ["shader", "effect"])
+        self.assertNotEqual(self.state()["on"]["id"], "fx-wash.fs")
+        self.assertEqual(self.fx.toggle(ask=True), {"ok": True, "on": False})
+        self.pump()
+        self.assertEqual((self.kinds(), self.state()["on"]), (["shader"], None))
+        self.assertTrue(self.fx.toggle(ask=True)["on"])
+        self.pump()
+        self.assertEqual(self.kinds(), ["shader", "effect"])
+        self.fx.off()
+        self.assertEqual((self.kinds(), self.texts(), self.state()["last"]), (["shader"], [], None))
+        self.assertIsNotNone(self.gen.on_screen())
+
+    def test_a_generator_chosen_while_an_effect_is_on_leaves_it_on(self):
+        """As it stays when a clip changes. The effect is in the list with the generator from the generator's first
+        command on: no moment without it."""
+        self.fx.put("fx-wash.fs", {"strength": 0.5})
+        serial, text = self.player.effect_serial, self.texts()
+        before = len(self.mpv.commands)
+        self.show()
+        self.assertEqual(self.lists(before), [["shader", "effect"]])
+        self.assertEqual((self.player.effect_serial, self.texts(), self.state()["last"]), (serial, text, None))
+        on = self.state()["on"]
+        self.assertEqual((on["id"], on["values"]["strength"]), ("fx-wash.fs", 0.5))
+        self.assertTrue(self.fx.changer._refresh is not None)                          # the worker goes on looking at the picture under it
+        # the worker's look: another kind of picture came under it (RGB, 30 a second), so a new text of the same effect
+        self.fx.adjust("anchor")
+        self.assertEqual((self.kinds(), self.player.effect_serial), (["shader", "effect"], serial))
+        self.assertEqual(self.state()["on"]["picture"], {"matrix": "rgb", "levels": "full", "fps": 30.0})
+        self.assertEqual(self.state()["on"]["working"]["under"], "shader")
+        was = self.mpv.loaded
+        self.show("nxlx-ember.fs")                                                     # another generator: the same picture for the effect
+        self.fx.adjust("anchor")
+        self.assertEqual(self.mpv.loaded[1], was[1])
+        self.assertEqual((self.kinds(), self.state()["on"]["id"]), (["shader", "effect"], "fx-wash.fs"))
+        # a value of the effect and a value of the generator change, each its own text, neither touches the other
+        self.fx.change({"values": {"strength": 0.9}})
+        self.pump()
+        self.assertEqual((self.kinds(), self.state()["on"]["values"]["strength"]), (["shader", "effect"], 0.9))
+        self.clip()                                                                    # a clip again: the generator goes, the effect stays
+        self.assertEqual((self.kinds(), self.state()["on"]["id"]), (["effect"], "fx-wash.fs"))
+        self.fx.adjust("anchor")
+        self.assertEqual((self.state()["on"]["picture"]["matrix"], self.state()["on"]["working"]["under"]), ("bt.709", "clip"))
+
+    def test_the_size_the_panel_is_told_is_the_generators_drawing_not_the_carrier(self):
+        """The player speaks of the carrier (64 x 36 in CI); the effect meets the generator's drawing (seen there by
+        pixel). Effect detail caps the effect only where the generator draws more lines than the cap."""
+        self.api.board = dict(self.api.board, kind="pi4")
+        screen = self.gen.screen
+        self.gen.screen = lambda: (1920, 1080)
+        self.addCleanup(setattr, self.gen, "screen", screen)
+        for height, sid, want in ((540, "fx-wash.fs", (720, 960, 540, False, None)),         # Automatic's 720 is above the generator's 540 lines
+                                  (720, "fx-wash.fs", (720, 1280, 720, False, 540)),
+                                  (720, "isf-edge-blowout.fs", (540, 960, 540, True, None))):     # the generator draws more: the effect works at its cap
+            cfg = self.gen.config()
+            cfg["height"] = height
+            self.gen._save(cfg)
+            self.show()
+            self.fx.put(sid)
+            w = self.state()["on"]["working"]
+            self.assertEqual((w["under"], w["clip"]["lines"], w["auto"]), ("shader", height, True), (height, sid))
+            self.assertEqual((w["lines"], w["width"], w["height"], w["scaled"], w["lower"]), want, (height, sid))
+            self.assertEqual("//!WIDTH" in self.text_of("effect"), True)                # the cap is in the text either way: the player decides
+            self.fx.off()
+        # black after a refused generator: a carrier with no record of a drawing, so no size is said
+        self.show()
+        self.gen.playing = None
+        self.fx.put("fx-wash.fs")
+        w = self.state()["on"]["working"]
+        self.assertEqual((w["under"], w["clip"], w["scaled"]), ("shader", None, False))
+
+    def text_of(self, kind):
+        path = next(p for p in self.mpv.props["glsl-shaders"] if os.path.basename(p).startswith(kind))
+        with open(path) as f:
+            return f.read()
+
+    def test_it_stays_through_a_vibes_rotation_and_its_dip(self):
+        self.fx.put("fx-wash.fs")
+        serial = self.player.effect_serial
+        vibes = self.api.vibes
+        vibes.start()
+        before = len(self.mpv.commands)
+        self.assertTrue(vibes.tick())                                                  # the first shader, after a dip from the clip
+        self.mpv.video, self.mpv.fps = dict(CARRIER_VIDEO), 30.0
+        self.assertTrue(vibes.running)
+        self.assertEqual((self.kinds(), self.state()["on"]["id"], self.player.effect_serial), (["shader", "effect"], "fx-wash.fs", serial))
+        first = self.mpv.loaded[0]
+        for _ in range(2):                                                             # two more steps of the rotation
+            vibes.skip()
+            vibes.tick()
+            self.fx.adjust("anchor")
+            self.assertEqual((self.kinds(), self.state()["on"]["id"]), (["shader", "effect"], "fx-wash.fs"))
+        self.assertNotEqual(self.mpv.loaded[0], first)
+        # at no moment of it was the effect out of the list, and the rotation's own dip (the brightness) went on
+        # with the effect in it: it is the filtered picture that dips and comes back
+        seen = self.mpv.commands[before:]
+        self.assertTrue(all("effect" in kinds for kinds in self.lists(before)), self.lists(before))
+        self.assertGreaterEqual(len(self.lists(before)), 3)
+        self.assertTrue(any(c[:2] == ("set_property", "brightness") and c[2] < 0 for c in seen), "the rotation made no dip in this test")
+        self.assertEqual(self.player.effect_serial, serial)                            # the same effect all along: never off and on again
+        # stopping Vibes clears the screen, and the effect goes with the picture it was over
+        vibes.stop()
+        self.assertEqual((self.mpv.loaded, self.mpv.props["path"], self.texts()), ([], None, []))
+        self.assertEqual((self.state()["on"], self.state()["last"]), (None, "the shader under it was taken off the screen"))
+
+    def test_stop_a_restart_and_the_module_going_off_take_the_pair_off(self):
+        self.show()
+        self.fx.put("fx-wash.fs")
+        self.api.control({"action": "stop"}, None, "t")
+        self.assertEqual((self.mpv.loaded, self.texts(), self.mpv.props["fbo-format"]), ([], [], "auto"))
+        self.assertEqual((self.state()["on"], self.state()["last"], self.gen.on_screen()), (None, "Stop was pressed", None))
+        self.show()                                                                    # the next shader starts clean
+        self.assertEqual(self.kinds(), ["shader"])
+        self.fx.put("fx-wash.fs")
+        self.mpv.restart()                                                             # a new mpv: it has neither
+        self.assertEqual((self.state()["on"], self.state()["last"], self.gen.on_screen()), (None, "the player was restarted", None))
+        self.clip()
+        self.assertEqual(self.mpv.loaded, [])
+        self.show()
+        self.fx.put("fx-wash.fs")
+        self.api.set_module("shaders", {"enabled": False}, None, "t")
+        self.assertEqual((self.mpv.loaded, self.mpv.props["path"], self.texts()), ([], None, []))
+        self.api.registry.set_enabled("shaders", True)
+        self.assertEqual((self.state()["on"], self.state()["last"]), (None, "the module was switched off"))
+
+    def test_a_pair_the_gpu_refuses_leaves_the_generator_on_and_is_not_sent_again(self):
+        self.show()
+        gen = self.mpv.loaded
+        FxTap.lines = list(REFUSAL)
+        with self.assertRaises(ApiError) as c:
+            self.fx.put("fx-wash.fs")
+        self.assertEqual(c.exception.status, 422)
+        for words in ("over the shader", "undeclared", "No effect is on.", "The shader stays on the screen."):
+            self.assertIn(words, c.exception.message)
+        self.assertEqual((self.mpv.loaded, self.texts(), self.state()["on"]), (gen, [], None))
+        self.assertEqual(self.gen.on_screen()["id"], "nxlx-silk.fs")
+        self.assertEqual(self.state()["error"]["id"], "fx-wash.fs")
+        # again, by hand and through the worker: the GPU is not shown it a second time (no flash)
+        FxTap.lines = []
+        before = len(self.mpv.commands)
+        with self.assertRaises(ApiError) as c:
+            self.fx.put("fx-wash.fs")
+        self.assertEqual(c.exception.status, 422)
+        self.assertIn("refused fx-wash.fs over a shader before", c.exception.message)
+        self.assertIn("not sent again", c.exception.message)
+        self.fx._queue("fx-wash.fs")
+        self.pump()
+        self.assertIn("not sent again", self.state()["error"]["message"])
+        self.assertEqual((self.lists(before), self.mpv.loaded, self.texts()), ([], gen, []))
+        self.show("nxlx-ember.fs")                                                     # another generator under it: the same pair for the GPU
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
+        # another shape of its values is another text, and is tried; over a clip it is tried too (the other hook runs there)
+        self.fx.put("fx-vignette.fs")
+        self.assertEqual(self.kinds(), ["shader", "effect"])
+        self.fx.off()
+        self.clip()
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.kinds(), self.state()["on"]["id"], self.state()["error"]), (["effect"], "fx-wash.fs", None))
+
+    def test_an_effect_refused_over_a_generator_gives_way_to_the_effect_before_it(self):
+        self.show()
+        self.fx.put("fx-vignette.fs")
+        was = self.mpv.loaded
+        FxTap.lines = list(REFUSAL)
+        with self.assertRaises(ApiError) as c:
+            self.fx.put("fx-wash.fs")
+        self.assertIn("The effect before it is back on. The shader stays on the screen.", c.exception.message)
+        self.assertEqual((self.mpv.loaded, self.state()["on"]["id"]), (was, "fx-vignette.fs"))
+
+    def test_a_generator_that_comes_under_an_effect_the_gpu_refuses_over_it_takes_the_effect_off(self):
+        """The effect was taken over a clip (its hook for video ran). Over a generator the text's other hook runs,
+        and the GPU has not seen it: the worker's first look listens. A refusal there takes the effect off (there
+        is no text to go back to that works over a shader), leaves the generator, and is remembered."""
+        self.clip()
+        self.fx.put("fx-wash.fs")
+        self.show()
+        gen = self.mpv.loaded[:1]
+        FxTap.lines = list(REFUSAL)
+        self.fx.adjust("anchor")
+        self.assertEqual((self.mpv.loaded, self.texts()), (gen, []))
+        s = self.state()
+        self.assertEqual((s["on"], s["last"], s["error"]["id"]), (None, "the GPU refused it over the shader that came on", "fx-wash.fs"))
+        self.assertIn("undeclared", s["error"]["message"])
+        self.assertEqual(self.gen.on_screen()["id"], "nxlx-silk.fs")
+        FxTap.lines = []
+        with self.assertRaises(ApiError) as c:
+            self.fx.put("fx-wash.fs")
+        self.assertIn("not sent again", c.exception.message)
+        # the same meeting once more, with the refusal known: off at the first look, and nothing is sent to the GPU
+        self.clip()
+        self.fx.put("fx-wash.fs")
+        self.show()
+        before, effect = len(self.mpv.commands), self.mpv.loaded[1]
+        self.fx.adjust("anchor")
+        self.assertEqual((self.lists(before), self.state()["on"]), ([["shader"]], None))
+        self.assertNotIn(effect, self.mpv.loaded)
+
+    def test_a_refusal_of_the_other_shader_is_not_taken_for_ones_own(self):
+        """Both engines listen to the player's one log, each under its own lock. The player prints a refused
+        shader's text before the compiler's words, and every text carries its name."""
+        named = lambda desc: [(p, level, t % desc if "%s" in t else t) for p, level, t in DUMP]
+        other = named("nxlx shader 7 12")
+        self.assertEqual(S.shader_errors(other), "line 40: `oops' undeclared")
+        self.assertEqual(S.about(other, "nxlx effect 7 3"), [])
+        self.assertEqual(S.about(other, "nxlx shader 7 1"), [])                        # "shader 7 12" is not "shader 7 1"
+        self.assertEqual(S.about(other, "nxlx shader 7 12"), other)
+        both = other + named("nxlx effect 7 3")
+        self.assertEqual(S.about(both, "nxlx effect 7 3"), both[len(other):])
+        self.assertEqual(S.about(both, "nxlx shader 7 12"), other)
+        self.assertEqual(S.about(REFUSAL, "nxlx effect 7 3"), REFUSAL)                 # a log that names no shader: kept, as before
+        unnamed = [row for row in other if "// nxlx" not in row[2]]
+        self.assertEqual(S.about(unnamed + other, "nxlx effect 7 3"), unnamed)
+        # the engines: a generator's refusal in the log while an effect goes on, and the other way round
+        self.show()
+        FxTap.lines = named("nxlx shader %d 99" % os.getpid())
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.kinds(), self.state()["on"]["checked"], self.state()["error"]), (["shader", "effect"], True, None))
+        GenTap.lines = named(self.fx.on["desc"])
+        self.assertTrue(self.gen.show("nxlx-ember.fs")["ok"])
+        self.assertIsNone(self.gen.error)
+        GenTap.lines = []
+
+    def test_vibes_marks_no_shader_heavy_while_an_effect_is_on_and_the_effects_card_says_it(self):
+        vibes = self.api.vibes
+        vibes.start()
+        vibes.tick()
+        self.mpv.video, self.mpv.fps = dict(CARRIER_VIDEO), 30.0
+        current = vibes.current
+        heavy = {"state": "heavy", "drops_per_second": 5.0, "gpu": None}
+        self.gen.guard.sample = lambda on: dict(heavy) if on else {"state": None, "drops_per_second": None, "gpu": None}
+        self.fx.put("fx-wash.fs")
+        self.assertEqual(self.gen.watch()["effect"], "fx-wash.fs")
+        self.assertEqual(self.gen.state()["playing"]["effect"], "fx-wash.fs")
+        self.assertIs(vibes._guard(), False)                                           # the frames are the pair's: no mark, no skip
+        self.assertEqual((self.settings.data.get("shaders", {}).get("heavy", {}), vibes._marked, vibes._tight, vibes.current), ({}, [], set(), current))
+        self.gen.guard.sample = lambda on: dict(heavy, state="tight")
+        self.assertIs(vibes._guard(), False)
+        self.assertEqual(vibes._tight, set())                                          # nor is the palette turn taken from it
+        # the effect's own guard is the one that speaks, and it starts over when another shader comes under the effect
+        self.fx.state()
+        desc = self.fx.guard._desc
+        self.assertEqual(desc, "%s over %s" % (self.fx.on["desc"], self.gen.playing["desc"]))
+        vibes.skip()
+        vibes.tick()
+        self.fx.state()
+        self.assertNotEqual(self.fx.guard._desc, desc)
+        self.assertIn(self.fx.on["desc"], self.fx.guard._desc)
+        # the effect off: the guard judges the shader by itself again, as before
+        self.fx.off()
+        self.gen.guard.sample = lambda on: dict(heavy)
+        self.assertNotIn("effect", self.gen.watch())
+        self.assertIsNone(self.gen.state()["playing"]["effect"])
+        current = vibes.current
+        self.assertIs(vibes._guard(), True)
+        self.assertIn(current, self.settings.data["shaders"]["heavy"])
+
+    def test_a_controllers_lights_say_an_effect_can_go_on_over_a_generator(self):
+        self.show()
+        self.api.registry.set_enabled("control-midi", True)
+        self.settings.data["control"]["midi"]["enabled"] = True
+        hub = M.MidiHub(self.api, self.settings, log=lambda *_: None, lister=lambda: [], describer=lambda p: None)
+        self.addCleanup(hub.stop)
+        snap = hub._snapshot(1.0, fresh=True)
+        self.assertEqual((snap["effect"], snap["effect_ready"], snap["running"], snap["shader"]), (None, True, True, "nxlx-silk.fs"))
+        self.assertEqual([M.light_state({"action": a}, snap) for a in ("effect_toggle", "effect_next")], ["on", "on"])
+        self.fx.put("fx-wash.fs")
+        snap = hub._snapshot(2.0, fresh=True)
+        self.assertEqual((snap["effect"], M.light_state({"action": "effect_toggle"}, snap)), ("fx-wash.fs", "active"))
+
+    def test_nothing_of_it_is_stored(self):
+        """No settings key and no schema change: the pair lives in the player and in memory, as an effect did."""
+        before = json.dumps(self.settings.data, sort_keys=True)
+        self.show()
+        self.fx.put("fx-wash.fs")
+        self.fx.change({"controls": {"amount": 0.5}})
+        self.pump()
+        self.show("nxlx-ember.fs")
+        self.fx.off()
+        self.assertEqual(json.dumps(self.settings.data, sort_keys=True), before)
+
+
 class PlayerLayerTest(unittest.TestCase):
     """The player's three shader layers, on the real class."""
     def setUp(self):
@@ -2050,16 +2367,52 @@ class PlayerLayerTest(unittest.TestCase):
         self.assertEqual((self.mpv.props["glsl-shaders"], self.mpv.props["fbo-format"], self.p.effect_ended, self.p.effect_serial), ([], "auto", "off", s + 2))
         self.assertFalse(self.p.clear_effect())
 
-    def test_a_source_and_an_effect_are_never_on_together(self):
-        self.p.put_effect("/e1.glsl")
-        self.p.play_source("/s1.glsl", "av://lavfi:carrier")
-        self.assertEqual((self.mpv.props["glsl-shaders"], self.p.effect_ended), (["/s1.glsl"], "generator"))
-        self.assertIsNone(self.p.put_effect("/e2.glsl"))
-        self.assertEqual(self.mpv.props["glsl-shaders"], ["/s1.glsl"])
-        self.p.play(["/media/a.mp4"])
-        self.assertEqual(self.p.put_effect("/e2.glsl"), 3)
+    def test_a_source_and_an_effect_are_on_together_the_source_first(self):
+        """D74. The order of the list is the order the two run in (both hook the same stage), so the source comes
+        first: the effect then filters what the source drew."""
+        s = self.p.put_effect("/e1.glsl")
+        self.p.set_shaders(["/m.glsl"])
+        epoch = self.p.play_source("/s1.glsl", "av://lavfi:carrier")
+        self.assertEqual((self.mpv.props["glsl-shaders"], self.p.effect_ended, self.p.effect_serial), (["/s1.glsl", "/e1.glsl", "/m.glsl"], "", s))
+        self.assertEqual(self.p.effect_on(), "/e1.glsl")
+        self.assertEqual(self.p.put_effect("/e2.glsl"), s + 1)                         # and one goes on over a source
+        self.assertEqual(self.mpv.props["glsl-shaders"], ["/s1.glsl", "/e2.glsl", "/m.glsl"])
+        self.p.play_source("/s2.glsl", "av://lavfi:carrier", epoch)                    # the next source (a Vibes step): the effect stays
+        self.assertEqual((self.mpv.props["glsl-shaders"], self.p.effect_serial), (["/s2.glsl", "/e2.glsl", "/m.glsl"], s + 1))
+        self.assertTrue(self.p.swap_source("/s3.glsl", self.p.source_epoch))           # another text of the source: the same
+        self.assertEqual(self.mpv.props["glsl-shaders"], ["/s3.glsl", "/e2.glsl", "/m.glsl"])
+        self.p.play(["/media/a.mp4"])                                                  # a clip takes the screen: the source goes, the effect stays
+        self.assertEqual((self.mpv.props["glsl-shaders"], self.p.effect_on()), (["/e2.glsl", "/m.glsl"], "/e2.glsl"))
         self.p.clear()
-        self.assertEqual((self.mpv.props["glsl-shaders"], self.p.effect_ended), ([], "stop"))
+        self.assertEqual((self.mpv.props["glsl-shaders"], self.p.effect_ended), (["/m.glsl"], "stop"))
+
+    def test_a_source_taken_off_the_screen_takes_the_effect_with_it_and_says_so(self):
+        epoch = self.p.play_source("/s1.glsl", "av://lavfi:carrier")
+        self.p.put_effect("/e1.glsl")
+        self.assertFalse(self.p.clear_source(epoch - 1))                               # not this source: nothing happens
+        self.assertEqual(self.mpv.props["glsl-shaders"], ["/s1.glsl", "/e1.glsl"])
+        self.assertTrue(self.p.clear_source(epoch))                                    # Vibes was stopped, the module went off
+        self.assertEqual((self.mpv.props["glsl-shaders"], self.mpv.props["path"], self.p.effect_ended), ([], None, "cleared"))
+
+    def test_the_buffers_format_is_not_set_again_for_an_effect_over_a_source(self):
+        """Setting it makes the player set its renderer up anew (a hitch). Under a source the buffers are 8-bit
+        already, so an effect that comes or goes there leaves the setting alone; when the source goes, the effect
+        keeps them 8-bit on the boards where it wants them (effect_8bit) and gives them back elsewhere."""
+        sets = lambda: [c[2] for c in self.mpv.commands if c[:2] == ("set_property", "fbo-format")]
+        for eight in (True, False):
+            self.p.effect_8bit = eight
+            self.p.play_source("/s1.glsl", "av://lavfi:carrier")
+            before = sets()
+            self.assertEqual(self.mpv.props["fbo-format"], "rgba8")
+            s = self.p.put_effect("/e1.glsl")
+            self.p.swap_effect("/e2.glsl", s)
+            self.p.clear_effect(s)
+            self.p.put_effect("/e3.glsl")
+            self.assertEqual(sets(), before, eight)
+            self.p.play(["/media/a.mp4"])                                              # the source goes, the effect stays
+            self.assertEqual(self.mpv.props["fbo-format"], "rgba8" if eight else "auto", eight)
+            self.p.clear()
+            self.assertEqual(self.mpv.props["fbo-format"], "auto", eight)
 
     def test_a_restarted_mpv_has_lost_the_effect_and_is_not_given_it_again(self):
         s = self.p.put_effect("/e1.glsl")
