@@ -597,9 +597,9 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }
 .tpspeed input { flex: 1 1 0; min-width: 0; margin: 0; height: 44px; }
 /* (a 320 px phone: "Blackout" needs 69 px in the widest of the faces this look is drawn in, and gets 75) */
-/* (under 1000 px, where the place in the clip is behind More: if the clip count and the time have no room on one
+/* (under 1600 px, where the line is full: if the clip count and the time have no room on one
    line, as in larger text, the time goes to a second line; it is not cut and no button is sent down) */
-@container app (max-width: 999px) { .tpinfo { grid-template-columns: auto minmax(0, 1fr) auto; } .tpinfo #time { white-space: normal; } }
+@container app (max-width: 1599px) { .tpinfo { grid-template-columns: auto minmax(0, 1fr) auto; } .tpinfo #time { white-space: normal; } }      /* (to 1599 px since D72: with More on the line from 1200 px, and Speed and Loop from 1440, a wider face sent Blackout down before it let the time wrap) */
 @container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } .tp .tpb { font-size: 13px; } }      /* (13 px: room to spare in a wider face than the one it was measured in) */
 @container app (min-width: 600px) {
   .frame { grid-template-columns: 96px minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; grid-template-areas: "head head" "side sub" "side main" "dock dock"; }
