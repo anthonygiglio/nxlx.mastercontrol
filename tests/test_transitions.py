@@ -2348,6 +2348,7 @@ class Stress(ServerBase):
     | q  a clip that is loaded leaving the pipe "playing" (a fault inside pvj/player.py)        | 3 of 3       | yes               |
     | r  a shader pad's shader shown while the play holds the player's lock (D73)               | 3 of 3       | yes               |
     | s  a shader pad taking the play's ticket before its shader: two newest wishes for one tap | 0 of 3       | yes               |
+    | t  a queued shader refused by the queue's own job before it (the older tap stays on)      | not in it    | yes               |
 
     What the rows say that is not "caught":
     * h needs a level wish that runs (a Fade in, a Fade out), a clip tapped with a blend, and then something newer
@@ -2372,6 +2373,9 @@ class Stress(ServerBase):
       on after a round, so it is tested by hand only). r is caught by the locks themselves, here and in eighteen
       tests by hand. s changes nothing that the end of a round can see (the second wish is the same action's); the
       test by hand counts the wishes of one tap (`Tapped.test_a_tap_is_one_newest_wish_as_a_shader_chosen_by_hand_is`).
+    * t (the review of #114) is a fault of the engine's queue for the controllers' taps, which this test does not
+      draw, for the reason given under r and s: "not in it" is not "0 of 3". By hand, with the worker held between
+      taking its job and taking the screen: `tests.test_shader_pads.Queued`, for a pad, a preset and a step.
     * The whole table, a to s, was run again when "shader pad" was added: the rows above are from that run. One of
       n's three runs failed, not for n's fault but with "the box gave up on transitions: the still took 1.3
       seconds", while a browser was taking pictures on the same machine: A MACHINE THAT STALLS FOR A SECOND MAKES
