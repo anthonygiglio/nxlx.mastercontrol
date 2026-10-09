@@ -755,7 +755,10 @@ class LiveEngine(S.Engine):
         self._chain = None
         self._place = None                          # (epoch, place in the set, shader) of a step whose shader did not stay: the worker's too
         self._job = threading.local()               # .doing: the queued job this thread is carrying out (the worker only)
-        self._adopted = {}                          # epoch -> the epoch Vibes made of it while it was being ended: see adopt
+        # epoch -> the epoch Vibes made of it while it was being ended: see adopt. Capped there and never cleared:
+        # an entry is only ever looked up by a job that carries its epoch, the player's epoch only goes up, so an
+        # old entry can match nothing new, and eight numbers are all it ever holds.
+        self._adopted = {}
         self.guard = Guard(self, clock)
         self._refusals = {}                         # source hash -> what the GPU said; a changed file has another hash
         # Settings are edited under this lock, never under the engine's own: that one is held while the GPU looks at a
@@ -1304,7 +1307,8 @@ class LiveEngine(S.Engine):
                 self.log("pvj-web: shader %s, asked for from a controller, was not shown: something else was played or "
                          "stopped after it was asked for" % job["id"])
         except ApiError as e:
-            self.error = {"id": job["id"], "message": e.message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+            self.error = {"id": job["id"], "message": e.message, "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                          "epoch": self.api.player.source_epoch}       # see play(): news while the screen stays as it is
         finally:
             self._job.doing = None
             if len(job["made"]) > 1:                # it took the screen, whatever came of it afterwards
@@ -1403,6 +1407,18 @@ class LiveEngine(S.Engine):
         epoch = self.api.player.source_epoch
         return epoch, (marker() if marker is not None else S.Engine.NOW)
 
+    def drop_waiting(self, why):
+        """Forget what waits for the worker (Vibes was started: it wins), and say in the journal what was dropped: a
+        controller's tap that was answered "pending" must not vanish without a word."""
+        waiting = self.changer.queued()
+        self.changer.clear()
+        if waiting is None:
+            return
+        if "steps" in waiting:
+            self.log("pvj-web: %d step(s) to the next shader, asked for from a controller, were not carried out: %s" % (waiting.get("presses", 0), why))
+        else:
+            self.log("pvj-web: shader %s, asked for from a controller, was not shown: %s" % (waiting.get("id"), why))
+
     def queue_show(self, sid, preset=None, moment=None):
         """Put a whole shader on from the worker, for a caller that must not wait for the GPU (a controller's pad, a
         preset of another shader). What belongs to the moment of asking is taken here and carried with the
@@ -1453,6 +1469,11 @@ class LiveEngine(S.Engine):
         if not result["ok"]:
             if not result["showing"]:
                 self.off(result["epoch"])           # nothing to go back to: stop, which leaves the screen black
+            # For the Live page (Api.status, `shader_refused`): the refusal is news while the screen is as the
+            # refusal left it. The player's epoch of now is kept with it; a clip, another shader, a Stop or Vibes
+            # moves the epoch, and the line under the pads goes. (The Shaders page keeps `error` as before.)
+            if self.error and self.error.get("id") == sid:
+                self.error = dict(self.error, epoch=self.api.player.source_epoch)
             raise ApiError(422, "the player refused %s: %s. %s" % (
                 result["id"], result["error"], "The shader before it is back on." if result["showing"] else "The screen is black."))
         self._refusals.pop(self.playing["digest"] if self.playing else None, None)

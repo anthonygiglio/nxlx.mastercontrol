@@ -1303,10 +1303,7 @@ class Engine:
                     # unless a wish for the level came while the GPU looked at it; after the operator's Fade out
                     # the shader comes up from black, as a clip does (it has no end and no blend: half the Mix's
                     # duration, the way a dip comes up)
-                    try:
-                        show(level_mark, rise=True)
-                    except TypeError:               # an Api stand-in of a test that knows no `rise`
-                        show(level_mark)
+                    show(level_mark, rise=True)
                 else:
                     self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
             self.api._started_playing()

@@ -1409,6 +1409,80 @@ class FromEverywhere(PadBase):
         self.tap(0)                                                     # shown: the refusal is over
         self.assertNotIn("shader_refused", self.api.status({}, None, "t")["player"])
 
+    def test_the_refusal_on_the_live_page_goes_when_anything_else_takes_the_screen(self):
+        # low, the second check of the fifth read: it stayed under the pads until that same shader showed or the
+        # service restarted, so a refusal at nine was the first thing under the pads at two
+        self.player.vo = "gpu"
+        self.give(0, ONE)
+        self.give(1, TWO)
+        self.vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=time.monotonic, sleep=lambda s: None,
+                                              rng=random.Random(4), thread=False, log=lambda *_: None)
+
+        def refused():
+            return self.api.status({}, None, "t")["player"].get("shader_refused", {}).get("id")
+        clip = os.path.join(self.media, "a.mp4")
+        for what, other in (("a clip", lambda: self.player.play([clip])),
+                            ("another shader", lambda: self.tap(1)),
+                            ("Stop", lambda: self.api.control({"action": "stop"}, None, "t")),
+                            ("Vibes", lambda: (self.vibes.start(), self.vibes.tick(), self.vibes.stop())),
+                            ("the same shader shown", lambda: self.tap(0))):
+            for how in ("a controller", "the panel"):
+                self.api.control({"action": "stop"}, None, "t")
+                self.engine._checked.clear()
+                self.engine._refusals.clear()
+                FakeTap.lines = REFUSAL
+                if how == "a controller":
+                    self.tap(0, device={"id": "midi"})
+                    self.assertTrue(self.wait(lambda: refused() == ONE), "%s, %s: the refusal never came" % (what, how))
+                else:
+                    with self.assertRaises(ApiError):
+                        self.tap(0)
+                    self.assertEqual(refused(), ONE, how)
+                self.assertEqual(refused(), ONE, "it does not last from one look to the next")
+                FakeTap.lines = []
+                self.engine._refusals.clear()
+                other()
+                self.assertIsNone(refused(), "the refusal is still under the pads after %s took the screen (it came from %s)" % (what, how))
+                self.assertTrue(what == "the same shader shown" or (self.engine.error or {}).get("id") == ONE, "the Shaders page lost it too")
+
+    def test_a_refusal_of_a_live_value_is_not_a_pads_refusal(self):
+        self.give(0, ONE)
+        self.tap(0)
+        self.engine.error = {"id": ONE, "message": "a value was refused", "at": "now"}      # as a live change's refusal: the shader stays on
+        self.assertNotIn("shader_refused", self.api.status({}, None, "t")["player"])
+
+    def test_a_tap_that_vibes_overtakes_before_the_worker_is_said_in_the_journal(self):
+        # low: Vibes started by the schedule or a Room scene between a controller's tap and the worker forgot the
+        # tap without a word. Vibes wins; the journal says what was dropped
+        said = []
+        self.engine.log = lambda *a: said.append(" ".join(str(x) for x in a))
+        self.give(0, ONE)
+        self.vibes = self.api.vibes = V.Vibes(self.api, self.engine, clock=time.monotonic, sleep=lambda s: None,
+                                              rng=random.Random(4), thread=False, log=lambda *_: None)
+        gate, pump = threading.Event(), self.engine.changer.pump
+        self.engine.changer.pump = lambda: (gate.wait(10), pump())[1]  # the worker has not come to it yet
+        self.addCleanup(gate.set)
+        self.tap(0, device={"id": "midi"})
+        self.vibes.start()
+        gate.set()
+        self.assertTrue(any("shader %s, asked for from a controller, was not shown: Vibes was started" % ONE in line for line in said), said)
+        self.assertTrue(self.vibes.tick())
+        self.assertTrue(self.vibes.running)
+        self.vibes.stop()
+        self.assertTrue(self.wait(lambda: self.engine.changer.newest() is None))
+        del said[:]
+        gate.clear()
+        self.engine.step(1)
+        self.engine.step(1)
+        self.vibes.start()
+        gate.set()
+        self.assertTrue(any("2 step(s)" in line and "Vibes was started" in line for line in said), said)
+        self.vibes.stop()
+        del said[:]
+        self.vibes.start()                                              # nothing waited: nothing is said
+        self.assertEqual([line for line in said if "asked for from a controller" in line], [])
+        self.vibes.stop()
+
     def test_the_queues_record_of_its_own_epochs_does_not_grow_with_the_jobs(self):
         self.give(0, ONE)
         self.give(1, TWO)

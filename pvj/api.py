@@ -449,7 +449,7 @@ class Api:
             refused = self.shaders.error if self.registry.enabled("shaders") else None
         except Exception:
             refused = None
-        if isinstance(refused, dict) and refused.get("id"):
+        if isinstance(refused, dict) and refused.get("id") and refused.get("epoch") == getattr(self.player, "source_epoch", None):
             player["shader_refused"] = {"id": refused["id"], "message": refused.get("message", ""), "at": refused.get("at", "")}
         return {"player": player, "mix": dict(self.mix, **self._mix_settings()),
                 "system": {"board": self.board["kind"], "model": self.board["model"],

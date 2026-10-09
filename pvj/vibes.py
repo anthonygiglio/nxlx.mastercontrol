@@ -132,7 +132,10 @@ class Vibes:
             self.set_id, self.history, self._want, self._tight, self._marked = set_id, [], None, set(), []
         changer = getattr(self.engine, "changer", None)
         if changer:
-            changer.clear()             # a step or a preset that was still waiting must not take the screen from this run
+            # a step, a preset or a pad's shader that was still waiting must not take the screen from this run: the
+            # rotation wins, and the journal says what was dropped
+            drop = getattr(self.engine, "drop_waiting", None)
+            drop("Vibes was started after it was asked for") if drop else changer.clear()
             self.due = self._clock()
             self.last = None
             self._clear = None
