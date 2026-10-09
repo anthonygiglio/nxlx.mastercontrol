@@ -296,3 +296,15 @@ After `gh auth refresh` and then `gh auth login`, `gh auth status` in the sessio
 
 `zlib`'s `decompress(data, max_length)` was called once for every piece of a PNG, each time with the whole picture as the bound, to be safe against a file that unpacks to more than a screen. On the dev machine a still came as one piece and it cost nothing. The Pi 4's mpv writes a 2560 x 1440 still as 2701 pieces of 4 KB, and the 2701 calls took a second, which alone was the limit after which the box gives up on crossfades. Eight reviews and a stress test could not see it: it is a matter of time, on a board, with the real player's file. What we do now: join the pieces and unpack once with one bound; and a figure for time in a docstring says where it was measured, or it is a guess.
 
+## A sentence in the panel can be a decision that reads like a law of nature (2026-10-09)
+
+"A generator is drawn from nothing, so there is no picture to change" was written into the code, the panel and three documents as the reason an effect could not go on over a shader. It was never tested, and it was not true of the player: a spike that handed it both texts through its socket, with no code changed, showed in one CI run that the effect filters the generator's picture exactly. Three things made it work that nobody had to build: the list already had the source before the effect, the effect's text already carried a hook for RGB pictures, and its size lines were already relative to the picture the hook meets. What we do now: a refusal's wording says who decided ("this box does not ...") when it is a choice, and before repeating a "cannot" in a new place, give the player the two texts by hand and look.
+
+## Two listeners on one log each hear the other's bad news (2026-10-09)
+
+As long as a generator took the effect off, only one shader of the two could be new at a time, and "the player complained while I was listening" meant "about mine". With both on the screen, each engine under its own lock, a Vibes step and a moved slider can overlap, and a refused generator would have been remembered as a refusal of the effect's values. Nothing failed to show it; it was seen by reading what `_watch` listens to after the rule changed. What we do now: when two things become possible at once that were exclusive before, list what each of them assumed about being alone. Here the cure was cheap because every text already carried its name, put there for another reason.
+
+## The player's word about the picture is about what it decoded, not what a hook meets (2026-10-09)
+
+Over a generator `video-params` says 64 x 36: the carrier. The hook of the effect meets 960 x 540: the generator's drawing. The engine's size arithmetic for the panel came from `video-params` and would have told the owner his effect was working on a picture of 36 lines. The spike printed both, which is the only reason it was seen before a person read it on the card. What we do now: a probe that asks the player in words also asks the GPU in pixels, and prints the two side by side.
+

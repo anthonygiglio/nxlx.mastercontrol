@@ -230,6 +230,31 @@ Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between cli
 | X22 | Choose a generator (a shader from the Shaders page), start a live input, and choose another generator within a second of starting the input, before the camera's picture is there. Then once more, waiting for the camera's picture before the second generator. After each: `pgrep -af "mpv.*--o="` | The generator is on the screen, not the camera's picture and not a frozen frame of it; the helper is gone | What is on the screen, and whether the helper still runs. The seventh review found that a generator chosen just after a live input could leave the pipe on the screen with its helper stopped (the player went by its `path`, which follows a load a moment late). The tests show the repair against a stand-in for mpv; how late a real mpv's `path` is, is not known here |
 | X23 | With a live input on the screen, restart the player with the panel's **Restart player** button, and once more with `sudo systemctl restart pvj-player`; `pgrep -af "mpv.*--o="` five seconds after each. Then the same with **Blackout** on, and play a clip afterwards | After the panel's restart the helper is gone at once. After the restart from the shell it may run until the next thing is played (nothing tells the panel), and must be gone then. Under Blackout the screen is dark again within ten seconds of the restart and stays dark under the clip | A helper that stays after the panel's restart; a lit screen under Blackout more than ten seconds after a restart, and the journal's line "could not put the picture's level back on the restarted player" if there is one (the panel offers the level to the new player five times, two seconds apart) |
 
+### An effect over a generator (D74)
+
+**Nothing of this has run on a board.** In CI the pair ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. The question for the board is what two shader stages cost. Twenty minutes. The numbers come from two requests while a pair is on: `GET /api/effects` (`on.load`, `on.drops_per_second`, `on.pass_ms`, `on.working`) and `GET /api/shaders` (`playing.pass_ms`, `playing.load`, `playing.drops_per_second`, `playing.effect`, `gpu.busy_percent`). Wait ten seconds after each change before reading: the guard does not count the first three and judges over six.
+
+Before: Shaders and Vibes on, nothing mapped, Effect detail on Automatic. Note the screen's size and rate.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| E1 | Picture detail 540 lines. Play the shader Silk. Put on the effect Wash | The shader with the wash over it, moving as before | Both requests' numbers; the same two numbers for Silk alone first (the effect Off) |
+| E2 | The same shader with Vignette, Kaleido, RGB Halftone and Edge Glow, one after the other | Each effect over the shader | The numbers for each pair; which lights the Effects card shows |
+| E3 | The same four effects over a medium shader (Aurora) and over a heavy one (Nebula) | | The numbers for each pair. This is where frames are expected to drop: say from which pair on |
+| E4 | Picture detail 720 lines, then E1 and E2 again | Softer under Edge Glow, Corner Color Tint and Edge Blowout (Automatic keeps those at 540 lines) | The numbers; whether the three look softer than the others |
+| E5 | Effect detail 540 lines with Picture detail 720, any light effect | The whole shader softer | The numbers beside E4's for the same pair |
+| E6 | Start Vibes on Ambient with Wash on, and let it run for five shaders | The effect stays through every change; the dip to black and back takes the wash with it; no flash of the unfiltered shader | Anything seen without the effect, and for how long; `GET /api/effects` `on.id` after each change |
+| E7 | During E6 with a pair that drops frames (from E3): leave it for a minute | The Effects card turns to "Too heavy with this shader"; Vibes does not leave the shader out and does not end with "the box is dropping frames"; the Shaders page says "An effect is on over it: Vibes does not judge the shader meanwhile" | `GET /api/shaders`: whether any shader's `heavy` is set now that was not before (none should be), and `vibes.last` |
+| E8 | Take the effect off during E7 and wait twenty seconds | Vibes judges the shader by itself again | Whether a shader was marked heavy now, and whether that seems right for the shader alone |
+| E9 | With a pair on: Blackout, Blackout off, Fade out, Fade in, Opacity 50 | Black is black; the pair comes back as it was | Anything lit under Blackout |
+| E10 | With a pair on and Transition set to Crossfade: play a clip | The filtered shader stands still, then melts into the clip, which has the effect on it | `mix.fallback`; how long the shader stood still |
+| E11 | With a pair on: Stop. Then play the shader again | The screen clears; the shader comes back with no effect | |
+| E12 | With an effect on over a clip: play a shader | The shader comes up with the effect on it from its first picture | Any flash of black or of the plain shader |
+| E13 | With a pair on, restart the player (`sudo systemctl restart pvj-player`) | Nothing on the screen; the Effects card says the player was restarted | |
+| E14 | With a pair on, move a control of the effect and a control of the shader in turn | Each follows; neither resets the other | Any hitch, and which control made it |
+
+What cannot be made on purpose: a pair the GPU refuses. If the Effects card ever says "the player refused ... over the shader", send the whole sentence and the two names.
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

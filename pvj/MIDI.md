@@ -221,7 +221,7 @@ A light follows **what its control does now**: if you put another action on a co
 | Vibes: start the set Ambient, Show | that set exists | Vibes is running with it | |
 | Previous / next shader; Vibes: next shader | a shader is on screen, or Vibes runs | | |
 | Previous / next clip | a playlist of more than one clip plays | | |
-| Effect on / off (style `effect`) | an effect could go on: something with a picture plays and no generator has the screen | an effect is on | |
+| Effect on / off (style `effect`) | an effect could go on: something plays (a clip, a live input, a generator shader or Vibes, D74) | an effect is on | |
 | The effect before, the next effect (style `step`) | an effect could go on, or one is on | | |
 | Effect control 1 to 8, as a press (style `control`) | an effect is on (not checked per input) | | |
 | Pause / resume | | something is playing | it is paused |
