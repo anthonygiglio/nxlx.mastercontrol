@@ -4,6 +4,19 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the morning (the sixth review of #111: a deadlock, and the order of the locks handed to a machine)
+
+Branch `transitions`, pull request #111, still a draft. The sixth independent read found a deadlock that the fifth round's own fixes had made (Stop against a step of Vibes' own dip), a Blackout that waited behind a load, and a live input's helper that survived the player's restart. All answered; D71 has "After the sixth review". **Nothing was run on hardware.**
+
+- **The method changed.** Every lock of these paths is made in `pvj/locks.py`, which holds the one written order. In the tests each lock knows its place and fails the test at a taking out of order (`tests/lockrank.py`), in one thread, without the interleaving that hangs. Put in before the fix, it failed an old single-threaded test of a Vibes tick. It then found nothing else in the 800 tests of the modules on these paths, apart from one test that took two locks in its own order.
+- **The fix is the order**, not a patch: the player's lock stands before the level's; Vibes' step takes them in that order; nothing waits for the player while it holds the level's lock, so a Blackout waits for one write of the level and no more (measured against the stand-in: under half a second behind a load of two seconds, also during a Vibes dip, a ramp and a crossfade).
+- **The real player is under test.** `tests/fakempv.py` stands in for mpv on the socket; the stress test and the class `RealPlayer` drive `pvj/player.py` itself. The fakes of the other tests take a lock where the real ones do.
+- **Found by the stress test once the real player was in it:** a player that restarts shows at full brightness whatever the mix says, so a clip could be lit under a Blackout (older than the branch). The watcher that puts the overlay and the mapping back puts the level back now.
+- **Also:** `Player.quit`, and `pipe_playing` that knows which process it was loaded into; Vibes' dip leaves an operator's Fade out alone; Fade out takes the fader before the lock; Reset's opacity inside the lock; a dip's way down only if nobody took the fader since the tap.
+- **A mistake of the session's own:** adding ten kinds of action to the stress test halved what it caught of the old faults (the Blackout switch outside its lock went from three runs of three to none) until the common actions were weighted and the switch was also checked inside each wish's own step. The mutation table is what showed it; it is run again whenever the test changes.
+- **Tests:** `tests/test_transitions.py` has 134 (twelve of them on the real player), `tests/test_lockrank.py` 12 for the checker itself. The mutation table has seventeen rows: fourteen are caught by the stress test alone in three runs of three, fifteen by a test written by hand, one hangs the hand-written run, and one is an equivalent mutation and is said to be. Twenty runs of the unbroken code passed; 250 rounds take about twenty seconds now, because the real player and a socket are in them.
+- **Open:** everything a board has to say (X20 and X21 added). The fallback, one owner thread for the level and the screen, is written down in D71 with why it is not the better road today.
+
 ## 2026-10-09, towards morning (the fifth review of #111: one rule for the level, and a stress test that is shown broken code)
 
 Branch `transitions`, pull request #111, still a draft. A fifth independent read found nothing high and no lock inversion; two medium findings and some low. All answered; D71 has "After the fifth review". **Nothing was run on hardware.**
