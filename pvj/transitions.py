@@ -64,6 +64,7 @@ STEPS = 20.0                    # steps a second asked for by a crossfade (the F
 MOVES = 30.0                    # and by a wipe or a slide: a step of theirs rewrites nothing, and an edge that jumps shows
 FIRST_FRAME = 10.0              # seconds to wait for the new clip's first frame under the still (a stream that does not come)
 POLL = 0.03
+LATE = 5.0                      # seconds after a command the player did not answer, when the still is taken off once more
 STILL_NAME = r"transition-\d+\.(?:png|bgra)(?:\.tmp)?"
 
 
@@ -242,11 +243,13 @@ class Transitions:
         self._still = None                  # (width, height, pixels) while a transition holds or runs
         self._up = False                    # an overlay of ours may be on the player
         self._pid = None                    # the player the still was given to: a restarted one never had it
-        self._froze = False                 # the newest hold froze a clip that was playing (to thaw if the play fails)
-        self.stops = 0                      # goes up at every Stop: a play that was taking its still loads nothing after it
+        self._froze = {}                    # token -> True for a hold that froze a clip that was playing (to thaw if its play fails)
+        self._gen = 0                       # the play generation: goes up at every play of any kind, Stop and quit (`claim`, `newer`)
+        self._ends = 0                      # goes up at every end(): a play that waits its turn sees that its blend is off
         self.running = None                 # the name of the transition that holds or runs
         self.given_up = ""                  # why this box dips instead, until the transition is chosen again
         self._large = ""                    # the same for a screen that is too large, from the last look at it
+        self.late = []                      # with no threads (tests): the removals `_once_more` would send later
         self.last = {}                      # what the last one did: {"name", "still_ms", "steps", "seconds", "dropped", "ended"}
 
     # -- what the box will do --
@@ -273,23 +276,56 @@ class Transitions:
         with self._mark:
             return bool(token) and token == self._token
 
+    # -- which wish is the newest --
+    def claim(self):
+        """A play of a clip begins: it is the newest wish from now on. Returns its ticket, to be taken by the caller
+        before any thread is started and before any lock is waited for, and handed to `hold`, `newest` and
+        `ended_since`."""
+        with self._mark:
+            self._gen += 1
+            return (self._gen, self._ends)
+
+    def newer(self):
+        """Something else became the newest wish (another way of playing, a Stop, a generator, the player's quit):
+        a play that is still on its way (taking its still, or waiting its turn to) loads nothing after this."""
+        with self._mark:
+            self._gen += 1
+
+    def newest(self, ticket):
+        with self._mark:
+            return ticket[0] == self._gen
+
+    def ended_since(self, ticket):
+        """True if an end() came since the ticket was taken: Blackout, a fade, an opacity change. The play's clip
+        still loads, without its blend, and it leaves the picture's brightness to whoever set it since."""
+        with self._mark:
+            return ticket[1] != self._ends
+
     # -- one transition --
-    def hold(self, name):
+    def hold(self, name, ticket=None, wanted=None):
         """Lay a still of the screen over everything, in place of a transition that still runs. Returns a token
         (never 0) if it is there: then the new clip can be started under it, and `run(token, ...)` must follow.
         Returns 0, with no still on the screen, the clip thawed if this froze it and nothing left behind, if there
         is no such blend, the box dips instead (`fallback`), nothing is loaded in the player, an access code is on
         the display (its pixels would go into the still), an `end()` came meanwhile, or the still failed. A still
-        that failed or took the player too long makes the box give up (`given_up`): the next plays dip."""
+        that failed or took the player too long makes the box give up (`given_up`): the next plays dip.
+
+        `ticket` is the play's own (`claim`). A play whose turn comes after a newer wish, or after an end(), returns
+        0 at once and has touched nothing: it did not freeze the clip, take a still or stop the transition that
+        runs. So of many plays that queue here only the newest takes a still. `wanted` is asked just before the
+        still is laid down: False (the screen went dark meanwhile) and it is not."""
         blend = BLENDS.get(name)
         player = self.api.player
-        if blend is None or self.fallback() or not hasattr(player, "still"):
+        if blend is None or not hasattr(player, "still"):
             return 0
         with self._holding:
             with self._mark:
+                if ticket is not None and (ticket[0] != self._gen or ticket[1] != self._ends):
+                    return 0
+                if self.fallback():             # looked at here, in turn: the still before this one may have given up
+                    return 0
                 self._token += 1
                 token = self._token
-                self._froze = False
             began = self._clock()               # from here: the wait behind another play's still is not this still's time
             froze, laid = False, False
             path = os.path.join(player.rundir, "transition-%d.png" % os.getpid())
@@ -313,7 +349,8 @@ class Transitions:
                 w, h, pixels = read_still(path, size)
                 # An end() does not wait for a still (Stop and Blackout act at once), so the still looks for one:
                 # here, before it is laid down, and again under the overlay's lock, where end() takes it off.
-                if not self.current(token) or self.api.access_on_screen():
+                stale = ticket is not None and (not self.newest(ticket) or self.ended_since(ticket))
+                if stale or not self.current(token) or self.api.access_on_screen() or (wanted is not None and not wanted()):
                     return self._let_go(token, froze)
                 with self._io:
                     if not self.current(token):
@@ -323,15 +360,22 @@ class Transitions:
                         self._up = True
                     self._lay(blend(), w, h, pixels)
                     with self._mark:
-                        if token != self._token:        # cannot be an end(): that waits for `_io`. Kept for safety.
-                            raise StillError("overtaken")
-                        self._still, self.running, self._pid, self._froze = (w, h, pixels), name, pid, froze
+                        # An end() that came while the still was laid (it marks at once, and then waits for `_io`
+                        # to take the overlay off): the still is not this hold's any more, and goes here.
+                        if token != self._token:
+                            raise StillError("ended while the still was laid")
+                        self._still, self.running, self._pid = (w, h, pixels), name, pid
+                        self._froze = {token: True} if froze else {}
             except Exception as e:              # every kind: a frozen clip and a 500 are worse than any cause
                 ended = not self.current(token)
+                gone = isinstance(e, PlayerError) and ("not running" in str(e) or "ipc error" in str(e))
                 self._let_go(token, froze, remove=laid)
                 if not ended:
                     self.log("pvj-web: no %s, a cut instead: %s" % (name, e))
-                    self._give_up("the still failed (%s)" % (str(e) or type(e).__name__)[:80])
+                    if not gone:                # a player that went away is not a box that is too slow
+                        self._give_up("the still failed (%s)" % (str(e) or type(e).__name__)[:80])
+                if "no reply" in str(e):
+                    self._once_more()
                 return 0
             finally:
                 try:
@@ -363,9 +407,11 @@ class Transitions:
             os.replace(path + ".tmp", path)
         self._show(blend, w, h, pixels, 0.0)
 
-    def _show(self, blend, w, h, pixels, progress):
-        """Draw the blend at `progress` (under `_io`). False if it has nothing more to draw."""
-        part = blend.step(w, h, pixels, progress)
+    def _show(self, blend, w, h, pixels, progress, part=None):
+        """Draw the blend at `progress` (under `_io`). False if it has nothing more to draw. `part` is what
+        `blend.step` gave for this moment, where the caller has asked already: a crossfade's step scales the whole
+        still, and that is done once."""
+        part = blend.step(w, h, pixels, progress) if part is None else part
         if part is None:
             return False
         if blend.moves:
@@ -376,8 +422,10 @@ class Transitions:
         return True
 
     def _let_go(self, token, froze, remove=False, locked=False):
-        """A hold that does not come about: whatever still was on the screen before it goes (this hold took its
-        place), the clip plays on if this hold froze it, and 0 is returned. `locked`: the caller holds `_io`."""
+        """A hold that began and does not come about. If it is still the current one, the still that was on the
+        screen before it goes too (this hold took its place); if an end() or a newer hold came, the screen is
+        theirs and only what this hold itself laid (`remove`) is taken off. The clip plays on if this hold froze
+        it. Returns 0. `locked`: the caller holds `_io`."""
         with self._mark:
             mine = token == self._token
             if mine:
@@ -423,22 +471,25 @@ class Transitions:
         with self._mark:
             if not token or token != self._token or self._still is None:
                 return
-            self._froze = False                 # the new clip plays: nothing to thaw any more
+            self._froze.pop(token, None)        # the new clip plays: nothing to thaw any more
             name = self.running
         if self._thread:
             threading.Thread(target=self._work, args=(token, seconds, name), name="transition", daemon=True).start()
         else:
             self._work(token, seconds, name)
 
-    def end(self, why="ended", stop=False):
+    def end(self, why="ended", newer=False):
         """Take the still off now. Called by everything the still would be wrong over: Blackout, a fade, a change of
-        opacity, Stop (`stop`), another way of playing. It never waits for a still that is being taken: it marks
-        that hold as ended, which the hold sees before it lays anything down. It waits for at most one step that is
-        on its way to the player, and then sends one command. Nothing happens when no transition runs."""
+        opacity, Stop, another way of playing. It never waits for a still that is being taken: it marks that hold
+        as ended, which the hold sees before it lays anything down, and a play that waits its turn sees it when
+        its turn comes. It waits for at most one step that is on its way to the player, and then sends one command.
+        With `newer` (Stop, another way of playing, a generator, the player's quit) a play on its way also loads
+        nothing after this (see `newer`). No command is sent when no still is up."""
         with self._mark:
             self._token += 1
-            if stop:
-                self.stops += 1
+            self._ends += 1
+            if newer:
+                self._gen += 1
             had = self._still is not None
             self._still, self.running = None, None
             if had:
@@ -449,16 +500,35 @@ class Transitions:
                 if not self._newer_up(0):
                     self._remove()
 
-    def abandon(self):
-        """The new clip did not start after all: the still goes and the old clip plays on, if the hold froze it."""
+    def abandon(self, token):
+        """The clip of the play that holds `token` did not start after all (it failed, or a newer wish came): its
+        still goes, if it is still the one on the screen, and the old clip plays on, if that hold froze it. A still
+        that a newer play has laid since is not this play's to take off."""
         with self._mark:
-            froze, self._froze = self._froze, False
-        self.end("the new clip did not start")
+            froze = self._froze.pop(token, False)
+            mine = bool(token) and token == self._token
+        if mine:
+            self.end("the new clip did not start")
         if froze:
             try:
                 self.api.player.pause(False)
             except Exception:
                 pass
+
+    def _once_more(self):
+        """A command the player did not answer in time may still be run by it later, after this side gave up and
+        took the still off: the still would then be back with nobody to remove it. So the removal is sent once
+        more, LATE seconds on, unless a newer still is up by then. (Not seen; it cannot be ruled out from here.)"""
+        def again():
+            with self._io:
+                if not self._newer_up(0):
+                    self._remove()
+        if self._thread:
+            timer = threading.Timer(LATE, again)
+            timer.daemon = True
+            timer.start()
+        else:
+            self.late.append(again)
 
     def _give_up(self, why):
         self.given_up = why + "; using the dip to black until the transition is chosen again"
@@ -495,7 +565,8 @@ class Transitions:
                     return "ended"
                 (w, h, pixels), name, pid = self._still, self.running, self._pid
             blend = BLENDS[name]()
-            if blend.step(w, h, pixels, progress) is None:
+            part = blend.step(w, h, pixels, progress)       # once: for a crossfade this is the whole still, scaled
+            if part is None:
                 return "over"
             try:
                 same = self.api.player.ipc.request("get_property", "pid") == pid
@@ -503,7 +574,7 @@ class Transitions:
                 raise Gone(str(e))
             if not same:
                 raise Gone("the player was restarted")
-            self._show(blend, w, h, pixels, progress)
+            self._show(blend, w, h, pixels, progress, part)
             return "drawn"
 
     def _work(self, token, seconds, name):
@@ -564,6 +635,8 @@ class Transitions:
                     self._remove()
             if mine and not isinstance(e, Gone) and "not running" not in str(e):
                 self._give_up("a step failed (%s)" % (str(e) or type(e).__name__)[:80])
+            if "no reply" in str(e):
+                self._once_more()
 
     def tidy(self):
         """When the panel starts: a still an earlier panel process left on the player comes off (nobody would take

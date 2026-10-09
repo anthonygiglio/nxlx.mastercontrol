@@ -1233,10 +1233,14 @@ class Engine:
                 if cut:
                     self.api.fader.cancel()
                 ending = getattr(self.api, "transitions", None)
-                if ending is not None:
-                    ending.end()                    # a clip's crossfade does not go on over a generator
                 try:
-                    new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                    # One step under the player's lock: the generator takes the screen, and with that it is the
+                    # newest wish. A clip's transition does not go on over it, and a clip that was still on its way
+                    # (its still being taken) looks under this same lock and does not load over it (Api.play).
+                    with (getattr(player, "_lock", None) or threading.Lock()):
+                        new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                        if new is not None and ending is not None:
+                            ending.end("a generator", newer=True)
                     fx = getattr(self.api, "effects", None)
                     if new is not None and fx is not None and fx is not self and fx.on is not None:
                         fx.sweep()                  # the generator took an effect off the screen: its text goes too

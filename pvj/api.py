@@ -204,11 +204,13 @@ class Api:
         self.boxcare = boxcare_mod.BoxCare(self)                   # settings export and import, diagnostics, factory reset
 
     # --- helpers -------------------------------------------------------
-    def _settle(self):
+    def _settle(self, newer=False):
         """Before anything that sets the picture: a fade still running from an earlier action must not darken what
-        comes, and the still of a transition must not lie over it (the player's brightness does not reach it)."""
+        comes, and the still of a transition must not lie over it (the player's brightness does not reach it).
+        `newer`: this is another way of playing, so a clip that is still on its way to the player (its still is
+        being taken, or it waits its turn) is no longer the newest wish and loads nothing (Transitions.newer)."""
         self.fader.cancel()
-        self.transitions.end()
+        self.transitions.end(newer=newer)
 
     def _mix_settings(self):
         """The Mix settings as the API gives them: the transition by its name (see pvj/transitions.py for how it is
@@ -767,7 +769,7 @@ class Api:
             import random
             paths = list(paths)
             random.SystemRandom().shuffle(paths)
-        self._settle()
+        self._settle(newer=True)
         self._player_call(self.player.play, paths, ending == "loop", None, False, self.spawn, ending, image_seconds)
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing()
@@ -883,6 +885,10 @@ class Api:
             ending = "stop"            # one clip: there is no next
         loop = ending == "loop"
         transition = self.settings.data["mix"]
+        # This play is the newest wish from here on, and whatever comes after it (another play of any kind, a Stop)
+        # is newer: the ticket is taken now, in the caller, before the player is asked anything, before any thread
+        # is started and before any wait for another play's still.
+        ticket = self.transitions.claim()
         playing = self._player_call(self.player.status).get("running")
         claim = getattr(self.player, "claim_screen", None)
         if claim:            # with a dip the clip loads later; a shader rotation must know now that the screen is taken
@@ -891,10 +897,10 @@ class Api:
         self.fader.cancel()  # a fade still running from an earlier action must not darken the new clip
 
         kind = transitions_mod.named(transition)
-        # A crossfade lays a still of the screen over the new clip (pvj/transitions.py). A screen that is dark
-        # (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there; with nothing
-        # playing there is nothing to take a still of. Where the box cannot do one it dips; where the still itself
-        # fails, time has passed already and the clip is cut to.
+        # A crossfade, a wipe or a slide lays a still of the screen over the new clip (pvj/transitions.py). A screen
+        # that is dark (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there.
+        # Where the box cannot do one it dips; where the still itself fails, time has passed already and the clip
+        # is cut to. Whether anything is loaded in the player is the still's own first question.
         blend = False
         if kind in transitions_mod.STYLES:
             if playing and not self.mix["blackout"] and self.mix["opacity"] > 0 and not faded_out:
@@ -905,11 +911,22 @@ class Api:
         if not blend:
             self.transitions.end()
         dip = kind == "dip" and not self.mix["blackout"]
+        player_lock = getattr(self.player, "_lock", None) or threading.Lock()
 
         def start(token=0):
             try:
-                self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
-                if not self.mix["blackout"]:
+                # Newest wins. The look and the load are one step under the player's own lock, which every way of
+                # playing and Stop take for their own change: whoever became the newest wish before this look is
+                # seen here and nothing is loaded, and whoever becomes it after waits for this lock and comes after
+                # this clip. No window is left between the look and the load.
+                with player_lock:
+                    if not self.transitions.newest(ticket):
+                        self.transitions.abandon(token)
+                        return
+                    self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
+                # A Blackout, a fade or an opacity change that came while a blend's still was taken or waited for
+                # has set the picture's brightness since this play was asked for: it is left as they set it.
+                if not self.mix["blackout"] and not (blend and self.transitions.ended_since(ticket)):
                     if dip:
                         self._apply_opacity(0)
                         self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
@@ -918,23 +935,19 @@ class Api:
             except BaseException:
                 # Whatever it was: no still stays over a clip that did not start, and the old clip, which the still
                 # froze, plays on.
-                self.transitions.abandon()
+                self.transitions.abandon(token)
                 raise
             self.transitions.run(token, transition["duration"])
 
+        def lit():
+            """Asked by the still just before it is laid down: is the screen still one to blend from?"""
+            return not self.mix["blackout"] and self.mix["opacity"] > 0 and getattr(self.fader, "label", None) != "out"
+
         def blended():
-            """The still, then the clip under it. The still takes time, and Stop does not wait for it: a Stop that
-            came meanwhile is the newer wish, and nothing is loaded after it."""
-            stops = self.transitions.stops
-            try:
-                token = self.transitions.hold(kind)
-            except BaseException:
-                self.transitions.abandon()
-                raise
-            if self.transitions.stops != stops:
-                self.transitions.abandon()
-                return
-            start(token)
+            """The still, then the clip under it. The still takes time and nothing waits for it, so the ticket says
+            what came meanwhile: after a newer wish (a Stop, any other play) nothing is loaded; after an end() the
+            clip loads without the blend."""
+            start(self.transitions.hold(kind, ticket, lit))
 
         if blend and isinstance(device, dict) and device.get("id") in CONTROLLERS:
             # A controller's actions come one after the other on one thread (MIDI, OSC, DMX, a Room scene): a pad
@@ -965,7 +978,7 @@ class Api:
         match = [s for s in self.settings.data["streams"] if s["id"] == sid]
         if not match:
             raise ApiError(404, "no such stream")
-        self._settle()
+        self._settle(newer=True)
         self._player_call(self.player.play, [match[0]["url"]], False, None, False, self.spawn)
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing()
@@ -1053,7 +1066,7 @@ class Api:
                 raise bad("value must be true or false")
             self._player_call(p.mute, body["value"])
         elif action == "stop":
-            self.transitions.end("Stop", stop=True)
+            self.transitions.end("Stop", newer=True)
             self._player_call(p.clear)
             self._stop_capture()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
@@ -1122,7 +1135,7 @@ class Api:
         tones = getattr(self.player, "TEST_TONES", {})
         if channel not in tones:
             raise bad("channel must be left, right or both")
-        self._settle()
+        self._settle(newer=True)
         self._player_call(self.player.play, [tones[channel]], False, None, False, self.spawn, "stop")
         self._started_playing()
         return {"test_tone": channel}
@@ -1347,11 +1360,11 @@ class Api:
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         if not on:
-            self.transitions.end("Stop", stop=True)
+            self.transitions.end("Stop", newer=True)
             self._player_call(self.player.clear)
             self._stop_capture()
             return {"test_pattern": False}
-        self._settle()
+        self._settle(newer=True)
         self._player_call(self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
         self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
         self._started_playing()
@@ -1371,7 +1384,7 @@ class Api:
 
     def stop_player(self, body, device, client):
         # The systemd unit (Restart=always) brings the player straight back.
-        self.transitions.end()
+        self.transitions.end("the player's restart", newer=True)
         self._player_call(self.player.ipc.request, "quit")
         self._stop_capture()
         return {"ok": True}
@@ -2015,7 +2028,7 @@ class Api:
                 w, h, fps = self.capture.prepare(spec.get("device"), mode)
             except capture_mod.CaptureError as e:
                 raise bad(str(e))
-            self._settle()
+            self._settle(newer=True)
             try:
                 self._player_call(self.player.play_pipe, self.capture.fifo, w, h, fps)
             except ApiError:

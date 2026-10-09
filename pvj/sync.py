@@ -452,6 +452,9 @@ class SyncManager:
 
             def stop(self):
                 try:
+                    ending = getattr(api, "transitions", None)
+                    if ending is not None:
+                        ending.end("Stop", newer=True)      # a clip of this box's own that is on its way loads nothing after it
                     api.player.clear()
                 except Exception:
                     pass

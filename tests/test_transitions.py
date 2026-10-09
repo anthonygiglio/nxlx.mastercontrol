@@ -743,10 +743,6 @@ class Settings(Base):
         self.assertEqual(S.default_settings()["mix"]["transition"], "dip")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Threads(ServerBase):
     """The findings of the review that are about threads, with real threads and the real clock."""
 
@@ -762,12 +758,37 @@ class Threads(ServerBase):
         self.gate, self.inside = threading.Event(), threading.Event()
         real = self.player.still
 
+        self.stuck = []
+
         def still(path):
             self.inside.set()
-            self.assertTrue(self.gate.wait(10), "the test never let the still go")
+            if not self.gate.wait(10):          # noted, not asserted: the code under test catches what a still raises
+                self.stuck.append(path)
             real(path)
         self.slow_still = still
+        self.addCleanup(lambda: self.assertEqual(self.stuck, [], "a test never let the still go"))
         self.addCleanup(self.gate.set)
+        self.held = []                          # threads the panel asked for and the test has not started yet
+
+    def hold_threads_back(self):
+        """From now on a thread that pvj/api.py starts is only noted; `release()` runs them, in the order given."""
+        import pvj.api as api_module
+        test = self
+
+        class Held:
+            def __init__(self, target=None, name=None, daemon=None, args=()):
+                self.target, self.args, self.name = target, args, name
+
+            def start(self):
+                test.held.append(self)
+        real = api_module.threading.Thread
+        api_module.threading.Thread = Held
+        self.addCleanup(setattr, api_module.threading, "Thread", real)
+
+    def release(self, order=None):
+        held, self.held = self.held, []
+        for i in (order if order is not None else range(len(held))):
+            held[i].target(*held[i].args)
 
     def background(self, fn):
         out = []
@@ -797,15 +818,13 @@ class Threads(ServerBase):
         first = self.tr.hold("crossfade")
         second = self.tr.hold("crossfade")
         self.assertTrue(first and second and first != second)
-        del self.player.levels[:]
+        workers = []
+        self.tr._thread = False                     # no clock in this test: who would step is noted, nobody steps
+        self.tr._work = lambda token, seconds, name: workers.append(token)
         self.tr.run(first, 0.3)                     # the first play gets to its run late: it must do nothing
         self.tr.run(second, 0.3)
-        self.assertLessEqual(sum(1 for t in self.threading.enumerate() if t.name == "transition"), 1)
-        self.settle()
-        steps = [v for v in self.player.levels if v is not None]
-        self.assertGreaterEqual(len(steps), 3)
-        self.assertEqual(steps, sorted(steps, reverse=True), "two workers stepped in turn: %s" % steps)
-        self.assertEqual(self.player.levels[-1], None)
+        self.assertEqual(workers, [second], "the first play's run started a worker on the second play's still")
+        self.tr.end()
 
     def test_two_plays_at_once_end_with_one_clean_transition(self):
         barrier = self.threading.Barrier(2)
@@ -895,3 +914,231 @@ class Threads(ServerBase):
         self.assertEqual(self.tr.given_up, "")
         self.assertLess(self.tr.last["still_ms"], 1000)
         self.tr.end()
+
+    # -- the second review: which wish is the newest --
+    def loaded(self):
+        return [os.path.basename(p["paths"][0]) for p in self.player.plays]
+
+    def test_a_stop_that_is_handled_before_the_controllers_thread_starts_is_seen_by_it(self):
+        # M2: the snapshot was taken on the new thread, so a Stop that came before the thread ran was not newer
+        from pvj.midi import MIDI_DEVICE
+        self.hold_threads_back()
+        self.assertEqual(self.api.play({"file": "a.mp4"}, MIDI_DEVICE, "midi"), {"playing": "a.mp4"})
+        self.assertEqual(len(self.held), 1)
+        self.api.control({"action": "stop"}, MIDI_DEVICE, "midi")
+        del self.player.calls[:]
+        self.release()
+        self.assertEqual(self.player.calls, [], "the clip's thread touched the player after the Stop")
+
+    def test_every_other_way_of_playing_during_a_still_is_the_newer_wish(self):
+        # M1: only Stop was counted; a preset, a stream, the test pattern, a tone or a sync client's clip started
+        # while a clip's still was taken was loaded over by that clip
+        self.settings.data["streams"] = [{"id": "bbbb0001", "name": "Camera", "url": "rtsp://192.168.1.60/live"}]
+        self.api.registry.set_enabled("inputs-srt", True)
+        for what, act in (("a preset", lambda: self.api.play({"preset": "startless"}, None, "t")),
+                          ("a stream", lambda: self.api.play({"stream": "bbbb0001"}, None, "t")),
+                          ("the test pattern", lambda: self.api.test_pattern({"on": True}, None, "t")),
+                          ("a tone", lambda: self.api.test_tone({"channel": "left"}, None, "t")),
+                          ("a sync client's clip", lambda: self.api.sync._local_player().load(os.path.join(self.media, "b.mov"), True)),
+                          ("another clip", lambda: self.api.play({"file": "b.mov"}, None, "other"))):
+            self.gate.clear(), self.inside.clear()
+            del self.player.calls[:], self.player.plays[:]
+            self.tr.given_up = ""
+            real, self.player.still = self.player.still, self.slow_still
+            t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+            self.assertTrue(self.inside.wait(5), what)
+            self.player.still = real                    # the newer play's own still, if it takes one, is not held
+            other = self.threading.Thread(target=act, daemon=True)
+            other.start()                               # "another clip" waits its turn behind the still
+            if what != "another clip":
+                other.join(5)
+                self.assertEqual(len(self.player.plays), 1, what)
+            theirs = list(self.player.plays)
+            self.gate.set()
+            t.join(5), other.join(5)
+            self.settle()
+            self.assertEqual(out, [{"playing": "a.mp4"}], what)
+            if what == "another clip":
+                self.assertEqual(self.loaded(), ["b.mov"], "the older clip loaded as well, or instead")
+            else:
+                self.assertEqual(self.player.plays, theirs, "%s was started while the clip's still was taken, and the clip loaded over it" % what)
+            self.assertFalse(self.player.props["pause"], what)
+
+    def test_a_generator_that_took_the_screen_during_a_still_keeps_it(self):
+        self.player.still = self.slow_still
+        t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+        self.assertTrue(self.inside.wait(5))
+        self.tr.end("a generator", newer=True)          # what pvj/shaders.py does under the player's lock
+        self.gate.set()
+        t.join(5)
+        self.assertEqual(self.loaded(), [])
+        self.assertNotIn("overlay", self.names())
+
+    def test_of_many_plays_from_a_controller_the_last_wins_and_one_still_is_taken(self):
+        # M3: one thread and one still each, in turn, and the last asked for need not be the last loaded
+        from pvj.midi import MIDI_DEVICE
+        for order in (None, [4, 3, 2, 1, 0], [2, 4, 0, 3, 1]):
+            self.hold_threads_back()
+            del self.player.calls[:], self.player.plays[:]
+            for name in ("a.mp4", "b.mov", "a.mp4", "a.mp4", "b.mov"):
+                self.api.play({"file": name}, MIDI_DEVICE, "midi")
+            self.assertEqual(len(self.held), 5)
+            self.tr._thread = False
+            self.tr._work = lambda token, seconds, name: None
+            self.release(order)
+            self.assertEqual(self.names().count("still"), 1, "a still for each of the plays that were overtaken")
+            self.assertEqual(self.names().count("pause"), 1)
+            self.assertEqual(self.loaded(), ["b.mov"], "the clip on the screen is not the last one asked for")
+            self.tr.end()
+
+    def test_a_flood_of_plays_on_real_threads_ends_with_the_last_one(self):
+        from pvj.midi import MIDI_DEVICE
+        names = ["a.mp4", "b.mov"] * 6 + ["a.mp4"]
+        self.player.still = self.slow_still             # the first play's still is in the player while the others come
+        for name in names:
+            self.api.play({"file": name}, MIDI_DEVICE, "midi")
+        self.assertTrue(self.inside.wait(5))
+        self.gate.set()
+        import time
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and any(t.name == "transition-play" for t in self.threading.enumerate()):
+            time.sleep(0.01)
+        self.settle()
+        self.assertEqual(self.loaded()[-1], "a.mp4")
+        self.assertLessEqual(self.names().count("still"), 2, "more stills than the one in flight and the last")
+        self.assertIsNone(self.tr.running)
+
+    def test_an_end_that_comes_while_a_play_waits_its_turn_takes_its_blend_and_keeps_its_brightness(self):
+        # M1: pad A, pad B, Fade out could end with a lit still over the fade
+        self.assertTrue(self.tr._holding.acquire(timeout=1))            # another play's still is being taken
+        t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
+        import time
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not self.tr._holding.locked():
+            time.sleep(0.01)
+        time.sleep(0.1)
+        self.assertEqual(out, [])
+        self.api.blackout({"on": True}, None, "t")
+        del self.player.calls[:]
+        self.tr._holding.release()
+        t.join(5)
+        self.assertEqual(out, [{"playing": "a.mp4"}])
+        self.assertEqual(self.names(), ["play"], "no still, no freeze, the clip under the dark, and its brightness left alone")
+
+    def test_the_screen_is_looked_at_again_when_the_still_would_be_laid(self):
+        asked = []
+        self.assertEqual(self.tr.hold("crossfade", self.tr.claim(), lambda: asked.append(1) or False), 0)
+        self.assertEqual(asked, [1])
+        self.assertIn("still", self.names())
+        self.assertNotIn("overlay", self.names())
+        self.assertFalse(self.player.props["pause"])
+
+    def test_a_play_whose_turn_comes_after_the_box_gave_up_takes_no_still(self):
+        self.assertTrue(self.tr._holding.acquire(timeout=1))
+        t, out = self.background(lambda: self.tr.hold("crossfade", self.tr.claim()))
+        import time
+        time.sleep(0.1)
+        self.tr.given_up = "the still took 3.0 seconds"                 # the still before this one said so
+        self.tr._holding.release()
+        t.join(5)
+        self.assertEqual((out, self.player.calls), ([0], []))
+
+    def test_abandoning_an_older_hold_leaves_a_newer_ones_still(self):
+        first = self.tr.hold("crossfade")
+        second = self.tr.hold("crossfade")
+        self.tr.abandon(first)
+        self.assertEqual(self.tr.running, "crossfade", "the newer play's still was taken off by the older one")
+        self.assertNotEqual(self.player.levels[-1], None)
+        self.tr.abandon(second)
+        self.assertIsNone(self.tr.running)
+        self.assertEqual(self.player.levels[-1], None)
+
+    def test_the_thaw_belongs_to_the_hold_that_froze(self):
+        token = self.tr.hold("crossfade")
+        self.assertTrue(self.player.props["pause"])
+        self.tr.abandon(token + 100)                                    # somebody else's
+        self.assertTrue(self.player.props["pause"])
+        self.tr.abandon(token)
+        self.assertFalse(self.player.props["pause"])
+
+    def test_a_player_that_goes_away_during_the_still_is_no_reason_to_give_up(self):
+        for message in ("player is not running", "ipc error: [Errno 32] Broken pipe"):
+            def still(path, message=message):
+                raise PlayerError(message)
+            self.player.still = still
+            self.assertEqual(self.tr.hold("crossfade"), 0)
+            self.assertEqual(self.tr.given_up, "", message)
+
+    def test_a_crossfade_step_scales_the_still_once(self):
+        # M4: the step was worked out twice, once to see whether there was one and once to draw it
+        count = []
+        real = T.faded
+        T.faded = lambda pixels, level: count.append(level) or real(pixels, level)
+        self.addCleanup(setattr, T, "faded", real)
+        token = self.tr.hold("crossfade")
+        del count[:]
+        for progress in (0.2, 0.5, 0.9):
+            self.assertEqual(self.tr._draw(token, progress), "drawn")
+        self.assertEqual(len(count), 3)
+        self.tr.end()
+
+    def test_a_command_the_player_did_not_answer_is_followed_by_one_more_removal(self):
+        self.tr._thread = False
+        token = self.tr.hold("crossfade")
+        self.player.fail.add("overlay")
+        self.tr._clock, self.tr._sleep = (lambda t=[0.0]: t.__setitem__(0, t[0] + 0.01) or t[0]), (lambda s: None)
+        self.tr.run(token, 0.2)
+        self.assertEqual(len(self.tr.late), 1)
+        del self.player.calls[:]
+        self.tr.late.pop()()
+        self.assertEqual(self.player.calls, [("overlay_remove", T.OVERLAY_ID)])
+        # but not when a newer still is up by then
+        self.player.fail.clear()
+        self.tr.given_up = ""
+        self.tr._once_more()
+        newer = self.tr.hold("crossfade")
+        del self.player.calls[:]
+        self.tr.late.pop()()
+        self.assertEqual(self.player.calls, [])
+        self.tr.abandon(newer)
+
+
+class OddSizes(unittest.TestCase):
+    """A wipe and a slide on a screen of 41 x 23: every column and every row, to the last."""
+
+    def test_every_step_is_inside_the_screen_and_the_file_and_the_last_one_is_one_column_or_row(self):
+        w, h = 41, 23
+        size = w * h * 4 + w * 4                                        # the file: the picture and one row more
+        for name in T.WIPES + T.SLIDES:
+            blend = T.BLENDS[name]()
+            across = w if blend.cut in ("left", "right") else h
+            seen = []
+            for n in range(across + 1):
+                part = blend.step(w, h, None, n / float(across))
+                if n == across:
+                    self.assertIsNone(part, name)
+                    break
+                x, y, offset, pw, ph = part
+                self.assertTrue(pw >= 1 and ph >= 1 and 0 <= x and x + pw <= w and 0 <= y and y + ph <= h, "%s at %d: %s" % (name, n, part))
+                self.assertLessEqual(offset + (ph - 1) * w * 4 + pw * 4, w * h * 4, "%s at %d reads past the picture" % (name, n))
+                self.assertLessEqual(offset + ph * w * 4, size, "%s at %d: the player maps past the file" % (name, n))
+                seen.append(pw if blend.cut in ("left", "right") else ph)
+            self.assertEqual(seen, list(range(across, 0, -1)), "%s does not go column by column (or row by row) to the last" % name)
+
+
+class OddRun(Base):
+    def test_a_wipe_and_a_slide_run_whole_on_a_screen_of_41_by_23(self):
+        for name in ("wipe-from-left", "wipe-from-bottom", "slide-right", "slide-up"):
+            self.settings.data["mix"] = T.stored(name, 2.0)
+            self.player.size = (41, 23)
+            del self.player.parts[:]
+            self.now[0] = 50.0
+            self.play()
+            self.assertEqual(self.tr.last["ended"], "done", name)
+            smallest = min(p[3] * p[4] for p in self.player.parts)
+            self.assertLessEqual(smallest, 2 * max(41, 23), "%s never came near its last column or row: %s" % (name, self.player.parts[-1]))
+            self.assertEqual(self.left(), [], name)
+
+
+if __name__ == "__main__":
+    unittest.main()
