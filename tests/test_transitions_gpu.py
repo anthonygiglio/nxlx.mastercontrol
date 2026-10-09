@@ -27,6 +27,8 @@ from tests.test_transitions import png
 FLAT = "av://lavfi:color=c=0x2060C0:size=320x180:rate=25"
 BLUE = (28, 95, 195)            # what the player draws for it, give or take the conversion
 PICTURE = (20, 200, 220)       # the still picture that comes: far from the middle of the test clip, which is about (187, 121, 75)
+YELLOW_CLIP = "av://lavfi:color=c=0xF0E010:size=320x180:rate=25"
+YELLOW = (240, 224, 16)         # for the wipes and slides: unlike every part of the test clip (its right half is near the blue)
 MIRROR = "//!HOOK OUTPUT\n//!BIND HOOKED\n//!DESC mirror\nvec4 hook() { return HOOKED_tex(vec2(1.0 - HOOKED_pos.x, HOOKED_pos.y)); }\n"
 
 
@@ -307,7 +309,7 @@ class CrossCase(FxCase):
         self.assertTrue(token, "%s: %s %s" % (name, self.tr.last, self.tr.given_up))
         whole = differ(self.shot(), old)
         self.assertLessEqual(whole[0], 3, "%s: the still is not the screen: %s" % (name, whole))
-        self.under()
+        self.under(YELLOW_CLIP)
         self.assertEqual(self.tr._draw(token, 0.5), "drawn", name)
         time.sleep(0.15)
         rows = self.shot()
@@ -316,16 +318,16 @@ class CrossCase(FxCase):
             x, y = at[where]
             return of[y][x]
         print("%s, ES %s: half way: %s is %s (the new clip is about %s), %s is %s (the old picture had %s at %s)"
-              % (name, self.ES, new, px(new), BLUE, old_at, px(old_at), px(old_from, old), old_from))
-        self.assertLessEqual(far(px(new), BLUE), 30, "%s: at its half the %s of the screen is not the new clip" % (name, new))
+              % (name, self.ES, new, px(new), YELLOW, old_at, px(old_at), px(old_from, old), old_from))
+        self.assertLessEqual(far(px(new), YELLOW), 30, "%s: at its half the %s of the screen is not the new clip" % (name, new))
         self.assertLessEqual(far(px(old_at), px(old_from, old)), 18, "%s: at its half the %s of the screen is not the old picture's %s" % (name, old_at, old_from))
-        self.assertGreater(far(px(old_at), BLUE), 60)
+        self.assertGreater(far(px(old_at), YELLOW), 60)
         self.tr.run(token, 0.5)
         self.watch()
         self.assertEqual((self.tr.last["ended"], self.tr.given_up), ("done", ""), name)
         self.assertGreaterEqual(self.tr.last["steps"], 4, name)
         print("%s, ES %s: %d steps in %.2f s, %d dropped" % (name, self.ES, self.tr.last["steps"], self.tr.last["seconds"], self.tr.last["dropped"]))
-        self.assertTrue(all(far(p, BLUE) <= 30 for p in grid(self.still(flat=True))), "%s: the new clip is not alone at the end" % name)
+        self.assertTrue(all(far(p, YELLOW) <= 36 for p in grid(self.still(flat=True))), "%s: the new clip is not alone at the end" % name)
         self.nothing_left()
 
     def test_a_wipe_at_its_half_shows_the_new_clip_on_the_side_it_comes_from(self):

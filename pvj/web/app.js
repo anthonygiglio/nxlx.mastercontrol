@@ -537,12 +537,11 @@
         h('div', { class: 'k', text: 'Transition between clips' }),
         choice([{ label: 'Cut', value: 'cut' }, { label: 'Dip to black', value: 'dip' }, { label: 'Crossfade', value: 'crossfade' }],
           m.transition, function (v) { setMix({ transition: v }); }),
-        choice([{ label: 'Wipe from left', value: 'wipe-from-left' }, { label: 'Wipe from right', value: 'wipe-from-right' },
-          { label: 'Wipe from top', value: 'wipe-from-top' }, { label: 'Wipe from bottom', value: 'wipe-from-bottom' }],
-          m.transition, function (v) { setMix({ transition: v }); }),
-        choice([{ label: 'Slide off left', value: 'slide-left' }, { label: 'Slide off right', value: 'slide-right' },
-          { label: 'Slide off up', value: 'slide-up' }, { label: 'Slide off down', value: 'slide-down' }],
-          m.transition, function (v) { setMix({ transition: v }); }),
+        // two to a row: four of these names do not fit a phone's width (the width sweep, D64)
+        [[['Wipe from left', 'wipe-from-left'], ['Wipe from right', 'wipe-from-right']], [['Wipe from top', 'wipe-from-top'], ['Wipe from bottom', 'wipe-from-bottom']],
+          [['Slide off left', 'slide-left'], ['Slide off right', 'slide-right']], [['Slide off up', 'slide-up'], ['Slide off down', 'slide-down']]].map(function (pair) {
+          return choice(pair.map(function (o) { return { label: o[0], value: o[1] }; }), m.transition, function (v) { setMix({ transition: v }); });
+        }),
         h('div', { class: 'k', text: 'Duration' }),
         choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); })),
       h('div', { class: 'card' },
