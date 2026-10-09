@@ -882,7 +882,7 @@ class Api:
         claim = getattr(self.player, "claim_screen", None)
         if claim:            # with a dip the clip loads later; a shader rotation must know now that the screen is taken
             claim()
-        faded_out = self.fader.label == "out"       # the operator's Fade out: the screen is dark or going dark
+        faded_out = getattr(self.fader, "label", None) == "out"     # the operator's Fade out: the screen is dark or going dark
         self.fader.cancel()  # a fade still running from an earlier action must not darken the new clip
 
         kind = transitions_mod.named(transition)
