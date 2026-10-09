@@ -842,6 +842,32 @@ def shader_errors(lines):
     return "; ".join(said[:4])[:500] or "the GPU refused the shader"
 
 
+_DUMP = re.compile(r"shader source:\s*$")
+_NAMED = re.compile(r"^\[\s*\d+\] // (nxlx (?:shader|effect) \d+ \d+)\s*$")
+
+
+def about(lines, desc):
+    """Of the player's log, what is not about another shader than `desc`. A generator and an effect can be in the
+    player together (D74), each looked at by its own engine under its own lock, and both listen to the one log: a
+    refused generator of a Vibes step must not be taken for a refusal of the effect whose text went to the player
+    in the same moment, nor the other way round. The player prints a refused shader's whole text before the
+    compiler's log, and every text of ours carries its name in a comment (see translate): a stretch of the log from
+    one "shader source:" to the next that names another shader is left out. A stretch that names none (a hand
+    written hook, a player that prints no text) is kept, as before."""
+    out, part, owner = [], [], None
+    for row in lines:
+        text = str(row[2])
+        if _DUMP.search(text):
+            if owner in (None, desc):
+                out += part
+            part, owner = [], None
+        if owner is None:
+            m = _NAMED.match(text.strip())
+            owner = m.group(1) if m else None
+        part.append(row)
+    return out + (part if owner in (None, desc) else [])
+
+
 # ---- the engine ----------------------------------------------------------------------------------------------------------
 def default_config():
     return {"dwell": DWELL_DEFAULT, "vary": True, "height": DEFAULT_HEIGHT, "disabled": []}
@@ -1162,7 +1188,7 @@ class Engine:
         deadline = self._clock() + VERIFY_SECONDS
         while self._clock() < deadline and not drawn:
             lines += tap.drain(0.1)
-            if shader_errors(lines):
+            if shader_errors(about(lines, desc)):
                 break
             named = re.compile(re.escape(desc) + r"(?![0-9])")
             mine = [x for x in self._passes() if named.search(str(x.get("desc", "")))]
@@ -1174,7 +1200,7 @@ class Engine:
                 if self._clock() - listed >= 1.0:
                     break
         lines += tap.drain(0.2)
-        message = shader_errors(lines)
+        message = shader_errors(about(lines, desc))
         if message:
             return "refused", message
         return ("ok" if drawn else "unknown"), ""
@@ -1245,9 +1271,7 @@ class Engine:
                         new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
                         if new is not None and ending is not None:
                             ending.end("a generator", newer=True)
-                    fx = getattr(self.api, "effects", None)
-                    if new is not None and fx is not None and fx is not self and fx.on is not None:
-                        fx.sweep()                  # the generator took an effect off the screen: its text goes too
+                    # An effect that is on stays on, over the generator (D74): nothing of it is touched here.
                 except PlayerError as e:
                     self._cleanup({before["path"]} if before else set())
                     raise ApiError(503, str(e))

@@ -1060,11 +1060,18 @@ class LiveEngine(S.Engine):
                 self._save(cfg)
 
     def watch(self):
-        """What the guard sees for the shader on screen, or None while it is switched off or nothing is on."""
+        """What the guard sees for the shader on screen, or None while it is switched off or nothing is on. With
+        "effect": the effect that is on over the shader (D74). The frames the player drops are then the pair's, and
+        nobody can say whose: Vibes marks no shader heavy and does not move on for it while that key is there (the
+        effect's own guard says "too heavy" in its card), so a mark stays what it was, the word about a shader
+        drawn by itself. From memory, no question to the player (effects.Effects._seen)."""
         if not self.config().get("guard", True):
             return None
         on = self.on_screen()
-        return self.guard.sample(on) if on else self.guard.sample(None)
+        seen = self.guard.sample(on) if on else self.guard.sample(None)
+        fx = getattr(self.api, "effects", None)
+        over = fx._seen() if (on and fx is not None and fx is not self) else None
+        return dict(seen, effect=over["id"]) if over else seen
 
     # -- changing what is on --
     def frames(self, carrier):
@@ -1391,7 +1398,8 @@ class LiveEngine(S.Engine):
             base["playing"].update(controls=dict(on["controls"]), preset=on.get("preset"), pending=bool(mine))
             seen = self.watch()
             if seen:
-                base["playing"].update(drops_per_second=seen["drops_per_second"], load=seen["state"])
+                # "effect": the effect that is on over it, or None; the load is then the pair's (see watch)
+                base["playing"].update(drops_per_second=seen["drops_per_second"], load=seen["state"], effect=seen.get("effect"))
         seen = self.guard.verdict if on else {}
         active = self.rotation(None, cfg, base["shaders"]) if self.enabled() else None
         base["config"].update(guard=cfg.get("guard", True), clock=cfg.get("clock", S.CLOCKS[0]), faster=cfg.get("faster", False))

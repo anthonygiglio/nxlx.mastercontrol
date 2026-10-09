@@ -670,6 +670,7 @@
       var parts = [LOAD[p.load] || ''];
       if (typeof p.drops_per_second === 'number' && p.drops_per_second > 0) parts.push(round(p.drops_per_second) + ' dropped frames a second.');
       if (p.pass_ms) parts.push(p.pass_ms + ' ms a frame.');
+      if (p.effect) parts.push('An effect is on over it: Vibes does not judge the shader meanwhile.');
       return parts.filter(Boolean).join(' ');
     }
     function patchLoad(d) {

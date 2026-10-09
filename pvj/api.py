@@ -566,6 +566,9 @@ class Api:
         if self.shaders.is_carrier(path):                 # a shader source: the blank picture under it is not a clip
             showing = self.shaders.on_screen()
             status["path"], status["shader"], status["vibes"] = None, (showing["id"][:-3] if showing else ""), self.vibes.running
+            effect = self.effects.current()               # an effect over the shader (D74)
+            if effect is not None:
+                status["effect"] = effect["id"][:-3]
             return status
         effect = self.effects.current()                   # an effect over the picture: its name, for the Live screen
         if effect is not None:
@@ -1241,8 +1244,8 @@ class Api:
             self._stop_screen()
             self._stop_capture()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
-            if self.effects.on is not None:     # a Stop takes the effect off (the player did); its text goes too. Only
-                self.effects.sweep()            # then: a Stop with no effect on does nothing more than it did before
+            if self.effects.on is not None:     # a Stop takes the effect off (the player did), also over a shader; its
+                self.effects.sweep()            # text goes too. A Stop with no effect on does nothing more than before
         elif action == "seek_to":
             self._player_call(p.seek_to, number(body, "value", 0, 24 * 3600))
         elif action == "shuffle":

@@ -30,11 +30,12 @@
   var LOAD = { ok: 'Running smoothly', tight: 'Close to the limit', heavy: 'Too heavy with this clip' };
   var DETAIL = { auto: 'Automatic', full: 'Full', 540: '540 lines', 720: '720 lines' };
   // What to do about an effect that is too heavy: a lower Effect detail while there is one that would make the
-  // filter's picture smaller, else another effect or a smaller clip.
+  // filter's picture smaller, else another effect or a smaller clip. Over a generator shader the picture is the
+  // shader's, and what makes it smaller is the Picture detail of Shaders and Vibes.
   function heavyWords(on) {
-    var w = on.working;
-    if (w && w.lower) return 'Too heavy with this clip: lower Effect detail to ' + w.lower + ' lines, or try another effect';
-    return 'Too heavy with this clip, also at the lowest Effect detail: try another effect or a smaller clip';
+    var w = on.working, shader = w && w.under === 'shader', lead = 'Too heavy with this ' + (shader ? 'shader' : 'clip');
+    if (w && w.lower) return lead + ': lower Effect detail to ' + w.lower + ' lines, or try another effect';
+    return lead + ', also at the lowest Effect detail: try another effect or a ' + (shader ? 'lower Picture detail' : 'smaller clip');
   }
   // One plain line: the size the effect works at for the clip that plays, or what the setting would do.
   function workingWords(d) {
@@ -47,9 +48,10 @@
         (det.auto.other < det.auto.lines ? ' (' + det.auto.other + ' for the heaviest effects and for ones you add)' : '') + '. A smaller clip is left as it is.';
     }
     var lead = w.auto ? 'Automatic: working at ' : 'Working at ';
-    if (!w.clip) return lead + (w.lines ? w.lines + ' lines at most.' : 'the clip\'s full size.');
-    if (w.scaled) return lead + Math.min(w.width, w.height) + ' lines for this ' + w.clip.lines + 'p clip.';
-    return lead + 'full size for this ' + w.clip.lines + 'p clip' + (w.lines ? ' (it is within ' + w.lines + ' lines).' : '.');
+    var shader = w.under === 'shader', what = w.clip ? (shader ? w.clip.lines + ' line shader' : w.clip.lines + 'p clip') : '';
+    if (!w.clip) return lead + (w.lines ? w.lines + ' lines at most.' : (shader ? 'the shader\'s full size.' : 'the clip\'s full size.'));
+    if (w.scaled) return lead + Math.min(w.width, w.height) + ' lines for this ' + what + '.';
+    return lead + 'full size for this ' + what + (w.lines ? ' (it is within ' + w.lines + ' lines).' : '.');
   }
   var WHERE = { path: '/api/effects/values', gone: 'Not sent: that effect is not on any more.' };
 
@@ -327,7 +329,7 @@
           [prev, tog, next].forEach(function (t) { el.appendChild(t.box); });
         }
       }
-      el.appendChild(h('div', { class: 'hint', id: 'fxrule', text: 'One effect at a time. It stays on when the clip changes; Stop, a generator shader and Vibes take it off.' }));
+      el.appendChild(h('div', { class: 'hint', id: 'fxrule', text: 'One effect at a time. It stays on when the clip changes, and over a shader and Vibes; Stop takes it off.' }));
     }
     if (on) {
       var lb = document.getElementById('fxload'), w = document.getElementById('fxloadwords'), p = document.getElementById('fxpending');

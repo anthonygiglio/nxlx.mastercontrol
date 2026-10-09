@@ -1,11 +1,18 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Effects: ISF filter shaders applied over whatever is playing (a clip, a stream, a live input).
+"""Effects: ISF filter shaders applied over whatever is playing (a clip, a stream, a live input, a generator shader).
 
 An effect is a third kind beside a clip and a generator shader. It never takes the screen: it is put on OVER the
-picture that plays and changes it, and it stays on when the clip changes, until it is taken off, Stop is pressed, a
-generator shader (or Vibes) takes the screen, the module goes off or the player restarts. One effect at a time in
-this first version; a chain of several is a later step.
+picture that plays and changes it, and it stays on when what plays changes (another clip, a generator shader, the
+next shader of a Vibes rotation), until it is taken off, the screen is cleared (Stop, Vibes stopped), the module
+goes off or the player restarts. One effect at a time in this first version; a chain of several is a later step.
+
+Over a generator shader (D74; settled on a real mpv in CI, tests/test_pair_gpu.py): the generator hooks NATIVE too,
+and the two run in the order of the player's shader list, the generator first, so the effect filters what the
+generator drew. The generator's carrier is RGB, so of the effect's two hooks the one for RGB runs. The picture the
+effect meets has the generator's drawing size (Picture detail), not the carrier's few pixels: the size lines below
+are relative to it, so Effect detail caps the effect at its lines only where the generator draws more. The player's
+own word about the picture is still the carrier's, so the size the panel shows is taken from the generators' record.
 
 Where it sits in the player (settled by experiment on a real mpv in CI, tests/test_effects_gpu.py):
 * A filter has to work on RGB, and it has to sit before the brightness that the panel's opacity, fades and Blackout
@@ -69,12 +76,11 @@ CONTROLLERS = api_controllers
 # Kr and Kb of the colour matrices mpv names in video-params/colormatrix. Anything else is treated as BT.709.
 MATRICES = {"bt.601": (0.299, 0.114), "bt.709": (0.2126, 0.0722), "bt.2020-ncl": (0.2627, 0.0593),
             "bt.2020-cl": (0.2627, 0.0593), "smpte-240m": (0.212, 0.087)}
-ENDED = {"stop": "Stop was pressed", "generator": "a generator shader took the screen", "restart": "the player was restarted",
-         "module": "the module was switched off", "panel": "the panel was restarted", "format": "a picture came that cannot take an effect"}
-
-
-GENERATOR_HAS_IT = ("A generator shader has the screen. An effect changes a picture that is playing, and a generator is drawn "
-                    "from nothing, so there is no picture to change. Play a clip, a stream or a live input first.")
+ENDED = {"stop": "Stop was pressed", "cleared": "the shader under it was taken off the screen", "restart": "the player was restarted",
+         "module": "the module was switched off", "panel": "the panel was restarted", "format": "a picture came that cannot take an effect",
+         "pair": "the GPU refused it over the shader that came on"}
+SHADER = "shader"               # what `under` says while a generator shader is the picture under the effect
+STAYS = "The shader stays on the screen."
 
 
 # Measured on a real board: a Raspberry Pi 4 (mpv 0.40, desktop OpenGL 3.1 on V3D, a 2560 x 1440 screen at 75 Hz), every
@@ -879,6 +885,7 @@ class Effects(S.Engine):
         self.unfit = False                          # the picture that plays cannot take an effect (see UNFIT_FORMATS)
         self.estimated = False                      # its frame rate is the player's estimate (a stream, a live input)
         self.size = None                            # (width, height) of the playing picture as it is stored, when the player says
+        self.under = None                           # SHADER while a generator shader is the picture (then `size` is its drawing size)
         self._waiting = None                        # the `error` that says an effect could not go on for want of a picture
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
@@ -943,10 +950,12 @@ class Effects(S.Engine):
         whether Automatic chose it, "clip": {"width", "height", "lines"} or None when the player did not say (the
         clip as it is stored; "lines" is its shorter side), "width", "height": what the filter draws (for a clip shown
         turned by a quarter, the two the other way round), "scaled": whether that is smaller than the clip, "lower":
-        the next Effect detail down that would make it smaller still, or None}."""
+        the next Effect detail down that would make it smaller still, or None, "under": "shader" while the picture is
+        a generator shader's (then "clip" is the generator's drawing, and its lines are the box's Picture detail),
+        else "clip"}."""
         work, size = rec.get("work") or {"lines": None}, rec.get("clip")
         out = {"lines": work["lines"], "auto": self.detail(cfg) == "auto" and not rec["controls"].get("half"),
-               "clip": None, "width": None, "height": None, "scaled": False, "lower": None}
+               "clip": None, "width": None, "height": None, "scaled": False, "lower": None, "under": rec.get("under") or "clip"}
         if size:
             w, h = work_size(size[0], size[1], work["lines"])
             at = min(w, h)
@@ -1132,7 +1141,7 @@ class Effects(S.Engine):
         """What the player says of the picture that plays, as an effect's text needs it, or None when nothing with a
         picture is playing or the picture is one the hooks cannot take (`self.unfit` says which)."""
         self.unfit = self.estimated = False
-        self.size = None
+        self.size = self.under = None
         try:
             ipc = self.api.player.ipc
             params = ipc.request("get_property", "video-params")
@@ -1144,6 +1153,17 @@ class Effects(S.Engine):
         w, h = params.get("w"), params.get("h")       # as it is stored; the arithmetic of the cap is the same turned
         if all(isinstance(n, int) and not isinstance(n, bool) and 0 < n <= 16384 for n in (w, h)):
             self.size = (w, h)
+        try:
+            carrier = S.is_carrier(ipc.request("get_property", "path"))
+        except Exception:
+            carrier = False
+        if carrier:
+            # A generator shader is the picture: what the effect meets is the generator's drawing, not the carrier
+            # the player speaks of (64 x 36 in CI). Its size is in the generators' record, read without their lock
+            # (see Engine.on_screen); with no record (black after a refused generator) no size is said.
+            self.under, shown = SHADER, self._live().playing
+            size = shown.get("size") if shown and shown.get("epoch") == getattr(self.api.player, "source_epoch", None) else None
+            self.size = (int(size[0]), int(size[1])) if size else None
         try:                        # what the output was given, after the player's own video filters, if it says
             out = ipc.request("get_property", "video-out-params")
             params = out if isinstance(out, dict) and out.get("colormatrix") else params
@@ -1173,14 +1193,6 @@ class Effects(S.Engine):
             return None
         return rec
 
-    def _blocked(self):
-        """Why a controller's wish for an effect cannot even be noted, or None: what can be said without asking the
-        player. Whether there is a picture is found out by the worker, which then says so in `error`."""
-        vibes = getattr(self.api, "vibes", None)
-        if getattr(self.api.player, "source_shader", None) or (vibes is not None and vibes.running):
-            return GENERATOR_HAS_IT
-        return None
-
     def _ask(self, ask):
         """For Next, Previous, the one button and a preset of another effect, before the wish is noted. A panel
         (`ask`) is told now, with a 409, when no effect could go on: it used to hear "ok" and then nothing happened.
@@ -1199,19 +1211,15 @@ class Effects(S.Engine):
         """(True, None), or (False, why an effect cannot be put on now, in plain words)."""
         if not self.enabled():
             return False, "The Shaders and Vibes module is off."
-        player = self.api.player
-        vibes = getattr(self.api, "vibes", None)
-        if getattr(player, "source_shader", None) or self._live().on_screen() is not None or (vibes is not None and vibes.running):
-            return False, GENERATOR_HAS_IT
         if self.picture() is None:
             if self.unfit:
                 return False, UNFIT + " (it has no colour planes the filter could read). Play another clip."
-            return False, NO_PICTURE + ". Play a clip, a stream or a live input, then put an effect on it."
+            return False, NO_PICTURE + ". Play a clip, a stream, a live input or a shader, then put an effect on it."
         return True, None
 
     def current(self):
-        """The effect that is on now, or None. The player is asked: Stop, a generator shader and a restart of the
-        player each take the effect off there, and the record here follows."""
+        """The effect that is on now, or None. The player is asked: Stop, a shader taken off the screen and a restart
+        of the player each take the effect off there, and the record here follows."""
         rec = self.on
         if rec is None:
             return None
@@ -1273,10 +1281,13 @@ class Effects(S.Engine):
         return translate(parsed, dict(state["values"], **state.get("held", {})), state["controls"], state["picture"], desc, lines=work.get("lines"))
 
     def _key(self, parsed, digest, state):
-        """What the GPU's word about a text is remembered under: the file, the shape of its values, the working size
-        and whether it is drawn at all (at amount 0 the player leaves the hook out, and has then looked at nothing)."""
+        """What the GPU's word about a text is remembered under: the file, the shape of its values, the working size,
+        whether a generator shader is under it (then the text's other hook runs, the one for RGB: a text the GPU took
+        over a clip has not been looked at as the pair, and a pair it refused is not a refusal over a clip) and, last,
+        whether it is drawn at all (at amount 0 the player leaves the hook out, and has then looked at nothing)."""
         work = state.get("work") or {}
-        return (digest, S.shape_of(parsed, dict(state["values"], **state.get("held", {}))), work.get("lines"), state["controls"]["amount"] > 0)
+        return (digest, S.shape_of(parsed, dict(state["values"], **state.get("held", {}))), work.get("lines"), state.get("under") == SHADER,
+                state["controls"]["amount"] > 0)
 
     def _now(self):
         return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1295,7 +1306,8 @@ class Effects(S.Engine):
         uses the preset called default, else the file's defaults. With `serial` and `epoch` (the worker's call),
         only if no effect went on or off and nothing was played or stopped since they were handed out; None is
         returned then. Returns {"ok": True, "id"}; raises 409 when there is no picture to put it on, 422 when the
-        file cannot be translated or the GPU refuses it (the effect before it stays on, else none)."""
+        file cannot be translated or the GPU refuses it (the effect before it stays on, else none; a generator shader
+        under it stays on the screen either way, and a pair the GPU refused is not sent to it again: see _key)."""
         self._need()
         path, _ = self._path(sid)
         with self._lock:
@@ -1316,12 +1328,18 @@ class Effects(S.Engine):
                          "held": {n: True for n, v in start.items() if n in events and v},
                          "controls": self.limit(parsed, L.clean_fx_controls(controls, stored)),
                          "picture": self.picture() or clean_picture()}
-                state.update(clip=self.size, work=self.work(sid, state["controls"], cfg))
+                state.update(clip=self.size, under=self.under, work=self.work(sid, state["controls"], cfg))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
                 key = self._key(parsed, digest, state)
             except ShaderError as e:
                 raise ApiError(422, "%s: %s" % (sid, e))
+            over = state["under"] == SHADER
+            if over and key in self._bad:
+                # The GPU refused this effect over a shader before: it is not sent again (each look of the GPU at a
+                # text it refuses flashes the screen), until its file or its values are others.
+                self.error = {"id": sid, "message": self._bad[key], "at": self._now()}
+                raise ApiError(422, "the GPU refused %s over a shader before (%s); it was not sent again. %s" % (sid, self._bad[key], STAYS))
             player = self.api.player
             before = self.current()
             try:
@@ -1372,9 +1390,12 @@ class Effects(S.Engine):
                 if len(self._refusals) > 4 * S.MAX_UPLOADS:
                     self._refusals.clear()
                 self._refusals[digest] = message
-                self.log("pvj-web: effect %s refused by the player: %s" % (sid, message))
-                raise ApiError(422, "the player refused %s: %s. %s" % (
-                    sid, message, "The effect before it is back on." if self.on else "No effect is on."))
+                if over:
+                    self._remember_bad(key, message)
+                self.log("pvj-web: effect %s refused by the player%s: %s" % (sid, " over a shader" if over else "", message))
+                raise ApiError(422, "the player refused %s%s: %s. %s%s" % (
+                    sid, " over the shader" if over else "", message, "The effect before it is back on." if self.on else "No effect is on.",
+                    " " + STAYS if over else ""))
             if verdict == "ok":
                 if len(self._checked) > 2048:
                     self._checked.clear()
@@ -1382,7 +1403,7 @@ class Effects(S.Engine):
             self._refusals.pop(digest, None)
             self.error = None                           # an effect is on: whatever went wrong before it is over
             self.on = {"id": sid, "values": state["values"], "held": state["held"], "controls": state["controls"], "picture": state["picture"],
-                       "clip": state["clip"], "work": state["work"],
+                       "clip": state["clip"], "work": state["work"], "under": state["under"],
                        "path": out, "desc": desc, "epoch": new, "digest": digest, "preset": name,
                        "checked": True if (verdict == "ok" or key in self._checked) else None}
             self.recent, self.last = sid, None
@@ -1447,10 +1468,11 @@ class Effects(S.Engine):
                          "controls": self.limit(parsed, dict(p["controls"], **job["controls"])),
                          "picture": seen or p["picture"]}
                 state["clip"] = (self.size or p.get("clip")) if seen else p.get("clip")
+                state["under"] = self.under if seen else p.get("under")
                 state["work"] = self.work(p["id"], state["controls"])
                 if look:
                     self.changer.keep()
-                    self.guard.sample(p)
+                    self.guard.sample(self._guarded(p))
                     # a frame rate that only wobbles, or that no line of this filter uses, is no reason for a new text
                     steady = steady_picture(state["picture"], p["picture"], parsed.get("clock"), self.estimated)
                     if steady == p["picture"] and state["controls"] == p["controls"] and state["work"] == p.get("work"):
@@ -1460,8 +1482,8 @@ class Effects(S.Engine):
                         known = state["picture"]
                         if self.estimated and abs(known["fps"] - p["picture"]["fps"]) <= FPS_SAME * p["picture"]["fps"]:
                             known = p["picture"]
-                        if (known, state["clip"]) != (p["picture"], p.get("clip")) and self.on is p:
-                            self.on = dict(p, picture=known, clip=state["clip"])
+                        if (known, state["clip"], state["under"]) != (p["picture"], p.get("clip"), p.get("under")) and self.on is p:
+                            self.on = dict(p, picture=known, clip=state["clip"], under=state["under"])
                         return bool(p.get("held"))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
@@ -1469,8 +1491,11 @@ class Effects(S.Engine):
             except (ShaderError, ApiError) as e:
                 self.error = {"id": p["id"], "message": str(getattr(e, "message", e)), "at": self._now()}
                 return False
+            met = state["under"] == SHADER and p.get("under") != SHADER      # the text on screen was not made for a shader under it
             if key in self._bad:
                 self.error = {"id": p["id"], "message": self._bad[key], "at": self._now()}
+                if met:
+                    self._pair_refused(p)
                 return False
             player = self.api.player
             try:
@@ -1497,15 +1522,20 @@ class Effects(S.Engine):
                 if tap:
                     tap.close()
             if verdict == "refused":
+                self.error = {"id": p["id"], "message": message, "at": self._now()}
+                self._remember_bad(key, message)
+                if met:
+                    # A generator shader came under an effect that was on over something else, and the GPU refuses
+                    # the effect over it. There is no text to go back to that is known to work over a shader, so the
+                    # effect comes off and the shader stays.
+                    self._pair_refused(p)
+                    self.log("pvj-web: effect %s refused over the shader that came on: %s" % (p["id"], message))
+                    return False
                 try:
                     player.swap_effect(p["path"], p["epoch"])
                 except Exception:
                     pass
                 self._cleanup({p["path"]})
-                self.error = {"id": p["id"], "message": message, "at": self._now()}
-                if len(self._bad) >= 256:
-                    self._bad.clear()
-                self._bad[key] = message
                 self.log("pvj-web: effect %s refused with new values: %s" % (p["id"], message))
                 return False
             if verdict == "ok":
@@ -1514,10 +1544,33 @@ class Effects(S.Engine):
             if self.error and self.error["id"] == p["id"]:
                 self.error = None                       # the new text was taken: what was refused before it is not on
             self.on = dict(p, values=state["values"], held=state["held"], controls=state["controls"], picture=state["picture"], path=out, desc=desc,
-                           clip=state["clip"], work=state["work"],
+                           clip=state["clip"], work=state["work"], under=state["under"],
                            digest=digest, preset=preset, checked=True if (verdict == "ok" or key in self._checked) else p["checked"])
             self._cleanup({out})
             return bool(state["held"])
+
+    def _remember_bad(self, key, message):
+        if len(self._bad) >= 256:
+            self._bad.clear()
+        self._bad[key] = message
+
+    def _pair_refused(self, p):
+        """The effect `p` comes off because the GPU refuses it over the generator shader that came under it; the
+        shader stays. Called with the engine's lock held."""
+        try:
+            self.api.player.clear_effect(p["epoch"], "refused")
+        except Exception:
+            pass
+        self.on, self.last, self._switched = None, ENDED["pair"], self._clock()
+        self._cleanup(set())
+
+    def _guarded(self, rec):
+        """The record the guard is shown: over a generator shader the text's name with the shader's, so the count
+        starts over when another shader comes under the effect (compiling it costs frames, as a new text does)."""
+        if rec.get("under") != SHADER:
+            return rec
+        shown = self._live().playing
+        return dict(rec, desc="%s over %s" % (rec["desc"], shown["desc"])) if shown else rec
 
     def off(self, why=None, asked=None):
         """Take the effect off (the Off button, or the module going off). Never waits for the GPU: it is one request
@@ -1646,9 +1699,6 @@ class Effects(S.Engine):
                 if self.changer._adjust:
                     self.changer._adjust["preset"] = name
         else:
-            why = self._blocked()
-            if why:
-                raise ApiError(409, why)
             self._ask(ask)
             self._queue(sid, name)
         return {"ok": True, "id": sid, "preset": name}
@@ -1660,9 +1710,6 @@ class Effects(S.Engine):
         self._need()
         if isinstance(direction, bool) or not isinstance(direction, int) or direction not in (1, -1):
             raise ApiError(400, "dir must be 1 (next) or -1 (the one before)")
-        why = self._blocked()
-        if why:
-            raise ApiError(409, why)
         ids = self.order()
         if not ids:
             raise ApiError(409, "there is no effect that can be put on")
@@ -1686,9 +1733,6 @@ class Effects(S.Engine):
         if self._intent if self._intent is not None else (self._seen() is not None):
             self.off_soon()
             return {"ok": True, "on": False}
-        why = self._blocked()
-        if why:
-            raise ApiError(409, why)
         ids = self.order()
         if not ids:
             raise ApiError(409, "there is no effect that can be put on")
@@ -1738,7 +1782,7 @@ class Effects(S.Engine):
             for x in self._fresh(on["desc"]):
                 if isinstance(x.get("avg"), (int, float)) and not isinstance(x["avg"], bool) and x["avg"] > 0:
                     showing["pass_ms"] = round(x["avg"] / 1e6, 2)
-            seen = self.guard.sample(on)
+            seen = self.guard.sample(self._guarded(on))
             showing.update(load=seen["state"], drops_per_second=seen["drops_per_second"])
         else:
             self.guard.sample(None)

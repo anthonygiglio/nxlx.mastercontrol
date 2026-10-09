@@ -171,12 +171,14 @@ class Player:
         self._source_pid = None     # the mpv it was given to; a restarted mpv has lost it
         self._carrier = None        # the blank picture the source is drawn over, while it plays
         self.source_epoch = 0       # goes up each time what is playing changes hands; a shader rotation checks it
-        # A third layer between the two: an effect, a filter shader over whatever plays (pvj/effects.py). It stays
-        # on when the clip changes and comes off on Stop, when a shader source takes the screen and with a restart.
+        # A third layer between the two: an effect, a filter shader over whatever plays (pvj/effects.py), a shader
+        # source included (D74: both hook the same stage, and the order of the list makes the effect filter what
+        # the source drew). It stays on when what plays changes and comes off when the screen is cleared (Stop, a
+        # source taken off) and with a restart.
         self._effect = None         # the filter shader file
         self._effect_pid = None     # the mpv it was given to
         self.effect_serial = 0      # goes up each time an effect goes on or comes off; the effect's worker checks it
-        self.effect_ended = ""      # why the last one came off: "off", "stop", "generator", "restart", "refused"
+        self.effect_ended = ""      # why the last one came off: "off", "stop", "cleared", "restart", "refused", "format"
         self.effect_8bit = False    # 8-bit GPU buffers while an effect is on (the effects engine says: see _apply_fbo)
 
     # --- lifecycle -------------------------------------------------------
@@ -437,17 +439,18 @@ class Player:
     def volume(self, percent):
         self._set("volume", min(130.0, max(0.0, float(percent))))
 
-    def clear(self):
+    def clear(self, why="stop"):
         """Stop the current clip but keep the player service and window alive. The loop settings go back to off, so
         an idle player does not report the last clip's looping (the panel's Loop button read "on" with nothing
-        playing, seen on the Pi after the test pattern); every play sets them again."""
+        playing, seen on the Pi after the test pattern); every play sets them again. An effect comes off with the
+        picture it was over; `why` is what its record then says (see effect_ended)."""
         with self._lock:
             self._pipe = False
             try:
                 self.ipc.request("stop")
             finally:
                 self._end_source()      # also when the player is down: the screen has changed hands either way
-                self._end_effect("stop")
+                self._end_effect(why)
             self.ipc.request("set_property", "loop-file", "no")
             self.ipc.request("set_property", "loop-playlist", "no")
 
@@ -556,7 +559,9 @@ class Player:
             self._drop_effect(why)
             try:
                 self._push_shaders()
-                if self.effect_8bit:
+                # Only where the effect was the one reason for the 8-bit buffers: under a mapping or a shader source
+                # they stay as they are, and setting the format again makes the player set its renderer up anew.
+                if self.effect_8bit and not (self._mapping_mode or self._source):
                     self._apply_fbo()
             except PlayerError:
                 pass
@@ -582,7 +587,10 @@ class Player:
 
     def _push_shaders(self):
         """The player's one shader list, in the order the picture passes them: the source (a generator, in place of
-        the picture), the effect (a filter of the picture), the projection mapping (the last stage)."""
+        the picture), the effect (a filter of the picture), the projection mapping (the last stage). The source and
+        the effect hook the same stage, and there the order of this list is the order they run in (seen on a real
+        mpv in CI, tests/test_pair_gpu.py: the other way round the generator draws over what the effect made). So
+        an effect over a source filters the source's picture."""
         self._check_source()
         self._check_effect()
         self.ipc.request("set_property", "glsl-shaders", ([self._source] if self._source else []) + ([self._effect] if self._effect else [])
@@ -600,22 +608,22 @@ class Player:
             return self._effect
 
     def put_effect(self, shader, serial=None, epoch=None):
-        """Put the filter shader file `shader` on over whatever plays, in place of the effect that is on. Returns
-        the new effect serial, or None, with nothing changed, when a shader source has the screen (a generator has
-        no picture to filter), or when `serial` or `epoch` are given and an effect went on or off, or something was
-        played or stopped, since they were handed out."""
+        """Put the filter shader file `shader` on over whatever plays (a clip, a live input, a shader source), in
+        place of the effect that is on. Returns the new effect serial, or None, with nothing changed, when `serial`
+        or `epoch` are given and an effect went on or off, or something was played or stopped, since they were
+        handed out."""
         with self._lock:
             self._check_source()
             self._check_effect()
-            if self._source is not None or self._carrier is not None:
-                return None
             if (serial is not None and serial != self.effect_serial) or (epoch is not None and epoch != self.source_epoch):
                 return None
             previous, pid = self._effect, self.ipc.request("get_property", "pid")
             self._effect, self._effect_pid = shader, pid
             try:
                 self._push_shaders()
-                if self.effect_8bit and previous is None:       # the first text of an effect; a change of text leaves them
+                # the first text of an effect (a change of text leaves the buffers), and only where they are not
+                # 8-bit already for a mapping or a shader source
+                if self.effect_8bit and previous is None and not (self._mapping_mode or self._source):
                     self._apply_fbo()
             except PlayerError:
                 self._effect = previous
@@ -692,7 +700,7 @@ class Player:
         with self._lock:
             if epoch != self.source_epoch or self._carrier is None:
                 return False
-            self.clear()
+            self.clear("cleared")
             return True
 
     @property
@@ -703,7 +711,8 @@ class Player:
         """Draw the generator shader file `shader` in place of the picture, over `carrier` (a blank picture from the
         player itself that gives the shader frames to draw on). With `epoch`, only if nothing else has been played
         since that epoch was handed out; otherwise None is returned and nothing changes. Returns the new epoch.
-        If the carrier is already playing only the shader is exchanged, so the picture does not restart."""
+        If the carrier is already playing only the shader is exchanged, so the picture does not restart. An effect
+        that is on stays on, after the source in the list: it filters what the source draws (D74)."""
         with self._lock:
             if epoch is not None and epoch != self.source_epoch:
                 return None
@@ -714,8 +723,6 @@ class Player:
                 self._spawn(None, False)
             self._undo_pipe_globals()
             previous = self._source
-            if self._effect is not None:            # a generator has no picture to filter: the effect comes off with
-                self._drop_effect("generator")      # the same push that puts the source on
             try:
                 pid = self.ipc.request("get_property", "pid")
                 # The carrier is left alone only if this side loaded it last, into this mpv, and mpv says it plays.

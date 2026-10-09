@@ -368,6 +368,11 @@ class Vibes:
         seen = watch() if watch else None
         if not seen or not seen["state"]:
             return False
+        if seen.get("effect"):
+            # An effect is on over the shader (D74): the dropped frames are the pair's. Nothing is marked, noted as
+            # tight or skipped for them, and what was marked before the effect went on is neither confirmed nor
+            # taken back. The effect's own card says when the pair is too heavy.
+            return False
         if seen["state"] == "tight":
             self._tight.add(self.current)
             return False
