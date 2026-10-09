@@ -458,6 +458,10 @@ async function seekBar(pg) {
     for (const width of [390, 768, 1280, 1366, 1440, 1920]) {
       await pg.setViewportSize({ width, height: 844 });
       await frames(pg);
+      // (the box's answer puts it back where the clip is, a quarter, a moment after each move: that is waited for, so
+      // that the answer cannot come between the look before the key and the look after it)
+      await pg.waitForFunction(() => document.getElementById('seek').value === '250', null, { timeout: 4000 }).catch(() => pg.evaluate(() => { document.getElementById('seek').value = '250'; }));
+      await pg.waitForFunction(() => Math.abs(parseFloat(document.getElementById('seek').style.getPropertyValue('--fill')) - 25) <= 1.5, null, { timeout: 4000 }).catch(() => {});
       const where = 'at ' + width + ' px the place in the clip ', before = await pg.evaluate(edge), was = await pg.evaluate(lie, STRIP.concat(SPEED));
       assert(before.count === 1 && before.shown && !before.disabled, where + 'is there once and can be used while a clip plays: ' + JSON.stringify(before));
       assert(Math.abs(parseFloat(before.fill) - 25) <= 1.5, where + 'shows how far the clip is (a quarter): ' + JSON.stringify(before));
