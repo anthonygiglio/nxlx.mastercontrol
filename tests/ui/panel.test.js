@@ -2777,7 +2777,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(Math.abs(lay.remote.left - lay.set.left) < 1, 'the controllers are under the settings');
     assert(lay.overflow === 'auto' && lay.listAll > lay.listShown, 'the library scrolls by itself: ' + JSON.stringify(lay));
     assert(lay.ctl.top < lay.vh && lay.lib.top < lay.vh, 'the playing shader\'s controls are in view without scrolling the library');
-    for (const w of [900, 1100, 1200, 1366, 1600, 1720, 1920]) {
+    for (const w of [900, 1100, 1200, 1366, 1600, 1700, 1920]) {
       await page.setViewportSize({ width: w, height: 768 });
       await page.waitForTimeout(150);
       await fitsPhone('Play > Shaders at ' + w + ' px');

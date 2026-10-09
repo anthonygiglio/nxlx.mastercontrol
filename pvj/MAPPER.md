@@ -20,7 +20,7 @@ Each surface shows a part of the picture: its **picture corners** (0 to 1 across
 
 ## Lining up
 
-1. Play something to line up with: Live > Test pattern is ideal.
+1. Play something to line up with: **Test pattern**, on the same screen under the mapping card, is ideal.
 2. Press **Edit on the display**: the projector shows every surface's outline (the chosen one yellow, the chosen corner as a pink dot).
 3. Drag a corner on the small screen in the card, or choose it and use the arrows (1, 10 or 50 pixels a press; the arrow keys work too when the drawing has focus). **Next corner** steps through them; **Move the whole surface** moves all corners together.
 4. Switch between **Screen corners** (where it lands) and **Picture corners** (what it shows).

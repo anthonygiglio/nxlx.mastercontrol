@@ -490,7 +490,7 @@ table.chan .lvl { width: 36%; }
    the row goes to a second line, where a word used to be cut in two ("Exponential" at 320 to 390 px and again in
    the laptop's narrow columns at 900 and 932; "Diagonals" at 1200, where the Shaders page has three columns). No
    fault was measured from 1366 px up, so nothing changes there. */
-.seg .segbtn { flex: 1 1 auto; }      /* (at every width since the Workspace shell, D65: a column is narrower beside the side menu) */
+.seg .segbtn { flex: 1 1 auto; }      /* (at every width since the Workspace shell, D65: a column is narrower beside the rail, and narrower still in a desk) */
 @container ws (max-width: 599px) {
   /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word (it was cut at 390) */
   .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -656,17 +656,17 @@ main.ws:focus, .deskcol:focus { outline: none; }
 }
 /* A desk, from 1200 px of panel (D72): the columns of the area that is built stand side by side, all of them
    equally live, each under its name. 1200 px is where the narrowest column is no narrower than a phone: beside the
-   96 px rail the workspace has 1104 px, and its columns come to 345, 345 and 414 px in Play, 455, 325 and 325 px
+   96 px rail the workspace has 1104 px, and its columns come to 344, 345 and 414 px in Play, 453, 325 and 325 px
    in Shape and 368 px each in Room, while every card is held at 320 px by the width sweep. The tabs of the
    screens that share the page are one tab; an area whose screens all share it has no tabs. Setup keeps its index
    as a column at the left of the open page, which scrolls by itself as the rail does, and the page's own Back to
    the index is not shown. */
-/* (from 1720 px the Shaders column of Play has the room its own laptop form was written for, the library of
-   shaders beside what plays, 900 px, and from 1916 px its three columns, 1100 px: the pads and the library keep
-   340 and 380 px and the rest is the shaders') */
-@container app (min-width: 1720px) {
-  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="pads"] { flex: 0 0 340px; }
-  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="library"] { flex: 0 0 380px; }
+/* (from 1700 px the Shaders column of Play has the room its own laptop form was written for, the library of
+   shaders beside what plays, 900 px, and from 1900 px its three columns, 1100 px: the pads and the library keep
+   330 and 370 px and the rest is the shaders') */
+@container app (min-width: 1700px) {
+  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="pads"] { flex: 0 0 330px; }
+  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="library"] { flex: 0 0 370px; }
 }
 @container app (min-width: 1200px) {
   .desk:not([data-cols="1"]) { display: flex; align-items: stretch; }
@@ -1216,9 +1216,9 @@ html[data-style="signal"] #roomscreen .room-scene { font-size: clamp(16px, 5.2vw
    no button grows. This look had taken the floor of 44 px away from a row of choices; it is back. */
 html[data-style="signal"] .seg .segbtn { min-width: 44px; }
 
-/* ---- The Workspace shell in Signal (D65). The title bar is the block of the area's colour that each screen's own
+/* ---- The Workspace shell in Signal (D65, D72). The title bar is the block of the area's colour that each screen's own
    title used to be (the area's name in the display face, the screen's job under it); the open tab, the chosen
-   screen in the row and in the side menu are that colour too. The strip's buttons are 56 px on a phone (staff
+   screen in the row of tabs and the open area's button of the rail are that colour too. The strip's buttons are 56 px on a phone (staff
    press them), and from 600 px the four that are always there are 56 and the rest 44. ---- */
 html[data-style="signal"] .wshead { padding: 20px 16px 14px; background: var(--ac); color: var(--on); align-items: flex-end; }
 html[data-style="signal"] .wstitle { font: var(--tk-tw, 900) clamp(34px, 11cqw, 44px)/1.05 var(--display); text-transform: var(--tk-case, uppercase); overflow-wrap: anywhere; }
