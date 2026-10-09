@@ -441,6 +441,110 @@ class Queued(PadBase):
         self.go.set()
         self.assertTrue(self.wait(lambda: self.on() == TWO), (self.on(), self.engine.error))
 
+    # -- the second read of #114: the windows the first repair missed --
+    def hold_in_the_look(self):
+        """The worker's next job stops while the GPU looks at its shader: it HAS taken the screen (the player's
+        epoch has moved) and the engine does not say so yet. Up to four seconds at a shader's first showing."""
+        self.go.set()
+        self.engine.play = type(self.engine).play.__get__(self.engine)
+        self.player.vo = "gpu"
+        looking, on = threading.Event(), threading.Event()
+        real, first = self.engine._watch, []
+
+        def held(tap, desc):
+            if not first and threading.current_thread() is not threading.main_thread():
+                first.append(1)
+                looking.set()
+                on.wait(5)
+            return real(tap, desc)
+        self.engine._watch = held
+        self.addCleanup(on.set)
+        return looking, on
+
+    def test_two_steps_go_two_on_when_the_second_comes_during_the_gpus_look(self):
+        self.engine.play(self.ids[0])
+        looking, on = self.hold_in_the_look()
+        self.engine.step(1)
+        self.assertTrue(looking.wait(5))
+        got = self.engine.step(1)
+        on.set()
+        self.assertTrue(self.wait(lambda: self.engine.changer.newest() is None and self.on() == self.ids[2]),
+                        "two steps from %s ended on %s (the second was told %s)" % (self.ids[0], self.on(), got["id"]))
+        self.assertEqual(got["id"], self.ids[2])
+
+    def test_a_second_tap_during_the_look_of_a_first_that_is_then_refused(self):
+        taps = []
+
+        def refuse_the_first_only(path):
+            FakeTap.lines = [] if taps else REFUSAL
+            taps.append(1)
+            return FakeTap(path)
+        self.engine._tap = refuse_the_first_only
+        looking, on = self.hold_in_the_look()
+        self.tap(0, device={"id": "midi"})
+        self.assertTrue(looking.wait(5))
+        self.tap(1, device={"id": "midi"})          # carries the epoch the first one's own showing made
+        on.set()
+        self.assertTrue(self.wait(lambda: self.on() == TWO), "the second tap was dropped: %s is on, %s" % (self.on(), self.engine.error))
+
+    def test_a_second_tap_after_a_first_that_raised_once_it_had_the_screen(self):
+        # the second came before the first took the screen and carries the epoch the first started from; the first
+        # then takes the screen and something raises. What it made of the epoch is written down as it is made, so
+        # the second is not refused for it
+        self.player.vo = "gpu"
+
+        def raises(tap, desc):
+            self.engine._watch = type(self.engine)._watch.__get__(self.engine)
+            raise RuntimeError("something broke after the shader was on the screen")
+        self.engine._watch = raises
+        self.tap(0, device={"id": "midi"})
+        self.assertTrue(self.inside.wait(5))
+        self.tap(1, device={"id": "midi"})
+        self.go.set()
+        self.assertTrue(self.wait(lambda: self.on() == TWO), (self.on(), self.engine.error))
+
+    def test_three_wishes_in_a_row(self):
+        # A in the worker's hands, B waiting, then C while B is in the worker's hands: C. (Keeping the epoch a job
+        # CARRIED where the epoch it was GIVEN belongs passed every test of two.)
+        self.give(2, self.ids[5])
+        real, n = type(self.engine).play.__get__(self.engine), []
+        gates = [(threading.Event(), threading.Event()), (threading.Event(), threading.Event())]
+        self.go.set()
+
+        def held(*a, **k):
+            if k.get("queued") and len(n) < 2:
+                inside, go = gates[len(n)]
+                n.append(1)
+                inside.set()
+                go.wait(5)
+            return real(*a, **k)
+        self.engine.play = held
+        for _, go in gates:
+            self.addCleanup(go.set)
+        device = {"id": "midi"}
+        self.tap(0, device=device)
+        self.assertTrue(gates[0][0].wait(5))
+        self.tap(1, device=device)                  # B, with the epoch A starts from
+        gates[0][1].set()
+        self.assertTrue(gates[1][0].wait(5))        # B taken, not yet on: A is
+        self.assertEqual(self.on(), ONE)
+        self.tap(2, device=device)                  # C, with the epoch A left
+        gates[1][1].set()
+        self.assertTrue(self.wait(lambda: self.engine.changer.newest() is None and self.on() == self.ids[5]), self.on())
+
+    def test_a_renamed_preset_and_its_pads_are_one_write(self):
+        self.go.set()
+        self.a_preset(name="Slow")
+        self.give(0, ONE, preset="Slow")
+        saves, real = [], self.settings.save
+
+        def save():
+            saves.append((self.settings.data["shaders"]["presets"][ONE][0]["name"], self.settings.data["pads"]["banks"][0]["pads"][0].get("preset")))
+            return real()
+        self.settings.save = save
+        self.engine.preset_rename(ONE, "Slow", "Gentle")
+        self.assertEqual(saves, [("Gentle", "Gentle")], "the preset's new name and the pad that names it were written apart")
+
     def test_a_fade_out_pressed_after_the_wish_stands_when_the_shader_comes(self):
         # M2: the level's mark was taken by the worker when it showed the shader, not at the tap
         self.presets()

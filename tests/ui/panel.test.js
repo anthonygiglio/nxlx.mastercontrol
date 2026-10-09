@@ -2755,6 +2755,32 @@ function startServer() {
       await page.click('.pad >> nth=0');
       await page.waitForFunction(() => /intro/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
       await page.waitForFunction(() => !document.querySelector('.pad.shader.on'));
+      // Which pad is "the one playing": two pads with the same shader and different presets, only the one whose
+      // preset is on is marked; and none while Vibes is the one showing that shader.
+      {
+        assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-aurora.fs' }), 200);
+        assert.strictEqual(await post('/api/shaders/presets', { action: 'save', name: 'Slow', id: 'nxlx-aurora.fs' }), 200);
+        assert.strictEqual(await post('/api/pads', { bank: 0, index: 6, label: 'Aurora slow', shader: 'nxlx-aurora.fs', preset: 'Slow' }), 200);
+        assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
+        await page.reload();
+        await page.waitForSelector('.pad.shader >> nth=1');
+        const marked = () => page.$$eval('.pad', (els) => els.map((el, i) => (el.classList.contains('on') && el.classList.contains('shader') ? i : -1)).filter((i) => i >= 0));
+        const until = async (want, what) => {
+          try { await page.waitForFunction((w) => JSON.stringify(Array.from(document.querySelectorAll('.pad')).map((el, i) => (el.classList.contains('on') && el.classList.contains('shader') ? i : -1)).filter((i) => i >= 0)) === w, JSON.stringify(want), { timeout: 20000 }); }
+          catch (e) { throw new Error(what + ': the shader pads marked as playing are ' + JSON.stringify(await marked()) + ', expected ' + JSON.stringify(want)); }
+        };
+        await page.click('.pad >> nth=5');
+        await until([5], 'the pad without a preset was tapped');
+        await page.click('.pad >> nth=6');
+        await until([6], 'the pad with the preset Slow was tapped');
+        assert.strictEqual((await get('/api/status')).player.shader_preset, 'Slow');
+        assert.strictEqual(await post('/api/vibes', { on: true }), 200);
+        await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((s) => s.player.vibes === true && typeof s.player.shader === 'string'), null, { timeout: 20000 });
+        await until([], 'Vibes is the one showing a shader');
+        assert.strictEqual(await post('/api/vibes', { on: false }), 200);
+        assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
+        assert.strictEqual(await post('/api/shaders/presets', { action: 'delete', id: 'nxlx-aurora.fs', name: 'Slow' }), 200);
+      }
       // a long label and a long shader name: nothing sticks out of the pad or of the page, at 320 and as it was
       assert.strictEqual(await post('/api/pads', { bank: 0, index: 6, label: 'Averyveryverylongshadernamewithnospaces', shader: 'nxlx-tide.fs' }), 200);
       const before = page.viewportSize();

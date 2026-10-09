@@ -896,17 +896,14 @@ class Api:
 
     def pads_follow_preset(self, sid, was, to):
         """A preset of `sid` was renamed: the pads that start the shader with it follow, as a clip's pads follow the
-        clip's new name."""
+        clip's new name. The caller holds the settings' lock and saves (LiveEngine.preset_rename: one write for the
+        preset's new name and the pads)."""
         from . import shaderlive
-        with self.settings.lock:
-            changed = False
-            for bank in self.settings.data["pads"]["banks"]:
-                for pad in bank["pads"]:
-                    held = self.pad_shader(pad)
-                    if held and held[0] == sid and held[1] is not None and shaderlive.name_key(held[1]) == shaderlive.name_key(was):
-                        pad["preset"], changed = to, True
-            if changed:
-                self.settings.save()
+        for bank in self.settings.data["pads"]["banks"]:
+            for pad in bank["pads"]:
+                held = self.pad_shader(pad)
+                if held and held[0] == sid and held[1] is not None and shaderlive.name_key(held[1]) == shaderlive.name_key(was):
+                    pad["preset"] = to
 
     def _play_shader_pad(self, held, device):
         """A pad that holds a generator shader (D73): the shader is shown exactly as choosing it by hand on the

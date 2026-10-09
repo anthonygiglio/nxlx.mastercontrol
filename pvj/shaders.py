@@ -1247,6 +1247,8 @@ class Engine:
                     # (its still being taken) looks under this same lock and does not load over it (Api.play).
                     with (getattr(player, "_lock", None) or locks.make("player")):
                         new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                        if new is not None:
+                            self._made(new)         # at once, before the GPU's look: see LiveEngine.play_job
                         if new is not None and ending is not None:
                             ending.end("a generator", newer=True)
                     fx = getattr(self.api, "effects", None)
@@ -1296,6 +1298,9 @@ class Engine:
             self.api._started_playing()
             return {"ok": True, "epoch": new, "id": sid}
 
+    def _made(self, epoch):
+        """This call has just moved the player's epoch to `epoch` itself (see LiveEngine, whose queue goes by it)."""
+
     def refused(self, sid, digest, message):
         """The GPU refused this file (see shaderlive.py, which remembers it until the file changes)."""
 
@@ -1317,6 +1322,7 @@ class Engine:
                     with (getattr(player, "_lock", None) or locks.make("player")):      # in between is never stopped
                         if player.clear_source(epoch):
                             left = player.source_epoch
+                            self._made(left)
                 except PlayerError:
                     pass
             if self.on_screen() is None:    # nothing of ours is showing (another shader may have taken the screen)
