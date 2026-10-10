@@ -434,7 +434,8 @@ class HttpsTest(HttpsBase):
         """Third review of #119: the trust anchor cannot be swapped through an upload."""
         first = self.request_and_sign(days=100, out="first.pem")
         csr = os.path.join(self.tmp, "box.csr")
-        self.assertEqual(self.install(first)[0], 200)          # the first root is taken as today
+        st, body, _ = self.install(first)
+        self.assertEqual((st, body["status"]["certificate"]["chained"]), (200, True), body)     # the first root is taken as today
         root_before = open(self.box.path("root.pem")).read()
         fp = self.call("GET", "/api/https", token=self.full)[1]["root_fingerprint"]
         self.assertEqual(len(fp.replace(" ", "")), 64)
@@ -500,8 +501,12 @@ class HttpsTest(HttpsBase):
         self.assertEqual((body["old"], body["new"]), (fp, fp2))
         self.assertEqual(open(self.box.path("root.pem")).read().strip(), root2.strip())
         self.assertTrue(any("root was replaced" in l for l in self.lines))
+        self.assertIs(body["status"]["certificate"]["chained"], False, "the certificate in use is from the root before: the page says so")
         # from now on the other root's certificates are the ones taken, and the first root's refused
-        self.assertEqual(self.scall("POST", "/api/https/certificate", {"certificate": foreign}, token=secure)[0], 200)
+        st, body, _ = self.scall("POST", "/api/https/certificate", {"certificate": foreign}, token=secure)
+        self.assertEqual((st, body["status"]["certificate"]["chained"]), (200, True), body)
+        self.assertTrue(self.box.load(), "and what is on disk is judged the same at a start")
+        self.assertIs(self.box.chained, True)
         # (the box now serves the other root's certificate, which this test's TLS client does not trust: plain http from here, the switch being off)
         self.assertEqual(self.install(renewed, token=self.full)[0], 400)
         self.assertEqual(self.call("GET", "/api/https/root.crt", token=self.full)[1].decode().strip(), root2.strip())

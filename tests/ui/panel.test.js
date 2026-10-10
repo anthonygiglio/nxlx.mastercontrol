@@ -1627,7 +1627,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await fitsOn(page, 'Secure connection at 320');
     await page.click('#httpsrequest');
     await page.waitForSelector('#httpsdownload', { timeout: 20000 });
-    assert(/Request made for/.test(await page.textContent('#httpsresult')), 'the request was made: ' + await page.textContent('#httpsresult'));
+    assert(/Request made for/.test(await page.textContent('#msg')), 'the request was made (the page is redrawn from a fresh answer, so the word is in the message line): ' + await page.textContent('#msg'));
     await fitsOn(page, 'Secure connection at 320 with the request made');
     await page.click('#httpsprobe');
     await page.waitForFunction(() => /^(Yes|No)/.test(document.getElementById('httpstrust').textContent), null, { timeout: 15000 });

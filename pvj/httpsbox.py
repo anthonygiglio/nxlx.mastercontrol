@@ -228,6 +228,7 @@ class HttpsBox:
         self.context = None          # the SSLContext the TLS listener serves with; None: every handshake is refused
         self.info = None             # read_certificate() of cert.pem while it is loaded
         self.load_error = None       # why the certificate on disk could not be loaded at start, for the page
+        self.chained = None          # does the certificate in use chain to the stored root (None: no root, or not known)
         self.port = None             # set by the server when it listens
         self._openssl_ok = None
 
@@ -579,10 +580,13 @@ class HttpsBox:
                 # refused whatever the file carries, and the stored root is never touched by an upload
                 if not self.has_openssl():
                     raise HttpsError("the certificate cannot be checked against this box's root without openssl on the box", 503)
-                if not self._issued_by_stored_root(leaf_pem, leaf):
+                chained = self._issued_by_stored_root(leaf_pem, leaf)
+                if not chained:
                     raise HttpsError("the certificate was not issued by the root this box knows (fingerprint %s): a certificate from another "
                                      "root is refused. To move to a new root, replace the root first, over https://, then upload." % stored_fp[:19])
                 root_pem = None
+            else:
+                chained = True if root_pem else None          # the first root comes with this very certificate
             ctx = self._try_load(leaf_pem)
             self._ensure_folder()
             try:
@@ -598,7 +602,7 @@ class HttpsBox:
             except OSError as e:
                 self._unlink(NEW)
                 raise HttpsError("the certificate could not be saved on the box: %s" % (e.strerror or e), 500)
-            self.context, self.info, self.load_error = ctx, leaf, None
+            self.context, self.info, self.load_error, self.chained = ctx, leaf, None, chained
         self.log("pvj-web: certificate installed for %s, ends %s (serial %s)" % (", ".join(leaf["dns"] + leaf["ips"]), self.date(leaf["not_after"]), leaf["serial"]))
         return leaf
 
@@ -634,6 +638,9 @@ class HttpsBox:
             old_info, old_fp = self.root_info()
             self._ensure_folder()
             self._write(ROOT, block)
+            current = self._read(CERT)
+            if self.context is not None and current and self.info and self.has_openssl():
+                self.chained = self._issued_by_stored_root(current, self.info)      # usually False until the next upload
         self.log("pvj-web: the root was replaced: %s -> %s" % ((old_fp or "none")[:19], new_fp[:19]))
         return {"old": old_fp, "new": new_fp, "name": info["subject"]}
 
@@ -654,6 +661,7 @@ class HttpsBox:
             else:
                 self._unlink(PREVIOUS)
             self.context, self.info, self.load_error = ctx, infos[0], None
+            self.chained = self._issued_by_stored_root(prev, self.info) if self._read(ROOT) and self.has_openssl() else None
         self.log("pvj-web: the earlier certificate is in use again")
         return self.info
 
@@ -695,6 +703,7 @@ class HttpsBox:
                 self.info = read_certificate(pem_certificates(text)[0])
                 self.context = self._try_load(text)
                 self.load_error = None
+                self.chained = self._issued_by_stored_root(text, self.info) if self._read(ROOT) and self.has_openssl() else None
                 return True
             except (HttpsError, ValueError, IndexError, OSError) as e:
                 self.context, self.info = None, None
@@ -714,7 +723,7 @@ class HttpsBox:
             left = (self.info["not_after"] - now) // 86400
             cert = {"names": self.info["dns"] + self.info["ips"], "starts": self.date(self.info["not_before"]),
                     "ends": self.date(self.info["not_after"]), "serial": self.info["serial"], "issuer": self.info["issuer"],
-                    "days_left": left, "run_out": left < 0, "soon": 0 <= left <= WARN_DAYS,
+                    "days_left": left, "run_out": left < 0, "soon": 0 <= left <= WARN_DAYS, "chained": self.chained,
                     "names_this_host": name_matches(host_of(host), self.info["dns"], self.info["ips"])}
         return {"https": self.context is not None, "port": self.port, "secure": bool(secure), "owner_only": self.owner_only,
                 "effective": self.effective(), "certificate": cert, "previous": os.path.isfile(self.path(PREVIOUS)),
