@@ -492,6 +492,7 @@ function startServer() {
     await page.click('#oscpaired');                           // lock 2: this browser is a paired device on loopback
     await page.waitForFunction(() => { const n = document.getElementById('oscpairednow'); return n && n.textContent === 'Counts now: 127.0.0.1'; });
     await page.selectOption('#oscpairedhours', '3');
+    for (let i = 0; i < 100; i++) { const d = await get('/api/osc'); if (d.paired_hours === 3 && d.listening) break; await page.waitForTimeout(100); }   // the choice is saved
     await page.waitForFunction(() => { const n = document.getElementById('oscpairedhours'); return n && n.value === '3'; });
     assert.deepStrictEqual(await get('/api/osc').then((d) => [d.paired_on, d.paired_hours, d.paired_roles]), [true, 3, 'full']);
     await page.click('#osckey');                              // lock 3: the key is hidden until Show, and hides again

@@ -349,6 +349,21 @@ class WatchTest(LayerBase):
         self.send(msg("/pvj/speed", 2.0), OTHER)
         self.assertEqual([s["address"] for s in self.manager.watch.senders()], [OTHER])
 
+    def test_a_change_of_who_may_send_keeps_the_socket_open(self):
+        self.settings.data["osc"].update(enabled=True, port=0)
+        self.manager.apply()
+        self.addCleanup(self.manager.stop)
+        first = self.manager.server
+        self.settings.data["osc"].update(port=first.port, only_on=True, only=[OTHER], allow=["203.0.113.0/24"])
+        self.manager.apply()
+        self.assertIs(self.manager.server, first)               # no gap in which a message would be lost
+        self.assertEqual(first.handle_packet(msg("/pvj/speed", 2.0), TABLET), 0)
+        self.assertEqual(first.handle_packet(msg("/pvj/speed", 2.0), OTHER), 1)
+        self.assertTrue(osc.source_allowed("203.0.113.9", first.extra))
+        self.settings.data["osc"].update(enabled=False)
+        self.manager.apply()
+        self.assertIsNone(self.manager.server)
+
     def test_the_list_outlives_a_save_of_the_page(self):
         self.settings.data["osc"].update(enabled=True, port=0)
         self.manager.apply()
@@ -442,6 +457,26 @@ class ApiTest(CareBase):
         self.assertTrue(osc.valid_key(self.settings.data["osc"]["key"]))
         self.assertNotEqual(self.settings.data["osc"]["key"], "aaaaaaaaaaaaaaaaaaaa")
         self.assertEqual(json.loads(read(self.settings.path))["osc"]["key"], self.settings.data["osc"]["key"])
+
+    def test_saves_at_the_same_moment_do_not_trip_over_the_port(self):
+        import threading
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        self.assertEqual(self.post({"enabled": True, "port": port})[0], 200)
+        bodies = [{"paired_hours": 3}, {"key_on": True}, {"only_on": True}, {"paired_on": True}, {"paired_roles": "live"},
+                  {"only": [TABLET]}] * 3
+        results = []
+        threads = [threading.Thread(target=lambda b=b: results.append(self.post(b)[0])) for b in bodies]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(results, [200] * len(bodies))
+        got = self.h("GET", "/api/osc", device=self.full_dev)[1]
+        self.assertEqual((got["listening"], got["error"], got["paired_hours"], got["key_on"], got["only_on"], got["paired_on"],
+                          got["paired_roles"], got["only"]), (True, None, 3, True, True, True, "live", [TABLET]))
 
     def test_the_key_is_shown_only_on_its_own_route_to_a_full_device_at_the_studio(self):
         self.assertEqual(self.post({"key_on": True})[0], 200)

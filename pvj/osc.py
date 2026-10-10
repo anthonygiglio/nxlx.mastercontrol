@@ -604,11 +604,11 @@ class OscServer:
         self._note(why + ":" + source_ip, "ignoring %s (%s)" % (source_ip, why))
         return 0
 
-    def _unlock(self, messages, source_ip):
+    def _unlock(self, messages, source_ip, rules):
         """With the key layer on: every message of the packet must carry the key, or the whole packet is refused
         (returns the reason). The messages come back without the prefix. With the layer off a prefix is just dropped,
         so a layout that has it goes on working."""
-        rules, out = self.rules, []
+        out = []
         if rules["key_on"] and not rules["key"]:
             return None, WHY_UNSET
         if rules["key_on"] and self.wrong_keys.empty(source_ip):
@@ -648,7 +648,7 @@ class OscServer:
             self.watch.note(source_ip, False, WHY_PACKET)
             self._note("parse", "bad packet from %s: %s" % (source_ip, e))
             return 0
-        messages, why = self._unlock(messages, source_ip)
+        messages, why = self._unlock(messages, source_ip, rules)
         if why:
             return self._refuse(source_ip, why)
         done = 0
@@ -722,6 +722,9 @@ class OscManager:
         self.server = None
         self.error = None
         self.watch = Watch()        # outlives a save of the page (apply makes a new receiver each time)
+        # One change at a time: two saves at once (two taps on the page, two devices) would each stop the receiver
+        # and open the port again, and the slower one would find it "in use" and take the other's change back.
+        self.lock = threading.RLock()
 
     def _paired(self, roles, hours):
         """The addresses from which a paired device of those roles made a panel request in the last `hours`."""
@@ -740,21 +743,29 @@ class OscManager:
 
     def apply(self):
         """Make reality match settings["osc"]. Raises OscError if the port cannot be opened."""
-        cfg = self.settings.data["osc"]
-        if self.server:
-            self.server.stop()
-            self.server = None
-        self.error = None
-        if not cfg["enabled"]:
-            return
-        server = OscServer(self.api, cfg["port"], parse_networks(cfg["allow"]), host=self.host, log=self.log,
-                           rules=cfg, paired=self._paired, watch=self.watch)
-        try:
-            server.start()
-        except OscError as e:
-            self.error = str(e)
-            raise
-        self.server = server
+        with self.lock:
+            cfg = self.settings.data["osc"]
+            if self.server and self.server.listening and cfg["enabled"] and self.server.port == cfg["port"]:
+                # Same port: who may send changes in place. The socket stays open, so no message is lost while the
+                # owner switches a lock or allows a device in the middle of a show.
+                self.server.extra = parse_networks(cfg["allow"])
+                self.server.rules = layers(cfg)
+                self.error = None
+                return
+            if self.server:
+                self.server.stop()
+                self.server = None
+            self.error = None
+            if not cfg["enabled"]:
+                return
+            server = OscServer(self.api, cfg["port"], parse_networks(cfg["allow"]), host=self.host, log=self.log,
+                               rules=cfg, paired=self._paired, watch=self.watch)
+            try:
+                server.start()
+            except OscError as e:
+                self.error = str(e)
+                raise
+            self.server = server
 
     def status(self, full=False):
         """What every paired device may read; with `full` also the lists (never the key: see Api.osc_key)."""

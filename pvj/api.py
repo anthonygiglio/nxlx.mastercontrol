@@ -1550,19 +1550,24 @@ class Api:
         fresh = body.get("new", False)
         if not isinstance(fresh, bool):
             raise bad("new must be true or false")
-        key = osc_mod.layers(self.settings.data["osc"])["key"]
-        if fresh or not key:
-            key = self.osc.make_key()
-            self.settings.save()
-            try:
-                self.osc.apply()
-            except osc_mod.OscError as e:
-                raise ApiError(409, str(e))
+        with self.osc.lock:
+            key = osc_mod.layers(self.settings.data["osc"])["key"]
+            if fresh or not key:
+                key = self.osc.make_key()
+                self.settings.save()
+                try:
+                    self.osc.apply()
+                except osc_mod.OscError as e:
+                    raise ApiError(409, str(e))
         return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/pvj/stop"}
 
     def set_osc(self, body, device, client):
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
+        with self.osc.lock:                   # one save at a time (OscManager.lock says why)
+            return self._set_osc(body)
+
+    def _set_osc(self, body):
         cfg = self.settings.data["osc"]
         new = dict(cfg)
         if "enabled" in body:
