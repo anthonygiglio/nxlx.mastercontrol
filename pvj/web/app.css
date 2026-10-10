@@ -134,7 +134,8 @@ input.seek { width: 100%; margin: 10px 0 4px; accent-color: var(--ac); height: 2
 /* The display at its own aspect (--mapaspect, set by the script from the box's screen size), as wide as its card and
    no taller than the room above the strip less the rows under it, so the whole display is in view while a corner is
    dragged; narrower than the card it is centred. */
-canvas.mapcanvas { display: block; width: min(100%, calc((100dvh - var(--dock, 120px) - 340px) * var(--mapaspect, 1.7778))); max-width: 100%; margin: 8px auto; border: 1px solid var(--ln); border-radius: 8px; touch-action: none; background: #111; }
+canvas.mapcanvas { display: block; width: min(100%, calc((100dvh - var(--dock, 120px) - var(--mapallow, 340px)) * var(--mapaspect, 1.7778))); max-width: 100%; margin: 8px auto; border: 1px solid var(--ln); border-radius: 8px; touch-action: none; background: #111; }
+html[data-style="signal"] canvas.mapcanvas { --mapallow: 440px; }      /* (Signal's title bar, tabs and heading stand taller above the canvas) */
 canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 .row.nudge .btn { min-width: 44px; min-height: 44px; font-size: 18px; }
 .list .item.map-entry.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 8px; }
