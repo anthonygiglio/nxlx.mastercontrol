@@ -108,9 +108,14 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | P1 | Without the switch: press the mapping mode button twice (M 8 on the nanoKONTROL2, the last round button along the top of the Launchpad) | Nothing. The log says controllers may not adjust the mapping |
 | P2 | Mix > Projection mapping: switch **Controllers may adjust the mapping** on (full access), add two surfaces, press the button twice | The display shows the outlines, one surface yellow, one corner a pink dot; the button flashes; the card says a controller is in mapping mode |
 | P3 | nanoKONTROL2: turn knob 2 and knob 3. Launchpad: the arrow pads on rows 7 and 8 | The pink corner moves a pixel a step. Too fine, too coarse? Press the step (Cycle; the fourth pad of row 8) for 10 and 50 |
-| P4 | Next corner, next surface (Marker and Track buttons; the first four pads of row 7), then undo | The marks on the display follow; undo takes the last nudge back |
+| P4 | Next corner, next surface (Marker and Track buttons; the first four pads of row 7). Turn knob 2 a quarter turn in one go, then undo | The marks on the display follow; undo takes the whole turn back, not its last click. Does a second between runs feel right? |
 | P5 | Press Blackout twice, Stop, a pad | Each does what it always does and the mode stays on |
 | P6 | Press the mode button twice; and once more, enter it and wait three minutes | The outlines leave the display, the mapped picture comes back, the light stops flashing |
+| P7 | nanoKONTROL2, a shader on screen, knob 2 low. Enter the mode, turn knob 2 far up (it nudges), leave the mode, touch knob 2 | The shader's second control does NOT jump; it follows again once the knob is back where it stood before the mode. The same when the mode ends by itself, and when it is ended from OSC or by the owner's switch while the hand is on the knob |
+| P8 | In the mode, spin knob 2 back and forth for ten seconds with `journalctl -u pvj-web -f` open | The corner follows the knob without a wait you can feel and ends where the knob ended; nothing in the log. Pull the power a second after the last turn: after the start the corner is where it ended |
+| P9 | On a full-access phone: Edit on the display on, choose the second surface and its third corner. Enter the mode from the controller, choose another surface, nudge, leave | The card says a controller is adjusting the mapping; afterwards Edit on the display is still on and the second surface and its third corner are chosen again |
+| P10 | TouchOSC: a momentary button on `/pvj/mapping/mode`, another on `/pvj/mapping/mode/off`, a third on `/pvj/mapping/mode/toggle` | The first enters on the press and the mode stays on when the finger comes up; the second leaves; the third does both, one press each |
+| P11 | Launchpad: with "Presenter codes from a controller" on, hold the third round button along the top for 4 seconds; then hold pad 12 of bank C and the two pads right of it | The code comes from the round button only; the pads right of bank C do nothing |
 
 ### TouchOSC: what the owner's layout can now be wired to (D75)
 

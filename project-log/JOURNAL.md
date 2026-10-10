@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-10, night (#115 after its independent review: the layers, the flood of nudges, master with the OSC locks merged in)
+
+Branch `midi-layouts`, pull request #115, still a draft, not merged. An earlier builder on these findings was cut off by the usage limit; this session started from the pushed head `80dcb67` and committed and pushed after each finding. **This round has not met the controllers**: nothing here ran on a nanoKONTROL2, a Launchpad, a MIDI Mix, a TouchOSC layout, a projector or the Pi. Fake clocks, pipes, a fake player, packets built by the tests.
+
+- **Medium 1, a shader knob jumped after mapping mode.** `matching()` now remembers the layer at each controller's last message and clears pickup and parks the shader knobs on any change (D75, amended). Test: the twin of the Geometry test, with the reviewer's numbers (20, the mode, 90, out, 92: nothing; back at 21: followed). It failed first.
+- **Medium 2, every nudge was two fsyncs and a rebuild.** Nudges are taken at once, saved at most twice a second and shown at most 25 times a second, with a last save and picture when they stop; leaving the mode saves. Test: 500 nudges, the saves and pictures bounded by the time it took, the corner exact in memory at once and on disk a second later. It failed first with 500 saves.
+- **One step of undo is now one run of nudges** (one corner, less than a second between them), put back by "place". The OSC test that undid a single message was changed to say so.
+- **Low**: the panel's edit and selection are as they were when the mode ends, and the card says a controller is adjusting; a 0 on `/pvj/mapping/mode` is a release and `/pvj/mapping/mode/off` leaves (with `/on` and `/toggle`); the Launchpad's presenter code moved from pad 6.8 to Top 3; tests for unplugging in a layer, two controllers each in a layer, and a Learned mapping in a layer (those three passed as written: `forget` already dropped the layer).
+- **Master merged** (#117, #118, D78), a merge and not a rebase. Conflicts in the manual, OSC.md, this journal and the device-test list, all "keep both". `pvj/osc.py` merged by itself and needed nothing by hand: the three locks are about who sends and stand before `translate`, and the key's prefix is taken off in `_unlock`, so `/k/<key>/pvj/mapping/...` is read as `/pvj/mapping/...`. The brief asked that the single-address list "can name the new addresses": that list holds devices' network addresses, not OSC addresses, so there is nothing to name; OSC.md now says so. New tests hold each lock, and all three, against one D75 address and mapping mode's.
+- Decided here: the layer change is noticed at the controller's next message, not pushed; the save gap is half a second and the run for undo one second; Top 3 for the code.
+- Open: the owner's answers D75 already lists; Parts 2 and 3 and OSC replies, not built; rows P7 to P11 in `tools/DEVICE-TESTING.md` for the first time the controllers are on the box; the reminder to run the ultra review before shipping.
+
 ## 2026-10-10, later (the review of #118: two findings and the lows, fixed on `osc-lockdown`)
 
 An independent review of #118 at `5e0c7a3` found two medium points and several low ones; all are answered, and master (#117, log out and the owner PIN) is merged in. Each fix has a test that failed when its code was broken on purpose after the commit (12 breakages, 12 caught). **Run on the development Mac; the browser test only in CI.**

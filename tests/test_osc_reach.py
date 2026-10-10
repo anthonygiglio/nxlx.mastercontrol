@@ -260,3 +260,76 @@ class ShadersOverOscTest(Live):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BehindTheLocksTest(ServerLogicTest):
+    """D78 met D75 in a merge: the three locks on who may send stand before every address, the ones added with D75
+    and mapping mode's among them. Each lock is tried against one of each; with all three off both go through; and
+    the key's prefix is taken off before an address is looked at, so `/k/<key>/pvj/mapping/...` is the same address."""
+    KEY = "0123456789abcdef0123"
+    FULL = {"id": "t", "name": "t", "role": "full"}
+    TABLET, OTHER = "192.168.1.20", "192.168.1.21"
+
+    def setUp(self):
+        super().setUp()
+        self.player.running = True
+        self.player.status = lambda: {"running": True, "path": "/x/a.mp4"}
+        for path, body in (("/api/modules/mapper", {"enabled": True}), ("/api/mapper", {"action": "add", "type": "quad"}),
+                           ("/api/mapper/remote", {"allow": True})):
+            self.assertEqual(self.api.handle("POST", path, body, self.FULL, "t")[0], 200, path)
+        self.mapper = self.api.mapper
+
+    def server_with(self, **rules):
+        return OscServer(self.api, clock=lambda: self.now[0], log=self.logs.append, rules=rules, key=self.KEY,
+                         paired=lambda roles, hours: {self.TABLET})
+
+    def corner(self):
+        st = self.mapper.state()
+        return next(s for s in st["surfaces"] if s["id"] == st["edit"]["selected"])["vertices"][st["edit"]["corner"]]
+
+    def both(self, server, ip, prefix=""):
+        """One address of D75's and three of mapping mode's from `ip`: how many did something, and is the mode on after."""
+        self.mapper.remote({"mode": False})
+        blackout = self.api.mix["blackout"]
+        at = self.corner()
+        done = sum(server.handle_packet(msg(prefix + address, *args), ip) for address, args in (
+            ("/pvj/position/y", (0.25,)), ("/pvj/mapping/mode", (1,)), ("/pvj/mapping/nudge", (2, 3)), ("/pvj/mapping/mode/toggle", (1.0,))))
+        self.assertEqual(self.api.mix["blackout"], blackout)
+        moved = self.corner() == [at[0] + 2, at[1] + 3]
+        self.assertEqual(moved, done == 4, "the count and the corner disagree")
+        self.assertFalse(self.mapper.remote_on())           # in and out again, or never in
+        return done
+
+    def test_with_every_lock_off_the_new_addresses_go_through(self):
+        server = self.server_with()
+        self.assertEqual(self.both(server, self.TABLET), 4)
+        self.assertEqual(self.both(server, self.OTHER), 4)
+        self.assertEqual(self.both(server, self.OTHER, "/k/%s" % self.KEY), 4)      # a layout that has the prefix goes on working
+        self.assertEqual(self.both(server, self.OTHER, "/k/nonsense"), 4)
+
+    def test_only_these_devices(self):
+        server = self.server_with(only_on=True, only=[self.TABLET])
+        self.assertEqual(self.both(server, self.OTHER), 0)
+        self.assertEqual(self.both(server, self.TABLET), 4)
+
+    def test_only_a_paired_device(self):
+        server = self.server_with(paired_on=True)
+        self.assertEqual(self.both(server, self.OTHER), 0)
+        self.assertEqual(self.both(server, self.TABLET), 4)
+
+    def test_the_key_in_the_address(self):
+        server = self.server_with(key_on=True)
+        self.assertEqual(self.both(server, self.TABLET), 0)                         # no key
+        self.assertEqual(self.both(server, self.TABLET, "/k/" + "f" * 20), 0)       # a wrong one
+        self.assertEqual(self.both(server, self.TABLET, "/k/" + self.KEY), 4)       # the prefix is gone before /pvj/mapping/ is looked at
+        seen = [row for row in self.logs if self.KEY in str(row)]
+        self.assertEqual(seen, [])                                                  # and the key is in no log line
+        # an address of mapping mode that means nothing is refused as itself, not as a key
+        self.assertEqual(server.handle_packet(msg("/k/%s/pvj/mapping/add" % self.KEY, 1), self.TABLET), 0)
+        self.assertEqual(osc.split_key("/k/%s/pvj/mapping/mode/off" % self.KEY), (self.KEY, "/pvj/mapping/mode/off"))
+
+    def test_all_three_at_once(self):
+        server = self.server_with(only_on=True, only=[self.TABLET], paired_on=True, key_on=True)
+        self.assertEqual(self.both(server, self.TABLET, "/k/" + self.KEY), 4)
+        self.assertEqual(self.both(server, self.OTHER, "/k/" + self.KEY), 0)
+        self.assertEqual(self.both(server, self.TABLET), 0)
