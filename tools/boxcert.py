@@ -12,6 +12,7 @@ OpenSSL from Homebrew, both work; Linux; Windows with OpenSSL on the path). Noth
   boxcert.py show CERT.pem                what a certificate says and when it ends
   boxcert.py verify CERT.pem [--dir DIR]  does the root in DIR vouch for it
   boxcert.py list [--dir DIR]             what this root has signed, and what is due
+  boxcert.py root [--dir DIR]             the root's SHA-256 fingerprint, to compare with the box's page once
 
 The folder (default ~/nxlx-root-ca) holds root.key (encrypted with your passphrase), root.pem (public: this is what
 your devices install) and signed.json (box, names, serial, start, end). Back the folder up. Never put root.key on
@@ -157,6 +158,7 @@ def make_root(exe, folder, name, allowed, constraints, ask, out=print, ranges=PR
     out("Root made.")
     out("  private key : %s  (encrypted with your passphrase; BACK IT UP; NEVER put it on a box)" % key)
     out("  public root : %s  (this is what each phone, tablet and laptop installs once)" % pem)
+    out("  SHA-256     : %s" % read_cert(exe, pem)["fingerprint"])
     out("  constraints : %s" % ("names under %s and addresses in %s only" % (", ".join("." + a for a in allowed), ", ".join(ranges)) if constraints else "none"))
     out("Next: on the box's panel, System > Secure connection, download the request, then: boxcert.py sign <the request>")
     return key, pem
@@ -200,12 +202,12 @@ def parse_time(line):
 
 
 def read_cert(exe, path):
-    code, text, err = run(exe, ["x509", "-in", path, "-noout", "-text", "-startdate", "-enddate", "-serial", "-issuer"])
+    code, text, err = run(exe, ["x509", "-in", path, "-noout", "-text", "-startdate", "-enddate", "-serial", "-issuer", "-fingerprint", "-sha256"])
     if code:
         _fail("%s is not a certificate" % path, err)
     dns, ips = names_in(text)
     start = end = None
-    serial = issuer = ""
+    serial = issuer = fp = ""
     for line in text.splitlines():
         if line.startswith("notBefore="):
             start = parse_time(line)
@@ -215,7 +217,10 @@ def read_cert(exe, path):
             serial = line.split("=", 1)[1].strip().lower()
         elif line.startswith("issuer="):
             issuer = line.split("=", 1)[1].strip()
-    return {"cn": common_name(text), "dns": dns, "ips": ips, "start": start, "end": end, "serial": serial, "issuer": issuer,
+        elif "Fingerprint=" in line and line.upper().startswith("SHA256"):
+            h = line.split("=", 1)[1].replace(":", "").strip().lower()
+            fp = " ".join(h[i:i + 4] for i in range(0, len(h), 4))     # the same groups of four the box's page shows
+    return {"cn": common_name(text), "dns": dns, "ips": ips, "start": start, "end": end, "serial": serial, "issuer": issuer, "fingerprint": fp,
             "ca": "CA:TRUE" in text, "server_auth": "TLS Web Server Authentication" in text or SERVER_AUTH in text,
             "constraints": "Name Constraints" in text}
 
@@ -365,7 +370,21 @@ def show(exe, path, out=print, now=None):
                                  "RUN OUT" if left is not None and left < 0 else "%d days left" % left if left is not None else "?"))
     out("  serial  : %s" % c["serial"])
     out("  issuer  : %s" % c["issuer"])
+    out("  SHA-256 : %s" % c["fingerprint"])
     return c
+
+
+def root_fingerprint(exe, folder, out=print):
+    """The stored root's fingerprint, to compare once with what the box's page shows (docs/HTTPS.md)."""
+    pem = os.path.join(folder, ROOT_PEM)
+    if not os.path.isfile(pem):
+        raise BoxcertError("%s is missing: make the root first, or point --dir at its folder" % pem)
+    c = read_cert(exe, pem)
+    out("root    : %s" % pem)
+    out("name    : %s" % c["cn"])
+    out("SHA-256 : %s" % c["fingerprint"])
+    out("Compare this with the fingerprint on the box's page, System > Secure connection, once.")
+    return c["fingerprint"]
 
 
 def verify(exe, folder, path, out=print):
@@ -423,6 +442,7 @@ def main(argv=None, ask=None, out=print):
     sub.add_parser("show").add_argument("cert")
     sub.add_parser("verify").add_argument("cert")
     sub.add_parser("list")
+    sub.add_parser("root", help="the root's fingerprint, to compare with the box's page")
     a = p.parse_args(argv)
     if not a.cmd:
         p.print_help()
@@ -440,6 +460,8 @@ def main(argv=None, ask=None, out=print):
             return 0 if verify(exe, a.dir, a.cert, out) else 1
         elif a.cmd == "list":
             list_signed(a.dir, out)
+        elif a.cmd == "root":
+            root_fingerprint(exe, a.dir, out)
         return 0
     except BoxcertError as e:
         print("boxcert: %s" % e, file=sys.stderr)

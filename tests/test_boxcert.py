@@ -144,9 +144,16 @@ class BoxcertTest(unittest.TestCase):
         self.assertEqual([r["serial"] for r in rows][0], info["serial"])
         self.assertEqual(len(rows), 2, "the box and the hostile request")
         self.assertEqual(rows[0]["names"], ["nxlx-mastercontrol.local", "studio.local"])
-        # the root itself shown: named as the root, so it is not uploaded as a box's certificate by mistake
+        # the root itself shown: named as the root, so it is not uploaded as a box's certificate by mistake; its
+        # fingerprint is what `root` prints and what the box's page shows (groups of four, SHA-256)
         self.assertEqual(self.run_tool(exe, ["show", os.path.join(ca, "root.pem")]), 0)
         self.assertTrue(any("ROOT certificate" in l for l in self.lines))
+        shown = [l for l in self.lines if l.startswith("  SHA-256 : ")][0].split(": ", 1)[1]
+        self.assertEqual(self.run_tool(exe, ["--dir", ca, "root"]), 0)
+        self.assertTrue(any(l == "SHA-256 : " + shown for l in self.lines), self.lines)
+        import hashlib, base64, re as re_
+        der = base64.b64decode(re_.search(r"-----BEGIN CERTIFICATE-----(.*?)-----END", open(os.path.join(ca, "root.pem")).read(), re_.S).group(1).replace("\n", ""))
+        self.assertEqual(shown.replace(" ", ""), hashlib.sha256(der).hexdigest())
         # renew is sign again with the same request: a second certificate for the same key, a new serial
         self.assertEqual(self.run_tool(exe, ["--dir", ca, "renew", csr, "--days", "30"]), 0, self.lines)
         again = boxcert.read_cert(exe, cert)

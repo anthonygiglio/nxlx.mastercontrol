@@ -23,6 +23,7 @@ serve what it has.
 
 import base64
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -32,7 +33,7 @@ import subprocess
 import threading
 import time
 
-KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT = "key.pem", "request.pem", "request.json", "cert.pem", "previous.pem", "root.pem"
+KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, NEW = "key.pem", "request.pem", "request.json", "cert.pem", "previous.pem", "root.pem", "cert.new.pem"
 CURVE = "prime256v1"
 MAX_PEM = 32 * 1024                    # a certificate with its root is about 2 kB
 WARN_DAYS = 30
@@ -41,6 +42,7 @@ OID_CN, OID_SAN, OID_EKU, OID_BASIC = "2.5.4.3", "2.5.29.17", "2.5.29.37", "2.5.
 OID_SERVER_AUTH = "1.3.6.1.5.5.7.3.1"
 SETTINGS_KEY = "https"                 # {"owner_only": bool, "names": [extra names for the request]}; no schema change (D79)
 OPEN_WHILE_OWNER_ONLY = {"/api/hello", "/api/logout", "/api/https", "/api/https/probe"}   # a panel can still explain and log out
+RENEWAL_ROUTES = {"/api/https/request.csr", "/api/https/certificate"}     # open over plain http to a paired owner once the certificate has run out
 
 
 class HttpsError(Exception):
@@ -170,6 +172,17 @@ def read_certificate(der):
     return out
 
 
+def fingerprint(der):
+    """SHA-256 of the certificate, in groups of four, the way the page and tools/boxcert.py both print it."""
+    h = hashlib.sha256(der).hexdigest()
+    return " ".join(h[i:i + 4] for i in range(0, 64, 4))
+
+
+def same_fingerprint(a, b):
+    norm = lambda x: re.sub(r"[^0-9a-f]", "", (x or "").lower())  # noqa: E731
+    return bool(norm(a)) and norm(a) == norm(b)
+
+
 def name_matches(host, dns, ips):
     """Does `host` (a name or address as typed in a browser, no port) match the certificate's names the way a browser
     matches them: a name exactly (case does not matter), or by the one left-most label against a wildcard; an
@@ -277,22 +290,27 @@ class HttpsBox:
         return [n for n in self._section().get("names", []) if isinstance(n, str)][:MAX_NAMES]
 
     def relief(self):
-        """Why the switch does not bite right now, or None: no certificate is loaded (HTTPS cannot be reached), or the
-        one loaded has run out by a clock set from the network (every device refuses it, so http is the only road
-        back: the request, the upload and the PIN must work there). A certificate removed while the switch is on
-        is the first case. A name the certificate does not carry is NOT a reason: the .local name is always in it
-        and keeps working, and a gate that opened on the Host header could be opened by whoever sends the header."""
+        """What the switch lets through right now although it is on, or None. "no_certificate": none is loaded, so
+        HTTPS cannot be reached and everything is open over http as if the switch were off (a certificate removed
+        while on is this case). "run_out": the loaded one has ended by a clock set from the network, every device
+        refuses it, and ONLY what renewal needs is open over plain http, to an already paired full-access device
+        (RENEWAL_ROUTES): never the PIN, never pairing, never another owner route, because the box's clock can be
+        stepped from the network by whoever answers its time requests (second review of #119), and a relief that
+        opened the PIN would then be theirs to open. A name the certificate does not carry is no relief at all."""
         if not self.owner_only:
             return None
         if self.context is None:
             return "no_certificate"
-        if self.info and self.clock_trusted() and self.info["not_after"] < int(self._now()):
+        if self.run_out():
             return "run_out"
         return None
 
+    def run_out(self):
+        return bool(self.info) and self.clock_trusted() and self.info["not_after"] < int(self._now())
+
     def effective(self):
-        """The switch bites only while a certificate is being served and has not run out (relief)."""
-        return self.owner_only and self.relief() is None
+        """The switch bites while a certificate is loaded; a run-out one opens the renewal routes only (owner_gate)."""
+        return self.owner_only and self.context is not None
 
     def set_owner_only(self, on, secure, device_secure):
         if not isinstance(on, bool):
@@ -318,6 +336,8 @@ class HttpsBox:
         if not device or device.get("role") != "full" or device.get("remote") or not self.effective():
             return None
         if path in OPEN_WHILE_OWNER_ONLY:
+            return None
+        if path in RENEWAL_ROUTES and self.run_out():          # the way to a new certificate, for a paired owner device
             return None
         if not secure:
             return "owner access is only over the secure connection: open %s" % self.https_address()
@@ -435,9 +455,9 @@ class HttpsBox:
         self.log("pvj-web: certificate request made for %s" % ", ".join(dns + ips))
         return {"request": self._read(REQUEST), "names": dns + ips, "file": self.hostname() + ".csr"}
 
-    def _run(self, args):
+    def _run(self, args, timeout=60):
         try:
-            return subprocess.run([self.openssl] + args, capture_output=True, text=True, timeout=60)
+            return subprocess.run([self.openssl] + args, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise HttpsError("openssl could not run: %s" % e, 500)
 
@@ -525,19 +545,97 @@ class HttpsBox:
                 break
         return leaf, blocks[0][1], root
 
+    def root_info(self):
+        """(info, fingerprint) of the stored root, or (None, None)."""
+        text = self._read(ROOT)
+        if not text:
+            return None, None
+        try:
+            der = pem_certificates(text)[0]
+            return read_certificate(der), fingerprint(der)
+        except (ValueError, IndexError):
+            return None, None
+
+    def _issued_by_stored_root(self, leaf_pem, leaf):
+        """Is this certificate signed by the root this box knows? Checked by the operating system's `openssl verify`
+        with fixed arguments and a time bound: the issuer name and the key identifier can be forged by a root made
+        to look the same, and the standard library has no public way to check a signature. `-attime` is the
+        certificate's own first minute, so the dates (which the device judges, and which a stepped clock would
+        confuse) play no part here; `-purpose sslserver` and the root's name constraints do."""
+        self._write("check.pem", leaf_pem, 0o600)
+        try:
+            r = self._run(["verify", "-CAfile", self.path(ROOT), "-purpose", "sslserver", "-attime", str(leaf["not_before"] + 60), self.path("check.pem")],
+                          timeout=20)
+        finally:
+            self._unlink("check.pem")
+        return r.returncode == 0 and ": OK" in (r.stdout or "")
+
     def install(self, pem_text, host):
         leaf, leaf_pem, root_pem = self.check(pem_text, host)
         with self.lock:
+            stored, stored_fp = self.root_info()
+            if stored is not None:
+                # the root is pinned once it exists (third review of #119): a certificate from another root is
+                # refused whatever the file carries, and the stored root is never touched by an upload
+                if not self.has_openssl():
+                    raise HttpsError("the certificate cannot be checked against this box's root without openssl on the box", 503)
+                if not self._issued_by_stored_root(leaf_pem, leaf):
+                    raise HttpsError("the certificate was not issued by the root this box knows (fingerprint %s): a certificate from another "
+                                     "root is refused. To move to a new root, replace the root first, over https://, then upload." % stored_fp[:19])
+                root_pem = None
             ctx = self._try_load(leaf_pem)
             self._ensure_folder()
-            if os.path.isfile(self.path(CERT)):
-                os.replace(self.path(CERT), self.path(PREVIOUS))
-            self._write(CERT, leaf_pem)
-            if root_pem:
-                self._write(ROOT, root_pem)
+            try:
+                # the new one lands under its own name first: a write that fails leaves the one in use where it is
+                # (second review of #119: moving it aside first could leave no certificate, and with the switch on
+                # the next start would open everything)
+                self._write(NEW, leaf_pem)
+                if root_pem:
+                    self._write(ROOT, root_pem)
+                if os.path.isfile(self.path(CERT)):
+                    os.replace(self.path(CERT), self.path(PREVIOUS))
+                os.replace(self.path(NEW), self.path(CERT))
+            except OSError as e:
+                self._unlink(NEW)
+                raise HttpsError("the certificate could not be saved on the box: %s" % (e.strerror or e), 500)
             self.context, self.info, self.load_error = ctx, leaf, None
         self.log("pvj-web: certificate installed for %s, ends %s (serial %s)" % (", ".join(leaf["dns"] + leaf["ips"]), self.date(leaf["not_after"]), leaf["serial"]))
         return leaf
+
+    def replace_root(self, pem_text, confirm, secure, device_secure):
+        """A new root, over TLS only, by a TLS-paired owner, with the new root's fingerprint typed back as the confirm
+        (the page shows the old and the new one side by side). The certificate in use stays as it is; the next
+        upload must then be from the new root."""
+        if not secure:
+            raise HttpsError("the root is replaced over the secure connection only: open %s" % self.https_address(), 403)
+        if not device_secure:
+            raise HttpsError("this device was paired over plain http: log out and pair it again over https://, then replace the root", 403)
+        if not isinstance(pem_text, str) or len(pem_text) > MAX_PEM:
+            raise HttpsError("send the root certificate file's text")
+        try:
+            blocks = pem_blocks(pem_text)
+        except ValueError as e:
+            raise HttpsError("not a certificate file: %s" % e)
+        cas = []
+        for der, block in blocks:
+            try:
+                info = read_certificate(der)
+            except (ValueError, IndexError, UnicodeDecodeError, OverflowError):
+                raise HttpsError("the file holds something that is not a certificate")
+            if info["ca"]:
+                cas.append((der, block, info))
+        if len(cas) != 1:
+            raise HttpsError("the file should hold exactly one root certificate (root.pem from the tool's folder); it holds %d" % len(cas))
+        der, block, info = cas[0]
+        new_fp = fingerprint(der)
+        if not same_fingerprint(confirm, new_fp):
+            raise HttpsError("to replace the root, send its fingerprint back as the confirm: %s" % new_fp, 409)
+        with self.lock:
+            old_info, old_fp = self.root_info()
+            self._ensure_folder()
+            self._write(ROOT, block)
+        self.log("pvj-web: the root was replaced: %s -> %s" % ((old_fp or "none")[:19], new_fp[:19]))
+        return {"old": old_fp, "new": new_fp, "name": info["subject"]}
 
     def undo(self):
         with self.lock:
@@ -577,7 +675,7 @@ class HttpsBox:
         problems = []
         with self.lock:
             self.context, self.info, self.load_error = None, None, None
-            for name in (KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, "check.pem", "request.cnf", KEY + ".tmp", REQUEST + ".tmp"):
+            for name in (KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, NEW, "check.pem", "request.cnf", KEY + ".tmp", REQUEST + ".tmp", NEW + ".tmp"):
                 if not self._unlink(name):
                     problems.append("could not remove %s" % name)
             try:
@@ -621,7 +719,7 @@ class HttpsBox:
         return {"https": self.context is not None, "port": self.port, "secure": bool(secure), "owner_only": self.owner_only,
                 "effective": self.effective(), "certificate": cert, "previous": os.path.isfile(self.path(PREVIOUS)),
                 "request": os.path.isfile(self.path(REQUEST)), "request_names": self._request_names(), "key": os.path.isfile(self.path(KEY)),
-                "root": os.path.isfile(self.path(ROOT)), "openssl": self.has_openssl(), "clock_trusted": self.clock_trusted(),
+                "root": os.path.isfile(self.path(ROOT)), "root_fingerprint": self.root_info()[1], "openssl": self.has_openssl(), "clock_trusted": self.clock_trusted(),
                 "load_error": self.load_error, "default_names": self.default_names(), "host": host_of(host),
                 "this_device_secure": self.device_secure(device) if device else False, "warn_days": WARN_DAYS, "relief": self.relief(),
                 "https_address": self.https_address(host), "http_address": "http://%s/" % (host_of(host) or self.first_name())}
