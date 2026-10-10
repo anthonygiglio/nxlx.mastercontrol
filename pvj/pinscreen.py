@@ -52,8 +52,8 @@ QR_REFRESH = 15.0
 QR_MAX_SCALE = 16                                # pixels per module; bounds the bitmap whatever size the player reports                                # a player that restarted has lost its overlays: draw them again after this long
 MANUAL_ITEMS = ("pin", "view", "live", "address")    # "address": only where to open the panel
 MANUAL_MIN_SECONDS, MANUAL_MAX_SECONDS, MANUAL_DEFAULT_SECONDS = 10, 3600, 60
-LABELS = {"pin": "Full access PIN", "view": "Guest, watch only, code", "live": "Presenter, play and mix, code"}
-CONTROLLER_LABELS = {"join": "One-time presenter code", "owner": "One-time full access code"}
+LABELS = {"pin": "Full access PIN", "view": "Guest, watch only, code", "live": "Operator, runs the room, code"}
+CONTROLLER_LABELS = {"join": "One-time guest code", "owner": "One-time full access code"}
 NOTICE_SECONDS = 8            # a line that says why no code came (too many this hour) stays this long
 NOTICES = {"limit": "No more codes from a controller for now. Try again in %d minutes.",
            "owner off": "Full access codes from a controller are switched off on this box.",
@@ -178,9 +178,9 @@ class PinScreen:
             out.append("%s  %s" % (LABELS[item], value))
         qrs = [r for r in ("view", "live") if r in m["items"]]
         if len(qrs) == 2:
-            out.append("Scan: guest QR on the left, presenter QR on the right")
+            out.append("Scan: guest QR on the left, operator QR on the right")
         elif qrs:
-            out.append("Scan the QR code to join as %s" % ("a guest" if qrs[0] == "view" else "a presenter"))
+            out.append("Scan the QR code to join as %s" % ("a guest" if qrs[0] == "view" else "an operator"))
         out.append("Hides in %d s" % max(0, int(m["until"] - self._clock())))
         return out
 

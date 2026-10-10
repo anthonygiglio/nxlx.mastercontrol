@@ -168,8 +168,36 @@ def is_guest(device):
 
 
 def held_to_legacy(device):
-    """The callers that keep the presenter's old reach whatever the route table says."""
-    return is_controller(device) or (bool(device) and bool(device.get("remote")) and device.get("role") != "full")
+    """The callers that keep the presenter's old reach whatever the route table says: the box's own callers, a support
+    session below full, and a device that was paired as a presenter with a code drawn from a controller before D80
+    (anyone at the controller could make that code with no owner there; such a code pairs a Guest now, and the
+    devices it made earlier do not rise with the Operator; they go after 7 unused days as before)."""
+    if not device:
+        return False
+    if is_controller(device) or (device.get("remote") and device.get("role") != "full"):
+        return True
+    return device.get("via") == "controller" and device.get("role") == "live"
+
+
+def is_operator(device):
+    """An Operator or an Owner with the Operator's new reach: for what a handler shows or does beyond the gate."""
+    return bool(device) and device.get("role") in ("live", "full") and not held_to_legacy(device)
+
+
+def reach(device, locked):
+    """One word for the panel, so it never works this out by itself: owner, operator, presenter (a device or session
+    held to LEGACY_LIVE), guest (guest controls open) or watch."""
+    if not device:
+        return "watch"
+    if is_controller(device):
+        return "presenter"
+    if device.get("role") == "full":
+        return "owner"
+    if is_operator(device):
+        return "operator"
+    if device.get("role") == "live":
+        return "presenter"
+    return "guest" if is_guest(device) and not locked else "watch"
 
 
 class GuestControls:
@@ -194,7 +222,9 @@ class GuestControls:
 
     def set_locked(self, locked):
         settings = self.api.settings
-        with settings.lock:
+        # self._lock first, then the settings': admit() looks at the lock under self._lock, so a guest's request is
+        # either refused as locked or its confirm token is made before the clear below and goes with it.
+        with self._lock, settings.lock:
             old = settings.data.get("guest_controls")
             settings.data["guest_controls"] = {"locked": bool(locked)}
             try:
@@ -205,8 +235,7 @@ class GuestControls:
                 else:
                     settings.data["guest_controls"] = old
                 raise
-        if locked:
-            with self._lock:
+            if locked:
                 self._confirms.clear()          # a power-off that was waiting for its second request is over
         return self.state()
 
@@ -242,6 +271,8 @@ class GuestControls:
         who, now = device["id"], self._clock()
         request = json.dumps([method, path, body], sort_keys=True)
         with self._lock:
+            if self.locked():                   # again, under the lock set_locked holds: see there
+                raise Refused(403, LOCKED_TEXT)
             wait = self._room_in(self._acts, who, now, GUEST_WINDOW, GUEST_ACTIONS, BOX_ACTIONS)
             if wait:
                 raise Refused(429, "too many guest actions at once; wait a moment", retry_after=int(wait) + 1)

@@ -307,7 +307,8 @@ class Api:
         return {"player": self._public_player_status(), "mix": dict(self.mix, **self.settings.data["mix"]),
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
-                "device": device, "support": self.support.banner(), "guest_controls": self.guests.state()}
+                "device": device, "support": self.support.banner(), "guest_controls": self.guests.state(),
+                "reach": policy.reach(device, self.guests.locked())}
 
     def access_on_screen(self):
         """True while the PIN or join codes are drawn on the display (on request, or the first-run screen)."""
@@ -1342,7 +1343,7 @@ class Api:
         that could not be used, an accent that was dropped) goes to full access only."""
         t = self.settings.data["theme"]
         looks = self._looks()
-        if not Auth.allows(device, "live"):         # an Operator chooses the look (D80), so he gets the Look page's details
+        if not policy.is_operator(device):          # an Operator chooses the look (D80), so he gets the Look page's details
             for look in looks:
                 del look["look"]
             return {"theme": t, "available": looks}
@@ -2263,7 +2264,7 @@ class Api:
         elif target in ("view", "live"):
             codes = {j["role"]: j["code"] for j in self.auth.list_joins()}
             if target not in codes:
-                raise ApiError(404, "make a %s code first" % ("guest" if target == "view" else "presenter"))
+                raise ApiError(404, "make a %s code first" % ("guest" if target == "view" else "operator"))
             text = "%s#code=%s" % (base, codes[target])
         else:
             raise bad("unknown QR code")

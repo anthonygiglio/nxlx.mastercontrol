@@ -2036,11 +2036,12 @@ class RolesTest(Base):
             st, body, _ = self.call("GET", "/api/shaders", token=token)
             self.assertEqual((st, len(body["shaders"])), (200, BUNDLED + len(PACKED)))
             self.assertEqual(len([s for s in body["shaders"] if s["pack"] == "nxlx"]), BUNDLED)
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         for path, body in (("/api/shaders/play", {"id": "nxlx-aurora.fs"}), ("/api/vibes", {"on": True}), ("/api/shaders", upload)):
             self.assertEqual(self.call("POST", path, body, token=view)[0], 403, path)
             self.assertEqual(self.call("POST", path, body, token=full, csrf=False)[0], 403, path)      # no cross-site requests
-        self.assertEqual(self.call("POST", "/api/shaders", upload, token=live)[0], 403)
-        self.assertEqual(self.call("POST", "/api/shaders", {"action": "config", "dwell": 60}, token=live)[0], 403)
+        self.assertEqual(self.call("POST", "/api/shaders", upload, token=view)[0], 403)                # the Operator's since D80: tests/test_roles.py
+        self.assertEqual(self.call("POST", "/api/shaders", {"action": "config", "dwell": 60}, token=view)[0], 403)
         st, body, _ = self.call("POST", "/api/shaders/play", {"id": "nxlx-aurora.fs", "values": {"speed": 2}}, token=live)
         self.assertEqual((st, body["playing"]["id"], body["playing"]["values"]["speed"]), (200, "nxlx-aurora.fs", 2.0))
         self.assertEqual(sorted(body["playing"]["values"]), ["height", "speed", "tint"])     # every input's value, as it is on the screen

@@ -266,8 +266,8 @@ class AutostartApiTest(ServerBase):
     def test_roles(self):
         view, live = self.invite("view"), self.invite("live")
         self.assertEqual(self.call("GET", "/api/autostart", token=view)[0], 200)
-        for token in (view, live):
-            self.assertEqual(self.call("POST", "/api/autostart", {"mode": "off"}, token=token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/autostart", {"mode": "off"}, token=view)[0], 403)
+        self.assertEqual(self.call("POST", "/api/autostart", {"mode": "off"}, token=live)[0], 200)     # the Operator's since D80
         self.assertEqual(self.call("POST", "/api/autostart/test", {}, token=view)[0], 403)
         self.assertEqual(self.call("GET", "/api/autostart")[0], 401)
 

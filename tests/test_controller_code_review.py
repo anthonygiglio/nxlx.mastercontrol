@@ -338,7 +338,7 @@ class Lockout(base.BoxBase):
         code = self.digits()
         self.lock()
         self.screen.tick()
-        self.assertIn("One-time presenter code  " + code, self.text())
+        self.assertIn("One-time guest code  " + code, self.text())
         self.assertIn("Pairing is locked for 5 minutes after wrong guesses", self.text())
         self.assertEqual(pinscreen.clean(self.text().replace("\n", " ")), self.text().replace("\n", " "))
 
@@ -423,7 +423,7 @@ class Devices(unittest.TestCase):
             th.start()
         for th in threads:
             th.join(5)
-        self.assertEqual(sorted(results, key=str), [None, "live"])              # exactly one pairs
+        self.assertEqual(sorted(results, key=str), [None, "view"])              # exactly one pairs
         self.assertEqual(len(self.settings.data["devices"]), 1)
 
     def test_a_list_that_filled_up_meanwhile_does_not_burn_the_code(self):
@@ -434,7 +434,7 @@ class Devices(unittest.TestCase):
         self.assertEqual(self.a.controller_digits()[1], code)                   # still good, still on the display
         self.assertEqual(self.a._fails, {})                                     # and no guess was counted
         self.settings.data["devices"].pop()
-        self.assertEqual(self.a.pair(code, "phone", "c")[1]["role"], "live")
+        self.assertEqual(self.a.pair(code, "phone", "c")[1]["role"], "view")
 
     def test_a_device_that_slips_in_between_the_look_and_the_add(self):
         code = self.code("join")
@@ -542,7 +542,7 @@ class Leftovers(unittest.TestCase):
         self.t[0] += pinscreen.QR_REFRESH + 1
         self.p.tick()
         self.assertEqual(self.overlays, [pinscreen.QR_IDS["controller"]] * 2)   # a restarted player has lost it: here it is again
-        self.assertIn("One-time presenter code", self.api.player.shown[-1][1])
+        self.assertIn("One-time guest code", self.api.player.shown[-1][1])
 
 
 class Diagnostics(base.BoxBase):

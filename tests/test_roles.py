@@ -206,6 +206,28 @@ GUEST_BODIES = {
         [{"scene": STREAM_SCENE}, {"scene": SCENE, "force": True}]),
 }
 
+# Guest forms whose real handler does not answer 200 on the test rig, and why. Everything else must run to its end,
+# so "nothing was saved" is said about handlers that really ran.
+def _not_here():
+    out = {}
+    for path, why in (("/api/effects", 409), ("/api/effects/step", 409), ("/api/effects/preset", 409), ("/api/shaders/play", 409),
+                      ("/api/shaders/step", 409), ("/api/shaders/preset", 409),       # the Shaders module is off on this rig
+                      ("/api/projector", 404), ("/api/room/group", 404)):             # no projector is added
+        for body in GUEST_BODIES[("POST", path)][0]:
+            out[(path, json.dumps(body))] = why
+    for body in GUEST_BODIES[("POST", "/api/vibes")][0]:
+        if body != {"on": False}:
+            out[("/api/vibes", json.dumps(body))] = 409
+    out[("/api/projector", "off")] = out[("/api/room/group", "off")] = 404
+    return out
+
+
+# What saves the settings in the modules behind those routes, by the function that does it, read from the source.
+# None is a guest's form: api_set and api_config and api_presets are the Operator's routes, set_dwell is the "dwell"
+# key (refused for a guest by the form), identify is "Refresh details" (refused) or the monitor's own reading.
+SAVERS = {"shaders": ["_save"], "effects": [], "vibes": [], "room": ["api_set"], "projector": ["identify"]}
+SAVE_CALLERS = {"shaders": ["api_set", "delete"], "effects": ["_edit_presets", "set_detail"], "vibes": []}
+
 ROOM = {"groups": [], "scenes": [
     {"id": SCENE, "name": "Show", "groups": [{"group": "all", "power": "on", "input": "", "picture": "leave", "sound": "leave"}],
      "box": {"action": "pad", "pad": [0, 0]}},
@@ -265,6 +287,9 @@ class GateTableTest(RolesBase):
         real = self.api.routes()
         stubbed = {k: (need, (lambda b, d, c: {})) for k, (need, _h) in real.items()}
         self.api.routes = lambda: stubbed
+        for key in (("POST", "/api/support/start"), ("POST", "/api/support/login"), ("POST", "/api/support/stop")):
+            self.real_support = getattr(self, "real_support", {})
+            self.real_support[key] = real[key][1]
         self.api.set_module = lambda *a: {}
         return real
 
@@ -280,12 +305,12 @@ class GateTableTest(RolesBase):
         return self.api.handle(method, path, body, device, client)[0]
 
     def support_device(self, role):
+        """A support session of this role, made with the real handlers (the table's are stubs by now)."""
+        do = self.real_support
         if self.api.support.session is not None:
-            self.h("POST", "/api/support/stop", device=self.owner)
-        st, body = self.start(role=role)
-        self.assertEqual(st, 200, body)
-        st, login = self.h("POST", "/api/support/login", {"code": body["code"]}, client=TUNNEL)
-        self.assertEqual(st, 200, login)
+            do[("POST", "/api/support/stop")]({}, self.owner, LAN)
+        body = do[("POST", "/api/support/start")]({"confirm": "start", "role": role}, self.owner, LAN)
+        login = do[("POST", "/api/support/login")]({"code": body["code"]}, None, TUNNEL)
         dev = self.api.support.authenticate(login["token"])
         self.assertEqual((dev["role"], dev["remote"]), (role, True))
         return dev
@@ -293,15 +318,21 @@ class GateTableTest(RolesBase):
     def test_every_route_has_a_row_and_no_row_is_left_over(self):
         routes = set(self.api.routes()) | set(policy.OUTSIDE) | {("POST", "/api/modules/*")}
         # the paths the server answers by itself are found in its source, so a new one cannot be forgotten
-        for path in re.findall(r'path == "(/api/[^"]+)"', inspect.getsource(server)):
-            self.assertTrue(any(p == path for _m, p in policy.OUTSIDE), "%s is answered by the server and is not in policy.OUTSIDE" % path)
+        # (every one of them asks _who(method, path), which is Api.gate with the row of policy.OUTSIDE)
+        source = inspect.getsource(server)
+        asked = {(m.group(1), path) for m in re.finditer(r'_who\("(GET|POST)", ([^\n]*)', source)
+                 for path in re.findall(r'"(/api/[^"]+)"', m.group(2))}
+        self.assertEqual(sorted(asked), sorted(policy.OUTSIDE))
+        # and a request gets its device in two places only: _who (the gate) and _api (Api.handle, the gate again)
+        self.assertEqual(len(re.findall(r"device = auth\.authenticate\(", source)), 2)
         self.assertEqual(sorted(routes - set(ROWS)), [], "routes without a row in tests/test_roles.py: decide who may use them")
         self.assertEqual(sorted(set(ROWS) - routes), [], "rows for routes that are gone")
         self.assertEqual(sorted(set(GUEST_BODIES)), sorted(policy.GUEST))
         self.assertEqual(sorted(k for k, row in ROWS.items() if row[2] == 200 and row[1] == 403), sorted(policy.GUEST))
 
     def test_the_route_table_and_the_rows_agree_about_the_minimum_role(self):
-        floors = dict({k: need for k, (need, _h) in self.api.routes().items()}, **policy.OUTSIDE)
+        floors = {k: need for k, (need, _h) in self.api.routes().items()}
+        floors.update(policy.OUTSIDE)
         floors[("POST", "/api/modules/*")] = "full"
         for key, row in ROWS.items():
             need = floors[key]
@@ -313,10 +344,10 @@ class GateTableTest(RolesBase):
         self.stub()
         wrong = []
 
-        def check(who, device, client, column):
+        def check(who, device, client, column, forms=False):
             for (method, path), row in sorted(ROWS.items()):
                 bodies = [{}]
-                if who == "guest, open" and (method, path) in GUEST_BODIES:
+                if (forms or who == "guest, open") and (method, path) in GUEST_BODIES:
                     bodies = GUEST_BODIES[(method, path)][0]
                 for body in bodies:
                     got = self.ask(method, path, body, device, client)
@@ -324,9 +355,10 @@ class GateTableTest(RolesBase):
                         wrong.append("%s: %s %s %s answered %s, the row says %s" % (who, method, path, json.dumps(body), got, row[column]))
 
         check("nobody", None, LAN, 0)
-        self.lock(True)
-        check("guest, locked", self.guest, LAN, 1)
-        self.lock(False)
+        self.api.guests.set_locked(True)              # not through the API: its handlers are stubs here
+        self.assertEqual(self.h("POST", "/api/blackout", {"on": True}, self.guest)[1].get("error"), policy.LOCKED_TEXT)
+        check("guest, locked", self.guest, LAN, 1, forms=True)
+        self.api.guests.set_locked(False)
         check("guest, open", self.guest, LAN, 2)
         check("operator", self.operator, LAN, 3)
         check("owner", self.owner, LAN, 4)
@@ -369,7 +401,10 @@ class GateTableTest(RolesBase):
             for call in re.findall(r"api\.handle\(([^\n]*)", inspect.getsource(module)):
                 self.assertRegex(call, r"(MIDI|OSC|DMX|ROOM)_DEVICE", "%s calls the API as something else: %s" % (module.__name__, call))
         pvj_dir = os.path.dirname(api_mod.__file__)
-        callers = sorted(n for n in os.listdir(pvj_dir) if n.endswith(".py") and re.search(r"api\.handle\(", open(os.path.join(pvj_dir, n)).read()))
+        def text(name):
+            with open(os.path.join(pvj_dir, name)) as f:
+                return f.read()
+        callers = sorted(n for n in os.listdir(pvj_dir) if n.endswith(".py") and re.search(r"api\.handle\(", text(n)))
         self.assertEqual(callers, ["dmx.py", "midi.py", "osc.py", "room.py", "scheduler.py", "server.py"])
 
     def test_a_guest_device_can_never_be_taken_for_a_controller(self):
@@ -445,6 +480,34 @@ class LockTest(RolesBase):
         self.assertNotIn("guest_controls", json.dumps(out))
         self.assertIn("guest_controls", boxcare.NEVER)
 
+    def test_a_factory_reset_opens_it_again(self):
+        self.lock(True)
+        st, out = self.h("POST", "/api/system/factory-reset", {"confirm": boxcare.CONFIRM_RESET, "media": "keep"}, self.owner)
+        self.assertEqual(st, 200, out)
+        self.assertNotIn("guest_controls", self.settings.data)
+        self.assertFalse(self.api.guests.locked())
+
+    def test_a_lock_set_while_a_guests_request_is_on_its_way_leaves_no_confirm_behind(self):
+        """The race: the guest's request has passed the first look at the lock when an operator locks. Under the
+        controls' own lock it is looked at again, so no token is made after the lock cleared them."""
+        guests, real = self.api.guests, self.api.guests.locked
+        calls = []
+
+        def locked():
+            calls.append(1)
+            if len(calls) == 1:                       # the first look says open; the operator locks right after it
+                answer = real()
+                guests.locked = real
+                guests.set_locked(True)
+                guests.locked = locked
+                return answer
+            return real()
+        guests.locked = locked
+        st, out = self.h("POST", "/api/projector", {"id": "all", "action": "off"}, self.guest)
+        guests.locked = real
+        self.assertEqual((st, out.get("error")), (403, policy.LOCKED_TEXT))
+        self.assertEqual(guests._confirms, {})
+
     def test_a_settings_file_with_the_lock_loads_in_a_release_that_does_not_know_it(self):
         """The rollback: this branch does not touch settings.py, whose loader is master's own. It keeps a key it does
         not know through a load and a save (the same was tried against a checkout of master, see the journal)."""
@@ -484,11 +547,9 @@ class PowerOffTest(RolesBase):
             self.assertEqual(out["confirm"]["seconds"], 30)
             token = out["confirm"]["token"]
             self.assertEqual(self.done, [])
-            for wrong in ("", "x", True, 1, None, [token], token + "x"):
-                self.later()
+            for wrong in ("", "x", True, 1, None, [token], token + "x"):      # nine requests in all: under the limit of ten
                 self.assertEqual(self.off(path, body, confirm=wrong)[0], 409, wrong)
             self.assertEqual(self.done, [])
-            self.later()
             st, out = self.off(path, body, confirm=token)
             self.assertEqual(st, 200, out)
             self.assertEqual(self.done, [(path, body)])          # the handler never sees the token
@@ -573,6 +634,27 @@ class GuestLimitTest(RolesBase):
         self.assertEqual(done, policy.BOX_ACTIONS)
         self.assertEqual(self.h("POST", "/api/blackout", body, self.operator)[0], 200)
 
+    def test_what_saves_in_the_modules_behind_the_guest_routes_is_known(self):
+        """The rig above cannot run a shader, an effect or a projector to the end, so this is read from the source:
+        the functions that save are these and no other, and none is a form a guest may send."""
+        import ast
+        from pvj import effects, projector, shaders, vibes
+        for module in (shaders, effects, vibes, room, projector):
+            name = module.__name__.split(".")[-1]
+            saving, calling = set(), set()
+            for node in ast.walk(ast.parse(inspect.getsource(module))):
+                if not isinstance(node, ast.FunctionDef):
+                    continue
+                for n in ast.walk(node):
+                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                        if n.func.attr == "save":
+                            saving.add(node.name)
+                        if n.func.attr == "_save":
+                            calling.add(node.name)
+            self.assertEqual(sorted(saving), SAVERS[name], name)
+            if name in SAVE_CALLERS:
+                self.assertEqual(sorted(calling), SAVE_CALLERS[name], name)
+
     def test_every_guest_action_is_logged_with_the_devices_name(self):
         named = self.auth.invite('Eve"\n pvj-web: owner PIN shown', "view")[1]
         self.assertEqual(self.h("POST", "/api/play", {"file": "a.mp4"}, named)[0], 200)
@@ -587,6 +669,9 @@ class GuestLimitTest(RolesBase):
         self.assertEqual(len(self.lines), before)
 
     def test_nothing_a_guest_does_is_written_to_the_settings(self):
+        with self.settings.lock:
+            self.settings.data["pads"]["banks"][0]["pads"][0] = {"label": "A", "file": "a.mp4", "ending": "loop"}
+            self.settings.save()
         with open(self.settings.path, "rb") as f:
             before = f.read()
         made = self.saves()
@@ -601,14 +686,61 @@ class GuestLimitTest(RolesBase):
             self.assertEqual(st, 409, out)
             self.later()
             answers[(path, "off")] = self.h("POST", path, dict(body, confirm=out["confirm"]["token"]), self.guest)[0]
-        self.assertNotIn(403, answers.values(), answers)
-        self.assertNotIn(401, answers.values(), answers)
-        self.assertGreater(list(answers.values()).count(200), 8, answers)       # real handlers ran, not only refusals
+        other = {k: v for k, v in answers.items() if v != 200}
+        self.assertEqual(other, _not_here(), "a guest form that did not run to its end here saved nothing only by chance")
         self.assertEqual(made, [])
         with open(self.settings.path, "rb") as f:
             self.assertEqual(f.read(), before)
         self.assertEqual(self.h("POST", "/api/mix", {"transition": "cut", "duration": 1}, self.operator)[0], 200)
         self.assertEqual(len(made), 1)                         # the counter does count
+
+
+class HeldBackTest(RolesBase):
+    """What does not rise with the Operator, beside the controllers and support of the table."""
+    def test_a_presenter_paired_from_a_controller_before_the_update_keeps_the_presenters_reach(self):
+        with self.settings.lock:
+            old = {"id": "0123abcd", "name": "From the Launchpad", "role": "live", "via": "controller", "created": 1, "hash": "x"}
+            self.settings.data["devices"].append(old)
+        self.assertTrue(policy.held_to_legacy(old))
+        self.assertFalse(policy.is_operator(old))
+        self.assertFalse(policy.held_to_legacy(self.operator))
+        self.assertFalse(policy.held_to_legacy(dict(old, role="full")))      # an owner code from a controller is an owner
+        self.assertFalse(policy.held_to_legacy(dict(old, role="view")))      # and a guest is a guest
+        legacy = {k for k, row in ROWS.items() if row[8] == 200}
+        real = self.api.routes()
+        stubbed = {k: (need, (lambda b, d, c: {})) for k, (need, _h) in real.items()}
+        self.api.routes = lambda: stubbed
+        self.api.set_module = lambda *a: {}
+        for method, path in sorted(ROWS):
+            if (method, path) in policy.OUTSIDE:
+                try:
+                    self.api.gate(method, path, {}, old, LAN)
+                    got = 200
+                except api_mod.ApiError as e:
+                    got = e.status
+            else:
+                got = self.api.handle(method, path.replace("*", "shaders"), {}, old, LAN)[0]
+            self.assertEqual(got, 200 if (method, path) in legacy else 403, "%s %s" % (method, path))
+
+    def test_the_panel_is_told_the_reach_in_one_word(self):
+        def reach(dev, client=LAN):
+            return self.h("GET", "/api/status", device=dev, client=client)[1]["reach"]
+        self.assertEqual([reach(self.owner), reach(self.operator), reach(self.guest)], ["owner", "operator", "guest"])
+        self.lock(True)
+        self.assertEqual([reach(self.owner), reach(self.operator), reach(self.guest)], ["owner", "operator", "watch"])
+        self.lock(False)
+        self.assertEqual(policy.reach({"id": "0123abcd", "role": "live", "via": "controller"}, False), "presenter")
+        self.assertEqual(policy.reach({"id": "support-1", "role": "live", "remote": True}, False), "presenter")
+        self.assertEqual(policy.reach({"id": "support-1", "role": "view", "remote": True}, False), "watch")   # never guest controls
+        self.assertEqual(policy.reach({"id": "support-1", "role": "full", "remote": True}, False), "owner")
+        self.assertEqual(policy.reach(midi.MIDI_DEVICE, False), "presenter")
+        self.assertEqual(policy.reach(None, False), "watch")
+
+    def test_the_look_pages_details_are_for_an_operator_and_not_for_who_is_held_back(self):
+        def has(dev):
+            return any("look" in x for x in self.api.get_theme({}, dev, LAN)["available"])
+        self.assertTrue(has(self.owner) and has(self.operator))
+        self.assertFalse(has(self.guest) or has(midi.MIDI_DEVICE) or has({"id": "support-1", "role": "live", "remote": True}))
 
 
 class PeopleTest(RolesBase):

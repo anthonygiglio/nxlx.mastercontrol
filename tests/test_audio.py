@@ -89,8 +89,8 @@ class AudioTest(ServerBase):
         view = self.call("POST", "/api/devices/invite", {"name": "g", "role": "view"}, token=self.full)[1]["token"]
         live = self.call("POST", "/api/devices/invite", {"name": "g", "role": "live"}, token=self.full)[1]["token"]
         self.assertEqual(self.call("GET", "/api/audio", token=view)[0], 200)
-        for token in (view, live):
-            self.assertEqual(self.call("POST", "/api/audio", {"device": "auto"}, token=token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/audio", {"device": "auto"}, token=view)[0], 403)
+        self.assertEqual(self.call("POST", "/api/audio", {"device": "auto"}, token=live)[0], 200)      # the Operator's since D80
 
     def test_a_screen_switched_on_after_boot_moves_the_sound_to_hdmi(self):
         current = ["alsa/plughw:CARD=Headphones,DEV=0"]

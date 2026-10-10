@@ -281,7 +281,7 @@ class Auth:
                 self._presenter_made = [x for x in self._presenter_made if t - x < 3600.0]
                 if len(self._presenter_made) >= PRESENTER_CODES_PER_HOUR:
                     wait = int(3600.0 - (t - self._presenter_made[0])) + 1
-                    raise JoinLimit("%d guest codes were made in the last hour, which is the most a presenter may; "
+                    raise JoinLimit("%d guest codes were made in the last hour, which is the most an operator may; "
                                     "use the code that is active, wait %d minutes, or ask the owner"
                                     % (PRESENTER_CODES_PER_HOUR, -(-wait // 60)), retry_after=wait)
             for c in same:                      # one live code per role: a new one replaces the old
