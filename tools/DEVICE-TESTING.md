@@ -178,9 +178,9 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 
 | # | Do | See on the box's display | See on the paired phone (System > People and codes) |
 | --- | --- | --- | --- |
-| C1 | With "A code from a controller" off: hold the eighth pad of the top row for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
-| C2 | Switch "Presenter codes from a controller" on (answer the question). Tap the pad | Nothing | The second switch appears |
-| C3 | Hold the pad for 4 seconds, let go | The address, "One-time presenter code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time presenter code is on the box's display now", and End this code. No digits |
+| C1 | With "A code from a controller" off: hold the third round button along the top (Top 3) for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
+| C2 | Switch "Presenter codes from a controller" on (answer the question). Tap the button | Nothing | The second switch appears |
+| C3 | Hold the button for 4 seconds, let go | The address, "One-time presenter code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time presenter code is on the box's display now", and End this code. No digits |
 | C4 | On the second phone open the address, type the code | The code leaves the display within a second or two | "The last one: a presenter code, just now, used by the device ..." and the phone is in Paired devices as Presenter |
 | C5 | Hold again, then press the pad once | The code appears, then goes at the press | "hidden at the controller" |
 | C6 | Hold again, wait 2 minutes | The code goes by itself | "ran out unused" |

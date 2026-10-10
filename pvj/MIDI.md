@@ -144,16 +144,16 @@ The **original** Launchpad Mini, not the MK3 (which sends other numbers and has 
 2. **A lit pad means there is something on it; the one that plays is bright green; an empty pad is dark.** Bank A is amber, bank B yellow-green, bank C orange.
 3. **One zone per thing, each a row or a strip, never scattered.** The strip beside the banks, two pads wide, is the presets of the shader on screen, 1 to 8 from the top. The fourth pair of rows is for what is not a pad: row 7 has shaders and Vibes on its left half and the effect on its right; row 8 has the clip in the panel's order (Prev, back 10 s, forward 10 s, Next) on its left and the shader's first four controls, as presses, on its right.
 4. **The round buttons are the ones to be careful with**, and you can feel that they are round. On the right, top half: the four **Room scenes** (press twice). Bottom half: **the screen**, in the panel's order from the top: **Fade, Freeze, Stop, Blackout**, Blackout in the corner. Fade and Blackout flash red for as long as they are on.
-5. **The top row holds what is used least**: which set Vibes plays, the quarter turn (far from the right-hand column), the overlay, sound off.
+5. **The top row holds what is used least**: which set Vibes plays, the presenter code (a hold of three seconds, on the third button: away from every pad of a bank), the quarter turn (far from the right-hand column), the overlay, sound off, and mapping mode on the last (press twice).
 
 ```
-top (round)   Vibes:Amb  Vibes:Show  .       .       Rotate   Overlay  Mute    .
+top (round)   Vibes:Amb  Vibes:Show  code    .       Rotate   Overlay  Mute    Mapping 2x
 row 1         A1   A2   A3   A4   A5   A6   |  preset 1  preset 2     (A) Room scene 1   2x
 row 2         A7   A8   A9   A10  A11  A12  |  preset 3  preset 4     (B) Room scene 2   2x
 row 3         B1   B2   B3   B4   B5   B6   |  preset 5  preset 6     (C) Room scene 3   2x
 row 4         B7   B8   B9   B10  B11  B12  |  preset 7  preset 8     (D) Room scene 4   2x
 row 5         C1   C2   C3   C4   C5   C6   |  .         .            (E) FADE out / in
-row 6         C7   C8   C9   C10  C11  C12  |  .         code         (F) Freeze
+row 6         C7   C8   C9   C10  C11  C12  |  .         .            (F) Freeze
 row 7         Vibes Shader< Shader> .  |  Effect  Effect<  Effect>  .  (G) Stop
 row 8         Prev  -10 s   +10 s  Next |  control 1  2  3  4          (H) BLACKOUT      2x
 ```
@@ -164,8 +164,7 @@ row 8         Prev  -10 s   +10 s  Next |  control 1  2  3  4          (H) BLACK
 | Grid rows 3 and 4, columns 1 to 6 | Notes 32 to 37, 48 to 53 | Bank B, pads 1 to 12 |
 | Grid rows 5 and 6, columns 1 to 6 | Notes 64 to 69, 80 to 85 | Bank C, pads 1 to 12 |
 | Grid rows 1 to 4, columns 7 and 8 | Notes 6, 7, 22, 23, 38, 39, 54, 55 | Shader preset 1 to 8 |
-| Grid rows 5 and 6, columns 7 and 8 | Notes 70, 71, 86 | Spare |
-| Grid row 6, column 8 | Note 87 | Show a one-time presenter code (hold 3 seconds and let go; does nothing until switched on, see "A pairing code on the display") |
+| Grid rows 5 and 6, columns 7 and 8 | Notes 70, 71, 86, 87 | Spare |
 | Grid row 7, columns 1 to 3 | Notes 96, 97, 98 | Vibes on / off, previous shader, next shader (column 4, note 99, is spare) |
 | Grid row 7, columns 5 to 7 | Notes 100, 101, 102 | Effect on / off, previous effect, next effect (column 8, note 103, is spare) |
 | Grid row 8, columns 1 to 4 | Notes 112 to 115 | Previous clip, back 10 seconds, forward 10 seconds, next clip |
@@ -174,7 +173,9 @@ row 8         Prev  -10 s   +10 s  Next |  control 1  2  3  4          (H) BLACK
 | E, F, G, H (right) | Notes 72, 88, 104, 120 | **Fade out, then in**; Freeze / resume; Stop; Blackout on / off (press twice) |
 | Top 1, 2 | CC 104, 105 | Vibes: start the set Ambient, start the set Show |
 | Top 5, 6, 7 | CC 108, 109, 110 | Rotate a quarter turn, overlay picture on / off, sound off / on |
-| Top 3, 4, 8 | CC 106, 107, 111 | Spare |
+| Top 3 | CC 106 | Show a one-time presenter code (hold 3 seconds and let go; does nothing until switched on, see "A pairing code on the display"). It was on the pad of row 6, column 8, right beside bank C's pad 12, with a spare pad on its other side: a hold meant for a clip could land on it. Up here nothing next to it is a pad |
+| Top 4 | CC 107 | Spare |
+| Top 8 | CC 111 | Mapping mode on / off (press twice; see "Layers") |
 
 The effect's controls as presses, which filled eight pads of the first layout, and the shader's controls 5 to 8 as presses are not on this one. **The banks are where the very first layout had them** (rows of six, A, B, C from the top): a hand that knew those pads still finds them.
 
@@ -210,7 +211,7 @@ Over OSC: the same, behind the same switch (`pvj/OSC.md`, `/pvj/mapping/...`).
 - **Most controls of the three layouts do something else.** The tables above are the whole truth; the ones a hand had learned:
   - *nanoKONTROL2*: the eight knobs are the shader's controls 1 to 8, as they were; new is that M 6 turns knobs 1 to 3 into zoom and the two positions while it flashes. R 6 was Fade in and is spare; R 7 was Fade out and is the one fade button; M 6 was preset 6 and is Geometry, M 7 was preset 7 and is the quarter turn, M 8 was preset 8 and is mapping mode (nothing until the owner's switch is on). Presets 6 to 8 are not on it any more.
   - *MIDI Mix*: knob B2 was position X and still is; B1 (size) is the same under the name Zoom; B3 was Vibes time and is position Y; B4 was spare and is Vibes time. The Solo+Mute row was Stop, Pause, Vibes, previous shader, next shader, Fade in, Fade out, Blackout and is Vibes, previous shader, next shader, effect on / off, fade, Freeze, Stop, Blackout. Rec Arm 8 was preset 8 and is the quarter turn.
-  - *Launchpad Mini*: the pads of the three banks are where they were (rows of six, A, B, C from the top). Everything else moved: the two columns beside the banks were the effect's buttons and controls and are the shader's presets 1 to 8; row 7 was the presets and is Vibes and the shader's steps (left) and the effect (right); row 8 was the shader's controls 1 to 8 and is the clip's transport (left) and the shader's controls 1 to 4 (right). The top row was previous and next shader, Vibes, previous and next clip, Pause, Fade in, Fade out and is the two Vibes sets, the quarter turn, the overlay and Mute. On the right, E and F were the two Vibes sets and are Fade and Freeze; Stop and Blackout (G and H) and the Room scenes (A to D) are where they were. The presenter code moved from the pad with note 7 to the pad with note 87.
+  - *Launchpad Mini*: the pads of the three banks are where they were (rows of six, A, B, C from the top). Everything else moved: the two columns beside the banks were the effect's buttons and controls and are the shader's presets 1 to 8; row 7 was the presets and is Vibes and the shader's steps (left) and the effect (right); row 8 was the shader's controls 1 to 8 and is the clip's transport (left) and the shader's controls 1 to 4 (right). The top row was previous and next shader, Vibes, previous and next clip, Pause, Fade in, Fade out and is the two Vibes sets, the quarter turn, the overlay and Mute. On the right, E and F were the two Vibes sets and are Fade and Freeze; Stop and Blackout (G and H) and the Room scenes (A to D) are where they were. The presenter code moved from the pad with note 7 to the pad with note 87, and after the review from there (it sat right beside bank C's pad 12) to the round button Top 3 (CC 106).
 - **A zoom or position knob waits for pickup** on these three controllers, also one you mapped yourself there: it does nothing until it reaches the value the box has.
 - **Zoom, position, clip speed, shader speed, colour turn and shader brightness have their normal value at the middle of the control**, over nine steps (60 to 68 of 0 to 127). For every mapping of these actions, yours and the built-in map's too:
   - zoom went from 1 to 200 percent in a straight line (100 percent near 63) and goes from 25 to 200 with 100 at the middle. A mapping that needs the old bottom can say `"min": 1`.
@@ -525,7 +526,7 @@ Anyone who can reach a controller plugged into the box can do this once it is on
 - **A full-access device sees it and can end it.** The card on People and codes says "A one-time presenter code is on the box's display now", with **End this code**, and afterwards what became of the last one (used, and by which device; ran out; hidden at the controller; ended from the panel). Switching either switch off ends a code that switch allowed. Neither the switches nor End work through remote support.
 - **Not in a settings file.** The two switches are never exported or imported, and a factory reset switches both off.
 
-**Giving a control the action.** On a controller's card (System > MIDI controller) tap a pad or a button and choose the action, or use Learn. A fader, a knob and a program change cannot have it (a fader given it through Learn does nothing, see "A button, not a fader"). **On a Launchpad Mini the eighth pad of the top row (note 7), the one pad that was spare, shows a presenter code**; while the switch is off it does nothing. No layout has the full access code: put it on a control yourself if you want it. The nanoKONTROL2 has no spare button (its one spare control is fader 8). The MIDI Mix's one spare button is Solo, which is held down while playing to reach the Solo+Mute row, so a hold on it would show a code by accident; it stays spare. On those two, give the action to a button you can do without.
+**Giving a control the action.** On a controller's card (System > MIDI controller) tap a pad or a button and choose the action, or use Learn. A fader, a knob and a program change cannot have it (a fader given it through Learn does nothing, see "A button, not a fader"). **On a Launchpad Mini the third round button along the top (Top 3, CC 106) shows a presenter code**; while the switch is off it does nothing. No layout has the full access code: put it on a control yourself if you want it. The nanoKONTROL2 has no spare button (its one spare control is fader 8). The MIDI Mix's one spare button is Solo, which is held down while playing to reach the Solo+Mute row, so a hold on it would show a code by accident; it stays spare. On those two, give the action to a button you can do without.
 
 If nothing happens: is MIDI on, is the switch on (People and codes), did you hold for at least 3 seconds and then let go, and is the player running (the code is drawn by the player; if it cannot draw, no code is made). `journalctl -u pvj-web | grep "controller code"` says why a request was refused.
 
