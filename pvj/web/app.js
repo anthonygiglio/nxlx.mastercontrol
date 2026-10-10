@@ -452,9 +452,10 @@
     } });
     var el = h('div', { class: 'tp', id: 'wstp', role: 'group', 'aria-label': 'Transport' },
       // (fold f-...: what leaves the one line of a wider panel for More, in the stylesheet's order: back and forward
-      // 10 s first, then the fades, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout. The place in the
-      // clip is never behind More: where it has no room on the line it is a slim bar along the strip's top edge,
-      // the same one control, placed there by the stylesheet.)
+      // 10 s first, then the fades, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout (keep), which a
+      // phone's closed strip shows too, with More beside them. The place in the clip is never behind More: where it
+      // has no room on the line it is a slim bar along the strip's top edge, the same one control, placed there by
+      // the stylesheet.)
       h('div', { class: 'tpinfo' }, h('div', { id: 'np', style: false, text: '' }), h('div', { class: 'tpmeta' }, h('div', { class: 'k', id: 'plpos' }), h('div', { class: 'k', id: 'time' })), more),
       h('div', { class: 'tpscrub' }, seekBar(canLive)),
       h('div', { class: 'tpgrp' }, speedBar(canLive),
@@ -462,14 +463,14 @@
           act('POST', '/api/control', { action: 'loop', value: !looping() }, poll);
         } })),
       h('div', { class: 'tpgrp' },
-        b('prev', '⏮ Prev', 'Previous clip', 'keep fold f-steps', ctl('prev')),
+        b('prev', '⏮ Prev', 'Previous clip', 'tpx fold f-steps', ctl('prev')),
         b('back10', '− 10 s', 'Back 10 seconds', 'tpx fold f-ten', ctl('seek', -10)),
         b('fwd10', '+ 10 s', 'Forward 10 seconds', 'tpx fold f-ten', ctl('seek', 10)),
-        b('next', 'Next ⏭', 'Next clip', 'keep fold f-steps', ctl('next'))),
+        b('next', 'Next ⏭', 'Next clip', 'tpx fold f-steps', ctl('next'))),
       h('div', { class: 'tpgrp' },
         b('fadein', 'Fade in', null, 'tpx fold f-fades', function () { act('POST', '/api/fadein', { seconds: 2 }, poll); }),
         b('fade', 'Fade out', null, 'tpx fold f-fades', function () { act('POST', '/api/fadeout', { seconds: 2 }); }),
-        b('freeze', 'Freeze', null, 'tpx', ctl('pause'))),
+        b('freeze', 'Freeze', null, 'keep', ctl('pause'))),
       h('div', { class: 'tpgrp' },
         b('stop', 'Stop', null, 'keep', ctl('stop')),
         b('black', 'Blackout', null, 'keep', function () {

@@ -67,7 +67,7 @@ const DESKS = { play: ['pads', 'library', 'shaders'], shape: ['effect', 'picture
 const HOMES = ['vibes', 'mapping', 'sound'];      // rows of the Setup index that open a screen of another area
 const STRIP = ['prev', 'back10', 'fwd10', 'next', 'fadein', 'fade', 'freeze', 'stop', 'black'];
 const SPEED = ['mv', 'loop'];      // Speed and Loop, on the strip since D72 (Loop has no id: it is found by its class)
-const ALWAYS = ['prev', 'next', 'stop', 'black'];
+const ALWAYS = ['freeze', 'stop', 'black'];      // a phone's closed strip: these and More (Previous and Next are behind More there)
 // From which width of the panel each control is on the strip's one line (under it: behind More). The owner's order
 // of who has the room first (D72): Blackout, Stop, Freeze; Previous and Next; Loop; Speed; the fades; back and
 // forward 10 s; the place in the clip.
@@ -76,7 +76,7 @@ const ON_LINE = { freeze: 600, stop: 600, black: 600, prev: 800, next: 800, loop
 // one control), from it a slider on the line.
 const SEEK_LINE = 1640;
 const NAME = 180;                  // the least width of the name of what plays, in px
-// (what the closed strip shows whatever the width: under 600 px those four, from 600 px Freeze, Stop and Blackout, with Previous and Next from 800 px)
+// (what the closed strip shows whatever the width: Freeze, Stop and Blackout, with Previous and Next from 800 px)
 const kept = (width) => (width < 600 ? ALWAYS : ['freeze', 'stop', 'black'].concat(width >= 800 ? ['prev', 'next'] : []));
 
 /* eslint-disable no-undef */

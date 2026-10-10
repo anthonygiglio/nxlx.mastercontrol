@@ -598,22 +598,23 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .wstabs { gap: 2px; padding-left: 8px; padding-right: 8px; }
   .wstabs .btn { font-size: 14px; }
 }
-/* The transport strip. A phone: what is playing and More on one line, then Previous, Next, Stop and Blackout;
-   More opens the other five and the place in the clip in place, UNDER those four, which stay where the thumb
-   found them: two rows of 44 px (back and forward 10 s, Fade in, Fade out; then Freeze and the place in the clip).
-   So the open strip and the tabs are under half of a 568 px phone. (On a phone the rows are placed by `order`,
-   so the cursor's order there is the laptop's: Previous, back, forward, Next, the fades, Freeze, Stop, Blackout.) */
+/* The transport strip. A phone: what is playing on a line of its own, the clip count and the time under it, then
+   the row the thumb finds: Freeze, Stop, Blackout and More (the three that are never behind More at any width,
+   and the way to the rest). More opens the rest in place, UNDER that row, which stays where it was: Previous,
+   Next, Fade in, Fade out; back and forward 10 s and Loop; then Speed on a row of its own, so the slider is as wide
+   as the strip. Closed, the strip and the tabs are what they were; open, in a 568 px phone the last row is reached
+   by scrolling inside the strip, whose lower edge then says so. (On a phone the rows are placed by `order`, so the
+   cursor's order there is the laptop's: Previous, back, forward, Next, the fades, Freeze, Stop, Blackout.) */
 .tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 16px; border-top: 1.5px solid var(--ln); }
-.tpinfo { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-width: 0; }
+.tpinfo { display: contents; }     /* (a phone: its three parts are cells of the strip's own grid; from 600 px a box of its own, below) */
 /* What plays has a line, cut with dots where it is long (whole in its title, app.js), and under it the clip count
-   and the time, beside More, which is as tall as both. Neither the count nor the time is ever broken: each is
-   one piece with figures of one width, and where the two have no room side by side the time stands under the
-   count, whole. */
-.tpinfo #np { grid-column: 1; grid-row: 1; width: 0; min-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tpmeta { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; column-gap: 10px; min-width: 0; }
+   and the time. Neither the count nor the time is ever broken: each is one piece with figures of one width, and
+   where the two have no room side by side the time stands under the count, whole. */
+.tpinfo #np { grid-column: 1 / -1; order: -2; width: 0; min-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpmeta { grid-column: 1 / -1; order: -1; display: flex; flex-wrap: wrap; column-gap: 10px; min-width: 0; }
 .tpmeta #time, .tpmeta #plpos { white-space: nowrap; overflow-wrap: normal; font-variant-numeric: tabular-nums; }
 .tpmeta #plpos:empty { display: none; }
-.tpinfo .tpmore { grid-column: 2; grid-row: 1 / span 2; margin-left: 10px; white-space: nowrap; }      /* ("Less" is one word in any look) */
+.tpinfo .tpmore { order: 1; min-height: 56px; white-space: nowrap; }      /* ("Less" is one word in any look) */
 /* The place in the clip. Where it has no room on the strip's line (under 1640 px, a phone too) it is a slim bar
    along the strip's top edge, as a media player has it: the whole width, 4 px of track that shows how far the
    clip is, in a target 24 px high for a finger or the pointer; it grows to 8 px with its handle under the
@@ -638,16 +639,17 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .wsdock > .tp.tp { padding-top: 12px; }
 }
 .tp .tpx { order: 2; }
-.tp #freeze { order: 3; }
+.tp .f-ten { order: 3; }
 .tp button.tpx { min-height: 44px; }
 .tpgrp { display: contents; }
 .tp .tpb { min-width: 0; min-height: 56px; padding: 0; font-size: 14px; }
 .tp .tpmore { flex: none; min-width: max-content; padding: 0 12px; }      /* (never narrower than its word: in a wider face "More" was 46 px in a button of 64 where the line is fullest) */
 .tp:not(.open) .tpx { display: none; }
-/* Speed and Loop (D72: they were on Shape > Controls). On a phone they are the last row that More opens: Loop, and
-   Speed beside it with its value over the slider's name. */
-.tp .tploop { order: 5; }
-.tp .tpspeed { order: 6; grid-column: span 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Speed and Loop (D72: they were on Shape > Controls). On a phone Loop is on the row of back and forward 10 s, twice
+   as wide as a button, and Speed is the last row that More opens, as wide as the strip, with its value over the
+   slider's name. */
+.tp .tploop { order: 4; grid-column: span 2; }
+.tp .tpspeed { order: 5; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tp:not(.open) .tpspeed { display: none; }
 .tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }
 .tpspeed input { flex: 1 1 0; min-width: 0; margin: 0; height: 44px; }
@@ -674,12 +676,13 @@ main.ws:focus, .deskcol:focus { outline: none; }
      line under the first, in place. */
   .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   .tpgrp { display: contents; }
-  .tpinfo { flex: 1 1 0; min-width: min-content; grid-template-columns: minmax(11.25rem, 1fr) auto; }
+  .tpinfo { display: grid; flex: 1 1 0; min-width: min-content; grid-template-columns: minmax(11.25rem, 1fr) auto; align-items: center; }
+  .tpinfo #np { grid-column: 1; grid-row: 1; }
+  .tpmeta { grid-column: 1; grid-row: 2; }
+  .tpinfo .tpmore { grid-column: 2; grid-row: 1 / span 2; margin-left: 10px; min-height: 44px; }      /* (beside the name, as tall as its two lines) */
   .tp .tpmore { display: block; }
   .tp .tpb { min-height: 44px; padding: 0 10px; font-size: inherit; }
   .tp .tpb.keep { min-height: 56px; }
-  .tp #freeze { order: 0; }
-  .tp:not(.open) #freeze { display: inline-block; }
   .tp .fold { order: 2; }
   .tp:not(.open) .fold { display: none; }
   .tp.open::before { content: ""; order: 1; flex: 0 0 100%; height: 0; margin-top: -6px; }
@@ -1295,6 +1298,7 @@ html[data-style="signal"] .tp { border-top: 0; padding: 8px 12px; }
 html[data-style="signal"] .tp .tpb { min-height: var(--tk-chl, 56px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
 html[data-style="signal"] .tp button.tpx { min-height: var(--tk-ch, 44px); }
 html[data-style="signal"] .tp .tpmore { min-height: var(--tk-ch, 44px); font-size: 14px; }
+@container app (max-width: 599px) { html[data-style="signal"] .tp .tpmore { min-height: var(--tk-chl, 56px); } }      /* (a phone: More is on the row of Freeze, Stop and Blackout, as tall as they are) */
 html[data-style="signal"] .tpinfo #np { font: 600 16px/1.2 var(--sans); text-transform: none; }
 html[data-style="signal"] .tpinfo #time, html[data-style="signal"] .tpinfo #plpos { font-size: 14px; }
 html[data-style="signal"] .tp #black { border-color: var(--st-problem, var(--fg)); }
