@@ -805,6 +805,14 @@ main.ws:focus, .deskcol:focus { outline: none; }
 @container app (max-width: 599px) { .row:has(> .btn.grow) { flex-wrap: wrap; } }
 .preset > span { min-width: 0; }
 
+/* The OSC page's "Who may send" (D78): long addresses (IPv6) and the key wrap, they never push the page wider. */
+.oscwho { min-width: 0; border-top: 1px solid var(--ln); padding-top: 10px; }
+.oscwho .lname.mono { font-size: 14px; }
+.oscwho .addr, .oscwho .lname, .oscwho .state { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.osckeyout { font-size: 15px; color: var(--fg); padding: 8px; border: 1.5px dashed var(--ln); border-radius: 6px; user-select: all; }
+.list .item.oscmsg { flex-direction: column; align-items: flex-start; gap: 2px; }
+.list .item.oscmsg > span:first-child { flex: none; }   /* a column here: the row rule's 10rem would be its height */
+
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
    element carries data-style="signal", which the server writes for a theme that names that style. The look above is

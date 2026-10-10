@@ -521,6 +521,101 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.fill('#oscport', oscPort);
     assert(await page.isDisabled('#oscsave'), 'back to the saved port: nothing to save');
     assert.strictEqual(await page.locator('#osctoggle').count(), 0, 'no second switch inside the OSC card');
+    // Who may send (D78): three locks, all off on a box that updates. Real OSC over UDP on loopback, from this test.
+    const oscUdp = (await get('/api/osc')).port;
+    const oscSend = (address) => new Promise((resolve) => {
+      const z = (t) => { const b = Buffer.from(t + '\0'); return Buffer.concat([b, Buffer.alloc((4 - b.length % 4) % 4)]); };
+      const sock = require('dgram').createSocket('udp4');
+      sock.send(Buffer.concat([z(address), z(',')]), oscUdp, '127.0.0.1', () => { sock.close(); resolve(); });
+    });
+    const oscRow = '.oscsender[data-id="127.0.0.1"]';
+    const oscNow = await get('/api/osc');
+    assert.deepStrictEqual([oscNow.only_on, oscNow.paired_on, oscNow.key_on, oscNow.only, oscNow.senders, 'key' in oscNow], [false, false, false, [], [], false], 'every lock is off until it is switched on');
+    await page.waitForSelector('#oscnosenders');
+    assert(/None of them is encryption/.test(await page.textContent('#oscwhohint')), 'the limit is said beside the locks');
+    await oscSend('/pvj/nothing-here');                       // the sender appears by itself, with its button
+    await page.waitForSelector(`${oscRow} button:text-is("Allow this one")`, { timeout: 15000 });
+    await page.click('#osconly');                             // lock 1: nobody yet, said in place
+    await page.waitForSelector('#osconlyempty');
+    await oscSend('/pvj/stop');
+    await page.waitForSelector(`${oscRow} .warn:has-text("Refused: not in the list of devices that may send")`, { timeout: 15000 });
+    await page.click(`${oscRow} button:text-is("Allow this one")`);
+    await page.waitForSelector('#osconlylist .addr:text-is("127.0.0.1")');
+    assert.strictEqual(await page.locator('#osconlyempty').count(), 0, 'the warning goes once a device is in the list');
+    await page.waitForSelector(`${oscRow} .hint:text-is("In the list")`);
+    await oscSend('/pvj/stop');
+    await page.waitForSelector(`${oscRow} .state:has-text("the last one /pvj/stop")`, { timeout: 15000 });
+    await page.click('#osclog > summary');                    // Last messages: what was let in, and why the other was not
+    await page.waitForSelector('#oscmessages .oscmsg:has-text("/pvj/stop")');
+    await page.waitForSelector('#oscmessages .oscmsg:has-text("Refused: not in the list")');
+    await page.click('#oscpaired');                           // lock 2: this browser is a paired device on loopback
+    await page.waitForFunction(() => { const n = document.getElementById('oscpairednow'); return n && n.textContent === 'Counts now: 127.0.0.1.'; });
+    await page.selectOption('#oscpairedhours', '3');
+    for (let i = 0; i < 100; i++) { const d = await get('/api/osc'); if (d.paired_hours === 3 && d.listening) break; await page.waitForTimeout(100); }   // the choice is saved
+    await page.waitForFunction(() => { const n = document.getElementById('oscpairedhours'); return n && n.value === '3'; });
+    assert.deepStrictEqual(await get('/api/osc').then((d) => [d.paired_on, d.paired_hours, d.paired_roles]), [true, 3, 'full']);
+    await page.click('#osckey');                              // lock 3: the key is hidden until Show, and hides again
+    await page.waitForSelector('#osckeyshow');
+    assert(!(await page.isVisible('#osckeyout')), 'the key is hidden until Show is pressed');
+    await page.click('#osckeyshow');
+    await page.waitForFunction(() => /^\/k\/[0-9a-f]{20}$/.test(document.getElementById('osckeyout').textContent));
+    const oscPrefix = await page.textContent('#osckeyout');
+    assert((await page.textContent('#osckeywhere')).includes(oscPrefix + '/pvj/stop'), 'where the key goes in TouchOSC is said with it');
+    assert(!JSON.stringify(await get('/api/osc')).includes(oscPrefix.slice(3)), 'the key is not in what the page asks for by itself');
+    await oscSend('/pvj/stop');
+    await page.waitForSelector(`${oscRow} .warn:has-text("no key in the address")`, { timeout: 15000 });
+    await oscSend(oscPrefix + '/pvj/stop');
+    await page.waitForSelector(`${oscRow} .state:has-text("the last one /pvj/stop")`, { timeout: 15000 });
+    await page.click('#osckeyshow');
+    assert(!(await page.isVisible('#osckeyout')) && (await page.textContent('#osckeyout')) === '', 'Hide takes the key off the page');
+    await page.click('#osckeynew');
+    await page.click('#confirmyes');
+    await page.waitForFunction((old) => { const t = document.getElementById('osckeyout').textContent; return /^\/k\/[0-9a-f]{20}$/.test(t) && t !== old; }, oscPrefix);
+    await oscSend(oscPrefix + '/pvj/stop');                   // the old key stops at once
+    await page.waitForSelector(`${oscRow} .warn:has-text("Refused: wrong key")`, { timeout: 15000 });
+    await page.waitForSelector(`${oscRow} .oscwrong:text-is("1 wrong key from this address.")`);
+    assert.strictEqual(await page.locator(`${oscRow} .oscnopanel`).count(), 0, 'this browser is a panel device at that address');
+    await page.waitForFunction(() => document.getElementById('osckeyout').hidden && !document.getElementById('osckeyout').textContent, null, { timeout: 45000 });   // it hides itself
+    // At 320 px with the longest addresses there are (IPv6, a full list, 64 character OSC addresses): nothing overruns.
+    const oscLong = (n) => 'fd12:3456:789a:bcde:f012:3456:789a:' + (0xbc00 + n).toString(16);
+    const oscWide = async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const res = await route.fetch(), d = await res.json();
+      d.only = Array.from({ length: 16 }, (_, n) => oscLong(n));
+      d.paired_now = [oscLong(1), oscLong(2), oscLong(3)];
+      d.paired_v6 = [oscLong(5), oscLong(6)];
+      d.refused = 1234567;
+      d.senders = [{ address: oscLong(1), messages: 123456, refused: 0, last: '/pvj/' + 'x'.repeat(59), accepted: true, why: 'nothing to do (an unknown address, or a button release)', at: 1 },
+        { address: oscLong(40), messages: 0, refused: 98765, wrong_keys: 98765, panel: false, last: '', accepted: false, why: 'not in the list of devices that may send', at: 1 }];
+      await route.fulfill({ response: res, json: d });
+    };
+    const oscWideLog = async (route) => route.fulfill({ json: { messages: [
+      { at: 1791650837, from: oscLong(1), address: '/pvj/' + 'x'.repeat(59), ok: true, why: '', count: 1 },
+      { at: 1791650837, from: oscLong(40), address: '', ok: false, why: 'not in the list of devices that may send', count: 98765 }] } });
+    await page.route('**/api/osc', oscWide);
+    await page.route('**/api/osc/messages', oscWideLog);
+    await page.setViewportSize({ width: 320, height: 844 });
+    await sys('OSC');
+    await page.waitForFunction(() => document.querySelectorAll('#osconlylist .item').length === 16 && document.querySelectorAll('.oscsender').length === 2);
+    await page.waitForSelector('#oscmessages .oscmsg:has-text("98765 times")');
+    assert(/reached the panel over IPv6 .*open the panel by the box's IPv4 address\.$/.test(await page.textContent('#oscpairednow')), 'an IPv6 panel device is said not to count');
+    assert.strictEqual(await page.textContent('.oscsender .oscwrong'), '98765 wrong keys from this address.');
+    assert.strictEqual(await page.textContent('.oscsender .oscnopanel'), 'No panel device here, check before allowing.');
+    await page.click('#osckeyshow');
+    await page.waitForFunction(() => /^\/k\/[0-9a-f]{20}$/.test(document.getElementById('osckeyout').textContent));
+    await fitsOn(page, 'OSC at 320 px with IPv6 addresses');
+    const oscOver = await page.$$eval('#oscwho *', (els) => { const card = document.getElementById('osccard').getBoundingClientRect();
+      return els.filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > card.right + 1 || r.left < card.left - 1 || (e.matches('.addr, .lname, .state, .hint') && e.scrollWidth > e.clientWidth + 1)); }).map((e) => (e.id || e.className) + ': ' + e.textContent.slice(0, 30)); });
+    assert.deepStrictEqual(oscOver, [], 'nothing in "Who may send" overruns at 320 px');
+    assert.strictEqual(await page.locator('.oscsender button:text-is("Allow this one")').count(), 1, 'a listed sender has no button, the other one has');
+    assert(await page.isDisabled('.oscsender button:text-is("Allow this one")'), 'a full list takes no more');
+    await page.unroute('**/api/osc', oscWide);
+    await page.unroute('**/api/osc/messages', oscWideLog);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.strictEqual(await post('/api/osc', { only_on: false, only: [], paired_on: false, key_on: false }), 200);
+    await sys('OSC');
+    await page.waitForSelector('#oscnosenders, .oscsender');
+    assert.strictEqual(await page.locator('#osckeybox, #osconlylist, #oscpairednow').count(), 0, 'all three locks are off again');
     await onPage('OSC');
     await sysIndex();
     await chip('OSC', 'Ready');

@@ -882,7 +882,7 @@ const MOVED = {
 };
 // What stands for each of them: the list fails if a control that replaced a removed copy is not there.
 const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn'], presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade'], guest: ['button: Crossfade'] };
-// Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D79 the Secure
+// Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D78 the OSC locks, D79 the Secure
 // connection page): each must be found, and on the screen named here. What shows only while something plays, in
 // the pad editor's sheet (Clip or Shader, D73) or after the box gave up a transition (the reason and Try again, D71)
 // is held by the steps of panel.test.js, not by the list, which is taken with nothing playing.
@@ -890,7 +890,8 @@ const TRANSITIONS = {};
 ['Wipe from left', 'Wipe from right', 'Wipe from top', 'Wipe from bottom', 'Slide off left', 'Slide off right', 'Slide off up', 'Slide off down'].forEach((n) => { TRANSITIONS['button: ' + n] = 'play/pads'; });
 const ADDED = {
   owner: Object.assign({ '#showpin': 'People and codes', '#copypin': 'People and codes', '#pinvalue': 'People and codes', '#logoutbtn': 'People and codes',
-    '#nav-https': 'setup/index', '#httpsrequest': 'Secure connection', '#httpsprobe': 'Secure connection', '#httpsowneronly': 'Secure connection' }, TRANSITIONS),
+    '#nav-https': 'setup/index', '#httpsrequest': 'Secure connection', '#httpsprobe': 'Secure connection', '#httpsowneronly': 'Secure connection',
+    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC', '#osckeyshow': 'OSC', '#osckeynew': 'OSC' }, TRANSITIONS),
   presenter: Object.assign({}, TRANSITIONS),
   guest: Object.assign({}, TRANSITIONS),
 };
