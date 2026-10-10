@@ -264,7 +264,7 @@ async function menus(pg) {
       await go(pg, 'play/shaders');
       const q = await see(pg);
       assert.deepStrictEqual(q.cols, ['shaders'], at + 'the Shaders tab has the whole width');
-      assert.deepStrictEqual(await pg.evaluate(() => { const v = (q2) => { const el = document.querySelector(q2); return !!el && el.getClientRects().length > 0; }; return [v('#syspage #sysblurb'), v('#syspage #sysswitch'), v('#syspage .syshead h2')]; }), [true, true, true], at + 'the Shaders screen alone has its own title, its sentence and its switch');
+      assert.deepStrictEqual(await pg.evaluate(() => { const v = (q2) => { const el = document.querySelector(q2); return !!el && el.getClientRects().length > 0; }; return [v('#syspage #sysblurb'), v('#syspage #sysswitch'), v('#syspage .syshead h2')]; }), [false, true, true], at + 'the Shaders screen alone has its own title and its switch (its sentence is hidden by the page\'s own laptop form from 900 px of room, app.css)');
       assert.deepStrictEqual(q.open.filter((id) => id.indexOf('sub-') === 0), ['sub-play-shaders'], at + 'the Shaders tab is the one marked open');
       await go(pg, 'play/pads');
       assert.deepStrictEqual((await see(pg)).open.filter((id) => id.indexOf('sub-') === 0), ['sub-play-desk'], at + 'the desk\'s tab is marked open again');
