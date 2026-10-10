@@ -374,43 +374,70 @@ class HttpsTest(HttpsBase):
         self.assertEqual(self.scall("POST", "/api/session", {"token": self.full})[0], 200)      # a cookie, nothing more
         self.assertEqual(self.scall("POST", "/api/pin/show", {}, token=self.full)[0], 403)
 
-    def test_m2_a_run_out_certificate_stops_the_switch_biting_so_the_owner_gets_back_over_http(self):
+    def test_m2_a_run_out_certificate_opens_renewal_only_over_http_for_a_paired_owner(self):
         short = self.request_and_sign(days=1, out="short.pem")
         self.assertEqual(self.install(short)[0], 200)
         secure = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "owner, tls"})[1]["token"]
         self.assertEqual(self.scall("POST", "/api/https/owner-only", {"on": True}, token=secure)[0], 200)
         self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 403, "bites while the certificate is good")
+        self.assertEqual(self.call("GET", "/api/https/request.csr", token=self.full)[0], 403)
+        # a clock stepped forward (what whoever answers the box's time requests can do) reopens NOTHING of the PIN
         self.clock.t += 3 * 86400
-        # the clock is from the network: it has run out, every device refuses https, http is the road back
         st, body, _ = self.call("GET", "/api/https", token=self.full)
-        self.assertEqual((body["relief"], body["effective"], body["owner_only"]), ("run_out", False, True))
+        self.assertEqual((body["relief"], body["effective"], body["owner_only"]), ("run_out", True, True))
+        self.assertEqual(self.call("POST", "/api/pair", {"pin": self.pin, "name": "owner back over http"})[0], 403)
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 403)
+        self.assertEqual(self.call("GET", "/api/status", token=self.full)[0], 403)
+        self.assertEqual(self.call("POST", "/api/https/request", {}, token=self.full)[0], 403)
+        self.assertEqual(self.call("POST", "/api/https/remove", {}, token=self.full)[0], 403)
+        self.assertEqual(self.call("GET", "/api/https/request.csr", token=self.view)[0], 403, "a guest still cannot")
+        # only what renewal needs, for a device already paired as owner
         self.assertEqual(self.call("GET", "/api/https/request.csr", token=self.full)[0], 200)
-        self.assertEqual(self.call("POST", "/api/pair", {"pin": self.pin, "name": "owner back over http"})[0], 200)
-        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 200)
-        fresh = self.request_and_sign(days=100, out="fresh.pem")
+        fresh = self.request_and_sign(days=100, out="fresh.pem", csr=os.path.join(self.tmp, "box.csr"))
         st, body, _ = self.install(fresh, token=self.full)
         self.assertEqual(st, 200, body)
         self.assertIsNone(body["status"]["relief"])
-        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 403, "bites again at once")
-        st, body, _ = self.scall("GET", "/api/https", token=secure)
-        self.assertTrue(body["effective"])
-        # the same run-out certificate with a clock NOT from the network: the box cannot tell, the switch keeps biting
+        self.assertEqual(self.call("GET", "/api/https/request.csr", token=self.full)[0], 403, "closed again at once")
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 403)
+        self.assertTrue(self.scall("GET", "/api/https", token=secure)[1]["effective"])
+        # a clock NOT from the network: the box cannot tell, nothing opens
         self.trusted = False
-        st, body, _ = self.scall("POST", "/api/https/certificate", {"certificate": short}, token=secure)   # over TLS: the switch bites again
-        self.assertEqual(st, 200, body)                                     # allowed: the box does not judge the date then
+        st, body, _ = self.scall("POST", "/api/https/certificate", {"certificate": short}, token=secure)
+        self.assertEqual(st, 200, body)
         self.clock.t += 3 * 86400
         self.assertEqual(self.call("GET", "/api/https", token=self.full)[1]["relief"], None)
-        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 403)
+        self.assertEqual(self.call("GET", "/api/https/request.csr", token=self.full)[0], 403)
         self.trusted = True
-        # a certificate removed while the switch is on: relief as well
+        # a certificate removed while the switch is on: everything open, as if off
         self.assertEqual(self.scall("POST", "/api/https/remove", {}, token=secure)[0], 200)
         self.assertEqual(self.call("GET", "/api/https", token=self.full)[1]["relief"], "no_certificate")
         self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 200)
-        # an address the certificate does not carry is NOT a relief: the Host header is the sender's to choose
+        # an address the certificate does not carry is no relief: the Host header is the sender's to choose
         self.assertEqual(self.install(fresh, token=self.full)[0], 200)
-        st, body, _ = self.call("POST", "/api/pin/show", {}, token=self.full, headers={"Host": "other.local"})
-        self.assertEqual(st, 403, body)
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full, headers={"Host": "other.local"})[0], 403)
         self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full, headers={"Host": "10.9.9.9"})[0], 403)
+
+    def test_a_write_that_fails_leaves_the_certificate_in_use_where_it_is(self):
+        first = self.request_and_sign(days=100, out="first.pem")
+        second = self.request_and_sign(days=200, out="second.pem")
+        self.assertEqual(self.install(first)[0], 200)
+        real = self.box._write
+
+        def failing(name, text, mode=0o640):
+            if name == httpsbox.NEW:
+                raise OSError(28, "No space left on device")
+            return real(name, text, mode)
+        self.box._write = failing
+        st, body, _ = self.install(second)
+        self.assertEqual(st, 500, body)
+        self.assertIn("could not be saved", body["error"])
+        self.box._write = real
+        self.assertTrue(os.path.isfile(self.box.path("cert.pem")))
+        self.assertFalse(os.path.isfile(self.box.path("previous.pem")))
+        self.assertFalse(os.path.isfile(self.box.path(httpsbox.NEW)))
+        self.assertIn(self.box.status(False, "")["certificate"]["days_left"], (99, 100))
+        self.assertTrue(self.box.load(), "what is on disk still loads")
+        self.assertEqual(self.scall("GET", "/api/hello")[0], 200)
 
     def test_m3_a_pem_made_to_backtrack_is_refused_at_once(self):
         import time

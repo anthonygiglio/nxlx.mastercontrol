@@ -2607,7 +2607,7 @@
       : 'This switch is changed over https:// only, so you cannot lock yourself out. Open ' + d.https_address + ' first.');
     if (!d.secure || !d.this_device_secure || (!d.https && !d.owner_only)) sw.sw.disabled = true;
     if (d.owner_only && !d.effective) lines.push(h('div', { class: 'hint warn', id: 'httpsrelief', text: d.relief === 'run_out'
-      ? 'The switch is on but has no effect while the certificate has run out: the PIN, the request and the upload work over http:// again until a new certificate is in use.'
+      ? 'The certificate has run out, so devices refuse https://. The switch stays on: over http:// a device that is already paired as owner can download the request and upload a new certificate here, and nothing else; the PIN is still refused there. If no such device is left, open https:// and click through the browser\'s warning, or use the console (docs/HTTPS.md).'
       : 'The switch is on but has no effect while no certificate is in use: nobody is locked out.' }));
     return h('div', { class: 'card', id: 'httpsstate' }, h('h2', { text: 'State' }), h('div', { class: 'list sp' }, lines, sw));
   }

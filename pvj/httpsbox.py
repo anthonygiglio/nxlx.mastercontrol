@@ -32,7 +32,7 @@ import subprocess
 import threading
 import time
 
-KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT = "key.pem", "request.pem", "request.json", "cert.pem", "previous.pem", "root.pem"
+KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, NEW = "key.pem", "request.pem", "request.json", "cert.pem", "previous.pem", "root.pem", "cert.new.pem"
 CURVE = "prime256v1"
 MAX_PEM = 32 * 1024                    # a certificate with its root is about 2 kB
 WARN_DAYS = 30
@@ -41,6 +41,7 @@ OID_CN, OID_SAN, OID_EKU, OID_BASIC = "2.5.4.3", "2.5.29.17", "2.5.29.37", "2.5.
 OID_SERVER_AUTH = "1.3.6.1.5.5.7.3.1"
 SETTINGS_KEY = "https"                 # {"owner_only": bool, "names": [extra names for the request]}; no schema change (D79)
 OPEN_WHILE_OWNER_ONLY = {"/api/hello", "/api/logout", "/api/https", "/api/https/probe"}   # a panel can still explain and log out
+RENEWAL_ROUTES = {"/api/https/request.csr", "/api/https/certificate"}     # open over plain http to a paired owner once the certificate has run out
 
 
 class HttpsError(Exception):
@@ -277,22 +278,27 @@ class HttpsBox:
         return [n for n in self._section().get("names", []) if isinstance(n, str)][:MAX_NAMES]
 
     def relief(self):
-        """Why the switch does not bite right now, or None: no certificate is loaded (HTTPS cannot be reached), or the
-        one loaded has run out by a clock set from the network (every device refuses it, so http is the only road
-        back: the request, the upload and the PIN must work there). A certificate removed while the switch is on
-        is the first case. A name the certificate does not carry is NOT a reason: the .local name is always in it
-        and keeps working, and a gate that opened on the Host header could be opened by whoever sends the header."""
+        """What the switch lets through right now although it is on, or None. "no_certificate": none is loaded, so
+        HTTPS cannot be reached and everything is open over http as if the switch were off (a certificate removed
+        while on is this case). "run_out": the loaded one has ended by a clock set from the network, every device
+        refuses it, and ONLY what renewal needs is open over plain http, to an already paired full-access device
+        (RENEWAL_ROUTES): never the PIN, never pairing, never another owner route, because the box's clock can be
+        stepped from the network by whoever answers its time requests (second review of #119), and a relief that
+        opened the PIN would then be theirs to open. A name the certificate does not carry is no relief at all."""
         if not self.owner_only:
             return None
         if self.context is None:
             return "no_certificate"
-        if self.info and self.clock_trusted() and self.info["not_after"] < int(self._now()):
+        if self.run_out():
             return "run_out"
         return None
 
+    def run_out(self):
+        return bool(self.info) and self.clock_trusted() and self.info["not_after"] < int(self._now())
+
     def effective(self):
-        """The switch bites only while a certificate is being served and has not run out (relief)."""
-        return self.owner_only and self.relief() is None
+        """The switch bites while a certificate is loaded; a run-out one opens the renewal routes only (owner_gate)."""
+        return self.owner_only and self.context is not None
 
     def set_owner_only(self, on, secure, device_secure):
         if not isinstance(on, bool):
@@ -318,6 +324,8 @@ class HttpsBox:
         if not device or device.get("role") != "full" or device.get("remote") or not self.effective():
             return None
         if path in OPEN_WHILE_OWNER_ONLY:
+            return None
+        if path in RENEWAL_ROUTES and self.run_out():          # the way to a new certificate, for a paired owner device
             return None
         if not secure:
             return "owner access is only over the secure connection: open %s" % self.https_address()
@@ -530,11 +538,19 @@ class HttpsBox:
         with self.lock:
             ctx = self._try_load(leaf_pem)
             self._ensure_folder()
-            if os.path.isfile(self.path(CERT)):
-                os.replace(self.path(CERT), self.path(PREVIOUS))
-            self._write(CERT, leaf_pem)
-            if root_pem:
-                self._write(ROOT, root_pem)
+            try:
+                # the new one lands under its own name first: a write that fails leaves the one in use where it is
+                # (second review of #119: moving it aside first could leave no certificate, and with the switch on
+                # the next start would open everything)
+                self._write(NEW, leaf_pem)
+                if root_pem:
+                    self._write(ROOT, root_pem)
+                if os.path.isfile(self.path(CERT)):
+                    os.replace(self.path(CERT), self.path(PREVIOUS))
+                os.replace(self.path(NEW), self.path(CERT))
+            except OSError as e:
+                self._unlink(NEW)
+                raise HttpsError("the certificate could not be saved on the box: %s" % (e.strerror or e), 500)
             self.context, self.info, self.load_error = ctx, leaf, None
         self.log("pvj-web: certificate installed for %s, ends %s (serial %s)" % (", ".join(leaf["dns"] + leaf["ips"]), self.date(leaf["not_after"]), leaf["serial"]))
         return leaf
@@ -577,7 +593,7 @@ class HttpsBox:
         problems = []
         with self.lock:
             self.context, self.info, self.load_error = None, None, None
-            for name in (KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, "check.pem", "request.cnf", KEY + ".tmp", REQUEST + ".tmp"):
+            for name in (KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, NEW, "check.pem", "request.cnf", KEY + ".tmp", REQUEST + ".tmp", NEW + ".tmp"):
                 if not self._unlink(name):
                     problems.append("could not remove %s" % name)
             try:
