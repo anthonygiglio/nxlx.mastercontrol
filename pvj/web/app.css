@@ -1049,3 +1049,26 @@ html[data-style="signal"] #roomscreen .room-scene { font-size: clamp(16px, 5.2vw
 /* A choice with one figure on it (how many petals: 3, 4, 5, 6, 8) was 40 px wide at 320, where the row is full and
    no button grows. This look had taken the floor of 44 px away from a row of choices; it is back. */
 html[data-style="signal"] .seg .segbtn { min-width: 44px; }
+
+/* ---- The panel saved as an app (D76, docs/WEBAPP.md) ----
+ * In an app window there are no browser bars: the page reaches the edges of the screen (viewport-fit=cover in
+ * index.html), so it keeps clear of the notch, the status bar, the rounded corners and the home indicator itself.
+ * env() is 0 where there is nothing to keep clear of, so a browser tab on a laptop is as it was. The tab bar has
+ * had its bottom inset since it was made; the shell's side insets move it in with the page when a phone is held
+ * sideways. Pinch zoom is left on (some people need it); a double tap does not zoom (touch-action on the body). */
+.shell { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+.offline { top: calc(8px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); }
+.picker { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+html[data-style="signal"] #msg { left: calc(16px + env(safe-area-inset-left)); right: calc(16px + env(safe-area-inset-right)); }
+.picker .sheet { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+/* Things that are pressed are not text: no selecting them with a long press, no callout over them (iPhone). What is
+ * there to be read or copied (a code, an address, a key) is not in this list and can be selected as before. */
+button, .btn, summary, label, .tabs, .switch, input[type="range"] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* Only in an app window: the page does not stretch away from its bars when pulled past its end. In a browser tab
+ * pulling down is how a phone loads a page again, and that is left alone; the app has "Load the panel again" on
+ * System > Save as an app. */
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  html, body { overscroll-behavior: none; }
+}
+.steps { margin: 8px 0; padding-left: 1.5em; display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+#appcard { overflow-wrap: anywhere; }

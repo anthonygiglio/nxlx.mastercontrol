@@ -1483,6 +1483,11 @@ class Api:
         theme, accent, _dropped = self._stored_look()
         return themes_mod.css(theme, accent)
 
+    def theme_in_use(self):
+        """The look in use as its theme file has it, for the manifest and the page's head (pvj/webapp.py). Like
+        /theme.css it is asked for before anyone has paired, and never fails."""
+        return self._stored_look()[0]
+
     def devices(self, body, device, client):
         return {"devices": self.auth.list_devices()}
 

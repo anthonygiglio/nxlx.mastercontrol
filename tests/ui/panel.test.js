@@ -323,7 +323,7 @@ function startServer() {
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
       'At power-up', 'Streams', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
-      'Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
+      'Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'Save as an app', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
     assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (5)');
@@ -1575,7 +1575,7 @@ function startServer() {
     // A guest's System has only what a guest can use: no disabled lists
     await guest.click('nav >> text=System');
     await guest.waitForSelector('#sysindex');
-    assert.deepStrictEqual(await guest.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'About and power'], 'the rows a guest sees');
+    assert.deepStrictEqual(await guest.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Save as an app', 'About and power'], 'the rows a guest sees');
     assert.strictEqual(await guest.locator('#notbuilt').count(), 0, 'a guest gets no list of modules');
     await guest.click('.navrow:has-text("About and power")');
     await guest.waitForSelector('#boxcard');
@@ -2376,7 +2376,7 @@ function startServer() {
     await presenter.click('nav >> text=System');
     await presenter.waitForSelector('#sysindex');
     assert.deepStrictEqual(await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent)),
-      ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
+      ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'Streams', 'Boxes in step', 'Save as an app', 'About and power'], 'the rows a presenter sees');
     assert.strictEqual(await presenter.locator('#notbuilt').count(), 0, 'a presenter gets no list of modules');
     // A presenter's People and codes (D48): the guest code and nothing else. The owner has a guest code and a
     // presenter code active; the presenter sees the first, is asked before replacing or ending it, and never sees
@@ -3075,6 +3075,15 @@ function startServer() {
       assert.strictEqual(await page.textContent('#themeresult'), 'Removed Browser test.');
       assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
       await page.setViewportSize({ width: 1280, height: 800 });
+    }
+
+    {
+      // The panel saved as an app (D76, tests/ui/webapp.js): each device its own steps, the card at 320 and 390 px in
+      // every look, a page that runs as an app, and the colour of the browser's bar. On pages of their own.
+      const webapp = require('./webapp');
+      const devices = webapp.unit();
+      await webapp.check({ browser, base, page, problems });
+      console.log('saved as an app: the words for ' + devices + ' devices and browsers, the card at 320 and 390 px in every look, an app window keeps its screen');
     }
 
     {

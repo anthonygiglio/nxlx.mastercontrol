@@ -23,7 +23,7 @@ const assert = require('assert');
 const LOST = (files) => 'Part of this page did not arrive from the box (' + files + '), so some of the panel is missing. The box keeps playing. Press Try again.';
 const BROKEN = (files) => 'Part of this page arrived but did not start (' + files + '), so some of the panel is missing. This is a fault in the panel, not in the connection; please report it.';
 const SCANNED = 'Reload forgets the code you scanned. Join first, or scan the code again afterwards.';
-const PARTS = ['pvjShaders', 'pvjEffects', 'pvjApp', 'pvjRoom'];
+const PARTS = ['pvjShaders', 'pvjEffects', 'pvjWebapp', 'pvjApp', 'pvjRoom'];
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /* eslint-disable no-undef */
@@ -32,7 +32,7 @@ function look() {
     asked: Object.assign({}, window.pvjLoad.asked), lost: window.pvjLoad.lost.slice(), broken: window.pvjLoad.broken.slice(),
     // every new request this page made, by file (the waits themselves are looked at apart: they differ by chance)
     again: window.pvjLoad.waits.map((w) => w[0]).sort(),
-    parts: ['pvjShaders', 'pvjEffects', 'pvjApp', 'pvjRoom'].filter((n) => !!window[n]),
+    parts: ['pvjShaders', 'pvjEffects', 'pvjWebapp', 'pvjApp', 'pvjRoom'].filter((n) => !!window[n]),
     drawn: !!document.querySelector('#app > *'),
     note: Array.from(document.querySelectorAll('#loadnote p')).map((p) => p.textContent),
     buttons: Array.from(document.querySelectorAll('#loadnote button')).map((b) => b.id),
@@ -50,7 +50,7 @@ function place() {
   return { position: st.position, role: note.getAttribute('role'), left: r.left, top: r.top, across: r.width === document.documentElement.clientWidth, window: innerWidth, low: r.bottom <= innerHeight * 0.6 + 1,
     sideways: document.documentElement.scrollWidth > innerWidth, scrolled: scrollY > 0, cursorInIt: note.contains(document.activeElement), buttons };
 }
-const isWhole = () => !!window.pvjLoad && !document.querySelector('#loadnote') && !!document.querySelector('#app > *') && !!window.pvjShaders && !!window.pvjEffects && !!window.pvjApp && !!window.pvjRoom &&
+const isWhole = () => !!window.pvjLoad && !document.querySelector('#loadnote') && !!document.querySelector('#app > *') && !!window.pvjShaders && !!window.pvjEffects && !!window.pvjWebapp && !!window.pvjApp && !!window.pvjRoom &&
   document.styleSheets.length === 2 && Array.from(document.styleSheets).every((s) => { try { return s.cssRules.length > 0; } catch (e) { return false; } });
 // the notice is up with that button, and the panel has drawn (both: the notice may come first)
 const offersAgain = () => !!document.querySelector('#loadnote #loadagain') && !!document.querySelector('#app > *');

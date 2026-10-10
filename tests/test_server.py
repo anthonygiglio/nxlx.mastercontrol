@@ -548,7 +548,9 @@ class ServerTest(ServerBase):
         raw = zlib.decompress(pixels)
         self.assertEqual(len(raw), 180 * (1 + 3 * 180))
         colours = {raw[y * 541 + 1 + 3 * x:y * 541 + 4 + 3 * x] for y in range(0, 180, 6) for x in range(0, 180, 6)}
-        self.assertEqual(colours, {bytes(icon.BACK), bytes(icon.MARK)})  # a mark on a ground, not an empty tile
+        # a mark on a ground, not an empty tile (the edges are smoothed since D76, so a few pixels are a mix of the two:
+        # tests/test_webapp.py looks at those)
+        self.assertLessEqual({bytes(icon.BACK), bytes(icon.MARK)}, colours)
         import pvj
         with open(os.path.join(os.path.dirname(pvj.__file__), "web", "index.html")) as f:      # the real page names them
             text = f.read()

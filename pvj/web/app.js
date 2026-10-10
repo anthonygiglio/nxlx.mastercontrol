@@ -170,6 +170,7 @@
         h('h1', { text: 'Connect to your box' }),
         h('p', { text: 'Scan the QR code on the screen, or type the code shown there. The box\'s owner can use the 4 digit PIN instead. No internet needed.' }),
         scannedNote,
+        window.pvjWebapp ? window.pvjWebapp.pairNote(h) : null,       // in an app window: why it asks again (D76)
         h('div', { class: 'k', text: 'Guest or presenter code' }), code,
         h('label', { class: 'k', for: 'devname', text: 'Name for this device' }),
         (name.id = 'devname', name),
@@ -1158,10 +1159,11 @@
         fact: function () { var t = S.themes.filter(function (x) { return S.theme && x.id === S.theme.name; })[0]; return t ? t.name : ''; },
         blurb: 'The panel\'s colours, on every paired device.',
         body: function () { return [appearanceCard()]; } },
+      appRow(),
       { id: 'about', group: 'box', name: 'About and power', role: 'view', url: '/api/system',
         blurb: 'What this box is, its versions, storage, screens and clock, and restarting it.',
         body: aboutPage }
-    ];
+    ].filter(Boolean);
     // A module nobody gave a row still gets one, so it can always be switched.
     var known = rows.map(function (r) { return r.module; });
     S.modules.forEach(function (m) {
@@ -1169,6 +1171,32 @@
       rows.push({ id: 'mod-' + m.id, group: 'show', name: m.name, role: 'full', module: m.id, blurb: m.description });
     });
     return rows;
+  }
+  // The panel saved as an app (D76): the row of System > Save as an app, for everybody who is paired. The card and its
+  // words are in webapp.js; without that file there is no row (sysRows drops the null).
+  function appRow() {
+    var w = window.pvjWebapp;
+    if (!w) return null;
+    return { id: 'app', group: 'box', name: 'Save as an app', role: 'view',
+      fact: function () { return w.here().app ? 'This is the app' : 'On this device\'s home screen, Dock or taskbar'; },
+      blurb: 'Put this panel on the home screen, the Dock or the taskbar of this device, so it opens like an app: its own icon, its own window. The steps are the ones each browser\'s maker gives; not yet tried on real phones and tablets.',
+      body: function () { return [w.card({ h: h })]; } };
+  }
+  // In an app window a reload keeps the screen (there is no address bar to see where one is, and a phone loads an app
+  // again by itself when it was put aside for a while): the tab and the System page are kept in the history entry,
+  // which outlives a reload and nothing else. In a browser tab a reload starts on Live, as before.
+  function inApp() { return !!(window.pvjWebapp && window.pvjWebapp.here().app); }
+  function keepScreen() {
+    if (!S.device || !inApp()) return;
+    var st = history.state || {};
+    if (st.tab !== S.tab) history.replaceState({ sys: st.sys, tab: S.tab }, '');
+  }
+  function recallScreen() {
+    var st = history.state;
+    if (!st) return;
+    if (!inApp()) { if (st.sys) history.replaceState(null, ''); return; }   // a reload starts on Live, like every other reload
+    if (st.sys) { S.tab = 'system'; S.sys = String(st.sys); S.landing = false; }
+    else if (['live', 'mix', 'media', 'system', 'room'].indexOf(st.tab) >= 0) { S.tab = st.tab; S.landing = false; }
   }
   function rowShown(row) {
     if (row.id === 'access' && S.device && S.device.remote) return false;      // codes are refused through the support connection, whatever the role
@@ -3983,6 +4011,7 @@
         onclick: function () { goTab(t[0]); } });
     }));
     app.appendChild(h('div', { class: 'shell' }, supportBanner(), screens[S.tab](), tabs));
+    keepScreen();
     if (S.sheet) app.appendChild(sheet());
     patchLive();
   }
@@ -3994,7 +4023,7 @@
     // keep it for the connect screen and take it out of the address bar and history at once.
     var scanned = /^#(code|pin)=([0-9]{4,6})$/.exec(location.hash);
     if (scanned) { S.scanned = { kind: scanned[1], value: scanned[2] }; history.replaceState(null, '', location.pathname); }
-    if (history.state && history.state.sys) history.replaceState(null, '');   // a reload starts on Live, like every other reload
+    recallScreen();
     window.addEventListener('popstate', function (e) {     // the phone's back gesture: from a System page to the index
       if (!S.device) return;
       var id = (e.state && e.state.sys) || null;
