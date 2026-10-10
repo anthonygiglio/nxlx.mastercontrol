@@ -2011,7 +2011,11 @@
     return [card, table];
   }
   var MIDI_ACTIONS = [['pad', 'Play a pad'], ['stop', 'Stop'], ['pause', 'Pause / resume'], ['blackout', 'Blackout on / off'], ['fadeout', 'Fade out'],
-    ['reset', 'Reset mix'], ['opacity', 'Opacity (fader)'], ['size', 'Size (fader)'], ['position', 'Position X (fader)'], ['speed', 'Speed (fader)'],
+    ['fade', 'Fade out, then in (one button)'],
+    ['reset', 'Reset mix'], ['opacity', 'Opacity (fader)'], ['size', 'Zoom: the size (fader)'], ['position', 'Position X (fader)'], ['position_y', 'Position Y (fader)'],
+    ['rotate', 'Rotate a quarter turn'], ['flip_h', 'Mirror left to right on / off'], ['flip_v', 'Mirror top to bottom on / off'], ['overlay', 'Overlay picture on / off'],
+    ['seek_back', 'Back 10 seconds'], ['seek_forward', 'Forward 10 seconds'], ['loop', 'Loop on / off'], ['mute', 'Sound off / on'], ['test_pattern', 'Test pattern on / off'],
+    ['speed', 'Speed (fader)'],
     ['volume', 'Volume (fader)'], ['blackout_hold', 'Blackout while held up (fader)'],
     ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)'],
     ['shader_speed', 'Shader: speed (fader)'], ['shader_prev', 'Shader: the one before'], ['shader_next', 'Shader: the next one']]
@@ -2028,12 +2032,18 @@
     .concat([['code_join', 'Show a one-time presenter code on the display (hold 3 seconds, let go)'],
       ['code_owner', 'Show a one-time full access code on the display (hold 3 seconds, let go)']]);
   // the actions that follow a fader or knob; a shader control does both (a knob sets it, a button steps or toggles it)
-  var MIDI_LEVELS = ['opacity', 'size', 'position', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
+  var MIDI_LEVELS = ['opacity', 'size', 'position', 'position_y', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
   // What an action is called on the drawn layout of a controller: short, since a control is a small box.
   var MIDI_SHORT = { shader_speed: 'Shader speed', shader_prev: 'Previous shader', shader_next: 'Next shader', shader_hue: 'Shader colour turn',
     shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
     effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
-    code_join: 'Presenter code (hold)', code_owner: 'Full access code (hold)' };
+    code_join: 'Presenter code (hold)', code_owner: 'Full access code (hold)',
+    fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror across', flip_v: 'Mirror down', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
+    loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume' };
+  // The parts of a controller that belong together (a control's "zone" in its profile): tinted alike in the drawing
+  // and named once under it. The words are fixed here; a profile only picks among them.
+  var MIDI_ZONES = [['pads', 'Pads'], ['clips', 'The clip'], ['screen', 'The screen: fade, freeze, stop, black'], ['picture', 'The picture: zoom, place, turn'], ['sound', 'Sound'],
+    ['shaders', 'Shaders and Vibes'], ['effects', 'Effects'], ['room', 'Room'], ['access', 'Access']];
   function midiWhat(a) {
     if (!a) return 'Spare';
     if (a.action === 'none') return 'Nothing';
@@ -2092,6 +2102,7 @@
         (x.unverified ? ' (from a list that the maker\'s document does not confirm)' : '') + '.' +
         (x.guard ? ' Press it twice within a second; one press does nothing.' : '') +
         (x.pickup ? ' It picks up: nothing changes until it reaches the value the box has, so nothing jumps.' : '') +
+        (x.action && ['size', 'position', 'position_y', 'speed', 'shader_speed', 'shader_hue', 'shader_brightness'].indexOf(x.action.action) >= 0 ? ' The middle of the control is exactly the normal value.' : '') +
         (x.waiting ? ' It has not reached that value yet.' : '') }));
       if (!can('full')) return box;
       var level = x.kind === 'fader' || x.kind === 'knob';
@@ -2200,7 +2211,7 @@
         c.controls.forEach(function (x) {
           var chosen = !!midiSel && midiSel.ctl === c.name && midiSel.id === x.id;
           if (chosen) open = x;
-          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' || x.origin === 'any' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : '') + (x.light ? ' haslight' : ''), type: 'button',
+          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' || x.origin === 'any' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : '') + (x.light ? ' haslight' : '') + (x.zone ? ' z-' + x.zone : ''), type: 'button',
             'data-id': x.id, 'aria-pressed': chosen ? 'true' : 'false', 'aria-label': x.name + ': ' + midiWhat(x.action),
             onclick: function () { midiSel = chosen ? null : { ctl: c.name, id: x.id }; draw(d); } },
             h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }), h('span', { class: 'ctlval' }));
@@ -2209,6 +2220,10 @@
           grid.appendChild(b);
         });
         card.appendChild(h('div', { class: 'ctlscroll' }, grid));
+        // the zones that are on this controller, each with its tint: why a thing is where it is, said once
+        var zones = MIDI_ZONES.filter(function (z) { return c.controls.some(function (x) { return x.zone === z[0]; }); });
+        if (zones.length) card.appendChild(h('div', { class: 'ctlzones', role: 'list', 'aria-label': 'The parts of ' + c.profile.name },
+          zones.map(function (z) { return h('span', { class: 'ctlzone z-' + z[0], role: 'listitem', text: z[1] }); })));
         if (open) card.appendChild(detail(c, open));
         card.appendChild(h('p', { class: 'hint', text: 'Move a control and it lights up here. Tap one to see' + (can('full') ? ' or change' : '') + ' what it does.' +
           (c.lights ? ' A small ring marks a control that has a light; it is filled while the box has that light on.' : '') +

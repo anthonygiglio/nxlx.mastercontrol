@@ -87,7 +87,7 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 
 ## 4. Play
 
-**Live** has three banks of twelve pads. **Edit pads** (full access) assigns a clip or a shader to a pad. Tap a pad to play it. **Fade out**, **Freeze** (pause), **Stop** (end the clip and leave the screen black and the player ready) and **Blackout** (black without stopping) are always at the bottom.
+**Live** has three banks of twelve pads. **Edit pads** (full access) assigns a clip or a shader to a pad. Tap a pad to play it. **Fade out** (one button: a tap fades the picture out over 2 seconds, and the button then reads **Fade in** and flashes while the picture is down; the next tap fades it in, also out of a Blackout. If your device asks for less motion it does not flash: it stands inverted with a dashed edge), **Freeze** (pause), **Stop** (end the clip and leave the screen black and the player ready) and **Blackout** (black without stopping) are always at the bottom.
 
 ![Live screen](images/ui/live.png)
 
@@ -95,7 +95,7 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 
 **Sound output** (System): on a Raspberry Pi "Automatic" sends the sound to the HDMI port that has the screen on it (the player's own default is the 3.5 mm headphone jack, which is silent on a monitor). Pick another output, such as the headphones or a USB sound device, in System > Sound. The choice is remembered and re-applied if the player restarts.
 
-**Now playing** (Live) has the controls of a normal player: a **position slider** (drag and release to jump), **Prev** and **Next** (when several clips are playing as a list, for example Play all), **- 10 s** and **+ 10 s**, **Fade in** (from a blackout or a fade out, over 2 s) and **Test pattern** (SMPTE colour bars from the player itself, for lining up a projector; tap again to stop).
+**Now playing** (Live) has the controls of a normal player: a **position slider** (drag and release to jump), **Prev** and **Next** (when several clips are playing as a list, for example Play all), **- 10 s** and **+ 10 s**, and **Test pattern** (SMPTE colour bars from the player itself, for lining up a projector; tap again to stop).
 
 ![Now playing with the transport, and Take snapshot](images/ui/live-transport.png)
 
@@ -229,8 +229,12 @@ A presenter sees only Health, Projectors, Shaders and Vibes, People and codes (t
 
 **A MIDI controller that just works.** Switch MIDI on (System > MIDI controller) and plug in a Korg nanoKONTROL2, an Akai MIDI Mix or a Novation Launchpad Mini (the original one): the box recognises it within a couple of seconds and it works at once, with nothing to teach. The page shows a card for it with the controller drawn on it; every control says what it does, and lights up when you move it. In short, the same on each so your hands find it again:
 
-- **The eight knobs** (the top row on the MIDI Mix) are the first eight controls of whichever shader is playing.
-- **The faders**, left to right: opacity, volume, clip speed, shader speed, shader colour turn, shader brightness; the last two are spare.
+- **The shader's controls** are the top row of knobs on the MIDI Mix (the first eight controls of whichever shader is playing) and knobs 4 to 7 on the nanoKONTROL2 (the first four).
+- **The faders**, left to right: opacity, volume, clip speed, shader speed, shader colour turn, shader brightness, effect amount; the last is spare.
+- **Zoom, position X and position Y sit side by side on three knobs** (knobs 1 to 3 of the nanoKONTROL2, the first three of the MIDI Mix's middle row). The middle of each knob is exactly 100 percent and exactly centred, and a knob that is not where the picture is does nothing until it gets there, so nothing jumps.
+- **One fade button** on each controller fades out, and at the next press in; its light flashes while the picture is down (not on the MIDI Mix, whose fade button has no light).
+- **The Launchpad Mini's grid is the pads**, each bank as the panel draws it, three rows of four: bank A top left (amber), bank B top right (yellow-green), bank C under A (orange); the pad that plays is bright green. Its round buttons on the right are the Room scenes and, below them, Fade, Freeze, Stop and Blackout.
+- Each controller's card tints the controls that belong together and names the zones under the drawing. **These layouts were drawn afresh on 2026-10-10 and have not been on a controller yet**; [pvj/MIDI.md](../pvj/MIDI.md) has each one as a drawing with the reasons, and what changed for a hand that knew the first ones.
 - **A row of buttons plays pads 1 to 8** (S on the nanoKONTROL2, Mute on the MIDI Mix) of the bank the controllers are on; two buttons step through banks A, B and C (Marker < and > on the nanoKONTROL2, Bank Left and Right on the MIDI Mix). **The next row is shader presets 1 to 8** (M, Rec Arm). The Launchpad Mini shows all three banks at once: two rows of six pads each, then a row of presets and a row that presses the shader's controls.
 - **Transport**: Play is pause and resume, Stop is stop, Rewind and Forward are the previous and next clip, Track < and > the previous and next shader, Cycle is Vibes on and off, Marker Set starts Vibes with the set Ambient and Rec with the set Show (E and F on the Launchpad). On the Launchpad these are the round buttons along the top.
 - **Blackout and the Room scenes need the same button twice within a second**, so a stray finger does not darken the room. They are marked 2x on the card. If you put one of them on another control, it is guarded the same way unless you switch "Press twice" off there.

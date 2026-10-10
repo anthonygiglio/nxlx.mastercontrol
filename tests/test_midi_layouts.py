@@ -33,7 +33,7 @@ class LevelShapeTest(unittest.TestCase):
     def test_the_ranges_and_the_ends(self):
         ends = {a: (midi.level_value(a, 0), midi.level_value(a, 127)) for a in midi.SHAPES}
         self.assertEqual(ends, {"opacity": (0.0, 100.0), "volume": (0.0, 100.0), "effect_amount": (0.0, 1.0),
-                                "size": (25.0, 200.0),          # not 1 to 200: a third of a knob on pictures nobody can see
+                                "size": (25.0, 200.0),          # not 1 to 200: under 25 percent a picture is a speck
                                 "position": (-100.0, 100.0), "position_y": (-100.0, 100.0), "speed": (0.25, 2.0),
                                 "shader_speed": (0.0, 4.0), "shader_hue": (-180.0, 180.0), "shader_brightness": (0.0, 2.0)})
         # what a mapping may ask for at most is the API's own range, not the default one

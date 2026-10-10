@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-10 (#115, D75, part 1: what the controllers do, after the owner's first report from the real ones)
+
+Branch `midi-layouts`, pull request #115, a draft stacked on #113 (`effect-over-shader` at c57218f, which did not move). **Nothing was run on a controller or on the Pi.**
+
+- **The report.** The owner used the nanoKONTROL2, the MIDI Mix and the Launchpad Mini for the first time: "odd, or not helpful, or incomplete. especially, the zoom and x/y position"; one fade button that flashes; "the launchpad button layouts dont make sense to me"; later "Things were there but in places that make no sense."
+- **What "the original live package" meant** was looked for in the legacy manual, the legacy OSC list, the panel's history and the proposal branch, and not found; D75 has the search. His answer came the same night: the panel as it is on the box.
+- **Built** (D75 has each): levels with a centre at the middle of the control and a curve; pickup for zoom and both positions on the level's own curve; `min`, `max`, `invert`, `takeover` per mapping; eleven new actions; `POST /api/fade` and one button on the panel; a flashing light state, by the Launchpad itself and by the writer elsewhere; the three layouts drawn afresh in zones, tinted on the card.
+- **The Launchpad's flashing is from the manual**, read here with macOS's PDFKit through `osascript` after two attempts at reading the PDF's text by hand had failed (LESSONS).
+- **Tests.** `tests/test_midi_layouts.py` (new): the transfer function with exact values, the way back, a mapping's options, pickup on the curve, two controllers sharing a level, the new calls, the API's toggles, the fade button against fades and Blackout started elsewhere and against twelve presses at once, the flash state per profile, the writer's flashing with its rate, and the three controllers through the real hub with pipes. The existing layout, lights, effects and shader-engine tests were changed where they pinned the old layouts, each to the new fact. On the Mac: the MIDI, controllers, lights, controller-code, effects and shader-engine modules pass; the whole suite's other failures are the Mac's own (`test_install`, `test_netd`, `test_update`, `test_release`). The browser test (the fade button, the zones on the card) ran only in CI.
+- **Stopped once by the usage limit**, mid-run; the coordinator kept the work as a local commit. Nothing was lost.
+- **Not started:** parts 2 and 3 (the card as an editor), Map Mode.
+
 ## 2026-10-09, the night (#113 with the shaders on pads merged in: the two features used together for the first time)
 
 Branch `effect-over-shader`, pull request #113, a draft, now stacked on #114 (`shader-pads`, D73) as well as on #111, and to merge after both. `origin/shader-pads` at 8f54af2 was merged in, never rebased. **Nothing was run on hardware.**

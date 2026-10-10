@@ -12,7 +12,7 @@ Play pads, fade and mix from USB MIDI controllers: pad grids, fader boxes, keybo
 
 A profile is one file in `pvj/controllers.d/`: which controller it is for, a drawing of it, what each control sends and what each does. When a matching controller appears (the box looks every 2 seconds) its layout applies by itself and the MIDI page shows a card for it: "Korg nanoKONTROL2: recognised, standard layout on."
 
-**None of the three layouts has been tried on the real controllers yet.** They come from documents and one recording (see each table), not from pressing every control. The check list below takes two minutes per controller.
+**The numbers each control sends come from documents and one recording (see each table), not from pressing every control.** The owner used all three on 2026-10-10 and found the first layouts "sort of, odd, or not helpful, or incomplete. especially, the zoom and x/y position", with things "in places that make no sense". The three layouts below were drawn afresh after that (D75): each controller in zones that belong together, with the reasons written beside it. **The new layouts have not been on a controller either.** The check list below takes two minutes per controller.
 
 ### How it behaves
 
@@ -26,16 +26,20 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
   | Level | Pickup | Why |
   | --- | --- | --- |
   | Opacity | yes | a fader left at the bottom would black the screen out |
+  | Zoom (size), position X, position Y | yes (since D75) | a knob that is not where the picture is would throw the picture across the screen at the first touch |
   | Volume, clip speed | yes | a jump is heard or seen. The box remembers what was last set through it (the panel, OSC, a controller); before anything was set it takes the player's own start values, 100 percent and 1x |
-  | Shader speed, shader brightness | yes | a jump to frozen or to black. For a shader of the category Performance the box keeps the speed at 1 or below unless "faster" is switched on; the fader then does nothing above a quarter of its way |
+  | Shader speed, shader brightness | yes | a jump to frozen or to black. For a shader of the category Performance the box keeps the speed at 1 or below unless "faster" is switched on; the fader then does nothing above its middle |
   | Shader control 1 to 8, shader colour turn | no | a jump is part of playing a shader, and a knob that waits feels broken |
   | Effect amount | yes | a fader left at the bottom would take the effect out of the picture at the first touch, one left at the top would put it in full |
   | Effect control 1 to 8 | no | as for a shader control |
-  | Size, position, Vibes time | no | not in a standard layout's faders; they follow at once |
+  | Vibes time | no | it picks one of fifteen steps; nothing is seen to jump |
 
-  Mappings you make on a recognised controller pick up the same way. Plain Learn mappings on a controller with no profile behave as before (no pickup).
+  Pickup catches where the control really gives the box's value: the reverse of the level's own curve (see "How a level follows a knob"), not a straight line. **Two controllers on one level share it this way**: each takes the level over only where it meets it, and the one that was left behind waits again (tested with a nanoKONTROL2's and a MIDI Mix's zoom knob).
+
+  Mappings you make on a recognised controller pick up the same way. Plain Learn mappings on a controller with no profile behave as before (no pickup). A mapping can say otherwise for itself: `"takeover": "pickup"` or `"jump"` (see "How a level follows a knob").
 - **The same press twice.** Blackout and the Room scenes need two presses of the same button within a second (and at least a quarter of a second apart); one press does nothing. They are marked "2x" on the card. A Room scene can switch projectors off for the whole room, so it is treated like blackout. If you put blackout or a Room scene on a control yourself (on its card), it is guarded too: the chooser shows a switch **Press twice**, on unless you switch it off. Saving a control without changing it stores nothing, so the guard cannot be lost by pressing Save. A mapping made with plain Learn is not guarded, as before.
 - **The controllers' bank.** A nanoKONTROL2 and a MIDI Mix have one row of eight pad buttons, so the box keeps a bank for controllers (A at start, not saved): the row plays pads 1 to 8 of that bank and two buttons step it. Pads 9 to 12 are not on these two layouts. The Launchpad Mini has room for all three banks and needs no bank button.
+- **Zones.** Every control of a layout belongs to one part of the controller: Pads, The clip, The screen (fade, freeze, stop, black), The picture (zoom, place, turn), Sound, Shaders and Vibes, Effects, Room, Access. The card tints the controls of a zone alike (a bar of colour along the foot of each) and names the zones once under the drawing.
 - **Same path as everything else.** A profile only chooses which API call a control makes; the call goes through the API as a presenter, so the module switches, every check and the 50 commands a second apply, and no control waits for the shader engine (tested with the engine's lock held, for every control of every layout).
 - **Lights.** The box shows its state on the controller's own lights: see "Lights" below. Switching a standard layout off also switches that controller's lights off.
 
@@ -43,80 +47,136 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 
 **Unverified.** Korg's nanoKONTROL2 Parameter Guide describes every parameter of CC mode but prints no table of the factory numbers. The numbers below are the factory assignments as widely reported and as used by the Mixxx project's mapping for this controller. The controller must be in **CC mode**: hold SET MARKER and CYCLE while plugging it in. It starts in the mode it was last used in, so one that came from a DAW set-up stays in that DAW's mode until you do this once. In a DAW mode its faders send pitch bend, which the box does not read, and the layout looks dead (the card then says "Nothing received yet"). In Korg's editor a button can be set to Toggle instead of Momentary; a toggling button then acts on every other press only. The layout expects the factory setting, Momentary. Factory reset (Parameter Guide p. 13): hold PREV TRACK, NEXT TRACK and CYCLE while plugging it in.
 
-| Control | Sends | Does |
-| --- | --- | --- |
-| Knob 1 to 8 | CC 16 to 23 | Shader control 1 to 8 of the shader on screen |
-| Fader 1 | CC 0 | Opacity (pickup) |
-| Fader 2 | CC 1 | Volume (pickup) |
-| Fader 3 | CC 2 | Clip speed (pickup) |
-| Fader 4 | CC 3 | Shader speed (pickup) |
-| Fader 5 | CC 4 | Shader colour turn |
-| Fader 6 | CC 5 | Shader brightness (pickup) |
-| Fader 7 | CC 6 | Effect amount (pickup) |
-| Fader 8 | CC 7 | Spare |
-| S 1 to 8 | CC 32 to 39 | Pad 1 to 8 of the controllers' bank |
-| M 1 to 8 | CC 48 to 55 | Shader preset 1 to 8 |
-| R 1 to 4 | CC 64 to 67 | Room scene 1 to 4 (press twice) |
-| R 5 | CC 68 | Effect on / off |
-| R 6, R 7 | CC 69, 70 | Fade in, fade out |
-| R 8 | CC 71 | Blackout on / off (press twice) |
-| Track <, Track > | CC 58, 59 | Previous shader, next shader |
-| Cycle | CC 46 | Vibes on / off |
-| Marker Set | CC 60 | Vibes: start the set Ambient |
-| Marker <, Marker > | CC 61, 62 | Controllers' bank: the one before, the next |
-| Rewind, Forward | CC 43, 44 | Previous clip, next clip (of a playlist) |
-| Stop, Play | CC 42, 41 | Stop, Pause / resume |
-| Rec | CC 45 | Vibes: start the set Show |
+**How to read it.** Eight strips, left to right, and the strips are the zones: strips 1 to 3 are **the picture and the clip** (what you reach for first), strips 4 to 6 the **shader**, strip 7 the **effect**. In every strip the knob is the fine thing and the fader the big one. The three button rows run the whole width: **S plays pads**, **M picks the shader's presets**, **R is the row to be careful with** (the room on the left, the screen on the right, Blackout at the far end). The transport buttons on the left do what is printed on them where the box has such a thing.
+
+```
+            knob     1 Zoom    2 Pos X   3 Pos Y   4 Sh c1   5 Sh c2   6 Sh c3   7 Sh c4   8 Vibes time
+Track < >   S        pad 1     pad 2     pad 3     pad 4     pad 5     pad 6     pad 7     pad 8
+Cycle  Marker        M        preset 1  preset 2  preset 3  preset 4  preset 5  preset 6  preset 7  preset 8
+<< >> Stop Play Rec  R        scene 1   scene 2   scene 3   scene 4   Effect    Rotate    FADE      BLACKOUT
+            fader    Opacity   Volume    Clip spd  Sh speed  Sh hue    Sh bright Fx amount (spare)
+```
+
+| Control | Sends | Does | Why there |
+| --- | --- | --- | --- |
+| Knob 1, 2, 3 | CC 16, 17, 18 | **Zoom, position X, position Y** (pickup; the middle is exactly 100 percent and exactly centred) | the three belong together and were asked for first; over the opacity, volume and speed faders they make strips 1 to 3 "the picture" |
+| Knob 4 to 7 | CC 19 to 22 | Shader control 1 to 4 of the shader on screen | over the shader's own faders |
+| Knob 8 | CC 23 | Vibes: time each shader stays | the least played knob, at the end |
+| Fader 1, 2, 3 | CC 0, 1, 2 | Opacity, volume, clip speed (pickup) | unchanged: the hand knows them |
+| Fader 4, 5, 6 | CC 3, 4, 5 | Shader speed (pickup), colour turn, brightness (pickup) | unchanged |
+| Fader 7 | CC 6 | Effect amount (pickup) | unchanged |
+| Fader 8 | CC 7 | Spare | |
+| S 1 to 8 | CC 32 to 39 | Pad 1 to 8 of the controllers' bank | the top row of buttons is the one pressed most |
+| M 1 to 8 | CC 48 to 55 | Shader preset 1 to 8 | |
+| R 1 to 4 | CC 64 to 67 | Room scene 1 to 4 (press twice) | |
+| R 5 | CC 68 | Effect on / off | under the effect's strips |
+| R 6 | CC 69 | Rotate a quarter turn | the picture's last control; a press too many is undone by three more |
+| R 7 | CC 70 | **Fade out, then in** (one button; its light flashes while the picture is down) | beside Blackout: the two that darken the screen |
+| R 8 | CC 71 | Blackout on / off (press twice) | the last button of the row, where no other is beside it on the right |
+| Track <, Track > | CC 58, 59 | Previous shader, next shader | |
+| Cycle | CC 46 | Vibes on / off | Vibes goes round |
+| Marker Set | CC 60 | Vibes: start the set Ambient | |
+| Marker <, Marker > | CC 61, 62 | Controllers' bank: the one before, the next | |
+| Rewind, Forward | CC 43, 44 | Previous clip, next clip (of a playlist) | as printed |
+| Stop, Play | CC 42, 41 | Stop, Freeze / resume | as printed |
+| Rec | CC 45 | Vibes: start the set Show | |
 
 ### Akai MIDI Mix (`akai-midimix`)
 
 **Unverified.** No Akai document with the factory numbers was found (the support article on the editor gives none; the User Guide could not be read when this was written). The numbers are those of a public Ableton Live script written for the factory preset (billmoser/MIDIMixD). Holding **Solo** makes the Mute buttons send a second set of notes; they are drawn as a row of their own, "Solo+Mute".
 
+**How to read it.** Here the rows are the zones, because the controller has three rows of knobs: the **top row is the shader**, the **middle row the picture**, the **bottom row the effect**. The faders are the same as on the nanoKONTROL2. **Mute plays pads**, **Rec Arm picks presets**, and the row you reach only by holding **Solo** holds what must not be hit by accident: the screen's four buttons at its right end, in the panel's own order.
+
+```
+knob A   Sh c1    Sh c2    Sh c3    Sh c4    Sh c5    Sh c6    Sh c7    Sh c8
+knob B   Zoom     Pos X    Pos Y    Vibes t. (spare)  (spare)  (spare)  (spare)
+knob C   Fx c1    Fx c2    Fx c3    Fx c4    Fx c5    Fx c6    Fx c7    Fx c8
+Mute     pad 1    pad 2    pad 3    pad 4    pad 5    pad 6    pad 7    pad 8      Bank <
+Solo+M   Vibes    Shader > Rotate   Effect   FADE     Freeze   Stop     BLACKOUT   Bank >
+Rec Arm  preset 1 preset 2 preset 3 preset 4 preset 5 preset 6 preset 7 preset 8   Solo (shift)
+fader    Opacity  Volume   Clip spd Sh speed Sh hue   Sh brt   Fx amt   (spare)    Master (spare)
+```
+
 | Control | Sends | Does |
 | --- | --- | --- |
 | Knob A1 to A8 (top row) | CC 16, 20, 24, 28, 46, 50, 54, 58 | Shader control 1 to 8 |
-| Knob B1, B2, B3 (middle row) | CC 17, 21, 25 | Size, position X, Vibes: time each shader stays |
-| Knob B4 to B8 | CC 29, 47, 51, 55, 59 | Spare |
+| Knob B1, B2, B3 (middle row) | CC 17, 21, 25 | **Zoom, position X, position Y** (pickup; the middle is exactly 100 percent and exactly centred) |
+| Knob B4 | CC 29 | Vibes: time each shader stays |
+| Knob B5 to B8 | CC 47, 51, 55, 59 | Spare |
 | Knob C1 to C8 (bottom row) | CC 18, 22, 26, 30, 48, 52, 56, 60 | Effect control 1 to 8 of the effect that is on |
 | Fader 1 to 6 | CC 19, 23, 27, 31, 49, 53 | As on the nanoKONTROL2: opacity, volume, clip speed, shader speed, colour turn, shader brightness |
 | Fader 7 | CC 57 | Effect amount (pickup) |
 | Fader 8, Master | CC 61, 62 | Spare |
 | Mute 1 to 8 | Note 1, 4, 7, 10, 13, 16, 19, 22 | Pad 1 to 8 of the controllers' bank |
 | Rec Arm 1 to 8 | Note 3, 6, 9, 12, 15, 18, 21, 24 | Shader preset 1 to 8 |
-| Solo+Mute 1 to 8 | Note 2, 5, 8, 11, 14, 17, 20, 23 | Stop, Pause / resume, Vibes on / off, previous shader, next shader, fade in, fade out, blackout (press twice) |
+| Solo+Mute 1 to 4 | Note 2, 5, 8, 11 | Vibes on / off, next shader, rotate a quarter turn, effect on / off |
+| Solo+Mute 5 to 8 | Note 14, 17, 20, 23 | **Fade out, then in** (one button), Freeze / resume, Stop, Blackout (press twice): the panel's own order |
 | Bank Left, Bank Right | Note 25, 26 | Controllers' bank: the one before, the next |
 | Solo | Note 27 | Spare (it is the shift for the row above) |
 
-Room scenes, the two Vibes sets, and the effect's on / off, previous and next are not on this layout (it has no free buttons); put one on a control from the card or the Room screen.
+Room scenes, the two Vibes sets, the previous shader and the effect's previous and next are not on this layout (it has no free buttons); put one on a control from the card or the Room screen. **The fade button has no light here**: the box cannot light the Solo+Mute row, so on a MIDI Mix the flashing is on the panel only.
 
 ### Novation Launchpad Mini (`novation-launchpad-mini`)
 
 The **original** Launchpad Mini, not the MK3 (which sends other numbers and has another card id). From Novation's Launchpad S Programmer's Reference Manual 1.02, whose protocol the original Mini shares: in the power-on X-Y layout a pad sends note 16 x row + column (from 0, top left), the round buttons on the right are column 8 (notes 8, 24 ... 120) and the round buttons along the top send CC 104 to 111. The recording of the owner's unit (D21: notes 20 to 103 and CC 104 to 111) fits: every number is one of that layout, and note 20 does not exist in the other (drum rack) layout. The recording did not cover every pad.
 
+**Drawn afresh** after the owner's "the launchpad button layouts dont make sense to me" (2026-10-10). The first layout laid each bank as two rows of six and filled what was left with single pads of every kind. This one has five rules:
+
+1. **The pads of the grid are the pads of the panel, in the panel's own shape.** On a laptop the panel draws a bank as three rows of four, so each bank is a block of three rows of four here, pad 1 at the block's top left: **bank A top left, bank B top right, bank C under A**. Three blocks, three colours.
+2. **A lit pad means there is something on it; the one that plays is bright green; an empty pad is dark.** Bank A is amber, bank B yellow-green, bank C orange.
+3. **One zone per thing, each a row or a block, never scattered.** Right of bank C, three rows of four: the shader row (Vibes, previous, next), the effect row (on / off, previous, next) and the clip row in the panel's order (Prev, back 10 s, forward 10 s, Next). Under everything, two full rows for the shader on screen: its presets, then its controls as presses.
+4. **The round buttons are the ones to be careful with**, and you can feel that they are round. On the right, top half: the four **Room scenes** (press twice). Bottom half: **the screen**, in the panel's order from the top: **Fade, Freeze, Stop, Blackout**, Blackout in the corner, red. The fade button flashes red while the picture is down. Nothing in this column is beside a pad that is tapped often: its neighbours on the left are the last column of the grid's rows.
+5. **The top row holds what is used least**: which set Vibes plays, the quarter turn, the overlay, sound off.
+
+```
+top (round)   Vibes:Amb  Vibes:Show  .       .       Rotate   Overlay  Mute    .
+row 1         A1   A2   A3   A4   |  B1   B2   B3   B4          (A) Room scene 1   2x
+row 2         A5   A6   A7   A8   |  B5   B6   B7   B8          (B) Room scene 2   2x
+row 3         A9   A10  A11  A12  |  B9   B10  B11  B12         (C) Room scene 3   2x
+row 4         C1   C2   C3   C4   |  Vibes  Shader<  Shader>  .   (D) Room scene 4   2x
+row 5         C5   C6   C7   C8   |  Effect Effect<  Effect>  code (E) FADE out / in
+row 6         C9   C10  C11  C12  |  Prev   -10 s    +10 s    Next (F) Freeze
+row 7         preset 1 ... preset 8 of the shader on screen       (G) Stop
+row 8         control 1 ... control 8 of it, as a press           (H) BLACKOUT      2x
+```
+
 | Control | Sends | Does |
 | --- | --- | --- |
-| Top 1 to 8 | CC 104 to 111 | Previous shader, next shader, Vibes on / off, previous clip, next clip, Pause / resume, fade in, fade out |
-| Grid rows 1 and 2, columns 1 to 6 | Notes 0 to 5, 16 to 21 | Bank A, pads 1 to 6 and 7 to 12 |
-| Grid rows 3 and 4, columns 1 to 6 | Notes 32 to 37, 48 to 53 | Bank B, pads 1 to 12 |
-| Grid rows 5 and 6, columns 1 to 6 | Notes 64 to 69, 80 to 85 | Bank C, pads 1 to 12 |
-| Grid row 1, columns 7 and 8 | Notes 6, 7 | Effect on / off; show a one-time presenter code (hold 3 seconds and let go; does nothing until switched on, see "A pairing code on the display") |
-| Grid row 2, columns 7 and 8 | Notes 22, 23 | Previous effect, next effect |
-| Grid rows 3 to 6, columns 7 and 8 | Notes 38, 39, 54, 55, 70, 71, 86, 87 | Effect control 1 to 8, as a press (as in row 8 for a shader) |
+| Grid rows 1 to 3, columns 1 to 4 | Notes 0 to 3, 16 to 19, 32 to 35 | Bank A, pads 1 to 12 |
+| Grid rows 1 to 3, columns 5 to 8 | Notes 4 to 7, 20 to 23, 36 to 39 | Bank B, pads 1 to 12 |
+| Grid rows 4 to 6, columns 1 to 4 | Notes 48 to 51, 64 to 67, 80 to 83 | Bank C, pads 1 to 12 |
+| Grid row 4, columns 5 to 7 | Notes 52, 53, 54 | Vibes on / off, previous shader, next shader (column 8, note 55, is spare) |
+| Grid row 5, columns 5 to 7 | Notes 68, 69, 70 | Effect on / off, previous effect, next effect |
+| Grid row 5, column 8 | Note 71 | Show a one-time presenter code (hold 3 seconds and let go; does nothing until switched on, see "A pairing code on the display") |
+| Grid row 6, columns 5 to 8 | Notes 84 to 87 | Previous clip, back 10 seconds, forward 10 seconds, next clip |
 | Grid row 7 | Notes 96 to 103 | Shader preset 1 to 8 |
 | Grid row 8 | Notes 112 to 119 | Shader control 1 to 8, as a press (a switch toggles, a choice steps, an event fires, a number goes back to its own value) |
 | A to D (right) | Notes 8, 24, 40, 56 | Room scene 1 to 4 (press twice) |
-| E, F | Notes 72, 88 | Vibes: start the set Ambient, start the set Show |
-| G | Note 104 | Stop |
-| H | Note 120 | Blackout on / off (press twice) |
+| E, F, G, H (right) | Notes 72, 88, 104, 120 | **Fade out, then in**; Freeze / resume; Stop; Blackout on / off (press twice) |
+| Top 1, 2 | CC 104, 105 | Vibes: start the set Ambient, start the set Show |
+| Top 5, 6, 7 | CC 108, 109, 110 | Rotate a quarter turn, overlay picture on / off, sound off / on |
+| Top 3, 4, 8 | CC 106, 107, 111 | Spare |
+
+The effect's controls as presses, which filled eight pads of the first layout, are not on this one. **Other ways to lay it out**, if this is still not it (the question is with the owner): each bank as two rows of six with the zones in the two right-hand columns; or one bank only, drawn large, with the round buttons on the right choosing the bank.
 
 ### What changes when you update
 
-A box that already had MIDI switched on behaves differently for these three controllers once this version is on it. Mappings you learned keep working and still win. What is new:
+**From the version with the first layouts to this one (D75).** A box that has one of the three controllers plugged in behaves differently after this update. Mappings you made keep working and still win over the standard for their control. What changes:
 
-- **Every control you never mapped now does something** (the tables above). Before, most did nothing.
-- **Learned opacity, volume, clip speed, shader speed and shader brightness on these three controllers now wait for pickup**: the fader does nothing until it reaches the value the box has.
-- **The built-in map no longer applies to them.** On the Launchpad Mini notes 36 to 71 used to be the built-in pads 1 to 36; now note 36 is bank B pad 5, notes 38 and 39 are effect controls 1 and 2, and so on by the grid; note 72 was the built-in Stop and is now "Vibes: start the set Ambient" (button E); notes 73 to 76 (pause, blackout, fade out, reset) are not on its grid. On the nanoKONTROL2 CC 20 to 23 were the built-in opacity, size, position and speed and are now knobs 5 to 8 (shader controls 5 to 8). On the MIDI Mix CC 20 to 25 change the same way.
-- To have the old behaviour back for one controller, switch its **Standard layout** off.
+- **Most controls of the three layouts do something else.** The tables above are the whole truth; the ones a hand had learned:
+  - *nanoKONTROL2*: knobs 1 to 3 were shader controls 1 to 3 and are zoom, position X and position Y; knobs 4 to 7 were shader controls 4 to 7 and are 1 to 4; knob 8 was shader control 8 and is Vibes time. R 6 was Fade in and is the quarter turn; R 7 was Fade out and is the one fade button. Shader controls 5 to 8 are not on it any more.
+  - *MIDI Mix*: knob B2 was position X and still is; B1 (size) is the same under the name Zoom; B3 was Vibes time and is position Y; B4 was spare and is Vibes time. The Solo+Mute row was Stop, Pause, Vibes, previous shader, next shader, Fade in, Fade out, Blackout and is Vibes, next shader, rotate, effect on / off, fade, Freeze, Stop, Blackout.
+  - *Launchpad Mini*: every pad of the grid and most round buttons. Above all the banks: note 4 was bank A pad 5 and is bank B pad 1. The top row was previous and next shader, Vibes, previous and next clip, Pause, Fade in, Fade out. Stop and Blackout are where they were (G and H); the Room scenes too (A to D). The presenter code moved from the pad with note 7 to the pad with note 71.
+- **A zoom or position knob waits for pickup** on these three controllers, also one you mapped yourself there: it does nothing until it reaches the value the box has.
+- **Zoom, position, clip speed, shader speed, colour turn and shader brightness have their normal value at the middle of the control**, over nine steps (60 to 68 of 0 to 127). For every mapping of these actions, yours and the built-in map's too:
+  - zoom went from 1 to 200 percent in a straight line (100 percent near 63) and goes from 25 to 200 with 100 at the middle. A mapping that needs the old bottom can say `"min": 1`.
+  - clip speed had 1x at about 54 of 127 and has it at the middle; shader speed had its own pace a quarter of the way up and has it at the middle.
+  - position, colour turn and brightness had their middle between two steps and now have it on nine.
+- **Fade out and Fade in on the panel are one button.** The two old calls and the two old actions still work.
+- **The Launchpad Mini is put in its flash mode** when it is plugged in (one more message after the reset), and its pads show three bank colours.
+- To have the old behaviour back for one controller there is no switch: the old layouts are gone. Switch **Standard layout** off to use only your own mappings and the built-in map.
+
+**From a version before controller profiles.** Every control you never mapped now does something (the tables above); before, most did nothing. **The built-in map no longer applies to these three controllers**: on the Launchpad Mini notes 36 to 71 used to be the built-in pads 1 to 36 and note 72 the built-in Stop; on the nanoKONTROL2 and the MIDI Mix CC 20 to 25 were the built-in levels. Now each number is what its table says.
 
 ### The two-minute check, per controller
 
@@ -129,7 +189,7 @@ With the controller plugged in, open System > MIDI controller and look at its ca
 
 ### On the page
 
-Each connected controller has a card: its name and state line, the switch "Standard layout", the drawn layout (a grid built from the profile's positions; on a phone a wide controller scrolls sideways inside its card), and under it the profile's note. A control shows what it does now; it lights while it is moved; a dashed edge means "changed by you"; a dotted edge means it waits for pickup. Tap a control to see what it sends and to choose another action (Save), or "Nothing" to switch it off; Save is offered only when the choice differs from what the control does now. "Back to the standard" undoes that for the control, and "Back to the standard for the whole controller" for all of them, after a question in place. Both remove only that controller's own mappings on the controls of its layout; a mapping made for any controller is shown on the control as such and is removed in the list of mappings. A recognised controller that has sent nothing yet says "Nothing received yet", with the CC mode hint for a nanoKONTROL2. A controller with no profile gets a card that says "No built-in layout for this one yet. Teach it below." The page is shown to full-access devices; a presenter can read the same through `GET /api/midi` but has no page for it yet.
+Each connected controller has a card: its name and state line, the switch "Standard layout", the drawn layout (a grid built from the profile's positions; on a phone a wide controller scrolls sideways inside its card), and under it the profile's note. A control shows what it does now and carries its zone's bar of colour, and the zones are named once under the drawing; it lights while it is moved; a dashed edge means "changed by you"; a dotted edge means it waits for pickup. Tap a control to see what it sends and to choose another action (Save), or "Nothing" to switch it off; Save is offered only when the choice differs from what the control does now. "Back to the standard" undoes that for the control, and "Back to the standard for the whole controller" for all of them, after a question in place. Both remove only that controller's own mappings on the controls of its layout; a mapping made for any controller is shown on the control as such and is removed in the list of mappings. A recognised controller that has sent nothing yet says "Nothing received yet", with the CC mode hint for a nanoKONTROL2. A controller with no profile gets a card that says "No built-in layout for this one yet. Teach it below." The page is shown to full-access devices; a presenter can read the same through `GET /api/midi` but has no page for it yet.
 
 ### Writing a profile for another controller
 
@@ -159,6 +219,7 @@ Add one file, `pvj/controllers.d/<id>.json`; nothing else changes. All keys are 
 - `layout` is the grid of the drawing (up to 16 by 16); each control has its own `row` and `col` from 0, a `name` as printed on the hardware (up to 24 characters), and a `kind`: `fader`, `knob`, `button` or `pad`.
 - `send`: `type` is `note` or `cc`, `number` 0 to 127, `channel` 1 to 16 or 0 for any (use 0 unless two controls differ only by channel).
 - `action` is `null` for a spare control, or an action from the table below with its fields (`pad` needs `bank` 0 to 2 and `index` 0 to 11, `bank_pad` needs `index`). A fader or knob needs an action that follows it; a button or pad one that is pressed. A scene by id and `none` are not allowed in a profile.
+- `zone` (optional): which part of the controller the control belongs to, for the drawing: `pads`, `clips`, `screen`, `picture`, `sound`, `shaders`, `effects`, `room` or `access`.
 - `guard` (optional, buttons and pads): the press is needed twice. Use it for blackout and anything room-wide. `unverified` (optional): the number is not confirmed by the maker's document; say so in `note` too.
 - Up to 160 controls; no two in one place, no two sending the same message.
 
@@ -186,8 +247,9 @@ Add one file, `pvj/controllers.d/<id>.json`; nothing else changes. All keys are 
 - `default`: are the lights on before anyone chose. Use `false` unless the maker's document gives the messages and the controller needs no setting changed first. `unverified`: the messages are not from a maker's document.
 - `channel` (1 to 16): the MIDI channel the lights are sent on. `off` (0 to 127): the value that darkens a light.
 - A light is addressed like its control: a control that sends a note gets a note-on with that note, one that sends a control change gets a control change with that number, and the value is the light. A controller whose lights are addressed differently cannot be described yet.
-- `styles`: per thing a light can show, the value for each of the four states `off`, `on` (there is something here), `active` (it is the one on now) and `busy`. The names are fixed: `clip`, `preset`, `control`, `vibes`, `set`, `step`, `play`, `stop`, `blackout`, `fadeout`, `fadein`, `room`, `bank`, `effect` (the table under "What a light shows" says which actions belong to which). `pulse` (optional) gives, for `on`, `active` or `busy`, a second value the light alternates with every 0.6 seconds; use it where a light has one colour. With `"brightness": true` each style holds three of these instead, under `low`, `medium` and `high`, and the card offers the choice.
+- `styles`: per thing a light can show, the value for each of the four states `off`, `on` (there is something here), `active` (it is the one on now) and `busy`. The names are fixed: `clip`, `clip_b` and `clip_c` (a pad of bank B and C, where a controller has colours; without them every pad is `clip`), `preset`, `control`, `vibes`, `set`, `step`, `play`, `stop`, `blackout`, `fadeout`, `fadein`, `fade` (the one fade button; without it, as `fadeout`), `room`, `bank`, `effect` (the table under "What a light shows" says which actions belong to which). `pulse` (optional) gives, for `on`, `active` or `busy`, a second value the light alternates with every 0.6 seconds; use it where a light has one colour. With `"brightness": true` each style holds three of these instead, under `low`, `medium` and `high`, and the card offers the choice.
 - `controls`: the ids of the controls that have a light; only buttons and pads. What a light shows is not written here: it follows from what its control does (the table under "What a light shows"), so a spare control that is given an action later, by a new version of the profile or by the person on the card, lights for that action with no change to this section. An action with nothing to show, or with no style in this file, leaves its light dark.
+- `flash` (optional): `"device"` where the maker's document gives values at which the controller flashes a light by itself; a style may then hold `flash`, that value. Without it (`"timer"`) the box switches a flashing light on and off itself.
 - `setup` and `clear` (optional, up to eight messages each, every one three numbers: status, data, data; a note-off, note-on or control change on the section's `channel`, and not controllers 120 to 127): sent once when the controller is plugged in, and to darken everything. Only where the maker's document gives them. Without `clear` each light is sent `off`.
 - Then add the controller to `tools/DEVICE-TESTING.md` and say plainly, in `note` and in this file, what was and was not tried on the hardware.
 
@@ -210,7 +272,9 @@ In the drawing a small ring marks each control that has a light; the ring is fil
 
 ### What a light shows
 
-A light follows **what its control does now**: if you put another action on a control, its light shows that action's state. Four states exist: off, "there is something here", "it is the one on now", and "busy".
+A light follows **what its control does now**: if you put another action on a control, its light shows that action's state. Five states exist: off, "there is something here", "it is the one on now", "busy", and **flashing** (D75), which only the one fade button uses: it flashes while the picture goes down and while it is black from a fade.
+
+**How a light flashes.** Where the maker's document gives a way for the controller to flash a light by itself, the box uses it: one message, and nothing more is sent while it flashes (the Launchpad, below). Everywhere else the light's own writer switches it on and off, a quarter of a second each (two flashes a second), on its own thread and its own clock, through the same limit of 200 messages a second as every other light: a flashing light costs four messages a second, the thread that reads the controller never waits for it, and it ends with the state. A profile says which: `"flash": "device"` in its lights section and a `flash` value in a style, or nothing (the writer does it).
 
 | The control does | Something here | On now | Busy |
 | --- | --- | --- | --- |
@@ -227,29 +291,37 @@ A light follows **what its control does now**: if you put another action on a co
 | Pause / resume | | something is playing | it is paused |
 | Stop | something is playing | nothing is playing | |
 | Blackout on / off | (marks the button) | **the screen is black** | |
+| **Fade out, then in** (the one button; style `fade`, or the style of Fade out where a file has none) | (marks the button) | | a fade in is running. **Flashing**: the picture is going down or is black from a fade. Under Blackout it is steady: Blackout's own button is the one that shows it |
+| Back 10 seconds, forward 10 seconds (style `step`) | something is playing | | |
 | Fade out | (marks the button) | the picture was faded out and is still down | |
 | Fade in | (marks the button) | | a fade in is running |
 | Room scene 1 to 8, a scene by id | the scene exists (and Room is on) | | it is being applied |
 | Controllers' bank: before, next | | a place mark: the left button on bank A, both on B, the right one on C | |
-| Nothing, a spare control, a level, a pairing code on the display | | | |
+| Nothing, a spare control, a level, a pairing code on the display, the quarter turn, the mirrors, the overlay, Mute, Loop, the test pattern | | | |
 
 "Which clip is playing" is decided by the file's name. Two pads with the same clip both show it.
 
 ### Novation Launchpad Mini: lights on, with colour
 
-Source: Novation, *Launchpad S Programmer's Reference Manual* 1.02 (https://fael-downloads-prod.focusrite.com/customer/dev/s3fs-public/novation/downloads/10753/launchpad-s-prm.pdf), read in full by the reviewer of pull request #82. It confirms: a note-on on channel 1 per pad (`90h`, the pad's key, a velocity); in the velocity, red in bits 0 to 1 and green in bits 4 to 5, each 0 to 3, and off is `0Ch`, so the value is 16 x green + red + 12; control changes `68h` to `6Fh` for the round buttons along the top, with the same value; and `B0h 00h 00h`, which turns all LEDs off and restores the power-on settings. The manual also describes double buffering, flashing and a rapid update; none of them is used, only one message per pad. The box sends 200 messages a second at most; that figure is this program's own limit, not one from the manual (an earlier version of this page gave "400 a second" as the manual's, which is not in it).
+Source: Novation, *Launchpad S Programmer's Reference Manual* 1.02 (https://fael-downloads-prod.focusrite.com/customer/dev/s3fs-public/novation/downloads/10753/launchpad-s-prm.pdf), read in full by the reviewer of pull request #82. It confirms: a note-on on channel 1 per pad (`90h`, the pad's key, a velocity); in the velocity, red in bits 0 to 1 and green in bits 4 to 5, each 0 to 3, and off is `0Ch`, so the value is 16 x green + red + 12; control changes `68h` to `6Fh` for the round buttons along the top, with the same value; and `B0h 00h 00h`, which turns all LEDs off and restores the power-on settings. The manual also describes double buffering and a rapid update; neither is used, only one message per pad. **Its flashing is used since D75**, for the one fade button, from the same manual ("Adventures in Double Buffering" and "Example: Flashing LEDs", read for this change with macOS's own PDF reader): `B0h 00h 28h` puts the Launchpad in flash mode ("write to buffer 0, and swap the display buffer every 280ms"); a colour written with bits 3 and 2 set (copy mode, which every value here has: the 12 in the formula) is lit in both buffers and stays steady; the same colour with bit 2 cleared ("subtracting 4 from the velocity value") is lit in one buffer and flashes. So the box sends `B0h 00h 28h` once after the reset, and flashing full red is `0Fh` less 4, `0Bh` (11). 280 ms a half is a little slower than the box's own two a second. The box sends 200 messages a second at most; that figure is this program's own limit, not one from the manual (an earlier version of this page gave "400 a second" as the manual's, which is not in it).
 
 **Not confirmed from a primary source: that the original Launchpad Mini (USB id `1235:0036`) uses the Launchpad S protocol.** The manual is for the Launchpad S. That the Mini shares it is widely reported, and the recording of the owner's unit fits its key numbers, but Novation's document does not say so. Not seen on the hardware.
 
 | Colour | Means | Value (low, medium, high brightness) |
 | --- | --- | --- |
 | dark | nothing here | 12 |
-| amber | there is something here: a clip on the pad, a preset, a scene, a button that does something now | 29, 29, 46 |
-| green | it is on now: the playing clip, the preset in use, Vibes running, a scene being applied, a fade in running | 28, 44, 60 |
-| dim red | this button darkens the screen (blackout, fade out) or stops what plays | 13, 13, 14 |
-| full red | **the screen is dark**: blackout is on, or the picture was faded out | 15 at every brightness |
+| amber | there is something here: a pad of **bank A** with something on it, a preset, a scene, a button that does something now | 29, 29, 46 |
+| yellow-green (green 2, red 1; at High green 3, red 2) | a pad of **bank B** with something on it | 45, 45, 62 |
+| orange (green 1, red 2; at High green 2, red 3) | a pad of **bank C** with something on it | 30, 30, 47 |
+| bright green | **the pad that is playing**, in every bank and at every brightness | 60 |
+| green | it is on now: the preset in use, Vibes running, a scene being applied, a fade in running | 28, 44, 60 |
+| dim red | this button darkens the screen (blackout, the fade button) or stops what plays | 13, 13, 14 |
+| full red | **the screen is dark**: blackout is on | 15 at every brightness |
+| full red, flashing | **the picture is going down or is black from a fade** (the fade button) | 11 at every brightness |
 
-Pause / resume is green while something plays and amber while it is paused. Every pad and round button has a light (80). When the controller is plugged in the box sends the reset first (so it is in the X-Y layout the profile expects, with everything dark) and then all 80 lights; once per plug-in, not again when a failed writer is tried again. When lights go off it sends the reset again.
+Every value is the manual's formula, 16 x green + red + 12. **Whether three bank colours can be told apart on the real pads, above all at Low, has not been seen.**
+
+Pause / resume is green while something plays and amber while it is paused. Every pad and round button has a light (80). When the controller is plugged in the box sends the reset first (so it is in the X-Y layout the profile expects, with everything dark), then the flash mode, and then all 80 lights; once per plug-in, not again when a failed writer is tried again. When lights go off it sends the reset again.
 
 ### Korg nanoKONTROL2: off until you switch it on
 
@@ -266,7 +338,8 @@ Source: Korg's nanoKONTROL2 Parameter Guide (E1), page 9 (https://cdn.korg.com/u
 | S 1 to 8 | pad 1 to 8 of the controllers' bank holds a clip | that clip is playing |
 | M 1 to 8 | the shader on screen has that preset | it is the one in use |
 | R 1 to 4 | the Room scene exists | it is being applied |
-| R 6, R 7 | a fade in is running; the picture is faded out | |
+| R 7 (the fade button) | a fade in is running. **Flashing, by the box switching it on and off**: the picture is going down or is black from a fade | |
+| R 5 | an effect is on | |
 | R 8 | **the screen is black** | |
 | Cycle | Vibes is running | |
 | Rec | Vibes is running with the set Show | |
@@ -276,7 +349,7 @@ Source: Korg's nanoKONTROL2 Parameter Guide (E1), page 9 (https://cdn.korg.com/u
 
 ### Akai MIDI Mix: off, unverified
 
-**Nothing about the MIDI Mix's lights is confirmed from a primary source.** No Akai document describes them (the MIDImix User Guide 1.0 says nothing about messages the unit receives), so they are off until you switch them on. The source is secondary: Tero Heikkinen, "AKAI MIDImix & Processing Midibus" (oldmachinery.blogspot.com, 2018-04-15): "Sending note-ons to MUTE, REC ARM or Bank button values with velocity 127 will turn the associated lights on. Sending note-ons with velocity 0 will turn the lights off. Sending note-offs does nothing." Open controller scripts (mfeyx/akai-midimix-bitwig, tstriker/akai-midimix) do the same. The Solo button cannot be lit, and the Solo+Mute row shows only while Solo is held, so neither gets a light from the box.
+**Nothing about the MIDI Mix's lights is confirmed from a primary source.** No Akai document describes them (the MIDImix User Guide 1.0 says nothing about messages the unit receives), so they are off until you switch them on. The source is secondary: Tero Heikkinen, "AKAI MIDImix & Processing Midibus" (oldmachinery.blogspot.com, 2018-04-15): "Sending note-ons to MUTE, REC ARM or Bank button values with velocity 127 will turn the associated lights on. Sending note-ons with velocity 0 will turn the lights off. Sending note-offs does nothing." Open controller scripts (mfeyx/akai-midimix-bitwig, tstriker/akai-midimix) do the same. The Solo button cannot be lit, and the Solo+Mute row shows only while Solo is held, so neither gets a light from the box. **So the fade button of this layout, which is on that row, has no light and does not flash on a MIDI Mix.**
 
 | Light | Lit | Slowly pulsing |
 | --- | --- | --- |
@@ -311,14 +384,21 @@ A mapping belongs to one controller (by its ALSA card id, such as `nanoKONTROL2`
 | Action | Kind | Does |
 | --- | --- | --- |
 | Play a pad | trigger | Plays that pad (bank A to C, pads 1 to 12) |
-| Stop, Pause / resume, Blackout on / off, Fade out, Reset mix | trigger | As in the panel |
-| Opacity, Size, Position X, Speed, Volume | level | Follows the control, 0 to 127 spread over the range (opacity 0 to 100 percent, size 1 to 200, position -100 to 100, speed 0.25x to 2x, volume 0 to 100) |
+| Stop, Pause / resume (the panel's Freeze), Blackout on / off, Fade out, Reset mix | trigger | As in the panel |
+| **Fade out, then in** (`fade`) | trigger | The one fade button: fades out in 2 seconds, and at the next press in. The box decides which from what the screen is doing (`POST /api/fade`): the picture is down when a Fade out is running or has left it black, or when Blackout is on, and then the press fades in (which also ends the Blackout). It is not a count of presses, so it stays right when a fade was started elsewhere, when Blackout was used and when a play brought the picture back |
+| Opacity, Zoom (`size`), Position X (`position`), Position Y (`position_y`), Speed, Volume | level | Follows the control: see "How a level follows a knob" |
+| Rotate a quarter turn (`rotate`) | trigger | 0, 90, 180, 270 degrees and round |
+| Mirror left to right, mirror top to bottom (`flip_h`, `flip_v`) | trigger | The other state |
+| Overlay picture on / off (`overlay`) | trigger | The other state of the overlay's switch; nothing when no picture was chosen. It is saved, as from the panel |
+| Back 10 seconds, forward 10 seconds (`seek_back`, `seek_forward`) | trigger | As the panel's two buttons |
+| Loop on / off, sound off / on (`loop`, `mute`) | trigger | The other state; the box asks the player which it has |
+| Test pattern on / off (`test_pattern`) | trigger | The colour bars, or off again (which clears the screen). In no standard layout: it takes the screen |
 | Blackout while held up | level | Black at 64 or more, shown below |
 | Vibes on / off | trigger | Starts the endless shader rotation, or stops it if it is running (see [SHADERS.md](SHADERS.md)) |
 | Vibes: next shader | trigger | Goes to the next shader now (only while Vibes is running) |
 | Vibes: time each shader stays | level | A knob or fader picks one of 15 steps from bottom to top: 15, 30, 45, 60, 90, 120, 180, 240, 300, 420, 600, 900, 1200, 1800, 3600 seconds. It is saved, and the shader on screen follows the new time |
 | Shader control 1 to 8 (`shader_control_1` ...) | follows the control | The n-th input of the shader on screen, whatever it is (numbers, switches, choices and events, in the file's order; colours and points have no knob). From a **knob or fader**: a number spreads over its MIN to MAX, a switch is on from 64 up, a choice is picked by position, an event fires at 64 or more. From a **pad or button**: a switch toggles, a choice steps to the next (round the end), an event fires, a number goes back to the file's own value. A shader with fewer inputs ignores the rest |
-| Shader speed (`shader_speed`) | level | 0 (frozen) to 4 times; the shader's own pace, 1, is a quarter of the way up. TIME goes on from where it is |
+| Shader speed (`shader_speed`) | level | 0 (frozen) to 4 times; the shader's own pace, 1, is the middle of the control. TIME goes on from where it is |
 | Previous shader, Next shader (`shader_prev`, `shader_next`) | trigger | Within the active set: steps Vibes while it runs, otherwise puts on the neighbour of the shader on screen |
 | Preset 1 to 8 (`shader_preset_1` ...) | trigger | Applies that preset of the shader on screen, in the order they were saved |
 | Shader colour turn, Shader brightness (`shader_hue`, `shader_brightness`) | level | The palette shift, -180 to 180 degrees (the middle is none), and the brightness trim, 0 to 2 (the middle leaves it alone) |
@@ -340,6 +420,32 @@ A fourth kind of action, **Apply a Room scene** (`scene`, a trigger that carries
 The Vibes and shader actions are assigned with Learn like any other; they are not in the built-in map. They need the **Shaders and Vibes** module to be on: while it is off they do nothing, and the log says so once. They go through the same calls as the panel (`/api/shaders/values`, `/api/shaders/step`, `/api/shaders/preset`), as a presenter: every value is checked there, and a call only notes the wish and answers, so the thread that reads the controller never waits for the GPU. A knob sweep reaches the box at 20 changes a second and the GPU at five at most; the last position always lands. The MIDI page's action list offers all of them; the Shaders page teaches the three Vibes actions.
 
 The **effect** actions are the same in every way: they need the Shaders and Vibes module, go through the panel's own calls (`/api/effects`, `/api/effects/values`, `/api/effects/step`) as a presenter, and never wait for the GPU, for the player or for its lock: a value, a step and the one button are noted from what the panel remembers, and a worker does the rest. They do nothing, and the log says why, while a generator shader or Vibes has the screen; with nothing playing a step or the button is noted and then comes to nothing (the Effects card says why). **The one button acts on what was asked for last**, so two quick presses are on and off. **Switching is held to about three a second**: an effect goes on at the earliest 0.35 seconds after the last switch (Off never waits), so a button held down or a sequencer on it cannot flash a filter; "Allow faster than the flash limit" lifts that. Their lights are in the table under "What a light shows". The Effects card on Mix has a MIDI button beside the amount, beside each of the first eight inputs a knob can drive, and under Previous, On / Off and Next. **On the three shipped layouts the effect actions sit only on controls that were spare** (the tables above); no control that had an action was moved. None of them has been pressed on a real controller.
+
+### How a level follows a knob
+
+The first report from the real controllers named the zoom and the positions. Three things were wrong by design, not by a wrong number: a knob has no notch and 0 to 127 has no middle step, so the picture never sat exactly at 100 percent or exactly centred; a knob left anywhere made the picture jump at the first touch; and zoom spent the bottom eighth of its way under 25 percent, where a picture is a speck, with 100 percent at no place a hand could find.
+
+| Action | Range on a control | Centre (nine steps, 60 to 68) | Curve | Takeover on a controller with a layout | Why |
+| --- | --- | --- | --- | --- | --- |
+| Zoom (`size`) | 25 to 200 percent | 100 percent | 1.6 | pickup | under 25 percent nothing is seen; the curve gives a seventh of a percent a step beside the centre and about 2.7 at the ends. `"min": 1` gives the panel's whole range back |
+| Position X, position Y | -100 to 100 | 0 | 1.6 | pickup | fine where a picture is lined up, the whole way still in reach |
+| Clip speed | 0.25x to 2x | 1x | straight (two halves) | pickup | the clip's own speed where the hand rests |
+| Shader speed | 0 to 4 times | 1 (its own pace) | straight (two halves) | pickup | the same rule as the clip's speed; it was a quarter of the way up |
+| Shader colour turn | -180 to 180 degrees | 0 | straight | jump | a colour turn hides nothing |
+| Shader brightness | 0 to 2 | 1 | straight | pickup | |
+| Opacity, volume | 0 to 100 | none | straight | pickup | as before |
+| Effect amount | 0 to 1 | none | straight | pickup | as before |
+
+A level with a centre gives exactly the centre for nine steps around the middle of the control; below and above, the way from the centre to each end is the fraction of that half raised to the curve. A level without one is a straight line, as it always was.
+
+**A mapping can say four things about its own level** (stored with the mapping; an older version of the program ignores them): `"min"` and `"max"` (another range, within what the panel allows: zoom 1 to 200, speed 0.25 to 2; if the range no longer holds the centre, the control spreads evenly over it), `"invert": true` (the other way round), and `"takeover": "pickup"` or `"jump"` (in place of the action's own rule; `"pickup"` also works on a controller with no layout). The card's chooser does not offer them yet (that is the editor, the next part of D75); the API takes them in `{"set": {"action": {...}}}` and `{"add": {...}}`.
+
+### What a controller still cannot do
+
+Looked at against the whole panel for D75. **Built with it:** position Y, the quarter turn, the two mirrors, the overlay's switch, ten seconds back and forward, loop, mute, the test pattern, the one fade button. **Not built, and why:**
+
+- **The Mapping screen** (mapping on / off, choosing a surface and a corner, nudging it, the outline on the display). Every change of the mapping is for a full-access device (`POST /api/mapper`), and a controller acts as a presenter: it would be refused. Making an exception means that whoever stands at the controller can change the saved mapping of the room. That is a decision for the owner, asked in D75. What would sit well on controls if he says yes: Mapping on / off (a guarded button), Edit on the display, next surface, next corner, and four nudge buttons or two knobs for the chosen corner.
+- Seek to a place, a pad by its name, volume in steps, the transition and its duration, anything of System.
 
 A trigger fires once per press (a note-on, or a CC that goes from below 64 to 64 or more), not on release or repeat, and a button cannot fire again within a quarter of a second, so contact bounce cannot repeat it. Right after Learn captures a control, that control is ignored for about half a second so a fader you are still moving does not run its old mapping. A fader sweep is thinned to 20 changes a second and the last position always lands.
 
@@ -391,7 +497,10 @@ On unless you turn it off (System > MIDI controller > Built-in map). It exists s
 
 ## Not built yet
 
-- Lights that are addressed differently from their control, more than one light per control, the Launchpad's flashing and double buffering, and lights for the Solo row of a MIDI Mix.
+- Lights that are addressed differently from their control, more than one light per control, the Launchpad's double buffering, and lights for the Solo row of a MIDI Mix.
+- **The editor of D75's second and third part**: a control's name, kind, place and what it sends corrected by pressing it; a layout for a controller the box does not know; a layout as a file; the Learn section folded into the cards; the chooser's options for range, direction and takeover. Planned, not built.
+- **Map Mode** for MIDI and OSC (the owner, 2026-10-10: switch it on, pick a control on the screen, turn a knob, mapped; one controller per control, or several sharing it by soft pickup). The sharing by pickup is what the levels do already; the mode itself is not built.
+- The Mapping screen on a controller (see "What a controller still cannot do").
 - A light per shader input (row 8 of the Launchpad is lit while any shader is on screen; the box does not read the shader's input list for it).
 - Motor-fader feedback (needs MIDI output too).
 - Mapping to pads by name, banks that follow the controller's own bank buttons, and relative (endless) encoders.
@@ -405,3 +514,5 @@ Verified on a real Raspberry Pi 4 (2026-09-30): the module reads a controller th
 **Controller profiles (2026-10-04): not tried on any real controller.** The three layouts are from the documents named above and one recording of the Launchpad Mini; the nanoKONTROL2's and the MIDI Mix's numbers are not confirmed by a manufacturer's document at all. Matching uses the card ids, product names and USB ids reported from the owner's Pi and is tested against a copy of that card list, but the code has not run on the Pi. Pickup, the double press, hot-plug and the drawn layout ran against pipes, a fake clock and the browser test's fake controller. Please run the two-minute check.
 
 **Controller lights (2026-10-04): not tried on any real controller, and not on the Pi.** The messages are from Novation's Programmer's Reference for the Launchpad S (that the Mini shares its protocol is not confirmed by a primary source), from Korg's Parameter Guide (nanoKONTROL2: only with LED Mode set to External and the factory On and Off values and channel; unverified) and from a secondary source alone (MIDI Mix; nothing confirmed). An independent review of the pull request read both makers' documents and found one medium and seven low points; each is fixed with a test (the journal lists them). The writer, the mapping from the box's state to each light, unplug and replug, the switch, the brightness, Test lights and the refusal under an older service file ran against pipes and the browser test's fake controller. Whether `DeviceAllow=char-alsa rw` lets the panel open a controller for writing on the Pi's systemd has not been run there. The check list is in `tools/DEVICE-TESTING.md`.
+
+**The layouts, the levels and the fade button of D75 (2026-10-10): not tried on any real controller, and not on the Pi.** The three layouts were drawn afresh from the owner's report and from how each controller is built, not from pressing them. How zoom and position feel on a real knob (does the centre sit, does anything jump, is the curve too slow or too fast), whether the Launchpad's flash mode flashes the fade button and leaves every other light steady, whether a nanoKONTROL2's R 7 flashes in External LED mode, and whether three bank colours can be told apart, are all unknown. They ran in unit tests with a fake clock, pipes and a fake player, and the panel's button in the browser test. The check list is "The layouts, the levels and the fade button (D75)" in `tools/DEVICE-TESTING.md`.

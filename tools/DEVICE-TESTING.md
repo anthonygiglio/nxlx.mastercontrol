@@ -70,7 +70,33 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | Schedule | Check the box clock (System > Schedule shows it), add an entry two minutes ahead, turn the schedule on | It fires once at that minute and shows "Last run"; reboot and confirm nothing fires for old times |
 | Network | **Last, with a monitor and keyboard on the Pi**, never over SSH on the only connection. Try a change, confirm, then one you do not confirm | A change you do not confirm reverts by itself. Never test this remotely on the only link |
 
+### The layouts, the levels and the fade button (D75): do these first
+
+**None of this has been on a controller.** The three layouts were drawn afresh on 2026-10-10 after the owner's first report; the numbers each control sends are still from documents. `pvj/MIDI.md` has each layout as a drawing. Before: MIDI on, a clip on pad A1, B1 and C1, something playing, Shaders and Vibes on. Say what you see for each row, also "fine".
+
+| # | Do | See |
+| --- | --- | --- |
+| K1 | For each of the three controllers: open System > MIDI controller and press or move **every control once** | Its box on the card lights up while you do. Note each one that does not, and each one that lights another box: that is a wrong number |
+| K2 | Look at each card | The controls that belong together carry one bar of colour, and the zones are named under the drawing. Does the arrangement make sense now? Say which control you looked for in another place |
+| K3 | nanoKONTROL2, knob 1 (zoom), with the picture at 100 percent and the knob anywhere | Nothing happens until the knob passes its middle; from there the picture follows. **Does it jump at any point?** |
+| K4 | Turn knob 1 slowly through its middle | The picture stays at exactly 100 percent for a short way around the middle (the Mix screen's Size reads 100). Is that rest too wide, too narrow, right? |
+| K5 | Turn knob 1 to both ends | 25 percent at the left, 200 at the right. Is the way near the middle fine enough to set a size, and the ends not too abrupt? |
+| K6 | The same with knob 2 (position X) and knob 3 (position Y) | Centred at the middle of each knob, to the edge of the screen and beyond at the ends. Do left, right, up and down go the way you expect? (If Y feels upside down, say so: it can be turned round) |
+| K7 | MIDI Mix: the same with the middle row's first three knobs | As K3 to K6 |
+| K8 | Move the zoom on the nanoKONTROL2, then touch the MIDI Mix's zoom knob | The MIDI Mix's knob does nothing until it meets the picture's size; then it has it, and the nanoKONTROL2's knob waits in its turn |
+| K9 | Panel, Live: tap **Fade out** | The picture fades out in 2 seconds; the button reads **Fade in** and flashes about twice a second, without moving anything around it. Readable in both halves of the flash? |
+| K10 | Tap it again | The picture fades in; the button is steady while it comes up and reads Fade out afterwards |
+| K11 | Launchpad Mini: press the round button **E** (right side, fifth from the top) | The same fade. While the picture is down E **flashes red** by itself and every other light stays steady. **If other lights flash too, or the pads look wrong after plugging in, say so at once and switch Lights off**: that is the flash mode misbehaving |
+| K12 | nanoKONTROL2 with lights on (LED Mode External, L10 below): press **R 7** | The same fade; R 7 flashes while the picture is down, lit while it comes up, dark afterwards |
+| K13 | MIDI Mix: hold Solo and press **Mute 5** | The same fade. No light (this row has none); the panel's button flashes |
+| K14 | Fade out with a controller, then press Blackout twice, then twice again | After the Blackout is off the picture is back and the fade button is steady; its next press fades out |
+| K15 | Launchpad Mini with clips on A1, B1 and C1 | Three colours: top left amber, the first pad of the right half yellow-green, the first pad of row 4 orange. Can you tell them apart at Low, Medium and High? The pad that plays is bright green |
+| K16 | Launchpad Mini: the three rows right of bank C | Row 4: Vibes, previous shader, next shader. Row 5: effect on / off, previous, next. Row 6: previous clip, back 10 s, forward 10 s, next clip |
+| K17 | The quarter turn: R 6 (nanoKONTROL2), Solo+Mute 3 (MIDI Mix), the fifth round button along the top (Launchpad) | The picture turns a quarter each press, back to upright after four |
+
 ### Controller lights (D53)
+
+**The rows L1, L4 and L5 below describe the Launchpad's first layout.** With D75: after plugging in, pad 1 is amber if A1 holds a clip, E (the fade button) and H (Blackout) are dim red, G (Stop) lights once something plays; Vibes is the fifth pad of row 4, and Freeze is F on the right.
 
 **Nothing of this has been seen on a real controller.** The messages come from Novation's document for the Launchpad S (that the Mini takes the same ones is not confirmed by Novation), from Korg's guide (nanoKONTROL2: External LED mode, and only with the factory On and Off values and channel) and from a secondary source alone (MIDI Mix). Five minutes; please say what you see at each step, also when it is right.
 

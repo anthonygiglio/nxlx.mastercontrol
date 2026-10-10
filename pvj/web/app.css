@@ -163,6 +163,17 @@ canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2
 .ctlgrid .ctl.lit .ctlname, .ctlgrid .ctl.lit .ctlwhat, .ctlgrid .ctl.lit .ctlval { color: var(--on); }
 .ctlgrid .ctl:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 /* a control with a light on the controller itself: a small ring, filled while the box has that light on */
+/* Zones (D75): the controls of a controller that belong together carry one bar of colour along their foot, and the
+   same bar marks the zone's name under the drawing. A bar, not a fill: the cell's own colours (lit, waiting, changed
+   by you) stay what they were, and the words keep their contrast in every look. */
+.ctlgrid .ctl[class*=" z-"], .ctlzone { box-shadow: inset 0 -4px 0 var(--zone, transparent); }
+.ctlgrid .ctl.sel[class*=" z-"] { box-shadow: inset 0 0 0 2px var(--ac), inset 0 -4px 0 var(--zone, transparent); }
+.z-pads { --zone: #d9a400; } .z-clips { --zone: #8a8f98; } .z-screen { --zone: #d93025; } .z-picture { --zone: #1a73e8; } .z-sound { --zone: #00897b; }
+.z-shaders { --zone: #8e44ad; } .z-effects { --zone: #e67e22; } .z-room { --zone: #2e9e4f; } .z-access { --zone: #6d4c41; }
+.ctlzones { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--mu); }
+.ctlzone { padding: 0 0 6px; overflow-wrap: anywhere; min-width: 0; }
+.ctlgrid .ctl.haslight[data-lit="flash"]::after { background: var(--ac); border-color: var(--ac); }
+@media (prefers-reduced-motion: no-preference) { .ctlgrid .ctl.haslight[data-lit="flash"]::after { animation: ctlflash .5s steps(1, end) infinite; } @keyframes ctlflash { 50% { background: transparent; } } }
 .ctlgrid .ctl.haslight { position: relative; }
 .ctlgrid .ctl.haslight::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--mu); box-sizing: border-box; }
 .ctlgrid .ctl.haslight[data-lit="on"]::after { background: var(--mu); }

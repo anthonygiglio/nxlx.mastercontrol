@@ -124,7 +124,7 @@ ACTIONS.update({
 #   notch, and 0 to 127 has no middle step: 63.5), so the picture sits centred when the knob looks centred.
 # * A curve above 1 gives the steps next to the centre less to do and the steps at the ends more: fine control
 #   where a picture is lined up, the whole range still within reach.
-# * Size: 25 to 200. A knob that goes down to 1 percent spends a third of its way on pictures nobody can see.
+# * Size: 25 to 200. Under 25 percent a picture is a speck; a mapping that wants the panel's whole range says "min": 1.
 SHAPES = {
     "opacity": (0, 100, None, 1.0), "volume": (0, 100, None, 1.0), "effect_amount": (0.0, 1.0, None, 1.0),
     "size": (25, 200, 100, 1.6), "position": (-100, 100, 0, 1.6), "position_y": (-100, 100, 0, 1.6),
