@@ -62,6 +62,7 @@ class Vibes:
         self._thread = None
         self._clear = None          # the epoch of a screen that stop() wants cleared as soon as no change is in progress
         self._dipped = False        # True while our own dip has the picture down (so an early end can put it back)
+        self._yielded = False       # ended by a shader chosen by hand or by a pad: something is about to take the screen
         self.running = False
         self.epoch = None           # the player's epoch after our last shader (or, before the first, when we started)
         self.started = False        # True once the first shader is on
@@ -124,14 +125,17 @@ class Vibes:
             # Started again while it still has the screen (it was running, or a stop is not carried out yet): it keeps
             # the screen it has, so a later stop still clears it.
             carry = self.started and (self.running or self._clear is not None)
-            self.running, self.started = True, carry
+            self.running, self.started, self._yielded = True, carry, False
             if not carry:
                 self.epoch = self.api.player.source_epoch
             self.order, self.current, self.rounds, self.refused = [], None, 0, set()
             self.set_id, self.history, self._want, self._tight, self._marked = set_id, [], None, set(), []
         changer = getattr(self.engine, "changer", None)
         if changer:
-            changer.clear()             # a step or a preset that was still waiting must not take the screen from this run
+            # a step, a preset or a pad's shader that was still waiting must not take the screen from this run: the
+            # rotation wins, and the journal says what was dropped
+            drop = getattr(self.engine, "drop_waiting", None)
+            drop("Vibes was started after it was asked for") if drop else changer.clear()
             self.due = self._clock()
             self.last = None
             self._clear = None
@@ -155,8 +159,13 @@ class Vibes:
         return self.status()
 
     def yield_screen(self):
-        """The operator is about to show one shader by hand: the rotation ends, the screen is left alone."""
-        self._finish("ended: a shader was chosen by hand")
+        """The operator is about to show one shader by hand: the rotation ends, the screen is left alone, also by a
+        change of the rotation's own that is in progress: it puts nothing on after this (Engine.show's `alive`), and
+        a shader of its own that had already taken the screen stays until the chosen one shows (_change)."""
+        with self._state:
+            if self.running:
+                self._yielded = True
+                self._end("ended: a shader was chosen by hand")
 
     def skip(self, direction=1):
         """Go to the next shader now, or (-1) back to the one before."""
@@ -202,8 +211,15 @@ class Vibes:
         with self._state:
             epoch, self._clear = self._clear, None
         if epoch is not None:
-            self.engine.off(epoch)
+            self._off(epoch)                    # a pad tapped right after this Stop is not refused by its clear
             self._undip()
+
+    def _off(self, epoch):
+        """Clear our screen on the way out, noting the move for the engine's queue in the same step (Engine.adopt)."""
+        try:
+            return self.engine.off(epoch, adopt=True)
+        except TypeError:                           # an engine that knows no queue
+            return self.engine.off(epoch)
 
     def _kick(self):
         if not self._use_thread or not self.running:
@@ -485,7 +501,9 @@ class Vibes:
                     # frames in this run goes without it (on a Pi 4 it was what pushed nxlx-pulse over the edge).
                     hue = 0.0 if sid in self._tight else round(self._rng.uniform(-HUE_RANGE, HUE_RANGE), 1)
                     offset = round(self._rng.uniform(0.0, OFFSET_MAX), 1)
-                result = self.engine.show(sid, values, hue, offset, epoch=self.epoch, cut=False, controls=controls, preset=preset)
+                before = self.epoch
+                result = self.engine.show(sid, values, hue, offset, epoch=before, cut=False, controls=controls, preset=preset,
+                                          alive=lambda: self.running)
             except ApiError as e:
                 if e.status == 503:                 # the player is down: nothing to rotate on
                     self._finish("ended: %s" % e.message)
@@ -501,8 +519,17 @@ class Vibes:
                 if not stopped:
                     self.epoch, self.started = result["epoch"], True
             if stopped:
-                self.engine.off(result["epoch"])    # ours, put on after the stop: take it off again (a no-op if the
-                self._undip()                       # screen has gone to a shader chosen by hand)
+                # Ours, put on while we were being ended (the GPU was looking at it). Whoever ended us read the
+                # player's epoch at that moment, before or after our taking of the screen: what we made of it since
+                # is ours to answer for, so a wish that is queued for the engine's worker is not refused by it.
+                # (Engine.show notes the move itself, in the same step, when we were ended before it.)
+                if not self._yielded:
+                    # a Stop: take it off again, and a pad tapped right after the Stop still shows
+                    self._off(result["epoch"])
+                # ended for a shader chosen by hand or by a pad: it is about to take the screen. Cleared here, the
+                # screen went black and the chosen shader, queued by a controller, was refused: at worst our
+                # picture stays until the chosen one shows.
+                self._undip()
                 return False
             if not result["ok"]:
                 self.refused.add(sid)

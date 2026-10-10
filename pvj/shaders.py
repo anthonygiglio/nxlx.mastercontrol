@@ -1224,12 +1224,19 @@ class Engine:
             return None
         return p
 
-    def show(self, sid, values=None, hue=0.0, offset=0.0, epoch=None, cut=True, controls=None, preset=None):
+    NOW = object()          # for `mark`: the level's mark is taken when the shader is shown, not handed in
+
+    def show(self, sid, values=None, hue=0.0, offset=0.0, epoch=None, cut=True, controls=None, preset=None, mark=NOW, alive=None):
         """Put a shader on the screen. With `epoch`, only if nothing else was played since (None is returned then).
         `cut` (a preview from the panel) sets the picture's opacity like any other play; a rotation that fades by
         itself passes False. `controls` are speed, hue and brightness (see clean_controls); `preset` is only the
-        name to remember for the values. Returns {"ok", "epoch", "id", "error"?}; ok False means the GPU refused it
-        and the screen shows the shader before it, or black."""
+        name to remember for the values. `mark` is the level's mark (Api._level_mark) of the moment this was asked
+        for, when that was earlier than now: a tap that was queued for the worker hands in the mark of the tap, so
+        that a Fade out pressed between the tap and the showing stands. `alive` is asked under the player's lock just
+        before the screen is taken: False and it is not taken (None is returned, as for a stale epoch); the rotation
+        hands in "am I still running", so a rotation that was ended while it composed its next shader does not put
+        it on over the wish that ended it. Returns {"ok", "epoch", "id", "error"?}; ok
+        False means the GPU refused it and the screen shows the shader before it, or black."""
         if not self.enabled():
             raise ApiError(409, "turn on the Shaders and Vibes module in System first")
         path, _ = self._path(sid)
@@ -1267,14 +1274,21 @@ class Engine:
                 # set, at the end (Api._show_level). Taken here, a generator the GPU then refused had stopped a
                 # fade for nothing, and a clip's dip that it overtook stayed at the level it had reached.
                 marker = getattr(self.api, "_level_mark", None)
-                level_mark = marker() if marker else None
+                level_mark = (marker() if marker else None) if mark is Engine.NOW else mark
                 ending = getattr(self.api, "transitions", None)
                 try:
                     # One step under the player's lock: the generator takes the screen, and with that it is the
                     # newest wish. A clip's transition does not go on over it, and a clip that was still on its way
                     # (its still being taken) looks under this same lock and does not load over it (Api.play).
                     with (getattr(player, "_lock", None) or locks.make("player")):
-                        new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                        new = None if (alive is not None and not alive()) else \
+                            player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                        if new is not None:
+                            self._made(new)         # at once, before the GPU's look: see LiveEngine.play_job
+                            if alive is not None and not alive():
+                                # ended between the look at `alive` and the taking of the screen: whoever ended
+                                # it may have read the epoch before this move. Noted in the same step as the move.
+                                self.adopt(epoch, new)
                         if new is not None and ending is not None:
                             ending.end("a generator", newer=True)
                     # An effect that is on stays on, over the generator (D74): nothing of it is touched here.
@@ -1322,11 +1336,20 @@ class Engine:
             if cut:
                 show = getattr(self.api, "_show_level", None)
                 if show is not None:
-                    show(level_mark)                # unless a wish for the level came while the GPU looked at it
+                    # unless a wish for the level came while the GPU looked at it; after the operator's Fade out
+                    # the shader comes up from black, as a clip does (it has no end and no blend: half the Mix's
+                    # duration, the way a dip comes up)
+                    show(level_mark, rise=True)
                 else:
                     self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
             self.api._started_playing()
             return {"ok": True, "epoch": new, "id": sid}
+
+    def _made(self, epoch):
+        """This call has just moved the player's epoch to `epoch` itself (see LiveEngine, whose queue goes by it)."""
+
+    def adopt(self, before, after):
+        """The rotation, on its way out, moved the player's epoch from `before` to `after` (see LiveEngine)."""
 
     def refused(self, sid, digest, message):
         """The GPU refused this file (see shaderlive.py, which remembers it until the file changes)."""
@@ -1335,16 +1358,25 @@ class Engine:
         """The controls as this shader may have them (see shaderlive.py: the flash limit of Performance shaders)."""
         return controls
 
-    def off(self, epoch=None):
+    def off(self, epoch=None, adopt=False):
         """The module was switched off, or Vibes was stopped: take the shader off the screen if one is on. With
-        `epoch`, also stop a bare carrier (black, after a refused shader) that this epoch put there."""
+        `epoch`, also stop a bare carrier (black, after a refused shader) that this epoch put there. Returns the
+        player's epoch after its own stop if it stopped something, else None (the worker's queue goes by it). With
+        `adopt` (the rotation's own clearing on its way out) the move is noted for the queue in the same step."""
+        left = None
         with self._lock:
             player = self.api.player
             if epoch is None:
                 epoch = self.playing["epoch"] if self.playing else None
             if epoch is not None:
                 try:                        # the player checks the epoch and stops in one step: a clip started
-                    cleared = player.clear_source(epoch)    # in between is never stopped
+                    with (getattr(player, "_lock", None) or locks.make("player")):      # in between is never stopped
+                        cleared = player.clear_source(epoch)
+                        if cleared:
+                            left = player.source_epoch
+                            self._made(left)
+                            if adopt:
+                                self.adopt(epoch, left)
                 except PlayerError:
                     cleared = False
                 fx = getattr(self.api, "effects", None)
@@ -1353,6 +1385,7 @@ class Engine:
             if self.on_screen() is None:    # nothing of ours is showing (another shader may have taken the screen)
                 self.playing = None
                 self._cleanup({player.source_shader} if player.source_shader else set())
+        return left
 
     # -- uploads --
     def upload(self, name, source, replace=False):

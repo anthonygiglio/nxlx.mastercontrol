@@ -2544,9 +2544,12 @@ class Stress(ServerBase):
     | m  a generator setting the level whatever was asked for since it was chosen               | 3 of 3       | yes               |
     | n  the level put back after a Stop whoever has taken the fader since                      | 0 of 3       | yes               |
     | o  Vibes' step taking the level's lock before the player's (the deadlock of round six)    | 3 of 3       | yes               |
-    | p  the player forgetting nothing at its restart (the pipe "plays" on)                     | 0 of 3       | yes               |
+    | p  the player forgetting nothing at its restart (the pipe "plays" on)                     | 3 of 3       | yes               |
     | q  a clip that is loaded leaving the pipe "playing" (a fault inside pvj/player.py)        | 3 of 3       | yes               |
-    | r  the effect put before the generator in the player's shader list (D74)                 | 3 of 3       | yes               |
+    | r  a shader pad's shader shown while the play holds the player's lock (D73)               | 3 of 3       | yes               |
+    | s  a shader pad taking the play's ticket before its shader: two newest wishes for one tap | 0 of 3       | yes               |
+    | t  a queued shader refused by the queue's own job before it (the older tap stays on)      | not in it    | yes               |
+    | u  the effect put before the generator in the player's shader list (D74)                 | 3 of 3       | yes               |
 
     What the rows say that is not "caught":
     * h needs a level wish that runs (a Fade in, a Fade out), a clip tapped with a blend, and then something newer
@@ -2563,15 +2566,28 @@ class Stress(ServerBase):
       Stop's clear and its putting-back of the level was cancelled by it, and the level snapped to full. The rounds
       do not draw that meeting (none of three, twice). The test by hand that kills it was added then:
       `Threads.test_a_stop_that_meets_a_fade_in_does_not_cut_it_short`.
-    * p needs a live input that plays, then a restart, then nothing else loaded. A restart is quick and a live
-      input slow, so in a round they come the other way round. By hand: three tests of the real player.
+    * p was caught none of three times when the table was first made and is caught three of three since the whole
+      table was run again for the shader pad (the seventh review's changes to the restart and to `pipe_playing`
+      came between the two runs; which of them did it was not looked for). By hand: three tests of the real player.
+    * r and s came with the pad that holds a shader (D73, tests/test_shader_pads.py), which is one more kind of
+      action here ("shader pad", from the panel: a controller's tap is queued for the engine's worker, which lives
+      on after a round, so it is tested by hand only). r is caught by the locks themselves, here and in eighteen
+      tests by hand. s changes nothing that the end of a round can see (the second wish is the same action's); the
+      test by hand counts the wishes of one tap (`Tapped.test_a_tap_is_one_newest_wish_as_a_shader_chosen_by_hand_is`).
+    * t (the review of #114) is a fault of the engine's queue for the controllers' taps, which this test does not
+      draw, for the reason given under r and s: "not in it" is not "0 of 3". By hand, with the worker held between
+      taking its job and taking the screen: `tests.test_shader_pads.Queued`, for a pad, a preset and a step.
+    * The whole table, a to s, was run again when "shader pad" was added: the rows above are from that run. One of
+      n's three runs failed, not for n's fault but with "the box gave up on transitions: the still took 1.3
+      seconds", while a browser was taking pictures on the same machine: A MACHINE THAT STALLS FOR A SECOND MAKES
+      THIS TEST FAIL THAT WAY, since the code under test measures its still by the real clock.
     * o is caught by the locks themselves (tests/lockrank.py), in this test and in single-threaded tests by hand:
       no interleaving is needed for it.
     * e is not the fifth review's e, "the fader taken before the generation moves": no way of playing takes the
       fader before its load any more. f by hand: a test with no bound of its own waits for ever, so the run does
       not end; a watchdog (`python3 -X faulthandler`, `faulthandler.dump_traceback_later`) shows where, and CI's
       job has its time limit.
-    * r is caught by the second test below, not by the first: an effect's actions (on, off, the next one; D74) are
+    * u is caught by the second test below, not by the first: an effect's actions (on, off, the next one; D74) are
       in rounds of their own, which are the first test's rounds with one or two of those actions added from numbers
       of their own. The first test's rounds are as they were, so the rows above stand as measured. The actions were
       first put into the first test's rounds, and for a while the second test did not hold "the box never gives
@@ -2628,6 +2644,7 @@ class Stress(ServerBase):
         self.fid = self.api.effects.order()[0]
         self.effects_on = 0                 # how often an effect really went on, over all rounds (the actions prove nothing otherwise)
         self.pairs = 0                      # and how often the player was given a generator and an effect together
+        self.settings.data["pads"]["banks"][self.SHADER_PAD[0]]["pads"][self.SHADER_PAD[1]] = {"label": "", "file": "", "shader": self.sid}
         for i in range(6):
             open(os.path.join(self.media, "r%d.mp4" % i), "w").close()
         self.epoch = 0
@@ -2726,11 +2743,14 @@ class Stress(ServerBase):
     CORE = PLAYS + ("stop", "blackout on", "blackout off", "fade out", "fade in", "opacity 40", "opacity 100", "next",
                     "generator by hand", "rotation tick", "live input")
     # what an operator does most, twice as often as the rest; the rare ones that matter (a restart, Vibes' own dip) too
-    KINDS = CORE + CORE + ("reset", "vibes dip", "vibes dip", "list", "stream", "test pattern", "test pattern off", "tone", "restart", "restart")
-    TAPS = ("generator by hand", "rotation tick", "live input", "list", "stream", "test pattern")     # besides the clips: who notes the level's mark
+    KINDS = CORE + CORE + ("reset", "vibes dip", "vibes dip", "list", "stream", "test pattern", "test pattern off", "tone", "restart", "restart",
+                           "shader pad", "shader pad")
+    GENERATORS = ("generator by hand", "shader pad")       # a pad that holds a shader is the same choosing by hand (D73)
+    TAPS = GENERATORS + ("rotation tick", "live input", "list", "stream", "test pattern")     # besides the clips: who notes the level's mark
+    SHADER_PAD = [2, 11]
     # An effect over whatever plays, a generator included (D74). It neither plays, stops nor sets the level, so it is
     # no wish and no tap; what it adds is the effects' engine and its lock beside everything above. These are drawn
-    # from numbers of their own and added to a round's actions in the second test only (see row r in the docstring).
+    # from numbers of their own and added to a round's actions in the second test only (see row u in the docstring).
     EFFECTS = ("effect on", "effect on", "effect off", "effect next")
 
     def vibes_dip(self):
@@ -2761,6 +2781,7 @@ class Stress(ServerBase):
             "reset": lambda: api.control({"action": "reset"}, None, "stress"),
             "next": lambda: api.control({"action": "next"}, None, "stress"),
             "generator by hand": lambda: api.shaders.show(self.sid),
+            "shader pad": lambda: api.play({"pad": list(self.SHADER_PAD)}, None, "stress"),     # from the panel: it waits for its answer
             "rotation tick": lambda: api.shaders.show(self.sid, epoch=self.epoch, cut=False),
             "vibes dip": self.vibes_dip,
             "live input": lambda: api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "stress"),
@@ -2892,7 +2913,7 @@ class Stress(ServerBase):
                 self.assertTrue(not later or later[-1] <= at + 1, "something was loaded after the newest wish (%s) and its own change\n%s" % (kind, said))
                 if kind in ("stop", "test pattern off", "restart"):
                     self.assertEqual((mpv.path, player.source_shader), (None, None), "something plays after the %s that came last\n%s" % (kind, said))
-                elif kind == "generator by hand":
+                elif kind in self.GENERATORS:
                     self.assertIsNotNone(player.source_shader, "the generator chosen last is not on the screen\n" + said)
                 elif kind == "live input":
                     self.assertTrue(player.pipe_playing, "the live input started last is not what plays\n" + said)
