@@ -940,11 +940,22 @@ class MidiMapper:
         self.layers = {}                            # source -> (layer, until): a controller's own layer (geometry), see LAYERS
         self._stood = {}                            # (source, kind, number) -> where a knob stood when it last set a shader's or an effect's control
         self._parked = {}                           # the same key -> where the knob was last seen, while it waits to come back to that place
+        self._seen = {}                             # source -> the layer that was on at its last message (matching)
 
     def matching(self, source, kind, channel, number):
         """Entries for this control, in the order of precedence: the person's own mapping (it replaces the others
         instead of firing next to them), else the controller's standard layout, else the built-in map; and the
         built-in map is never used for a controller whose standard layout is on."""
+        # The layer that is on now, and whether it is another than at this controller's last message. Mapping mode
+        # comes and goes in the mapper's memory (another controller, OSC, the panel's switch, its three minutes
+        # running out), so nobody tells us: the change is met here, before anything is looked up, whatever control
+        # this message is for (a Learned one too).
+        layer = self.active_layer(source)
+        if source not in self._seen:
+            self._seen[source] = layer
+        elif self._seen[source] != layer:
+            self._seen[source] = layer
+            self._afresh(source)
         found = [e for e in self.entries if e["kind"] == kind and e["number"] == number
                  and e["source"] in ("*", source) and e["channel"] in (0, channel + 1)]
         mine = [e for e in found if not e.get("builtin") and not e.get("profile")]
@@ -953,7 +964,6 @@ class MidiMapper:
             return [e for e in mine if e["channel"]] or mine
         standard = [e for e in found if e.get("profile")]
         # a control's other self in mapping mode takes its place while the mode is on, and does not exist outside it
-        layer = self.active_layer(source)
         other = [e for e in standard if layer is not None and e.get("layer") == layer]
         standard = other or [e for e in standard if not e.get("layer")]
         if other and layer in LAYER_SECONDS:            # a touch of one of the layer's controls keeps the layer on
@@ -975,13 +985,20 @@ class MidiMapper:
         return own[0]
 
     def _switch(self, source, layer):
-        """Put a controller's own layer on, or off (None). Nothing may jump across the change: a level starts its
-        pickup afresh (its knob was somewhere else meanwhile), and a knob that sets a shader's or an effect's control
-        waits until it is back where it stood when it last set one."""
+        """Put a controller's own layer on, or off (None)."""
         if layer is None:
             self.layers.pop(source, None)
         else:
             self.layers[source] = (layer, self._clock() + LAYER_SECONDS.get(layer, 0.0))
+        if not self.mapping_mode():                     # under mapping mode the layer that counts did not change
+            self._seen[source] = layer
+            self._afresh(source)
+
+    def _afresh(self, source):
+        """A controller's layer changed, by whatever road (its own button, its time running out, mapping mode coming
+        or going). Nothing may jump across the change: a level starts its pickup afresh (its knob was somewhere else
+        meanwhile), and a knob that sets a shader's or an effect's control waits until it is back where it stood
+        when it last set one."""
         for key in [k for k in self._pick if k[0] == source]:
             del self._pick[key]
         for key in [k for k in self._stood if k[0] == source]:
@@ -1009,8 +1026,9 @@ class MidiMapper:
         """A controller went: its pickup and guard state go with it, so it starts clean when it comes back. With no
         source, every controller's (MIDI was switched off: what is let go meanwhile is never heard, so a button
         that was down then would otherwise count as held for ever, and its next press would do nothing)."""
-        for name in [n for n in self.layers if source is None or n == source]:
-            del self.layers[name]
+        for store in (self.layers, self._seen):
+            for name in [n for n in store if source is None or n == source]:
+                del store[name]
         for store in (self._pick, self._armed, self._pressed, self.pending, self._held, self._turn, self._stood, self._parked):
             for key in [k for k in store if source is None or source in k[:2]]:
                 del store[key]
