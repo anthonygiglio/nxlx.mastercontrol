@@ -89,7 +89,7 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 
 ## 4. Play
 
-**Live** has three banks of twelve pads. **Edit pads** (full access) assigns a clip or a shader to a pad. Tap a pad to play it. **Fade out** (one button: a tap fades the picture out over 2 seconds, and the button then reads **Fade in** and flashes while the picture is down; the next tap fades it in, also out of a Blackout. If your device asks for less motion it does not flash: it stands inverted with a dashed edge), **Freeze** (pause), **Stop** (end the clip and leave the screen black and the player ready) and **Blackout** (black without stopping) are always at the bottom.
+**Live** has three banks of twelve pads. **Edit pads** (full access) assigns a clip or a shader to a pad. Tap a pad to play it. **Fade out** (one button: a tap fades the picture out over 2 seconds, and the button then reads **Fade in** and flashes while the picture is down; the next tap fades it in, also out of a Blackout. If your device asks for less motion it does not flash: it stands inverted with a dashed edge; **Blackout** flashes the same way for as long as it is on), **Freeze** (pause), **Stop** (end the clip and leave the screen black and the player ready) and **Blackout** (black without stopping) are always at the bottom.
 
 ![Live screen](images/ui/live.png)
 

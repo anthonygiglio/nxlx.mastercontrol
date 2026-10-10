@@ -459,7 +459,9 @@ class FlashStateTest(unittest.TestCase):
         fade = {"action": "fade"}
         self.assertEqual(midi.light_meaning(fade), "fade")
         self.assertEqual([midi.light_state(fade, snap(**k)) for k in ({}, {"fade": "out"}, {"fade": "in"}, {"blackout": True})],
-                         ["on", "flash", "busy", "on"])              # under Blackout its own button is the red one
+                         ["on", "flash", "busy", "on"])              # under Blackout its own button is the one that flashes
+        black = {"action": "blackout"}
+        self.assertEqual([midi.light_state(black, snap(**k)) for k in ({}, {"blackout": True}, {"fade": "out"})], ["on", "flash", "on"])
         # the Launchpad flashes it itself: full red in "clear" mode. Nothing for a writer to do
         lights = BY_ID[PAD]["lights"]
         self.assertEqual([value(PAD, fade, snap(**k)) for k in ({}, {"fade": "out"}, {"fade": "in"})], [13, 11, 28])

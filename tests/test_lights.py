@@ -122,7 +122,7 @@ class LightsFilesTest(unittest.TestCase):
         clean = midi.validate_profile(p, PAD)
         self.assertIn("pad58", clean["lights"]["controls"])
         action = next(c for c in clean["controls"] if c["id"] == "pad58")["action"]
-        self.assertEqual([value(PAD, action, snap()), value(PAD, action, snap(blackout=True))], [13, 15])       # and its light follows it
+        self.assertEqual([value(PAD, action, snap()), value(PAD, action, snap(blackout=True))], [13, 11])       # and its light follows it
         with mock.patch.dict(midi.ACTIONS, {"strobe": ("trigger", None, None), "smear": ("level", 0, 1)}):
             p = raw(PAD)
             next(c for c in p["controls"] if c["id"] == "pad58")["action"] = {"action": "strobe"}
@@ -174,9 +174,9 @@ class LightsFilesTest(unittest.TestCase):
                     self.assertEqual(v & 0x0C, 12, "the flags of normal use")       # copy mode: lit in both buffers, so steady in flash mode
                     self.assertEqual(v & 0x40, 0)
                 # the manual's "Adventures in Double Buffering": a flashing colour is the same colour with bit 2 cleared,
-                # "subtracting 4 from the velocity value". Only the fade button has one: full red, 0Fh less 4
-                self.assertEqual(style[level].get("flash"), 11 if name == "fade" else None)
-                if name == "fade":
+                # "subtracting 4 from the velocity value". The fade button and Blackout have one: full red, 0Fh less 4
+                self.assertEqual(style[level].get("flash"), 11 if name in ("fade", "blackout") else None)
+                if name in ("fade", "blackout"):
                     self.assertEqual((style[level]["flash"] & 0x0C, style[level]["flash"] + 4), (8, style[level]["active"]))
         # the three banks in three colours, by the manual's formula 16 x green + red + 12: amber (1, 1), yellow-green
         # (green 2, red 1), orange (green 1, red 2); the pad that plays is full green in every bank
@@ -301,7 +301,10 @@ class WhatALightShowsTest(unittest.TestCase):
     def test_blackout_fades_and_the_transport(self):
         black, out, fin = {"action": "blackout"}, {"action": "fadeout"}, {"action": "fadein"}
         self.assertEqual([value(PAD, black, snap(), lv) for lv in midi.LIGHT_LEVELS], [13, 13, 14])           # a dim red marks the button
-        self.assertEqual([value(PAD, black, snap(blackout=True), lv) for lv in midi.LIGHT_LEVELS], [15, 15, 15])   # full red while black, at any brightness
+        self.assertEqual([value(PAD, black, snap(blackout=True), lv) for lv in midi.LIGHT_LEVELS], [11, 11, 11])   # full red, flashing, while black, at any brightness
+        self.assertEqual((midi.light_state(black, snap(blackout=True)), midi.light_state(black, snap(fade="out"))), ("flash", "on"))      # each button shows its own state
+        self.assertFalse(midi.light_flashes(BY_ID[PAD]["lights"], "blackout", "flash"))           # the Launchpad flashes it by itself
+        self.assertTrue(midi.light_flashes(BY_ID[NANO]["lights"], "blackout", "flash"))           # the nanoKONTROL2's writer does
         self.assertEqual([value(NANO, black, snap()), value(NANO, black, snap(blackout=True))], [0, 127])
         self.assertEqual([value(PAD, out, snap()), value(PAD, out, snap(fade="out")), value(PAD, fin, snap()), value(PAD, fin, snap(fade="in"))], [13, 15, 29, 28])
         self.assertEqual([value(NANO, out, snap()), value(NANO, out, snap(fade="out")), value(NANO, fin, snap()), value(NANO, fin, snap(fade="in"))], [0, 127, 0, 127])
@@ -536,7 +539,7 @@ class LightsHubTest(LightsHubBase):
         self.wait(lambda: pipe.lit()[(0x90, 0)] == 60)
         self.assertEqual(pipe.lit()[(0x90, 104)], 13)                       # Stop: a dim red while something plays
         self.assertEqual(self.post("/api/blackout", {"on": True})[0], 200)
-        self.wait(lambda: pipe.lit()[(0x90, 120)] == 15)                    # black: full red, within a tick
+        self.wait(lambda: pipe.lit()[(0x90, 120)] == 11)                    # black: full red, flashing, within a tick
         self.post("/api/blackout", {"on": False})
         self.wait(lambda: pipe.lit()[(0x90, 120)] == 13)
         pad11 = next(x for x in self.controller("Mini")["controls"] if x["id"] == "pad11")
@@ -649,7 +652,7 @@ class LightsHubTest(LightsHubBase):
         self.wait(lambda: C_NANO in self.out and C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
         self.out[C_NANO].unplug()                                           # its output breaks while the controller stays listed
         self.post("/api/blackout", {"on": True})
-        self.wait(lambda: self.out[C_PAD].lit()[(0x90, 120)] == 15)         # the Launchpad goes on
+        self.wait(lambda: self.out[C_PAD].lit()[(0x90, 120)] == 11)         # the Launchpad goes on
         self.wait(lambda: self.lights_of("nanoKONTROL2")["state"] == "failed")
         self.assertEqual(self.lights_of("Mini")["state"], "on")
         before = len(self.player.calls)
@@ -838,7 +841,7 @@ class ReviewFindingsTest(LightsHubBase):
             again = self.out[C_PAD].read()
             self.assertNotIn((0xB0, 0, 0), again)                               # the whole state, and no second reset
             self.assertEqual((len(again), self.opens), (80, [C_PAD, C_PAD]))
-            self.assertEqual(self.out[C_PAD].lit()[(0x90, 120)], 15)
+            self.assertEqual(self.out[C_PAD].lit()[(0x90, 120)], 11)
         # plugged in again, it is a new plug-in: the reset goes first again
         reader = self.pipes.pop(C_PAD)
         self.present = []

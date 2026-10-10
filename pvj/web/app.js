@@ -516,7 +516,7 @@
     document.getElementById('pill').textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
     fadeShow(document.getElementById('fade'), st.mix);
-    var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.className = 'btn big grow' + (on ? ' solid' : ''); b.textContent = on ? 'Show' : 'Blackout'; }
+    var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.className = 'btn big grow' + (on ? ' flash' : ''); b.textContent = on ? 'Show' : 'Blackout'; }      // flashing for as long as it is on, as the fade button is (D75)
     var pads = document.getElementById('pads');
     if (pads && S.banks[S.bank]) {
       S.banks[S.bank].pads.forEach(function (p, i) {

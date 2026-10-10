@@ -702,7 +702,7 @@ def light_state(action, snap, bank=0):
     if a == "stop":
         return "on" if snap["running"] else "active"
     if a == "blackout":
-        return "active" if snap["blackout"] else "on"
+        return LIGHT_FLASH if snap["blackout"] else "on"      # flashing for as long as Blackout is on (the owner, 2026-10-10)
     if a == "fade":                                     # the one fade button: flashing while the picture goes down and
         return LIGHT_FLASH if snap["fade"] == "out" else ("busy" if snap["fade"] == "in" else "on")     # while it is black
     if a in ("seek_back", "seek_forward"):

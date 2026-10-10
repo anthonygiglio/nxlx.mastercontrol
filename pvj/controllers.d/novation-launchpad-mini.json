@@ -110,7 +110,7 @@
       "step": {"low": {"off": 12, "on": 29, "active": 29, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 29, "busy": 29}, "high": {"off": 12, "on": 46, "active": 46, "busy": 46}},
       "play": {"low": {"off": 12, "on": 29, "active": 28, "busy": 29}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 29}, "high": {"off": 12, "on": 46, "active": 60, "busy": 46}},
       "stop": {"low": {"off": 12, "on": 13, "active": 12, "busy": 12}, "medium": {"off": 12, "on": 13, "active": 12, "busy": 12}, "high": {"off": 12, "on": 14, "active": 12, "busy": 12}},
-      "blackout": {"low": {"off": 12, "on": 13, "active": 15, "busy": 15}, "medium": {"off": 12, "on": 13, "active": 15, "busy": 15}, "high": {"off": 12, "on": 14, "active": 15, "busy": 15}},
+      "blackout": {"low": {"off": 12, "on": 13, "active": 15, "busy": 15, "flash": 11}, "medium": {"off": 12, "on": 13, "active": 15, "busy": 15, "flash": 11}, "high": {"off": 12, "on": 14, "active": 15, "busy": 15, "flash": 11}},
       "fadeout": {"low": {"off": 12, "on": 13, "active": 15, "busy": 15}, "medium": {"off": 12, "on": 13, "active": 15, "busy": 15}, "high": {"off": 12, "on": 14, "active": 15, "busy": 15}},
       "fadein": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},
       "room": {"low": {"off": 12, "on": 29, "active": 28, "busy": 28}, "medium": {"off": 12, "on": 29, "active": 44, "busy": 44}, "high": {"off": 12, "on": 46, "active": 60, "busy": 60}},

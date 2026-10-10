@@ -166,6 +166,8 @@ function startServer() {
     assert.strictEqual(previewRequests, 1, 'a snapshot is taken once per tap, never repeated by itself (' + previewRequests + ' requests)');
     await page.click('#black');
     await page.waitForFunction(() => document.getElementById('black').textContent === 'Show');
+    assert.strictEqual(await page.locator('#black').evaluate((el) => el.classList.contains('flash') && getComputedStyle(el).animationName), 'fadeflash', 'Blackout flashes for as long as it is on');
+    assert.strictEqual(await page.locator('#fade').evaluate((el) => el.classList.contains('flash')), false, 'under Blackout the fade button is steady: each shows its own state');
     await page.click('#black');
     await page.waitForFunction(() => document.getElementById('black').textContent === 'Blackout');
     // One fade button (D75): a press fades out and the button flashes while the picture is down, the next press fades

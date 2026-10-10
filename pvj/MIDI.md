@@ -291,7 +291,7 @@ In the drawing a small ring marks each control that has a light; the ring is fil
 
 ### What a light shows
 
-A light follows **what its control does now**: if you put another action on a control, its light shows that action's state. Five states exist: off, "there is something here", "it is the one on now", "busy", and **flashing** (D75), which only the one fade button uses: it flashes while the picture goes down and while it is black from a fade.
+A light follows **what its control does now**: if you put another action on a control, its light shows that action's state. Five states exist: off, "there is something here", "it is the one on now", "busy", and **flashing** (D75), for the two buttons that darken the screen: the fade button flashes while the picture goes down and while it is black from a fade, and Blackout flashes for as long as it is on.
 
 **How a light flashes.** Where the maker's document gives a way for the controller to flash a light by itself, the box uses it: one message, and nothing more is sent while it flashes (the Launchpad, below). Everywhere else the light's own writer switches it on and off, a quarter of a second each (two flashes a second), on its own thread and its own clock, through the same limit of 200 messages a second as every other light: a flashing light costs four messages a second, the thread that reads the controller never waits for it, and it ends with the state. **If the panel's service dies without sending its clear message** (a crash, the power of the box and not of the controller), a light stays as it was at that moment: one the box was flashing itself stays lit or dark, whichever half it was in, and a Launchpad goes on flashing by itself until it is unplugged or the service is back. A profile says which: `"flash": "device"` in its lights section and a `flash` value in a style, or nothing (the writer does it).
 
@@ -309,7 +309,7 @@ A light follows **what its control does now**: if you put another action on a co
 | Effect control 1 to 8, as a press (style `control`) | an effect is on (not checked per input) | | |
 | Pause / resume | | something is playing | it is paused |
 | Stop | something is playing | nothing is playing | |
-| Blackout on / off | (marks the button) | **the screen is black** | |
+| Blackout on / off | (marks the button) | | **Flashing for as long as Blackout is on** (the owner, 2026-10-10: "flashing when active, same with blackout"). Each of the two buttons shows its own state: under Blackout the fade button is steady unless a fade out is also on |
 | **Fade out, then in** (the one button; style `fade`, or the style of Fade out where a file has none) | (marks the button) | | a fade in is running. **Flashing**: the picture is going down or is black from a fade. Under Blackout it is steady: Blackout's own button is the one that shows it |
 | Back 10 seconds, forward 10 seconds (style `step`) | something is playing | | |
 | Fade out | (marks the button) | the picture was faded out and is still down | |
@@ -335,8 +335,7 @@ Source: Novation, *Launchpad S Programmer's Reference Manual* 1.02 (https://fael
 | bright green | **the pad that is playing**, in every bank and at every brightness | 60 |
 | green | it is on now: the preset in use, Vibes running, a scene being applied, a fade in running | 28, 44, 60 |
 | dim red | this button darkens the screen (blackout, the fade button) or stops what plays | 13, 13, 14 |
-| full red | **the screen is dark**: blackout is on | 15 at every brightness |
-| full red, flashing | **the picture is going down or is black from a fade** (the fade button) | 11 at every brightness |
+| full red, flashing | **the screen is dark, or going dark**: Blackout is on (its button), the picture is going down or is black from a fade (the fade button) | 11 at every brightness |
 
 Every value is the manual's formula, 16 x green + red + 12. **Whether three bank colours can be told apart on the real pads, above all at Low, has not been seen.**
 
@@ -359,7 +358,7 @@ Source: Korg's nanoKONTROL2 Parameter Guide (E1), page 9 (https://cdn.korg.com/u
 | R 1 to 4 | the Room scene exists | it is being applied |
 | R 7 (the fade button) | a fade in is running. **Flashing, by the box switching it on and off**: the picture is going down or is black from a fade | |
 | R 5 | an effect is on | |
-| R 8 | **the screen is black** | |
+| R 8 | **Flashing, by the box switching it on and off**: Blackout is on | |
 | Cycle | Vibes is running | |
 | Rec | Vibes is running with the set Show | |
 | Play | something is playing | it is paused |
@@ -368,7 +367,7 @@ Source: Korg's nanoKONTROL2 Parameter Guide (E1), page 9 (https://cdn.korg.com/u
 
 ### Akai MIDI Mix: off, unverified
 
-**Nothing about the MIDI Mix's lights is confirmed from a primary source.** No Akai document describes them (the MIDImix User Guide 1.0 says nothing about messages the unit receives), so they are off until you switch them on. The source is secondary: Tero Heikkinen, "AKAI MIDImix & Processing Midibus" (oldmachinery.blogspot.com, 2018-04-15): "Sending note-ons to MUTE, REC ARM or Bank button values with velocity 127 will turn the associated lights on. Sending note-ons with velocity 0 will turn the lights off. Sending note-offs does nothing." Open controller scripts (mfeyx/akai-midimix-bitwig, tstriker/akai-midimix) do the same. The Solo button cannot be lit, and the Solo+Mute row shows only while Solo is held, so neither gets a light from the box. **So the fade button of this layout, which is on that row, has no light and does not flash on a MIDI Mix.**
+**Nothing about the MIDI Mix's lights is confirmed from a primary source.** No Akai document describes them (the MIDImix User Guide 1.0 says nothing about messages the unit receives), so they are off until you switch them on. The source is secondary: Tero Heikkinen, "AKAI MIDImix & Processing Midibus" (oldmachinery.blogspot.com, 2018-04-15): "Sending note-ons to MUTE, REC ARM or Bank button values with velocity 127 will turn the associated lights on. Sending note-ons with velocity 0 will turn the lights off. Sending note-offs does nothing." Open controller scripts (mfeyx/akai-midimix-bitwig, tstriker/akai-midimix) do the same. The Solo button cannot be lit, and the Solo+Mute row shows only while Solo is held, so neither gets a light from the box. **So the fade button and Blackout of this layout, which are on that row, have no light and do not flash on a MIDI Mix**; the panel's two buttons do.
 
 | Light | Lit | Slowly pulsing |
 | --- | --- | --- |
