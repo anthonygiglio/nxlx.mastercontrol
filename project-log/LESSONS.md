@@ -402,3 +402,15 @@ A cookie is identified by name, domain and path, not by scheme. With one name, p
 ## The last statement of app.js is pinned by a test (2026-10-10)
 
 `tests/test_page_files.py` asserts that `window.pvjApp = true;` is the very last statement of `app.js`, so the loader can tell a script that arrived from one that ran. Anything a browser test needs from inside the module goes on its own `window.` name before `boot()`, not on `pvjApp`.
+
+## A branch that rewrote a file is a base, not a side (2026-10-10, desks-build)
+
+`area-desks` rewrote `pvj/web/app.js`; five feature branches changed the old file. Git's merge of that is a conflict of the whole file, and taking hunks from either side gives a file that is neither. What worked: take the rewrite as the base and carry each feature's change into the function the review's merge map named, then check that every line the features added is in the result (a script that looks each added line up in the merged file found two missing, both comments). The browser tests needed the same by hand where a feature's test pressed what the rewrite had removed (the effect strip, the old tabs).
+
+## A block placed before the one it overrides loses (2026-10-10)
+
+A rule for 1700 px written above the 1200 px block that showed the tab bar did nothing: same specificity, earlier in the file. The picture at 1700 px showed it; the fix was a heavier selector. Pictures at the width a rule is for, not only at the widths the tests take.
+
+## A harness started before a merge serves the new panel with the old box (2026-10-10)
+
+The test harness reads the panel's files from disk on every request but keeps the Python it started with. After master's OSC locks were merged, the OSC page in the picture had no "Who may send": the box behind it had never heard of them. Restart the harness after any merge that touches the server.
