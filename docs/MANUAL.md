@@ -18,7 +18,7 @@ The pictures come from the test suite (test clips and a fake network), see [UI.m
 
 **A code shown from a MIDI controller now pairs a Guest**, not a presenter (the Operator is close to an owner, and nobody has to be there for that code). **MIDI, OSC, DMX, room scenes and the schedule can do exactly what they could before**, no more. A remote support session "play and mix only" likewise.
 
-A guest's switch-off of the projectors is limited (one per phone and two for the box in five minutes) and every guest action is in the box's journal with the phone's name. Nothing a guest does is saved. Rolling back to the earlier version is safe: it ignores the lock, and an Operator is a presenter again. **None of this has run on a real box, phone, projector or controller yet.**
+Guests together can play, black out or apply a scene once in two seconds, so nobody can flash the room from a phone. A guest's switch-off of the projectors is limited (one per phone and two for the box in five minutes) and every guest action is in the box's journal with the phone's name. Nothing a guest does is saved. Rolling back to the earlier version is safe: it ignores the lock, and an Operator is a presenter again. **None of this has run on a real box, phone, projector or controller yet.**
 
 ## 1. Get it running
 

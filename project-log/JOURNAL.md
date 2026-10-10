@@ -4,6 +4,19 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-11 (the independent review of #120 at `571d2ac`: no High, no Medium, six Lows fixed)
+
+Each Low has a test in `tests/test_roles.py`, `ReviewTest`, written first and seen to fail (five failed on the code as it was; the sixth is a guard, seen to fail with a path added to `server.py` without the gate). **Run on the development Mac; nothing on the box.**
+
+- **A switch-off was counted and logged before it happened.** `admit` now returns the body and a `finish`; `Api.handle` calls it with whether the handler answered. The journal line is written on a 200 only; a held switch-off and the cooldown are given back otherwise (also when the handler raised something that is no API error).
+- **A guest could flash the room.** Play, blackout and a scene: one for all guests together in 2 seconds (`policy.COOLED`, `COOL_SECONDS`). Not for an Operator or Owner.
+- **The lock could be changed through the support tunnel** by a full session: `POST /api/guests` is in `REMOTE_DENY`.
+- **A path `server.py` answers itself must ask the gate.** A test reads every "/api/..." in its source: each is a route or a key of `policy.OUTSIDE`.
+- **A refused form was free.** The limit on actions is now counted before the form is looked at.
+- **The counters kept an empty list for every device for ever.** Pruned on every look; a device that went quiet has no entry.
+- Also tested now: HEAD with no login and as a guest, a guest over real HTTP on the five paths the server answers itself, a full and a live support session on the lock.
+- Not changed, noted in D80: a confirm token for a target that is not there; a token used up by a different body. D80 also has the reviewer's view on a per-scene mark for guests, as an open question; not built.
+
 ## 2026-10-10, night (Owner, Operator, Guest: D80 built on `roles-operator`, #120, not merged, not on the box)
 
 The builder of D80 was cut off by the usage limit with a commit that had never run as a whole (`4032470`: `pvj/policy.py`, the gate in `pvj/api.py`, a first table test with 3 failures and 3 errors). This session read it against D80, made it hold, built the panel and wrote the documents. **Run on the development Mac only (Python tests); the browser test only in CI; nothing on the Pi, no phone, no projector, no controller.**
