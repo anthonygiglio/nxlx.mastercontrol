@@ -418,7 +418,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                             raise ApiError(404, "the box has no root certificate to give: upload a certificate file that holds the root after the box's certificate")
                         return self._send(200, text.encode(), "application/x-x509-ca-cert",
                                           [("Content-Disposition", 'attachment; filename="nxlx-root.crt"')])
-                    raise ApiError(405 if path in ("/api/https/request", "/api/https/certificate", "/api/https/undo", "/api/https/remove", "/api/https/owner-only") else 404,
+                    raise ApiError(405 if path in ("/api/https/request", "/api/https/certificate", "/api/https/undo", "/api/https/remove", "/api/https/owner-only", "/api/https/root") else 404,
                                    "method not allowed" if path.startswith("/api/https/") else "not found")
                 if path == "/api/https/request":
                     names = body.get("names") if "names" in body else box.default_names()
@@ -433,6 +433,10 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 if path == "/api/https/remove":
                     had = box.remove()
                     return self._json(200, {"removed": had, "status": box.status(self._secure(), host, device)})
+                if path == "/api/https/root":
+                    out = box.replace_root(body.get("root"), body.get("confirm"), self._secure(), box.device_secure(device))
+                    api.log("pvj-web: root replaced by device %s (%s)" % (device["id"], device["name"]))
+                    return self._json(200, dict(out, status=box.status(self._secure(), host, device)))
                 if path == "/api/https/owner-only":
                     on = box.set_owner_only(body.get("on"), self._secure(), box.device_secure(device))
                     return self._json(200, {"owner_only": on, "status": box.status(self._secure(), host, device)})

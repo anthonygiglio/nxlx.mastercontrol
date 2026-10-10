@@ -54,6 +54,7 @@ You need: a computer with Python 3 and `openssl` (a Mac has both; Linux has both
    `python3 tools/boxcert.py sign ~/Downloads/nxlx-mastercontrol.csr`
    It shows the names from the request, asks for the passphrase, and writes `~/nxlx-root-ca/nxlx-mastercontrol-cert.pem` (the box's certificate followed by the root). `--name` adds a name, `--address` an address, `--days` sets the length (397 by default, 825 at most).
 4. **Upload it.** On the same page, "Upload the certificate", choose that file. The page says what the certificate names and when it ends. If the box refuses it, the message says why (wrong key, wrong names, run out, the root uploaded by mistake).
+   The first certificate file also gives the box your root, which it then **pins**: from then on it accepts only certificates issued by that root, and the root on the box is replaced only over `https://`, by a device paired over `https://`, through "Replace the root..." on the same page, with the old and the new fingerprint shown. Compare the fingerprint once: the page shows "Root this box trusts, SHA-256: ..." and `python3 tools/boxcert.py root` prints the same on your computer. They must be the same.
 5. **Install the root on this device.** Still over `http://`, press "Download the root certificate" and follow the steps the page shows for the device in your hand (they are the ones above). Then press "Does this device trust the box?": it should say yes.
 6. **Move to https://** with the link on the page, and **pair again** (the `https://` address is a new origin to the browser, so the old session is not there; the PIN is under People and codes on the `http://` panel, or on the box's display).
 7. **Switch on "Owner access only over the secure connection"** on the same page, now over `https://`. From then on the PIN is refused over `http://`, owner devices paired over `http://` are told to pair again over `https://`, and guests notice nothing.
@@ -81,7 +82,7 @@ Two neighbours of that case: a certificate **removed** while the switch is on st
 
 ## If the root key is lost
 
-Nothing can be signed any more, and the boxes' certificates run out one by one. Make a new root (`make-root --dir ~/nxlx-root-ca-2`), sign every box again, install the new root on every device, and remove the old root from each device (the same place you installed it). The old root cannot hurt anybody if nobody has its key.
+Nothing can be signed any more, and the boxes' certificates run out one by one. Make a new root (`make-root --dir ~/nxlx-root-ca-2`); on each box, over `https://`, "Replace the root..." with the new `root.pem` (the box pins its root, so a certificate from the new one is refused until then); sign every box again and upload; install the new root on every device, and remove the old root from each device (the same place you installed it). The old root cannot hurt anybody if nobody has its key.
 
 ## If the root key may have been stolen
 

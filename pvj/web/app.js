@@ -2598,6 +2598,7 @@
       if (!c.names_this_host && d.host) lines.push(h('div', { class: 'hint warn', text: 'It does not name ' + d.host + ', which is how you reached the box, so https://' + d.host + '/ would be refused. Use one of its names, or make a new request with this one in it.' }));
     }
     if (!d.clock_trusted) lines.push(h('div', { class: 'hint', text: 'The box\'s clock is not set from the network, so dates here are as the box counts them; your device judges the certificate by its own clock.' }));
+    if (d.root_fingerprint) lines.push(h('div', { class: 'hint', id: 'httpsfp', text: 'Root this box trusts, SHA-256: ' + d.root_fingerprint + '. Compare it once with "python3 tools/boxcert.py root" on your computer.' }));
     lines.push(h('div', { class: 'hint', id: 'httpsyouare', text: d.secure ? 'You are reading this over https://. This device trusts the box.' : 'You are reading this over http://.' + (d.https ? ' Install the root below, then move to ' + d.https_address : '') }));
     var sw = toggle('httpsowneronly', 'Owner access only over the secure connection', d.owner_only, function (v) {
       act('POST', '/api/https/owner-only', { on: v }, function () { say(v ? 'From now on the PIN and owner devices work over https:// only.' : 'Owner access works over http:// again.'); S.sysFresh = false; redrawSystem(); })
@@ -2649,6 +2650,29 @@
           act('POST', '/api/https/undo', {}, function (r) { sayAt(out, 'The earlier certificate is in use again, until ' + r.status.certificate.ends + '.'); S.sysFresh = false; redrawSystem(); });
         } }) : null),
       pick, out];
+    var rootPick = h('input', { type: 'file', id: 'httpsrootpick', accept: '.pem,.crt,.cer', hidden: true });
+    rootPick.addEventListener('change', function () {
+      var f = rootPick.files && rootPick.files[0];
+      rootPick.value = '';
+      if (!f) return;
+      var read = f.text ? f.text() : new Promise(function (res) { var rd = new FileReader(); rd.onload = function () { res(rd.result); }; rd.readAsText(f); });
+      read.then(function (text) {
+        // ask the box what the new one is (a wrong confirm answers 409 with the fingerprint), then confirm in place
+        api('POST', '/api/https/root', { root: text, confirm: '' }).then(function (r) {
+          var m = /confirm: (.+)$/.exec(r.data.error || '');
+          if (r.ok || !m) return sayAt(out, r.data.error || 'The root could not be read.', true);
+          var fp = m[1], control = document.getElementById('httpsrootbtn');
+          if (!control) return;
+          confirmRow('Replace the root this box trusts? Old: ' + (d.root_fingerprint || 'none') + '. New: ' + fp + '. The next certificate must come from the new root; your devices need the new root installed.',
+            'Replace the root', 'Keep it', function () {
+              act('POST', '/api/https/root', { root: text, confirm: fp }, function () { sayAt(out, 'The root was replaced. Now sign this box\'s request with it and upload the certificate.'); S.sysFresh = false; redrawSystem(); });
+            }, control);
+        });
+      });
+    });
+    if (d.secure && d.this_device_secure && d.root) {
+      rows.push(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'httpsrootbtn', text: 'Replace the root...', onclick: function () { rootPick.click(); } })), rootPick);
+    }
     if (d.https || d.key) {
       rows.push(h('div', { class: 'row' },
         d.https ? h('button', { class: 'btn grow', id: 'httpsremove', text: 'Remove the certificate', onclick: function (e) {
