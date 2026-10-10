@@ -70,6 +70,8 @@ class Pipe:
         for status, number, v in self.read():
             if (status, number, v) == (0xB0, 0, 0):
                 have = {}
+            elif (status, number) == (0xB0, 0):           # controller 0 is the Launchpad's own settings (flash mode), not a light
+                continue
             else:
                 have[(status, number)] = v
         return have
@@ -103,7 +105,9 @@ class LightsFilesTest(unittest.TestCase):
             # and every standard action of a lit control has a style in its own file, so none is dark by oversight
             # (dark on purpose: a control that asks for a pairing code, D61; a controller shows nothing about a code)
             for ctl in p["controls"]:
-                if ctl["id"] in p["lights"]["controls"] and ctl["action"] is not None and midi.ACTIONS[ctl["action"]["action"]][0] != "hold":
+                # (and Mute and the overlay's switch, D75: the box keeps no record of either that a light could follow without asking the player)
+                if ctl["id"] in p["lights"]["controls"] and ctl["action"] is not None and midi.ACTIONS[ctl["action"]["action"]][0] != "hold" \
+                        and ctl["action"]["action"] not in ("mute", "overlay"):
                     self.assertIn(midi.light_meaning(ctl["action"]), p["lights"]["styles"], (p["id"], ctl["id"]))
 
     def test_a_lights_section_does_not_depend_on_what_the_controls_do(self):
@@ -111,17 +115,17 @@ class LightsFilesTest(unittest.TestCase):
         may make a profile fail its check (it would lose its whole layout): the section only lists which controls
         have a light, and a light with nothing to show is dark."""
         p = raw(PAD)
-        spare = next(c for c in p["controls"] if c["id"] == "pad18")         # the pad the effects left spare; since D61 it asks for a code
+        spare = next(c for c in p["controls"] if c["id"] == "pad58")         # the pad at the end of the effects row: it asks for a code (D61)
         self.assertEqual(spare["action"], {"action": "code_join"})
         self.assertIsNone(midi.light_meaning(spare["action"]))               # nothing about a code is ever shown on a controller
         spare["action"] = {"action": "blackout"}
         clean = midi.validate_profile(p, PAD)
-        self.assertIn("pad18", clean["lights"]["controls"])
-        action = next(c for c in clean["controls"] if c["id"] == "pad18")["action"]
+        self.assertIn("pad58", clean["lights"]["controls"])
+        action = next(c for c in clean["controls"] if c["id"] == "pad58")["action"]
         self.assertEqual([value(PAD, action, snap()), value(PAD, action, snap(blackout=True))], [13, 15])       # and its light follows it
         with mock.patch.dict(midi.ACTIONS, {"strobe": ("trigger", None, None), "smear": ("level", 0, 1)}):
             p = raw(PAD)
-            next(c for c in p["controls"] if c["id"] == "pad18")["action"] = {"action": "strobe"}
+            next(c for c in p["controls"] if c["id"] == "pad58")["action"] = {"action": "strobe"}
             next(c for c in p["controls"] if c["id"] == "top1")["action"] = {"action": "strobe"}
             clean = midi.validate_profile(p, PAD)
             self.assertEqual(len(clean["lights"]["controls"]), 80)
@@ -142,7 +146,7 @@ class LightsFilesTest(unittest.TestCase):
         self.assertEqual(states(snap(effect_ready=True)), ["off", "off", "off", "off"])     # ready, and nothing with a picture
         self.assertEqual(states(snap(running=True, effect_ready=True, effect="fx-wash.fs")), ["active", "on", "on", "on"])
         # the three shipped layouts: where an effect action sits on a control with a light, the light has a style
-        self.assertEqual(next(c for c in BY_ID[PAD]["controls"] if c["id"] == "pad17")["action"], {"action": "effect_toggle"})
+        self.assertEqual(next(c for c in BY_ID[PAD]["controls"] if c["id"] == "pad55")["action"], {"action": "effect_toggle"})
         self.assertEqual(next(c for c in BY_ID[NANO]["controls"] if c["id"] == "r5")["action"], {"action": "effect_toggle"})
         on = snap(running=True, effect_ready=True, effect="fx-wash.fs")
         self.assertEqual([value(PAD, toggle, snap()), value(PAD, toggle, snap(running=True, effect_ready=True)), value(PAD, toggle, on)], [12, 29, 28])
@@ -161,13 +165,25 @@ class LightsFilesTest(unittest.TestCase):
         self.assertEqual(midi.light_message(pad["lights"], ctl[PAD]["side_h"], 15), bytes((0x90, 120, 15)))
         self.assertEqual(midi.light_message(pad["lights"], ctl[PAD]["top1"], 29), bytes((0xB0, 104, 29)))
         self.assertEqual(midi.light_message(pad["lights"], ctl[PAD]["top8"], 12), bytes((0xB0, 111, 12)))
-        self.assertEqual((pad["lights"]["off"], pad["lights"]["setup"], pad["lights"]["clear"]), (12, [b"\xb0\x00\x00"], [b"\xb0\x00\x00"]))
-        for style in pad["lights"]["styles"].values():
+        self.assertEqual((pad["lights"]["off"], pad["lights"]["setup"], pad["lights"]["clear"]), (12, [b"\xb0\x00\x00", b"\xb0\x00\x28"], [b"\xb0\x00\x00"]))      # the reset, then flash mode (28h); the reset again to clear
+        self.assertEqual(pad["lights"]["flash"], "device")
+        for name, style in pad["lights"]["styles"].items():
             for level in midi.LIGHT_LEVELS:
                 for state in midi.LIGHT_STATES:
                     v = style[level][state]
-                    self.assertEqual(v & 0x0C, 12, "the flags of normal use")       # never the flashing or the buffer flags
+                    self.assertEqual(v & 0x0C, 12, "the flags of normal use")       # copy mode: lit in both buffers, so steady in flash mode
                     self.assertEqual(v & 0x40, 0)
+                # the manual's "Adventures in Double Buffering": a flashing colour is the same colour with bit 2 cleared,
+                # "subtracting 4 from the velocity value". Only the fade button has one: full red, 0Fh less 4
+                self.assertEqual(style[level].get("flash"), 11 if name == "fade" else None)
+                if name == "fade":
+                    self.assertEqual((style[level]["flash"] & 0x0C, style[level]["flash"] + 4), (8, style[level]["active"]))
+        # the three banks in three colours, by the manual's formula 16 x green + red + 12: amber (1, 1), yellow-green
+        # (green 2, red 1), orange (green 1, red 2); the pad that plays is full green in every bank
+        st = pad["lights"]["styles"]
+        self.assertEqual([st[n]["low"]["on"] for n in ("clip", "clip_b", "clip_c")], [16 * 1 + 1 + 12, 16 * 2 + 1 + 12, 16 * 1 + 2 + 12])
+        self.assertEqual([st[n]["high"]["on"] for n in ("clip", "clip_b", "clip_c")], [16 * 2 + 2 + 12, 16 * 3 + 2 + 12, 16 * 2 + 3 + 12])
+        self.assertEqual({st[n][lv]["active"] for n in ("clip", "clip_b", "clip_c") for lv in midi.LIGHT_LEVELS}, {16 * 3 + 12})
         # nanoKONTROL2 in External LED mode: a control change with the button's own number, 127 or 0
         self.assertEqual(midi.light_message(nano["lights"], ctl[NANO]["s1"], 127), bytes((0xB0, 32, 127)))
         self.assertEqual(midi.light_message(nano["lights"], ctl[NANO]["play"], 0), bytes((0xB0, 41, 0)))
@@ -175,7 +191,7 @@ class LightsFilesTest(unittest.TestCase):
         self.assertEqual(midi.light_message(mix["lights"], ctl[MIX]["mute1"], 127), bytes((0x90, 1, 127)))
         self.assertEqual(midi.light_message(mix["lights"], ctl[MIX]["rec8"], 0), bytes((0x90, 24, 0)))
         for p in (nano, mix):
-            self.assertEqual((p["lights"]["off"], p["lights"]["setup"], p["lights"]["clear"]), (0, [], []))
+            self.assertEqual((p["lights"]["off"], p["lights"]["setup"], p["lights"]["clear"], p["lights"]["flash"]), (0, [], [], "timer"))
             for style in p["lights"]["styles"].values():
                 self.assertLessEqual({style["low"][s] for s in midi.LIGHT_STATES} | set(style["low"]["pulse"].values()), {0, 127})
 
@@ -242,10 +258,16 @@ class WhatALightShowsTest(unittest.TestCase):
         pads = [["a.mp4"] + [""] * 11, [""] * 12, [""] * 12]
         a1, a2 = {"action": "pad", "bank": 0, "index": 0}, {"action": "pad", "bank": 0, "index": 1}
         self.assertEqual([value(PAD, a2, snap(pads=pads)), value(PAD, a1, snap(pads=pads)), value(PAD, a1, snap(pads=pads, running=True, playing="a.mp4"))],
-                         [12, 29, 28])                                         # off, amber, green
+                         [12, 29, 60])                                         # off, amber, full green
         self.assertEqual(value(PAD, a1, snap(pads=pads, running=True, playing="b.mov")), 29)
         self.assertEqual(value(PAD, a1, snap(pads=pads, running=False, playing="a.mp4")), 29)
-        self.assertEqual([value(PAD, a1, snap(pads=pads, running=True, playing="a.mp4"), level) for level in ("low", "medium", "high")], [28, 44, 60])
+        self.assertEqual([value(PAD, a1, snap(pads=pads, running=True, playing="a.mp4"), level) for level in ("low", "medium", "high")], [60, 60, 60])    # the one that plays stands out at any brightness
+        b1, c1 = {"action": "pad", "bank": 1, "index": 0}, {"action": "pad", "bank": 2, "index": 0}
+        three = [["a.mp4"] + [""] * 11, ["b.mp4"] + [""] * 11, ["c.mp4"] + [""] * 11]
+        self.assertEqual([midi.light_meaning(a) for a in (a1, b1, c1, {"action": "bank_pad", "index": 0})], ["clip", "clip_b", "clip_c", "clip"])
+        self.assertEqual([value(PAD, a, snap(pads=three)) for a in (a1, b1, c1)], [29, 45, 30])        # three banks, three colours
+        self.assertEqual([value(PAD, a, snap(pads=three, running=True, playing="b.mp4")) for a in (a1, b1, c1)], [29, 60, 30])
+        self.assertEqual([value(NANO, a, snap(pads=three)) for a in (a1, b1, c1)], [127, 127, 127])    # a controller with one colour: every bank as "clip"
         self.assertEqual([value(PAD, a1, snap(pads=pads), level) for level in ("low", "medium", "high")], [29, 29, 46])
         # one light per button: lit with a clip, slowly pulsing while it plays; the pad of the controllers' bank
         row = {"action": "bank_pad", "index": 0}
@@ -501,7 +523,7 @@ class LightsHubTest(LightsHubBase):
         self.plug(C_PAD)
         self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
         pipe = self.out[C_PAD]
-        self.assertEqual(pipe.read()[0], (0xB0, 0, 0))                      # the reference's reset first: X-Y layout, all off
+        self.assertEqual(pipe.read()[:2], [(0xB0, 0, 0), (0xB0, 0, 40)])    # the reference's reset first (X-Y layout, all off), then its flash mode
         lit = pipe.lit()
         self.assertEqual((lit[(0x90, 0)], lit[(0x90, 1)], lit[(0x90, 120)], lit[(0x90, 104)], lit[(0xB0, 106)]), (29, 12, 13, 12, 12))
         self.assertEqual(self.lights_of("Mini")["line"], "Lights on.")
@@ -511,7 +533,7 @@ class LightsHubTest(LightsHubBase):
         self.assertEqual(len(pipe.read()), sent)
         self.playing[0] = os.path.join(self.media, "a.mp4")
         self.send(C_PAD, [0x90, 0, 127])                                    # the pad is pressed: it plays, and its light turns green
-        self.wait(lambda: pipe.lit()[(0x90, 0)] == 28)
+        self.wait(lambda: pipe.lit()[(0x90, 0)] == 60)
         self.assertEqual(pipe.lit()[(0x90, 104)], 13)                       # Stop: a dim red while something plays
         self.assertEqual(self.post("/api/blackout", {"on": True})[0], 200)
         self.wait(lambda: pipe.lit()[(0x90, 120)] == 15)                    # black: full red, within a tick
@@ -519,7 +541,7 @@ class LightsHubTest(LightsHubBase):
         self.wait(lambda: pipe.lit()[(0x90, 120)] == 13)
         pad11 = next(x for x in self.controller("Mini")["controls"] if x["id"] == "pad11")
         self.assertEqual((pad11["light"], pad11["lit"]), (True, "active"))
-        self.assertEqual(len(pipe.read()), sent + 5)                        # five changes, five messages
+        self.assertEqual(len(pipe.read()), sent + 7)                        # seven changes (the pad, Stop, Freeze, the two ten-second steps, black and back), seven messages
 
     def test_only_the_profiles_own_bytes_are_ever_written(self):
         self.present = [C_NANO, C_MIX, C_PAD, C_KEYS, C_LAUNCHKEY]
@@ -602,7 +624,7 @@ class LightsHubTest(LightsHubBase):
         self.present = [C_PAD]                                              # and back
         self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
         again = self.out[C_PAD]
-        self.assertEqual((again.read()[0], again.lit()[(0x90, 0)], len(again.read())), ((0xB0, 0, 0), 29, 81))
+        self.assertEqual((again.read()[0], again.lit()[(0x90, 0)], len(again.read())), ((0xB0, 0, 0), 29, 82))       # the reset, flash mode, eighty lights
 
     def test_an_older_service_file_gives_one_clear_line_and_no_loop(self):
         self.refuse = PermissionError(1, "Operation not permitted")         # what a unit with "char-alsa r" answers to an open for writing
@@ -674,7 +696,7 @@ class LightsHubTest(LightsHubBase):
     def test_a_control_the_person_changed_shows_what_it_does_now(self):
         self.plug(C_PAD)
         self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
-        self.assertEqual(self.out[C_PAD].lit()[(0x90, 6)], 12)              # a spare pad is dark
+        self.assertEqual(self.out[C_PAD].lit()[(0x90, 6)], 12)              # a pad with nothing on it is dark
         self.assertEqual(self.post("/api/midi/map", {"set": {"controller": "Mini", "control": "pad17", "action": {"action": "blackout", "guard": False}}})[0], 200)
         self.wait(lambda: self.out[C_PAD].lit()[(0x90, 6)] == 13)
         self.post("/api/midi/map", {"set": {"controller": "Mini", "control": "pad11", "action": {"action": "none"}}})

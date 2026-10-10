@@ -32,6 +32,14 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn.on, .pad.on { background: var(--ac); border-color: var(--ac); color: var(--on); }
 .btn.solid { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+/* The one fade button while the picture goes down and while it is black from a fade (D75): it flashes, twice a
+   second, by its colours only, so nothing moves and the words stay readable in both halves. For someone who asked for
+   less motion it does not flash: it stands inverted with a dashed edge, which no other button has. */
+.btn.flash { background: var(--fg); color: var(--bg); border-color: var(--fg); border-style: dashed; }
+@media (prefers-reduced-motion: no-preference) {
+  .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
+  @keyframes fadeflash { 0%, 100% { background: var(--fg); color: var(--bg); } 50% { background: var(--cd); color: var(--fg); } }
+}
 .btn.big { min-height: 56px; }
 .btn.small { min-height: 34px; padding: 0 10px; font-size: 14px; }
 

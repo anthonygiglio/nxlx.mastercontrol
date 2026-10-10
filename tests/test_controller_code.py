@@ -302,14 +302,14 @@ class HoldTest(unittest.TestCase):
             midi.validate_profile(raw, "korg-nanokontrol2")
 
     def test_the_shipped_layouts(self):
-        """Only the Launchpad Mini had a free pad: its eighth pad of the top row asks for a presenter code. No
+        """Only the Launchpad Mini has a pad for it: the last pad of its effects row (pad 5.8) asks for a presenter code. No
         layout asks for a full access code, and the MIDI Mix's Solo (a shift that is held while playing) stays spare."""
         have = {}
         for p in midi.load_profiles(log=lambda *_: None):
             for c in p["controls"]:
                 if c["action"] and c["action"]["action"] in controllercode.ACTION_KINDS:
                     have[(p["id"], c["id"])] = (c["action"]["action"], c["kind"], c["guard"])
-        self.assertEqual(have, {("novation-launchpad-mini", "pad18"): ("code_join", "pad", False)})
+        self.assertEqual(have, {("novation-launchpad-mini", "pad58"): ("code_join", "pad", False)})
         mix = next(p for p in midi.load_profiles(log=lambda *_: None) if p["id"] == "akai-midimix")
         self.assertIsNone(next(c for c in mix["controls"] if c["send"] == {"type": "note", "channel": 0, "number": 27})["action"])
         for action in controllercode.ACTION_KINDS:

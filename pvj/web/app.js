@@ -355,6 +355,24 @@
     });
     return b;
   }
+  // The one fade button (D75): a press fades out, the next fades in; the box decides which from what the screen is
+  // doing (POST /api/fade), so the button is right whoever started the fade. fadeShow() gives it its words and, while
+  // the picture goes down and while it is black from a fade, the class "flash" (the style flashes it, or holds it
+  // steady and inverted for someone who asked for less motion). Every place that draws a fade button draws this one.
+  function fadeButton(cls, enabled) {
+    var b = h('button', { class: cls, id: 'fade', 'data-cls': cls, text: 'Fade out', disabled: !enabled, onclick: function () { act('POST', '/api/fade', { seconds: 2 }, poll); } });
+    fadeShow(b, S.status && S.status.mix);
+    return b;
+  }
+  function fadeShow(b, mix) {
+    if (!b) return;
+    var fade = mix && mix.fade, down = fade === 'out' || !!(mix && mix.blackout);
+    var cls = b.getAttribute('data-cls') + (fade === 'out' ? ' flash' : fade === 'in' ? ' on' : '');
+    if (b.className !== cls) b.className = cls;
+    var text = down || fade === 'in' ? 'Fade in' : 'Fade out';
+    if (b.textContent !== text) b.textContent = text;
+    b.setAttribute('aria-label', fade === 'out' ? 'Fade in (the picture is faded out)' : fade === 'in' ? 'Fade in (fading in now)' : text);
+  }
   function live() {
     var st = S.status || {};
     var pl = st.player || {};
@@ -378,7 +396,6 @@
           h('button', { class: 'btn small grow', id: 'fwd10', text: '+ 10 s', 'aria-label': 'Forward 10 seconds', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'seek', value: 10 }, poll); } }),
           h('button', { class: 'btn small grow', id: 'next', text: 'Next \u23ed', 'aria-label': 'Next clip', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'next' }, poll); } })),
         h('div', { class: 'row transport' },
-          h('button', { class: 'btn small grow', id: 'fadein', text: 'Fade in', disabled: !canLive, onclick: function () { act('POST', '/api/fadein', { seconds: 2 }, poll); } }),
           h('button', { class: 'btn small grow', id: 'testpattern', text: 'Test pattern', disabled: !canLive, onclick: function () {
             var on = !(S.status && S.status.player && S.status.player.test_pattern);
             act('POST', '/api/testpattern', { on: on }, poll);
@@ -396,7 +413,7 @@
       h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg })),
       h('div', { class: 'grow' }),
       h('div', { class: 'row' },
-        h('button', { class: 'btn big grow', id: 'fade', text: 'Fade out', disabled: !canLive, onclick: function () { act('POST', '/api/fadeout', { seconds: 2 }); } }),
+        fadeButton('btn big grow', canLive),
         h('button', { class: 'btn big grow', id: 'freeze', text: 'Freeze', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'pause' }, poll); } }),
         h('button', { class: 'btn big grow', id: 'stop', text: 'Stop', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'stop' }, poll); } }),
         h('button', { class: 'btn big grow', id: 'black', text: 'Blackout', disabled: !canLive, onclick: function () {
@@ -498,6 +515,7 @@
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     document.getElementById('pill').textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
+    fadeShow(document.getElementById('fade'), st.mix);
     var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.className = 'btn big grow' + (on ? ' solid' : ''); b.textContent = on ? 'Show' : 'Blackout'; }
     var pads = document.getElementById('pads');
     if (pads && S.banks[S.bank]) {

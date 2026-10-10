@@ -104,13 +104,44 @@ for _n in range(1, SHADER_SLOTS + 1):
 # field is the kind of code asked for (controllercode.KINDS). These two are not API calls: see MidiHub._local.
 ACTIONS.update({"code_join": ("hold", "join", None), "code_owner": ("hold", "owner", None)})
 HOLD_MIN, HOLD_MAX = 3.0, 10.0
+# Added with the editable layouts (D75), after the first report from the real controllers ("odd, or not helpful, or
+# incomplete. especially, the zoom and x/y position"). Each is something the panel could already do and a controller
+# could not: the picture's other axis, its quarter turns and flips, the overlay, sound off, the loop, a step of ten
+# seconds, the test pattern, and ONE fade button (out, and at the next press in; the API decides which, from what the
+# screen is doing, so it stays right when a fade was started somewhere else).
+ACTIONS.update({
+    "position_y": ("level", -100, 100),
+    "fade": ("trigger", None, None), "rotate": ("trigger", None, None),
+    "flip_h": ("trigger", None, None), "flip_v": ("trigger", None, None), "mute": ("trigger", None, None),
+    "loop": ("trigger", None, None), "overlay": ("trigger", None, None), "test_pattern": ("trigger", None, None),
+    "seek_back": ("trigger", -10, None), "seek_forward": ("trigger", 10, None),
+})
+# How a level follows a knob or fader: action -> (low, high, centre, curve). The second and third fields of ACTIONS
+# stay the WIDEST range a mapping may ask for with its own "min" and "max"; these are what a control gets when it
+# asks for nothing.
+# * A level with a centre has a place where it is "as it was made": 100 percent size, no shift, the clip's own
+#   speed. The middle of the control IS that value, exactly, over CENTRE_HALF steps to either side (a knob has no
+#   notch, and 0 to 127 has no middle step: 63.5), so the picture sits centred when the knob looks centred.
+# * A curve above 1 gives the steps next to the centre less to do and the steps at the ends more: fine control
+#   where a picture is lined up, the whole range still within reach.
+# * Size: 25 to 200. A knob that goes down to 1 percent spends a third of its way on pictures nobody can see.
+SHAPES = {
+    "opacity": (0, 100, None, 1.0), "volume": (0, 100, None, 1.0), "effect_amount": (0.0, 1.0, None, 1.0),
+    "size": (25, 200, 100, 1.6), "position": (-100, 100, 0, 1.6), "position_y": (-100, 100, 0, 1.6),
+    "speed": (0.25, 2.0, 1.0, 1.0), "shader_speed": (0.0, 4.0, 1.0, 1.0),
+    "shader_hue": (-180.0, 180.0, 0.0, 1.0), "shader_brightness": (0.0, 2.0, 1.0, 1.0),
+}
+CENTRE_HALF = 4             # of 127: this close to the middle of a control is the centre of a level that has one
+TAKEOVERS = ("pickup", "jump")
+OPTION_KEYS = ("min", "max", "invert", "takeover")      # what a mapping may say about how its level follows the control
 SLOW_CALLS = 0.5            # calls that took longer than this, for a message with no read time: what is held is forgotten
 LOCAL_CODE = "code"         # a planned call with this in the place of a path goes to the hub's own _local, never to the API
 BANKS = 3
 # Soft takeover ("pickup"): on a recognised controller these levels do nothing until the fader or knob reaches the
-# value the box has, so a fader left at the bottom does not black the screen out when it is first touched. The
-# others (a shader's own inputs, its hue, the size and position) may jump: see MIDI.md.
-PICKUP = ("opacity", "volume", "speed", "shader_speed", "shader_brightness", "effect_amount")
+# value the box has, so a fader left at the bottom does not black the screen out when it is first touched, and a knob
+# that is not where the picture is does not throw the picture across the screen. The others (a shader's own inputs
+# and its hue) may jump: see MIDI.md. A mapping can say otherwise for itself ("takeover": "pickup" or "jump").
+PICKUP = ("opacity", "volume", "speed", "shader_speed", "shader_brightness", "effect_amount", "size", "position", "position_y")
 PICKUP_TOLERANCE = 4        # of 127: this close to the box's value counts as reached
 PICKUP_END = 8              # of 127: this close to the top or the bottom is the top or the bottom
 PICKUP_IDLE = 1.0           # a control that rested this long is checked against the box's value again
@@ -199,6 +230,9 @@ CONTROL_KINDS = ("fader", "knob", "button", "pad")
 MATCH_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}")       # exact names only: no patterns, so nothing a file says can make matching slow
 PRINTABLE = re.compile(r"[\x20-\x7e]+")
 MAX_CONTROLS, MAX_SIDE, MAX_PROFILES = 160, 16, 64
+# What a control is for, so the drawing can tint the parts of a controller that belong together and name them once.
+# A fixed list: a file chooses among these words and can put no word of its own on the page.
+ZONES = ("pads", "clips", "screen", "picture", "sound", "shaders", "effects", "room", "access")
 
 
 def _text(v, what, most):
@@ -221,15 +255,98 @@ def _keys(d, what, required, optional=()):
         raise MidiError("%s: %s" % (what, "missing " + ", ".join(missing) if missing else "unknown key " + ", ".join(sorted(map(str, extra)))))
 
 
+def level_shape(action, opts=None):
+    """(low, high, centre or None, curve) for a level as one mapping has it: the action's own shape, with the
+    mapping's "min" and "max" in place of the ends. A centre that the chosen range does not hold is no centre: the
+    control then spreads evenly over the range."""
+    lo, hi, centre, curve = SHAPES[action]
+    if opts:
+        lo, hi = opts.get("min", lo), opts.get("max", hi)
+    if centre is not None and not lo < centre < hi:
+        centre, curve = None, 1.0
+    return lo, hi, centre, curve
+
+
+def level_value(action, v, opts=None):
+    """The level a control at `v` (0 to 127) asks for. `opts` is the mapping (its min, max and invert are read)."""
+    lo, hi, centre, curve = level_shape(action, opts)
+    if opts and opts.get("invert"):
+        v = 127 - v
+    if centre is None:
+        return lo + (hi - lo) * v / 127.0
+    if abs(v - 64) <= CENTRE_HALF:
+        return float(centre)
+    if v < 64:
+        t = (64 - CENTRE_HALF - v) / float(64 - CENTRE_HALF)
+        return centre + (lo - centre) * t ** curve
+    t = (v - 64 - CENTRE_HALF) / float(127 - 64 - CENTRE_HALF)
+    return centre + (hi - centre) * t ** curve
+
+
+_TABLES = {}
+
+
+def level_position(action, have, opts=None):
+    """Where a control must stand (0 to 127) for the box's value `have`: the exact reverse of level_value, read from
+    its own table, so pickup catches where the control really gives that value, whatever the curve, the range and
+    the direction. A value several steps give (the centre) is the middle one of them; a value outside the range is
+    the end nearest to it."""
+    key = (action, (opts or {}).get("min"), (opts or {}).get("max"), bool((opts or {}).get("invert")))
+    table = _TABLES.get(key)
+    if table is None:
+        if len(_TABLES) > 512:                  # a mapping's range is free: nothing may grow without end
+            _TABLES.clear()
+        table = _TABLES[key] = [level_value(action, v, opts) for v in range(128)]
+    best = min(abs(x - have) for x in table)
+    hits = [v for v, x in enumerate(table) if abs(x - have) <= best + 1e-9]
+    return hits[len(hits) // 2] if len(hits) > 1 else hits[0]
+
+
+def clean_options(e, action):
+    """A mapping's own way of following its control, from untrusted input: {"min", "max", "invert", "takeover"},
+    each optional. Only a level that has a shape takes them. Raises MidiError."""
+    found = {k: e[k] for k in OPTION_KEYS if k in e}
+    if not found:
+        return {}
+    if action not in SHAPES:
+        raise MidiError("only a level (opacity, size, position and the like) has a range, a direction and a takeover")
+    wide_lo, wide_hi = ACTIONS[action][1], ACTIONS[action][2]
+    for key in ("min", "max"):
+        if key in found:
+            v = found[key]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or not wide_lo <= v <= wide_hi:
+                raise MidiError("%s must be a number from %s to %s" % (key, wide_lo, wide_hi))
+            found[key] = round(float(v), 3)
+    lo, hi = found.get("min", SHAPES[action][0]), found.get("max", SHAPES[action][1])
+    if not lo < hi:
+        raise MidiError("min must be less than max")
+    if "invert" in found and not isinstance(found["invert"], bool):
+        raise MidiError("invert must be true or false")
+    if "takeover" in found and found["takeover"] not in TAKEOVERS:
+        raise MidiError("takeover must be pickup or jump")
+    return found
+
+
+def takes_over(e, layout):
+    """Does this mapping wait for pickup: what it says itself, else the action's own rule on a controller that has a
+    layout (`layout`), and never on one that has none, as before."""
+    if e.get("takeover") in TAKEOVERS:
+        return e["takeover"] == "pickup"
+    return bool(layout) and e["action"] in PICKUP
+
+
+ACTION_KEYS = ("action", "bank", "index", "scene", "guard") + OPTION_KEYS
+
+
 def clean_action(a, kind="note"):
     """A profile's or an override's action ({"action": "pad", "bank": 0, "index": 3}), checked by the same rules as a
     learned mapping. Returns only the action's own fields."""
     if not isinstance(a, dict):
         raise MidiError("an action must be an object")
-    if any(k not in ("action", "bank", "index", "scene", "guard") for k in a):
-        raise MidiError("an action has only action, bank, index, scene and guard")
+    if any(k not in ACTION_KEYS for k in a):
+        raise MidiError("an action has only action, bank, index, scene, guard, min, max, invert and takeover")
     e = validate_entry(dict(a, kind=kind, number=0, channel=0, source="*"))
-    return {k: e[k] for k in ("action", "bank", "index", "scene", "guard") if k in e}
+    return {k: e[k] for k in ACTION_KEYS if k in e}
 
 
 def validate_profile(p, stem=None):
@@ -261,7 +378,9 @@ def validate_profile(p, stem=None):
         raise MidiError("controls must list 1 to %d controls" % MAX_CONTROLS)
     ids, cells, sends, controls = set(), set(), set(), []
     for c in p["controls"]:
-        _keys(c, "a control", ("id", "name", "row", "col", "kind", "send", "action"), ("guard", "unverified"))
+        _keys(c, "a control", ("id", "name", "row", "col", "kind", "send", "action"), ("guard", "unverified", "zone"))
+        if "zone" in c and c["zone"] not in ZONES:
+            raise MidiError("a control's zone is one of: %s" % ", ".join(ZONES))
         if not isinstance(c["id"], str) or not CONTROL_ID.fullmatch(c["id"]) or c["id"] in ids:
             raise MidiError("a control's id must be unique: small letters, digits and _ (%r)" % (c["id"],))
         what = "control %s" % c["id"]
@@ -301,7 +420,8 @@ def validate_profile(p, stem=None):
         if c.get("guard") and (action is None or c["kind"] not in ("button", "pad")):
             raise MidiError("%s: only a button or pad with an action can be guarded" % what)
         controls.append({"id": c["id"], "name": _text(c["name"], what + " name", 24), "row": cell[0], "col": cell[1], "kind": c["kind"],
-                         "send": send, "action": action, "guard": bool(c.get("guard")), "unverified": bool(c.get("unverified"))})
+                         "send": send, "action": action, "guard": bool(c.get("guard")), "unverified": bool(c.get("unverified")),
+                         "zone": c.get("zone")})
     out["controls"] = controls
     out["lights"] = validate_lights(p["lights"], controls) if "lights" in p else None      # see "lights" below
     return out
@@ -353,7 +473,7 @@ def profile_entries(profile, source):
             continue
         e = dict(c["action"], id="p:" + c["id"], source=source, kind=c["send"]["type"], channel=c["send"]["channel"],
                  number=c["send"]["number"], profile=True, guard=c["guard"])
-        e["pickup"] = e["action"] in PICKUP
+        e["pickup"] = takes_over(e, True)
         out.append(e)
     return out
 
@@ -364,15 +484,26 @@ def profile_entries(profile, source):
 # own number, and as its value one of the numbers written out in a style; plus the few fixed set-up and clear messages
 # the maker's reference gives. Nothing from a request, a clip name or a shader name can reach these bytes. See MIDI.md.
 LIGHT_STATES = ("off", "on", "active", "busy")
+# A fifth state, "flash": the light goes on and off about twice a second (the one fade button while the picture goes
+# down and while it is black). It is not one of the four a style must give: a style MAY give "flash", the value the
+# controller itself flashes at (only in a section that says "flash": "device", where the maker's document gives such
+# values); every other light is flashed by its writer, which alternates the style's "active" value with the
+# section's "off" on its own clock.
+LIGHT_FLASH = "flash"
+FLASH_HALF = 0.25           # seconds a writer-flashed light is on, then off: two flashes a second
 LIGHT_LEVELS = ("low", "medium", "high")
 # what a light can be about; which one a control shows follows from what the control does (light_meaning)
 LIGHT_MEANINGS = ("clip", "preset", "control", "vibes", "set", "step", "play", "stop", "blackout", "fadeout", "fadein", "room", "bank", "effect",
-                  "spare")
+                  "fade", "clip_b", "clip_c", "spare")
+# "clip_b" and "clip_c" are a pad of bank B and of bank C, for a controller that can show the three banks in three
+# colours; a section without them shows every pad as "clip".
+FALLBACK_STYLE = {"clip_b": "clip", "clip_c": "clip", "fade": "fadeout"}
 MAX_FIXED = 8               # set-up or clear messages in a profile
 _MEANING = {"vibes": "vibes", "vibes_ambient": "set", "vibes_show": "set", "vibes_next": "step", "shader_prev": "step",
             "shader_next": "step", "clip_prev": "step", "clip_next": "step", "pause": "play", "stop": "stop",
             "blackout": "blackout", "fadeout": "fadeout", "fadein": "fadein", "bank_prev": "bank", "bank_next": "bank",
-            "effect_toggle": "effect", "effect_prev": "step", "effect_next": "step"}
+            "effect_toggle": "effect", "effect_prev": "step", "effect_next": "step", "fade": "fade",
+            "seek_back": "step", "seek_forward": "step"}
 
 
 def light_meaning(action):
@@ -381,7 +512,9 @@ def light_meaning(action):
     a = action["action"] if action else None
     if a is None or a == "none":
         return "spare"
-    if a in ("pad", "bank_pad"):
+    if a == "pad":
+        return ("clip", "clip_b", "clip_c")[action.get("bank", 0)] if action.get("bank", 0) in (0, 1, 2) else "clip"
+    if a == "bank_pad":
         return "clip"
     if a.startswith("shader_preset_"):
         return "preset"
@@ -427,9 +560,11 @@ def _fixed(v, what, channel):
     return out
 
 
-def _style(v, what):
-    _keys(v, what, LIGHT_STATES, ("pulse",))
+def _style(v, what, device_flash=False):
+    _keys(v, what, LIGHT_STATES, ("pulse", "flash") if device_flash else ("pulse",))
     out = {k: _whole(v[k], "%s %s" % (what, k), 0, 127) for k in LIGHT_STATES}
+    if "flash" in v:                                # the value at which the controller flashes the light by itself
+        out["flash"] = _whole(v["flash"], "%s flash" % what, 0, 127)
     pulse = v.get("pulse", {})
     if not isinstance(pulse, dict) or any(k not in LIGHT_STATES[1:] for k in pulse):
         raise MidiError("%s pulse: on, active or busy, each with the value it alternates with" % what)
@@ -442,12 +577,16 @@ def validate_lights(v, controls):
     controls: a light belongs to a button or pad of the layout. The section does not say what a light shows: that
     follows from what its control does (light_meaning), so giving a spare control an action, or adding an action,
     never makes a lights section wrong."""
-    _keys(v, "lights", ("default", "unverified", "note", "sources", "channel", "brightness", "off", "styles", "controls"), ("setup", "clear"))
+    _keys(v, "lights", ("default", "unverified", "note", "sources", "channel", "brightness", "off", "styles", "controls"), ("setup", "clear", "flash"))
+    if v.get("flash", "timer") not in ("timer", "device"):
+        raise MidiError("lights.flash must be timer (the box switches the light on and off) or device (the controller flashes it)")
+    device_flash = v.get("flash") == "device"
     for flag in ("default", "unverified", "brightness"):
         if not isinstance(v[flag], bool):
             raise MidiError("lights.%s must be true or false" % flag)
     out = {"default": v["default"], "unverified": v["unverified"], "brightness": v["brightness"], "note": _text(v["note"], "lights.note", 600),
-           "channel": _whole(v["channel"], "lights.channel", 1, 16), "off": _whole(v["off"], "lights.off", 0, 127)}
+           "channel": _whole(v["channel"], "lights.channel", 1, 16), "off": _whole(v["off"], "lights.off", 0, 127),
+           "flash": "device" if device_flash else "timer"}
     if not isinstance(v["sources"], list) or not 1 <= len(v["sources"]) <= 8:
         raise MidiError("lights.sources must list one to eight documents")
     out["sources"] = [_text(s, "a lights source", 400) for s in v["sources"]]
@@ -461,9 +600,9 @@ def validate_lights(v, controls):
         what = "lights.styles.%s" % name
         if out["brightness"]:
             _keys(style, what, LIGHT_LEVELS)
-            styles[name] = {level: _style(style[level], "%s.%s" % (what, level)) for level in LIGHT_LEVELS}
+            styles[name] = {level: _style(style[level], "%s.%s" % (what, level), device_flash) for level in LIGHT_LEVELS}
         else:
-            one = _style(style, what)
+            one = _style(style, what, device_flash)
             styles[name] = {level: one for level in LIGHT_LEVELS}
     out["styles"] = styles
     if not isinstance(v["controls"], list) or not 1 <= len(v["controls"]) <= MAX_CONTROLS:
@@ -563,6 +702,10 @@ def light_state(action, snap, bank=0):
         return "on" if snap["running"] else "active"
     if a == "blackout":
         return "active" if snap["blackout"] else "on"
+    if a == "fade":                                     # the one fade button: flashing while the picture goes down and
+        return LIGHT_FLASH if snap["fade"] == "out" else ("busy" if snap["fade"] == "in" else "on")     # while it is black
+    if a in ("seek_back", "seek_forward"):
+        return "on" if snap["running"] else "off"
     if a == "fadeout":
         return "active" if snap["fade"] == "out" else "on"
     if a == "fadein":
@@ -575,13 +718,24 @@ def light_state(action, snap, bank=0):
 def light_value(lights, meaning, state, level="low", phase=0):
     """The number a light is sent for a state, from the profile's style for what it shows (the section's own "off"
     when it has no style for that); a pulsing state alternates with its second value on the hub's slow beat."""
-    style = lights["styles"].get(meaning)
-    if style is None or state not in LIGHT_STATES:
+    style = lights["styles"].get(meaning) or lights["styles"].get(FALLBACK_STYLE.get(meaning))
+    if style is None or (state not in LIGHT_STATES and state != LIGHT_FLASH):
         return lights["off"]
     style = style[level if level in LIGHT_LEVELS else "low"]
+    if state == LIGHT_FLASH:                            # the controller's own flashing value, else what its writer
+        return style.get("flash", style["active"])      # alternates with "off" (light_flashes says which)
     if phase and state in style["pulse"]:
         return style["pulse"][state]
     return style[state]
+
+
+def light_flashes(lights, meaning, state, level="low"):
+    """Must the writer flash this light itself: it is in the state "flash" and its style has no value at which the
+    controller does it."""
+    if state != LIGHT_FLASH:
+        return False
+    style = lights["styles"].get(meaning) or lights["styles"].get(FALLBACK_STYLE.get(meaning))
+    return style is not None and "flash" not in style[level if level in LIGHT_LEVELS else "low"]
 
 
 class MidiParser:
@@ -699,6 +853,7 @@ def validate_entry(e, keep_id=False):
         if not isinstance(e["guard"], bool) or not guardable(action):
             raise MidiError("guard is true or false, and only for blackout and Room scenes")
         out["guard"] = e["guard"]
+    out.update(clean_options(e, action))            # its own range, direction and takeover (a level only)
     return out
 
 
@@ -755,11 +910,10 @@ class MidiMapper:
 
     def _picked_up(self, e, key, value, now):
         """Soft takeover. False while the control has not reached the value the box has."""
-        _, lo, hi = ACTIONS[e["action"]]
         have = self.target(e["action"])
         if have is None:
             return True
-        at = (min(max(have, lo), hi) - lo) * 127.0 / (hi - lo)
+        at = level_position(e["action"], have, e)      # where this control gives that value: its own curve, backwards
         st = self._pick.get(key)
         if st and st["caught"] and (now - st["at"] < PICKUP_IDLE or abs(st["sent"] - at) <= PICKUP_TOLERANCE + 2):
             st.update(prev=value, sent=value, at=now)
@@ -784,6 +938,16 @@ class MidiMapper:
             return [("/api/control", {"action": "next" if a == "clip_next" else "prev"})]
         if a == "fadein":
             return [("/api/fadein", {"seconds": 2})]
+        if a == "fade":                                 # out, or in if the screen is down: the API looks and decides
+            return [("/api/fade", {"seconds": 2})]
+        if a in ("rotate", "flip_h", "flip_v", "mute", "loop"):
+            return [("/api/control", {"action": a, "value": "toggle"})]     # the next quarter turn, or the other state
+        if a in ("seek_back", "seek_forward"):
+            return [("/api/control", {"action": "seek", "value": ACTIONS[a][1]})]
+        if a == "overlay":
+            return [("/api/overlay", {"toggle": True})]
+        if a == "test_pattern":
+            return [("/api/testpattern", {"on": "toggle"})]
         if a.startswith("scene_"):
             return [("/api/room/scene", {"number": ACTIONS[a][1]})]
         if a == "scene":
@@ -825,12 +989,12 @@ class MidiMapper:
             return [("/api/shaders/values", {"control": ACTIONS[a][1], "level": value})]
         if a.startswith("effect_control_"):
             return [("/api/effects/values", {"control": ACTIONS[a][1], "level": value})]
-        _, lo, hi = ACTIONS[a]
+        level = level_value(a, value, e)                # the action's shape, with this mapping's own range and direction
         if a == "effect_amount":
-            return [("/api/effects/values", {"controls": {"amount": round(value / 127.0, 3)}})]
+            return [("/api/effects/values", {"controls": {"amount": round(level, 3)}})]
         if a in ("shader_speed", "shader_hue", "shader_brightness"):
-            return [("/api/shaders/values", {"controls": {a[7:]: round(lo + (hi - lo) * value / 127.0, 2)}})]
-        return [("/api/control", {"action": a, "value": round(lo + (hi - lo) * value / 127.0, 2)})]
+            return [("/api/shaders/values", {"controls": {a[7:]: round(level, 2)}})]
+        return [("/api/control", {"action": a, "value": round(level, 2)})]
 
     def forget_held(self, source=None, pressed=False):
         """Forget every hold that is under way (of one controller, or of all). For when a release may have been
@@ -1156,6 +1320,7 @@ class LightWriter:
         self._open = open_fn or self._open_device
         self._lock = threading.Lock()
         self._want = {}                 # key -> value the light should have
+        self._flash = set()             # keys this writer switches on and off itself, FLASH_HALF each (see show)
         self._over = {}                 # key -> value while Test lights runs
         self._sweep = None              # (steps, value per key, started) while Test lights runs
         self._wake = threading.Event()
@@ -1206,11 +1371,16 @@ class LightWriter:
         except OSError:
             pass
 
-    def show(self, table):
-        """The value every light should have now ({key: value}). Never waits."""
+    def show(self, table, flash=()):
+        """The value every light should have now ({key: value}). Never waits. `flash`: the keys of the lights this
+        writer flashes itself: each alternates its value with the section's "off", FLASH_HALF seconds each, on this
+        thread's own clock, for as long as the hub keeps naming it. The flashing costs two messages a light a second
+        and goes through the same limit as everything else this writer sends; a controller's reader never waits for
+        it, and it ends with the first table that does not name the light."""
+        flash = set(flash)
         with self._lock:
-            if table != self._want:
-                self._want = dict(table)
+            if table != self._want or flash != self._flash:
+                self._want, self._flash = dict(table), flash
                 self._wake.set()
 
     def test(self, values):
@@ -1243,9 +1413,14 @@ class LightWriter:
             return LIGHT_SWEEP_STEP * 4
         return LIGHT_SWEEP_STEP
 
-    def _pending(self, have):
+    def _pending(self, have, now=None):
         """With the lock held: the messages that would make the device match the table, in the drawn order."""
-        want = {**self._want, **self._over} if self._over else self._want
+        want = self._want
+        if self._flash and int((self._clock() if now is None else now) / FLASH_HALF) % 2:      # the dark half of a flash
+            want = dict(want)
+            want.update({k: self.lights["off"] for k in self._flash if k in want})
+        if self._over:
+            want = {**want, **self._over}
         return [(k, want[k]) for k in self.keys if k in want and have.get(k) != want[k]]
 
     def _write(self, fd, data):
@@ -1286,7 +1461,10 @@ class LightWriter:
                 last = now
                 with self._lock:
                     wait = self._advance(now)
-                    todo = self._pending(have)
+                    todo = self._pending(have, now)
+                    if self._flash:                     # wake for the next half of the flash, not a second from now
+                        beat = FLASH_HALF - now % FLASH_HALF + 0.005
+                        wait = beat if wait is None else min(wait, beat)
                 if tail:                                # what a full buffer cut off goes first, whole, before anything new
                     n = self._write(fd, tail)
                     tail = tail[n:]
@@ -1533,15 +1711,18 @@ class MidiHub:
     def _light_table(self, source, profile, level, snap, bank, phase, c):
         """({the two leading bytes of a light's message: its value}, {control id: its state}) for one controller."""
         lights, doing = profile["lights"], self._doing(source, profile, c)
-        table, states = {}, {}
+        table, states, flash = {}, {}, set()
         for ctl in profile["controls"]:
             if ctl["id"] not in lights["controls"]:
                 continue
             action = doing[ctl["id"]]
-            state = light_state(action, snap, bank)
-            table[light_message(lights, ctl, 0)[:2]] = light_value(lights, light_meaning(action), state, level, phase)
+            state, meaning = light_state(action, snap, bank), light_meaning(action)
+            key = light_message(lights, ctl, 0)[:2]
+            table[key] = light_value(lights, meaning, state, level, phase)
+            if light_flashes(lights, meaning, state, level):
+                flash.add(key)
             states[ctl["id"]] = state
-        return table, states
+        return table, states, flash
 
     @staticmethod
     def _light_keys(profile):
@@ -1614,8 +1795,8 @@ class MidiHub:
             return
         phase = int(now / (2 * LIGHT_TICK)) % 2
         for path, w, src, profile, level in live:
-            table, states = self._light_table(src, profile, level, snap, bank, phase, c)
-            w.show(table)
+            table, states, flash = self._light_table(src, profile, level, snap, bank, phase, c)
+            w.show(table, flash)
             self._lit[path] = states
 
     def _lights_loop(self, stop):
@@ -1734,6 +1915,8 @@ class MidiHub:
         try:
             if action == "opacity":
                 return float(self.api.mix["opacity"])
+            if action in ("size", "position", "position_y"):    # the mix in memory, as for the opacity
+                return float(self.api.mix[action])
             if action in ("shader_speed", "shader_brightness"):
                 playing = getattr(getattr(self.api, "shaders", None), "playing", None)
                 return float(playing["controls"][action[7:]]) if playing else None
@@ -1760,8 +1943,8 @@ class MidiHub:
                 e = validate_entry(e, keep_id=True)
             except MidiError:
                 continue
-            if profile is not None and e["source"] == source:
-                e["pickup"] = e["action"] in PICKUP          # the same soft takeover as the layout it replaces
+            # the same soft takeover as the layout it replaces, unless the mapping says "pickup" or "jump" itself
+            e["pickup"] = takes_over(e, profile is not None and e["source"] == source)
             mine.append(e)
         standard = []
         if profile is not None:
@@ -2022,14 +2205,14 @@ class MidiHub:
         for ctl in profile["controls"]:
             send = ctl["send"]
             key = (send["type"], send["number"])
-            item = {k: ctl[k] for k in ("id", "name", "row", "col", "kind", "send", "unverified")}
+            item = {k: ctl[k] for k in ("id", "name", "row", "col", "kind", "send", "unverified", "zone")}
             if key in mine:
                 e = mine[key]
-                item.update(action={k: e[k] for k in ("action", "bank", "index", "scene") if k in e}, guard=bool(e.get("guard")),
+                item.update(action={k: e[k] for k in ("action", "bank", "index", "scene") + OPTION_KEYS if k in e}, guard=bool(e.get("guard")),
                             origin="yours" if e["source"] == source else "any",      # "any": made for every controller; removed in the list
-                            pickup=out["standard"] and e["source"] == source and e["action"] in PICKUP)
+                            pickup=takes_over(e, out["standard"] and e["source"] == source))
             elif out["standard"] and ctl["action"] is not None:
-                item.update(action=dict(ctl["action"]), origin="standard", guard=ctl["guard"], pickup=ctl["action"]["action"] in PICKUP)
+                item.update(action=dict(ctl["action"]), origin="standard", guard=ctl["guard"], pickup=takes_over(ctl["action"], True))
             else:
                 item.update(action=None, origin=None, guard=False, pickup=False)
             item["standard"] = dict(ctl["action"]) if ctl["action"] is not None else None

@@ -118,6 +118,16 @@ class Fader:
             self.label = None
             return self._token
 
+    def take(self):
+        """Take the fader as `cancel` does, and say what its label was at that moment: (token, label). For the one
+        fade button, which must know whether the picture was going down or was down BEFORE it took the fader
+        (taking it clears the label), with nobody able to change the label between the look and the taking."""
+        with self._lock:
+            was = self.label
+            self._token += 1
+            self.label = None
+            return self._token, was
+
     def mark(self):
         """The token as it is now, to ask `current` with later: has anybody taken the fader since? Every wish for a
         level takes it (Blackout, the Opacity slider, a Reset, a Fade in, a Fade out, a ramp), so this is how
@@ -451,7 +461,9 @@ class Api:
             refused = None
         if isinstance(refused, dict) and refused.get("id") and refused.get("epoch") == getattr(self.player, "source_epoch", None):
             player["shader_refused"] = {"id": refused["id"], "message": refused.get("message", ""), "at": refused.get("at", "")}
-        return {"player": player, "mix": dict(self.mix, **self._mix_settings()),
+        # "fade": "out" while the operator's Fade out runs and while the screen is black from it, "in" while a fade
+        # in runs, else null: the one fade button flashes by it (D75). The fader's own label, read from memory.
+        return {"player": player, "mix": dict(self.mix, fade=getattr(self.fader, "label", None), **self._mix_settings()),
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner()}
@@ -1343,24 +1355,29 @@ class Api:
             self.mix["position_y"] = number(body, "value", -100, 100)
             self._player_call(p.position, self.mix["position"] * 10, self.mix["position_y"] * 10)
         elif action in ("flip_h", "flip_v"):
-            if not isinstance(body.get("value"), bool):
+            # "toggle" (a controller's button, D75): the other state, from the mix in memory
+            value = (not self.mix[action]) if body.get("value") == "toggle" else body.get("value")
+            if not isinstance(value, bool):
                 raise bad("value must be true or false")
-            self.mix[action] = body["value"]
-            self._player_call(p.flip, action == "flip_h", body["value"])
+            self.mix[action] = value
+            self._player_call(p.flip, action == "flip_h", value)
         elif action == "rotate":
+            if body.get("value") == "toggle":       # the next quarter turn, round and round
+                body = dict(body, value=(self.mix["rotate"] + 90) % 360)
             degrees = number(body, "value", 0, 270, integer=True)
             if degrees not in (0, 90, 180, 270):
                 raise bad("rotation must be 0, 90, 180 or 270")
             self.mix["rotate"] = degrees
             self._player_call(p.rotate, degrees)
-        elif action == "loop":
-            if not isinstance(body.get("value"), bool):
+        elif action in ("loop", "mute"):
+            value = body.get("value")
+            if value == "toggle":                   # the other state: the player is asked what it has (one question)
+                st = self._player_call(p.status)
+                value = (not st.get("muted")) if action == "mute" else \
+                    not ((st.get("loop_file") or "no") != "no" or (st.get("loop_playlist") or "no") != "no")
+            if not isinstance(value, bool):
                 raise bad("value must be true or false")
-            self._player_call(p.loop, body["value"])
-        elif action == "mute":
-            if not isinstance(body.get("value"), bool):
-                raise bad("value must be true or false")
-            self._player_call(p.mute, body["value"])
+            self._player_call(p.loop if action == "loop" else p.mute, value)
         elif action == "stop":
             self._stop_screen()
             self._stop_capture()
@@ -1441,6 +1458,31 @@ class Api:
             self._apply_opacity(0)
             self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
         return {"ok": True}
+
+    def fade(self, body, device, client):
+        """The one fade button (D75): fades out, and at the next press in. Which of the two is decided here, from what
+        the screen is doing, not from a count of presses, so it stays right when a fade was started somewhere else
+        (the old two calls, a controller, OSC, a Room scene), when Blackout was used and when a play brought the
+        picture back. The picture is DOWN when the operator's Fade out is on (its ramp runs, or the screen is black
+        from it: the fader's label is "out") or when Blackout is on; then this fades in, which also ends the
+        Blackout, as Fade in always did. Otherwise it fades out. Answers which it did.
+        The look and the taking of the fader are one step (Fader.take), and the decision is made again inside the
+        lock a level is written under if somebody took the fader in between: the newest wish is the one judged."""
+        seconds = number(body, "seconds", 0.1, 30) if "seconds" in body else 2.0
+        self._player_call(self.player.status)
+        self.transitions.end()
+        mark, was = self.fader.take()           # before the lock, as the other wishes for a level do; `was` is kept
+        with self._levels():
+            if not self.fader.current(mark):    # somebody was quicker: judge what they left
+                was = getattr(self.fader, "label", None)
+            down = was == "out" or self.mix["blackout"]
+            if down:
+                self.mix["blackout"] = False
+                self._apply_opacity(0)
+                self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
+            else:
+                self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
+        return {"ok": True, "fade": "in" if down else "out"}
 
     def test_tone(self, body, device, client):
         """5 seconds of a 440 Hz tone on the left, the right or both speakers, through the chosen sound output."""
@@ -1669,6 +1711,8 @@ class Api:
     def test_pattern(self, body, device, client):
         """Show colour bars (for lining up a projector), or stop them. They come from the player itself, no file."""
         on = body.get("on")
+        if on == "toggle":                          # a controller's button (D75): off if the bars are on, else on
+            on = self._player_call(self.player.status).get("path") != self.player.TEST_PATTERN
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         if not on:
@@ -2015,6 +2059,8 @@ class Api:
             if f != "" and (not valid_name(f) or not f.lower().endswith(".png")):
                 raise bad("choose a PNG picture from the media folder")
             cfg["file"] = f
+        if body.get("toggle") is True and "on" not in body:     # a controller's button (D75): the other state
+            body = dict(body, on=not cfg["on"])
         if "on" in body:
             if not isinstance(body["on"], bool):
                 raise bad("on must be true or false")
@@ -2886,6 +2932,7 @@ class Api:
             ("POST", "/api/blackout"): ("live", self.blackout),
             ("POST", "/api/fadeout"): ("live", self.fadeout),
             ("POST", "/api/fadein"): ("live", self.fadein),
+            ("POST", "/api/fade"): ("live", self.fade),
             ("POST", "/api/testpattern"): ("live", self.test_pattern),
             ("POST", "/api/testtone"): ("live", self.test_tone),
             ("POST", "/api/media/info"): ("view", self.media_info),
