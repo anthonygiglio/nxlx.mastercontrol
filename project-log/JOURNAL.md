@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-10 (the three features on the test Pi; master with the owner PIN and Log out merged in)
+
+- **On the test Pi 4 since 09:00 UTC:** this branch at `c57218f` (crossfades with wipes and slides, shaders on pads, an effect over a shader), after the owner said to deploy the best reviewed version. Installed through `pvj-dev` with `install.sh --offline`; four files compared by hash, the five services active, `pvj-selftest` with no failed check. The panel and the player restarted, so the pairing PIN changed. **Nobody has watched the monitor**, and shaders on pads and effects over shaders have never been used on a board.
+- **Master merged in** (`aa70085`, pull request #117, D77: a full-access device can read the owner PIN from People and codes, and every device can log itself out). Only the three log files conflicted; both sides are kept. The auth, PIN and logout, server, shader pad and pad-with-effect tests pass on the merged tree on the dev Mac. Not yet on the box.
+- **The owner's answers of that night** (from his brief): the one-second standing still before a crossfade at 2560 x 1440 is not acceptable, a faster way is to be looked for (his lead: work at a lower size and scale up); the Mapping screen of the Area desks branch must be at least the live one with more room before that branch merges.
+
+## 2026-10-10, the owner PIN from the panel and Log out (`pin-and-logout`, D77)
+
+Branch `pin-and-logout`, one pull request, not merged. The owner asked, as urgent, to see the Owner PIN from the panel when logged in as an owner, and for logouts. A first session was cut off by the usage limit with the work half done and kept as a WIP commit; this session read it as a reviewer, kept the server side (`POST /api/pin/show` for full access only, refused through remote support twice, rate limited per device, one journal line per answer without the PIN; `POST /api/logout` for every role, idempotent, the cookie expired with the attributes it was set with; a support login's logout forgets that token only), removed the "Log out every device" button the WIP had added without being asked, and let the last full-access device log out even when the panel does not know the PIN (it offers New PIN first or logging out anyway). Owner: Show, Copy and New PIN on People and codes, and Log out on the own row of Paired devices; presenter and guest: Log out on About and power. D77 has each choice with its reason, and what seeing the PIN newly allows (a stolen full-access cookie learns the PIN quietly; the journal line is the notice that remains).
+
+Tests: `tests/test_pin_and_logout.py` (the route per role, a support session, the PIN unknown, the headers, the rate limit, the journal line, the PIN in no other GET, the diagnostics file or an export, logout per role with the cookie, a second press, no request header, a removed device, the last owner and the PIN screen returning, the body ignored), two in `test_auth.py`, and the browser steps (Show, hidden by itself, Copy, Log out and its question at 320 px; a guest's Log out for real). All 15 Python tests were seen to fail against master's server code. On the Mac: `test_auth`, `test_pin_and_logout` and `test_server` pass; the whole suite as noted in the pull request. Nothing ran on the box.
+
 ## 2026-10-09, the night (#113 with the shaders on pads merged in: the two features used together for the first time)
 
 Branch `effect-over-shader`, pull request #113, a draft, now stacked on #114 (`shader-pads`, D73) as well as on #111, and to merge after both. `origin/shader-pads` at 8f54af2 was merged in, never rebased. **Nothing was run on hardware.**

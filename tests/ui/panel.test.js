@@ -1511,6 +1511,31 @@ function startServer() {
     assert.deepStrictEqual(await page.$$eval('#linkrole option', (os) => os.map((o) => o.textContent)), ['Guest (can watch)', 'Presenter (can play and mix)'], 'the link roles, in the one vocabulary');
     assert(/Owner \(everything\)/.test(await page.textContent('#devicescard')), 'this device is named Owner (everything) in the list');
     assert(!/watch only|View only|\(play and mix\)/.test(await page.textContent('#sysbody')), 'no other names for the roles on People and codes: ' + await page.textContent('#sysbody'));
+    // The owner PIN (D77): not on the screen until Show, then the box's own PIN, gone again by itself; Copy; this
+    // device marked in the list with Log out, whose question (as the last owner device) shows the PIN; all of it
+    // at 320 px without anything leaving its card.
+    assert.strictEqual(await page.inputValue('#pinvalue'), '', 'the PIN is not on the screen until asked for');
+    assert(!(await page.textContent('#devicescard')).includes(info.pin), 'and nowhere else on the card');
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.click('#showpin');
+    await page.waitForFunction((pin) => document.getElementById('pinvalue').value === pin, info.pin);
+    await fitsOn(page, 'People and codes at 320 with the PIN shown');
+    await page.waitForFunction(() => document.getElementById('pinvalue').value === '', null, { timeout: 25000 });      // gone by itself
+    await page.click('#copypin');
+    await page.waitForFunction(() => /copied|copy it/.test(document.getElementById('msg').textContent));
+    assert(/this device/.test(await page.textContent('#devicelist')), 'this device is marked in the list');
+    const owners = (await get('/api/devices')).devices.filter((d) => d.role === 'full').length;
+    await page.click('#logoutbtn');
+    await page.waitForSelector('#devicescard #confirmrow');
+    const askedOut = await page.textContent('#confirmrow');
+    if (owners === 1) assert(/last device with everything allowed/.test(askedOut) && askedOut.includes('The PIN to pair again is ' + info.pin), 'the last owner device is told the PIN before it logs out: ' + askedOut);
+    else assert(/need the PIN/.test(askedOut) && !askedOut.includes(info.pin), 'with another owner device paired the question is plain: ' + askedOut);
+    await fitsOn(page, 'People and codes at 320 with the Log out question open');
+    await page.click('#confirmno');
+    await page.waitForSelector('#logoutbtn');
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert((await get('/api/status')).device, 'Stay logs nothing out');
+    await page.waitForSelector('#showpin');
     // A code from a controller (D61): off on a new box; a question in place before it goes on; the full access kind is
     // a second switch that is only there once the first is on; off applies at once and takes the second with it. The
     // card never holds a code: only a hold on a controller makes one, and this test has no controller on this page.
@@ -1642,7 +1667,7 @@ function startServer() {
     assert.strictEqual(await guest.locator('#powercard, #sysswitch, #setclock, #rebootbtn, #poweroffbtn, #restartplayer').count(), 0, 'a guest gets no power action');
     assert(!/Vitals/.test(await guest.textContent('#sysbody')), 'no second card repeating the board and the player');
     await guest.click('#forgetdevice');
-    await guest.waitForSelector('#confirmrow:has-text("Leave this panel on this phone? You will need a code or the PIN to get back in.")');
+    await guest.waitForSelector('#confirmrow:has-text("Log out on this phone? The box forgets it. You will need a code, a link or the PIN to get back in.")');
     await guest.click('#confirmno');
     await guest.waitForSelector('#forgetdevice');
 
@@ -1797,6 +1822,21 @@ function startServer() {
     await guest.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
     assert(/Vibes is playing/.test(await guest.textContent('#shaderline')), 'a guest sees that Vibes is playing');
     assert.strictEqual(await guest.locator('#shaderpage button, #shaderpage input[type=range], #vibesdwell, #shaderheight, #sysswitch').count(), 0, 'a guest gets nothing to press on the Shaders page (only the filter of the list)');
+    // Log out (D77), from the guest's own page: the box forgets the device, the cookie is gone (a reload stays on
+    // the pairing screen) and the owner's list is one shorter.
+    const devicesBefore = (await get('/api/devices')).devices.length;
+    await guest.click('#sysback');
+    await guest.click('nav >> text=System');
+    await guest.click('.navrow:has-text("About and power")');
+    await guest.waitForSelector('#forgetdevice');
+    await guest.click('#forgetdevice');
+    await guest.waitForSelector('#confirmrow');
+    await guest.click('#confirmyes');
+    await guest.waitForSelector('#pairbtn');
+    await guest.reload();
+    await guest.waitForSelector('#pairbtn');
+    assert.strictEqual(await guest.evaluate(() => fetch('/api/status').then((r) => r.status)), 401, 'the guest\'s cookie is gone after Log out');
+    assert.strictEqual((await get('/api/devices')).devices.length, devicesBefore - 1, 'the guest\'s device is gone from the owner\'s list');
     await page.click('#sysback');
     await page.waitForSelector('.pads');
     assert.strictEqual(await page.textContent('nav button[aria-current="page"]'), 'Live', 'Back from the Shaders page returns to Live');

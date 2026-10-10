@@ -22,7 +22,7 @@ Open `http://<address of the box>/` in a browser. The box makes a new four digit
 
 ![Connect screen](images/ui/connect.png)
 
-A paired phone is remembered until you remove it. A wrong PIN is throttled. If someone locks new pairing by guessing, a paired full-access device clears it with **New PIN** in System.
+A paired phone is remembered until you remove it or it logs out (a presenter or a guest under System > About and power, **Log out**; an owner on its own row under Paired devices). A wrong PIN is throttled. If someone locks new pairing by guessing, a paired full-access device clears it with **New PIN** in System.
 
 There are three kinds of access, and the panel uses these names for them everywhere: **Guest (can watch)**, **Presenter (can play and mix)** and **Owner (everything)**: pads, modules, files, settings and who may come in. (In the API and the settings file they are `view`, `live` and `full`.)
 
@@ -39,6 +39,8 @@ For a studio or a gig, open System > People and codes. The first card is **Let s
 - The panel answers only to its IP addresses, `localhost`, its own name and `<name>.local`. To use another name (a studio DNS name), add it to `PVJ_ALLOWED_HOSTS` in `/etc/pvj/pvj.env` (comma separated). This stops a web page elsewhere from driving the panel through a visitor's browser (DNS rebinding).
 - **Print access sheet** prints a page to pin up: a QR code for the panel address (no access in it; people still need a code), and the current guest and presenter codes.
 - Under **Paired devices**, **Create link** makes a link for a guest or a presenter that does not expire (until you remove its device from the list), with its QR code; hand it to a resident operator.
+- Under **Paired devices** your own device is marked "this device" and has **Log out** instead of Remove; it asks first. If it is the last device with everything allowed, the question says that nobody can then read the PIN from a panel and shows the PIN you will need to pair again (the box also draws it on its display while nothing is paired, and `sudo pvj-pin` prints it).
+- **The Owner (everything) PIN** is on the same card, hidden until you press **Show**: it is on the screen for 12 seconds and then goes by itself, and it goes when you leave the page, so mind a projector or a stream. **Copy** copies it (on plain http the panel may ask you to select it and copy it yourself). **New PIN** makes a new one and shows it the same way. The box counts how often the PIN is shown (ten times in five minutes per device, then it asks you to wait) and writes a line in its journal for each, without the PIN. A panel that was started without making a new PIN knows only a check value of it: it says so and offers New PIN. Only a full-access device sees any of this; a presenter, a guest and remote support are refused by the box, not only by the page.
 
 **How many, and for how long.** A phone that joined with a guest code is forgotten once it has not opened the panel for 7 days; it joins again with a new code. Phones paired with the PIN, with a link or with a presenter code stay until you remove them. The box keeps at most 200 paired devices, and 20 of those places are only for devices paired with the PIN, so however many guests have joined, the owner can always pair another phone. When the list is full for guests, joining says so; remove some under Paired devices.
 
@@ -211,7 +213,7 @@ Each row says how it is doing, with one word and a sentence:
 
 **The same on every page.** Every field has its name above it and, where it helps, a line of help below. A list (projectors, schedule entries, streams) has one row per thing: its name, one line that says how it is, a red line when something is wrong, one main button, and **More** for everything else, with Remove last. **+ Add a ...** opens the form in place; it is already open while the list is empty. **Every Remove, and everything that changes what the room sees or locks someone out, asks first, in place**, naming the thing and what happens; the question goes away by itself after 8 seconds. The panel never opens a browser dialog. On a laptop (from about 900 px) the pages with a lot on them use two columns: the list on the left, scrolling by itself, and its form beside it.
 
-A presenter sees only Health, Projectors, Shaders and Vibes, People and codes (to let a guest in), Sound, Streams, Boxes in step and About and power (and only the modules that are on); a guest sees Health, About and power, and Shaders and Vibes while that is on (to see what is playing). Modules that are not built yet are listed at the bottom, folded, with no switches.
+A presenter sees only Health, Projectors, Shaders and Vibes, People and codes (to let a guest in), Sound, Streams, Boxes in step and About and power (and only the modules that are on); a guest sees Health, About and power, and Shaders and Vibes while that is on (to see what is playing). Both log out on About and power (**Log out**, under This phone): the box forgets the device and the pairing screen comes back. Modules that are not built yet are listed at the bottom, folded, with no switches.
 
 | What | Where to read |
 | --- | --- |

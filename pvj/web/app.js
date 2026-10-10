@@ -1634,6 +1634,19 @@
   }
   // A card that redraws by itself waits while a question is open in it, so the question is not wiped.
   function asking(el) { return !!(el && el.querySelector('#confirmrow')); }
+  // Log out (D77), for every role: the question in place, then the box forgets this device's token and answers
+  // with the cookie expired, and the page goes back to the pairing screen. A support login's token is forgotten
+  // the same way; its session goes on. A token the owner removed meanwhile gets the same answer, so the page ends
+  // up logged out either way.
+  function logOutHere(control, question) {
+    confirmRow(question, 'Log out', 'Stay', function () {
+      api('POST', '/api/logout', {}).then(function (r) {
+        if (!r.ok) return say(r.data.error || 'Could not log out.', true);
+        S.device = null; S.devices = []; S.token = null; S.landing = true;
+        render();
+      });
+    }, control);
+  }
   // A card that is rebuilt whole must not take the cursor from the person using it. rebuild() runs in between; the
   // control that had the cursor is found again by its id and gets the cursor back. (An answer from the box can
   // arrive while a name is being typed: without this the keyboard closed, and the letters typed after it went
@@ -1798,8 +1811,8 @@
     } else {
       cards.push(h('div', { class: 'card', id: 'forgetcard' }, h('h2', { text: 'This phone' }),
         h('div', { class: 'hint', text: S.device ? S.device.name + ', ' + roleName(S.device.role) : '' }),
-        h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'forgetdevice', text: 'Leave this panel', onclick: function (e) {
-          confirmRow('Leave this panel on this phone? You will need a code or the PIN to get back in.', 'Leave', 'Stay', function () { S.device = null; render(); }, e.currentTarget);
+        h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'forgetdevice', text: 'Log out', onclick: function (e) {
+          logOutHere(e.currentTarget, 'Log out on this phone? The box forgets it. You will need a code, a link or the PIN to get back in.');
         } }))));
     }
     return cards;
@@ -3798,6 +3811,7 @@
   // One vocabulary for the three kinds of access, wherever the panel names them.
   function roleName(r) { return r === 'view' ? 'Guest (can watch)' : r === 'live' ? 'Presenter (can play and mix)' : 'Owner (everything)'; }
   var JOIN_MINUTES = [[15, '15 minutes'], [60, '1 hour'], [120, '2 hours']];       // how long a new code works; what a presenter may choose (auth.py)
+  var PIN_SHOW_MS = 12000;         // how long the owner PIN stays on the screen after Show (D77)
   var SHOW_SECONDS = [[60, '1 minute'], [300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour']];
   // "Let someone in": codes people join with, and putting them on the room screen. `all`: the owner's page, with the
   // presenter code and the PIN too. Without it only the guest code, which is all a presenter may handle (the server
@@ -3973,21 +3987,68 @@
     if (!full) return [first];
     var card = h('div', { class: 'card', id: 'devicescard' }, h('h2', { text: 'Paired devices' }));
     var devices = h('div', { class: 'list sp', id: 'devicelist' });
+    var pinOut = h('div', { class: 'msg inmsg', id: 'pinout', role: 'status' });
+    // The owner PIN (D77): never on the screen until Show is pressed (a laptop may be on a projector or a stream),
+    // gone again by itself and with the page. Each Show, Copy and the Log out question below asks the box for it
+    // again; the box counts those and writes a journal line for each, so nothing is kept here.
+    var pinField = h('input', { class: 'text-input mono', id: 'pinvalue', readonly: true, 'aria-label': 'Owner PIN', placeholder: '····', value: '' });
+    var pinHide = null;
+    function hidePin() { clearTimeout(pinHide); pinField.value = ''; }
+    function showPin(pin) { pinField.value = pin; pinOut.textContent = ''; clearTimeout(pinHide); pinHide = setTimeout(function () { if (pinField.isConnected) hidePin(); }, PIN_SHOW_MS); }
+    var UNKNOWN = 'This panel has not known the PIN since the box started (it keeps only a check value of it). New PIN makes one and shows it here; sudo pvj-pin on the box prints the current one.';
+    // Asks the box for the PIN; `then(pin)` with it, or `unknown()` (by default a note under the field) when this
+    // run of the panel does not know it. An error (the rate limit, a stale device) is said in the message line.
+    function withPin(then, unknown) {
+      api('POST', '/api/pin/show', {}).then(function (r) {
+        if (!pinField.isConnected) return;
+        if (!r.ok) return say(r.data.error || 'The PIN could not be read.', true);
+        if (!r.data.known) { hidePin(); return (unknown || function () { pinOut.textContent = UNKNOWN; })(); }
+        then(r.data.pin);
+      });
+    }
+    function copyPin(pin) {
+      showPin(pin);              // the plain-http panel has no clipboard API: copy from the field itself
+      pinField.focus();
+      pinField.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      if (ok) { hidePin(); return say('The PIN is copied.'); }
+      (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(pin) : Promise.reject()).then(function () { hidePin(); say('The PIN is copied.'); },
+        function () { say('Select the PIN and copy it.'); });
+    }
+    // Before this device logs out: with another full-access device paired, a plain question; as the last one, the
+    // question shows the PIN it will need to pair again (or, when the panel does not know it, offers New PIN first),
+    // and reminds that the box draws it on its display while nothing is paired. Never forbidden: sudo pvj-pin is on
+    // the box. The PIN in the question is asked from the box like a Show: counted and in the journal.
+    function ownQuestion(then) {
+      api('GET', '/api/devices').then(function (r) {
+        if (r.ok) S.devices = r.data.devices;          // read again: another owner device may have logged out meanwhile (no redraw: the pressed button stays)
+        var others = S.devices.filter(function (x) { return x.role === 'full' && !(S.device && x.id === S.device.id); }).length;
+        if (others) return then('Log out on this device? The box forgets it. You will need the PIN to get back in.');
+        var last = 'This is the last device with everything allowed. Once it logs out nobody can read the PIN from a panel. ';
+        withPin(function (pin) {
+          then(last + 'The PIN to pair again is ' + pin + '. The box also draws it on its display while nothing is paired, and sudo pvj-pin prints it.');
+        }, function () {
+          then(last + 'This panel does not know the PIN: press Stay and New PIN to get one first, or log out anyway. The box draws the PIN on its display while nothing is paired, and sudo pvj-pin prints it.');
+        });
+      });
+    }
     function drawDevices() {
       devices.textContent = '';
       S.devices.forEach(function (d) {
         var me = !!S.device && d.id === S.device.id;
-        devices.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role) + (me ? ' · this phone' : ''),
-          primary: h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function (e) {
-            confirmRow(me ? 'Remove this phone? You will need the PIN to get back in.' : 'Remove ' + d.name + '? It needs a code, a link or the PIN to get back in.',
-              'Remove', 'Keep it', function () {
-                act('POST', '/api/devices/revoke', { id: d.id }, function () {
-                  S.devices = S.devices.filter(function (x) { return x.id !== d.id; });
-                  if (me) { S.device = null; return render(); }
-                  say(d.name + ' is removed.');
-                  drawDevices();
-                });
-              }, e.currentTarget);
+        devices.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role) + (me ? ' · this device' : ''),
+          primary: me ? h('button', { class: 'btn plain', id: 'logoutbtn', text: 'Log out', 'aria-label': 'Log out this device', onclick: function (e) {
+            var control = e.currentTarget;
+            ownQuestion(function (question) { if (control.isConnected) logOutHere(control, question); });
+          } }) : h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function (e) {
+            confirmRow('Remove ' + d.name + '? It needs a code, a link or the PIN to get back in.', 'Remove', 'Keep it', function () {
+              act('POST', '/api/devices/revoke', { id: d.id }, function () {
+                S.devices = S.devices.filter(function (x) { return x.id !== d.id; });
+                say(d.name + ' is removed.');
+                drawDevices();
+              });
+            }, e.currentTarget);
           } }) }));
       });
     }
@@ -3995,7 +4056,6 @@
     var link = h('input', { class: 'text-input mono', readonly: true, 'aria-label': 'Link', hidden: true });
     var linkQr = h('img', { class: 'qr', id: 'linkqr', alt: 'QR code for the link', hidden: true });
     var role = h('select', { class: 'text-input', id: 'linkrole' }, h('option', { value: 'view', text: roleName('view') }), h('option', { value: 'live', text: roleName('live') }));
-    var pinOut = h('div', { class: 'msg inmsg mono', id: 'pinout', role: 'status' });
     card.appendChild(devices);
     card.appendChild(labelled('A link that does not expire', role, 'For someone who is here often. It works until you remove its device from the list above.'));
     card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'makelink', text: 'Create link', onclick: function () {
@@ -4008,12 +4068,16 @@
     card.appendChild(link);
     card.appendChild(linkQr);
     card.appendChild(h('div', { class: 'field', text: 'The ' + roleName('full') + ' PIN' }));
-    card.appendChild(h('div', { class: 'hint', text: 'The PIN pairs a phone with everything allowed. It is on the box\'s display when nothing is paired.' }));
-    card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'newpin', text: 'New PIN', onclick: function (e) {
-      confirmRow('Make a new PIN? The old PIN stops working. Phones that are already paired stay paired.', 'New PIN', 'Keep the old one', function () {
-        act('POST', '/api/pin/rotate', {}, function (d) { pinOut.textContent = 'New PIN: ' + d.pin; say('The PIN is changed.'); });
-      }, e.currentTarget);
-    } })));
+    card.appendChild(h('div', { class: 'hint', text: 'The PIN pairs a phone with everything allowed. It is on the box\'s display when nothing is paired. Show puts it on this screen for a few seconds: mind a projector or a stream.' }));
+    card.appendChild(h('div', { class: 'row' }, pinField));
+    card.appendChild(h('div', { class: 'row wrap' },
+      h('button', { class: 'btn grow', id: 'showpin', text: 'Show', onclick: function () { withPin(function (pin) { showPin(pin); say('The PIN is on this screen for ' + Math.round(PIN_SHOW_MS / 1000) + ' seconds.'); }); } }),
+      h('button', { class: 'btn grow', id: 'copypin', text: 'Copy', onclick: function () { withPin(copyPin); } }),
+      h('button', { class: 'btn grow', id: 'newpin', text: 'New PIN', onclick: function (e) {
+        confirmRow('Make a new PIN? The old PIN stops working. Phones that are already paired stay paired.', 'New PIN', 'Keep the old one', function () {
+          act('POST', '/api/pin/rotate', {}, function (d) { showPin(d.pin); say('The PIN is changed. The new one is on this screen for ' + Math.round(PIN_SHOW_MS / 1000) + ' seconds.'); });
+        }, e.currentTarget);
+      } })));
     card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'unlockpair', text: 'Unblock joining', onclick: function () {
       act('POST', '/api/pin/unlock', {}, function () { pinOut.textContent = 'Joining is open again (the PIN is unchanged).'; say('Joining is open again.'); });
     } })));
