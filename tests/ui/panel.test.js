@@ -1491,7 +1491,7 @@ function startServer() {
     await page.waitForSelector('#logoutbtn');
     await page.setViewportSize({ width: 390, height: 844 });
     assert((await get('/api/status')).device, 'Stay logs nothing out');
-    await page.waitForSelector('#logoutall');
+    await page.waitForSelector('#showpin');
     // A code from a controller (D61): off on a new box; a question in place before it goes on; the full access kind is
     // a second switch that is only there once the first is on; off applies at once and takes the second with it. The
     // card never holds a code: only a hold on a controller makes one, and this test has no controller on this page.

@@ -1552,18 +1552,10 @@ class Api:
         """Log this device out (D77): its token is removed from the box, and the server clears the cookie (server.py
         does that for every 200 from here). Any role; a token that is already dead (removed by the owner, a second
         press) gets the same answer, so the client ends up logged out either way. A support login forgets its own
-        token only (support.logout). {"all": true}: a full-access device at the studio logs every device out, this
-        one too; the PIN screen then returns on the box's display when nothing plays (pinscreen.auto_wanted)."""
+        token only (support.logout). The last full-access device may log out: the PIN screen then returns on the
+        box's display when nothing plays (pinscreen.auto_wanted), and sudo pvj-pin prints the PIN."""
         if device is None:
             return {"ok": True, "ended": False}
-        if body.get("all") is True:
-            self.require(device, "full")
-            if device.get("remote"):
-                raise ApiError(403, "this cannot be done through remote support; ask someone at the studio")
-            n = len(self.settings.data["devices"])
-            self.auth.revoke_all()
-            self.log("pvj-web: every device (%d) logged out by device %s (%s) from %s" % (n, device["id"], device["name"], client))
-            return {"ok": True, "ended": True, "all": True}
         if device.get("remote"):
             self.support.logout(device)
         else:

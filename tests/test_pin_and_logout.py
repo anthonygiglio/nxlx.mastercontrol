@@ -180,18 +180,10 @@ class LogoutTest(ServerBase):
         self.assertTrue(pinscreen_mod.PinScreen(self.api, self.auth).auto_wanted())    # the way back in: the PIN on the display
         self.assertTrue(self.auth.pair(self.pin, "again", LAN)[0])                     # and the PIN still pairs
 
-    def test_log_out_every_device_is_the_owners_alone(self):
-        for token in (self.view, self.live):
-            st, body, _ = self.call("POST", "/api/logout", {"all": True}, token=token)
-            self.assertEqual(st, 403, body)
-        self.assertEqual(len(self.names()), 4)
-        st, body, r = self.call("POST", "/api/logout", {"all": True}, token=self.full)
-        self.assertEqual((st, body), (200, {"ok": True, "ended": True, "all": True}))
-        self.assertEqual(r.getheader("Set-Cookie"), EXPIRED)
-        self.assertEqual(self.auth.list_devices(), [])
-        for token in (self.full, self.full2, self.live, self.view):
-            self.assertEqual(self.call("GET", "/api/status", token=token)[0], 401)
-        self.assertTrue(any("every device (4) logged out" in line for line in self.lines))
+    def test_a_body_changes_nothing_only_this_device_is_logged_out(self):
+        st, body, _ = self.call("POST", "/api/logout", {"all": True, "id": "anything"}, token=self.view)
+        self.assertEqual((st, body), (200, {"ok": True, "ended": True}))
+        self.assertEqual(self.names(), ["owner laptop", "owner phone", "presenter"])
 
 
 class SupportSessionTest(SupportBase):
@@ -212,7 +204,7 @@ class SupportSessionTest(SupportBase):
         self.assertNotIn(self.pin, json.dumps(body))
         # nor can it make itself lasting access (what the guard already refused; kept here beside the new route)
         for path, body in ((("POST", "/api/pin/rotate"), {}), (("POST", "/api/devices/invite"), {"name": "x", "role": "live"}),
-                           (("POST", "/api/access/code"), {"role": "view"}), (("POST", "/api/logout"), {"all": True})):
+                           (("POST", "/api/access/code"), {"role": "view"}), (("POST", "/api/pin/unlock"), {})):
             self.assertEqual(self.h(path[0], path[1], body, dev, TUNNEL)[0], 403, path)
         self.assertEqual(len(self.auth.list_devices()), 2)
 
