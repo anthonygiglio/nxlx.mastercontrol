@@ -266,6 +266,15 @@ class Transitions:
     Beside them: `_held`, the token of the newest hold that began, and `_paused`, true while a hold has frozen the
     clip and nobody has thawed it; the hold named by `_held` owns that thaw."""
 
+    def _effect_on(self):
+        """The name of the effect that is on, from the effects' own memory (no question to the player, no lock), or
+        None. Only for the words of a give-up."""
+        try:
+            seen = self.api.effects._seen()
+            return seen["id"][:-3] if seen else None
+        except Exception:
+            return None
+
     def __init__(self, api, clock=time.monotonic, sleep=time.sleep, thread=True, log=None):
         self.api = api
         self._clock, self._sleep, self._thread = clock, sleep, thread
@@ -697,7 +706,14 @@ class Transitions:
             if seconds >= 0.5 and steps < MIN_RATE * seconds:
                 self._give_up("%d steps in %.1f seconds" % (steps, seconds))
             elif lost > MAX_DROPS * max(seconds, 1.0):
-                self._give_up("the clip dropped %d frames in %.1f seconds" % (lost, seconds))
+                # The frames are counted whatever dropped them: a blend that stutters falls back. But with an effect
+                # on (it stays on over the incoming clip, also out of a shader, D74) "the clip dropped" would blame
+                # the clip for what the effect may cost, and name nothing the operator can do: the reason says so.
+                fx = self._effect_on()
+                if fx:
+                    self._give_up("frames were dropping during the change with the effect %s on (%d in %.1f seconds); taking the effect off may help" % (fx, lost, seconds))
+                else:
+                    self._give_up("the clip dropped %d frames in %.1f seconds" % (lost, seconds))
         except Exception as e:
             # A player that went away or was restarted has lost the still with everything else: nothing to learn.
             # Any other failure of a step (no reply in time, a file that cannot be written) and the box gives up.

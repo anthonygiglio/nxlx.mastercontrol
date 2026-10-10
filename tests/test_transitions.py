@@ -888,6 +888,27 @@ class Crossfade(Base):
         self.assertEqual(self.tr.last["dropped"], 20)                # one at each step; the still itself came before the count
         self.assertIn("dropped 20 frames", self.tr.given_up)
 
+    def test_with_an_effect_on_the_give_up_names_the_effect_and_not_the_clip(self):
+        """An effect stays on over the incoming clip (also out of a shader, D74), and its cost is in the frames the
+        blend drops. The count is as before: a blend that stutters falls back. The words name what can be done."""
+        def drop():
+            self.player.props["frame-drop-count"] += 1
+        self.player.on_overlay = drop
+        fx = self.api.effects
+        fx.on = {"id": "fx-edge-glow.fs", "epoch": 4}               # the effects' own memory of what is on
+        self.player.effect_shader, self.player.effect_serial = "/run/effect-1-1.glsl", 4
+        self.play()
+        self.assertEqual(self.tr.last["dropped"], 20)
+        self.assertTrue(self.tr.given_up.startswith("frames were dropping during the change with the effect fx-edge-glow on (20 in 1.0 seconds); "
+                                                    "taking the effect off may help"), self.tr.given_up)
+        self.assertNotIn("the clip dropped", self.tr.given_up)
+        self.assertEqual(self.api.status({}, None, "t")["mix"]["fallback"], self.tr.given_up)      # what the line under the picker shows
+        # the effect off: the words are the ones before
+        fx.on, self.player.effect_shader = None, None
+        self.tr.given_up = ""
+        self.play()
+        self.assertIn("the clip dropped 20 frames", self.tr.given_up)
+
     def test_a_few_dropped_frames_are_no_reason(self):
         self.hook = lambda: self.player.props.update({"decoder-frame-drop-count": 3})
         self.play()

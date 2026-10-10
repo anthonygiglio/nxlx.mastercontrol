@@ -262,6 +262,55 @@ class Together(TE.OverShaderTest):
         self.assertIs(self.heavy_seconds(now, 4), True)                                # and then it is, across the change of pad
         self.assertEqual((self.shader(), self.kinds()), (TWO, ["shader"]))
 
+    def test_the_floor_judges_by_what_is_under_the_effect_at_that_look(self):
+        """A pair that has dropped frames for most of the floor's time, and then a clip takes the screen: the effect
+        is not taken off "over the shader" while a clip plays, nor while nothing with a picture can be seen."""
+        now = self.floor_clock()
+        for name, change in (("a clip", self.clip), ("no picture to be seen", lambda: setattr(self.mpv, "video", None))):
+            self.tap(0)
+            self.fx.put("fx-wash.fs")
+            self.assertIs(self.heavy_seconds(now, 22), False, name)
+            change()
+            self.assertIs(self.heavy_seconds(now, 6), False, name)
+            self.assertEqual((self.fx.on["id"], self.fx.last), ("fx-wash.fs", None), name)
+            self.clip()
+            self.api.control({"action": "stop"}, None, "t")
+
+    def test_a_pads_shader_taken_off_the_screen_takes_the_effects_text_with_it(self):
+        self.tap(0)
+        self.fx.put("fx-wash.fs")
+        self.assertEqual((self.kinds(), len(self.texts())), (["shader", "effect"], 1))
+        self.gen.off()                                                                 # as when Vibes is stopped or the module goes off
+        self.assertEqual((self.mpv.loaded, self.mpv.props["path"], self.texts()), ([], None, []))
+        self.assertEqual((self.state()["on"], self.state()["last"]), (None, "the shader under it was taken off the screen"))
+
+    def test_a_pads_shader_refused_while_a_clip_took_the_screen_says_what_is_on_the_screen(self):
+        """The GPU refuses the pad's shader; during its look a clip was played, which took the screen and keeps it.
+        The answer said "The screen is black." though the clip plays."""
+        named = [(p, level, t % ("nxlx shader %d %d" % (os.getpid(), self.gen._serial + 1)) if "%s" in t else t) for p, level, t in DUMP]
+
+        class During(GenTap):
+            def drain(tap, seconds):
+                if not tap.sent:
+                    self.player.play(["/media/b.mov"])                                 # a clip, tapped while the GPU looks
+                return GenTap.drain(tap, seconds)
+        self.gen._tap = During
+        GenTap.lines = named
+        with self.assertRaises(ApiError) as c:
+            self.tap(0)
+        GenTap.lines = []
+        self.assertIn("What was played meanwhile stays on the screen.", c.exception.message)
+        self.assertNotIn("black", c.exception.message)
+        self.assertEqual(self.mpv.props["path"], "/media/b.mov")
+        self.gen._tap = GenTap                                                         # and with nothing played meanwhile it is black, and says so
+        self.gen._refusals.clear()
+        self.api.control({"action": "stop"}, None, "t")
+        GenTap.lines = [(p, level, t % ("nxlx shader %d %d" % (os.getpid(), self.gen._serial + 1)) if "%s" in t else t) for p, level, t in DUMP]
+        with self.assertRaises(ApiError) as c:
+            self.tap(0)
+        GenTap.lines = []
+        self.assertIn("The screen is black.", c.exception.message)
+
     # -- the level --
     def test_a_pads_shader_comes_up_from_black_after_a_fade_out_with_the_effect_still_on(self):
         self.settings.data["mix"] = {"transition": "cut", "duration": 0.4}

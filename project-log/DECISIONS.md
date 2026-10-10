@@ -798,3 +798,9 @@ After the re-check of that round (2026-10-09, the second model, by probes; one h
 - **After a Fade out, a pad's shader comes up from black over half the Mix duration with the effect still on**, from the panel and from a controller.
 - **Both workers on their own threads**, pads and effect steps coming together: nothing hangs, the generator is always first in the list, the last wish of each kind is on; the lock checker saw nothing.
 
+After the second model's read of the combination (nothing high; the merge judged right; one medium, four low):
+
+- **A blend that gives up for dropped frames names the effect when one is on.** A crossfade out of a pad's shader keeps the effect on over the incoming clip, and a heavy effect made the first blend give up with "the clip dropped N frames", which blames the clip and names nothing to do; Try again failed again. The frames are still counted with an effect on (a blend that stutters falls back); only the reason changed: "frames were dropping during the change with the effect X on (N in S seconds); taking the effect off may help". It is in `pvj/transitions.py`, which is #111's file: three lines and a small reader of the effects' memory, written on this branch because only here can an effect be on out of a shader.
+- **A pad's shader refused while a clip took the screen** answers "What was played meanwhile stays on the screen.", not "The screen is black.".
+- **The floor judges by what is under the effect at that look.** With no picture to be seen the pair is not judged; a clip under it is no pair.
+

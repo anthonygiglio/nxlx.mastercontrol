@@ -1491,15 +1491,19 @@ class LiveEngine(S.Engine):
         if result is None:
             return None                             # the screen went to something else: it keeps it
         if not result["ok"]:
+            stopped = None
             if not result["showing"]:
-                self.off(result["epoch"])           # nothing to go back to: stop, which leaves the screen black
+                stopped = self.off(result["epoch"])     # nothing to go back to: stop, which leaves the screen black
             # For the Live page (Api.status, `shader_refused`): the refusal is news while the screen is as the
             # refusal left it. The player's epoch of now is kept with it; a clip, another shader, a Stop or Vibes
             # moves the epoch, and the line under the pads goes. (The Shaders page keeps `error` as before.)
             if self.error and self.error.get("id") == sid:
                 self.error = dict(self.error, epoch=self.api.player.source_epoch)
+            # What is true of the screen now: the shader before it, black (this stopped it), or whatever was played
+            # while the GPU was looking, which took the screen and keeps it.
             raise ApiError(422, "the player refused %s: %s. %s" % (
-                result["id"], result["error"], "The shader before it is back on." if result["showing"] else "The screen is black."))
+                result["id"], result["error"], "The shader before it is back on." if result["showing"]
+                else ("The screen is black." if stopped is not None else "What was played meanwhile stays on the screen.")))
         self._refusals.pop(self.playing["digest"] if self.playing else None, None)
         return result
 

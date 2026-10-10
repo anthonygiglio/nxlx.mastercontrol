@@ -1592,7 +1592,8 @@ class Effects(S.Engine):
                 if look:
                     self.changer.keep()
                     self.guard.sample(self._guarded(p))
-                    if self._floor(dict(p, under=state["under"])):
+                    # by what is under it at this look, not at the put: unknown (no picture now) is not "a shader"
+                    if self._floor(dict(p, under=self.under if seen else None)):
                         return False
                     # a frame rate that only wobbles, or that no line of this filter uses, is no reason for a new text
                     steady = steady_picture(state["picture"], p["picture"], parsed.get("clock"), self.estimated)
