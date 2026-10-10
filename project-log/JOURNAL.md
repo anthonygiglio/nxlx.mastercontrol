@@ -10,7 +10,11 @@ A re-check of the ninth read's answers by the second model found one high findin
 
 - **Now:** the duration is out of the rule. One slow still is used at every duration; two in a row and the box dips; one still over `HOPELESS` (3 seconds) and it dips at once. A test runs one slow still at each of 0.5, 1, 2 and 5 seconds, and the helper no longer changes the duration.
 - **Left as they are, from the same read (all low):** the give-up state is written without a lock from three places (a lost reset or a doubled "trying again" line at worst); the retry after five minutes is passive and a box that is truly too slow will freeze twice every five minutes while plays happen (a back-off would be kinder); a player restart does not start the count of slow stills again; Vibes forgets its own dip when it steps aside for a tapped clip, so if that clip then fails to load the old picture stays half dark until the next play; a second tap during the rise from black takes a still of a half-lit picture.
-- **Not run on hardware.** The Pi still has `cfcacc5`.
+- **On the test Pi afterwards** (the owner said "deploy the transitions to the pi"; `c436f5f` installed at 00:31 UTC on 2026-10-10 the same way as before, three files equal by hash, five services active, `pvj-selftest` with no failed check; the panel and the player restarted). Screen 2560 x 1440, the same two clips, nobody at the monitor:
+  - Crossfade at 1 s (the default), 0.5 s and 2 s, a wipe at 1 s and a slide at 2 s, three plays each: every play answered in 0.91 to 1.06 s, `mix.fallback` stayed empty, and the journal has no "the still took" line, so no still alone went over a second in fifteen plays. What a still alone takes there is still not known as a figure: `last.still_ms` is not in `GET /api/status`.
+  - Fade out, then a tap with Crossfade chosen: the play answered in 0.19 s (no still is taken from a dark screen); that the picture then rises from black was not seen.
+  - Blackout 0.25 s after a tap, so during the screenshot itself: answered in 0.25 s (X12's open number). Stop at the same moment: answered in 0.26 s and nothing played after (X11).
+  - Afterwards `/run/pvj/web` held only its three own files; the player did not restart.
 
 ## 2026-10-09, the evening (the ninth read of #111, by another model: the give-up rule)
 

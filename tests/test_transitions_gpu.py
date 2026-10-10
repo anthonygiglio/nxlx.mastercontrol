@@ -20,6 +20,7 @@ import time
 import unittest
 
 from pvj import transitions as T
+from pvj.player import PlayerError
 from tests.test_effects_gpu import CLIP, GPU, H, INVERT, ONLY, W, FxCase, differ, grid
 from tests.test_server import ServerBase
 from tests.test_transitions import png
@@ -50,7 +51,12 @@ class CrossCase(FxCase):
         self.real.play([url], windowed=True)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            t = self.real.ipc.request("get_property", "time-pos")
+            try:
+                t = self.real.ipc.request("get_property", "time-pos")
+            except PlayerError as e:        # right after a load the player has no position yet: not started, ask again
+                if "unavailable" not in str(e):
+                    raise
+                t = None
             if isinstance(t, (int, float)) and t > 0.2:
                 return
             time.sleep(0.05)
