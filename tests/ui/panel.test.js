@@ -2613,8 +2613,13 @@ function startServer() {
         await presenter.click(`.navrow:has(.navname:text-is("${name}"))`);
         await presenter.waitForSelector(marker);
         await fitsOn(presenter, `a presenter's ${name} page at ${width}`);
-        assert.strictEqual(await presenter.locator('#sysswitch, .addform, .addopen, .savebar, #powercard, #audiodev, #syncroles, #devicescard, #syspage button:text-is("Remove"), #syspage button:text-is("Edit")').count(), 0,
-          `nothing to set the box up with on a presenter's ${name} page`);
+        // An Operator (D80): the sound output is his, and so are the guests on People and codes (a card of its own, with Remove);
+        // nothing else on these pages sets the box up
+        assert.strictEqual(await presenter.locator('#sysswitch, .addform, .addopen, #powercard, #syncroles, #devicescard, #syspage button:text-is("Edit")').count(), 0,
+          `nothing to set the box up with on an operator's ${name} page`);
+        if (name !== 'Sound') assert.strictEqual(await presenter.locator('.savebar, #audiodev').count(), 0, `no setting to save on an operator's ${name} page`);
+        assert.strictEqual(await presenter.locator('#syspage button:text-is("Remove")').count(), await presenter.locator('#guestdevices button:text-is("Remove")').count(),
+          `Remove only for guests on an operator's ${name} page`);
         await presenter.click('#sysback');
         await presenter.waitForSelector('#sysindex');
       }
@@ -2663,7 +2668,7 @@ function startServer() {
       await fitsOn(page, "the owner's Room screen with the picture detail line");
       const staff = await open(tokens[0], 'ambience presenter');
       await staff.waitForSelector('#roomambset:visible');
-      assert.strictEqual(await staff.locator('#roomambdetail, #roomambuse').count(), 0, 'a presenter is not told about the picture detail');
+      assert.strictEqual(await staff.locator('#roomambdetail').count(), 1, 'the picture detail is the Operator\'s too since D80');
       await page.click('#roomambuse');
       await page.waitForFunction(() => document.getElementById('roomambdetail').hidden, null, { timeout: 15000 });
       assert.strictEqual((await get('/api/shaders')).config.height, usual, 'Use ' + usual + ' on Room applies on tap');
