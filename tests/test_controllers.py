@@ -44,10 +44,10 @@ class ProfileFilesTest(unittest.TestCase):
     def test_every_listed_control_maps_to_an_action_the_api_has(self):
         for p in PROFILES:
             entries = midi.profile_entries(p, "x")
-            self.assertEqual(len(entries), sum(c["action"] is not None for c in p["controls"]))
+            self.assertEqual(len(entries), sum(c["action"] is not None for c in p["controls"]) + sum(c["mapping"] is not None for c in p["controls"]))
             for e in entries:
                 self.assertIn(e["action"], midi.ACTIONS, p["id"])
-                clean = midi.validate_entry({k: v for k, v in e.items() if k not in ("id", "profile", "guard", "pickup")})
+                clean = midi.validate_entry({k: v for k, v in e.items() if k not in ("id", "profile", "guard", "pickup", "mode")})
                 self.assertEqual(clean["action"], e["action"])
             for c in p["controls"]:                                    # a fader or knob is followed, a button or pad is pressed
                 if c["action"]:
@@ -74,7 +74,8 @@ class ProfileFilesTest(unittest.TestCase):
             self.assertFalse({"flip_h", "flip_v", "test_pattern", "loop", "reset"} & set(names), p["id"])
         # the quarter turn is not beside the buttons that darken the screen: over Fade on the nanoKONTROL2 (R 6, beside
         # Fade, is spare), on the last Rec Arm button of the MIDI Mix (not on its Solo row)
-        self.assertEqual((control(NANO, "m7")["action"], control(NANO, "r6")["action"], control(NANO, "m8")["action"]), ({"action": "rotate"}, None, None))
+        self.assertEqual((control(NANO, "m7")["action"], control(NANO, "r6")["action"], control(NANO, "m8")["action"]),
+                         ({"action": "rotate"}, None, {"action": "mapping_mode"}))       # (M 8: mapping mode, press twice)
         self.assertEqual((control(NANO, "m7")["col"], control(NANO, "m7")["row"] + 1), (control(NANO, "r7")["col"], control(NANO, "r7")["row"]))
         self.assertEqual(control(MIX, "rec8")["action"], {"action": "rotate"})
         self.assertEqual([control(MIX, "solo%d" % n)["action"]["action"] for n in range(1, 9)],
@@ -926,7 +927,7 @@ class NoBlockingTest(Live):
         refused = sorted({(path, status) for (path, status) in answers if status != 200})
         # (404, since the layouts of D75 press the presets and the controls while the shader is still on: a preset
         # and an input that this shader does not have)
-        self.assertEqual(refused, [("/api/effects/values", 409), ("/api/overlay", 400), ("/api/play", 400),      # (the overlay: no picture was chosen)
+        self.assertEqual(refused, [("/api/effects/values", 409), ("/api/mapper/nudge", 409), ("/api/overlay", 400), ("/api/play", 400),      # (the overlay: no picture was chosen; mapping mode: its module is off)
                                    ("/api/room/scene", 409), ("/api/shaders/preset", 404), ("/api/shaders/preset", 409),
                                    ("/api/shaders/values", 404), ("/api/shaders/values", 409)], answers)
         for path in ("/api/effects", "/api/effects/step"):

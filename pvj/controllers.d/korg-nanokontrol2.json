@@ -7,12 +7,12 @@
   "sources": ["Korg nanoKONTROL2 Parameter Guide (E1): CC mode parameters, LED mode (p. 9), factory reset (p. 13); it has no table of factory CC numbers", "Mixxx controller mapping 'Korg nanoKONTROL 2.midi.xml' (secondary): faders 0 to 7, knobs 16 to 23, S 32 to 39, M 48 to 55, R 64 to 71, transport 41 to 62"],
   "layout": {"rows": 5, "cols": 13},
   "controls": [
-    {"id": "track_prev", "name": "Track <", "row": 0, "col": 0, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 58}, "action": {"action": "shader_prev"}, "zone": "shaders", "unverified": true},
-    {"id": "track_next", "name": "Track >", "row": 0, "col": 1, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 59}, "action": {"action": "shader_next"}, "zone": "shaders", "unverified": true},
-    {"id": "cycle", "name": "Cycle", "row": 1, "col": 0, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 46}, "action": {"action": "vibes"}, "zone": "shaders", "unverified": true},
-    {"id": "marker_set", "name": "Marker Set", "row": 1, "col": 2, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 60}, "action": {"action": "vibes_ambient"}, "zone": "shaders", "unverified": true},
-    {"id": "marker_prev", "name": "Marker <", "row": 1, "col": 3, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 61}, "action": {"action": "bank_prev"}, "zone": "pads", "unverified": true},
-    {"id": "marker_next", "name": "Marker >", "row": 1, "col": 4, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 62}, "action": {"action": "bank_next"}, "zone": "pads", "unverified": true},
+    {"id": "track_prev", "name": "Track <", "row": 0, "col": 0, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 58}, "action": {"action": "shader_prev"}, "zone": "shaders", "unverified": true, "mapping": {"action": "map_surface_prev"}},
+    {"id": "track_next", "name": "Track >", "row": 0, "col": 1, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 59}, "action": {"action": "shader_next"}, "zone": "shaders", "unverified": true, "mapping": {"action": "map_surface_next"}},
+    {"id": "cycle", "name": "Cycle", "row": 1, "col": 0, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 46}, "action": {"action": "vibes"}, "zone": "shaders", "unverified": true, "mapping": {"action": "map_step"}},
+    {"id": "marker_set", "name": "Marker Set", "row": 1, "col": 2, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 60}, "action": {"action": "vibes_ambient"}, "zone": "shaders", "unverified": true, "mapping": {"action": "map_undo"}},
+    {"id": "marker_prev", "name": "Marker <", "row": 1, "col": 3, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 61}, "action": {"action": "bank_prev"}, "zone": "pads", "unverified": true, "mapping": {"action": "map_corner_prev"}},
+    {"id": "marker_next", "name": "Marker >", "row": 1, "col": 4, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 62}, "action": {"action": "bank_next"}, "zone": "pads", "unverified": true, "mapping": {"action": "map_corner_next"}},
     {"id": "rewind", "name": "Rewind", "row": 2, "col": 0, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 43}, "action": {"action": "clip_prev"}, "zone": "clips", "unverified": true},
     {"id": "forward", "name": "Forward", "row": 2, "col": 1, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 44}, "action": {"action": "clip_next"}, "zone": "clips", "unverified": true},
     {"id": "stop", "name": "Stop", "row": 2, "col": 2, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 42}, "action": {"action": "stop"}, "zone": "screen", "unverified": true},
@@ -23,12 +23,12 @@
     {"id": "m1", "name": "M 1", "row": 2, "col": 5, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 48}, "action": {"action": "shader_preset_1"}, "zone": "shaders", "unverified": true},
     {"id": "r1", "name": "R 1", "row": 3, "col": 5, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 64}, "action": {"action": "scene_1"}, "guard": true, "zone": "room", "unverified": true},
     {"id": "fader1", "name": "Fader 1", "row": 4, "col": 5, "kind": "fader", "send": {"type": "cc", "channel": 0, "number": 0}, "action": {"action": "opacity"}, "zone": "picture", "unverified": true},
-    {"id": "knob2", "name": "Knob 2", "row": 0, "col": 6, "kind": "knob", "send": {"type": "cc", "channel": 0, "number": 17}, "action": {"action": "position"}, "zone": "picture", "unverified": true},
+    {"id": "knob2", "name": "Knob 2", "row": 0, "col": 6, "kind": "knob", "send": {"type": "cc", "channel": 0, "number": 17}, "action": {"action": "position"}, "zone": "picture", "unverified": true, "mapping": {"action": "map_x"}},
     {"id": "s2", "name": "S 2", "row": 1, "col": 6, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 33}, "action": {"action": "bank_pad", "index": 1}, "zone": "pads", "unverified": true},
     {"id": "m2", "name": "M 2", "row": 2, "col": 6, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 49}, "action": {"action": "shader_preset_2"}, "zone": "shaders", "unverified": true},
     {"id": "r2", "name": "R 2", "row": 3, "col": 6, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 65}, "action": {"action": "scene_2"}, "guard": true, "zone": "room", "unverified": true},
     {"id": "fader2", "name": "Fader 2", "row": 4, "col": 6, "kind": "fader", "send": {"type": "cc", "channel": 0, "number": 1}, "action": {"action": "volume"}, "zone": "sound", "unverified": true},
-    {"id": "knob3", "name": "Knob 3", "row": 0, "col": 7, "kind": "knob", "send": {"type": "cc", "channel": 0, "number": 18}, "action": {"action": "position_y"}, "zone": "picture", "unverified": true},
+    {"id": "knob3", "name": "Knob 3", "row": 0, "col": 7, "kind": "knob", "send": {"type": "cc", "channel": 0, "number": 18}, "action": {"action": "position_y"}, "zone": "picture", "unverified": true, "mapping": {"action": "map_y"}},
     {"id": "s3", "name": "S 3", "row": 1, "col": 7, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 34}, "action": {"action": "bank_pad", "index": 2}, "zone": "pads", "unverified": true},
     {"id": "m3", "name": "M 3", "row": 2, "col": 7, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 50}, "action": {"action": "shader_preset_3"}, "zone": "shaders", "unverified": true},
     {"id": "r3", "name": "R 3", "row": 3, "col": 7, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 66}, "action": {"action": "scene_3"}, "guard": true, "zone": "room", "unverified": true},
@@ -55,7 +55,7 @@
     {"id": "fader7", "name": "Fader 7", "row": 4, "col": 11, "kind": "fader", "send": {"type": "cc", "channel": 0, "number": 6}, "action": {"action": "effect_amount"}, "zone": "effects", "unverified": true},
     {"id": "knob8", "name": "Knob 8", "row": 0, "col": 12, "kind": "knob", "send": {"type": "cc", "channel": 0, "number": 23}, "action": {"action": "vibes_dwell"}, "zone": "shaders", "unverified": true},
     {"id": "s8", "name": "S 8", "row": 1, "col": 12, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 39}, "action": {"action": "bank_pad", "index": 7}, "zone": "pads", "unverified": true},
-    {"id": "m8", "name": "M 8", "row": 2, "col": 12, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 55}, "action": null, "unverified": true},
+    {"id": "m8", "name": "M 8", "row": 2, "col": 12, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 55}, "action": {"action": "mapping_mode"}, "guard": true, "zone": "picture", "unverified": true},
     {"id": "r8", "name": "R 8", "row": 3, "col": 12, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 71}, "action": {"action": "blackout"}, "guard": true, "zone": "screen", "unverified": true},
     {"id": "fader8", "name": "Fader 8", "row": 4, "col": 12, "kind": "fader", "send": {"type": "cc", "channel": 0, "number": 7}, "action": null, "unverified": true}
   ],
@@ -80,7 +80,8 @@
       "blackout": {"off": 0, "on": 0, "active": 127, "busy": 127},
       "fadeout": {"off": 0, "on": 0, "active": 127, "busy": 127},
       "fadein": {"off": 0, "on": 0, "active": 127, "busy": 127},
-      "fade": {"off": 0, "on": 0, "active": 127, "busy": 127}
+      "fade": {"off": 0, "on": 0, "active": 127, "busy": 127},
+      "mapping": {"off": 0, "on": 0, "active": 127, "busy": 127}
     },
     "controls": ["cycle", "rewind", "forward", "stop", "play", "rec", "s1", "m1", "r1", "s2", "m2", "r2", "s3", "m3", "r3", "s4", "m4", "r4", "s5", "m5", "r5", "s6", "m6", "r6", "s7", "m7", "r7", "s8", "m8", "r8"]
   }

@@ -22,6 +22,7 @@ import os
 import re
 import struct
 import threading
+import time
 import uuid
 
 from . import locks
@@ -670,6 +671,11 @@ def resample_grid(s, cols, rows):
 
 
 # ---- the engine: settings -> the player ---------------------------------------------------------------------------
+REMOTE_STEPS = (1, 10, 50)      # pixels a nudge from a controller moves: the panel's own three choices
+REMOTE_REACH = 200              # and the most one message may move a corner, whatever the step and the count
+REMOTE_SECONDS = 180.0          # mapping mode ends by itself this long after the last thing done in it
+
+
 class Engine:
     """Keeps the player's picture in step with settings["mapper"] and the edit state.
 
@@ -688,6 +694,9 @@ class Engine:
         self._apply_lock = locks.make("mapper.apply")  # the newest-change check and the switch, together
         self._job = None                       # the newest build waiting for the worker
         self._building = False
+        # Mapping mode from a controller (D75): see "from a controller" below. Guarded by `_lock`, a few fields.
+        self._remote = {"on": False, "until": 0.0, "step": REMOTE_STEPS[0], "last": None, "serial": 0}
+        self._remote_clock = time.monotonic
 
     @property
     def settings(self):
@@ -731,8 +740,170 @@ class Engine:
         with self._lock:
             status = dict(self.status)
         return {"enabled": self.enabled(), "on": cfg["on"], "screen": list(self.screen()), "surfaces": self.current(),
-                "sets": sorted(cfg["sets"]), "edit": dict(self.edit), "status": status,
+                "sets": sorted(cfg["sets"]), "edit": dict(self.edit), "status": status, "controllers": self.remote_state(),
                 "limits": {"surfaces": MAX_SURFACES, "cells": MAX_CELLS, "grid": MAX_GRID, "sets": MAX_SETS}}
+
+    # -- from a controller: mapping mode (D75) --
+    # The owner, 2026-10-10: "the controller can handle corner or point nudges once in that mode". Every change of the
+    # mapping needs a full-access device; a controller acts as a presenter. So the permission is the owner's own
+    # switch ("Controllers may adjust the mapping", set by full access only, off unless switched on, never taken
+    # from an imported settings file), and even with it nothing moves outside the MODE: a controller enters it on
+    # purpose, the display then shows the outlines with the chosen surface and corner marked (the panel's own "Edit
+    # on the display"), and it ends by the same button, by the switch going off, or by itself REMOTE_SECONDS after
+    # the last thing done in it. Blackout, Stop and a pad do NOT end it: lining up is done with something playing,
+    # and with the screen dark in between. Each nudge is the panel's own "move", through the same check of the
+    # whole mapping (a corner cannot be pushed until a surface folds), at most REMOTE_REACH pixels at a time.
+    def remote_allowed(self):
+        control = self.settings.data.get("control")
+        return isinstance(control, dict) and control.get("mapping") is True
+
+    def remote_on(self):
+        """Is mapping mode on now. Reads memory only: a controller's thread asks this for every message."""
+        r = self._remote
+        return bool(r["on"]) and self._remote_clock() < r["until"]
+
+    def remote_state(self):
+        with self._lock:
+            r = dict(self._remote)
+        on = bool(r["on"]) and self._remote_clock() < r["until"]
+        return {"allow": self.remote_allowed(), "mode": on, "step": r["step"], "undo": on and r["last"] is not None,
+                "seconds_left": max(0, int(r["until"] - self._remote_clock())) if on else 0}
+
+    def set_remote_allowed(self, allow):
+        """The owner's switch. Off also ends a mode that is on."""
+        if not isinstance(allow, bool):
+            raise MapperError("allow must be true or false")
+        with self.settings.lock:
+            control = self.settings.data.setdefault("control", {})
+            if allow:
+                control["mapping"] = True
+            else:
+                control.pop("mapping", None)
+            self.settings.save()
+        if not allow:
+            self._leave()
+        return self.state()
+
+    def _stay(self, serial=None):
+        """With `_lock` held by the caller: the mode lasts REMOTE_SECONDS from now."""
+        self._remote["until"] = self._remote_clock() + REMOTE_SECONDS
+
+    def _leave(self):
+        with self._lock:
+            was = self._remote["on"]
+            self._remote.update(on=False, until=0.0, last=None)
+            self._remote["serial"] += 1
+        if was and self.edit.get("on"):
+            try:
+                self.handle({"action": "edit", "on": False})        # the show picture is built again, as after the panel's edit
+            except Exception as e:
+                self.log("mapper: leaving mapping mode: %r" % (e,))
+        return was
+
+    def _expire(self, serial):
+        with self._lock:
+            mine = self._remote["serial"] == serial and self._remote["on"]
+            late = self._remote_clock() >= self._remote["until"]
+        if mine and late:
+            self._leave()
+        elif mine:                                  # something was done meanwhile: look again when it would be over
+            self._watch(serial)
+
+    def _watch(self, serial):
+        with self._lock:
+            wait = max(0.5, self._remote["until"] - self._remote_clock())
+        t = threading.Timer(wait, self._expire, (serial,))
+        t.daemon = True
+        t.start()
+
+    def remote(self, body):
+        """One thing a controller asks in or about mapping mode. Returns the state. Raises MapperError.
+        {"mode": true | false | "toggle"}; and only while the mode is on: {"surface": 1 | -1} and {"corner": 1 | -1}
+        (the next or the one before, round and round), {"steps": [x, y]} (so many of the chosen step, each -127 to
+        127), {"step": 1 | 10 | 50 | "next"}, {"undo": true}."""
+        if not isinstance(body, dict) or len(body) != 1:
+            raise MapperError("send one of mode, surface, corner, steps, step, undo")
+        if not self.remote_allowed():
+            self._leave()
+            raise MapperError("controllers may not adjust the mapping (the switch on the Mapping page is off)")
+        if "mode" in body:
+            want = body["mode"]
+            if want == "toggle":
+                want = not self.remote_on()
+            if not isinstance(want, bool):
+                raise MapperError("mode must be true or false")
+            if not want:
+                self._leave()
+                return self.state()
+            if not self.remote_on():
+                self.handle({"action": "edit", "on": True})         # the outlines, the chosen surface and corner marked
+                with self._lock:
+                    self._remote.update(on=True, last=None, step=REMOTE_STEPS[0])
+                    self._remote["serial"] += 1
+                    self._stay()
+                    serial = self._remote["serial"]
+                self._watch(serial)
+            return self.state()
+        if not self.remote_on():
+            raise MapperError("not in mapping mode")
+        surfaces = self.current()
+        chosen = next((s for s in surfaces if s["id"] == self.edit.get("selected")), None)
+        if "surface" in body or "corner" in body:
+            way = body.get("surface", body.get("corner"))
+            if way not in (1, -1) or isinstance(way, bool):
+                raise MapperError("1 for the next, -1 for the one before")
+            if not surfaces:
+                raise MapperError("there is no surface to choose")
+            if "surface" in body:
+                at = surfaces.index(chosen) if chosen else -1
+                self.handle({"action": "edit", "selected": surfaces[(at + way) % len(surfaces)]["id"]})
+            else:
+                if chosen is None:
+                    raise MapperError("choose a surface first")
+                self.handle({"action": "edit", "corner": (self.edit.get("corner", 0) + way) % len(chosen["vertices"])})
+            with self._lock:
+                self._remote["last"] = None             # an undo belongs to the corner it was made on
+                self._stay()
+            return self.state()
+        if "step" in body:
+            step = body["step"]
+            with self._lock:
+                if step == "next":
+                    step = REMOTE_STEPS[(REMOTE_STEPS.index(self._remote["step"]) + 1) % len(REMOTE_STEPS)]
+                if step not in REMOTE_STEPS or isinstance(step, bool):
+                    raise MapperError("step must be one of %s" % ", ".join(map(str, REMOTE_STEPS)))
+                self._remote["step"] = step
+                self._stay()
+            return self.state()
+        if "undo" in body:
+            if body["undo"] is not True:
+                raise MapperError("undo must be true")
+            with self._lock:
+                last, self._remote["last"] = self._remote["last"], None
+            if last is None:
+                raise MapperError("there is no nudge to undo")
+            self.handle(dict(last, action="move", dx=-last["dx"], dy=-last["dy"]))
+            with self._lock:
+                self._stay()
+            return self.state()
+        if "steps" in body:
+            steps = body["steps"]
+            if (not isinstance(steps, list) or len(steps) != 2
+                    or any(isinstance(v, bool) or not isinstance(v, int) or not -127 <= v <= 127 for v in steps)):
+                raise MapperError("steps must be two whole numbers from -127 to 127")
+            if chosen is None:
+                raise MapperError("choose a surface first")
+            with self._lock:
+                size = self._remote["step"]
+            dx = max(-REMOTE_REACH, min(REMOTE_REACH, steps[0] * size))
+            dy = max(-REMOTE_REACH, min(REMOTE_REACH, steps[1] * size))
+            move = {"id": chosen["id"], "corner": self.edit.get("corner", 0), "target": self.edit.get("target", "screen"), "dx": dx, "dy": dy}
+            self.handle(dict(move, action="move"))      # the panel's own move: the whole mapping is checked, or nothing is changed
+            with self._lock:
+                self._remote["last"] = move
+                self._stay()
+            return self.state()
+        raise MapperError("send one of mode, surface, corner, steps, step, undo")
 
     # -- writing to the player --
     def _write(self, text):

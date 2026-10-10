@@ -2227,6 +2227,32 @@ class Api:
         except mapper_mod.MapperError as e:
             raise bad(str(e))
 
+    def mapper_controllers(self, body, device, client):
+        """{"allow": true | false}: the owner's switch "Controllers may adjust the mapping" (full access)."""
+        from . import mapper as mapper_mod
+        if not self.registry.enabled("mapper"):
+            raise ApiError(409, "turn on the Projection mapper module in System first")
+        if set(body) != {"allow"}:
+            raise bad("send allow: true or false")
+        try:
+            return self.mapper.set_remote_allowed(body["allow"])
+        except mapper_mod.MapperError as e:
+            raise bad(str(e))
+
+    def mapper_nudge(self, body, device, client):
+        """Mapping mode from a controller (D75, pvj/mapper.py "from a controller"). Only a MIDI controller or OSC may
+        call it: the route is for presenters, and a presenter's phone must not get a way round the full access
+        that the Mapping screen asks for. It does nothing unless the owner's switch is on."""
+        from . import mapper as mapper_mod
+        if not (isinstance(device, dict) and device.get("id") in ("midi", "osc")):
+            raise ApiError(403, "only a controller uses this; the Mapping screen is for a full-access device")
+        if not self.registry.enabled("mapper"):
+            raise ApiError(409, "turn on the Projection mapper module in System first")
+        try:
+            return self.mapper.remote(body)
+        except mapper_mod.MapperError as e:
+            raise ApiError(409, str(e))
+
     def apply_mapper(self):
         """Put the mapping back on a player that restarted (it lost its shaders)."""
         self.mapper.apply()
@@ -3038,6 +3064,8 @@ class Api:
             ("POST", "/api/sync"): ("full", self.set_sync),
             ("GET", "/api/mapper"): ("view", self.get_mapper),
             ("POST", "/api/mapper"): ("full", self.set_mapper),
+            ("POST", "/api/mapper/remote"): ("full", self.mapper_controllers),
+            ("POST", "/api/mapper/nudge"): ("live", self.mapper_nudge),
             ("GET", "/api/shaders"): ("view", self.shaders.api_get),
             ("POST", "/api/shaders"): ("full", self.shaders.api_set),
             ("POST", "/api/shaders/play"): ("live", self.shader_play),

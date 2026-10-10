@@ -32,6 +32,17 @@ _PRESS = {
     "effect_next": ("/api/effects/step", {"dir": 1}), "effect_prev": ("/api/effects/step", {"dir": -1}),
     "effect_toggle": ("/api/effects", {"toggle": True}),
 }
+# Mapping mode (pvj/mapper.py, "from a controller"): entering and leaving it, and what works only inside it. The
+# box refuses every one of these unless the owner switched "Controllers may adjust the mapping" on.
+NUDGE = "/api/mapper/nudge"
+_PRESS.update({
+    "mapping_mode": (NUDGE, {"mode": "toggle"}),
+    "map_surface_next": (NUDGE, {"surface": 1}), "map_surface_prev": (NUDGE, {"surface": -1}),
+    "map_corner_next": (NUDGE, {"corner": 1}), "map_corner_prev": (NUDGE, {"corner": -1}),
+    "map_left": (NUDGE, {"steps": [-1, 0]}), "map_right": (NUDGE, {"steps": [1, 0]}),
+    "map_up": (NUDGE, {"steps": [0, -1]}), "map_down": (NUDGE, {"steps": [0, 1]}),
+    "map_step": (NUDGE, {"step": "next"}), "map_undo": (NUDGE, {"undo": True}),
+})
 for _n in range(1, SLOTS + 1):
     _PRESS["shader_preset_%d" % _n] = ("/api/shaders/preset", {"index": _n})
     _PRESS["shader_control_%d" % _n] = ("/api/shaders/values", {"control": _n, "press": True})
@@ -59,6 +70,11 @@ def level(name, value):
     if name == "effect_amount":
         return "/api/effects/values", {"controls": {"amount": round(value, 3)}}
     return None
+
+
+def nudge(axis, count):
+    """A knob turned in mapping mode: `count` steps along "x" or "y" for the chosen corner."""
+    return NUDGE, {"steps": [count, 0] if axis == "x" else [0, count]}
 
 
 def control(kind, n, value):

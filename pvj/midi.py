@@ -117,6 +117,14 @@ ACTIONS.update({
     "loop": ("trigger", None, None), "overlay": ("trigger", None, None), "test_pattern": ("trigger", None, None),
     "seek_back": ("trigger", -10, None), "seek_forward": ("trigger", 10, None),
 })
+# Mapping mode (D75; pvj/mapper.py, "from a controller"). One button enters and leaves it (press twice, as for
+# Blackout: it changes what other controls do). The others do something only while it is on; outside it the box
+# refuses them. "delta" is a knob that is followed by how far it is TURNED, not by where it stands: the chosen
+# corner moves a step for each step of the knob, and the first touch moves nothing.
+ACTIONS.update({a: ("trigger", None, None) for a in (
+    "mapping_mode", "map_surface_next", "map_surface_prev", "map_corner_next", "map_corner_prev",
+    "map_left", "map_right", "map_up", "map_down", "map_step", "map_undo")})
+ACTIONS.update({"map_x": ("delta", "x", None), "map_y": ("delta", "y", None)})
 # How a level follows a knob or fader: action -> (low, high, centre, curve). The second and third fields of ACTIONS
 # stay the WIDEST range a mapping may ask for with its own "min" and "max"; these are what a control gets when it
 # asks for nothing.
@@ -379,7 +387,7 @@ def validate_profile(p, stem=None):
         raise MidiError("controls must list 1 to %d controls" % MAX_CONTROLS)
     ids, cells, sends, controls = set(), set(), set(), []
     for c in p["controls"]:
-        _keys(c, "a control", ("id", "name", "row", "col", "kind", "send", "action"), ("guard", "unverified", "zone"))
+        _keys(c, "a control", ("id", "name", "row", "col", "kind", "send", "action"), ("guard", "unverified", "zone", "mapping"))
         if "zone" in c and c["zone"] not in ZONES:
             raise MidiError("a control's zone is one of: %s" % ", ".join(ZONES))
         if not isinstance(c["id"], str) or not CONTROL_ID.fullmatch(c["id"]) or c["id"] in ids:
@@ -410,19 +418,28 @@ def validate_profile(p, stem=None):
                 raise MidiError("%s: %s" % (what, e))
             if "scene" in action or "guard" in action or action["action"] == "none":
                 raise MidiError("%s: a profile cannot name a scene id or the action none, and its guard is the control's" % what)
-            level = ACTIONS[action["action"]][0] in ("level", "control")
+            level = ACTIONS[action["action"]][0] in ("level", "control", "delta")
             if c["kind"] in ("fader", "knob") and not level:
                 raise MidiError("%s: a fader or knob needs an action that follows it" % what)
-            if c["kind"] in ("button", "pad") and ACTIONS[action["action"]][0] == "level":
+            if c["kind"] in ("button", "pad") and ACTIONS[action["action"]][0] in ("level", "delta"):
                 raise MidiError("%s: a button or pad needs an action that is pressed" % what)
         for flag in ("guard", "unverified"):
             if flag in c and not isinstance(c[flag], bool):
                 raise MidiError("%s: %s must be true or false" % (what, flag))
         if c.get("guard") and (action is None or c["kind"] not in ("button", "pad")):
             raise MidiError("%s: only a button or pad with an action can be guarded" % what)
+        other = None                                # what the control does instead while mapping mode is on
+        if "mapping" in c:
+            try:
+                other = clean_action(c["mapping"], send["type"])
+            except MidiError as e:
+                raise MidiError("%s mapping: %s" % (what, e))
+            turned = ACTIONS[other["action"]][0] == "delta"
+            if not other["action"].startswith("map_") or turned != (c["kind"] in ("fader", "knob")) or len(other) != 1:
+                raise MidiError("%s: in mapping mode a button chooses, nudges or undoes, and a knob nudges" % what)
         controls.append({"id": c["id"], "name": _text(c["name"], what + " name", 24), "row": cell[0], "col": cell[1], "kind": c["kind"],
                          "send": send, "action": action, "guard": bool(c.get("guard")), "unverified": bool(c.get("unverified")),
-                         "zone": c.get("zone")})
+                         "zone": c.get("zone"), "mapping": other})
     out["controls"] = controls
     out["lights"] = validate_lights(p["lights"], controls) if "lights" in p else None      # see "lights" below
     return out
@@ -470,6 +487,9 @@ def profile_entries(profile, source):
     """A profile's default actions as map entries for the controller called `source`."""
     out = []
     for c in profile["controls"]:
+        if c.get("mapping"):                        # its other self, used only while mapping mode is on (MidiMapper.matching)
+            out.append(dict(c["mapping"], id="m:" + c["id"], source=source, kind=c["send"]["type"], channel=c["send"]["channel"],
+                            number=c["send"]["number"], profile=True, mode=True, guard=False, pickup=False))
         if c["action"] is None:
             continue
         e = dict(c["action"], id="p:" + c["id"], source=source, kind=c["send"]["type"], channel=c["send"]["channel"],
@@ -495,15 +515,15 @@ FLASH_HALF = 0.25           # seconds a writer-flashed light is on, then off: tw
 LIGHT_LEVELS = ("low", "medium", "high")
 # what a light can be about; which one a control shows follows from what the control does (light_meaning)
 LIGHT_MEANINGS = ("clip", "preset", "control", "vibes", "set", "step", "play", "stop", "blackout", "fadeout", "fadein", "room", "bank", "effect",
-                  "fade", "clip_b", "clip_c", "spare")
+                  "fade", "clip_b", "clip_c", "mapping", "spare")
 # "clip_b" and "clip_c" are a pad of bank B and of bank C, for a controller that can show the three banks in three
 # colours; a section without them shows every pad as "clip".
-FALLBACK_STYLE = {"clip_b": "clip", "clip_c": "clip", "fade": "fadeout"}
+FALLBACK_STYLE = {"clip_b": "clip", "clip_c": "clip", "fade": "fadeout", "mapping": "vibes"}
 MAX_FIXED = 8               # set-up or clear messages in a profile
 _MEANING = {"vibes": "vibes", "vibes_ambient": "set", "vibes_show": "set", "vibes_next": "step", "shader_prev": "step",
             "shader_next": "step", "clip_prev": "step", "clip_next": "step", "pause": "play", "stop": "stop",
             "blackout": "blackout", "fadeout": "fadeout", "fadein": "fadein", "bank_prev": "bank", "bank_next": "bank",
-            "effect_toggle": "effect", "effect_prev": "step", "effect_next": "step", "fade": "fade",
+            "effect_toggle": "effect", "effect_prev": "step", "effect_next": "step", "fade": "fade", "mapping_mode": "mapping",
             "seek_back": "step", "seek_forward": "step"}
 
 
@@ -701,6 +721,8 @@ def light_state(action, snap, bank=0):
         return "off" if not snap["running"] else ("busy" if snap["paused"] else "active")
     if a == "stop":
         return "on" if snap["running"] else "active"
+    if a == "mapping_mode":                             # lit where the owner allows it, flashing while the mode is on
+        return LIGHT_FLASH if snap.get("mapping") else ("on" if snap.get("mapping_ready") else "off")
     if a == "blackout":
         return LIGHT_FLASH if snap["blackout"] else "on"      # flashing for as long as Blackout is on (the owner, 2026-10-10)
     if a == "fade":                                     # the one fade button: flashing while the picture goes down and
@@ -830,6 +852,8 @@ def validate_entry(e, keep_id=False):
         raise MidiError("bad controller name")
     if ACTIONS[action][0] == "level" and kind == "program":
         raise MidiError("a program change cannot drive a level")
+    if ACTIONS[action][0] == "delta" and kind != "cc":
+        raise MidiError("only a knob or fader can nudge by being turned")
     if ACTIONS[action][0] == "hold" and kind == "program":
         raise MidiError("a program change cannot be held; use a pad or a button")
     stored = keep_id and isinstance(e.get("id"), str) and re.fullmatch(r"[0-9a-f]{8}", e["id"])
@@ -859,7 +883,7 @@ def validate_entry(e, keep_id=False):
 
 
 def guardable(action):
-    return action in ("blackout", "scene") or (isinstance(action, str) and action.startswith("scene_"))
+    return action in ("blackout", "scene", "mapping_mode") or (isinstance(action, str) and action.startswith("scene_"))
 
 
 class MidiMapper:
@@ -880,6 +904,8 @@ class MidiMapper:
         self._armed = {}                    # trigger key -> time of the first press of a guarded button
         self._held = {}                     # trigger key -> when a control with a "hold" action went down
         self.local = lambda source, body: False     # what is not an API call (a code on the display); the hub sets it
+        self.mapping_mode = lambda: False           # is mapping mode on (the mapper's memory); the hub sets it. Must never wait
+        self._turn = {}                             # (source, kind, number) -> [where a "delta" knob stood last, steps not yet sent]
 
     def matching(self, source, kind, channel, number):
         """Entries for this control, in the order of precedence: the person's own mapping (it replaces the others
@@ -892,6 +918,9 @@ class MidiMapper:
             mine = [e for e in mine if e["source"] == source] or mine
             return [e for e in mine if e["channel"]] or mine
         standard = [e for e in found if e.get("profile")]
+        # a control's other self in mapping mode takes its place while the mode is on, and does not exist outside it
+        other = [e for e in standard if e.get("mode")]
+        standard = other if other and self.mapping_mode() else [e for e in standard if not e.get("mode")]
         if standard or source in self.profiled:
             return standard
         return found
@@ -900,7 +929,7 @@ class MidiMapper:
         """A controller went: its pickup and guard state go with it, so it starts clean when it comes back. With no
         source, every controller's (MIDI was switched off: what is let go meanwhile is never heard, so a button
         that was down then would otherwise count as held for ever, and its next press would do nothing)."""
-        for store in (self._pick, self._armed, self._pressed, self.pending, self._held):
+        for store in (self._pick, self._armed, self._pressed, self.pending, self._held, self._turn):
             for key in [k for k in store if source is None or source in k[:2]]:
                 del store[key]
 
@@ -993,6 +1022,22 @@ class MidiMapper:
             kind_of, _, _ = ACTIONS[e["action"]]
             if kind_of == "control":                    # a knob or fader is followed; a pad or button is a press
                 kind_of = "level" if kind == "cc" else "trigger"
+            if kind_of == "delta":
+                # A knob that nudges: followed by how far it is turned. Where it stands is always noted, so the first
+                # step after the mode came on moves one step and not the whole way the knob was turned before.
+                if kind != "cc":
+                    continue
+                st = self._turn.setdefault((source, kind, d1), [d2, 0])
+                moved, st[0] = d2 - st[0], d2
+                if not self.mapping_mode():
+                    st[1] = 0
+                    continue
+                st[1] = max(-127, min(127, st[1] + moved))
+                if st[1] and now - self._last.get(key, 0.0) >= MIN_INTERVAL:
+                    self._last[key] = now
+                    calls.append(actions.nudge(ACTIONS[e["action"]][1], st[1]))
+                    st[1] = 0
+                continue
             if kind_of == "hold":
                 # Held, then let go: the press only notes the time (and takes a code that is showing off the
                 # display, which needs no hold); the release asks, if the hold was neither too short nor too long.
@@ -1066,6 +1111,17 @@ class MidiMapper:
                 e, value = self.pending.pop(key)
                 self._last[key] = now
                 calls.extend(self._level_calls(e, value))
+        if self._turn and self.mapping_mode():          # what a nudging knob was turned since its last call
+            for (source, kind, number), st in list(self._turn.items()):
+                if not st[1]:
+                    continue
+                for e in self.matching(source, kind, 0, number):
+                    if ACTIONS[e["action"]][0] == "delta":
+                        key = (e["id"] if "id" in e else e["action"], source, kind, number)
+                        if now - self._last.get(key, 0.0) >= MIN_INTERVAL:
+                            self._last[key] = now
+                            calls.append(actions.nudge(ACTIONS[e["action"]][1], st[1]))
+                            st[1] = 0
         return calls
 
     def flush(self):
@@ -1534,6 +1590,7 @@ class MidiHub:
         self.mapper = MidiMapper(self._do, [], api.mix, clock)
         self.mapper.target = self._target
         self.mapper.local = self._local
+        self.mapper.mapping_mode = self._mapping_mode
         self.queue_max = QUEUE_MAX          # messages read from one controller and not yet handled (a test makes it small)
         self.learn_until = 0.0
         self.captured = None
@@ -1582,6 +1639,13 @@ class MidiHub:
             self._note("%s -> %s %s" % (path, status, payload.get("error", "")))
             return False
         return True
+
+    def _mapping_mode(self):
+        """Is mapping mode on: the mapper's own memory, no lock and no question to anybody."""
+        try:
+            return bool(self.api.mapper.remote_on())
+        except Exception:
+            return False
 
     def cfg(self):
         return self.settings.data["control"]["midi"]
@@ -1672,6 +1736,11 @@ class MidiHub:
                     seen = fx._seen()
                     # "ready" was "no generator has the screen" until an effect could go on over one (D74)
                     snap["effect"], snap["effect_ready"] = (seen["id"] if seen else None), True
+        except Exception:
+            pass
+        try:
+            snap["mapping"] = self._mapping_mode()
+            snap["mapping_ready"] = bool(api.registry.enabled("mapper") and api.mapper.remote_allowed())
         except Exception:
             pass
         try:
@@ -2184,7 +2253,7 @@ class MidiHub:
         for ctl in profile["controls"]:
             send = ctl["send"]
             key = (send["type"], send["number"])
-            item = {k: ctl[k] for k in ("id", "name", "row", "col", "kind", "send", "unverified", "zone")}
+            item = {k: ctl[k] for k in ("id", "name", "row", "col", "kind", "send", "unverified", "zone", "mapping")}
             if key in mine:
                 e = mine[key]
                 item.update(action={k: e[k] for k in ("action", "bank", "index", "scene") + OPTION_KEYS if k in e}, guard=bool(e.get("guard")),

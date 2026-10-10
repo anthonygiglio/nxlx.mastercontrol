@@ -175,7 +175,7 @@ class LightsFilesTest(unittest.TestCase):
                     self.assertEqual(v & 0x40, 0)
                 # the manual's "Adventures in Double Buffering": a flashing colour is the same colour with bit 2 cleared,
                 # "subtracting 4 from the velocity value". The fade button and Blackout have one: full red, 0Fh less 4
-                self.assertEqual(style[level].get("flash"), 11 if name in ("fade", "blackout") else None)
+                self.assertEqual(style[level].get("flash"), 11 if name in ("fade", "blackout") else 56 if name == "mapping" else None)       # (mapping mode: green, 3Ch less 4)
                 if name in ("fade", "blackout"):
                     self.assertEqual((style[level]["flash"] & 0x0C, style[level]["flash"] + 4), (8, style[level]["active"]))
         # the three banks in three colours, by the manual's formula 16 x green + red + 12: amber (1, 1), yellow-green
