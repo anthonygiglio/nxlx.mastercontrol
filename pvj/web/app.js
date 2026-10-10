@@ -241,7 +241,7 @@
     var timer = null;
     function refresh() { api('GET', '/api/support').then(function (r) { if (document.getElementById('supportcard') && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } draw(r.data); } }); }
     function post(path, b) { return act('POST', path, b, function (data) { say(''); draw(data); poll(); }); }
-    var ROLES = { full: 'check and change everything', live: 'play and mix only, as an operator could before', view: 'watch only' };
+    var ROLES = { full: 'check and change everything', live: 'play and mix only', view: 'watch only' };
     function draw(d) {
       clearTimeout(timer);
       body.textContent = '';

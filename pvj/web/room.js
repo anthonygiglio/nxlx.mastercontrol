@@ -59,7 +59,7 @@
       follow = null;
       if (!V) return null;
       if (!c.moduleOn('shaders')) {
-        if (!full || !c.openShaders) return null;
+        if (!c.owner() || !c.openShaders) return null;      // the way to the module's switch, which is the Owner's
         return h('div', { class: 'card room-amb', id: 'roomamboff' }, h('div', { class: 'row wrap' },
           h('span', { class: 'hint grow', text: 'Ambience (Vibes) is switched off.' }),
           h('button', { class: 'btn', id: 'roomambopen', text: 'Open Shaders and Vibes', onclick: c.openShaders })));

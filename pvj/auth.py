@@ -552,7 +552,10 @@ class Auth:
 
     @staticmethod
     def _public(device):
-        return {k: device[k] for k in ("id", "name", "role", "created")}
+        out = {k: device[k] for k in ("id", "name", "role", "created")}
+        if device.get("via") == "controller":       # the gate holds a presenter paired from a controller to the old reach (policy.held_to_legacy, D80)
+            out["via"] = "controller"
+        return out
 
     @staticmethod
     def allows(device, needed):

@@ -722,6 +722,23 @@ class HeldBackTest(RolesBase):
                 got = self.api.handle(method, path.replace("*", "shaders"), {}, old, LAN)[0]
             self.assertEqual(got, 200 if (method, path) in legacy else 403, "%s %s" % (method, path))
 
+    def test_the_same_through_pairing_and_a_token_over_http(self):
+        """Not a device written by hand: one paired as the controller code paired before D80, asked with its token."""
+        token, dev = self.auth._add_device("From the Launchpad", "live", via="controller")
+        self.assertEqual(self.auth.authenticate(token).get("via"), "controller")
+        self.assertEqual(self.call("GET", "/api/status", token=token)[1]["reach"], "presenter")
+        self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=token)[0], 200)
+        for path, body in (("/api/pads", {"bank": 0, "index": 0, "label": "x", "file": "a.mp4"}), ("/api/media/delete", {"name": "a.mp4"}),
+                           ("/api/guests", {"locked": True}), ("/api/devices/invite", {"name": "x", "role": "view"}), ("/api/schedule", {"enabled": True, "entries": []})):
+            self.assertEqual(self.call("POST", path, body, token=token)[0], 403, path)
+        self.assertEqual(self.call("GET", "/api/devices", token=token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/media/upload?name=new.mp4", raw=b"0123", headers={"Content-Type": "application/octet-stream"}, token=token)[0], 403)
+        # the others carry no such mark, and an operator from a link is an operator
+        self.assertNotIn("via", self.auth.authenticate(self.guest_token))
+        op = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=self.full)[1]["token"]
+        self.assertEqual(self.call("GET", "/api/status", token=op)[1]["reach"], "operator")
+        self.assertEqual(self.call("POST", "/api/guests", {"locked": False}, token=op)[0], 200)
+
     def test_the_panel_is_told_the_reach_in_one_word(self):
         def reach(dev, client=LAN):
             return self.h("GET", "/api/status", device=dev, client=client)[1]["reach"]

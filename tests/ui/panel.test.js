@@ -2581,9 +2581,9 @@ function startServer() {
       ['/api/access/code', { role: 'live' }], ['/api/access/code', { role: 'view', minutes: 121, replace: true }], ['/api/access/code', { role: 'view', uses: 21, replace: true }],
       ['/api/access/cancel', { all: true }], ['/api/access/cancel', { role: 'live' }], ['/api/access/cancel', { code: digits }],
       ['/api/access/screen', { show: true, items: ['pin'] }], ['/api/access/screen', { show: true, items: ['view', 'live'] }],
-      ['/api/devices/invite', { name: 'x', role: 'view' }], ['/api/devices/revoke', { id: 'x' }], ['/api/pin/rotate', {}], ['/api/pin/unlock', {}]
+      ['/api/devices/invite', { name: 'x', role: 'live' }], ['/api/devices/revoke', { id: 'x' }], ['/api/pin/rotate', {}], ['/api/pin/unlock', {}]
     ].map((x) => fetch(x[0], { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(x[1]) }).then((r) => r.status))), ownersPresenter);
-    assert.deepStrictEqual(refused, [403, 400, 400, 403, 403, 403, 403, 403, 403, 403, 403, 403], 'what a presenter is refused');
+    assert.deepStrictEqual(refused, [403, 400, 400, 403, 403, 403, 403, 403, 403, 404, 403, 403], 'what an operator is refused (D80: a link above a guest; removing is for guests, and there is no device x)');
     assert.strictEqual(await presenter.evaluate(() => fetch('/api/qr.svg?for=live').then((r) => r.status)), 403, 'no QR code of the presenter code for a presenter');
     assert.strictEqual(await presenter.evaluate(() => fetch('/api/access/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"role":"view","replace":true}' }).then((r) => r.status)), 403,
       'and nothing without the request header (CSRF)');
