@@ -208,7 +208,9 @@ class Player:
             if self._seen_pid is not None and pid != self._seen_pid:
                 if self._new_expected:
                     # The panel itself ended the old one (quit), which was counted then. A wish made since is for
-                    # the new player: it is not dropped for a restart it came after.
+                    # the new player: it is not dropped for a restart it came after. (If that new player crashes
+                    # before anyone has heard of it, the one after it is taken for it: two restarts counted as
+                    # one. Harmless: nobody could have made a wish for a player that was never heard from.)
                     self._new_expected = False
                 else:
                     self.clears += 1
@@ -424,7 +426,15 @@ class Player:
                 self.clears += 1            # and an effect that waits to go on is not for the next player
                 self.cleared_by = "restart"
                 self._new_expected = self._seen_pid is not None
-            self.ipc.request("quit")
+            try:
+                self.ipc.request("quit")
+            except PlayerError:
+                # The player did not take the quit (it does not answer): the same mpv may live on, and no new one
+                # is on its way by this call. Left armed, the next restart that nobody asked for would pass as
+                # this one, and a wish made before that crash would land after it.
+                with self._pid_lock:
+                    self._new_expected = False
+                raise
 
     def _pid(self):
         try:

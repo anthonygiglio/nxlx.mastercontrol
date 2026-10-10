@@ -2290,6 +2290,23 @@ class QueueTest(Base):
         self.mpv.restart()                                                             # and a restart nobody asked for, later, counts again
         self.player.is_running()
         self.assertEqual(self.player.clears, clears + 2)
+        # a quit the player did not take (it does not answer): the same mpv lives on, and the restart that comes
+        # later by itself is not taken for the panel's own
+        clears = self.player.clears
+        self.mpv.down = True
+        with self.assertRaises(PlayerError):
+            self.player.quit()
+        self.mpv.down = False
+        self.assertFalse(self.player._new_expected)
+        self.player.play(["/media/a.mp4"])
+        self.fx.error = None
+        self.fx.step(1)                                                                # a wish, and then the crash
+        self.mpv.restart()
+        self.player.play(["/media/b.mov"])
+        self.assertEqual(self.player.clears, clears + 2)                               # the quit's own count, and the crash
+        self.drain()
+        self.assertEqual(self.on(), None)
+        self.assertIn("The player was restarted after it was asked for", self.state()["error"]["message"])
 
     def test_a_wish_that_cannot_be_carried_out_says_why(self):
         self.fx.put(self.ids[2])
