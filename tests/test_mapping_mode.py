@@ -4,6 +4,7 @@
 every nudge the mapper's own checked move) and the nanoKONTROL2's geometry layer.
 
 Nothing here has touched a real controller or a projector: pipes, a fake player and direct calls stand in."""
+import json
 import time
 import unittest
 
@@ -121,6 +122,113 @@ class SwitchAndModeTest(Base):
         self.assertEqual(self.settings.data["mapper"]["surfaces"][0]["vertices"] if self.settings.data["mapper"]["surfaces"][0]["id"] == s["id"]
                          else now, now)                             # what is saved is what the mapper accepted last
         self.assertNotEqual(now, saved)
+
+    def on_disk(self, sid, corner):
+        with open(self.settings.path) as f:
+            return next(x for x in json.load(f)["mapper"]["surfaces"] if x["id"] == sid)["vertices"][corner]
+
+    def test_a_flood_of_nudges_is_saved_twice_a_second_and_nothing_is_lost(self):
+        self.allow()
+        self.ask({"mode": True})
+        s, corner, at = self.chosen()
+        saves, shown = [], []
+        save, show = self.settings.save, self.mapper.apply
+        self.settings.save = lambda: (saves.append(1), save())[1]
+        self.mapper.apply = lambda: (shown.append(self.chosen()[2]), show())[1]
+        self.addCleanup(lambda: (setattr(self.settings, "save", save), setattr(self.mapper, "apply", show)))
+        began = time.monotonic()
+        for i in range(500):                                        # OSC lets 200 a second through, a knob gives 20
+            self.assertEqual(self.ask({"steps": [[1, 0], [1, 0], [-1, 0], [0, 1], [0, -1]][i % 5]})[0], 200)
+        took = time.monotonic() - began
+        end = [at[0] + 100, at[1]]
+        self.assertEqual(self.chosen()[2], end)                     # every step counted, at once
+        self.assertLessEqual(len(saves), 2 + 2 * took, "%d saves in %.2f s" % (len(saves), took))
+        self.assertLessEqual(len(shown), 3 + 25 * took, "%d pictures in %.2f s" % (len(shown), took))
+        time.sleep(1.2)                                             # nothing more comes: within a second it is saved and shown as it ended
+        self.assertEqual(self.on_disk(s["id"], corner), end)
+        self.assertEqual(shown[-1], end)
+        self.assertLessEqual(len(saves), 3 + 2 * took)
+        n = len(saves)
+        time.sleep(0.7)
+        self.assertEqual(len(saves), n, "it went on saving with nothing to save")
+
+    def test_leaving_the_mode_saves_what_was_not_saved_yet(self):
+        self.allow()
+        self.ask({"mode": True})
+        s, corner, at = self.chosen()
+        for _ in range(4):
+            self.ask({"steps": [1, 1]})
+        self.ask({"mode": False})
+        self.assertEqual(self.on_disk(s["id"], corner), [at[0] + 4, at[1] + 4])
+        self.ask({"mode": True})
+        for _ in range(4):
+            self.ask({"steps": [1, 1]})
+        self.allow(False)                                           # and the owner's switch going off
+        self.assertEqual(self.on_disk(s["id"], corner), [at[0] + 8, at[1] + 8])
+
+    def test_one_undo_takes_back_one_run_of_nudges(self):
+        """A knob's turn comes as many messages: an undo that took back the last of them would take back a pixel
+        or two. One step of undo is a run: the nudges of one corner that follow each other within a second."""
+        now = [1000.0]
+        self.mapper._remote_clock = lambda: now[0]
+        self.allow()
+        self.ask({"mode": True})
+        s, corner, at = self.chosen()
+        for _ in range(5):                                          # a knob turned
+            now[0] += 0.05
+            self.ask({"steps": [2, 1]})
+        now[0] += 2
+        for _ in range(3):                                          # and after a pause an arrow pressed three times
+            now[0] += 0.4
+            self.ask({"steps": [0, -1]})
+        self.assertEqual(self.chosen()[2], [at[0] + 10, at[1] + 2])
+        self.assertTrue(self.mapper.state()["controllers"]["undo"])
+        self.assertEqual(self.ask({"undo": True})[0], 200)
+        self.assertEqual(self.chosen()[2], [at[0] + 10, at[1] + 5]) # the three presses, in one move
+        self.assertEqual(self.ask({"undo": True})[0], 409)          # one step back, no further
+        now[0] += 0.1
+        self.ask({"steps": [1, 0]})
+        now[0] += 0.1
+        self.ask({"step": 10})                                      # another step size: what comes now is another run
+        now[0] += 0.1
+        self.ask({"steps": [1, 0]})
+        self.ask({"undo": True})
+        self.assertEqual(self.chosen()[2], [at[0] + 11, at[1] + 5])
+        now[0] += 0.1
+        self.ask({"steps": [3, 3]})                                 # a run that a refused nudge interrupts is still one run
+        self.assertEqual(self.ask({"steps": [1.5, 0]})[0], 409)
+        self.ask({"steps": [1, 0]})
+        self.ask({"undo": True})
+        self.assertEqual(self.chosen()[2], [at[0] + 11, at[1] + 5])
+        self.ask({"mode": False})
+        self.assertEqual(self.on_disk(s["id"], corner), [at[0] + 11, at[1] + 5])
+
+    def test_the_panels_own_edit_is_as_it_was_afterwards(self):
+        """The mode shows its outlines through the panel's "Edit on the display" and chooses through the panel's
+        selection. A full-access person who had that on, with a surface and a corner chosen, has them back."""
+        self.allow()
+        other = self.mapper.state()["surfaces"][1]["id"]
+        self.assertEqual(self.post("/api/mapper", {"action": "edit", "on": True, "selected": other})[0], 200)
+        self.assertEqual(self.post("/api/mapper", {"action": "edit", "corner": 2})[0], 200)
+        before = dict(self.mapper.edit)
+        self.assertEqual((before["on"], before["selected"], before["corner"]), (True, other, 2))
+        for leave in (lambda: self.ask({"mode": False}), lambda: self.allow(False),
+                      lambda: (setattr(self.mapper, "_remote_clock", lambda: time.monotonic() + 1000), self.mapper._expire(self.mapper._remote["serial"]))):
+            self.allow()
+            self.ask({"mode": True})
+            self.ask({"surface": 1})
+            self.ask({"corner": 1})
+            self.assertNotEqual(self.mapper.edit, before)
+            leave()
+            self.assertFalse(self.mapper._remote["on"])
+            self.assertEqual(self.mapper.edit, before)
+        self.mapper._remote_clock = time.monotonic
+        self.allow()
+        self.ask({"mode": True})                                    # its surface was removed meanwhile: edit stays on, on what there is
+        self.post("/api/mapper", {"action": "remove", "id": other})
+        self.ask({"mode": False})
+        self.assertTrue(self.mapper.edit["on"])
+        self.assertNotEqual(self.mapper.edit["selected"], other)
 
     def test_what_ends_the_mode_and_what_does_not(self):
         self.allow()
