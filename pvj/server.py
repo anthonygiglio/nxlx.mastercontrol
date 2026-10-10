@@ -357,12 +357,18 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
 
         do_PUT = do_DELETE = do_PATCH = _method_not_allowed
 
+        def _seen_from(self):
+            """The connection's own address (never a header), for Auth to remember where a paired device asks from
+            (D78). Not through the support tunnel: that address is the tunnel's, not a device at the studio."""
+            client = self.client_address[0]
+            return None if api.support.is_remote(client) else client
+
         def _who(self, method, path):
             """The device behind this request (a paired device, or support during a session), after the support tunnel's
             rules: through the tunnel only support's login works, and some things are never allowed there."""
             from . import support as support_mod
             token = self._token()
-            device = auth.authenticate(token) or api.support.authenticate(token)
+            device = auth.authenticate(token, self._seen_from()) or api.support.authenticate(token)
             try:
                 api.support.guard(method, path, device, self.client_address[0])
             except support_mod.SupportApiError as e:
@@ -371,7 +377,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
 
         def _api(self, method, path, body):
             token = self._token()
-            device = auth.authenticate(token) or api.support.authenticate(token)
+            device = auth.authenticate(token, self._seen_from()) or api.support.authenticate(token)
             try:
                 status, payload = api.handle(method, path, body, device, self.client_address[0])
             except Exception:
