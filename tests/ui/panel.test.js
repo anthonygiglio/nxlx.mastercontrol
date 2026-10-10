@@ -323,7 +323,7 @@ function startServer() {
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
       'At power-up', 'Streams', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
-      'Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
+      'Network', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
     assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (5)');
@@ -1540,6 +1540,36 @@ function startServer() {
     // Box care: export the settings (no access data in the file), change something, import the file back; a file
     // with a repeated key is refused; diagnostics downloads; factory reset wants a choice and can be cancelled
     // (a real reset would unpair this test's own device, so it is covered by tests/test_boxcare.py)
+    // Secure connection (D79): HTTP only at first, the request made from the page, the device card in the words of
+    // the device being held, all of it at 320 px; and the platform text for injected user agents.
+    await sys('Secure connection');
+    await page.waitForSelector('#httpsline');
+    assert(/HTTP only/.test(await page.textContent('#httpsline')), 'a new box is HTTP only: ' + await page.textContent('#httpsline'));
+    assert(/over http:\/\//.test(await page.textContent('#httpsyouare')), 'the page says what it is read over');
+    assert.strictEqual(await page.getAttribute('#httpsowneronly', 'disabled'), '', 'the owner-only switch cannot be flipped from http://');
+    await page.setViewportSize({ width: 320, height: 844 });
+    await fitsOn(page, 'Secure connection at 320');
+    await page.click('#httpsrequest');
+    await page.waitForSelector('#httpsdownload', { timeout: 20000 });
+    assert(/Request made for/.test(await page.textContent('#httpsresult')), 'the request was made: ' + await page.textContent('#httpsresult'));
+    await fitsOn(page, 'Secure connection at 320 with the request made');
+    await page.click('#httpsprobe');
+    await page.waitForFunction(() => /^(Yes|No)/.test(document.getElementById('httpstrust').textContent), null, { timeout: 15000 });
+    assert(/^No/.test(await page.textContent('#httpstrust')), 'with no certificate the trust check says no');
+    await page.setViewportSize({ width: 390, height: 844 });
+    const platforms = await page.evaluate(() => [
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36 Edg/120.0',
+      'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0'].map((ua) => window.pvjHttpsPlatform(ua)));
+    assert.deepStrictEqual(platforms.map((p) => p.name), ['iPhone', 'Android', 'Mac', 'Windows', 'Chromebook', 'Linux'], 'each device is told apart by its user agent');
+    assert(platforms[0].steps.join(' ').includes('Certificate Trust Settings'), 'the iPhone is told about the second step in Settings');
+    assert(platforms[1].steps.join(' ').includes('CA certificate'), 'Android is told where the CA certificate goes');
+    assert(platforms[2].steps.join(' ').includes('Always Trust'), 'the Mac is told about Always Trust');
+    assert(platforms[3].steps.join(' ').includes('Trusted Root Certification Authorities'), 'Windows is told the store');
+
     await sys('Backup and reset');
     await page.waitForSelector('#settingscard #exportbtn');
     assert.deepStrictEqual(await page.$$eval('#sysbody > *', (els) => els.map((e) => e.id)), ['settingscard', 'diagcard', 'dangerhead', 'resetcard'], 'reset is last, under Danger');
