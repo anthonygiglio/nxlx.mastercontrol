@@ -110,6 +110,15 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 | C9 | `journalctl -u pvj-web -b \| grep "controller code"` on the Pi | | A line for each code shown and each refusal, and no line with 6 digits in it |
 | C10 | Other controllers: give the action to a button on the card, repeat C3. On a nanoKONTROL2 say whether the button needs holding or two presses | | |
 
+### The owner PIN from the panel, and Log out (D77)
+
+**Never run on a box.** Before: a phone paired with the PIN (owner) and a second phone joined with a guest code; both on System > People and codes (the owner) and System > About and power (the guest).
+
+| # | Do | See on the phone | See on the Pi |
+| --- | --- | --- | --- |
+| P1 | Owner: press **Show** under "The Owner (everything) PIN"; then **Copy**; then leave the page and come back | Four digits in the field, gone by themselves after about 12 seconds; "The PIN is copied" (or "Select the PIN and copy it"); the field empty again on return. Compare the digits with `sudo pvj-pin` | `journalctl -u pvj-web -b \| grep "owner PIN"`: one line per press with the device's id and name and no four digits of a PIN in it |
+| P2 | Guest: About and power > **Log out**, answer Log out; reload the page. Then owner: Log out on your own row under Paired devices, read the question, press Stay; then Log out and answer Log out | The guest is on the pairing screen after the reload, and gone from the owner's list. The owner's question names the PIN (last full-access device) or says "You will need the PIN"; after the real Log out the pairing screen, and the old PIN pairs again | When no device is left and nothing plays: the PIN screen on the display within a few seconds; `journalctl -u pvj-web -b \| grep "logged out"` has a line per logout |
+
 ### Runtime folders: who owns what in /run (D45)
 
 **Not run on any box yet.** The change that gives each service its own runtime folder ran in CI only: the unit tests, and one job that runs the installer for real as root under the runner's systemd (`tests/real_install_test.sh`: no display, not a Pi, not the box's systemd). This list is the proof for a box; until someone has run it, nothing may be claimed about how the folders behave on hardware.
