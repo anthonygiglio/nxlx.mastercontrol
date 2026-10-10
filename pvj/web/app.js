@@ -2534,7 +2534,9 @@
   // "Facts"). Nothing here has met a real phone: the words come from the vendors' pages read on 2026-10-10.
   function httpsPlatform(ua) {
     ua = ua || '';
-    var ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && typeof document !== 'undefined' && 'ontouchend' in document);
+    // An iPad calls itself a Mac; the touch test tells them apart, and is asked only about this very device.
+    var here = typeof navigator !== 'undefined' && ua === navigator.userAgent;
+    var ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && here && typeof document !== 'undefined' && 'ontouchend' in document);
     if (/iPhone/.test(ua) || ipad) {
       return { name: ipad ? 'iPad' : 'iPhone', steps: ['Tap "Download the root certificate". Safari asks to allow the download, then says "Profile Downloaded".',
         'Open Settings. Tap "Profile Downloaded" near the top (or General, VPN & Device Management), then Install, and enter your passcode.',
