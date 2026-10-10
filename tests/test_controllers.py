@@ -44,10 +44,10 @@ class ProfileFilesTest(unittest.TestCase):
     def test_every_listed_control_maps_to_an_action_the_api_has(self):
         for p in PROFILES:
             entries = midi.profile_entries(p, "x")
-            self.assertEqual(len(entries), sum(c["action"] is not None for c in p["controls"]) + sum(c["mapping"] is not None for c in p["controls"]))
+            self.assertEqual(len(entries), sum(c["action"] is not None for c in p["controls"]) + sum(len(c["layers"]) for c in p["controls"]))
             for e in entries:
                 self.assertIn(e["action"], midi.ACTIONS, p["id"])
-                clean = midi.validate_entry({k: v for k, v in e.items() if k not in ("id", "profile", "guard", "pickup", "mode")})
+                clean = midi.validate_entry({k: v for k, v in e.items() if k not in ("id", "profile", "guard", "pickup", "layer")})
                 self.assertEqual(clean["action"], e["action"])
             for c in p["controls"]:                                    # a fader or knob is followed, a button or pad is pressed
                 if c["action"]:
@@ -60,11 +60,18 @@ class ProfileFilesTest(unittest.TestCase):
             self.assertEqual([(control(p, "fader%d" % n)["action"] or {}).get("action") for n in range(1, 9)],
                              ["opacity", "volume", "speed", "shader_speed", "shader_hue", "shader_brightness", "effect_amount", None])
         # the size (zoom) and the two positions side by side, on both (D75: "especially, the zoom and x/y position")
+        # (on the MIDI Mix as its middle row's first three knobs; on the nanoKONTROL2 as the first three knobs of its
+        # geometry layer, since the owner wants all eight knobs on the shader: "use a button to switch to the geometry controls")
         for p, three in ((NANO, ("knob1", "knob2", "knob3")), (MIX, ("knob_b1", "knob_b2", "knob_b3"))):
-            self.assertEqual([control(p, i)["action"] for i in three], [{"action": "size"}, {"action": "position"}, {"action": "position_y"}])
+            self.assertEqual([control(p, i)["layers"]["geometry"] if p == NANO else control(p, i)["action"] for i in three],
+                             [{"action": "size"}, {"action": "position"}, {"action": "position_y"}])
             self.assertEqual(len({control(p, i)["row"] for i in three}), 1)
             self.assertEqual([control(p, i)["col"] - control(p, three[0])["col"] for i in three], [0, 1, 2])
-        self.assertEqual((control(NANO, "knob4")["action"], control(MIX, "knob_a1")["action"]), ({"action": "shader_control_1"},) * 2)
+        self.assertEqual([control(NANO, "knob%d" % n)["action"] for n in range(1, 9)], [{"action": "shader_control_%d" % n} for n in range(1, 9)])
+        self.assertEqual([control(NANO, "knob%d" % n)["layers"]["geometry"] for n in range(4, 9)], [None] * 5)      # they rest in the layer
+        self.assertEqual((control(NANO, "m6")["action"], control(NANO, "m6")["guard"]), ({"action": "layer_geometry"}, False))     # a plain press, over the spare R 6
+        self.assertEqual(control(MIX, "knob_a1")["action"], {"action": "shader_control_1"})
+        self.assertFalse([c["id"] for p in (MIX, PAD) for c in BY_ID[p]["controls"] if "geometry" in c["layers"]])  # the other two have no such layer
         # one fade button on each, and neither of the old two; one button for the quarter turns; nothing that flips the
         # picture, resets the mix or takes the screen for a test pattern
         for p in PROFILES:
@@ -282,13 +289,13 @@ class MapperTest(unittest.TestCase):
 
     def test_the_standard_layout_applies_and_the_built_in_map_does_not_show_through(self):
         m = self.mapper(NANO, "nanoKONTROL2")
-        self.cc(m, "nanoKONTROL2", 16, 127)                    # knob 1: the size
+        self.cc(m, "nanoKONTROL2", 16, 127)                    # knob 1
         self.cc(m, "nanoKONTROL2", 20, 64)                     # knob 5: CC 20 is "opacity" in the built-in map
         self.cc(m, "nanoKONTROL2", 22, 10)                     # knob 7: CC 22 is "position" there
         self.cc(m, "nanoKONTROL2", 7, 127)                     # fader 8 is spare: nothing, not even the built-in map
         self.cc(m, "nanoKONTROL2", 99, 127)                    # not a control of this controller
-        self.assertEqual(self.rec.calls, [("/api/control", {"action": "size", "value": 200.0}), ("/api/shaders/values", {"control": 2, "level": 64}),
-                                          ("/api/shaders/values", {"control": 4, "level": 10})])
+        self.assertEqual(self.rec.calls, [("/api/shaders/values", {"control": 1, "level": 127}), ("/api/shaders/values", {"control": 5, "level": 64}),
+                                          ("/api/shaders/values", {"control": 7, "level": 10})])
         mix = self.mapper(MIX, "Mix")
         self.cc(mix, "Mix", 25, 127)                           # knob B3 is CC 25: "blackout while held up" in the built-in map
         self.assertEqual(self.rec.calls[-1], ("/api/control", {"action": "position_y", "value": 100.0}))
@@ -304,7 +311,7 @@ class MapperTest(unittest.TestCase):
         m = self.mapper(NANO, "nanoKONTROL2", own)
         self.cc(m, "nanoKONTROL2", 16, 127)
         self.cc(m, "nanoKONTROL2", 17, 127)
-        self.assertEqual(self.rec.calls, [("/api/control", {"action": "opacity", "value": 100.0}), ("/api/control", {"action": "position", "value": 100.0})])
+        self.assertEqual(self.rec.calls, [("/api/control", {"action": "opacity", "value": 100.0}), ("/api/shaders/values", {"control": 2, "level": 127})])
         every = midi.validate_entry({"source": "*", "kind": "cc", "number": 17, "action": "volume"})     # for any controller: it wins over the layout
         m = self.mapper(NANO, "nanoKONTROL2", every)
         self.cc(m, "nanoKONTROL2", 17, 127)
@@ -388,7 +395,7 @@ class MapperTest(unittest.TestCase):
         m = self.mapper(NANO, "nanoKONTROL2")
         self.cc(m, "nanoKONTROL2", 4, 0)                        # the hue fader jumps: a colour turn hides nothing
         self.cc(m, "nanoKONTROL2", 19, 0)                       # and so does a shader control (knob 4)
-        self.assertEqual(self.rec.calls, [("/api/shaders/values", {"controls": {"hue": -180.0}}), ("/api/shaders/values", {"control": 1, "level": 0})])
+        self.assertEqual(self.rec.calls, [("/api/shaders/values", {"controls": {"hue": -180.0}}), ("/api/shaders/values", {"control": 4, "level": 0})])
         self.rec.calls.clear()
         self.cc(m, "nanoKONTROL2", 1, 0)                        # volume: the box's value is not known to this bare mapper, so it is followed
         self.assertEqual(len(self.rec.calls), 1)

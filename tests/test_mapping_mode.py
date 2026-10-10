@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""D75: mapping mode from a controller. The owner's switch, the mode, what works only inside it, what ends it, and
-that every nudge is the mapper's own checked move.
+"""D75: layers on a controller. Mapping mode (the owner's switch, the mode, what works only inside it, what ends it,
+every nudge the mapper's own checked move) and the nanoKONTROL2's geometry layer.
 
 Nothing here has touched a real controller or a projector: pipes, a fake player and direct calls stand in."""
 import time
+import unittest
 
 from pvj import boxcare, midi, osc
+from pvj.midi import MidiMapper
+from tests.test_lights import LightsHubBase
+from tests.test_midi import Recorder
 from pvj.osc import OscServer
 from tests.test_controllers import BY_ID, HubBase, NANO, PAD
 from tests.test_osc import msg
@@ -159,21 +163,21 @@ class OnTheControllersTest(Base):
     def test_the_layouts_other_selves(self):
         nano = {c["id"]: c for c in BY_ID[NANO]["controls"]}
         self.assertEqual((nano["m8"]["action"], nano["m8"]["guard"]), ({"action": "mapping_mode"}, True))
-        self.assertEqual({k: v["mapping"]["action"] for k, v in nano.items() if v["mapping"]},
+        self.assertEqual({k: v["layers"]["mapping"]["action"] for k, v in nano.items() if "mapping" in v["layers"]},
                          {"track_prev": "map_surface_prev", "track_next": "map_surface_next", "marker_prev": "map_corner_prev",
                           "marker_next": "map_corner_next", "marker_set": "map_undo", "cycle": "map_step", "knob2": "map_x", "knob3": "map_y"})
         pad = {c["id"]: c for c in BY_ID[PAD]["controls"]}
         self.assertEqual((pad["top8"]["action"], pad["top8"]["guard"]), ({"action": "mapping_mode"}, True))
-        self.assertEqual({k: v["mapping"]["action"] for k, v in pad.items() if v["mapping"]},
+        self.assertEqual({k: v["layers"]["mapping"]["action"] for k, v in pad.items() if "mapping" in v["layers"]},
                          {"pad71": "map_surface_prev", "pad72": "map_surface_next", "pad73": "map_corner_prev", "pad74": "map_corner_next",
                           "pad76": "map_up", "pad78": "map_undo", "pad84": "map_step", "pad85": "map_left", "pad86": "map_down", "pad87": "map_right"})
         for p in BY_ID.values():                                    # nothing that darkens or stops is ever given another self
             for c in p["controls"]:
-                if c["mapping"]:
+                if c["layers"]:
                     self.assertNotIn((c["action"] or {}).get("action"), ("blackout", "stop", "fade", "pause", "pad", "bank_pad"), (p["id"], c["id"]))
         self.assertTrue(midi.guardable("mapping_mode"))
         for bad in ({"action": "stop"}, {"action": "map_x"}, {"action": "map_left", "guard": True}):      # a button: only choose, nudge, undo
-            raw = {"id": "x", "name": "X", "row": 0, "col": 0, "kind": "button", "send": {"type": "note", "channel": 0, "number": 1}, "action": None, "mapping": bad}
+            raw = {"id": "x", "name": "X", "row": 0, "col": 0, "kind": "button", "send": {"type": "note", "channel": 0, "number": 1}, "action": None, "layers": {"mapping": bad}}
             with self.assertRaises(midi.MidiError, msg=bad):
                 midi.validate_profile({"id": "t", "name": "T", "match": {"card_ids": ["T"], "card_names": []}, "description": "d", "sources": ["s"],
                                        "layout": {"rows": 1, "cols": 1}, "controls": [raw]}, "t")
@@ -224,7 +228,7 @@ class OnTheControllersTest(Base):
         self.wait(lambda: ("clear",) in self.player.calls)
         self.assertTrue(self.mapper.remote_on())
         ctl = {c["id"]: c for c in self.controller("nanoKONTROL2")["controls"]}
-        self.assertEqual((ctl["knob2"]["mapping"], ctl["m8"]["action"], ctl["m8"]["guard"]), ({"action": "map_x"}, {"action": "mapping_mode"}, True))
+        self.assertEqual((ctl["knob2"]["layers"]["mapping"], ctl["m8"]["action"], ctl["m8"]["guard"]), ({"action": "map_x"}, {"action": "mapping_mode"}, True))
         self.press_twice(55)                                        # out again
         self.wait(lambda: not self.mapper.remote_on())
         moved = self.chosen()
@@ -272,3 +276,120 @@ class OverOscTest(Base):
         self.assertEqual(self.osc("/pvj/mapping/mode", 0), 1)
         self.assertFalse(self.mapper.remote_on())
         self.assertEqual(osc.translate("/pvj/mapping/mode", []), ("/api/mapper/nudge", {"mode": "toggle"}))
+
+
+class GeometryLayerTest(unittest.TestCase):
+    """The nanoKONTROL2's geometry layer on the bare mapper and a fake clock: all eight knobs are the shader's, one
+    button turns the first three into zoom and the two positions, and nothing jumps going in or coming out."""
+
+    def setUp(self):
+        self.rec, self.t, self.have, self.mapping = Recorder(), [100.0], {"size": 100.0, "position": 0.0, "position_y": 0.0, "opacity": 100.0}, [False]
+        self.m = MidiMapper(self.rec, midi.profile_entries(BY_ID[NANO], "nano") + midi.builtin_map(), {"blackout": False}, clock=lambda: self.t[0])
+        self.m.profiled = {"nano"}
+        self.m.target = lambda action: self.have.get(action)
+        self.m.mapping_mode = lambda: self.mapping[0]
+
+    def cc(self, number, v, after=1.0):
+        self.t[0] += after
+        n = len(self.rec.calls)
+        self.m.message("nano", ("cc", 0, number, v))
+        return self.rec.calls[n:]
+
+    def button(self):
+        self.cc(53, 127)
+        self.cc(53, 0, 0.05)
+
+    def test_in_and_out_by_one_plain_press(self):
+        self.assertEqual(self.cc(16, 30), [("/api/shaders/values", {"control": 1, "level": 30})])
+        self.assertIsNone(self.m.active_layer("nano"))
+        self.button()
+        self.assertEqual((self.m.active_layer("nano"), self.rec.calls[1:]), ("geometry", []))    # one press, and nothing asked of the box
+        self.assertEqual(self.cc(16, 127), [])                      # knob 1 is the zoom now, and waits for the picture's 100 percent
+        self.assertEqual(self.cc(16, 64), [("/api/control", {"action": "size", "value": 100.0})])
+        self.assertEqual(self.cc(17, 64), [("/api/control", {"action": "position", "value": 0.0})])
+        self.assertEqual(self.cc(18, 64), [("/api/control", {"action": "position_y", "value": 0.0})])
+        for knob in (19, 20, 21, 22, 23):                           # the other five rest: they must not move the shader unseen
+            self.assertEqual(self.cc(knob, 99), [], knob)
+        self.assertEqual(self.cc(0, 127), [("/api/control", {"action": "opacity", "value": 100.0})])     # a fader is what it always is
+        self.assertEqual(self.cc(42, 127), [("/api/control", {"action": "stop"})])
+        self.button()
+        self.assertIsNone(self.m.active_layer("nano"))
+        self.assertEqual(self.cc(20, 50), [("/api/shaders/values", {"control": 5, "level": 50})])       # never set a control before: free, as always
+
+    def test_coming_back_a_shader_knob_waits_until_it_is_where_it_stood(self):
+        self.cc(16, 30)                                             # knob 1 set the shader's first control at 30
+        self.button()
+        self.cc(16, 64)
+        self.cc(16, 90)                                             # and was then turned up as the zoom
+        self.button()
+        self.assertEqual(self.cc(16, 88), [])                       # back on the shader: 88 would be a jump from 30
+        self.assertEqual(self.cc(16, 60), [])
+        self.assertEqual(self.cc(16, 32), [("/api/shaders/values", {"control": 1, "level": 32})])       # it met where it stood: followed again
+        self.assertEqual(self.cc(16, 80), [("/api/shaders/values", {"control": 1, "level": 80})])
+        # and going in again, the zoom knob starts its pickup afresh: it was at 90 as the zoom, the picture still is, the knob is at 80
+        self.have["size"] = midi.level_value("size", 90)
+        self.button()
+        self.assertEqual(self.cc(16, 20), [])
+        self.assertTrue(self.m.waiting("nano", "cc", 16))
+
+    def test_it_ends_by_itself_two_minutes_after_the_last_touch(self):
+        self.button()
+        self.cc(16, 64, after=100)                                  # a touch of one of its controls: two minutes from here
+        self.cc(0, 100, after=100)                                  # a fader is not one of them
+        self.assertEqual(self.m.active_layer("nano"), "geometry")
+        self.t[0] += 21
+        self.assertIsNone(self.m.active_layer("nano"))
+        self.assertEqual(midi.LAYER_SECONDS, {"geometry": 120.0})
+        self.cc(19, 40)
+        self.assertEqual(self.rec.calls[-1], ("/api/shaders/values", {"control": 4, "level": 40}))      # the shader knobs live again
+
+    def test_one_layer_at_a_time(self):
+        self.mapping[0] = True                                      # mapping mode is on (the box's own layer)
+        self.button()
+        self.assertEqual((self.m.active_layer("nano"), self.m.layers), ("mapping", {}))        # the geometry button does nothing meanwhile
+        self.assertEqual(self.cc(16, 50), [("/api/shaders/values", {"control": 1, "level": 50})])       # knob 1 has no other self in mapping mode
+        self.mapping[0] = False
+        self.button()
+        self.mapping[0] = True                                      # and mapping mode comes over a geometry layer that is on
+        self.assertEqual(self.m.active_layer("nano"), "mapping")
+        self.cc(17, 10)
+        self.assertEqual(self.cc(17, 12), [("/api/mapper/nudge", {"steps": [2, 0]})])           # knob 2 nudges, it does not move the picture
+
+    def test_the_buttons_light_and_the_files_rules(self):
+        action = {"action": "layer_geometry"}
+        self.assertEqual([midi.light_state(action, {}, 0, layer) for layer in (None, "geometry", "mapping")], ["on", "flash", "on"])
+        self.assertEqual(midi.light_meaning(action), "layer")
+        lights = BY_ID[NANO]["lights"]
+        self.assertEqual((midi.light_value(lights, "layer", "on"), midi.light_value(lights, "layer", "flash")), (0, 127))
+        self.assertTrue(midi.light_flashes(lights, "layer", "flash"))                           # the writer flashes it
+        self.assertIn("m6", lights["controls"])
+        base = {"id": "t", "name": "T", "match": {"card_ids": ["T"], "card_names": []}, "description": "d", "sources": ["s"], "layout": {"rows": 1, "cols": 1}}
+        knob = {"id": "k", "name": "K", "row": 0, "col": 0, "kind": "knob", "send": {"type": "cc", "channel": 0, "number": 1}, "action": {"action": "shader_control_1"}}
+        ok = midi.validate_profile(dict(base, controls=[dict(knob, layers={"geometry": {"action": "size"}})]), "t")
+        self.assertEqual(ok["controls"][0]["layers"], {"geometry": {"action": "size"}})
+        for bad in ({"shift": {"action": "size"}}, {"geometry": {"action": "stop"}}, {"geometry": {"action": "layer_geometry"}}, {"mapping": None},
+                    {"geometry": {"action": "none"}}, {}, [], {"geometry": {"action": "blackout", "guard": False}}):
+            with self.assertRaises(midi.MidiError, msg=bad):
+                midi.validate_profile(dict(base, controls=[dict(knob, layers=bad)]), "t")
+
+
+class GeometryOnTheHubTest(LightsHubBase):
+    def test_the_card_says_it_and_the_light_flashes_while_it_lasts(self):
+        self.plug(C_NANO)
+        self.post("/api/midi", {"controller": "nanoKONTROL2", "lights": True})
+        self.wait(lambda: C_NANO in self.out and self.out[C_NANO].lit().get((0xB0, 32)) == 127)
+        pipe = self.out[C_NANO]
+        m6 = lambda: [m[2] for m in pipe.read() if m[:2] == (0xB0, 53)]
+        self.wait(lambda: m6() == [0])
+        self.send(C_NANO, [0xB0, 53, 127]); self.send(C_NANO, [0xB0, 53, 0])
+        self.wait(lambda: self.controller("nanoKONTROL2")["layer"] == "geometry")
+        self.wait(lambda: len(m6()) >= 6, timeout=8)                # on, off, on, off ...
+        ctl = {c["id"]: c for c in self.controller("nanoKONTROL2")["controls"]}
+        self.assertEqual((ctl["knob1"]["action"], ctl["knob1"]["origin"], ctl["knob5"]["action"], ctl["m6"]["lit"]), ({"action": "size"}, "layer", None, "flash"))
+        self.send(C_NANO, [0xB0, 53, 127]); self.send(C_NANO, [0xB0, 53, 0])
+        self.wait(lambda: self.controller("nanoKONTROL2")["layer"] is None)
+        self.wait(lambda: pipe.lit()[(0xB0, 53)] == 0)
+        count = len(m6())
+        time.sleep(1.0)
+        self.assertEqual(len(m6()), count)
+        self.assertEqual(next(c for c in self.controller("nanoKONTROL2")["controls"] if c["id"] == "knob1")["action"], {"action": "shader_control_1"})

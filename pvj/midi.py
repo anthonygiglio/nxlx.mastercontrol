@@ -125,6 +125,19 @@ ACTIONS.update({a: ("trigger", None, None) for a in (
     "mapping_mode", "map_surface_next", "map_surface_prev", "map_corner_next", "map_corner_prev",
     "map_left", "map_right", "map_up", "map_down", "map_step", "map_undo")})
 ACTIONS.update({"map_x": ("delta", "x", None), "map_y": ("delta", "y", None)})
+# A LAYER on a controller: a state in which a few of its controls do something else, shown by a flashing light, and
+# only one at a time. A profile gives a control its other self per layer ("layers": {"geometry": {...}}); everything
+# without one works as always. Two layers exist:
+# * "mapping": mapping mode. It belongs to the box (the mapper keeps it, behind the owner's switch), is entered and
+#   left by the action mapping_mode, and applies to every controller that has such controls.
+# * "geometry": the owner, 2026-10-10, for the nanoKONTROL2: "all eight knobs for shaders ... use a button to
+#   switch to the geometry controls and flash the button when in that state". It belongs to the one controller, is
+#   entered and left by the action layer_geometry (a plain press: it changes nothing on the screen by itself), and
+#   ends by itself LAYER_SECONDS after the last touch of one of its controls, so that forgotten, it does not leave
+#   the shader knobs dead. A control whose other self is null does nothing in the layer.
+LAYERS = ("mapping", "geometry")
+LAYER_SECONDS = {"geometry": 120.0}
+ACTIONS["layer_geometry"] = ("trigger", "geometry", None)
 # How a level follows a knob or fader: action -> (low, high, centre, curve). The second and third fields of ACTIONS
 # stay the WIDEST range a mapping may ask for with its own "min" and "max"; these are what a control gets when it
 # asks for nothing.
@@ -387,7 +400,7 @@ def validate_profile(p, stem=None):
         raise MidiError("controls must list 1 to %d controls" % MAX_CONTROLS)
     ids, cells, sends, controls = set(), set(), set(), []
     for c in p["controls"]:
-        _keys(c, "a control", ("id", "name", "row", "col", "kind", "send", "action"), ("guard", "unverified", "zone", "mapping"))
+        _keys(c, "a control", ("id", "name", "row", "col", "kind", "send", "action"), ("guard", "unverified", "zone", "layers"))
         if "zone" in c and c["zone"] not in ZONES:
             raise MidiError("a control's zone is one of: %s" % ", ".join(ZONES))
         if not isinstance(c["id"], str) or not CONTROL_ID.fullmatch(c["id"]) or c["id"] in ids:
@@ -428,18 +441,32 @@ def validate_profile(p, stem=None):
                 raise MidiError("%s: %s must be true or false" % (what, flag))
         if c.get("guard") and (action is None or c["kind"] not in ("button", "pad")):
             raise MidiError("%s: only a button or pad with an action can be guarded" % what)
-        other = None                                # what the control does instead while mapping mode is on
-        if "mapping" in c:
-            try:
-                other = clean_action(c["mapping"], send["type"])
-            except MidiError as e:
-                raise MidiError("%s mapping: %s" % (what, e))
-            turned = ACTIONS[other["action"]][0] == "delta"
-            if not other["action"].startswith("map_") or turned != (c["kind"] in ("fader", "knob")) or len(other) != 1:
-                raise MidiError("%s: in mapping mode a button chooses, nudges or undoes, and a knob nudges" % what)
+        others = {}                                 # what the control does instead while a layer is on: {layer: action or None}
+        if "layers" in c:
+            if not isinstance(c["layers"], dict) or not c["layers"] or any(k not in LAYERS for k in c["layers"]):
+                raise MidiError("%s: layers names %s" % (what, " or ".join(LAYERS)))
+            for name, raw in c["layers"].items():
+                if raw is None:                     # nothing at all in that layer
+                    if name == "mapping":
+                        raise MidiError("%s: in mapping mode a control has an action or is left as it is" % what)
+                    others[name] = None
+                    continue
+                try:
+                    other = clean_action(raw, send["type"])
+                except MidiError as e:
+                    raise MidiError("%s in the layer %s: %s" % (what, name, e))
+                kind_of = ACTIONS[other["action"]][0]
+                follows = kind_of in ("level", "control", "delta")
+                if "scene" in other or "guard" in other or other["action"] in ("none", "mapping_mode", "layer_geometry") or kind_of == "hold":
+                    raise MidiError("%s in the layer %s: that action cannot be a control's other self" % (what, name))
+                if (c["kind"] in ("fader", "knob")) != follows and not (kind_of == "control" and c["kind"] in ("button", "pad")):
+                    raise MidiError("%s in the layer %s: a fader or knob needs an action that follows it, a button or pad one that is pressed" % (what, name))
+                if name == "mapping" and (not other["action"].startswith("map_") or len(other) != 1):
+                    raise MidiError("%s: in mapping mode a button chooses, nudges or undoes, and a knob nudges" % what)
+                others[name] = other
         controls.append({"id": c["id"], "name": _text(c["name"], what + " name", 24), "row": cell[0], "col": cell[1], "kind": c["kind"],
                          "send": send, "action": action, "guard": bool(c.get("guard")), "unverified": bool(c.get("unverified")),
-                         "zone": c.get("zone"), "mapping": other})
+                         "zone": c.get("zone"), "layers": others})
     out["controls"] = controls
     out["lights"] = validate_lights(p["lights"], controls) if "lights" in p else None      # see "lights" below
     return out
@@ -487,9 +514,11 @@ def profile_entries(profile, source):
     """A profile's default actions as map entries for the controller called `source`."""
     out = []
     for c in profile["controls"]:
-        if c.get("mapping"):                        # its other self, used only while mapping mode is on (MidiMapper.matching)
-            out.append(dict(c["mapping"], id="m:" + c["id"], source=source, kind=c["send"]["type"], channel=c["send"]["channel"],
-                            number=c["send"]["number"], profile=True, mode=True, guard=False, pickup=False))
+        for name, other in (c.get("layers") or {}).items():    # its other self per layer, used only while that layer is on (MidiMapper.matching)
+            e = dict(other or {"action": "none"}, id="l:%s:%s" % (name, c["id"]), source=source, kind=c["send"]["type"],
+                     channel=c["send"]["channel"], number=c["send"]["number"], profile=True, layer=name, guard=False)
+            e["pickup"] = bool(other) and takes_over(e, True)
+            out.append(e)
         if c["action"] is None:
             continue
         e = dict(c["action"], id="p:" + c["id"], source=source, kind=c["send"]["type"], channel=c["send"]["channel"],
@@ -515,15 +544,15 @@ FLASH_HALF = 0.25           # seconds a writer-flashed light is on, then off: tw
 LIGHT_LEVELS = ("low", "medium", "high")
 # what a light can be about; which one a control shows follows from what the control does (light_meaning)
 LIGHT_MEANINGS = ("clip", "preset", "control", "vibes", "set", "step", "play", "stop", "blackout", "fadeout", "fadein", "room", "bank", "effect",
-                  "fade", "clip_b", "clip_c", "mapping", "spare")
+                  "fade", "clip_b", "clip_c", "mapping", "layer", "spare")
 # "clip_b" and "clip_c" are a pad of bank B and of bank C, for a controller that can show the three banks in three
 # colours; a section without them shows every pad as "clip".
-FALLBACK_STYLE = {"clip_b": "clip", "clip_c": "clip", "fade": "fadeout", "mapping": "vibes"}
+FALLBACK_STYLE = {"clip_b": "clip", "clip_c": "clip", "fade": "fadeout", "mapping": "vibes", "layer": "vibes"}
 MAX_FIXED = 8               # set-up or clear messages in a profile
 _MEANING = {"vibes": "vibes", "vibes_ambient": "set", "vibes_show": "set", "vibes_next": "step", "shader_prev": "step",
             "shader_next": "step", "clip_prev": "step", "clip_next": "step", "pause": "play", "stop": "stop",
             "blackout": "blackout", "fadeout": "fadeout", "fadein": "fadein", "bank_prev": "bank", "bank_next": "bank",
-            "effect_toggle": "effect", "effect_prev": "step", "effect_next": "step", "fade": "fade", "mapping_mode": "mapping",
+            "effect_toggle": "effect", "effect_prev": "step", "effect_next": "step", "fade": "fade", "mapping_mode": "mapping", "layer_geometry": "layer",
             "seek_back": "step", "seek_forward": "step"}
 
 
@@ -650,7 +679,7 @@ def light_message(lights, ctl, value):
     return bytes((status, ctl["send"]["number"] & 0x7F, value & 0x7F))
 
 
-def light_state(action, snap, bank=0):
+def light_state(action, snap, bank=0, layer=None):
     """What the light of a control that does `action` should say now: "off", "on" (there is something here), "active"
     (it is the one on now) or "busy". `snap` is the hub's picture of the box (MidiHub._snapshot); only plain values
     are read here, so this cannot wait for anything."""
@@ -721,6 +750,8 @@ def light_state(action, snap, bank=0):
         return "off" if not snap["running"] else ("busy" if snap["paused"] else "active")
     if a == "stop":
         return "on" if snap["running"] else "active"
+    if a == "layer_geometry":                           # the controller's own layer: flashing for as long as it is on
+        return LIGHT_FLASH if layer == ACTIONS[a][1] else "on"
     if a == "mapping_mode":                             # lit where the owner allows it, flashing while the mode is on
         return LIGHT_FLASH if snap.get("mapping") else ("on" if snap.get("mapping_ready") else "off")
     if a == "blackout":
@@ -906,6 +937,9 @@ class MidiMapper:
         self.local = lambda source, body: False     # what is not an API call (a code on the display); the hub sets it
         self.mapping_mode = lambda: False           # is mapping mode on (the mapper's memory); the hub sets it. Must never wait
         self._turn = {}                             # (source, kind, number) -> [where a "delta" knob stood last, steps not yet sent]
+        self.layers = {}                            # source -> (layer, until): a controller's own layer (geometry), see LAYERS
+        self._stood = {}                            # (source, kind, number) -> where a knob stood when it last set a shader's or an effect's control
+        self._parked = {}                           # the same key -> where the knob was last seen, while it waits to come back to that place
 
     def matching(self, source, kind, channel, number):
         """Entries for this control, in the order of precedence: the person's own mapping (it replaces the others
@@ -919,17 +953,65 @@ class MidiMapper:
             return [e for e in mine if e["channel"]] or mine
         standard = [e for e in found if e.get("profile")]
         # a control's other self in mapping mode takes its place while the mode is on, and does not exist outside it
-        other = [e for e in standard if e.get("mode")]
-        standard = other if other and self.mapping_mode() else [e for e in standard if not e.get("mode")]
+        layer = self.active_layer(source)
+        other = [e for e in standard if layer is not None and e.get("layer") == layer]
+        standard = other or [e for e in standard if not e.get("layer")]
+        if other and layer in LAYER_SECONDS:            # a touch of one of the layer's controls keeps the layer on
+            self.layers[source] = (layer, self._clock() + LAYER_SECONDS[layer])
         if standard or source in self.profiled:
             return standard
         return found
+
+    def active_layer(self, source):
+        """The layer that is on for this controller, or None: mapping mode (the box's) before the controller's own."""
+        if self.mapping_mode():
+            return "mapping"
+        own = self.layers.get(source)
+        if own is None:
+            return None
+        if self._clock() >= own[1]:                     # it ended by itself
+            self._switch(source, None)
+            return None
+        return own[0]
+
+    def _switch(self, source, layer):
+        """Put a controller's own layer on, or off (None). Nothing may jump across the change: a level starts its
+        pickup afresh (its knob was somewhere else meanwhile), and a knob that sets a shader's or an effect's control
+        waits until it is back where it stood when it last set one."""
+        if layer is None:
+            self.layers.pop(source, None)
+        else:
+            self.layers[source] = (layer, self._clock() + LAYER_SECONDS.get(layer, 0.0))
+        for key in [k for k in self._pick if k[0] == source]:
+            del self._pick[key]
+        for key in [k for k in self._stood if k[0] == source]:
+            self._parked[key] = None
+
+    def toggle_layer(self, source, layer):
+        """The layer's own button. While mapping mode is on it does nothing: one layer at a time."""
+        if self.mapping_mode():
+            return
+        self._switch(source, None if self.layers.get(source, (None,))[0] == layer else layer)
+
+    def _back_in_place(self, key, value):
+        """A knob that sets a control of the shader or the effect, after a layer: False until it is back where it
+        stood (within the pickup's tolerance, or passing it)."""
+        if key not in self._parked:
+            return True
+        stood, prev = self._stood.get(key), self._parked[key]
+        if stood is None or abs(value - stood) <= PICKUP_TOLERANCE or (prev is not None and (prev - stood) * (value - stood) <= 0):
+            del self._parked[key]
+            return True
+        self._parked[key] = value
+        return False
 
     def forget(self, source=None):
         """A controller went: its pickup and guard state go with it, so it starts clean when it comes back. With no
         source, every controller's (MIDI was switched off: what is let go meanwhile is never heard, so a button
         that was down then would otherwise count as held for ever, and its next press would do nothing)."""
-        for store in (self._pick, self._armed, self._pressed, self.pending, self._held, self._turn):
+        for name in [n for n in self.layers if source is None or n == source]:
+            del self.layers[name]
+        for store in (self._pick, self._armed, self._pressed, self.pending, self._held, self._turn, self._stood, self._parked):
             for key in [k for k in store if source is None or source in k[:2]]:
                 del store[key]
 
@@ -1076,8 +1158,16 @@ class MidiMapper:
                         if first is None or not GUARD_MIN <= now - first <= GUARD_MAX:
                             self._armed[key] = now
                             continue
+                    if e["action"] == "layer_geometry":     # the controller's own layer: nothing is asked of the box
+                        self.toggle_layer(source, ACTIONS[e["action"]][1])
+                        continue
                     calls.extend(self._trigger_calls(e))
             else:
+                if ACTIONS[e["action"]][0] == "control":        # a knob on a shader's or an effect's control
+                    if not self._back_in_place((source, kind, d1), d2):
+                        self.pending.pop(key, None)
+                        continue
+                    self._stood[(source, kind, d1)] = d2
                 if e.get("pickup") and not self._picked_up(e, (source, kind, d1), d2, now):
                     self.pending.pop(key, None)
                     continue
@@ -1759,11 +1849,12 @@ class MidiHub:
         """({the two leading bytes of a light's message: its value}, {control id: its state}) for one controller."""
         lights, doing = profile["lights"], self._doing(source, profile, c)
         table, states, flash = {}, {}, set()
+        layer = (self.mapper.layers.get(source) or (None,))[0]     # the controller's own layer, for its button's light (a plain read)
         for ctl in profile["controls"]:
             if ctl["id"] not in lights["controls"]:
                 continue
             action = doing[ctl["id"]]
-            state, meaning = light_state(action, snap, bank), light_meaning(action)
+            state, meaning = light_state(action, snap, bank, layer), light_meaning(action)
             key = light_message(lights, ctl, 0)[:2]
             table[key] = light_value(lights, meaning, state, level, phase)
             if light_flashes(lights, meaning, state, level):
@@ -2233,7 +2324,8 @@ class MidiHub:
         source = device["name"]
         profile = self.profile_for(source, device["path"]) if device["path"] in self.inputs else None
         out = {"name": source, "path": device["path"], "connected": device["connected"], "messages": device["messages"],
-               "profile": None, "standard": self.standard_on(source), "controls": [], "lights": None}
+               "profile": None, "standard": self.standard_on(source), "controls": [], "lights": None,
+               "layer": self.mapper.active_layer(source)}      # the layer that is on for it now (LAYERS), or None
         if profile is None:
             return out
         out["lights"] = self._light_status(device["path"], source, profile)
@@ -2253,12 +2345,16 @@ class MidiHub:
         for ctl in profile["controls"]:
             send = ctl["send"]
             key = (send["type"], send["number"])
-            item = {k: ctl[k] for k in ("id", "name", "row", "col", "kind", "send", "unverified", "zone", "mapping")}
+            item = {k: ctl[k] for k in ("id", "name", "row", "col", "kind", "send", "unverified", "zone", "layers")}
             if key in mine:
                 e = mine[key]
                 item.update(action={k: e[k] for k in ("action", "bank", "index", "scene") + OPTION_KEYS if k in e}, guard=bool(e.get("guard")),
                             origin="yours" if e["source"] == source else "any",      # "any": made for every controller; removed in the list
                             pickup=takes_over(e, out["standard"] and e["source"] == source))
+            elif out["standard"] and out["layer"] in ctl["layers"]:       # its other self, while that layer is on
+                other = ctl["layers"][out["layer"]]
+                item.update(action=dict(other) if other else None, origin="layer" if other else None, guard=False,
+                            pickup=bool(other) and takes_over(other, True))
             elif out["standard"] and ctl["action"] is not None:
                 item.update(action=dict(ctl["action"]), origin="standard", guard=ctl["guard"], pickup=takes_over(ctl["action"], True))
             else:

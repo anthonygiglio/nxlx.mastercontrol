@@ -155,7 +155,8 @@ canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2
 .ctlgrid .ctl .ctlname { color: var(--mu); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ctlgrid .ctl .ctlwhat { font-weight: 600; overflow-wrap: anywhere; }
 .ctlgrid .ctl .ctlval { color: var(--mu); font-size: 10px; }
-.ctlgrid .ctl .ctlalt { color: var(--mu); font-size: 10px; overflow-wrap: anywhere; }      /* what the control does instead in mapping mode (D75) */
+.ctlgrid .ctl .ctlalt { color: var(--mu); font-size: 10px; overflow-wrap: anywhere; }
+.ctlgrid .ctl .ctlalt.now { color: inherit; font-weight: 600; text-decoration: underline; }      /* what the control does instead in mapping mode (D75) */
 .ctlgrid .ctl.spare .ctlwhat { font-weight: 400; color: var(--mu); }
 .ctlgrid .ctl.mine { border-style: dashed; border-color: var(--ac); }
 .ctlgrid .ctl.wait { border-style: dotted; border-color: var(--ac); }

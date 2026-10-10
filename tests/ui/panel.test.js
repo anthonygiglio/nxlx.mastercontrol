@@ -660,14 +660,18 @@ function startServer() {
     assert.strictEqual(await page.locator(nano + ' .ctl').count(), 51, 'every control of the nanoKONTROL2 is drawn');
     assert.strictEqual(await page.locator('.ctlcard[data-ctl="keys"] .ctl').count(), 0, 'an unknown controller has no drawn layout');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader1"] .ctlwhat'), 'Opacity');
-    // the zoom and the two positions side by side on knobs 1 to 3 (D75), then the shader's controls
+    // all eight knobs are the shader's (the owner, 2026-10-10); zoom and the two positions are their other selves in the geometry layer
     assert.deepStrictEqual(await page.locator(nano + ' .ctl[data-id^="knob"] .ctlwhat').allTextContents(),
-      ['Zoom', 'Position X', 'Position Y', 'Shader control 1', 'Shader control 2', 'Shader control 3', 'Shader control 4', 'Vibes time']);
+      [1, 2, 3, 4, 5, 6, 7, 8].map((n) => 'Shader control ' + n));
+    assert.deepStrictEqual(await page.locator(nano + ' .ctl[data-id^="knob"] .ctlalt[data-layer="geometry"]').allTextContents(),
+      ['geometry: Zoom', 'geometry: Position X', 'geometry: Position Y', 'geometry: nothing', 'geometry: nothing', 'geometry: nothing', 'geometry: nothing', 'geometry: nothing']);
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="m6"] .ctlwhat'), 'Geometry');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="m8"] .ctlwhat'), 'Mapping mode 2x');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r7"] .ctlwhat'), 'Fade out / in');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="m7"] .ctlwhat'), 'Rotate');      // over Fade, not beside it
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r6"] .ctlwhat'), 'Spare');
     // the parts of the controller are tinted and named once under the drawing
-    assert.strictEqual(await page.locator(nano + ' .ctl.z-picture').count(), 5, 'zoom, X, Y, the opacity and the quarter turn are one zone');
+    assert.strictEqual(await page.locator(nano + ' .ctl.z-picture').count(), 4, 'the opacity, Geometry, the quarter turn and mapping mode are one zone');
     assert.deepStrictEqual(await page.locator(nano + ' .ctlzone').allTextContents(),
       ['Pads', 'The clip', 'The screen: fade, freeze, stop, black', 'The picture: zoom, place, turn', 'Sound', 'Shaders and Vibes', 'Effects', 'Room']);
     assert.notStrictEqual(await page.locator(nano + ' .ctl[data-id="knob1"]').evaluate((el) => getComputedStyle(el).boxShadow), 'none', 'a zone is drawn');
@@ -681,6 +685,16 @@ function startServer() {
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob1"] .ctlval'), '64');
     assert.strictEqual(await page.locator(nano + ' .ctlquiet').isHidden(), true, 'the "nothing received" line goes with the first message');
     await page.waitForSelector(nano + ' .ctl[data-id="knob1"]:not(.lit)', { timeout: 8000 });      // and goes dark again
+    // the geometry layer: one press of M 6 (CC 53) and the card says so and shows the knobs' other selves; a press again and it is over
+    fs.appendFileSync(midiIn, 'B0 35 7F\nB0 35 00\n');
+    await page.waitForSelector(nano + ' .ctllayer:has-text("Geometry is on")', { timeout: 8000 });
+    assert.deepStrictEqual((await page.locator(nano + ' .ctl[data-id^="knob"] .ctlwhat').allTextContents()).slice(0, 4), ['Zoom', 'Position X', 'Position Y', 'Spare']);
+    assert.strictEqual(await page.locator(nano + ' .ctlalt.now').count(), 8);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), 'the layer made the page scroll sideways');
+    await page.waitForTimeout(400);
+    fs.appendFileSync(midiIn, 'B0 35 7F\nB0 35 00\n');
+    await page.waitForFunction((sel) => !document.querySelector(sel + ' .ctllayer'), nano, { timeout: 8000 });
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob1"] .ctlwhat'), 'Shader control 1');
     fs.appendFileSync(midiIn, 'B0 00 05\n');                                    // fader 1, far below the box's 100 percent: it waits (pickup)
     await page.waitForSelector(nano + ' .ctl[data-id="fader1"].wait');
     assert.strictEqual((await get('/api/midi')).controllers[0].controls.filter((x) => x.id === 'fader1')[0].pickup, true);

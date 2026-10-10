@@ -2043,6 +2043,7 @@
     ['map_corner_next', 'Mapping mode: next corner'], ['map_corner_prev', 'Mapping mode: the corner before'], ['map_left', 'Mapping mode: nudge left'], ['map_right', 'Mapping mode: nudge right'],
     ['map_up', 'Mapping mode: nudge up'], ['map_down', 'Mapping mode: nudge down'], ['map_step', 'Mapping mode: step size (1, 10, 50)'], ['map_undo', 'Mapping mode: undo the last nudge'],
     ['map_x', 'Mapping mode: nudge left and right by turning (fader)'], ['map_y', 'Mapping mode: nudge up and down by turning (fader)'],
+    ['layer_geometry', 'Geometry on / off: the controls marked "geometry" set zoom and position'],
     ['speed', 'Speed (fader)'],
     ['volume', 'Volume (fader)'], ['blackout_hold', 'Blackout while held up (fader)'],
     ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)'],
@@ -2067,7 +2068,7 @@
     effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
     code_join: 'Presenter code (hold)', code_owner: 'Full access code (hold)',
     fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror left to right', flip_v: 'Mirror top to bottom', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
-    loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume', mapping_mode: 'Mapping mode',
+    loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume', mapping_mode: 'Mapping mode', layer_geometry: 'Geometry',
     map_surface_next: 'Map: next surface', map_surface_prev: 'Map: surface before', map_corner_next: 'Map: next corner', map_corner_prev: 'Map: corner before',
     map_left: 'Map: left', map_right: 'Map: right', map_up: 'Map: up', map_down: 'Map: down', map_step: 'Map: step size', map_undo: 'Map: undo',
     map_x: 'Map: nudge X', map_y: 'Map: nudge Y' };
@@ -2100,7 +2101,7 @@
     var sig = null;
     function signature(d) {
       return JSON.stringify([d.enabled, d.bank, (d.controllers || []).map(function (c) {
-        return [c.name, c.connected, c.standard, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin, x.guard]; }),
+        return [c.name, c.connected, c.standard, c.layer, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin, x.guard]; }),
           c.lights && [c.lights.on, c.lights.state, c.lights.brightness, c.lights.testing]];
       })]);
     }
@@ -2235,6 +2236,10 @@
           }
           card.appendChild(h('p', { class: 'hint ctllightnote', text: L.note }));
         }
+        // a layer that is on (D75): said in words, as its button's light says it on the controller
+        if (c.layer) card.appendChild(h('p', { class: 'msg ctllayer', role: 'status', text: c.layer === 'mapping' ?
+          'Mapping mode is on: the controls marked "mapping mode" choose and nudge the mapping\'s corners. Everything else works as always.' :
+          'Geometry is on: the controls marked "geometry" set zoom and position; the other knobs rest. Press the flashing button to go back; it also ends by itself after two minutes without a touch.' }));
         var grid = h('div', { class: 'ctlgrid', role: 'group', 'aria-label': 'The controls of ' + c.profile.name });
         grid.style.gridTemplateColumns = 'repeat(' + c.profile.cols + ', minmax(58px, 1fr))';
         grid.style.setProperty('--cols', String(c.profile.cols));       // for a style that gives the cells another width (D54)
@@ -2246,7 +2251,11 @@
             'data-id': x.id, 'aria-pressed': chosen ? 'true' : 'false', 'aria-label': x.name + ': ' + midiWhat(x.action),
             onclick: function () { midiSel = chosen ? null : { ctl: c.name, id: x.id }; draw(d); } },
             h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }),
-            x.mapping ? h('span', { class: 'ctlalt', text: midiWhat(x.mapping).replace('Map: ', 'in mapping mode: ') }) : null, h('span', { class: 'ctlval' }));
+            // its other self in a layer: named under what it does, and in its place while that layer is on
+            Object.keys(x.layers || {}).map(function (name) {
+              return h('span', { class: 'ctlalt' + (c.layer === name ? ' now' : ''), 'data-layer': name,
+                text: (name === 'mapping' ? 'mapping mode: ' : 'geometry: ') + (x.layers[name] ? midiWhat(x.layers[name]).replace('Map: ', '') : 'nothing') });
+            }), h('span', { class: 'ctlval' }));
           b.style.gridRow = String(x.row + 1);
           b.style.gridColumn = String(x.col + 1);
           grid.appendChild(b);

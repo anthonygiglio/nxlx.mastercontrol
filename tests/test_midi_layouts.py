@@ -103,6 +103,8 @@ class GeometryOnAKnobTest(unittest.TestCase):
         m = MidiMapper(self.rec, entries, {"blackout": False}, clock=lambda: self.t[0])
         m.profiled = {source} if profile else set()
         m.target = lambda action: self.have.get(action)
+        if profile == NANO:
+            m._switch(source, "geometry")           # the nanoKONTROL2's zoom and positions are its geometry layer
         return m
 
     def cc(self, m, number, v, source="nanoKONTROL2"):
@@ -186,6 +188,7 @@ class GeometryOnAKnobTest(unittest.TestCase):
         m = MidiMapper(self.rec, entries, {"blackout": False}, clock=lambda: self.t[0])
         m.profiled = {"nanoKONTROL2", "Mix"}
         m.target = lambda action: self.have.get(action)
+        m._switch("nanoKONTROL2", "geometry")
         self.have.update(size=100.0)
 
         def turn(source, number, v):
@@ -247,12 +250,15 @@ class HubGeometryTest(HubBase):
         self.enable()
         self.wait(lambda: "/dev/snd/midiC1D0" in self.pipes)
         self.player.running = True
+        self.send("/dev/snd/midiC1D0", [0xB0, 53, 127])             # M 6: into the geometry layer, one plain press
+        self.send("/dev/snd/midiC1D0", [0xB0, 53, 0])
+        self.wait(lambda: self.controller("nanoKONTROL2")["layer"] == "geometry")
         self.send("/dev/snd/midiC1D0", [0xB0, 18, 0])               # knob 3 (position Y) left at the bottom; the picture is centred
-        self.wait(lambda: self.controller("nanoKONTROL2")["messages"] >= 1)
+        self.wait(lambda: self.controller("nanoKONTROL2")["messages"] >= 3)
         time.sleep(0.2)
         self.assertEqual(self.api.mix["position_y"], 0)
         knob = next(c for c in self.controller("nanoKONTROL2")["controls"] if c["id"] == "knob3")
-        self.assertEqual((knob["action"], knob["pickup"], knob["waiting"], knob["zone"]), ({"action": "position_y"}, True, True, "picture"))
+        self.assertEqual((knob["action"], knob["origin"], knob["pickup"], knob["waiting"]), ({"action": "position_y"}, "layer", True, True))
         self.send("/dev/snd/midiC1D0", [0xB0, 18, 64])
         time.sleep(0.2)
         self.send("/dev/snd/midiC1D0", [0xB0, 18, 127])
