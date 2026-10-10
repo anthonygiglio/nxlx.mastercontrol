@@ -21,7 +21,9 @@
   a full-access device. Both need the box setting `controller_code` (off unless a full-access device switched it
   on; the owner kind has its own switch), which is read again when the code is used.
 * The PIN is stored as a salted scrypt hash. Because it is short, guessing is
-  throttled per client and globally, and comparisons are constant-time.
+  throttled per client and globally, and comparisons are constant-time. The PIN in clear is known to the run that
+  made it (`current_pin`), and a paired full-access device may read it back (`show_pin`, D77; rate limited, and
+  the API writes a journal line each time). A run that started without making a new PIN does not know it.
 """
 
 import hashlib
@@ -51,6 +53,7 @@ CONTROLLER_PER_HOUR = 6                         # and this many are made in any 
 PER_CLIENT_FAILS, PER_CLIENT_WINDOW = 5, 60.0
 GLOBAL_FAILS, GLOBAL_WINDOW = 20, 600.0
 LOCKOUT_SECONDS = 60.0
+PIN_SHOWS, PIN_SHOW_WINDOW = 10, 300.0          # a full-access device may ask for the PIN this often (D77)
 
 
 class AuthError(Exception):
@@ -117,6 +120,8 @@ class Auth:
         self._controller = None     # the code shown from a controller: {"code", "kind", "expires" (monotonic), "shown" (wall)}
         self._controller_made = []  # when (monotonic) such codes were made, within the last hour
         self.controller_last = None  # the one before: {"kind", "shown", "ended" (wall), "how", "device"?}, for the panel
+        self.current_pin = None     # the PIN in clear, known only to this run and only once made here (_new_pin); never saved
+        self._pin_shows = {}        # device id -> when (monotonic) it was given the PIN, within PIN_SHOW_WINDOW
         self._prune_idle()
         with settings.lock:                 # at load: the section is written as what it means (controller_setting)
             if "controller_code" in settings.data and settings.data["controller_code"] != controller_setting(settings.data["controller_code"]):
@@ -154,6 +159,20 @@ class Auth:
             self._global_fails = []
             self._locked_until.clear()
             return self._new_pin()
+
+    def show_pin(self, device_id):
+        """The PIN in clear for a paired full-access device (the API checks the role), or None when this run does
+        not know it: a panel that started without making a new one has only the hash (D77). Counted per device
+        whether it is known or not, so asking says nothing by its timing: after PIN_SHOWS in PIN_SHOW_WINDOW it
+        raises AuthError with `retry_after`. The caller writes the journal line; this never logs the PIN."""
+        with self._pair_lock:
+            t = self._clock()
+            shows = [x for x in self._pin_shows.get(device_id, []) if t - x < PIN_SHOW_WINDOW]
+            if len(shows) >= PIN_SHOWS:
+                raise AuthError("the PIN was shown %d times in the last %d minutes; wait a little"
+                                % (PIN_SHOWS, int(PIN_SHOW_WINDOW // 60)), retry_after=int(PIN_SHOW_WINDOW - (t - shows[0])) + 1)
+            self._pin_shows[device_id] = shows + [t]
+            return self.current_pin
 
     def _check_pin(self, pin):
         auth = self.settings.data["auth"]

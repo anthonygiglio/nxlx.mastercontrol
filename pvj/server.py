@@ -3,8 +3,9 @@
 """HTTP front end for the control API and the web panel (standard library only).
 
 Security model, in one place:
-* every API call except hello, pair and session needs a paired device token
-  (HttpOnly SameSite=Strict cookie, or Authorization: Bearer for scripts)
+* every API call except hello, pair, session and logout needs a paired device token
+  (HttpOnly SameSite=Strict cookie, or Authorization: Bearer for scripts); logout
+  removes that token from the box and answers with the cookie expired
 * every state-changing call is a POST with JSON, the X-PVJ-Request header and a
   matching Origin (if the browser sends one), so other websites cannot drive it
 * the panel is served with a Content-Security-Policy that forbids inline script,
@@ -387,6 +388,9 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             if status == 200 and path in ("/api/pair", "/api/session") and payload.get("token"):
                 extra.append(("Set-Cookie", "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
                               % (COOKIE, payload["token"])))
+            if status == 200 and path == "/api/logout":
+                # the same attributes as the cookie that was set, with no life left: the browser drops it (D77)
+                extra.append(("Set-Cookie", "%s=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT" % COOKIE))
             if status == 200 and path == "/api/support/login" and payload.get("token"):
                 # support's login ends with the session on the box; the cookie only has to cover the longest a
                 # session can last (the studio may extend it), and is useless after that

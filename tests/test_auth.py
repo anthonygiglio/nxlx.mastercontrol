@@ -148,8 +148,20 @@ class AuthTest(unittest.TestCase):
         s2 = Settings(self.settings.path)
         s2.load()
         a2 = Auth(s2)
-        self.assertFalse(hasattr(a2, "current_pin"))
+        self.assertIsNone(a2.current_pin)          # the PIN is not known to this run: only its hash is (D77)
+        self.assertIsNone(a2.show_pin("some-device"))
         self.assertTrue(a2.pair(self.pin, "x", "c")[0])
+
+    def test_show_pin_is_counted_per_device_and_never_written_down(self):
+        for _ in range(auth.PIN_SHOWS):
+            self.assertEqual(self.auth.show_pin("dev-a"), self.pin)
+        with self.assertRaises(AuthError) as cm:
+            self.auth.show_pin("dev-a")
+        self.assertGreater(cm.exception.retry_after, 0)
+        self.assertEqual(self.auth.show_pin("dev-b"), self.pin)         # another device is not counted with it
+        self.clock.t += auth.PIN_SHOW_WINDOW + 1
+        self.assertEqual(self.auth.show_pin("dev-a"), self.pin)
+        self.assertNotIn(self.pin, str(self.settings.data))
 
 
 if __name__ == "__main__":
