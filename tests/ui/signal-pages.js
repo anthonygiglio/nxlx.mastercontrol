@@ -582,7 +582,8 @@ async function check(pg, o) {
     // the title: whole, inside the window, in the area's colour. Before pairing it is the screen's own heading; in
     // the Workspace shell (D65, D72) it is the title bar, and the open area's button (its tab under 600 px, its
     // button of the rail from 600 px) is that colour too. Exactly one heading of the first rank is shown, and the
-    // transport strip is on every screen with the four buttons that never fold away.
+    // transport strip is on every screen with the three buttons that never fold away (Freeze, Stop, Blackout: on
+    // a phone Previous and Next are behind More since the review of #112).
     const bg = (el) => (el ? getComputedStyle(el).backgroundColor : '');
     const bar = document.getElementById('wshead');
     const h1 = bar ? document.getElementById('wstitle') : document.querySelector('.screen h1');
@@ -596,7 +597,7 @@ async function check(pg, o) {
       const heads = Array.prototype.filter.call(shell.querySelectorAll('h1'), shown);
       if (heads.length !== 1) out.push(heads.length + ' first headings are shown: ' + heads.map((x) => x.textContent).join(', '));
       const strip = document.getElementById('wstp');
-      if (!strip || !shown(strip) || !['prev', 'next', 'stop', 'black'].every((id) => { const b = document.getElementById(id); return b && shown(b); })) out.push('the transport strip is not whole on this screen');
+      if (!strip || !shown(strip) || !['freeze', 'stop', 'black'].every((id) => { const b = document.getElementById(id); return b && shown(b); })) out.push('the transport strip is not whole on this screen');
     } else {
       const top = h1 && h1.closest('.top');
       if (!h1 || [bg(h1), bg(top)].indexOf(areaRgb) < 0) out.push('the title block is not the area colour ' + areaRgb + ': ' + JSON.stringify([bg(h1), bg(top)]));

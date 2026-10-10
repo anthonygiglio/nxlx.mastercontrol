@@ -311,8 +311,10 @@ function startServer() {
       }
     });
     // The instrument: one shader chosen by hand (a switch, a choice, two colours and numbers), with a preset saved;
-    // the page on a phone, and Play on a laptop, where the shader's controls stand beside the pads and the library
-    // (the picture keeps its name: until D72 it was of a strip of five of those controls, on Live and then on Shape > Controls).
+    // the page on a phone, and Play on a wide panel (1700 px, where the three screens share the page: D72 as changed
+    // on 2026-10-10; under that Shaders is a tab beside the desk), where the shader's controls stand beside the pads
+    // and the library (the picture keeps its name: until D72 it was of a strip of five of those controls, on Live
+    // and then on Shape > Controls).
     await api('POST', '/api/vibes', { on: false });
     await api('POST', '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
     await api('POST', '/api/shaders/presets', { action: 'save', name: 'Warm' });
@@ -324,7 +326,7 @@ function startServer() {
       await go(page, 'play/pads');
     });
     await shot('live-shader-laptop', async (f) => {
-      await page.setViewportSize({ width: 1366, height: 768 });
+      await page.setViewportSize({ width: 1700, height: 900 });
       try {
         await go(page, 'play/pads');
         await soft('the shader\'s controls beside the pads', page.waitForSelector('#shadercontrols:visible', { timeout: 15000 }));
