@@ -2572,6 +2572,11 @@
     return { name: 'this device', steps: ['Click "Download the root certificate" and install it as a trusted root certificate authority the way this device does it.',
       'Come back here and press "Does this device trust the box?".'] };
   }
+  // After a change the page is drawn from a fresh answer: the page machinery keeps a new answer for the state line
+  // only, and a redraw alone would show the old one (seen in CI: no Download button after the request was made).
+  function httpsReload() {
+    return api('GET', '/api/https').then(function (r) { keepAnswer({ id: 'https' }, r); if (S.sys === 'https') redrawSystem(); return r; });
+  }
   var httpsNoticeEl = null;
   function httpsNotice(data) {     // owner access is only over https:// now: say it once at the top, with the link
     if (!httpsNoticeEl) {
@@ -2595,13 +2600,14 @@
       lines.push(h('div', { class: 'kv', id: 'httpsline', text: 'HTTPS is on. Certificate for ' + c.names.join(', ') + ', from ' + c.starts + ', ends on ' + c.ends + '.' }));
       if (c.run_out) lines.push(h('div', { class: 'hint warn', id: 'httpswarn', text: 'The certificate ran out on ' + c.ends + '. Devices will refuse https:// until a new one is uploaded: download the request below, sign it again, upload the certificate.' }));
       else if (c.soon) lines.push(h('div', { class: 'hint warn', id: 'httpswarn', text: 'The certificate ends in ' + c.days_left + ' days. Download the request below, sign it again and upload the new certificate before then.' }));
+      if (c.chained === false) lines.push(h('div', { class: 'hint warn', id: 'httpschain', text: 'The certificate in use was issued by the root before this one. Devices that installed the new root refuse https:// until a certificate from it is uploaded; devices with the old root keep working meanwhile.' }));
       if (!c.names_this_host && d.host) lines.push(h('div', { class: 'hint warn', text: 'It does not name ' + d.host + ', which is how you reached the box, so https://' + d.host + '/ would be refused. Use one of its names, or make a new request with this one in it.' }));
     }
     if (!d.clock_trusted) lines.push(h('div', { class: 'hint', text: 'The box\'s clock is not set from the network, so dates here are as the box counts them; your device judges the certificate by its own clock.' }));
     if (d.root_fingerprint) lines.push(h('div', { class: 'hint', id: 'httpsfp', text: 'Root this box trusts, SHA-256: ' + d.root_fingerprint + '. Compare it once with "python3 tools/boxcert.py root" on your computer.' }));
     lines.push(h('div', { class: 'hint', id: 'httpsyouare', text: d.secure ? 'You are reading this over https://. This device trusts the box.' : 'You are reading this over http://.' + (d.https ? ' Install the root below, then move to ' + d.https_address : '') }));
     var sw = toggle('httpsowneronly', 'Owner access only over the secure connection', d.owner_only, function (v) {
-      act('POST', '/api/https/owner-only', { on: v }, function () { say(v ? 'From now on the PIN and owner devices work over https:// only.' : 'Owner access works over http:// again.'); S.sysFresh = false; redrawSystem(); })
+      act('POST', '/api/https/owner-only', { on: v }, function () { say(v ? 'From now on the PIN and owner devices work over https:// only.' : 'Owner access works over http:// again.'); httpsReload(); })
         .then(function (r) { if (!r.ok) { sw.sw.setAttribute('aria-checked', v ? 'false' : 'true'); } });
     }, d.secure ? (d.this_device_secure ? 'While on: the PIN is refused over http://, owner devices paired over http:// are told to pair again over https://, and guests notice nothing. The way back is the box itself (docs/HTTPS.md).'
       : 'This device was paired over http://. Log out, pair again here over https://, and then this switch works.')
@@ -2621,7 +2627,7 @@
       act('POST', '/api/https/request', { names: list, new_key: !!newKey }, function (r) {
         httpsForm.names = null;
         sayAt(out, 'Request made for ' + r.names.join(', ') + '. Download it, sign it on your computer (python3 tools/boxcert.py sign ' + r.file + '), then upload the certificate here.');
-        S.sysFresh = false; redrawSystem();
+        httpsReload();
       });
     }
     var pick = h('input', { type: 'file', id: 'httpspick', accept: '.pem,.crt,.cer,application/x-pem-file,application/x-x509-ca-cert', hidden: true });
@@ -2635,7 +2641,7 @@
         act('POST', '/api/https/certificate', { certificate: text }, function (r) {
           var c = r.status.certificate;
           sayAt(out, 'Certificate in use for ' + c.names.join(', ') + ', until ' + c.ends + '.' + (d.secure ? '' : ' Now install the root on this device (next card) and move to ' + r.status.https_address));
-          S.sysFresh = false; redrawSystem();
+          httpsReload();
         }).then(function (r) { if (!r.ok) sayAt(out, r.data.error || 'The certificate was refused.', true); });
       });
     });
@@ -2647,7 +2653,7 @@
       h('div', { class: 'row' },
         h('button', { class: 'btn grow', id: 'httpsupload', text: 'Upload the certificate...', onclick: function () { pick.click(); } }),
         d.previous ? h('button', { class: 'btn grow', id: 'httpsundo', text: 'Back to the one before', onclick: function () {
-          act('POST', '/api/https/undo', {}, function (r) { sayAt(out, 'The earlier certificate is in use again, until ' + r.status.certificate.ends + '.'); S.sysFresh = false; redrawSystem(); });
+          act('POST', '/api/https/undo', {}, function (r) { sayAt(out, 'The earlier certificate is in use again, until ' + r.status.certificate.ends + '.'); httpsReload(); });
         } }) : null),
       pick, out];
     var rootPick = h('input', { type: 'file', id: 'httpsrootpick', accept: '.pem,.crt,.cer', hidden: true });
@@ -2665,7 +2671,7 @@
           if (!control) return;
           confirmRow('Replace the root this box trusts? Old: ' + (d.root_fingerprint || 'none') + '. New: ' + fp + '. The next certificate must come from the new root; your devices need the new root installed.',
             'Replace the root', 'Keep it', function () {
-              act('POST', '/api/https/root', { root: text, confirm: fp }, function () { sayAt(out, 'The root was replaced. Now sign this box\'s request with it and upload the certificate.'); S.sysFresh = false; redrawSystem(); });
+              act('POST', '/api/https/root', { root: text, confirm: fp }, function () { sayAt(out, 'The root was replaced. Now sign this box\'s request with it and upload the certificate.'); httpsReload(); });
             }, control);
         });
       });
@@ -2677,7 +2683,7 @@
       rows.push(h('div', { class: 'row' },
         d.https ? h('button', { class: 'btn grow', id: 'httpsremove', text: 'Remove the certificate', onclick: function (e) {
           confirmRow('Remove the certificate? The box answers on http:// only until a new one is uploaded' + (d.owner_only ? ', and the owner-only switch has no effect meanwhile' : '') + '.', 'Remove it', 'Keep it', function () {
-            act('POST', '/api/https/remove', {}, function () { say('HTTP only now.'); S.sysFresh = false; redrawSystem(); });
+            act('POST', '/api/https/remove', {}, function () { say('HTTP only now.'); httpsReload(); });
           }, e.currentTarget);
         } }) : null,
         d.key ? h('button', { class: 'btn grow', id: 'httpsnewkey', text: 'New key', onclick: function (e) {
