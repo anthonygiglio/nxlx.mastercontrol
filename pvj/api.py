@@ -23,6 +23,7 @@ import unicodedata
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
 from . import paths
+from . import policy
 from .auth import Auth, AuthError
 from .modules import ModuleError
 from .player import AUDIO_EXTENSIONS, ENDINGS, IMAGE_EXTENSIONS, PlayerError, VIDEO_EXTENSIONS
@@ -154,6 +155,7 @@ class Api:
         self.net = net            # NetdClient or None
         self._sysfs = net_sysfs
         self._ip_json = ip_json or self._run_ip
+        self.guests = policy.GuestControls(self)     # the lock on guest controls, their limits and confirms (D80)
         self._upload_lock = threading.Lock()  # one upload at a time: protects the SD card and the threads
         self._media_lock = threading.Lock()   # rename, delete and publishing an upload never interleave
         self.mix = {"opacity": 100, "blackout": False, "size": 100, "position": 0, "position_y": 0, "rotate": 0,
@@ -305,7 +307,7 @@ class Api:
         return {"player": self._public_player_status(), "mix": dict(self.mix, **self.settings.data["mix"]),
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
-                "device": device, "support": self.support.banner()}
+                "device": device, "support": self.support.banner(), "guest_controls": self.guests.state()}
 
     def access_on_screen(self):
         """True while the PIN or join codes are drawn on the display (on request, or the first-run screen)."""
@@ -1340,7 +1342,7 @@ class Api:
         that could not be used, an accent that was dropped) goes to full access only."""
         t = self.settings.data["theme"]
         looks = self._looks()
-        if not Auth.allows(device, "full"):
+        if not Auth.allows(device, "live"):         # an Operator chooses the look (D80), so he gets the Look page's details
             for look in looks:
                 del look["look"]
             return {"theme": t, "available": looks}
@@ -1485,7 +1487,10 @@ class Api:
         return themes_mod.css(theme, accent)
 
     def devices(self, body, device, client):
-        return {"devices": self.auth.list_devices()}
+        devices = self.auth.list_devices()
+        if not Auth.allows(device, "full"):         # an Operator sees the guests, whom he may remove, and nobody else
+            devices = [d for d in devices if d["role"] == "view"]
+        return {"devices": devices}
 
     def _still_paired(self, device):
         """False when the device this request came from is gone: a factory reset (or a revoke) ran while the request
@@ -1497,6 +1502,9 @@ class Api:
         return any(d["id"] == device.get("id") for d in self.settings.data["devices"])
 
     def invite(self, body, device, client):
+        """A link for a new device. An Owner: a guest or an Operator. An Operator: a guest only (D80)."""
+        if not Auth.allows(device, "full") and body.get("role") != "view":
+            raise ApiError(403, "an operator can make a guest link only (owner access needed)")
         try:
             token, dev = self.auth.invite(str(body.get("name", "guest"))[:40], body.get("role"))
         except auth_mod.TooManyDevices as e:
@@ -1514,8 +1522,18 @@ class Api:
         return out
 
     def revoke(self, body, device, client):
+        """Remove a paired device. An Operator: a guest only, never an Operator or an Owner (D80)."""
         did = body.get("id")
-        if not isinstance(did, str) or not self.auth.revoke(did):
+        if not isinstance(did, str):
+            raise ApiError(404, "no such device")
+        if not Auth.allows(device, "full"):
+            target = next((d for d in list(self.settings.data["devices"]) if d["id"] == did), None)
+            if target is None:
+                raise ApiError(404, "no such device")
+            if target["role"] != "view":
+                raise ApiError(403, "an operator can remove a guest only (owner access needed)")
+            self.log("pvj-web: guest device %s removed by operator device %s (from %s)" % (did, device.get("id"), client))
+        if not self.auth.revoke(did):
             raise ApiError(404, "no such device")
         return {"ok": True}
 
@@ -2183,7 +2201,7 @@ class Api:
         role, minutes, uses = body.get("role"), body.get("minutes", auth_mod.JOIN_DEFAULT_MINUTES), body.get("uses", auth_mod.JOIN_DEFAULT_USES)
         if not full:
             if role != "view":
-                raise ApiError(403, "a presenter can make a guest code only (full access needed)")
+                raise ApiError(403, "an operator can make a guest code only (owner access needed)")
             if type(minutes) is not int or minutes not in auth_mod.PRESENTER_JOIN_MINUTES:      # the type first: 15.0 == 15
                 raise bad("minutes must be one of %s" % ", ".join(str(m) for m in auth_mod.PRESENTER_JOIN_MINUTES))
             if type(uses) is not int or not 1 <= uses <= auth_mod.PRESENTER_JOIN_MAX_USES:
@@ -2204,7 +2222,7 @@ class Api:
             self.auth.cancel_join(code)
             raise ApiError(401, "this device is no longer paired")
         if not full:
-            self.log("pvj-web: guest code made by presenter device %s (from %s), %d minutes, %d uses%s"
+            self.log("pvj-web: guest code made by operator device %s (from %s), %d minutes, %d uses%s"
                      % (device.get("id"), client, minutes, uses,
                         ", in the place of the one the %s made" % old["by"] if old else ""))
         return self._access_state(device)
@@ -2214,12 +2232,12 @@ class Api:
         cannot name a code by its digits, so it cannot use this to test guesses at the presenter code."""
         if not Auth.allows(device, "full"):
             if body.get("role") != "view" or "code" in body or "all" in body:
-                raise ApiError(403, "a presenter can end the guest code only (full access needed)")
+                raise ApiError(403, "an operator can end the guest code only (owner access needed)")
             if not self.auth.cancel_join_role("view"):
                 raise ApiError(404, "no such code")
             if self.pinscreen is not None:
                 self.pinscreen.hide(only=self.PRESENTER_ITEMS)      # a code that is gone is not left on the room screen
-            self.log("pvj-web: guest code ended by presenter device %s (from %s)" % (device.get("id"), client))
+            self.log("pvj-web: guest code ended by operator device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
         if body.get("all") is True:
             self.auth.cancel_join(None)
@@ -2269,7 +2287,7 @@ class Api:
         if not show:
             self.pinscreen.hide(only=only)
             if not full:
-                self.log("pvj-web: guest code taken off the room screen by presenter device %s (from %s)" % (device.get("id"), client))
+                self.log("pvj-web: guest code taken off the room screen by operator device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
         made = []           # the codes this very call made, to take back if the device turns out to be gone
         try:
@@ -2291,7 +2309,7 @@ class Api:
             self.pinscreen.hide(only=only)
             raise ApiError(401, "this device is no longer paired")
         if not full:
-            self.log("pvj-web: guest code put on the room screen for %d s by presenter device %s (from %s)%s"
+            self.log("pvj-web: guest code put on the room screen for %d s by operator device %s (from %s)%s"
                      % (body.get("seconds", 60), device.get("id"), client, "; a guest code was made for it" if made else ""))
         return self._access_state(device)
 
@@ -2539,7 +2557,9 @@ class Api:
         return out
 
     def _routes(self):
-        # (method, path) -> (minimum role or None, handler)
+        # (method, path) -> (minimum role or None, handler). view: Guest, live: Operator, full: Owner (D80). The role
+        # is not the whole rule: Api.gate also holds controllers and support to policy.LEGACY_LIVE and lets a Guest
+        # use the forms in policy.GUEST while guest controls are open. A new route needs a row in tests/test_roles.py.
         return {
             ("GET", "/api/hello"): (None, self.hello),
             ("POST", "/api/pair"): (None, self.pair),
@@ -2561,9 +2581,9 @@ class Api:
             ("POST", "/api/testpattern"): ("live", self.test_pattern),
             ("POST", "/api/testtone"): ("live", self.test_tone),
             ("POST", "/api/media/info"): ("view", self.media_info),
-            ("POST", "/api/media/import"): ("full", self.import_usb),
+            ("POST", "/api/media/import"): ("live", self.import_usb),
             ("GET", "/api/media/import"): ("view", self.import_status),
-            ("POST", "/api/media/import/cancel"): ("full", self.import_cancel),
+            ("POST", "/api/media/import/cancel"): ("live", self.import_cancel),
             ("GET", "/api/system"): ("view", self.system_info),
             ("POST", "/api/system/reboot"): ("full", self.reboot),
             ("POST", "/api/system/poweroff"): ("full", self.poweroff),
@@ -2590,34 +2610,34 @@ class Api:
             ("GET", "/api/sync"): ("view", self.get_sync),
             ("POST", "/api/sync"): ("full", self.set_sync),
             ("GET", "/api/mapper"): ("view", self.get_mapper),
-            ("POST", "/api/mapper"): ("full", self.set_mapper),
+            ("POST", "/api/mapper"): ("live", self.set_mapper),
             ("GET", "/api/shaders"): ("view", self.shaders.api_get),
-            ("POST", "/api/shaders"): ("full", self.shaders.api_set),
+            ("POST", "/api/shaders"): ("live", self.shaders.api_set),
             ("POST", "/api/shaders/play"): ("live", self.shaders.api_play),
             ("POST", "/api/shaders/values"): ("live", self.shaders.api_values),
             ("POST", "/api/shaders/step"): ("live", self.shaders.api_step),
             ("POST", "/api/shaders/preset"): ("live", self.shaders.api_preset),
-            ("POST", "/api/shaders/presets"): ("full", self.shaders.api_presets),
+            ("POST", "/api/shaders/presets"): ("live", self.shaders.api_presets),
             ("POST", "/api/vibes"): ("live", self.vibes.api_vibes),
             ("GET", "/api/effects"): ("view", self.effects.api_get),
             ("POST", "/api/effects"): ("live", self.effects.api_put),
             ("POST", "/api/effects/values"): ("live", self.effects.api_values),
             ("POST", "/api/effects/step"): ("live", self.effects.api_step),
             ("POST", "/api/effects/preset"): ("live", self.effects.api_preset),
-            ("POST", "/api/effects/presets"): ("full", self.effects.api_presets),
-            ("POST", "/api/effects/library"): ("full", self.effects.api_library),
-            ("POST", "/api/effects/config"): ("full", self.effects.api_config),
+            ("POST", "/api/effects/presets"): ("live", self.effects.api_presets),
+            ("POST", "/api/effects/library"): ("live", self.effects.api_library),
+            ("POST", "/api/effects/config"): ("live", self.effects.api_config),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),
             ("GET", "/api/room"): ("view", self.room.api_get),
-            ("POST", "/api/room"): ("full", self.room.api_set),
+            ("POST", "/api/room"): ("live", self.room.api_set),
             ("POST", "/api/room/scene"): ("live", self.room.api_scene),
             ("POST", "/api/room/group"): ("live", self.room.api_group),
             ("GET", "/api/audio"): ("view", self.get_audio),
-            ("POST", "/api/audio"): ("full", self.set_audio),
+            ("POST", "/api/audio"): ("live", self.set_audio),
             ("GET", "/api/autostart"): ("view", self.get_autostart),
-            ("POST", "/api/autostart"): ("full", self.set_autostart),
+            ("POST", "/api/autostart"): ("live", self.set_autostart),
             ("POST", "/api/autostart/test"): ("live", self.test_autostart),
             ("GET", "/api/dmx"): ("full", self.get_dmx),
             ("POST", "/api/dmx"): ("full", self.set_dmx),
@@ -2629,28 +2649,29 @@ class Api:
             ("GET", "/api/streams"): ("view", self.get_streams),
             ("POST", "/api/streams"): ("full", self.set_streams),
             ("GET", "/api/schedule"): ("view", self.get_schedule),
-            ("POST", "/api/schedule"): ("full", self.set_schedule),
+            ("POST", "/api/schedule"): ("live", self.set_schedule),
             ("GET", "/api/network"): ("full", self.get_network),
             ("POST", "/api/network/plan"): ("full", self.plan_network),
             ("POST", "/api/network/apply"): ("full", self.apply_network),
             ("POST", "/api/network/confirm"): ("full", self.confirm_network),
             ("POST", "/api/network/revert"): ("full", self.revert_network),
             ("POST", "/api/network/scan"): ("full", self.scan_wifi),
-            ("POST", "/api/media/delete"): ("full", self.delete_media),
-            ("POST", "/api/media/rename"): ("full", self.rename_media),
-            ("POST", "/api/pads"): ("full", self.set_pad),
-            ("POST", "/api/theme"): ("full", self.set_theme),
+            ("POST", "/api/media/delete"): ("live", self.delete_media),
+            ("POST", "/api/media/rename"): ("live", self.rename_media),
+            ("POST", "/api/pads"): ("live", self.set_pad),
+            ("POST", "/api/theme"): ("live", self.set_theme),
             ("POST", "/api/theme/add"): ("full", self.add_theme),
             ("POST", "/api/theme/remove"): ("full", self.remove_theme),
-            ("POST", "/api/theme/export"): ("full", self.export_theme),
-            ("GET", "/api/devices"): ("full", self.devices),
-            ("POST", "/api/devices/invite"): ("full", self.invite),
-            ("POST", "/api/devices/revoke"): ("full", self.revoke),
+            ("POST", "/api/theme/export"): ("live", self.export_theme),
+            ("GET", "/api/devices"): ("live", self.devices),
+            ("POST", "/api/devices/invite"): ("live", self.invite),
+            ("POST", "/api/devices/revoke"): ("live", self.revoke),
             ("POST", "/api/pin/rotate"): ("full", self.rotate_pin),
             ("POST", "/api/pin/unlock"): ("full", self.unlock_pairing),
             ("POST", "/api/pin/show"): ("full", self.show_pin),           # the owner PIN, to the owner only (D77)
             ("POST", "/api/logout"): (None, self.logout),                 # any role; None: a dead token is logged out already
-            ("POST", "/api/player/restart"): ("full", self.stop_player),
+            ("POST", "/api/player/restart"): ("live", self.stop_player),
+            ("POST", "/api/guests"): ("live", self.set_guests),            # the lock on guest controls (D80)
         }
 
     @staticmethod
@@ -2659,6 +2680,54 @@ class Api:
             raise ApiError(401, "pair this device first")
         if not Auth.allows(device, role):
             raise ApiError(403, "this device may not do that (%s access needed)" % role)
+
+    MODULE_ROUTE = "/api/modules/*"          # how POST /api/modules/<id> is named in the policy lists
+
+    def gate(self, method, path, body, device, client, need=False):
+        """The one check every request passes (D80), also the paths the server answers outside the route table
+        (policy.OUTSIDE). Raises ApiError; returns the body the handler gets. In order: the support tunnel's rules;
+        the box's own callers and a support session below full stay inside policy.LEGACY_LIVE; the route's minimum
+        role; and for a Guest above his role, the guest controls (the lock, the forms, the limits, the confirm)."""
+        from . import support as support_mod
+        key = (method, path)
+        if need is False:
+            need = policy.OUTSIDE[key]
+        try:                      # requests through the support tunnel: only support's login, never some things
+            self.support.guard(method, path, device, client)
+        except support_mod.SupportApiError as e:
+            raise ApiError(e.status, e.message)
+        if need is None:
+            return body
+        if device is None:
+            raise ApiError(401, "pair this device first")
+        if method == "POST" and re.match(r"^/api/modules/([^/]+)$", path):
+            key = (method, self.MODULE_ROUTE)
+        if policy.held_to_legacy(device) and key not in policy.LEGACY_LIVE:
+            raise ApiError(403, "this cannot be done from a controller or a support session of this kind")
+        if Auth.allows(device, need):
+            return body
+        if policy.is_guest(device) and need == "live" and key in policy.GUEST:
+            try:
+                return self.guests.admit(method, path, body, device, client)
+            except policy.Refused as e:
+                err = ApiError(e.status, e.message, e.retry_after)
+                err.extra = e.extra
+                raise err
+        raise ApiError(403, "this device may not do that (%s access needed)" % policy.NAMES[need].lower())
+
+    def set_guests(self, body, device, client):
+        """{"locked": true | false}: an Operator or an Owner locks or opens guest controls for the whole box. Kept in
+        the settings; a guest's next request sees it."""
+        locked = body.get("locked")
+        if not isinstance(locked, bool) or len(body) != 1:
+            raise bad("send locked: true or false")
+        try:
+            out = self.guests.set_locked(locked)
+        except OSError as e:
+            raise ApiError(500, "could not save: %s" % (e.strerror or e))
+        self.log("pvj-web: guest controls %s by device %s (%s, from %s)"
+                 % ("locked" if locked else "opened", device.get("id"), device.get("role"), client))
+        return {"guest_controls": out}
 
     def handle(self, method, path, body, device, client):
         try:
@@ -2671,19 +2740,10 @@ class Api:
                     known = any(p == path for (_, p) in self.routes()) or bool(m)
                     raise ApiError(405 if known else 404, "method not allowed" if known else "not found")
                 need, handler = route
-            from . import support as support_mod
-            try:                      # requests through the support tunnel: only support's login, never some things
-                self.support.guard(method, path, device, client)
-            except support_mod.SupportApiError as e:
-                raise ApiError(e.status, e.message)
-            if need is not None:
-                if device is None:
-                    raise ApiError(401, "pair this device first")
-                if not Auth.allows(device, need):
-                    raise ApiError(403, "this device may not do that (%s access needed)" % need)
-            return 200, handler(body if isinstance(body, dict) else {}, device, client)
+            body = self.gate(method, path, body if isinstance(body, dict) else {}, device, client, need)
+            return 200, handler(body, device, client)
         except ApiError as e:
-            payload = {"error": e.message}
+            payload = dict(getattr(e, "extra", None) or {}, error=e.message)
             if e.retry_after:
                 payload["retry_after"] = e.retry_after
             return e.status, payload

@@ -211,7 +211,6 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             """GET /api/preview.jpg: what the screen is showing (any paired device, even view-only)."""
             try:
                 device = self._who("GET", "/api/preview.jpg")
-                api.require(device, "view")
                 self._send(200, api.preview_jpeg(device), "image/jpeg")
             except ApiError as e:
                 self._json(e.status, {"error": e.message})
@@ -221,7 +220,6 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             and the guest code; the presenter code needs full access (checked in access_qr)."""
             try:
                 device = self._who("GET", "/api/qr.svg")
-                api.require(device, "live")
                 target = (parse_qs(urlsplit(self.path).query).get("for") or [""])[0]
                 self._send(200, api.access_qr(target, self.headers.get("Host", ""), device), "image/svg+xml")
             except ApiError as e:
@@ -267,7 +265,6 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             query = parse_qs(parts.query)
             try:
                 device = self._who("POST", "/api/system/update/upload" if update else "/api/media/upload")
-                api.require(device, "full")
                 if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/octet-stream":
                     raise ApiError(415, "send application/octet-stream")
                 try:
@@ -309,7 +306,6 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             from . import boxcare
             try:
                 device = self._who("POST", "/api/system/settings/import")
-                api.require(device, "full")
                 if not (self.headers.get("Content-Type") or "").startswith("application/json"):
                     raise ApiError(415, "send application/json")
                 if self.headers.get("Transfer-Encoding"):
@@ -364,15 +360,13 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             return None if api.support.is_remote(client) else client
 
         def _who(self, method, path):
-            """The device behind this request (a paired device, or support during a session), after the support tunnel's
-            rules: through the tunnel only support's login works, and some things are never allowed there."""
-            from . import support as support_mod
+            """The device behind this request (a paired device, or support during a session), after Api.gate: the
+            support tunnel's rules (through the tunnel only support's login works, and some things are never allowed
+            there) and the path's minimum role from policy.OUTSIDE. Used only for the paths answered outside the
+            route table."""
             token = self._token()
             device = auth.authenticate(token, self._seen_from()) or api.support.authenticate(token)
-            try:
-                api.support.guard(method, path, device, self.client_address[0])
-            except support_mod.SupportApiError as e:
-                raise ApiError(e.status, e.message)
+            api.gate(method, path, {}, device, self.client_address[0])      # the same gate as the route table (D80)
             return device
 
         def _api(self, method, path, body):

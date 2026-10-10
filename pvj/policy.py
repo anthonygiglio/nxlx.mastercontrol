@@ -1,0 +1,266 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""Who may do what (D80): Owner (`full`), Operator (`live`), Guest (`view`).
+
+The route table in api.py holds each route's minimum role. This module holds the three things that are NOT a rank:
+
+* LEGACY_LIVE: what a presenter could reach before the Operator was raised. The box's own callers (MIDI, OSC, DMX, a
+  Room scene, the schedule) and a remote support session below `full` are held to it, so they gain nothing when a
+  route's minimum is lowered. It is written out by hand on purpose: never compute it from the route table.
+* GUEST: the forms of a request a Guest may send while guest controls are open. Each was chosen so that it is
+  reversible, shows in the room, and saves nothing.
+* GuestControls: the lock, the limits, the two-step power-off and the log line.
+
+A new route is in none of these lists, so it is for paired devices of its minimum role only until someone decides
+otherwise; tests/test_roles.py fails for a route without a row.
+"""
+
+import json
+import secrets
+import threading
+import time
+
+NAMES = {"view": "Guest", "live": "Operator", "full": "Owner"}
+
+# The device ids the box's own callers act as (midi.MIDI_DEVICE and so on). A paired device's id is 8 hex digits and
+# a support login's is "support-N", so neither can be one of these.
+CONTROLLERS = ("midi", "osc", "dmx", "room")
+
+# Paths the server answers itself, outside Api.routes(): path -> minimum role.
+OUTSIDE = {
+    ("GET", "/api/preview.jpg"): "view",
+    ("GET", "/api/qr.svg"): "live",
+    ("POST", "/api/media/upload"): "live",
+    ("POST", "/api/system/update/upload"): "full",
+    ("POST", "/api/system/settings/import"): "full",
+}
+
+# Every route a presenter (or less) could use on master before D80, 2026-10-10. Frozen: do not add to it.
+LEGACY_LIVE = frozenset(
+    [("GET", p) for p in (
+        "/api/hello", "/api/status", "/api/media", "/api/pads", "/api/modules", "/api/theme", "/api/osc",
+        "/api/media/import", "/api/system", "/api/access", "/api/inputs", "/api/overlay", "/api/health",
+        "/api/support", "/api/sync", "/api/mapper", "/api/shaders", "/api/effects", "/api/projectors", "/api/room",
+        "/api/audio", "/api/autostart", "/api/midi", "/api/streams", "/api/schedule", "/api/preview.jpg",
+        "/api/qr.svg")]
+    + [("POST", p) for p in (
+        "/api/pair", "/api/session", "/api/logout", "/api/support/login", "/api/play", "/api/control",
+        "/api/blackout", "/api/fadeout", "/api/fadein", "/api/testpattern", "/api/testtone", "/api/media/info",
+        "/api/mix", "/api/access/code", "/api/access/cancel", "/api/access/screen", "/api/overlay",
+        "/api/support/stop", "/api/shaders/play", "/api/shaders/values", "/api/shaders/step", "/api/shaders/preset",
+        "/api/vibes", "/api/effects", "/api/effects/values", "/api/effects/step", "/api/effects/preset",
+        "/api/projector", "/api/room/scene", "/api/room/group", "/api/autostart/test")])
+
+GUEST_ACTIONS, GUEST_WINDOW = 10, 10.0          # one guest device: this many actions in this many seconds
+BOX_ACTIONS, BOX_WINDOW = 30, 10.0              # all guests together
+OFF_DEVICE, OFF_BOX, OFF_WINDOW = 1, 2, 300.0   # power-offs carried out: per guest device, for the box, in seconds
+CONFIRM_SECONDS = 30                            # a power-off's second request must come within this
+MAX_CONFIRMS = 64                               # waiting confirms kept in memory, oldest dropped
+LOCKED_TEXT = "The room is locked for a show: you can watch"
+OFF = "off"                                     # what a form answers for a power-off: allowed, with the confirm
+
+
+class Refused(Exception):
+    """What the gate turns into an API error: status, message, and for a confirm or a limit the extra fields."""
+    def __init__(self, status, message, retry_after=None, extra=None):
+        super().__init__(message)
+        self.status, self.message, self.retry_after, self.extra = status, message, retry_after, extra or {}
+
+
+def _keys(body, *allowed):
+    return all(k in allowed for k in body)
+
+
+def _play(body, api):
+    if not _keys(body, "pad", "file", "loop") or ("pad" in body) == ("file" in body):
+        return False
+    if "file" in body and not isinstance(body["file"], str):
+        return False
+    return "loop" not in body or isinstance(body["loop"], bool)
+
+
+def _control(body, api):
+    return set(body) == {"action"} and body["action"] in ("next", "prev", "stop")
+
+
+def _blackout(body, api):
+    return set(body) == {"on"} and isinstance(body["on"], bool)
+
+
+def _vibes(body, api):
+    if body == {"on": False} or body == {"next": True} or body == {"previous": True}:
+        return all(isinstance(v, bool) for v in body.values())      # 1 == True in Python: only real booleans
+    return (_keys(body, "on", "set") and body.get("on") is True
+            and ("set" not in body or isinstance(body["set"], str)))
+
+
+def _shader(body, api):
+    return set(body) == {"id"} and isinstance(body["id"], str)
+
+
+def _step(body, api):
+    return _keys(body, "dir")
+
+
+def _preset(body, api):
+    return _keys(body, "id", "name", "index")
+
+
+def _effect(body, api):
+    if set(body) == {"off"}:
+        return body["off"] is True
+    return (_keys(body, "id", "preset") and isinstance(body.get("id"), str)
+            and ("preset" not in body or isinstance(body["preset"], str)))
+
+
+def _power(body, api, *names):
+    if not _keys(body, "action", "input", *names) or body.get("action") not in ("on", "off", "input"):
+        return False
+    return OFF if body["action"] == "off" else True
+
+
+def _projector(body, api):
+    return _power(body, api, "id")
+
+
+def _group(body, api):
+    return _power(body, api, "group", "number", "name")
+
+
+def _scene(body, api):
+    """Every scene but one that plays a stream; one that switches a group off is a power-off. The scene is looked up
+    as the handler will look it up, so a wrong id answers as it does for anyone."""
+    if not _keys(body, "scene", "number", "name"):
+        return False
+    room = api.room
+    room._need()
+    scene = room._pick(room.config()["scenes"], body, "scene", "scene")
+    if (scene.get("box") or {}).get("action") == "stream":
+        raise Refused(403, "this scene plays a stream; ask an operator to start it")
+    return OFF if any(r.get("power") == "off" for r in scene.get("groups", [])) else True
+
+
+# (method, path) -> form(body, api): False (not for a guest), True, or OFF (a power-off: needs the confirm).
+GUEST = {
+    ("POST", "/api/play"): _play,
+    ("POST", "/api/control"): _control,
+    ("POST", "/api/blackout"): _blackout,
+    ("POST", "/api/vibes"): _vibes,
+    ("POST", "/api/shaders/play"): _shader,
+    ("POST", "/api/shaders/step"): _step,
+    ("POST", "/api/shaders/preset"): _preset,
+    ("POST", "/api/effects"): _effect,
+    ("POST", "/api/effects/step"): _step,
+    ("POST", "/api/effects/preset"): _preset,
+    ("POST", "/api/projector"): _projector,
+    ("POST", "/api/room/group"): _group,
+    ("POST", "/api/room/scene"): _scene,
+}
+
+
+def is_controller(device):
+    return bool(device) and device.get("id") in CONTROLLERS
+
+
+def is_guest(device):
+    """A paired device of the lowest role. Not a support session and not one of the box's own callers."""
+    return bool(device) and device.get("role") == "view" and not device.get("remote") and not is_controller(device)
+
+
+def held_to_legacy(device):
+    """The callers that keep the presenter's old reach whatever the route table says."""
+    return is_controller(device) or (bool(device) and bool(device.get("remote")) and device.get("role") != "full")
+
+
+class GuestControls:
+    def __init__(self, api, clock=time.monotonic):
+        self.api = api
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._acts = {}             # device id -> [times], and "*" for the box
+        self._offs = {}             # the same for power-offs carried out
+        self._confirms = {}         # token -> (device id, request key, expires)
+
+    # -- the lock --
+    def locked(self):
+        """Open unless the settings say locked. A damaged value counts as locked."""
+        value = self.api.settings.data.get("guest_controls")
+        if value is None:
+            return False
+        return not (isinstance(value, dict) and value.get("locked") is False)
+
+    def state(self):
+        return {"locked": self.locked()}
+
+    def set_locked(self, locked):
+        settings = self.api.settings
+        with settings.lock:
+            old = settings.data.get("guest_controls")
+            settings.data["guest_controls"] = {"locked": bool(locked)}
+            try:
+                settings.save()
+            except OSError:
+                if old is None:
+                    settings.data.pop("guest_controls", None)
+                else:
+                    settings.data["guest_controls"] = old
+                raise
+        if locked:
+            with self._lock:
+                self._confirms.clear()          # a power-off that was waiting for its second request is over
+        return self.state()
+
+    # -- one guest request --
+    @staticmethod
+    def _recent(times, now, window):
+        return [t for t in times if now - t < window]
+
+    def _room_in(self, store, who, now, window, per_device, per_box):
+        """Seconds to wait, or 0. Looks only; _count writes."""
+        wait = 0.0
+        for key, most in ((who, per_device), ("*", per_box)):
+            times = store[key] = self._recent(store.get(key, []), now, window)
+            if len(times) >= most:
+                wait = max(wait, window - (now - times[0]))
+        return wait
+
+    @staticmethod
+    def _count(store, who, now):
+        store.setdefault(who, []).append(now)
+        store.setdefault("*", []).append(now)
+
+    def admit(self, method, path, body, device, client):
+        """Let a guest's request through, or raise Refused. Returns the body for the handler (without "confirm")."""
+        if self.locked():
+            raise Refused(403, LOCKED_TEXT)
+        form = GUEST.get((method, path))
+        body = dict(body) if isinstance(body, dict) else {}
+        given = body.pop("confirm", None)
+        kind = form(body, self.api) if form else False
+        if kind is not True and kind != OFF:
+            raise Refused(403, "a guest may not do that (operator access needed)")
+        who, now = device["id"], self._clock()
+        request = json.dumps([method, path, body], sort_keys=True)
+        with self._lock:
+            wait = self._room_in(self._acts, who, now, GUEST_WINDOW, GUEST_ACTIONS, BOX_ACTIONS)
+            if wait:
+                raise Refused(429, "too many guest actions at once; wait a moment", retry_after=int(wait) + 1)
+            self._count(self._acts, who, now)
+            if kind == OFF:
+                wait = self._room_in(self._offs, who, now, OFF_WINDOW, OFF_DEVICE, OFF_BOX)
+                if wait:
+                    raise Refused(429, "the projectors were switched off by a guest a moment ago; ask an operator",
+                                  retry_after=int(wait) + 1)
+                self._confirms = {t: c for t, c in self._confirms.items() if c[2] > now}
+                held = self._confirms.pop(given, None) if isinstance(given, str) else None
+                if held is None or held[0] != who or held[1] != request:
+                    while len(self._confirms) >= MAX_CONFIRMS:
+                        del self._confirms[next(iter(self._confirms))]
+                    token = secrets.token_urlsafe(12)
+                    self._confirms[token] = (who, request, now + CONFIRM_SECONDS)
+                    raise Refused(409, "switching projectors off needs a second tap to confirm",
+                                  extra={"confirm": {"token": token, "seconds": CONFIRM_SECONDS}})
+                self._count(self._offs, who, now)
+        self.api.log("pvj-web: guest %s (device %s, from %s): %s %s"
+                     % (json.dumps(str(device.get("name", ""))[:40]), who, client, path, json.dumps(body, sort_keys=True)[:160]))
+        return body

@@ -47,7 +47,8 @@ MAX_DEVICES = 200                               # paired devices in all
 FULL_RESERVED = 20                              # of those, places only a full-access device can take
 GUEST_IDLE_DAYS = 7                             # a device that joined with a guest code goes when unused this long
 SEEN_EVERY = 86400                              # its last use is saved at most this often (seconds)
-CONTROLLER_KINDS = {"join": "live", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs
+CONTROLLER_KINDS = {"join": "view", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs. "join" is a
+                                                        # GUEST since D80: the Operator is close to an owner, and nobody has to be there for this code
 CONTROLLER_SECONDS = 120                        # it works for this long
 CONTROLLER_PER_HOUR = 6                         # and this many are made in any hour, of both kinds together
 PER_CLIENT_FAILS, PER_CLIENT_WINDOW = 5, 60.0
@@ -452,7 +453,7 @@ class Auth:
         presenter that joined with a code shown from a controller (anyone at the controller can make those, so
         they must not pile up). A presenter from a join code or a link, and every full-access device, stays."""
         return ((device.get("via") == "code" and device["role"] == "view")
-                or (device.get("via") == "controller" and device["role"] == "live"))
+                or (device.get("via") == "controller" and device["role"] != "full"))
 
     def _idle(self, device, now):
         return self._expires(device) and now - device.get("seen", device["created"]) > GUEST_IDLE_DAYS * 86400
