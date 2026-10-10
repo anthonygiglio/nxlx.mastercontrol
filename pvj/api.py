@@ -169,6 +169,7 @@ class Api:
         from . import controllercode as controllercode_mod
         self.controller_codes = controllercode_mod.ControllerCodes(self, log=lambda line: self.log(line))   # a code on the display from a MIDI controller (D61)
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
+        self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.capture = None       # Capture or None (live input from a USB capture device)
         self._import = {}         # the USB copy running or last run
         self._import_lock = threading.Lock()

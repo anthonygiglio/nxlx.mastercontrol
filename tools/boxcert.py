@@ -92,19 +92,31 @@ def valid_ip(text):
 
 
 # --- the root ----------------------------------------------------------------------------------------------------
-def root_config(name, allowed, constraints):
+def root_config(name, allowed, constraints, ranges=PRIVATE_RANGES):
     lines = ["[req]", "distinguished_name = dn", "prompt = no", "[dn]", "CN = %s" % name, "[v3_ca]",
              "basicConstraints = critical, CA:TRUE, pathlen:0", "keyUsage = critical, keyCertSign, cRLSign",
              "subjectKeyIdentifier = hash"]
     if constraints:
-        parts = ["permitted;DNS:%s" % d for d in allowed] + ["permitted;IP:%s" % r for r in PRIVATE_RANGES]
+        parts = ["permitted;DNS:%s" % d for d in allowed] + ["permitted;IP:%s" % r for r in ranges]
         lines.append("nameConstraints = critical, " + ", ".join(parts))
     return "\n".join(lines) + "\n"
 
 
-def make_root(exe, folder, name, allowed, constraints, ask, out=print):
+def valid_range(text):
+    """An IPv4 range as openssl writes it in a constraint: address/mask, both dotted."""
+    import ipaddress
+    net, _, mask = text.partition("/")
+    try:
+        return str(ipaddress.ip_network("%s/%s" % (net, mask), strict=True).with_netmask).replace("/", "/")
+    except ValueError:
+        return None
+
+
+def make_root(exe, folder, name, allowed, constraints, ask, out=print, ranges=PRIVATE_RANGES):
     for bad in [a for a in allowed if not valid_dns(a)]:
         raise BoxcertError("not a domain name: %r" % bad)
+    for bad in [r for r in ranges if not valid_range(r)]:
+        raise BoxcertError("not an address range (write it as 192.168.0.0/255.255.0.0): %r" % bad)
     if not re.fullmatch(r"[A-Za-z0-9 ._-]{1,48}", name):
         raise BoxcertError("the root's name may hold letters, digits, spaces, dots, dashes and underscores (48 at most)")
     os.makedirs(folder, mode=0o700, exist_ok=True)
@@ -122,7 +134,7 @@ def make_root(exe, folder, name, allowed, constraints, ask, out=print):
         os.chmod(tmp, 0o700)
         plain, cfg = os.path.join(tmp, "plain.key"), os.path.join(tmp, "root.cnf")
         with open(cfg, "w") as f:
-            f.write(root_config(name, allowed, constraints))
+            f.write(root_config(name, allowed, constraints, ranges))
         code, _, err = run(exe, ["ecparam", "-name", ROOT_CURVE, "-genkey", "-noout", "-out", plain])
         if code:
             _fail("could not make the root key", err)
@@ -145,7 +157,7 @@ def make_root(exe, folder, name, allowed, constraints, ask, out=print):
     out("Root made.")
     out("  private key : %s  (encrypted with your passphrase; BACK IT UP; NEVER put it on a box)" % key)
     out("  public root : %s  (this is what each phone, tablet and laptop installs once)" % pem)
-    out("  constraints : %s" % ("names under %s and private addresses only" % ", ".join("." + a for a in allowed) if constraints else "none"))
+    out("  constraints : %s" % ("names under %s and addresses in %s only" % (", ".join("." + a for a in allowed), ", ".join(ranges)) if constraints else "none"))
     out("Next: on the box's panel, System > Secure connection, download the request, then: boxcert.py sign <the request>")
     return key, pem
 
@@ -265,7 +277,7 @@ def sign(exe, folder, request, add_names, add_ips, drop, days, out_path, ask, ou
             ips.append(str(ip))
     if not dns and not ips:
         raise BoxcertError("the request names nothing and nothing was added: give at least --name <the box's .local name>")
-    if req["cn"] and req["cn"].lower() not in dns and valid_dns(req["cn"].lower()):
+    if req["cn"] and req["cn"].lower() not in dns and req["cn"].lower() not in drop and valid_dns(req["cn"].lower()):
         dns.insert(0, req["cn"].lower())
     v6 = [i for i in ips if ":" in i]
     if v6:
@@ -398,6 +410,7 @@ def main(argv=None, ask=None, out=print):
     r = sub.add_parser("make-root", help="make the root (once)")
     r.add_argument("--name", default="NXLX boxes root", help="the root's name as devices show it")
     r.add_argument("--allow-name", action="append", default=[], metavar="DOMAIN", help="a further domain the root may sign under (besides local)")
+    r.add_argument("--allow-address", action="append", default=[], metavar="RANGE", help="a further address range, as 203.0.113.0/255.255.255.0 (besides the private ranges)")
     r.add_argument("--no-constraints", action="store_true", help="a root without name constraints (read docs/HTTPS.md first)")
     for name in ("sign", "renew"):
         s = sub.add_parser(name, help="sign a box's request" if name == "sign" else "the same as sign")
@@ -417,7 +430,8 @@ def main(argv=None, ask=None, out=print):
     try:
         exe = openssl_bin(a.openssl)
         if a.cmd == "make-root":
-            make_root(exe, a.dir, a.name, tuple(DEFAULT_ALLOWED) + tuple(x.lower() for x in a.allow_name), not a.no_constraints, ask, out)
+            make_root(exe, a.dir, a.name, tuple(DEFAULT_ALLOWED) + tuple(x.lower() for x in a.allow_name), not a.no_constraints, ask, out,
+                      tuple(PRIVATE_RANGES) + tuple(a.allow_address))
         elif a.cmd in ("sign", "renew"):
             sign(exe, a.dir, a.request, a.name, a.address, [d.lower() for d in a.drop], a.days, a.out, ask, out)
         elif a.cmd == "show":

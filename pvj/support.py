@@ -54,7 +54,7 @@ REMOTE_DENY = {
     # a theme is a file kept on the box: added and removed by someone at the studio (applying a look is not refused)
     ("POST", "/api/theme/add"), ("POST", "/api/theme/remove"),
 }
-REMOTE_DENY_PREFIX = ("/api/access",)
+REMOTE_DENY_PREFIX = ("/api/access", "/api/https")      # /api/https: the box's key, certificate and the owner-only switch (D79)
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
 
 
