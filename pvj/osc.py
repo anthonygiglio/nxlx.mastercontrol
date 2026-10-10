@@ -336,8 +336,16 @@ def _reach(a, args):
                  "corner/prev": "map_corner_prev", "left": "map_left", "right": "map_right", "up": "map_up", "down": "map_down", "undo": "map_undo"}
         if what in names:
             return actions.press(names[what]) if pressed(args) else None
+        # Entering and leaving. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and the 0 used
+        # to be "leave": the mode was over as the finger came up (the trap /pvj/fadein had, see _fade). Now a 0 on
+        # /pvj/mapping/mode is a release and does nothing; 1 enters; no argument switches over. Leaving is said
+        # outright with /pvj/mapping/mode/off, and one momentary button does both with /pvj/mapping/mode/toggle.
         if what == "mode":
-            return (actions.NUDGE, {"mode": "toggle" if not args else flag}) if not args or flag is not None else None
+            if not args:
+                return actions.NUDGE, {"mode": "toggle"}
+            return (actions.NUDGE, {"mode": True}) if flag else None
+        if what in ("mode/on", "mode/off", "mode/toggle"):
+            return (actions.NUDGE, {"mode": {"on": True, "off": False, "toggle": "toggle"}[what[5:]]}) if pressed(args) else None
         whole = [int(x) for x in args[:2] if _number(x) and x == int(x)]
         if what == "step":
             return (actions.NUDGE, {"step": whole[0]}) if len(whole) >= 1 else None
