@@ -508,10 +508,12 @@ class BoxCareTest(CareBase):
         self.assertEqual(self.settings.data["osc"]["key"], KEY)             # the box still has it
 
     def test_the_diagnostics_file_does_not_show_it(self):
-        self.care._run = lambda *a, **k: ""
-        st, out = self.h("GET", "/api/system/diagnostics", device=self.full_dev)
-        if st == 200:
-            self.assertNotIn(KEY, json.dumps(out))
+        from tests.test_boxcare import FakeJournal
+        self.care._run = FakeJournal()
+        st, out = self.h("GET", "/api/system/diagnostics", {}, self.full_dev, LAN)
+        self.assertEqual(st, 200, out)
+        self.assertNotIn(KEY, json.dumps(out))
+        self.assertEqual(out["file"]["settings"]["osc"]["only"], [TABLET])       # the rest of the section is there
         self.assertEqual(boxcare_net({"osc": {"key": KEY}})["osc"]["key"], "(removed)")
 
     def test_an_import_checks_the_layers_and_keeps_the_boxes_own_key(self):

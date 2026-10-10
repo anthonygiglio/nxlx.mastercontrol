@@ -3552,7 +3552,7 @@
     })));
     // 2. a paired device
     box.appendChild(toggle('oscpaired', 'A sender must be a paired device', d.paired_on, function (v) { set({ paired_on: v }); },
-      'Open the panel on the tablet once; then TouchOSC on the same tablet may send, for the hours set here. Removing the device under Access stops it at once.'));
+      'Open the panel on the tablet once; then TouchOSC on the same tablet may send, for the hours set here. Removing the device under People and codes stops it at once.'));
     if (d.paired_on) {
       var roles = h('select', { class: 'text-input', id: 'oscpairedroles', onchange: function () { set({ paired_roles: roles.value }); } },
         [['full', 'Owner devices only'], ['live', 'Owner and presenter devices']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: d.paired_roles === o[0] }); }));
@@ -3584,6 +3584,9 @@
     return d.paired_now.length ? 'Counts now: ' + d.paired_now.join(', ') : 'No paired device counts now. Open the panel on the tablet that sends.';
   }
   function oscSenders(el, d, set) {
+    var same = JSON.stringify([d.senders, d.only, d.refused]);
+    if (el.getAttribute('data-same') === same) return;      // nothing new: the buttons stay where a finger may be
+    el.setAttribute('data-same', same);
     el.textContent = '';
     if (!d.senders.length) el.appendChild(h('div', { class: 'hint', id: 'oscnosenders', text: 'Nobody has sent anything in the last ten minutes. Press a button in your layout and its address appears here.' }));
     d.senders.forEach(function (x) {

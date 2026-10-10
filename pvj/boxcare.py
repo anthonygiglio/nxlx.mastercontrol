@@ -862,6 +862,8 @@ class BoxCare:
         for s in data.get("streams", []):
             found.update(stream_secrets(s.get("url")))
         found.add((data.get("support") or {}).get("server_key"))
+        osc_key = (data.get("osc") or {}).get("key")       # the OSC key (D78), should it ever reach a log line
+        found.add(osc_key if isinstance(osc_key, str) else None)
         try:
             found.update(j["code"] for j in api.auth.list_joins())
         except Exception:
