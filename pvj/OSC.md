@@ -36,7 +36,7 @@ On **System > OSC**, under "Who may send", for a full-access device. **What chan
 
 **What you can see.** "Senders in the last ten minutes" (the address, how many messages, the last OSC address, let in or refused and why) and "Last messages" (the last 50). Both are kept in memory only, are bounded (64 senders, 50 messages), and only a full-access device gets them; a presenter or a guest gets neither the lists nor the key. Of a refused packet only the sender's address, a count and the reason are kept: never its OSC address or its arguments, and never the key it tried. A flood of refused packets from many forged addresses can push the older lines out of "Last messages"; the tablet that works stays in the senders list.
 
-**The existing limits stay**: the outer wall, 200 messages a second per sender, the packet size and parsing limits, no replies.
+**The existing limits stay**: the outer wall, 200 messages a second per sender, the packet size and parsing limits, no replies. Switching a lock, allowing a device or making a new key does not close the port, so nothing sent in that moment is lost; changing the port does reopen it.
 
 **An older release and these settings.** No settings schema change: the locks are extra keys under `osc` (`only_on`, `only`, `paired_on`, `paired_roles`, `paired_hours`, `key_on`, `key`). Tried with the code of master before this change: it loads a settings file that has them, and it keeps them when its own OSC page saves. But it does not enforce them: after going back to an older release every lock is silently off, although the file still says on. Its export would also write the key into the file, and its import drops the new keys. Switch OSC off before going back if the locks matter.
 
