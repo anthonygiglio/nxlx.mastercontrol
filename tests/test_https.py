@@ -470,12 +470,18 @@ class HttpsTest(HttpsBase):
         with open(os.path.join(ca2, "root.pem")) as f:
             root2 = f.read()
         fp2 = boxcert.read_cert(self.exe, os.path.join(ca2, "root.pem"))["fingerprint"]
-        self.assertEqual(self.call("POST", "/api/https/root", {"root": root2, "confirm": fp2}, token=self.full)[0], 403)
+        # (with the http-paired token, and with the TLS-paired token sent over plain http, which a sniffer could hold)
+        for token in (self.full, secure):
+            self.assertEqual(self.call("POST", "/api/https/root", {"root": root2, "confirm": fp2}, token=token)[0], 403)
         self.scall("POST", "/api/https/certificate", {"certificate": self.sign_with(self.ca, csr, "s2.pem", days=1)}, token=secure)
         self.clock.t += 3 * 86400
-        self.assertEqual(self.call("POST", "/api/https/root", {"root": root2, "confirm": fp2}, token=self.full)[0], 403)
+        for token in (self.full, secure):
+            self.assertEqual(self.call("POST", "/api/https/root", {"root": root2, "confirm": fp2}, token=token)[0], 403)
         self.assertEqual(self.scall("POST", "/api/https/owner-only", {"on": False}, token=secure)[0], 200)
-        self.assertEqual(self.call("POST", "/api/https/root", {"root": root2, "confirm": fp2}, token=self.full)[0], 403)
+        for token in (self.full, secure):
+            st, body, _ = self.call("POST", "/api/https/root", {"root": root2, "confirm": fp2}, token=token)
+            self.assertEqual(st, 403, body)
+            self.assertIn("secure connection only", body["error"])
         self.assertEqual(open(self.box.path("root.pem")).read(), root_before)
         # over TLS: an upload never replaces it; the explicit action needs a TLS-paired owner and the confirm
         self.assertEqual(self.scall("POST", "/api/https/certificate", {"certificate": foreign}, token=secure)[0], 400)
