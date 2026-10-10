@@ -845,8 +845,9 @@
       body.appendChild(h('div', { class: 'hint', id: 'mapstatus', text: (words[st.state] || st.state) + ' · screen ' + d.screen[0] + 'x' + d.screen[1] + ' · ' + d.surfaces.length + ' surface' + (d.surfaces.length === 1 ? '' : 's') }));
       // Mapping mode from a controller (D75): everyone sees that it is on; full access holds the switch that allows it
       var rc = d.controllers || {};
-      if (rc.mode) body.appendChild(h('div', { class: 'msg', id: 'mapremoteon', role: 'status', text: 'A controller is in mapping mode: it can choose a surface and a corner and nudge it, ' +
-        rc.step + ' px a step. It ends by itself ' + Math.ceil(rc.seconds_left / 60) + ' min after the last nudge.' }));
+      if (rc.mode) body.appendChild(h('div', { class: 'msg', id: 'mapremoteon', role: 'status', text: 'A controller is adjusting the mapping (mapping mode): it chooses a surface and a corner and nudges it, ' +
+        rc.step + ' px a step. It uses "Edit on the display" and the surface and corner chosen here, so those move while it lasts; ' +
+        'afterwards they are as you had them. It ends by itself ' + Math.ceil(rc.seconds_left / 60) + ' min after the last nudge.' }));
       if (!full) { watch(); return; }
       body.appendChild(toggle('mapremote', 'Controllers may adjust the mapping', !!rc.allow, function (v) {
         api('POST', '/api/mapper/remote', { allow: v }).then(function (r) {
