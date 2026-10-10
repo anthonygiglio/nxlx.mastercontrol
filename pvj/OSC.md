@@ -54,6 +54,8 @@ Not tried with a real TouchOSC or on a box yet; the receiver was tested with pac
 
 Numbers use natural units, so set your controller's fader range to match (for example 0 to 100 for opacity). Pads and banks are **1-based** like TouchOSC's multipush grids.
 
+Every address in this table, the ones added with D75 and `/pvj/mapping/...` among them, sits behind the three locks of "Who may send" whenever those are on (see "Behind the three locks" under the table).
+
 | Address | Arguments | Effect |
 | --- | --- | --- |
 | `/pvj/pad/<bank>/<pad>` | value (press) | Play that pad. Bank 1 to 3, pad 1 to 12 |

@@ -1003,6 +1003,10 @@ class MidiMapper:
             del self._pick[key]
         for key in [k for k in self._stood if k[0] == source]:
             self._parked[key] = None
+        # and a knob that nudges forgets where it stood and what it had not sent yet: outside the mode it is another
+        # control (a shader's knob), turned to anywhere, so its next first touch in the mode moves nothing again
+        for key in [k for k in self._turn if k[0] == source]:
+            del self._turn[key]
 
     def toggle_layer(self, source, layer):
         """The layer's own button. While mapping mode is on it does nothing: one layer at a time."""
@@ -1219,11 +1223,16 @@ class MidiMapper:
                 e, value = self.pending.pop(key)
                 self._last[key] = now
                 calls.extend(self._level_calls(e, value))
-        if self._turn and self.mapping_mode():          # what a nudging knob was turned since its last call
+        if self._turn and not self.mapping_mode():      # the mode is over: steps it never sent are not kept for the next one
+            for st in self._turn.values():
+                st[1] = 0
+        elif self._turn:                                # what a nudging knob was turned since its last call
             for (source, kind, number), st in list(self._turn.items()):
                 if not st[1]:
                     continue
                 for e in self.matching(source, kind, 0, number):
+                    if self._turn.get((source, kind, number)) is not st:    # the layer had changed: matching forgot it
+                        break
                     if ACTIONS[e["action"]][0] == "delta":
                         key = (e["id"] if "id" in e else e["action"], source, kind, number)
                         if now - self._last.get(key, 0.0) >= MIN_INTERVAL:
