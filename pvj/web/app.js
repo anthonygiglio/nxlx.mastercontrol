@@ -4777,12 +4777,18 @@
       h('span', { class: 'wsbrand', text: 'nxlx.mastercontrol' }),
       h('div', { class: 'pill k', id: 'pill' }));
     // The tabs. Where the area is a desk, its columns are one tab ("Effect · Picture · Sound") beside the tools
-    // that need the whole width; an area whose screens all share the page has no tabs there at all.
-    var joined = desk.length && desk.length < mine.length ? h('button', { class: 'btn segbtn dj' + (cur && cur.part ? ' on' : ''), id: 'sub-' + area + '-desk', 'data-desk': area,
-      'aria-current': cur && cur.part ? 'page' : false, text: desk.map(function (x) { return x.name; }).join(' · '),
-      onclick: function () { var last = desk.filter(function (x) { return x.key === S.last[area]; })[0]; go((last || desk[0]).key); } }) : null;
-    var sub = area !== 'setup' && mine.length > 1 ? h('nav', { class: 'wssub' + (desk.length === mine.length ? ' all' : ''), id: 'wssub', 'aria-label': 'Screens of ' + areaName },
-      h('div', { class: 'seg' }, joined, mine.map(function (x) { return item(x, 'btn segbtn' + (x.part && desk.length ? ' m' : '')); }))) : h('div', { class: 'wssub', id: 'wssub', hidden: true });
+    // that need the whole width; an area whose screens all share the page has no tabs there at all. Play's Shaders
+    // column is the exception (D72, changed 2026-10-10): up to 1699 px the desk is Pads and Library and Shaders is a
+    // tab beside it with the whole width (its own laptop form needs 900 px); from 1700 px the three share the page.
+    // Both are built; the stylesheet shows the one for the width (.m: a column's tab, gone from 1200 px; .m3: gone
+    // from 1700 px; .p3 on the bar: Play with the three).
+    var mid = area === 'play' ? desk.filter(function (x) { return x.part !== 'shaders'; }) : desk;
+    var onDesk = !!(cur && cur.part && mid.indexOf(cur) >= 0);
+    var joined = mid.length && mid.length < mine.length ? h('button', { class: 'btn segbtn dj' + (onDesk ? ' on' : ''), id: 'sub-' + area + '-desk', 'data-desk': area,
+      'aria-current': onDesk ? 'page' : false, text: mid.map(function (x) { return x.name; }).join(' · '),
+      onclick: function () { var last = mid.filter(function (x) { return x.key === S.last[area]; })[0]; go((last || mid[0]).key); } }) : null;
+    var sub = area !== 'setup' && mine.length > 1 ? h('nav', { class: 'wssub' + (desk.length === mine.length ? ' all' : '') + (mid.length < desk.length ? ' p3' : ''), id: 'wssub', 'aria-label': 'Screens of ' + areaName },
+      h('div', { class: 'seg' }, joined, mine.map(function (x) { return item(x, 'btn segbtn' + (x.part && desk.length ? (mid.indexOf(x) >= 0 ? ' m' : ' m3') : '')); }))) : h('div', { class: 'wssub', id: 'wssub', hidden: true });
     var area1 = function (a, cls, prefix) {
       return h('button', { class: cls + (a[0] === area ? ' on' : ''), id: prefix + a[0], 'data-ar': a[0], text: a[1], 'aria-current': a[0] === area ? 'page' : false,
         onclick: function () { goArea(a[0]); } });

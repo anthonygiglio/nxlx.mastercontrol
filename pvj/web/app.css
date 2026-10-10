@@ -710,6 +710,19 @@ main.ws:focus, .deskcol:focus { outline: none; }
    screens that share the page are one tab; an area whose screens all share it has no tabs. Setup keeps its index
    as a column at the left of the open page, which scrolls by itself as the rail does, and the page's own Back to
    the index is not shown. */
+@container app (min-width: 1200px) and (max-width: 1699px) {
+  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="shaders"]:not(.cur) { display: none; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) > .deskcol:not([data-col="shaders"]) { display: none; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) > .deskcol[data-col="shaders"] { border-left: 0; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) .deskhead { display: none; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) .syspage .syshead { position: static; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) .syspage .syshead h2 { display: block; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) .syspage #sysblurb { display: block; }
+}
+@container app (min-width: 1700px) {
+  nav.wssub.all.p3 { display: none; }      /* (nav: this block stands before the 1200 px block that shows the bar, so it must weigh more) */
+  .wssub .segbtn.m3 { display: none; }
+}
 /* (from 1700 px the Shaders column of Play has the room its own laptop form was written for, the library of
    shaders beside what plays, 900 px, and from 1900 px its three columns, 1100 px: the pads and the library keep
    330 and 370 px and the rest is the shaders') */
@@ -728,6 +741,17 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .wssub .m { display: none; }
   .wssub .dj { display: block; }
   .wssub.all { display: none; }
+  /* Play up to 1699 px (D72, changed 2026-10-10): Pads and Library are the desk and Shaders is a tab beside them
+     with the whole width, where its own laptop form (the library of shaders beside what plays, 900 px) fits;
+     the bar of tabs stays (Pads · Library, Shaders), the Shaders column is shown alone with its own title and
+     sentence while it is the open one, and hidden while the desk is. From 1700 px the three share the page. */
+  .wssub.all.p3 { display: block; }
+  /* Room (D72, changed 2026-10-10): two columns, Guests under Scenes (a guest's column was one fold in a third). */
+  .desk[data-area="room"][data-cols="3"] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 1fr; grid-template-areas: "scenes walls" "guests walls"; align-items: start; }
+  .desk[data-area="room"][data-cols="3"] > .deskcol[data-col="scenes"] { grid-area: scenes; }
+  .desk[data-area="room"][data-cols="3"] > .deskcol[data-col="walls"] { grid-area: walls; }
+  .desk[data-area="room"][data-cols="3"] > .deskcol[data-col="guests"] { grid-area: guests; border-left: 0; border-top: 1.5px solid var(--ln); }
+  .desk[data-area="room"][data-cols="3"] > .roomnote { grid-column: 1 / -1; }
   .wsjob.one { display: none; }
   .wsjob.all { display: block; }
   /* every column has the same small heading: a column that is a page (Shaders, Sound) leaves its own title and
@@ -1329,6 +1353,8 @@ html[data-style="signal"] .deskcol[data-col="shaders"] { --ac: var(--ar-shaders,
 html[data-style="signal"] .navrow.on .navname { color: var(--fg); text-decoration: underline; text-decoration-thickness: var(--rule); text-underline-offset: 4px; }
 @container app (min-width: 1200px) {
   html[data-style="signal"] .desk:not([data-cols="1"]) > .deskcol + .deskcol, html[data-style="signal"] .setupdesk > .deskcol.cur { border-left: var(--rule) solid var(--fg); }
+  html[data-style="signal"] .desk[data-area="room"][data-cols="3"] > .deskcol[data-col="guests"] { border-left: 0; border-top: var(--rule) solid var(--fg); }
+  html[data-style="signal"] .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) > .deskcol[data-col="shaders"] { border-left: 0; }
 }
 @media (max-height: 479px) {
   html[data-style="signal"] .wshead { padding-top: 4px; padding-bottom: 4px; }

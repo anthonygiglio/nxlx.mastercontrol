@@ -62,8 +62,9 @@ const inv = require('./inventory.js');
 const AREAS = { play: 'Play', shape: 'Shape', room: 'Room', setup: 'Setup' };
 const SIZES = [[390, 844], [768, 1024], [1366, 768]];
 const DESK = 1200;                 // from this width of the panel an area's screens share the page
-// the screens that are columns of one page there (the others have the whole width: Mapping, and Setup's pages)
-const DESKS = { play: ['pads', 'library', 'shaders'], shape: ['effect', 'picture', 'sound'], room: ['scenes', 'walls', 'guests'] };
+// the screens that are columns of one page there (the others have the whole width: Mapping, Setup's pages, and
+// Play's Shaders up to 1699 px, which joins the desk from 1700: D72 as changed on 2026-10-10; SIZES stop at 1366)
+const DESKS = { play: ['pads', 'library'], shape: ['effect', 'picture', 'sound'], room: ['scenes', 'walls', 'guests'] };
 const HOMES = ['vibes', 'mapping', 'sound'];      // rows of the Setup index that open a screen of another area
 const STRIP = ['prev', 'back10', 'fwd10', 'next', 'fadein', 'fade', 'freeze', 'stop', 'black'];
 const SPEED = ['mv', 'loop'];      // Speed and Loop, on the strip since D72 (Loop has no id: it is found by its class)
@@ -252,16 +253,23 @@ async function menus(pg) {
     assert(wide ? !/^(Effect|Picture|Sound): /.test(s.job) && s.job.length > 0 : /^Picture: /.test(s.job), at + 'what the title bar says: ' + s.job);
     assert.deepStrictEqual(s.landmarks.nav.slice().sort(), ['Areas', 'Areas', 'Screens of Shape'], 'the menus are named landmarks');
     assert(s.landmarks.main === 1 && s.landmarks.header === 1, 'one main part and one title bar: ' + JSON.stringify(s.landmarks));
-    // Play: all of its screens share the page from 1200 px, so it has no tabs there; and the link from the pads to
-    // the Shaders screen is there only where Shaders is another tab
+    // Play: from 1200 px Pads and Library share the page and Shaders is a tab beside them with the whole width
+    // (up to 1699 px: D72 as changed on 2026-10-10); and the link from the pads to the Shaders screen is never shown
     await go(pg, 'play/pads');
     const p = await see(pg);
-    assert.deepStrictEqual(p.cols, wide ? ['pads', 'library', 'shaders'] : ['pads'], at + 'the columns of Play');
+    assert.deepStrictEqual(p.cols, wide ? ['pads', 'library'] : ['pads'], at + 'the columns of Play');
     if (wide) {
-      assert.deepStrictEqual(p.colHeads, ['Pads', 'Library', 'Shaders'], at + 'the headings of Play\'s columns (the Shaders page\'s own title is not a second one)');
-      assert.deepStrictEqual(await pg.evaluate(() => { const v = (q) => { const el = document.querySelector(q); return !!el && el.getClientRects().length > 0; }; return [v('#syspage #sysblurb'), v('#syspage #sysswitch')]; }), [false, true], at + 'the Shaders column has its switch and not the page\'s sentence');
+      assert.deepStrictEqual(p.colHeads, ['Pads', 'Library'], at + 'the headings of Play\'s columns');
+      assert.deepStrictEqual(p.subs, ['sub-play-desk', 'sub-play-shaders'], at + 'the tabs of Play: the desk, and Shaders');
+      await go(pg, 'play/shaders');
+      const q = await see(pg);
+      assert.deepStrictEqual(q.cols, ['shaders'], at + 'the Shaders tab has the whole width');
+      assert.deepStrictEqual(await pg.evaluate(() => { const v = (q2) => { const el = document.querySelector(q2); return !!el && el.getClientRects().length > 0; }; return [v('#syspage #sysblurb'), v('#syspage #sysswitch'), v('#syspage .syshead h2')]; }), [true, true, true], at + 'the Shaders screen alone has its own title, its sentence and its switch');
+      assert.deepStrictEqual(q.open.filter((id) => id.indexOf('sub-') === 0), ['sub-play-shaders'], at + 'the Shaders tab is the one marked open');
+      await go(pg, 'play/pads');
+      assert.deepStrictEqual((await see(pg)).open.filter((id) => id.indexOf('sub-') === 0), ['sub-play-desk'], at + 'the desk\'s tab is marked open again');
     }
-    assert.strictEqual(p.sub, !wide, at + 'the tabs of Play\'s screens');
+    assert.strictEqual(p.sub, true, at + 'the tabs of Play\'s screens');
     assert.strictEqual(await pg.isVisible('#shaderslink'), false, at + 'the pads have no link to the Shaders screen: it is the tab above them, or the column beside them');
   }
   // each card is on the page once, whatever is shown: one build per area
@@ -796,7 +804,7 @@ async function roles(pages, post) {
     await go(pg, 'room/scenes');
     assert.deepStrictEqual((await see(pg)).cols, who === 'guest' ? ['scenes', 'walls'] : ['scenes', 'walls', 'guests'], 'the columns of a ' + who + '\'s Room at 1366 px');
     await go(pg, 'play/pads');
-    assert.deepStrictEqual((await see(pg)).cols, ['pads', 'library', 'shaders'], 'the columns of a ' + who + '\'s Play at 1366 px');
+    assert.deepStrictEqual((await see(pg)).cols, ['pads', 'library'], 'the columns of a ' + who + '\'s Play at 1366 px (Shaders is a tab there)');
     await go(pg, 'shape/picture');
     assert.deepStrictEqual((await see(pg)).cols, ['effect', 'picture', 'sound'], 'the columns of a ' + who + '\'s Shape at 1366 px');
     await pg.setViewportSize({ width: 390, height: 844 });

@@ -3013,29 +3013,48 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('.pads:visible');
     }
 
-    // A laptop (D72): Play is a desk. At 1366 px the pads, the library and the Shaders screen stand side by side
-    // beside the rail, each in its phone's form, inside the window; the link from the pads to the Shaders screen is
-    // not shown, the screen being the column beside them. On a very wide panel (1920 px) the Shaders column has the
-    // room its own laptop form was written for: its library a column that scrolls by itself, what is playing and
-    // its controls beside it and in view, the settings and controllers a third column. Nothing sticks out at any width.
+    // A laptop (D72, changed 2026-10-10): Play is a desk. At 1366 px the pads and the library stand side by side
+    // beside the rail, each in its phone's form, inside the window, and the Shaders screen is a tab beside them
+    // with the whole width, where it has its own laptop form; the link from the pads to the Shaders screen is not
+    // shown. From 1700 px the three share the page. On a very wide panel (1920 px) the Shaders column has the room
+    // its own laptop form was written for: its library a column that scrolls by itself, what is playing and its
+    // controls beside it and in view, the settings and controllers a third column. Nothing sticks out at any width.
     await page.setViewportSize({ width: 1366, height: 768 });
     assert.strictEqual(await post('/api/shaders/play', { id: 'nxlx-tide.fs' }), 200);
     await go(page, 'play/pads');
-    await page.waitForSelector('#shadercontrols #shin-speed', { timeout: 20000 });
+    await page.waitForSelector('#shadercontrols #shin-speed', { timeout: 20000, state: 'attached' });
+    const deskNow = () => page.evaluate(() => {
+      const r = (el) => { const b = el ? el.getBoundingClientRect() : { left: -1, right: -1, width: 0 }; return { left: Math.round(b.left), right: Math.round(b.right), width: Math.round(b.width) }; };
+      const col = (id) => r(document.querySelector('main.ws > .desk > .deskcol[data-col="' + id + '"]'));
+      return { side: r(document.getElementById('wsside')), pads: col('pads'), library: col('library'), shaders: col('shaders'), tabs: r(document.getElementById('wstabs')), sub: r(document.getElementById('wssub')),
+        link: r(document.getElementById('shaderslink')), vibes: r(document.getElementById('vibes')), ctl: r(document.getElementById('shadercontrols')), vw: window.innerWidth };
+    });
     {
-      const desk = await page.evaluate(() => {
-        const r = (el) => { const b = el ? el.getBoundingClientRect() : { left: -1, right: -1, width: 0 }; return { left: Math.round(b.left), right: Math.round(b.right), width: Math.round(b.width) }; };
-        const col = (id) => r(document.querySelector('main.ws > .desk > .deskcol[data-col="' + id + '"]'));
-        return { side: r(document.getElementById('wsside')), pads: col('pads'), library: col('library'), shaders: col('shaders'), tabs: r(document.getElementById('wstabs')), sub: r(document.getElementById('wssub')),
-          link: r(document.getElementById('shaderslink')), vibes: r(document.getElementById('vibes')), ctl: r(document.getElementById('shadercontrols')), vw: window.innerWidth };
-      });
-      assert(desk.side.width > 0 && desk.side.right <= desk.pads.left && desk.pads.right <= desk.library.left && desk.library.right <= desk.shaders.left && desk.shaders.right <= desk.vw,
-        'on a laptop Play is the rail, then the pads, the library and the shaders side by side, inside the window: ' + JSON.stringify(desk));
-      assert(Math.min(desk.pads.width, desk.library.width, desk.shaders.width) >= 320, 'no column of the desk is narrower than a phone: ' + JSON.stringify(desk));
-      assert(desk.tabs.width === 0 && desk.sub.width === 0 && desk.link.width === 0, 'no tabs at the foot, no tabs of the screens and no link to the Shaders screen where the three share the page: ' + JSON.stringify(desk));
-      assert(desk.vibes.left >= desk.pads.left && desk.vibes.right <= desk.pads.right && desk.ctl.left >= desk.shaders.left && desk.ctl.right <= desk.shaders.right, 'the Vibes button is in the pads\' column and the playing shader\'s controls in the shaders\': ' + JSON.stringify(desk));
+      const desk = await deskNow();
+      assert(desk.side.width > 0 && desk.side.right <= desk.pads.left && desk.pads.right <= desk.library.left && desk.library.right <= desk.vw,
+        'on a laptop under 1700 px Play is the rail, then the pads and the library side by side, inside the window: ' + JSON.stringify(desk));
+      assert(desk.shaders.width === 0 && desk.ctl.width === 0, 'the Shaders screen is not beside them there: it is a tab with the whole width: ' + JSON.stringify(desk));
+      assert(Math.min(desk.pads.width, desk.library.width) >= 320, 'no column of the desk is narrower than a phone: ' + JSON.stringify(desk));
+      assert(desk.tabs.width === 0 && desk.sub.width > 0 && desk.link.width === 0, 'no tabs at the foot, the tabs of the screens (the desk, Shaders) and no link to the Shaders screen: ' + JSON.stringify(desk));
+      assert(desk.vibes.left >= desk.pads.left && desk.vibes.right <= desk.pads.right, 'the Vibes button is in the pads\' column: ' + JSON.stringify(desk));
     }
     await fitsPhone('Play at 1366 px');
+    await go(page, 'play/shaders');
+    await page.waitForSelector('#shadercontrols #shin-speed', { timeout: 20000 });
+    {
+      const one = await deskNow();
+      assert(one.pads.width === 0 && one.library.width === 0 && one.shaders.width > 0 && one.shaders.right <= one.vw && one.ctl.left >= one.shaders.left && one.ctl.right <= one.shaders.right,
+        'at 1366 px the Shaders tab has the whole width, with the playing shader\'s controls in it: ' + JSON.stringify(one));
+    }
+    await fitsPhone('Play > Shaders at 1366 px');
+    await page.setViewportSize({ width: 1700, height: 900 });
+    await go(page, 'play/pads');
+    {
+      const three = await deskNow();
+      assert(three.pads.right <= three.library.left && three.library.right <= three.shaders.left && three.shaders.right <= three.vw && three.sub.width === 0 && three.ctl.left >= three.shaders.left,
+        'from 1700 px the pads, the library and the shaders share the page, with no tabs: ' + JSON.stringify(three));
+      assert(Math.min(three.pads.width, three.library.width, three.shaders.width) >= 320, 'no column of the desk is narrower than a phone: ' + JSON.stringify(three));
+    }
     await page.setViewportSize({ width: 1920, height: 1080 });
     await go(page, 'play/shaders');
     await page.waitForSelector('#shadercontrols #shin-speed');
