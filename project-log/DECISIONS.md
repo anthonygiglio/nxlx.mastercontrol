@@ -471,3 +471,174 @@ Looked at and left: the session cookie lasts a year for every role (a guest code
 - **No settings schema change, and the key in a section of its own (changed after the review of #118).** The locks are optional settings under `osc`, read through `osc.layers` with "off" for a missing one and fail-closed for a damaged one. The key is in `settings["osc_secret"]`: every release exports only the sections it names, refuses an import that holds a section it does not know, and leaves an unknown section alone when it loads and saves, so no release writes the key into a file or loses it. The reviewer suggested `auth`; that section is written anew at every new PIN (`Auth._new_pin`, also in older releases), which would lose the key, so it has its own. Tried against master's own code (2026-10-10): it loads the file, keeps the lock settings and the key through a save of its OSC page and two new PINs, its export does not hold the key, and its import leaves the section alone; it does not enforce the locks and its import drops the lock settings. A key found under `osc` (the first build kept it there) is moved when the receiver is set up (`OscManager._move_key`), with no schema bump. That is said in `pvj/OSC.md`.
 
 Not done: an IPv6 socket (the receiver is IPv4 only as before, so an IPv6 address in the list matches nothing); any reply or handshake (the receiver still never sends). **Nothing here has met a real TouchOSC or a box.** The browser test was written without being run on the development Mac (no Playwright there); CI runs it.
+
+## D80. Three levels: Owner, Operator, Guest; guest controls with one lock, open by default; controllers and support keep the reach they had
+
+The owner, 2026-10-10: "let's revisit the role permissions. Owners/Admins have ultimate authority. Normal daily users can take over the Presenter role position, but may get a new name, and have almost all the same controls as the Owner/Admin, except for system critical options. Guests can still exist but mostly to play around, like powering projectors, choosing scenes, videos, shaders, etc." Then: the daily role is called Operator; "3 levels, not locked by default. owners and operators can lock. an operator may delete clips and remove guests. they run the room day to day."; a guest may power projectors off "yes with confirm, but only when guest controls are unlocked"; an Operator's code is made by an "Owner only, room screen allowed".
+
+The stored role ids do not change: `view` is the Guest, `live` the Operator, `full` the Owner. No settings schema change and no change to a device record. The panel and the manual say Owner, Operator, Guest; "Presenter" is gone from both.
+
+**How it is enforced.** One gate, `Api.gate`, that every request passes: the route table's `handle()` and the five paths the server answers outside it (the snapshot, the QR code, the two uploads, the settings import). In order: (1) the support tunnel's own rules (D7, unchanged); (2) a controller identity (MIDI, OSC, DMX, a Room scene or the schedule) and a support session that is not `full` may only use a route in `policy.LEGACY_LIVE`, a list written out by hand of what a presenter could reach before this change, so raising the Operator raises none of them; (3) the route's minimum role; (4) for a Guest on a route above his role, the guest controls: the lock must be open, the request's body must have one of the forms in `policy.GUEST`, the rate limits must have room, a power-off must carry a confirm token, and the action is logged with the device's name.
+
+**The lock.** One state for the box, "Guest controls: open or locked", open by default by the owner's choice. An Operator or an Owner changes it (`POST /api/guests {"locked": true}`); it is in `GET /api/status` for every device; it is kept under the settings key `guest_controls`, which is optional (missing means open), not exported and not imported (it is in `boxcare.NEVER`: master's import refuses a file with a section it does not know), and gone after a factory reset. Locking also ends every power-off confirm that was waiting. A scene a guest started before the lock runs to its end.
+
+**Because the lock is open by default, every guest device and every guest link that exists on a box today gains the guest controls at the update.** The manual and the hand-off say so first under "What changes when you update", and the lock is one tap on Room and on People and codes.
+
+**What a Guest may do while the lock is open** (the forms in `policy.GUEST`; anything else on these routes is refused as before):
+
+- Play a pad, or a clip that is on the box (`{"pad": [bank, index]}` or `{"file": name}`, with `loop` if wanted). Not a stream, a USB drive, a slideshow, a capture input or a mix preset.
+- Next, Previous and Stop. Blackout on and off. (Chosen: whoever can start a picture can stop it and darken it. Not pause, seek, speed or loop: nobody asked for them.)
+- Ambience (Vibes) on with a set, off, next and previous. Not the dwell time (it is saved).
+- A shader by its id, one of its saved presets, and the next or previous shader. Never live values, never saving.
+- An effect on by its id or one of its presets, off, next and previous. Never its values or controls. (Chosen yes: an effect is undone with one tap, it is what the room sees, and the owner said "shaders, etc.". Its cost on a Pi 4 is bounded by Effect detail, which a guest cannot change.)
+- A projector or a group: power on, choose an input, and power off with the confirm below. Not the mutes, not Refresh details (it saves what the projector answered).
+- A scene, every one of them, with two exceptions: a scene that plays a stream is refused (the box would connect to an outside address), and a scene that switches a group off needs the same confirm as a direct power-off. (Chosen over a "guests may use" mark on each scene: it stores nothing and needs no new control. The mark is an open question for the owner.)
+- Not for a guest, open or locked: size, position, rotate, flips, opacity, fades, volume, mute, the sound output, the overlay, the mapping, test pictures and tones, uploads, deletes, renames, editing anything stored, codes, devices, any setting.
+
+**Power-off needs two requests.** A guest's power-off (one projector, a group, or a scene with a group switched off) is answered with 409 and `{"confirm": {"token", "seconds": 30}}`; the same request sent again with `"confirm": token` within 30 seconds does it. A token is random, works once, belongs to that device and that exact request, and is checked after the lock, the form and the limits. Operators and Owners are not asked by the server (the panel asks them as before).
+
+**Limits on guests.** Each guest device: 10 actions in 10 seconds. All guests together: 30 in 10 seconds. Power-offs (direct, a group, or in a scene): one per device and two for the box in 5 minutes, counted when carried out. Over a limit: 429 with `retry_after`. A projector therefore cannot be strobed by guests: switching on again and again does nothing to a projector that is on, and off is limited.
+
+**Nothing a guest does is saved.** The forms above were chosen so that none writes the settings; a test counts the saves around every one. What the box saves by itself stays as it was (a guest device's last-used day, at most once a day).
+
+**Codes and devices.**
+
+- An Operator's code, link and QR code are made by an Owner only, as a presenter's were (D48). They may be drawn on the room screen; the panel says once, beside that choice, that anyone who sees the screen can then run the room.
+- An Operator makes guest codes (the bounds of D48 stay) and now also guest links (`POST /api/devices/invite` with `view` only), sees the guest devices (`GET /api/devices` gives an Operator the guests and nobody else) and removes a guest device (`POST /api/devices/revoke`; an Operator or Owner device answers 403 to him).
+- A code a MIDI controller draws on the display (D61): its "join" kind now pairs a **Guest**, not an Operator. It needs no owner present and anyone at the controller can make it, and the Operator is now close to an owner. The "owner" kind stays behind its own switch. This reverses the owner's answer of 2026-10-08 (D63: "keeps pairing a presenter"), which was given when a presenter could only play and mix; it is an open question for him. Such a guest goes after 7 unused days like a guest from a code.
+
+**Controllers.** MIDI, OSC, DMX, a Room scene and the schedule keep exactly the reach of before (`LEGACY_LIVE`), whatever the Operator gains. OSC still switches a projector off with no confirm, as before: the confirm is for guests. The lock is not an OSC or MIDI action: locking would be harmless, unlocking would give a controller with no login a say over who controls the room, so neither is built.
+
+**Remote support.** A `full` session is an Owner's minus `REMOTE_DENY`, as before. A `live` session keeps the presenter's reach of before (`LEGACY_LIVE` minus `REMOTE_DENY`) and gains none of the Operator's new powers. A `view` session stays read-only: it never has guest controls, open or locked.
+
+**The two questions the brief left to this decision.** The mapper (`POST /api/mapper`: surfaces, their corners, on and off, saved mappings): **Operator**. It is adjusted during a show, holds no secret and reaches nothing outside the box. MIDI layout, Learn and lights: **Owner**, for now. A mapping is shared by everyone at the controller, a mapping can put "Show a full access code" on a pad, and the layouts are being rebuilt in #115. An open question for the owner.
+
+**The table.** One row for every route and every path handled outside the route table. "Before" is the lowest role that could use it on master (G guest, P presenter, O owner, none: no login). Then who may after: Guest with the lock open, Guest locked, Operator, Owner. "part" means some forms only, as written above or in the last column.
+
+| Route | What it does | Before | Guest, open | Guest, locked | Operator | Owner | Why |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| GET /api/hello | Says what the box is | none | yes | yes | yes | yes | Needed before pairing |
+| POST /api/pair | Pairs with the PIN or a code | none | yes | yes | yes | yes | The way in |
+| POST /api/session | Starts a session from a link | none | yes | yes | yes | yes | The way in |
+| POST /api/logout | Logs this device out | none | yes | yes | yes | yes | Everyone may leave (D77) |
+| POST /api/support/login | Support's own login through the tunnel | none | yes | yes | yes | yes | Unchanged (D7) |
+| GET /api/status | What plays, the mix, the lock | G | yes | yes | yes | yes | Read only |
+| GET /api/media | The clips | G | yes | yes | yes | yes | Read only |
+| GET /api/pads | The pads | G | yes | yes | yes | yes | Read only |
+| GET /api/modules | Which features are on | G | yes | yes | yes | yes | Read only |
+| GET /api/theme | The look in use | G | yes | yes | yes | yes | Read only; the Look page's details now also for an Operator |
+| GET /api/osc | OSC state, without senders for less than Owner | G | yes | yes | yes | yes | Read only |
+| GET /api/media/import | Progress of a copy from USB | G | yes | yes | yes | yes | Read only |
+| POST /api/media/info | What is in a clip | G | yes | yes | yes | yes | Read only, as before |
+| GET /api/system | About the box | G | yes | yes | yes | yes | Read only |
+| GET /api/inputs | Capture inputs | G | yes | yes | yes | yes | Read only |
+| GET /api/overlay | The overlay | G | yes | yes | yes | yes | Read only |
+| GET /api/health | Power, temperature, helpers | G | yes | yes | yes | yes | Read only |
+| GET /api/support | Is a support session open | G | yes | yes | yes | yes | Everyone may see it |
+| GET /api/sync | Boxes in step, state | G | yes | yes | yes | yes | Read only |
+| GET /api/mapper | The mapping | G | yes | yes | yes | yes | Read only |
+| GET /api/shaders | Shaders and sets | G | yes | yes | yes | yes | Read only |
+| GET /api/effects | Effects | G | yes | yes | yes | yes | Read only |
+| GET /api/projectors | Projectors, no address or password below Owner | G | yes | yes | yes | yes | Read only |
+| GET /api/room | Groups, scenes, how a scene is going | G | yes | yes | yes | yes | Read only |
+| GET /api/audio | Sound outputs | G | yes | yes | yes | yes | Read only |
+| GET /api/autostart | Autostart | G | yes | yes | yes | yes | Read only |
+| GET /api/streams | Saved streams, no address below Owner | G | yes | yes | yes | yes | Read only |
+| GET /api/schedule | The schedule | G | yes | yes | yes | yes | Read only |
+| GET /api/preview.jpg | A snapshot of the screen (outside the table) | G | yes | yes | yes | yes | Read only; codes on the display are left out below Owner, as before |
+| POST /api/play | Plays something | P | part | no | yes | yes | Guest: a pad or a clip on the box only |
+| POST /api/control | Transport, geometry, volume | P | part | no | yes | yes | Guest: next, prev, stop only |
+| POST /api/blackout | Blackout on or off | P | yes | no | yes | yes | Who can start can darken |
+| POST /api/fadeout | Fades out | P | no | no | yes | yes | A fade is the operator's |
+| POST /api/fadein | Fades in | P | no | no | yes | yes | A fade is the operator's |
+| POST /api/testpattern | Colour bars | P | no | no | yes | yes | A set-up tool |
+| POST /api/testtone | A test tone | P | no | no | yes | yes | It makes noise |
+| POST /api/mix | The transition, saved | P | no | no | yes | yes | It is saved |
+| POST /api/overlay | The overlay picture, saved | P | no | no | yes | yes | It is saved |
+| POST /api/vibes | Ambience | P | part | no | yes | yes | Guest: on with a set, off, next, previous |
+| POST /api/shaders/play | Shows one shader | P | part | no | yes | yes | Guest: by id, no values |
+| POST /api/shaders/values | Live values of a shader | P | no | no | yes | yes | Performing |
+| POST /api/shaders/step | Next or previous shader | P | yes | no | yes | yes | Choosing |
+| POST /api/shaders/preset | Applies a saved preset | P | yes | no | yes | yes | Choosing; nothing saved |
+| POST /api/effects | An effect on or off | P | part | no | yes | yes | Guest: by id or preset, or off |
+| POST /api/effects/values | Live values of an effect | P | no | no | yes | yes | Performing |
+| POST /api/effects/step | Next or previous effect | P | yes | no | yes | yes | Choosing |
+| POST /api/effects/preset | Applies a saved preset | P | yes | no | yes | yes | Choosing; nothing saved |
+| POST /api/projector | Power, input, mutes, details of a projector | P | part | no | yes | yes | Guest: on, input, off with confirm |
+| POST /api/room/scene | Applies a scene | P | part | no | yes | yes | Guest: not a scene with a stream; confirm for one that powers off |
+| POST /api/room/group | Power, input, mutes of a group | P | part | no | yes | yes | Guest: on, input, off with confirm |
+| POST /api/autostart/test | Tries the autostart now | P | no | no | yes | yes | A set-up tool |
+| POST /api/support/stop | Ends a support session | P | no | no | yes | yes | Unchanged |
+| GET /api/access | The codes and what is on the room screen | P | no | no | part | yes | Operator: the guest code only (D48) |
+| POST /api/access/code | Makes a join code | P | no | no | part | yes | Operator: a guest code only; an Operator code is the Owner's |
+| POST /api/access/cancel | Ends a join code | P | no | no | part | yes | Operator: the guest code only |
+| POST /api/access/screen | Codes on the room screen | P | no | no | part | yes | Operator: the guest code only |
+| GET /api/qr.svg | A QR code (outside the table) | P | no | no | part | yes | Operator: the address and the guest code |
+| GET /api/midi | The MIDI layout, to look at | P | no | no | yes | yes | Unchanged |
+| POST /api/guests | Locks or opens guest controls (new) | new | no | no | yes | yes | They run the room |
+| POST /api/media/upload | Uploads a clip (outside the table) | O | no | no | yes | yes | Daily work |
+| POST /api/media/import | Copies a clip from USB | O | no | no | yes | yes | Daily work |
+| POST /api/media/import/cancel | Stops that copy | O | no | no | yes | yes | Daily work |
+| POST /api/media/delete | Deletes a clip | O | no | no | yes | yes | His words |
+| POST /api/media/rename | Renames a clip | O | no | no | yes | yes | Daily work |
+| POST /api/pads | Edits a pad | O | no | no | yes | yes | Daily work |
+| POST /api/shaders | Adds or removes a shader, edits sets | O | no | no | yes | yes | Daily work; a shader is checked text, not a program |
+| POST /api/shaders/presets | Saves, renames, deletes shader presets | O | no | no | yes | yes | Daily work |
+| POST /api/effects/presets | Saves, renames, deletes effect presets | O | no | no | yes | yes | Daily work |
+| POST /api/effects/library | Adds or removes an effect | O | no | no | yes | yes | As a shader |
+| POST /api/effects/config | Effect detail | O | no | no | yes | yes | Tuned during a show |
+| POST /api/room | Edits groups and scenes | O | no | no | yes | yes | Daily work; no address or password in it |
+| POST /api/audio | The sound output | O | no | no | yes | yes | Sound is daily work |
+| POST /api/autostart | Autostart | O | no | no | yes | yes | Daily work |
+| POST /api/schedule | The schedule | O | no | no | yes | yes | Daily work |
+| POST /api/mapper | The mapping | O | no | no | yes | yes | Adjusted during a show (chosen) |
+| POST /api/theme | Chooses the look | O | no | no | yes | yes | Reversible, no file |
+| POST /api/theme/export | Saves the look as a file | O | no | no | yes | yes | A download |
+| POST /api/player/restart | Restarts the player | O | no | no | yes | yes | A stuck picture during a show |
+| GET /api/devices | The paired devices | O | no | no | part | yes | Operator: the guests only |
+| POST /api/devices/invite | Makes a link | O | no | no | part | yes | Operator: a guest link only |
+| POST /api/devices/revoke | Removes a device | O | no | no | part | yes | Operator: a guest only (his words) |
+| POST /api/theme/add | Adds a theme file | O | no | no | no | yes | An upload kept on the box |
+| POST /api/theme/remove | Removes a theme | O | no | no | no | yes | With add |
+| POST /api/osc | OSC listener and its locks | O | no | no | no | yes | A way into the box |
+| GET /api/osc/messages | Recent OSC senders and messages | O | no | no | no | yes | With the OSC page |
+| POST /api/osc/key | Shows or renews the OSC key | O | no | no | no | yes | A secret |
+| GET /api/dmx | DMX settings | O | no | no | no | yes | A way into the box |
+| POST /api/dmx | DMX settings | O | no | no | no | yes | A way into the box |
+| POST /api/midi | MIDI on, the built-in layout | O | no | no | no | yes | A way into the box |
+| POST /api/midi/learn | MIDI Learn | O | no | no | no | yes | Shared mappings (chosen, open question) |
+| POST /api/midi/map | Edits the MIDI layout | O | no | no | no | yes | It can map the owner-code action |
+| POST /api/midi/lights | Controller lights | O | no | no | no | yes | With the layout |
+| POST /api/access/controller | The controller-code switches | O | no | no | no | yes | Who may get in |
+| POST /api/streams | Adds, edits, removes streams | O | no | no | no | yes | The box connects outside |
+| POST /api/projectors | Adds, edits, removes projectors | O | no | no | no | yes | They hold passwords |
+| POST /api/sync | Boxes in step | O | no | no | no | yes | Network set-up |
+| POST /api/modules/(id) | A feature on or off | O | no | no | no | yes | System critical |
+| GET /api/network | Network settings | O | no | no | no | yes | System critical |
+| POST /api/network/plan | Network: prepare | O | no | no | no | yes | System critical |
+| POST /api/network/apply | Network: apply | O | no | no | no | yes | System critical |
+| POST /api/network/confirm | Network: keep | O | no | no | no | yes | System critical |
+| POST /api/network/revert | Network: undo | O | no | no | no | yes | System critical |
+| POST /api/network/scan | Finds Wi-Fi networks | O | no | no | no | yes | System critical |
+| POST /api/system/reboot | Restarts the box | O | no | no | no | yes | System critical |
+| POST /api/system/poweroff | Powers the box off | O | no | no | no | yes | System critical |
+| POST /api/system/clock | Sets the clock | O | no | no | no | yes | System critical |
+| GET /api/system/update | Update state | O | no | no | no | yes | System critical |
+| POST /api/system/update | Starts an update | O | no | no | no | yes | System critical |
+| POST /api/system/update/upload | Uploads an update (outside the table) | O | no | no | no | yes | System critical |
+| POST /api/pin/rotate | A new PIN | O | no | no | no | yes | Who may get in |
+| POST /api/pin/unlock | Lifts a guessing lockout | O | no | no | no | yes | Who may get in |
+| POST /api/pin/show | Shows the PIN | O | no | no | no | yes | Who may get in (D77) |
+| POST /api/support/config | Remote support settings | O | no | no | no | yes | A way into the box |
+| POST /api/support/start | Opens a support session | O | no | no | no | yes | A way into the box |
+| POST /api/support/extend | Extends it | O | no | no | no | yes | A way into the box |
+| POST /api/system/settings/export | Saves the settings as a file | O | no | no | no | yes | Box care |
+| POST /api/system/settings/import | Loads a settings file (also outside the table) | O | no | no | no | yes | Box care |
+| GET /api/system/diagnostics | The diagnostics file | O | no | no | no | yes | Box care |
+| POST /api/system/factory-reset | Factory reset | O | no | no | no | yes | Box care |
+
+Controllers (MIDI, OSC, DMX, a Room scene, the schedule) and a support session below `full`: every row whose "Before" is none, G or P, and no other. A support session of any role is refused the routes in `REMOTE_DENY` as before.
+
+HTTPS (#119, not on master) adds an owner-only switch; when it merges it gets a row here and in `tests/test_roles.py`, where a route without a row fails.
+
+**Nothing of this has run on a box**, with a phone, a projector or a controller. Rows are in `tools/DEVICE-TESTING.md`.
