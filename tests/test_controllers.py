@@ -85,22 +85,27 @@ class ProfileFilesTest(unittest.TestCase):
                          (49, {"type": "note", "channel": 0, "number": 22}, 62))
         # the Launchpad's X-Y layout: 16 x row + column, the side buttons are column 8, the top row is CC 104 to 111
         self.assertEqual([control(PAD, i)["send"]["number"] for i in ("pad11", "pad25", "pad78", "side_a", "side_h", "top1", "top8")], [0, 20, 103, 8, 120, 104, 111])
-        # the grid IS the pads, each bank as the panel draws it on a laptop, three rows of four: A top left, B top
-        # right, C under A; pad 1 of each at its block's top left
+        # the grid IS the pads, read in rows (the owner, 2026-10-10: "rows"): one bank per pair of rows, six and six,
+        # A on rows 1 and 2, B on 3 and 4, C on 5 and 6; pad 1 of each at the left of its first row
         want = {}
-        for r in range(1, 4):
-            for c in range(1, 5):
-                want["pad%d%d" % (r, c)] = {"action": "pad", "bank": 0, "index": (r - 1) * 4 + c - 1}
-                want["pad%d%d" % (r, c + 4)] = {"action": "pad", "bank": 1, "index": (r - 1) * 4 + c - 1}
-                want["pad%d%d" % (r + 3, c)] = {"action": "pad", "bank": 2, "index": (r - 1) * 4 + c - 1}
+        for r in range(1, 7):
+            for c in range(1, 7):
+                want["pad%d%d" % (r, c)] = {"action": "pad", "bank": (r - 1) // 2, "index": ((r - 1) % 2) * 6 + c - 1}
         self.assertEqual({i: control(PAD, i)["action"] for i in want}, want)
+        self.assertEqual((control(PAD, "pad11")["action"], control(PAD, "pad31")["action"], control(PAD, "pad66")["action"]),
+                         ({"action": "pad", "bank": 0, "index": 0}, {"action": "pad", "bank": 1, "index": 0}, {"action": "pad", "bank": 2, "index": 11}))
         self.assertEqual(sum(1 for c in BY_ID[PAD]["controls"] if c["action"] and c["action"]["action"] == "pad"), 36)
         # the round buttons on the right: scenes, then the screen in the panel's own order (Fade, Freeze, Stop, Blackout)
         self.assertEqual([control(PAD, "side_" + x)["action"]["action"] for x in "abcdefgh"],
                          ["scene_1", "scene_2", "scene_3", "scene_4", "fade", "pause", "stop", "blackout"])
-        self.assertEqual([[(control(PAD, "pad%d%d" % (r, c))["action"] or {}).get("action") for c in range(5, 9)] for r in (4, 5, 6)],
-                         [["vibes", "shader_prev", "shader_next", None], ["effect_toggle", "effect_prev", "effect_next", "code_join"],
-                          ["clip_prev", "seek_back", "seek_forward", "clip_next"]])
+        act = lambda r, c: (control(PAD, "pad%d%d" % (r, c))["action"] or {}).get("action")
+        self.assertEqual([[act(r, c) for c in (7, 8)] for r in range(1, 7)],        # beside the banks: the presets, then spare and the code
+                         [["shader_preset_1", "shader_preset_2"], ["shader_preset_3", "shader_preset_4"], ["shader_preset_5", "shader_preset_6"],
+                          ["shader_preset_7", "shader_preset_8"], [None, None], [None, "code_join"]])
+        self.assertEqual([[act(r, c) for c in range(1, 9)] for r in (7, 8)],        # the fourth pair of rows: shaders, the effect, the clip
+                         [["vibes", "shader_prev", "shader_next", None, "effect_toggle", "effect_prev", "effect_next", None],
+                          ["clip_prev", "seek_back", "seek_forward", "clip_next", "shader_control_1", "shader_control_2", "shader_control_3", "shader_control_4"]])
+        self.assertEqual(control(PAD, "top5")["action"], {"action": "rotate"})       # the quarter turn: along the top, nowhere near the right column
         for p in PROFILES:                                             # every control with an action says which part it belongs to
             for c in p["controls"]:
                 self.assertEqual(c["zone"] in midi.ZONES, c["action"] is not None or c["zone"] is not None, (p["id"], c["id"]))
@@ -432,9 +437,9 @@ class MapperTest(unittest.TestCase):
     def test_an_unguarded_button_fires_at_once(self):
         m = self.mapper(PAD, "Mini")
         self.press(m, "Mini", "note", 104, 1)                  # G: Stop
-        self.press(m, "Mini", "note", 20, 1)                   # pad 2.5 is bank B, pad 5 (the right half, second row of four)
-        self.press(m, "Mini", "note", 52, 1)                   # pad 4.5: Vibes
-        self.assertEqual(self.rec.calls, [("/api/control", {"action": "stop"}), ("/api/play", {"pad": [1, 4]}), ("/api/vibes", {"on": True})])
+        self.press(m, "Mini", "note", 20, 1)                   # pad 2.5 is bank A, pad 11 (the second row of its six and six)
+        self.press(m, "Mini", "note", 96, 1)                   # pad 7.1: Vibes
+        self.assertEqual(self.rec.calls, [("/api/control", {"action": "stop"}), ("/api/play", {"pad": [0, 10]}), ("/api/vibes", {"on": True})])
 
     def test_the_controllers_bank(self):
         m = self.mapper(NANO, "nanoKONTROL2")
@@ -799,7 +804,7 @@ class HubTest(HubBase):
             return real(method, path, *rest)
         self.api.handle = handle
         for n in range(64):                                                 # every pad of the grid, four times over, in no time
-            if n == 3 * 8 + 4:                                              # (but Vibes on / off, pad 4.5: this fake player cannot start it)
+            if n == 6 * 8:                                                  # (but Vibes on / off, pad 7.1: this fake player cannot start it)
                 continue
             for _ in range(4):
                 self.hub.on_message("Mini", ("on", 0, 16 * (n // 8) + n % 8, 127))

@@ -91,8 +91,8 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | K12 | nanoKONTROL2 with lights on (LED Mode External, L10 below): press **R 7** | The same fade; R 7 flashes while the picture is down, lit while it comes up, dark afterwards |
 | K13 | MIDI Mix: hold Solo and press **Mute 5** | The same fade. No light (this row has none); the panel's button flashes |
 | K14 | Fade out with a controller, then press Blackout twice, then twice again | After the Blackout is off the picture is back and the fade button is steady; its next press fades out |
-| K15 | Launchpad Mini with clips on A1, B1 and C1 | Three colours: top left amber, the first pad of the right half yellow-green, the first pad of row 4 orange. Can you tell them apart at Low, Medium and High? The pad that plays is bright green |
-| K16 | Launchpad Mini: the three rows right of bank C | Row 4: Vibes, previous shader, next shader. Row 5: effect on / off, previous, next. Row 6: previous clip, back 10 s, forward 10 s, next clip |
+| K15 | Launchpad Mini with clips on A1, B1 and C1 | Three colours down the left edge: row 1 amber, row 3 yellow-green, row 5 orange (each bank is two rows of six). Can you tell them apart at Low, Medium and High? The pad that plays is bright green |
+| K16 | Launchpad Mini: the two bottom rows and the strip beside the banks | Row 7: Vibes, previous shader, next shader, then effect on / off, previous, next. Row 8: previous clip, back 10 s, forward 10 s, next clip, then shader controls 1 to 4. Beside the banks, two wide: presets 1 to 8. Do the rows read right now? |
 | K17 | The quarter turn: M 7 (nanoKONTROL2, over Fade), Rec Arm 8 (MIDI Mix), the fifth round button along the top (Launchpad) | The picture turns a quarter each press, back to upright after four |
 
 ### TouchOSC: what the owner's layout can now be wired to (D75)
@@ -132,7 +132,7 @@ To try: O1, send each new address from the layout with a clip playing and look a
 
 ### Controller lights (D53)
 
-**The rows L1, L4 and L5 below describe the Launchpad's first layout.** With D75: after plugging in, pad 1 is amber if A1 holds a clip, E (the fade button) and H (Blackout) are dim red, G (Stop) lights once something plays; Vibes is the fifth pad of row 4, and Freeze is F on the right.
+**The rows L1, L4 and L5 below describe the Launchpad's first layout.** With D75: after plugging in, pad 1 is amber if A1 holds a clip, E (the fade button) and H (Blackout) are dim red, G (Stop) lights once something plays; Vibes is the first pad of row 7, and Freeze is F on the right.
 
 **Nothing of this has been seen on a real controller.** The messages come from Novation's document for the Launchpad S (that the Mini takes the same ones is not confirmed by Novation), from Korg's guide (nanoKONTROL2: External LED mode, and only with the factory On and Off values and channel) and from a secondary source alone (MIDI Mix). Five minutes; please say what you see at each step, also when it is right.
 

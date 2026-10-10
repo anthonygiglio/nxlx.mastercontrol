@@ -115,17 +115,17 @@ class LightsFilesTest(unittest.TestCase):
         may make a profile fail its check (it would lose its whole layout): the section only lists which controls
         have a light, and a light with nothing to show is dark."""
         p = raw(PAD)
-        spare = next(c for c in p["controls"] if c["id"] == "pad58")         # the pad at the end of the effects row: it asks for a code (D61)
+        spare = next(c for c in p["controls"] if c["id"] == "pad68")         # the last pad beside bank C: it asks for a code (D61)
         self.assertEqual(spare["action"], {"action": "code_join"})
         self.assertIsNone(midi.light_meaning(spare["action"]))               # nothing about a code is ever shown on a controller
         spare["action"] = {"action": "blackout"}
         clean = midi.validate_profile(p, PAD)
-        self.assertIn("pad58", clean["lights"]["controls"])
-        action = next(c for c in clean["controls"] if c["id"] == "pad58")["action"]
+        self.assertIn("pad68", clean["lights"]["controls"])
+        action = next(c for c in clean["controls"] if c["id"] == "pad68")["action"]
         self.assertEqual([value(PAD, action, snap()), value(PAD, action, snap(blackout=True))], [13, 11])       # and its light follows it
         with mock.patch.dict(midi.ACTIONS, {"strobe": ("trigger", None, None), "smear": ("level", 0, 1)}):
             p = raw(PAD)
-            next(c for c in p["controls"] if c["id"] == "pad58")["action"] = {"action": "strobe"}
+            next(c for c in p["controls"] if c["id"] == "pad68")["action"] = {"action": "strobe"}
             next(c for c in p["controls"] if c["id"] == "top1")["action"] = {"action": "strobe"}
             clean = midi.validate_profile(p, PAD)
             self.assertEqual(len(clean["lights"]["controls"]), 80)
@@ -146,7 +146,7 @@ class LightsFilesTest(unittest.TestCase):
         self.assertEqual(states(snap(effect_ready=True)), ["off", "off", "off", "off"])     # ready, and nothing with a picture
         self.assertEqual(states(snap(running=True, effect_ready=True, effect="fx-wash.fs")), ["active", "on", "on", "on"])
         # the three shipped layouts: where an effect action sits on a control with a light, the light has a style
-        self.assertEqual(next(c for c in BY_ID[PAD]["controls"] if c["id"] == "pad55")["action"], {"action": "effect_toggle"})
+        self.assertEqual(next(c for c in BY_ID[PAD]["controls"] if c["id"] == "pad75")["action"], {"action": "effect_toggle"})
         self.assertEqual(next(c for c in BY_ID[NANO]["controls"] if c["id"] == "r5")["action"], {"action": "effect_toggle"})
         on = snap(running=True, effect_ready=True, effect="fx-wash.fs")
         self.assertEqual([value(PAD, toggle, snap()), value(PAD, toggle, snap(running=True, effect_ready=True)), value(PAD, toggle, on)], [12, 29, 28])

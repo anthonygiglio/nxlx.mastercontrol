@@ -3293,7 +3293,7 @@ class MidiTest(Base):
         three on the Launchpad) for on/off and the steps."""
         want = {"korg-nanokontrol2": {"fader7": "effect_amount", "r5": "effect_toggle"},
                 "akai-midimix": dict({"knob_c%d" % n: "effect_control_%d" % n for n in range(1, 9)}, fader7="effect_amount", solo4="effect_toggle"),
-                "novation-launchpad-mini": {"pad55": "effect_toggle", "pad56": "effect_prev", "pad57": "effect_next"}}
+                "novation-launchpad-mini": {"pad75": "effect_toggle", "pad76": "effect_prev", "pad77": "effect_next"}}
         profiles = M.load_profiles(log=lambda *_: None)
         self.assertEqual(sorted(p["id"] for p in profiles), sorted(want))
         for p in profiles:
@@ -3303,8 +3303,8 @@ class MidiTest(Base):
                 if c["id"] in got:
                     kind = M.ACTIONS[got[c["id"]]][0]
                     self.assertTrue(kind != "trigger" if c["kind"] in ("fader", "knob") else kind != "level", (p["id"], c["id"]))
-            if p["id"] == "novation-launchpad-mini":                                   # the pad at the end of its effects row shows a pairing code (D61)
-                self.assertEqual([c["id"] for c in p["controls"] if c["action"] and c["action"]["action"] == "code_join"], ["pad58"])
+            if p["id"] == "novation-launchpad-mini":                                   # the last pad beside bank C shows a pairing code (D61)
+                self.assertEqual([c["id"] for c in p["controls"] if c["action"] and c["action"]["action"] == "code_join"], ["pad68"])
             else:
                 self.assertTrue(any(c["action"] is None for c in p["controls"]), p["id"])  # and something is still spare
 

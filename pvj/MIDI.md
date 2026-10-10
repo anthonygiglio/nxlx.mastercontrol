@@ -123,60 +123,45 @@ Room scenes, the two Vibes sets and the effect's previous and next are not on th
 
 The **original** Launchpad Mini, not the MK3 (which sends other numbers and has another card id). From Novation's Launchpad S Programmer's Reference Manual 1.02, whose protocol the original Mini shares: in the power-on X-Y layout a pad sends note 16 x row + column (from 0, top left), the round buttons on the right are column 8 (notes 8, 24 ... 120) and the round buttons along the top send CC 104 to 111. The recording of the owner's unit (D21: notes 20 to 103 and CC 104 to 111) fits: every number is one of that layout, and note 20 does not exist in the other (drum rack) layout. The recording did not cover every pad.
 
-**Drawn afresh** after the owner's "the launchpad button layouts dont make sense to me" (2026-10-10). The first layout laid each bank as two rows of six and filled what was left with single pads of every kind. This one has five rules:
+**Drawn afresh** after the owner's "the launchpad button layouts dont make sense to me" (2026-10-10), and then in rows at his word ("rows"). The first layout laid each bank as two rows of six and filled what was left with single pads of every kind. A second one drew each bank as a block of three rows of four, as the panel draws a bank on a laptop; it was built and reviewed, and rows won, because a performer reads an 8 by 8 grid in rows, not in blocks. This one has five rules:
 
-1. **The pads of the grid are the pads of the panel, in the panel's own shape.** On a laptop the panel draws a bank as three rows of four, so each bank is a block of three rows of four here, pad 1 at the block's top left: **bank A top left, bank B top right, bank C under A**. Three blocks, three colours.
+1. **The grid is read in rows, and the banks follow one another from the top.** Each bank is a pair of rows, six pads and six, pad 1 at the left of the first: **bank A on rows 1 and 2, bank B on rows 3 and 4, bank C on rows 5 and 6**. Six and six, not eight and four: every bank has the same shape, pad 7 sits under pad 1, and the two columns left over run straight down beside all three banks as one strip.
 2. **A lit pad means there is something on it; the one that plays is bright green; an empty pad is dark.** Bank A is amber, bank B yellow-green, bank C orange.
-3. **One zone per thing, each a row or a block, never scattered.** Right of bank C, three rows of four: the shader row (Vibes, previous, next), the effect row (on / off, previous, next) and the clip row in the panel's order (Prev, back 10 s, forward 10 s, Next). Under everything, two full rows for the shader on screen: its presets, then its controls as presses.
-4. **The round buttons are the ones to be careful with**, and you can feel that they are round. On the right, top half: the four **Room scenes** (press twice). Bottom half: **the screen**, in the panel's order from the top: **Fade, Freeze, Stop, Blackout**, Blackout in the corner, red. The fade button flashes red while the picture is down. Nothing in this column is beside a pad that is tapped often: its neighbours on the left are the last column of the grid's rows.
-5. **The top row holds what is used least**: which set Vibes plays, the quarter turn, the overlay, sound off.
+3. **One zone per thing, each a row or a strip, never scattered.** The strip beside the banks, two pads wide, is the presets of the shader on screen, 1 to 8 from the top. The fourth pair of rows is for what is not a pad: row 7 has shaders and Vibes on its left half and the effect on its right; row 8 has the clip in the panel's order (Prev, back 10 s, forward 10 s, Next) on its left and the shader's first four controls, as presses, on its right.
+4. **The round buttons are the ones to be careful with**, and you can feel that they are round. On the right, top half: the four **Room scenes** (press twice). Bottom half: **the screen**, in the panel's order from the top: **Fade, Freeze, Stop, Blackout**, Blackout in the corner. Fade and Blackout flash red for as long as they are on.
+5. **The top row holds what is used least**: which set Vibes plays, the quarter turn (far from the right-hand column), the overlay, sound off.
 
 ```
 top (round)   Vibes:Amb  Vibes:Show  .       .       Rotate   Overlay  Mute    .
-row 1         A1   A2   A3   A4   |  B1   B2   B3   B4          (A) Room scene 1   2x
-row 2         A5   A6   A7   A8   |  B5   B6   B7   B8          (B) Room scene 2   2x
-row 3         A9   A10  A11  A12  |  B9   B10  B11  B12         (C) Room scene 3   2x
-row 4         C1   C2   C3   C4   |  Vibes  Shader<  Shader>  .   (D) Room scene 4   2x
-row 5         C5   C6   C7   C8   |  Effect Effect<  Effect>  code (E) FADE out / in
-row 6         C9   C10  C11  C12  |  Prev   -10 s    +10 s    Next (F) Freeze
-row 7         preset 1 ... preset 8 of the shader on screen       (G) Stop
-row 8         control 1 ... control 8 of it, as a press           (H) BLACKOUT      2x
+row 1         A1   A2   A3   A4   A5   A6   |  preset 1  preset 2     (A) Room scene 1   2x
+row 2         A7   A8   A9   A10  A11  A12  |  preset 3  preset 4     (B) Room scene 2   2x
+row 3         B1   B2   B3   B4   B5   B6   |  preset 5  preset 6     (C) Room scene 3   2x
+row 4         B7   B8   B9   B10  B11  B12  |  preset 7  preset 8     (D) Room scene 4   2x
+row 5         C1   C2   C3   C4   C5   C6   |  .         .            (E) FADE out / in
+row 6         C7   C8   C9   C10  C11  C12  |  .         code         (F) Freeze
+row 7         Vibes Shader< Shader> .  |  Effect  Effect<  Effect>  .  (G) Stop
+row 8         Prev  -10 s   +10 s  Next |  control 1  2  3  4          (H) BLACKOUT      2x
 ```
 
 | Control | Sends | Does |
 | --- | --- | --- |
-| Grid rows 1 to 3, columns 1 to 4 | Notes 0 to 3, 16 to 19, 32 to 35 | Bank A, pads 1 to 12 |
-| Grid rows 1 to 3, columns 5 to 8 | Notes 4 to 7, 20 to 23, 36 to 39 | Bank B, pads 1 to 12 |
-| Grid rows 4 to 6, columns 1 to 4 | Notes 48 to 51, 64 to 67, 80 to 83 | Bank C, pads 1 to 12 |
-| Grid row 4, columns 5 to 7 | Notes 52, 53, 54 | Vibes on / off, previous shader, next shader (column 8, note 55, is spare) |
-| Grid row 5, columns 5 to 7 | Notes 68, 69, 70 | Effect on / off, previous effect, next effect |
-| Grid row 5, column 8 | Note 71 | Show a one-time presenter code (hold 3 seconds and let go; does nothing until switched on, see "A pairing code on the display") |
-| Grid row 6, columns 5 to 8 | Notes 84 to 87 | Previous clip, back 10 seconds, forward 10 seconds, next clip |
-| Grid row 7 | Notes 96 to 103 | Shader preset 1 to 8 |
-| Grid row 8 | Notes 112 to 119 | Shader control 1 to 8, as a press (a switch toggles, a choice steps, an event fires, a number goes back to its own value) |
+| Grid rows 1 and 2, columns 1 to 6 | Notes 0 to 5, 16 to 21 | Bank A, pads 1 to 6 and 7 to 12 |
+| Grid rows 3 and 4, columns 1 to 6 | Notes 32 to 37, 48 to 53 | Bank B, pads 1 to 12 |
+| Grid rows 5 and 6, columns 1 to 6 | Notes 64 to 69, 80 to 85 | Bank C, pads 1 to 12 |
+| Grid rows 1 to 4, columns 7 and 8 | Notes 6, 7, 22, 23, 38, 39, 54, 55 | Shader preset 1 to 8 |
+| Grid rows 5 and 6, columns 7 and 8 | Notes 70, 71, 86 | Spare |
+| Grid row 6, column 8 | Note 87 | Show a one-time presenter code (hold 3 seconds and let go; does nothing until switched on, see "A pairing code on the display") |
+| Grid row 7, columns 1 to 3 | Notes 96, 97, 98 | Vibes on / off, previous shader, next shader (column 4, note 99, is spare) |
+| Grid row 7, columns 5 to 7 | Notes 100, 101, 102 | Effect on / off, previous effect, next effect (column 8, note 103, is spare) |
+| Grid row 8, columns 1 to 4 | Notes 112 to 115 | Previous clip, back 10 seconds, forward 10 seconds, next clip |
+| Grid row 8, columns 5 to 8 | Notes 116 to 119 | Shader control 1 to 4, as a press (a switch toggles, a choice steps, an event fires, a number goes back to its own value) |
 | A to D (right) | Notes 8, 24, 40, 56 | Room scene 1 to 4 (press twice) |
 | E, F, G, H (right) | Notes 72, 88, 104, 120 | **Fade out, then in**; Freeze / resume; Stop; Blackout on / off (press twice) |
 | Top 1, 2 | CC 104, 105 | Vibes: start the set Ambient, start the set Show |
 | Top 5, 6, 7 | CC 108, 109, 110 | Rotate a quarter turn, overlay picture on / off, sound off / on |
 | Top 3, 4, 8 | CC 106, 107, 111 | Spare |
 
-The effect's controls as presses, which filled eight pads of the first layout, are not on this one.
-
-**The other drawing, to compare** (proposed by the independent review of D75; not built, the question is with the owner). One bank per pair of rows, the banks stacked A, B, C down the grid, so a bank reads left to right as one line of pads and the three banks sit under each other as the three bank buttons of the panel sit side by side; the fourth pair of rows for shaders, effects and the clip. Eight pads a row leaves four columns free beside each bank's twelve:
-
-```
-top (round)   Vibes:Amb  Vibes:Show  .       .       Rotate   Overlay  Mute    .
-row 1         A1   A2   A3   A4   A5   A6   |  .    .           (A) Room scene 1   2x
-row 2         A7   A8   A9   A10  A11  A12  |  .    .           (B) Room scene 2   2x
-row 3         B1   B2   B3   B4   B5   B6   |  .    .           (C) Room scene 3   2x
-row 4         B7   B8   B9   B10  B11  B12  |  .    .           (D) Room scene 4   2x
-row 5         C1   C2   C3   C4   C5   C6   |  .    .           (E) FADE out / in
-row 6         C7   C8   C9   C10  C11  C12  |  .    .           (F) Freeze
-row 7         Vibes Shader< Shader> . | Effect Effect< Effect> code (G) Stop
-row 8         Prev  -10 s   +10 s  Next | preset 1 to 4            (H) BLACKOUT      2x
-```
-
-What each gives: **as built**, a bank looks like the panel's bank on a laptop (three rows of four) and the grid has room for eight presets and eight shader controls; **the other**, the banks follow one another top to bottom, which may be what a hand expects of "bank A, then B, then C", at the price of twelve pads left dark on the right and only four presets. A third way: one bank only, drawn large, with the round buttons on the right choosing the bank.
+The effect's controls as presses, which filled eight pads of the first layout, and the shader's controls 5 to 8 as presses are not on this one. **The banks are where the very first layout had them** (rows of six, A, B, C from the top): a hand that knew those pads still finds them.
 
 ### What changes when you update
 
@@ -185,7 +170,7 @@ What each gives: **as built**, a bank looks like the panel's bank on a laptop (t
 - **Most controls of the three layouts do something else.** The tables above are the whole truth; the ones a hand had learned:
   - *nanoKONTROL2*: knobs 1 to 3 were shader controls 1 to 3 and are zoom, position X and position Y; knobs 4 to 7 were shader controls 4 to 7 and are 1 to 4; knob 8 was shader control 8 and is Vibes time. R 6 was Fade in and is spare; R 7 was Fade out and is the one fade button; M 7 was preset 7 and is the quarter turn, M 8 was preset 8 and is spare. Shader controls 5 to 8 and presets 7 and 8 are not on it any more.
   - *MIDI Mix*: knob B2 was position X and still is; B1 (size) is the same under the name Zoom; B3 was Vibes time and is position Y; B4 was spare and is Vibes time. The Solo+Mute row was Stop, Pause, Vibes, previous shader, next shader, Fade in, Fade out, Blackout and is Vibes, previous shader, next shader, effect on / off, fade, Freeze, Stop, Blackout. Rec Arm 8 was preset 8 and is the quarter turn.
-  - *Launchpad Mini*: every pad of the grid and most round buttons. Above all the banks: note 4 was bank A pad 5 and is bank B pad 1. The top row was previous and next shader, Vibes, previous and next clip, Pause, Fade in, Fade out. Stop and Blackout are where they were (G and H); the Room scenes too (A to D). The presenter code moved from the pad with note 7 to the pad with note 71.
+  - *Launchpad Mini*: the pads of the three banks are where they were (rows of six, A, B, C from the top). Everything else moved: the two columns beside the banks were the effect's buttons and controls and are the shader's presets 1 to 8; row 7 was the presets and is Vibes and the shader's steps (left) and the effect (right); row 8 was the shader's controls 1 to 8 and is the clip's transport (left) and the shader's controls 1 to 4 (right). The top row was previous and next shader, Vibes, previous and next clip, Pause, Fade in, Fade out and is the two Vibes sets, the quarter turn, the overlay and Mute. On the right, E and F were the two Vibes sets and are Fade and Freeze; Stop and Blackout (G and H) and the Room scenes (A to D) are where they were. The presenter code moved from the pad with note 7 to the pad with note 87.
 - **A zoom or position knob waits for pickup** on these three controllers, also one you mapped yourself there: it does nothing until it reaches the value the box has.
 - **Zoom, position, clip speed, shader speed, colour turn and shader brightness have their normal value at the middle of the control**, over nine steps (60 to 68 of 0 to 127). For every mapping of these actions, yours and the built-in map's too:
   - zoom went from 1 to 200 percent in a straight line (100 percent near 63) and goes from 25 to 200 with 100 at the middle. A mapping that needs the old bottom can say `"min": 1`.
