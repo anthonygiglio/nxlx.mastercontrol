@@ -332,6 +332,104 @@ class GeometryLayerTest(unittest.TestCase):
         self.assertEqual(self.cc(16, 20), [])
         self.assertTrue(self.m.waiting("nano", "cc", 16))
 
+    def test_coming_back_from_mapping_mode_a_shader_knob_waits_until_it_is_where_it_stood(self):
+        """The twin of the test above for the box's own layer. Mapping mode comes and goes in the mapper's memory
+        (a controller, OSC, the panel's switch, the time running out): nobody tells this controller."""
+        self.assertEqual(self.cc(17, 20), [("/api/shaders/values", {"control": 2, "level": 20})])      # knob 2 set the shader's second control at 20
+        self.mapping[0] = True
+        self.assertEqual(self.cc(17, 22), [])                       # its first touch as the nudge moves nothing
+        self.assertEqual(self.cc(17, 90), [(NUDGE, {"steps": [68, 0]})])
+        self.mapping[0] = False
+        self.assertEqual(self.cc(17, 92), [])                       # back on the shader: 92 would be a jump from 20
+        self.assertEqual(self.cc(17, 60), [])
+        self.assertEqual(self.cc(17, 21), [("/api/shaders/values", {"control": 2, "level": 21})])       # it met where it stood
+        self.assertEqual(self.cc(17, 70), [("/api/shaders/values", {"control": 2, "level": 70})])
+        # a level starts its pickup afresh on the way in and on the way out, as with Geometry
+        self.cc(0, 127)
+        self.assertFalse(self.m.waiting("nano", "cc", 0))
+        self.have["opacity"] = 40.0                                 # the panel moved it meanwhile
+        self.mapping[0] = True
+        self.assertEqual(self.cc(0, 126), [])
+        self.assertTrue(self.m.waiting("nano", "cc", 0))
+
+    def test_mapping_mode_over_geometry_and_back_nothing_jumps(self):
+        self.cc(16, 30)                                             # knob 1 on the shader at 30
+        self.button()
+        self.cc(16, 64); self.cc(16, 90)                            # the zoom
+        self.mapping[0] = True                                      # mapping mode comes over it: knob 1 is the shader's again
+        self.assertEqual(self.m.active_layer("nano"), "mapping")
+        self.assertEqual(self.cc(16, 91), [])                       # and must not jump from 30 to 91
+        self.mapping[0] = False                                     # Geometry is still on underneath
+        self.assertEqual(self.m.active_layer("nano"), "geometry")
+        self.have["size"] = 100.0
+        self.assertEqual(self.cc(16, 92), [])                       # the zoom's pickup started afresh
+        self.assertTrue(self.m.waiting("nano", "cc", 16))
+
+    def test_unplugged_in_a_layer_it_comes_back_plain(self):
+        self.cc(16, 30)
+        self.button()
+        self.cc(16, 64); self.cc(16, 90)
+        self.assertEqual(self.m.active_layer("nano"), "geometry")
+        self.m.forget("nano")                                       # the cable came out
+        self.assertIsNone(self.m.active_layer("nano"))
+        self.assertEqual(self.m.layers, {})
+        self.assertEqual(self.cc(16, 91), [("/api/shaders/values", {"control": 1, "level": 91})])      # plugged in again: a shader knob, free as on a first touch
+        # and in mapping mode: the mode is the box's and goes on, the controller's memory of it does not
+        self.mapping[0] = True
+        self.cc(17, 10)
+        self.m.forget("nano")
+        self.assertEqual(self.m.active_layer("nano"), "mapping")
+        self.assertEqual(self.cc(17, 50), [])                       # the first touch after coming back nudges nothing
+        self.assertEqual(self.cc(17, 51), [(NUDGE, {"steps": [1, 0]})])
+
+    def test_two_controllers_each_in_its_own_layer(self):
+        self.m.entries.extend(midi.profile_entries(BY_ID[NANO], "two"))
+        self.m.profiled = {"nano", "two"}
+
+        def cc(source, number, v):
+            self.t[0] += 1.0
+            n = len(self.rec.calls)
+            self.m.message(source, ("cc", 0, number, v))
+            return self.rec.calls[n:]
+        cc("nano", 16, 30); cc("two", 16, 40)
+        self.button()                                               # the first goes into Geometry, the second does not
+        self.assertEqual((self.m.active_layer("nano"), self.m.active_layer("two")), ("geometry", None))
+        self.assertEqual(cc("nano", 16, 64), [("/api/control", {"action": "size", "value": 100.0})])
+        self.assertEqual(cc("two", 16, 41), [("/api/shaders/values", {"control": 1, "level": 41})])
+        self.assertEqual(cc("two", 53, 127), [])                    # and the second, by its own button
+        cc("two", 53, 0)
+        self.button()                                               # the first comes out
+        self.assertEqual((self.m.active_layer("nano"), self.m.active_layer("two")), (None, "geometry"))
+        self.assertEqual(cc("nano", 16, 66), [])                    # it waits where it stood (30); the other is the zoom
+        self.assertEqual(cc("two", 16, 64), [("/api/control", {"action": "size", "value": 100.0})])
+        self.mapping[0] = True                                      # the box's layer is over both
+        self.assertEqual((self.m.active_layer("nano"), self.m.active_layer("two")), ("mapping", "mapping"))
+        cc("nano", 17, 10); cc("two", 17, 100)
+        self.assertEqual(cc("nano", 17, 12), [(NUDGE, {"steps": [2, 0]})])
+        self.assertEqual(cc("two", 17, 97), [(NUDGE, {"steps": [-3, 0]})])
+        self.mapping[0] = False                                     # and off: each is back where it was
+        self.assertEqual((self.m.active_layer("nano"), self.m.active_layer("two")), (None, "geometry"))
+        self.assertEqual(cc("nano", 17, 14), [("/api/shaders/values", {"control": 2, "level": 14})])    # the first's knob 2 never set a control: free, and no nudge
+        self.have["position"] = 0.0
+        self.assertEqual(cc("two", 17, 97), [])                     # the second's knob 2 is the position, and waits for the picture's
+
+    def test_a_learned_mapping_wins_inside_a_layer(self):
+        mine = midi.validate_entry({"kind": "cc", "number": 17, "action": "volume"})       # the person's own: knob 2 is the volume
+        self.m.entries.append(mine)
+        self.have["volume"] = 100.0
+        self.cc(17, 127)
+        self.assertEqual(self.rec.calls[-1][1]["action"], "volume")
+        self.button()                                               # in Geometry knob 2 would be the position
+        self.assertEqual(self.cc(17, 120)[0][1]["action"], "volume")
+        self.mapping[0] = True                                      # in mapping mode it would nudge
+        calls = self.cc(17, 110) + self.cc(17, 100)
+        self.assertEqual([c[1]["action"] for c in calls], ["volume", "volume"])
+        self.assertNotIn(NUDGE, [c[0] for c in self.rec.calls])
+        # a layer that changed while only Learned controls were touched is still seen: knob 1 parked for Geometry stays right
+        self.mapping[0] = False
+        self.assertEqual(self.m.active_layer("nano"), "geometry")
+        self.assertEqual(self.cc(17, 90)[0][1]["action"], "volume")
+
     def test_it_ends_by_itself_two_minutes_after_the_last_touch(self):
         self.button()
         self.cc(16, 64, after=100)                                  # a touch of one of its controls: two minutes from here
