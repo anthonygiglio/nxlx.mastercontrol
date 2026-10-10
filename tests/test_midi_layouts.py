@@ -179,6 +179,37 @@ class GeometryOnAKnobTest(unittest.TestCase):
         self.cc(m, 17, 127)
         self.assertEqual(self.values(), [("position", -100.0)])
 
+    def test_two_controllers_share_one_level_by_soft_pickup(self):
+        """The model the owner described on 2026-10-10 for a later Map Mode: several physical controllers on one
+        control of the box, each taking it over only where it meets the value, so none of them makes it jump."""
+        entries = midi.profile_entries(BY_ID[NANO], "nanoKONTROL2") + midi.profile_entries(BY_ID[MIX], "Mix")
+        m = MidiMapper(self.rec, entries, {"blackout": False}, clock=lambda: self.t[0])
+        m.profiled = {"nanoKONTROL2", "Mix"}
+        m.target = lambda action: self.have.get(action)
+        self.have.update(size=100.0)
+
+        def turn(source, number, v):
+            self.t[0] += 2.0                                        # each rests for two seconds between its moves
+            m.message(source, ("cc", 0, number, v))
+            if self.values():
+                self.have["size"] = self.values()[-1][1]            # the box has what was last set, whoever set it
+            return len(self.values())
+        self.assertEqual(turn("nanoKONTROL2", 16, 64), 1)           # the nanoKONTROL2's knob is where the picture is: it has it
+        self.assertEqual(turn("nanoKONTROL2", 16, 100), 2)
+        up = self.have["size"]
+        self.assertGreater(up, 130)
+        self.assertEqual(turn("Mix", 17, 0), 2)                     # the MIDI Mix's knob B1 stands at the bottom: nothing jumps
+        self.assertTrue(m.waiting("Mix", "cc", 17))
+        self.assertEqual(turn("Mix", 17, 99), 3)                    # it comes to where the picture is (within the tolerance): it has it now
+        self.assertLess(abs(self.have["size"] - up), 4)
+        self.assertEqual(turn("Mix", 17, 30), 4)                    # and takes the picture down
+        down = self.have["size"]
+        self.assertLess(down, 80)
+        self.assertEqual(turn("nanoKONTROL2", 16, 101), 4)          # the first knob still stands at 100: it lost the picture and must meet it again
+        self.assertTrue(m.waiting("nanoKONTROL2", "cc", 16))
+        self.assertEqual(turn("nanoKONTROL2", 16, 31), 5)
+        self.assertLess(abs(self.have["size"] - down), 4)
+
     def test_the_new_buttons_make_the_calls_of_the_panel(self):
         m = self.mapper(profile=None, source="keys")
         want = {"fade": ("/api/fade", {"seconds": 2}), "rotate": ("/api/control", {"action": "rotate", "value": "toggle"}),

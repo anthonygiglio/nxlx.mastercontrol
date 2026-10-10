@@ -46,7 +46,7 @@
     {"id": "knob6", "name": "Knob 6", "row": 0, "col": 10, "kind": "knob", "send": {"type": "cc", "channel": 0, "number": 21}, "action": {"action": "shader_control_3"}, "zone": "shaders", "unverified": true},
     {"id": "s6", "name": "S 6", "row": 1, "col": 10, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 37}, "action": {"action": "bank_pad", "index": 5}, "zone": "pads", "unverified": true},
     {"id": "m6", "name": "M 6", "row": 2, "col": 10, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 53}, "action": {"action": "shader_preset_6"}, "zone": "shaders", "unverified": true},
-    {"id": "r6", "name": "R 6", "row": 3, "col": 10, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 69}, "action": {"action": "effect_next"}, "zone": "effects", "unverified": true},
+    {"id": "r6", "name": "R 6", "row": 3, "col": 10, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 69}, "action": {"action": "rotate"}, "zone": "picture", "unverified": true},
     {"id": "fader6", "name": "Fader 6", "row": 4, "col": 10, "kind": "fader", "send": {"type": "cc", "channel": 0, "number": 5}, "action": {"action": "shader_brightness"}, "zone": "shaders", "unverified": true},
     {"id": "knob7", "name": "Knob 7", "row": 0, "col": 11, "kind": "knob", "send": {"type": "cc", "channel": 0, "number": 22}, "action": {"action": "shader_control_4"}, "zone": "shaders", "unverified": true},
     {"id": "s7", "name": "S 7", "row": 1, "col": 11, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 38}, "action": {"action": "bank_pad", "index": 6}, "zone": "pads", "unverified": true},

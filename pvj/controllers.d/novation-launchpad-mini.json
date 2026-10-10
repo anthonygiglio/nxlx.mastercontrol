@@ -11,7 +11,7 @@
     {"id": "top2", "name": "Top 2", "row": 0, "col": 1, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 105}, "action": {"action": "vibes_show"}, "zone": "shaders"},
     {"id": "top3", "name": "Top 3", "row": 0, "col": 2, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 106}, "action": null},
     {"id": "top4", "name": "Top 4", "row": 0, "col": 3, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 107}, "action": null},
-    {"id": "top5", "name": "Top 5", "row": 0, "col": 4, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 108}, "action": null},
+    {"id": "top5", "name": "Top 5", "row": 0, "col": 4, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 108}, "action": {"action": "rotate"}, "zone": "picture"},
     {"id": "top6", "name": "Top 6", "row": 0, "col": 5, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 109}, "action": {"action": "overlay"}, "zone": "picture"},
     {"id": "top7", "name": "Top 7", "row": 0, "col": 6, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 110}, "action": {"action": "mute"}, "zone": "sound"},
     {"id": "top8", "name": "Top 8", "row": 0, "col": 7, "kind": "button", "send": {"type": "cc", "channel": 0, "number": 111}, "action": null},

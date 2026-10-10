@@ -105,9 +105,9 @@ class LightsFilesTest(unittest.TestCase):
             # and every standard action of a lit control has a style in its own file, so none is dark by oversight
             # (dark on purpose: a control that asks for a pairing code, D61; a controller shows nothing about a code)
             for ctl in p["controls"]:
-                # (and Mute and the overlay's switch, D75: the box keeps no record of either that a light could follow without asking the player)
+                # (and Mute, the overlay's switch and the quarter turn, D75: nothing of them is shown on a light)
                 if ctl["id"] in p["lights"]["controls"] and ctl["action"] is not None and midi.ACTIONS[ctl["action"]["action"]][0] != "hold" \
-                        and ctl["action"]["action"] not in ("mute", "overlay"):
+                        and ctl["action"]["action"] not in ("mute", "overlay", "rotate"):
                     self.assertIn(midi.light_meaning(ctl["action"]), p["lights"]["styles"], (p["id"], ctl["id"]))
 
     def test_a_lights_section_does_not_depend_on_what_the_controls_do(self):

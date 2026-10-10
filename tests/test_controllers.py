@@ -65,11 +65,13 @@ class ProfileFilesTest(unittest.TestCase):
             self.assertEqual(len({control(p, i)["row"] for i in three}), 1)
             self.assertEqual([control(p, i)["col"] - control(p, three[0])["col"] for i in three], [0, 1, 2])
         self.assertEqual((control(NANO, "knob4")["action"], control(MIX, "knob_a1")["action"]), ({"action": "shader_control_1"},) * 2)
-        # one fade button on each, and neither of the old two; nothing that resets the mix or turns the picture
+        # one fade button on each, and neither of the old two; one button for the quarter turns; nothing that flips the
+        # picture, resets the mix or takes the screen for a test pattern
         for p in PROFILES:
             names = [c["action"]["action"] for c in p["controls"] if c["action"]]
             self.assertEqual((names.count("fade"), names.count("fadein"), names.count("fadeout")), (1, 0, 0), p["id"])
-            self.assertFalse({"rotate", "flip_h", "flip_v", "test_pattern", "loop"} & set(names), p["id"])
+            self.assertEqual(names.count("rotate"), 1, p["id"])
+            self.assertFalse({"flip_h", "flip_v", "test_pattern", "loop", "reset"} & set(names), p["id"])
         self.assertEqual((control(NANO, "fader1")["send"], control(NANO, "knob8")["send"], control(NANO, "play")["send"]["number"]),
                          ({"type": "cc", "channel": 0, "number": 0}, {"type": "cc", "channel": 0, "number": 23}, 41))
         self.assertEqual((control(MIX, "fader5")["send"]["number"], control(MIX, "mute8")["send"], control(MIX, "master")["send"]["number"]),
@@ -440,9 +442,9 @@ class MapperTest(unittest.TestCase):
 
     def test_the_new_actions_make_calls_the_api_already_had(self):
         m = self.mapper(NANO, "nanoKONTROL2")
-        for number in (43, 44, 69, 70, 58, 59, 46, 41, 48, 60, 45):    # rewind, forward, R 6 (next effect), R 7 (the one fade button), track < >, cycle, play, M 1, marker set, rec
+        for number in (43, 44, 69, 70, 58, 59, 46, 41, 48, 60, 45):    # rewind, forward, R 6 (a quarter turn), R 7 (the one fade button), track < >, cycle, play, M 1, marker set, rec
             self.press(m, "nanoKONTROL2", "cc", number, 1)
-        self.assertEqual(self.rec.calls, [("/api/control", {"action": "prev"}), ("/api/control", {"action": "next"}), ("/api/effects/step", {"dir": 1}),
+        self.assertEqual(self.rec.calls, [("/api/control", {"action": "prev"}), ("/api/control", {"action": "next"}), ("/api/control", {"action": "rotate", "value": "toggle"}),
                                           ("/api/fade", {"seconds": 2}), ("/api/shaders/step", {"dir": -1}), ("/api/shaders/step", {"dir": 1}),
                                           ("/api/vibes", {"on": True}), ("/api/control", {"action": "pause"}), ("/api/shaders/preset", {"index": 1}),
                                           ("/api/vibes", {"on": True, "set": "Ambient"}), ("/api/vibes", {"on": True, "set": "Show"})])
