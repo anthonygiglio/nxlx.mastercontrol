@@ -37,7 +37,7 @@ class OneTableTest(unittest.TestCase):
         self.assertEqual(tr("/pvj/overlay"), actions.press("overlay"))
         # every action MIDI knows that is a plain press or a level with a shape is in the table, and nothing else is
         for name, (kind, _, _) in midi.ACTIONS.items():
-            plain = kind == "trigger" and name not in ("pad", "bank_pad", "bank_prev", "bank_next", "scene", "none")
+            plain = kind == "trigger" and name not in ("pad", "bank_pad", "bank_prev", "bank_next", "scene", "none", "layer_geometry")      # (a controller's own layer asks the box nothing)
             self.assertEqual(actions.press(name) is not None, plain or kind == "control", name)
             self.assertEqual(actions.level(name, 1.0) is not None, name in midi.SHAPES, name)
         self.assertIsNone(actions.press("shutdown"))
