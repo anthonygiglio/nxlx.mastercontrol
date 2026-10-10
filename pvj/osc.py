@@ -330,6 +330,20 @@ def _reach(a, args):
         return ("/api/mix", {"duration": number}) if number is not None else None
     if a == "/pvj/vibes/dwell":
         return ("/api/vibes", {"dwell": number}) if number is not None else None
+    if a.startswith("/pvj/mapping/"):                   # mapping mode (pvj/mapper.py): the box refuses all of it unless the owner's switch is on
+        what = a[len("/pvj/mapping/"):]
+        names = {"surface/next": "map_surface_next", "surface/prev": "map_surface_prev", "corner/next": "map_corner_next",
+                 "corner/prev": "map_corner_prev", "left": "map_left", "right": "map_right", "up": "map_up", "down": "map_down", "undo": "map_undo"}
+        if what in names:
+            return actions.press(names[what]) if pressed(args) else None
+        if what == "mode":
+            return (actions.NUDGE, {"mode": "toggle" if not args else flag}) if not args or flag is not None else None
+        whole = [int(x) for x in args[:2] if _number(x) and x == int(x)]
+        if what == "step":
+            return (actions.NUDGE, {"step": whole[0]}) if len(whole) >= 1 else None
+        if what == "nudge":                             # two whole numbers: steps to the right and steps down
+            return (actions.NUDGE, {"steps": whole}) if len(whole) == 2 and len(args) >= 2 else None
+        return None
     if a == "/pvj/shader":                              # a shader by its name, with ".fs" or without
         if not isinstance(v, str) or not _SHADER_NAME.fullmatch(v):
             return None

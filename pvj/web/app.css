@@ -155,6 +155,7 @@ canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2
 .ctlgrid .ctl .ctlname { color: var(--mu); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ctlgrid .ctl .ctlwhat { font-weight: 600; overflow-wrap: anywhere; }
 .ctlgrid .ctl .ctlval { color: var(--mu); font-size: 10px; }
+.ctlgrid .ctl .ctlalt { color: var(--mu); font-size: 10px; overflow-wrap: anywhere; }      /* what the control does instead in mapping mode (D75) */
 .ctlgrid .ctl.spare .ctlwhat { font-weight: 400; color: var(--mu); }
 .ctlgrid .ctl.mine { border-style: dashed; border-color: var(--ac); }
 .ctlgrid .ctl.wait { border-style: dotted; border-color: var(--ac); }
@@ -803,7 +804,7 @@ html[data-style="signal"] .ctlgrid .ctl-fader { min-height: 104px; }
 html[data-style="signal"] .ctlgrid .ctl-knob { border-radius: 28px; }
 html[data-style="signal"] .ctlgrid .ctl .ctlname { font: 500 13px var(--mono); color: var(--mu); text-transform: uppercase; }
 html[data-style="signal"] .ctlgrid .ctl .ctlwhat { font-weight: 700; line-height: 1.15; overflow-wrap: break-word; }      /* sentence case: capitals would need a cell half as wide again */
-html[data-style="signal"] .ctlgrid .ctl .ctlval { font: 500 13px var(--mono); color: var(--mu); }
+html[data-style="signal"] .ctlgrid .ctl .ctlval, html[data-style="signal"] .ctlgrid .ctl .ctlalt { font: 500 13px var(--mono); color: var(--mu); }
 html[data-style="signal"] .ctlgrid .ctl.spare { border-color: var(--mu); }
 html[data-style="signal"] .ctlgrid .ctl.spare .ctlwhat { font-weight: 600; color: var(--mu); }
 html[data-style="signal"] .ctlgrid .ctl.mine { border-style: dashed; border-color: var(--ink); }

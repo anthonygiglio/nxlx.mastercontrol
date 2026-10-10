@@ -843,7 +843,18 @@
       var st = d.status, s = selected();
       var words = { off: 'Mapping is off', building: 'Preparing the mapped picture...', on: 'Mapping is on', editing: 'Editing on the display', error: 'Problem: ' + st.message };
       body.appendChild(h('div', { class: 'hint', id: 'mapstatus', text: (words[st.state] || st.state) + ' · screen ' + d.screen[0] + 'x' + d.screen[1] + ' · ' + d.surfaces.length + ' surface' + (d.surfaces.length === 1 ? '' : 's') }));
+      // Mapping mode from a controller (D75): everyone sees that it is on; full access holds the switch that allows it
+      var rc = d.controllers || {};
+      if (rc.mode) body.appendChild(h('div', { class: 'msg', id: 'mapremoteon', role: 'status', text: 'A controller is in mapping mode: it can choose a surface and a corner and nudge it, ' +
+        rc.step + ' px a step. It ends by itself ' + Math.ceil(rc.seconds_left / 60) + ' min after the last nudge.' }));
       if (!full) { watch(); return; }
+      body.appendChild(toggle('mapremote', 'Controllers may adjust the mapping', !!rc.allow, function (v) {
+        api('POST', '/api/mapper/remote', { allow: v }).then(function (r) {
+          if (!document.getElementById('mapcard')) return;
+          if (!r.ok) { say(r.data.error || 'Could not change that', true); if (d) draw(d); return; }
+          say(v ? 'A MIDI controller or OSC can now enter mapping mode.' : 'Controllers cannot change the mapping.'); draw(r.data);
+        });
+      }, 'Off unless you switch it on. With it on, whoever is at a MIDI controller (or sends OSC) can enter mapping mode and move the corners of this mapping; nothing moves outside that mode.'));
       body.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn grow' + (d.on ? ' on' : ''), id: 'mapon', 'aria-pressed': d.on ? 'true' : 'false', text: d.on ? 'Mapping on' : 'Mapping off',
           onclick: function () { send({ action: 'on', on: !d.on }); } }),
@@ -2028,6 +2039,10 @@
     ['reset', 'Reset mix'], ['opacity', 'Opacity (fader)'], ['size', 'Zoom: the size (fader)'], ['position', 'Position X (fader)'], ['position_y', 'Position Y (fader)'],
     ['rotate', 'Rotate a quarter turn'], ['flip_h', 'Mirror left to right on / off'], ['flip_v', 'Mirror top to bottom on / off'], ['overlay', 'Overlay picture on / off'],
     ['seek_back', 'Back 10 seconds'], ['seek_forward', 'Forward 10 seconds'], ['loop', 'Loop on / off'], ['mute', 'Sound off / on'], ['test_pattern', 'Test pattern on / off'],
+    ['mapping_mode', 'Mapping mode on / off (needs the switch on the Mapping page)'], ['map_surface_next', 'Mapping mode: next surface'], ['map_surface_prev', 'Mapping mode: the surface before'],
+    ['map_corner_next', 'Mapping mode: next corner'], ['map_corner_prev', 'Mapping mode: the corner before'], ['map_left', 'Mapping mode: nudge left'], ['map_right', 'Mapping mode: nudge right'],
+    ['map_up', 'Mapping mode: nudge up'], ['map_down', 'Mapping mode: nudge down'], ['map_step', 'Mapping mode: step size (1, 10, 50)'], ['map_undo', 'Mapping mode: undo the last nudge'],
+    ['map_x', 'Mapping mode: nudge left and right by turning (fader)'], ['map_y', 'Mapping mode: nudge up and down by turning (fader)'],
     ['speed', 'Speed (fader)'],
     ['volume', 'Volume (fader)'], ['blackout_hold', 'Blackout while held up (fader)'],
     ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)'],
@@ -2045,14 +2060,17 @@
     .concat([['code_join', 'Show a one-time presenter code on the display (hold 3 seconds, let go)'],
       ['code_owner', 'Show a one-time full access code on the display (hold 3 seconds, let go)']]);
   // the actions that follow a fader or knob; a shader control does both (a knob sets it, a button steps or toggles it)
-  var MIDI_LEVELS = ['opacity', 'size', 'position', 'position_y', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
+  var MIDI_LEVELS = ['map_x', 'map_y', 'opacity', 'size', 'position', 'position_y', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
   // What an action is called on the drawn layout of a controller: short, since a control is a small box.
   var MIDI_SHORT = { shader_speed: 'Shader speed', shader_prev: 'Previous shader', shader_next: 'Next shader', shader_hue: 'Shader colour turn',
     shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
     effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
     code_join: 'Presenter code (hold)', code_owner: 'Full access code (hold)',
     fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror left to right', flip_v: 'Mirror top to bottom', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
-    loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume' };
+    loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume', mapping_mode: 'Mapping mode',
+    map_surface_next: 'Map: next surface', map_surface_prev: 'Map: surface before', map_corner_next: 'Map: next corner', map_corner_prev: 'Map: corner before',
+    map_left: 'Map: left', map_right: 'Map: right', map_up: 'Map: up', map_down: 'Map: down', map_step: 'Map: step size', map_undo: 'Map: undo',
+    map_x: 'Map: nudge X', map_y: 'Map: nudge Y' };
   // The parts of a controller that belong together (a control's "zone" in its profile): tinted alike in the drawing
   // and named once under it. The words are fixed here; a profile only picks among them.
   var MIDI_ZONES = [['pads', 'Pads'], ['clips', 'The clip'], ['screen', 'The screen: fade, freeze, stop, black'], ['picture', 'The picture: zoom, place, turn'], ['sound', 'Sound'],
@@ -2227,7 +2245,8 @@
           var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' || x.origin === 'any' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : '') + (x.light ? ' haslight' : '') + (x.zone ? ' z-' + x.zone : ''), type: 'button',
             'data-id': x.id, 'aria-pressed': chosen ? 'true' : 'false', 'aria-label': x.name + ': ' + midiWhat(x.action),
             onclick: function () { midiSel = chosen ? null : { ctl: c.name, id: x.id }; draw(d); } },
-            h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }), h('span', { class: 'ctlval' }));
+            h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }),
+            x.mapping ? h('span', { class: 'ctlalt', text: midiWhat(x.mapping).replace('Map: ', 'in mapping mode: ') }) : null, h('span', { class: 'ctlval' }));
           b.style.gridRow = String(x.row + 1);
           b.style.gridColumn = String(x.col + 1);
           grid.appendChild(b);
