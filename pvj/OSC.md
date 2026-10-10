@@ -31,7 +31,28 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/fadeout` | seconds (default 2) | Fade to black |
 | `/pvj/opacity` | 0 to 100 | Percent |
 | `/pvj/size` | 1 to 200 | Percent |
-| `/pvj/position` | -100 to 100 | Horizontal shift |
+| `/pvj/position`, `/pvj/position/x` | -100 to 100 | Horizontal shift (two names for the same thing) |
+| `/pvj/position/y` | -100 to 100 | Vertical shift |
+| `/pvj/flip/h`, `/pvj/flip/v` | 0/1 | Mirror left to right, top to bottom: set (an argument is required; the old `/fliph` and `/flipv` still switch over at each press) |
+| `/pvj/fade` | value (press) | The one fade button: fades out in 2 seconds, and at the next press in. The box decides which from what the screen is doing, so it is right whoever started the fade; it also brings the picture up out of a Blackout. A button's release (0) does nothing |
+| `/pvj/fadein` | seconds (default 2) | Fade in from black; also ends a blackout |
+| `/pvj/clip/next`, `/pvj/clip/prev` | value (press) | The next or the previous clip of the playlist that is playing |
+| `/pvj/transition` | name (string) | How one clip changes to the next: `cut`, `dip`, `crossfade`, `wipe-from-left`, `wipe-from-right`, `wipe-from-top`, `wipe-from-bottom`, `slide-left`, `slide-right`, `slide-up`, `slide-down` (the Mix screen's choice; it is saved) |
+| `/pvj/transition/duration` | 0.1 to 10 | Seconds a transition takes (saved) |
+| `/pvj/overlay` | none, or 0/1 | The overlay picture: no argument switches it over; refused while no picture is chosen |
+| `/pvj/overlay/file` | name (string) | Choose the overlay picture: a PNG in the media folder, checked as the panel checks it |
+| `/pvj/effect` | none, or 0/1 | The effect over the picture: 1 puts the one that was on last back (the first of the list if there was none), 0 takes it off, no argument is the one button (needs the Shaders and Vibes module, as every effect and shader address does) |
+| `/pvj/effect/next`, `/pvj/effect/prev` | value (press) | The neighbour in the list of effects |
+| `/pvj/effect/amount` | 0 to 100 | Percent of the effect in the picture |
+| `/pvj/effect/control/<n>` | 0 to 1 | The n-th input (1 to 8) of the effect that is on, spread over its own range as a controller's knob does: a number over its MIN to MAX, a switch on from 0.5 up, a choice by position |
+| `/pvj/shader` | name (string) | Show that shader, as the Shaders screen's Play does (`silk` or `silk.fs`). The box answers at once and the shader follows when the graphics chip has taken it; a refusal is shown on the Shaders screen |
+| `/pvj/shader/next`, `/pvj/shader/prev` | value (press) | The neighbour in the active set (steps Vibes while it runs) |
+| `/pvj/shader/speed` | 0 to 4 | Times the shader's own pace; 0 freezes it |
+| `/pvj/shader/hue` | -180 to 180 | Degrees the colours are turned |
+| `/pvj/shader/brightness` | 0 to 2 | 1 leaves it alone |
+| `/pvj/shader/control/<n>` | 0 to 1 | The n-th input (1 to 8) of the shader on screen, as for an effect |
+| `/pvj/shader/preset/<n>` | value (press) | The n-th preset (1 to 8) of the shader on screen |
+| `/pvj/vibes/dwell` | 15 to 3600 | Seconds each shader of the rotation stays (saved) |
 | `/pvj/speed` | 0.1 to 4 | Playback speed |
 | `/pvj/volume` | 0 to 130 | Percent |
 | `/pvj/seek` | -3600 to 3600 | Seconds, relative |
@@ -43,6 +64,14 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/group/<n>/on`, `/pvj/group/<n>/off` | value (press) | Switch the projectors of the n-th group on or off; `all` in place of the number is every projector |
 | `/pvj/group/<n>/mute`, `/mute_picture`, `/mute_sound` | 0/1 | Mute (1) or unmute (0) picture and sound, the picture, or the sound of that group (an argument is required) |
 | `/pvj/group/<n>/input` | input code (`31`, as a string or a number) | Switch that group's projectors to that input; the codes are listed in System > Projectors |
+
+**Real units, and no centre that sits.** A MIDI knob sends 0 to 127, so the box gives its zoom and position a middle that holds and a curve ([MIDI.md](MIDI.md), "How a level follows a knob"). OSC sends the real value, so `/pvj/size 100` is 100 percent and `/pvj/position/y 0.5` is half a step off centre: nothing is rounded to a centre and nothing waits for pickup. Set the fader's range in the sender.
+
+**Freeze** on the panel is pause: `/pvj/pause`. There is no `/pvj/freeze`.
+
+**One table with MIDI.** The addresses above that are a press or a level (the fade, the clip's and the shader's and the effect's steps, the presets, position, the shader's speed, hue and brightness, the effect's amount) make their calls from the same table as a MIDI controller's actions (`pvj/actions.py`), so what a controller can do and what OSC can do do not drift apart.
+
+**No replies, still.** The box sends nothing back, so a TouchOSC layout cannot show the box's state (which pad plays, whether the screen is black). That is the safety property above and it was kept. Feedback is a later step and the owner's decision (D75): off unless switched on, sent only to addresses on the allow-list, and limited in rate.
 
 **Buttons fire on press only.** TouchOSC sends `1.0` when a button is pressed and `0.0` when it is released; a command marked "press" acts on a non-zero value (or no argument) and ignores the release, so a pad does not fire twice.
 
@@ -59,4 +88,4 @@ Not carried over:
 
 ## Tested
 
-The parser is tested on every type and padding length, on malformed packets, bundle nesting bombs and 4000 random or corrupted packets; the receiver on the allow-list, rate limit, a real UDP socket on loopback (and that it never replies), and through the settings API. Not tested with a real TouchOSC layout or hardware controller.
+The parser is tested on every type and padding length, on malformed packets, bundle nesting bombs and 4000 random or corrupted packets; the receiver on the allow-list, rate limit, a real UDP socket on loopback (and that it never replies), and through the settings API. The addresses added with D75 (2026-10-10) are tested through the parser, through the API with a fake player and a real shader engine with a fake graphics chip, and over a real UDP socket on loopback (`tests/test_osc_reach.py`). Not tested with a real TouchOSC layout or hardware controller, and not on the Pi.

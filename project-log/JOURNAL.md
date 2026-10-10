@@ -14,7 +14,10 @@ Branch `midi-layouts`, pull request #115, a draft stacked on #113 (`effect-over-
 - **The Launchpad's flashing is from the manual**, read here with macOS's PDFKit through `osascript` after two attempts at reading the PDF's text by hand had failed (LESSONS).
 - **Tests.** `tests/test_midi_layouts.py` (new): the transfer function with exact values, the way back, a mapping's options, pickup on the curve, two controllers sharing a level, the new calls, the API's toggles, the fade button against fades and Blackout started elsewhere and against twelve presses at once, the flash state per profile, the writer's flashing with its rate, and the three controllers through the real hub with pipes. The existing layout, lights, effects and shader-engine tests were changed where they pinned the old layouts, each to the new fact. On the Mac: the MIDI, controllers, lights, controller-code, effects and shader-engine modules pass; the whole suite's other failures are the Mac's own (`test_install`, `test_netd`, `test_update`, `test_release`). The browser test (the fade button, the zones on the card) ran only in CI.
 - **Stopped once by the usage limit**, mid-run; the coordinator kept the work as a local commit. Nothing was lost.
-- **Not started:** parts 2 and 3 (the card as an editor), Map Mode.
+- **CI on 21dfbfc:** everything green but `panel-ui`, both runs, for one reason: the zone names under a controller's drawing were 12 px, and the Signal look allows no text under 13. Mended (13 px).
+- **OSC, the same day** ("yes, add those to the box's OSC"): one table of actions shared by MIDI and OSC (`pvj/actions.py`), twenty-odd new addresses in `pvj/OSC.md`, `tests/test_osc_reach.py` through the parser, the API and a real UDP socket. No replies were added; D75 has the next step. The TouchOSC layout itself was not opened: the wiring list in `tools/DEVICE-TESTING.md` is written from the panel's screens.
+- **Stopped a second time**, by a restart of the session, after the push of 21dfbfc. Nothing was lost.
+- **Not started:** parts 2 and 3 (the card as an editor), Map Mode, OSC feedback. Parts 2 and 3 wait for an independent review of part 1.
 
 ## 2026-10-09, the night (#113 with the shaders on pads merged in: the two features used together for the first time)
 

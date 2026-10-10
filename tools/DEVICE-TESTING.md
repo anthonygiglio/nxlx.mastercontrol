@@ -94,6 +94,33 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | K16 | Launchpad Mini: the three rows right of bank C | Row 4: Vibes, previous shader, next shader. Row 5: effect on / off, previous, next. Row 6: previous clip, back 10 s, forward 10 s, next clip |
 | K17 | The quarter turn: R 6 (nanoKONTROL2), Solo+Mute 3 (MIDI Mix), the fifth round button along the top (Launchpad) | The picture turns a quarter each press, back to upright after four |
 
+### TouchOSC: what the owner's layout can now be wired to (D75)
+
+The layout in the owner's TouchOSC editor (pages Room, Live, Mix, Shaders and Vibes, Tools, and a strip) was built on the addresses the box had. **This list was written from the panel's own screens, not from opening the layout**, so it names kinds of control, not the layout's own names. The box still sends nothing back, so no control can show the box's state. Nothing here was sent from TouchOSC.
+
+| Page | Control | Address | Send |
+| --- | --- | --- | --- |
+| Strip | Fade (one button in place of Fade out and Fade in) | `/pvj/fade` | 1 on press (the release is ignored) |
+| Strip | Fade in, if kept as its own button | `/pvj/fadein` | no argument, or the seconds |
+| Strip, Live | Prev, Next | `/pvj/clip/prev`, `/pvj/clip/next` | 1 on press |
+| Strip | Freeze | `/pvj/pause` (as before: Freeze is pause) | no argument, or 0/1 |
+| Mix | Position Y fader | `/pvj/position/y` | -100 to 100 |
+| Mix | Mirror switches | `/pvj/flip/h`, `/pvj/flip/v` | 0/1 |
+| Mix | Transition (a radio or a row of buttons) | `/pvj/transition` | the name as a string: `cut`, `dip`, `crossfade`, `wipe-from-left` ... |
+| Mix | Duration fader | `/pvj/transition/duration` | 0.1 to 10 |
+| Mix | Overlay switch | `/pvj/overlay` | 0/1 |
+| Mix | Effect on / off, previous, next | `/pvj/effect`, `/pvj/effect/prev`, `/pvj/effect/next` | 0/1; 1 on press |
+| Mix | Effect amount fader | `/pvj/effect/amount` | 0 to 100 |
+| Mix | Effect knobs 1 to 8 | `/pvj/effect/control/1` ... `/8` | 0 to 1 |
+| Shaders and Vibes | Previous, next shader | `/pvj/shader/prev`, `/pvj/shader/next` | 1 on press |
+| Shaders and Vibes | Speed, colour turn, brightness | `/pvj/shader/speed`, `/hue`, `/brightness` | 0 to 4, -180 to 180, 0 to 2 |
+| Shaders and Vibes | Shader knobs 1 to 8 | `/pvj/shader/control/1` ... `/8` | 0 to 1 |
+| Shaders and Vibes | Presets 1 to 8 | `/pvj/shader/preset/1` ... `/8` | 1 on press |
+| Shaders and Vibes | A button per shader | `/pvj/shader` | the shader's name as a string (`silk`) |
+| Shaders and Vibes | How long each stays | `/pvj/vibes/dwell` | 15 to 3600 seconds |
+
+To try: O1, send each from the layout with a clip playing and look at the screen and the panel; O2, the fade button twice (out, in), then Blackout from the panel and the fade button once (the picture comes up); O3, `/pvj/shader` with a name while Vibes runs (Vibes ends, that shader shows); O4, `journalctl -u pvj-web | grep osc` for a refused value.
+
 ### Controller lights (D53)
 
 **The rows L1, L4 and L5 below describe the Launchpad's first layout.** With D75: after plugging in, pad 1 is amber if A1 holds a clip, E (the fade button) and H (Blackout) are dim red, G (Stop) lights once something plays; Vibes is the fifth pad of row 4, and Freeze is F on the right.
