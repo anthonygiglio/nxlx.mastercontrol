@@ -3472,6 +3472,7 @@
   var oscForm = { port: null, allow: null }, oscAdv = false, oscTimer = null;
   function oscCard() {
     clearTimeout(oscTimer);
+    clearTimeout(oscKeyTimer);
     var body = h('div', { class: 'list sp', id: 'oscbody' }, h('div', { class: 'state', id: 'oscline', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'osccard' }, h('h2', { text: 'OSC' }), body);
     function count(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
@@ -3487,6 +3488,7 @@
         api('GET', '/api/osc').then(function (r) {
           var line = document.getElementById('oscline');
           if (r.ok && line && body.isConnected) { line.textContent = lineText(r.data); line.className = r.data.error ? 'hint warn' : 'state'; }
+          if (r.ok && body.isConnected) oscFresh(r.data, draw);
           if (body.isConnected) watch();
         });
       }, 3000);
@@ -3516,6 +3518,7 @@
       bar.dirty(changed());
       if (saved) bar.result.textContent = 'Saved';
       body.appendChild(h('div', { class: 'hint', text: 'Shutdown and restart are never available over OSC.' }));
+      if (d.senders) body.appendChild(oscWho(d, draw));
       watch();
     }
     api('GET', '/api/osc').then(function (r) {
@@ -3523,6 +3526,119 @@
       if (r.ok) draw(r.data); else { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'oscline', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); }
     });
     return card;
+  }
+  // Who may send OSC (D78): three locks, each off until the owner switches it on, the senders seen lately and the
+  // last messages. All of it belongs to the OSC page (oscCard draws it, and keeps the lists fresh while it is open).
+  // Only a full-access device is sent the lists; the key is asked for when Show is pressed, and hides itself.
+  var oscKeyTimer = null, oscLogOpen = false, OSC_KEY_SECONDS = 30;
+  function oscWho(d, redraw) {
+    function set(body) {
+      api('POST', '/api/osc', body).then(function (r) {
+        if (r.ok) { say('Saved'); return redraw(r.data); }
+        say((r.data.error || 'Could not save') + '. Nothing was changed.', true);
+        api('GET', '/api/osc').then(function (g) { if (g.ok) redraw(g.data); });
+      });
+    }
+    var box = h('div', { class: 'list sp oscwho', id: 'oscwho' },
+      h('div', { class: 'switchlabel', text: 'Who may send' }),
+      h('div', { class: 'hint', id: 'oscwhohint', text: 'Three locks, each off until you switch it on; a message must pass every one that is on. None of them is encryption: OSC travels in the clear, and a device on this network can pretend to be another one. They keep out devices that are merely on the network.' }));
+    // 1. the list of devices
+    box.appendChild(toggle('osconly', 'Only these devices may send', d.only_on, function (v) { set({ only_on: v }); },
+      'Only the addresses in this list, in place of every device on a private network.'));
+    if (d.only_on && !d.only.length) box.appendChild(h('div', { class: 'hint warn', id: 'osconlyempty', text: 'Nobody may send yet. Send one message from your tablet, then press "Allow this one" beside it under Senders.' }));
+    if (d.only.length) box.appendChild(h('div', { class: 'list', id: 'osconlylist' }, d.only.map(function (a) {
+      return h('div', { class: 'item' }, h('span', { class: 'addr', text: a }),
+        h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + a, onclick: function () { set({ only: d.only.filter(function (x) { return x !== a; }) }); } }));
+    })));
+    // 2. a paired device
+    box.appendChild(toggle('oscpaired', 'A sender must be a paired device', d.paired_on, function (v) { set({ paired_on: v }); },
+      'Open the panel on the tablet once; then TouchOSC on the same tablet may send, for the hours set here. Removing the device under Access stops it at once.'));
+    if (d.paired_on) {
+      var roles = h('select', { class: 'text-input', id: 'oscpairedroles', onchange: function () { set({ paired_roles: roles.value }); } },
+        [['full', 'Owner devices only'], ['live', 'Owner and presenter devices']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: d.paired_roles === o[0] }); }));
+      var hours = h('select', { class: 'text-input', id: 'oscpairedhours', onchange: function () { set({ paired_hours: parseInt(hours.value, 10) }); } },
+        [1, 3, 6, 12, 24, 48, 72].concat([1, 3, 6, 12, 24, 48, 72].indexOf(d.paired_hours) < 0 ? [d.paired_hours] : []).map(function (n) { return h('option', { value: String(n), text: plural(n, 'hour'), selected: d.paired_hours === n }); }));
+      box.appendChild(labelled('Which paired devices count', roles));
+      box.appendChild(labelled('For how long after the panel was last used', hours,
+        'Every device behind one address counts together (a phone hotspot, a router that shares one address), and an address that passes to another device still counts until the hours are over.'));
+      box.appendChild(h('div', { class: 'state', id: 'oscpairednow', text: oscPairedText(d) }));
+    }
+    // 3. the key
+    box.appendChild(toggle('osckey', 'A key in the address', d.key_on, function (v) { set({ key_on: v }); },
+      'Every message must start with /k/ and the key, for example /k/<key>/pvj/stop. Anyone who can listen on this network can read the key from a single message, so it stops people who are merely on the network from poking the box, not someone who is capturing traffic.'));
+    if (d.key_on) box.appendChild(oscKeyBox());
+    // who sent, and what
+    box.appendChild(h('div', { class: 'switchlabel', text: 'Senders in the last ten minutes' }));
+    box.appendChild(h('div', { class: 'list', id: 'oscsenders' }));
+    var log = h('details', { class: 'fold', id: 'osclog', open: oscLogOpen }, h('summary', { text: 'Last messages' }),
+      h('div', { class: 'hint', text: 'The last 50, kept only until the panel restarts. Of a refused message only the sender and the reason are kept.' }),
+      h('div', { class: 'list', id: 'oscmessages' }));
+    log.addEventListener('toggle', function () { oscLogOpen = log.open; if (log.open) oscMessages(log); });
+    box.appendChild(log);
+    oscSenders(box.querySelector('#oscsenders'), d, set);
+    if (oscLogOpen) oscMessages(log);
+    box.set = set;
+    return box;
+  }
+  function oscPairedText(d) {
+    return d.paired_now.length ? 'Counts now: ' + d.paired_now.join(', ') : 'No paired device counts now. Open the panel on the tablet that sends.';
+  }
+  function oscSenders(el, d, set) {
+    el.textContent = '';
+    if (!d.senders.length) el.appendChild(h('div', { class: 'hint', id: 'oscnosenders', text: 'Nobody has sent anything in the last ten minutes. Press a button in your layout and its address appears here.' }));
+    d.senders.forEach(function (x) {
+      var listed = d.only.indexOf(x.address) >= 0;
+      var what = x.accepted ? plural(x.messages, 'message') + ', the last one ' + x.last + (x.why ? ' (' + x.why + ')' : '') + '.'
+        : 'Refused: ' + x.why + ' (' + plural(x.refused, 'time') + ').' + (x.messages ? ' Before that ' + plural(x.messages, 'message') + ' let in.' : '');
+      el.appendChild(h('div', { class: 'item lrow oscsender', 'data-id': x.address },
+        h('div', { class: 'lhead' }, h('div', { class: 'lname mono', text: x.address }),
+          h('div', { class: x.accepted ? 'state' : 'hint warn', text: what })),
+        h('div', { class: 'row lacts' }, listed ? h('span', { class: 'hint', text: 'In the list' })
+          : h('button', { class: 'btn small', text: 'Allow this one', 'aria-label': 'Allow ' + x.address, disabled: d.only.length >= 16,
+            onclick: function () { set({ only: d.only.concat([x.address]) }); } }))));
+    });
+    if (d.refused) el.appendChild(h('div', { class: 'hint', id: 'oscrefused', text: plural(d.refused, 'packet') + ' refused since the panel started.' }));
+  }
+  function oscMessages(log) {
+    api('GET', '/api/osc/messages').then(function (r) {
+      var el = log.querySelector('#oscmessages');
+      if (!r.ok || !el || !log.isConnected) return;
+      el.textContent = '';
+      if (!r.data.messages.length) el.appendChild(h('div', { class: 'hint', text: 'Nothing yet.' }));
+      r.data.messages.forEach(function (m) {
+        el.appendChild(h('div', { class: 'item oscmsg' },
+          h('span', { class: 'addr', text: new Date(m.at * 1000).toLocaleTimeString() + '  ' + m.from }),
+          h('span', { class: 'addr', text: m.address || '(not kept)' }),
+          h('span', { class: m.ok ? 'state' : 'hint', text: (m.ok ? 'Done' : m.address ? 'Let in: ' + m.why : 'Refused: ' + m.why) + (m.count > 1 ? ', ' + m.count + ' times' : '') })));
+      });
+    });
+  }
+  // Called every few seconds while the page is open: the lists change by themselves, the switches do not.
+  function oscFresh(d, redraw) {
+    var who = document.getElementById('oscwho'), el = document.getElementById('oscsenders'), now = document.getElementById('oscpairednow'), log = document.getElementById('osclog');
+    if (!who || !el || !d.senders) return;
+    oscSenders(el, d, who.set);
+    if (now) now.textContent = oscPairedText(d);
+    if (log && log.open) oscMessages(log);
+  }
+  function oscKeyBox() {
+    var out = h('div', { class: 'addr osckeyout', id: 'osckeyout', hidden: true }), where = h('div', { class: 'hint', id: 'osckeywhere', hidden: true });
+    var show = h('button', { class: 'btn grow', id: 'osckeyshow', text: 'Show the key', onclick: function () { if (out.hidden) ask({}); else hide(); } });
+    function hide() { clearTimeout(oscKeyTimer); out.textContent = ''; where.textContent = ''; out.hidden = where.hidden = true; show.textContent = 'Show the key'; }
+    function ask(body) {
+      api('POST', '/api/osc/key', body).then(function (r) {
+        if (!r.ok) return say((r.data.error || 'Could not show the key') + '.', true);
+        out.textContent = r.data.prefix; out.hidden = where.hidden = false; show.textContent = 'Hide the key';
+        where.textContent = 'In TouchOSC, put it at the front of every address in the layout: ' + r.data.example + ' in place of /pvj/stop (in each control\'s OSC message, or once with a script that adds it). It hides itself after ' + OSC_KEY_SECONDS + ' seconds.';
+        if (body.new) say('A new key is made. The old one no longer works.');
+        clearTimeout(oscKeyTimer);
+        oscKeyTimer = setTimeout(hide, OSC_KEY_SECONDS * 1000);
+      });
+    }
+    var fresh = h('button', { class: 'btn', id: 'osckeynew', text: 'Make a new key', onclick: function () {
+      confirmRow('Make a new key? The old one stops working at once, and every address in the layout needs the new one.', 'Make a new key', 'Keep this one', function () { ask({ new: true }); }, fresh);
+    } });
+    return h('div', { class: 'list sp', id: 'osckeybox' }, h('div', { class: 'row wrap' }, show, fresh), out, where);
   }
   // A theme may name a style (D54): one of the few looks app.css has a block for. The name goes on the root element,
   // where the server also writes it into the page, and only a name from this list is ever put there; anything else
