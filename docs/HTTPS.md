@@ -59,6 +59,10 @@ You need: a computer with Python 3 and `openssl` (a Mac has both; Linux has both
 7. **Switch on "Owner access only over the secure connection"** on the same page, now over `https://`. From then on the PIN is refused over `http://`, owner devices paired over `http://` are told to pair again over `https://`, and guests notice nothing.
 8. Repeat step 5 and 6 on each of your other devices. Save the `https://` panel as an app where you had the `http://` one.
 
+## Adding another device of yours later
+
+With the switch "Owner access only over the secure connection" on, a new phone of yours cannot pair over `http://` and cannot download the root from the box (the download needs an owner session, which it has not got yet). Give it the root from your computer instead: `~/nxlx-root-ca/root.pem` (AirDrop it, or mail it to yourself and open the attachment), install it as the steps above say, then open `https://nxlx-mastercontrol.local/` and pair with the PIN there. Or switch the owner-only setting off for a minute from a device that already has https://, and do it the ordinary way.
+
 ## Adding another box
 
 Steps 2 to 4 for the new box with the same root; its certificate is `~/nxlx-root-ca/<its host name>-cert.pem`. Nothing to do on your devices: they trust the root already. `python3 tools/boxcert.py list` shows every box signed, with its end date.
