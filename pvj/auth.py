@@ -113,6 +113,7 @@ class Auth:
         self._global_fails = []
         self._locked_until = {}  # client or "*" -> time
         self.last_seen = {}
+        self._addresses = {}    # device id -> (client address, monotonic): where it last asked from. Memory only (D78)
         self._pair_lock = threading.Lock()  # one PIN attempt at a time, so the counters are exact
         self._joins = {}        # code -> {"role", "expires" (monotonic), "uses"}
         self._presenter_made = []   # when (monotonic) presenters made guest codes, within the last hour
@@ -485,7 +486,9 @@ class Auth:
                 raise
         return token, self._public(device)
 
-    def authenticate(self, token):
+    def authenticate(self, token, client=None):
+        """The paired device of this token, or None. With `client` (the connection's own address) the device's last
+        address is remembered, in memory only, for the OSC rule "a sender must be a paired device" (D78)."""
         if not isinstance(token, str) or not token:
             return None
         h = _token_hash(token)
@@ -499,6 +502,8 @@ class Auth:
                 self.revoke(found["id"])
                 return None
             self.last_seen[found["id"]] = now
+            if client is not None:
+                self._addresses[found["id"]] = (str(client), self._clock())
             if self._expires(found) and now - found.get("seen", found["created"]) >= SEEN_EVERY:
                 with self.settings.lock:               # written down once a day at most, so its idle time survives a restart
                     found["seen"] = now
@@ -506,7 +511,28 @@ class Auth:
             return self._public(found)
         return None
 
+    def paired_addresses(self, seconds, roles=("full",)):
+        """The addresses from which a device that is paired NOW, with one of `roles` NOW, asked within `seconds`.
+        A revoked, reset or expired device is not in the list of devices, so its address stops counting at once."""
+        t, out, live = self._clock(), set(), set()
+        for d in list(self.settings.data["devices"]):
+            live.add(d["id"])
+            seen = self._addresses.get(d["id"])
+            if seen and d.get("role") in roles and t - seen[1] <= seconds:
+                out.add(seen[0])
+        for gone in [k for k in list(self._addresses) if k not in live]:
+            self._addresses.pop(gone, None)
+        return out
+
+    def forget_address(self, device_id=None):
+        """Forget where one device (or every device) last asked from: it must open the panel again to count."""
+        if device_id is None:
+            self._addresses.clear()
+        else:
+            self._addresses.pop(device_id, None)
+
     def revoke(self, device_id):
+        self._addresses.pop(device_id, None)
         with self.settings.lock:
             before = len(self.settings.data["devices"])
             self.settings.data["devices"] = [d for d in self.settings.data["devices"] if d["id"] != device_id]
