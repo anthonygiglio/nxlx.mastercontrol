@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-10 (OSC: three locks on who may send, D78; branch `osc-lockdown`)
+
+The owner asked to make the connection from TouchOSC to the box secure. Built as three locks on System > OSC, each off by default: a list of single devices, a paired device, a key in the address; plus the senders of the last ten minutes with "Allow this one" and the last 50 messages. The decision, the choices where the brief left one and the limits are in D78; the user's text is in `pvj/OSC.md` ("Who may send: three locks", "Setting up TouchOSC").
+
+- **Run on the development Mac only**: `tests.test_osc_lockdown` (40 tests) and the OSC, box care, auth, server, support, settings and join tests. After the commit, 28 pieces of the new code were broken on purpose, one at a time (the three checks, the key comparison, the limits, what is kept of a refused packet, the bounds, roles, expiry, removal, the tunnel, what each role is sent, export, import, reset). A test failed for 27 of them. The 28th (an import that takes the key from the file) is stopped in two places, `check_osc` and `_osc_layers`; with both broken a test fails.
+- **Not run here**: the browser test (`tests/ui/panel.test.js`, the OSC part with real UDP on loopback and the page at 320 px with IPv6 addresses). This Mac has no Playwright and no mpv, and nothing was installed. CI runs it; see the pull request for its state.
+- **Tried as an attacker, against the code**: a forged source address passes the list and the paired-device lock (as the docs say) and is stopped only by the key; a captured packet with the key is accepted when sent again (a replay, as the docs say); a flood of wrong keys is compared 20 times and then refused unchecked, and it also keeps the real sender out while it lasts; a guest and a presenter get 403 from the key and the messages routes and no list in `GET /api/osc`.
+- **Master's own code** loads a settings file with the new keys and keeps them on a save; it does not enforce them and its export would carry the key.
+- **Never on a box, never with a real TouchOSC.** Rows O1 to O12 in `tools/DEVICE-TESTING.md`.
+- Open: an independent security review before the merge; the panel has no log out; the receiver is IPv4 only.
+
 ## 2026-10-08, the night (the review of #108: eight findings, all fixed on `product-leftovers`)
 
 Branch `product-leftovers`, pull request #108, pushed, not merged. An independent read-only review of D70 found no high finding, one medium to low and seven low; all eight are answered. For 1 to 6 there is a fix and a test that was run against the code before the fix and failed there; 7 is about the tests and was tried against a deliberately broken `main()`; 8 is a correction of text. D70 is rewritten where behaviour changed. **Run on the development Mac only** (`tests.test_leftovers`, `tests.test_update_button`, `tests.test_update`; never the whole suite, the disk is short). The ten tests of `tests.test_update.UpdaterTest` that run `install.sh` cannot run on the Mac (`install.sh` uses `mv -T`, as it did before this branch); they were seen failing so after this work, and CI runs them. **Nothing was tried on a box.**
