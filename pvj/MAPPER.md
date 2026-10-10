@@ -33,6 +33,12 @@ Save a finished set-up under a name (up to 8). A saved mapping keeps its place i
 
 **Masks**: use the overlay picture on the same screen (a PNG, black where no light should fall, transparent elsewhere). It is drawn over the mapped picture, in screen space.
 
+## From a controller: mapping mode
+
+Off unless you switch it on: **Controllers may adjust the mapping**, on this card, for a full-access device only. With it on, a MIDI controller or OSC can enter **mapping mode** and, only in that mode, choose a surface and a corner and nudge it by 1, 10 or 50 pixels, with undo of the last nudge. The display shows the outlines with the chosen surface and corner marked, the card says a controller is in mapping mode, and the mode ends by the controller's own button or by itself three minutes after the last nudge. Every nudge goes through the same check as a move on this card. The switch is not taken from an imported settings file, and a factory reset switches it off. Which buttons and knobs: [MIDI.md](MIDI.md), "Layers"; the OSC addresses: [OSC.md](OSC.md). Not tried on a controller or a projector.
+
+API: `POST /api/mapper/remote` (full) `{"allow": true|false}`; `POST /api/mapper/nudge` (a MIDI controller or OSC only) with one of `{"mode": true|false|"toggle"}`, `{"surface": 1|-1}`, `{"corner": 1|-1}`, `{"steps": [x, y]}`, `{"step": 1|10|50|"next"}`, `{"undo": true}`; `GET /api/mapper` has `controllers: {allow, mode, step, undo, seconds_left}`.
+
 ## How it works, and what it costs
 
 The picture that would be on screen without mapping is the texture. For the show, the box computes a table (one entry every 4 pixels) of where each screen point comes from, with two layers (the top surface and the one under it) and the distance to each surface's edge, so edges and overlaps stay smooth. The GPU reads the table and the picture: the cost is the same for one surface or sixty-four. While editing, a direct shader that tests each cell is used instead, so changes show at once (it costs more, so playback can stutter while you edit).

@@ -95,6 +95,23 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | K16 | Launchpad Mini: the two bottom rows and the strip beside the banks | Row 7: Vibes, previous shader, next shader, then effect on / off, previous, next. Row 8: previous clip, back 10 s, forward 10 s, next clip, then shader controls 1 to 4. Beside the banks, two wide: presets 1 to 8. Do the rows read right now? |
 | K17 | The quarter turn: M 7 (nanoKONTROL2, over Fade), Rec Arm 8 (MIDI Mix), the fifth round button along the top (Launchpad) | The picture turns a quarter each press, back to upright after four |
 
+### Layers: Geometry on the nanoKONTROL2, and mapping mode (D75)
+
+**Never on a controller or a projector.**
+
+| # | Do | See |
+| --- | --- | --- |
+| G1 | nanoKONTROL2, a shader on screen: turn knobs 1 to 8 | Each moves one of the shader's first eight controls |
+| G2 | Press **M 6** once (lights on, LED Mode External) | M 6 flashes; the card says "Geometry is on" and knobs 1 to 3 read Zoom, Position X, Position Y. Turn knob 1: nothing until it passes the picture's size, then the zoom follows. Knobs 4 to 8 do nothing |
+| G3 | Set zoom and position, press M 6 again | M 6 stops flashing. Turn knob 1: the shader's control does NOT jump; it follows again once the knob is back where it stood before G2. Does that wait feel right, or does the knob feel dead? |
+| G4 | Press M 6 and leave it for two minutes | It stops flashing by itself and the knobs are the shader's again |
+| P1 | Without the switch: press the mapping mode button twice (M 8 on the nanoKONTROL2, the last round button along the top of the Launchpad) | Nothing. The log says controllers may not adjust the mapping |
+| P2 | Mix > Projection mapping: switch **Controllers may adjust the mapping** on (full access), add two surfaces, press the button twice | The display shows the outlines, one surface yellow, one corner a pink dot; the button flashes; the card says a controller is in mapping mode |
+| P3 | nanoKONTROL2: turn knob 2 and knob 3. Launchpad: the arrow pads on rows 7 and 8 | The pink corner moves a pixel a step. Too fine, too coarse? Press the step (Cycle; the fourth pad of row 8) for 10 and 50 |
+| P4 | Next corner, next surface (Marker and Track buttons; the first four pads of row 7), then undo | The marks on the display follow; undo takes the last nudge back |
+| P5 | Press Blackout twice, Stop, a pad | Each does what it always does and the mode stays on |
+| P6 | Press the mode button twice; and once more, enter it and wait three minutes | The outlines leave the display, the mapped picture comes back, the light stops flashing |
+
 ### TouchOSC: what the owner's layout can now be wired to (D75)
 
 The layout open in the owner's TouchOSC editor (`touchosc/mastercontrol_tOSC-layout_0001.tosc`: pages Room, Live, Mix, Shaders and Vibes, Tools, and a strip) was built on the addresses the box had. Its controls were read on 2026-10-10 (read only, nothing in it was changed); each control is named after the address it sends. **Nothing here was sent from TouchOSC, and the box still sends nothing back**, so no control can show the box's state.

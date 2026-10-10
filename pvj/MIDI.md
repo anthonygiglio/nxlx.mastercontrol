@@ -47,41 +47,56 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 
 **Unverified.** Korg's nanoKONTROL2 Parameter Guide describes every parameter of CC mode but prints no table of the factory numbers. The numbers below are the factory assignments as widely reported and as used by the Mixxx project's mapping for this controller. The controller must be in **CC mode**: hold SET MARKER and CYCLE while plugging it in. It starts in the mode it was last used in, so one that came from a DAW set-up stays in that DAW's mode until you do this once. In a DAW mode its faders send pitch bend, which the box does not read, and the layout looks dead (the card then says "Nothing received yet"). In Korg's editor a button can be set to Toggle instead of Momentary; a toggling button then acts on every other press only. The layout expects the factory setting, Momentary. Factory reset (Parameter Guide p. 13): hold PREV TRACK, NEXT TRACK and CYCLE while plugging it in.
 
-**How to read it.** Eight strips, left to right, and the strips are the zones: strips 1 to 3 are **the picture and the clip** (what you reach for first), strips 4 to 6 the **shader**, strip 7 the **effect**. In every strip the knob is the fine thing and the fader the big one. The three button rows run the whole width: **S plays pads**, **M picks the shader's presets**, **R is the row to be careful with** (the room on the left, the screen on the right, Blackout at the far end). The transport buttons on the left do what is printed on them where the box has such a thing.
+**How to read it.** Eight strips, left to right. The owner, 2026-10-10: "all eight knobs for shaders, zoom x y on faders, if they make sense. otherwise, use a button to switch to the geometry controls and flash the button when in that state". The faders do not make sense for zoom and position: all are in use for levels that are ridden (opacity, volume, the speeds, the colour, the effect), a fader has no middle a hand can feel, and one left low would be a picture left small or off centre. So it is the button: **all eight knobs are the shader's, and M 6, "Geometry", turns knobs 1 to 3 into zoom, position X and position Y for as long as its light flashes.** The three button rows run the whole width: **S plays pads**, **M picks the shader's presets** and, at its right end, holds the three buttons for the picture (Geometry, Rotate, Mapping mode), **R is the row to be careful with** (the room on the left, the screen on the right, Blackout at the far end).
+
+In normal use:
 
 ```
-            knob     1 Zoom    2 Pos X   3 Pos Y   4 Sh c1   5 Sh c2   6 Sh c3   7 Sh c4   8 Vibes time
+            knob     1 Sh c1   2 Sh c2   3 Sh c3   4 Sh c4   5 Sh c5   6 Sh c6   7 Sh c7   8 Sh c8
 Track < >   S        pad 1     pad 2     pad 3     pad 4     pad 5     pad 6     pad 7     pad 8
-Cycle  Marker        M        preset 1  preset 2  preset 3  preset 4  preset 5  preset 6  Rotate    (spare)
+Cycle  Marker        M        preset 1  preset 2  preset 3  preset 4  preset 5  GEOMETRY  Rotate    MAPPING 2x
 << >> Stop Play Rec  R        scene 1   scene 2   scene 3   scene 4   Effect    (spare)   FADE      BLACKOUT
             fader    Opacity   Volume    Clip spd  Sh speed  Sh hue    Sh bright Fx amount (spare)
 ```
 
+With Geometry on (M 6 flashing), only the knobs change:
+
+```
+            knob     1 ZOOM    2 POS X   3 POS Y   4 .       5 .       6 .       7 .       8 .
+```
+
+- **Into it:** one plain press of M 6 (it changes nothing on the screen by itself). Each of the three knobs waits until it meets the picture's own value, so nothing jumps; the middle of each is exactly 100 percent and exactly centred. Knobs 4 to 8 rest: they do not go on moving the shader unseen.
+- **Out of it:** M 6 again, or by itself two minutes after the last touch of one of the three knobs, so a forgotten Geometry does not leave the shader knobs dead; the light stops flashing. **Each shader knob then waits until it is back where it stood when it last set the shader**, so nothing jumps on the way back either. (It waits for its own old place, not for the shader's value: if the same control was changed on the panel meanwhile, the knob takes it over where it stands, as a shader knob always did.)
+- Faders, pads, presets, scenes, the transport and the screen's buttons are the same in both.
+- Why M 6: it has a light, it is in the row of the picture's buttons, and the button under it (R 6) is spare; Fade and Blackout are two and three places away, in another row.
+- Not on it: the two mirrors and Reset mix. No free button is left that is not beside something tapped often; put one on a control from the card.
+
 | Control | Sends | Does | Why there |
 | --- | --- | --- | --- |
-| Knob 1, 2, 3 | CC 16, 17, 18 | **Zoom, position X, position Y** (pickup; the middle is exactly 100 percent and exactly centred) | the three belong together and were asked for first; over the opacity, volume and speed faders they make strips 1 to 3 "the picture" |
-| Knob 4 to 7 | CC 19 to 22 | Shader control 1 to 4 of the shader on screen | over the shader's own faders |
-| Knob 8 | CC 23 | Vibes: time each shader stays | the least played knob, at the end |
+| Knob 1 to 8 | CC 16 to 23 | Shader control 1 to 8 of the shader on screen. **With Geometry on**: knob 1 zoom, knob 2 position X, knob 3 position Y (pickup), knobs 4 to 8 nothing. In mapping mode knobs 2 and 3 nudge the chosen corner | the owner's word |
 | Fader 1, 2, 3 | CC 0, 1, 2 | Opacity, volume, clip speed (pickup) | unchanged: the hand knows them |
 | Fader 4, 5, 6 | CC 3, 4, 5 | Shader speed (pickup), colour turn, brightness (pickup) | unchanged |
 | Fader 7 | CC 6 | Effect amount (pickup) | unchanged |
 | Fader 8 | CC 7 | Spare | |
 | S 1 to 8 | CC 32 to 39 | Pad 1 to 8 of the controllers' bank | the top row of buttons is the one pressed most |
-| M 1 to 6 | CC 48 to 53 | Shader preset 1 to 6 | |
-| M 7 | CC 54 | Rotate a quarter turn | over Fade, not beside it: the buttons a hand reaches for in the dark have nothing drastic at their side (after the review of D75; it was on R 6) |
-| M 8 | CC 55 | Spare | over Blackout |
+| M 1 to 5 | CC 48 to 52 | Shader preset 1 to 5 | |
+| M 6 | CC 53 | **Geometry** on / off (one press; flashes while on) | above |
+| M 7 | CC 54 | Rotate a quarter turn | over Fade, not beside it: the buttons a hand reaches for in the dark have nothing drastic at their side |
+| M 8 | CC 55 | **Mapping mode** on / off (press twice; flashes while on; see "Mapping mode") | over Blackout; it does nothing until the owner's switch is on |
 | R 1 to 4 | CC 64 to 67 | Room scene 1 to 4 (press twice) | |
 | R 5 | CC 68 | Effect on / off | under the effect's strips |
 | R 6 | CC 69 | Spare | left empty on purpose, beside Fade |
 | R 7 | CC 70 | **Fade out, then in** (one button; its light flashes while the picture is down) | beside Blackout: the two that darken the screen |
-| R 8 | CC 71 | Blackout on / off (press twice) | the last button of the row, where no other is beside it on the right |
-| Track <, Track > | CC 58, 59 | Previous shader, next shader | |
-| Cycle | CC 46 | Vibes on / off | Vibes goes round |
-| Marker Set | CC 60 | Vibes: start the set Ambient | |
-| Marker <, Marker > | CC 61, 62 | Controllers' bank: the one before, the next | |
+| R 8 | CC 71 | Blackout on / off (press twice; flashes while on) | the last button of the row |
+| Track <, Track > | CC 58, 59 | Previous shader, next shader. In mapping mode: the surface before, the next surface | |
+| Cycle | CC 46 | Vibes on / off. In mapping mode: the step (1, 10, 50 pixels) | |
+| Marker Set | CC 60 | Vibes: start the set Ambient. In mapping mode: undo the last nudge | |
+| Marker <, Marker > | CC 61, 62 | Controllers' bank: the one before, the next. In mapping mode: the corner before, the next corner | |
 | Rewind, Forward | CC 43, 44 | Previous clip, next clip (of a playlist) | as printed |
 | Stop, Play | CC 42, 41 | Stop, Freeze / resume | as printed |
 | Rec | CC 45 | Vibes: start the set Show | |
+
+Vibes time and shader presets 6 to 8 are not on this layout any more.
 
 ### Akai MIDI Mix (`akai-midimix`)
 
@@ -163,12 +178,37 @@ row 8         Prev  -10 s   +10 s  Next |  control 1  2  3  4          (H) BLACK
 
 The effect's controls as presses, which filled eight pads of the first layout, and the shader's controls 5 to 8 as presses are not on this one. **The banks are where the very first layout had them** (rows of six, A, B, C from the top): a hand that knew those pads still finds them.
 
+### Layers: Geometry and mapping mode
+
+A **layer** is a state of a controller in which a few of its controls do something else. Its button's light flashes for as long as it is on, the card says so and shows each control's other self, and only one layer is on at a time. Everything that has no other self in the layer works as always. A profile gives a control its other self with `"layers"` (see "Writing a profile"); your own mapping for a control wins in every layer.
+
+**Geometry** (the nanoKONTROL2 only) belongs to that one controller: see its section above.
+
+**Mapping mode** belongs to the box. The owner, 2026-10-10: "the controller can handle corner or point nudges once in that mode."
+
+- **It needs the owner's switch**: on the Mapping card, "Controllers may adjust the mapping", set by a full-access device only, **off unless switched on**, never taken from an imported settings file and off after a factory reset. Every change of the mapping otherwise needs full access; with the switch on, whoever is at a MIDI controller (or sends OSC) can move the corners of the room's mapping. Decide with the room in mind.
+- **Nothing is nudged outside the mode.** The mode is entered on purpose: its button (the action "Mapping mode on / off"), pressed twice like Blackout, because it changes what other controls do. The box's display then shows every surface's outline with the chosen one yellow and the chosen corner as a pink dot (the panel's own "Edit on the display"), the Mapping card says a controller is in mapping mode, and the button flashes (green on the Launchpad).
+- **In the mode**: the surface before and the next, the corner before and the next (round and round), a nudge left, right, up and down by the step, the step itself (1, 10 or 50 pixels; it starts at 1), and undo of the last nudge. A knob with the action nudges by being turned, a step for each step of the knob; its first touch moves nothing. One message moves a corner 200 pixels at most.
+- **Every nudge is the panel's own move**: the whole mapping is checked again, a surface cannot be folded or flattened, and what is refused changes nothing. Each nudge is saved, as from the panel.
+- **It ends** by the same button (twice), when the switch goes off, and by itself three minutes after the last thing done in it. Then the outlines leave the display and the show picture is prepared again. **Blackout, Stop, a fade and playing a pad do not end it**: lining up is done with something playing and with the screen dark in between, and those buttons keep working in the mode.
+- A larger step **while a button is held** is not built: the step button cycles 1, 10, 50 instead. Choosing between screen corners and picture corners, adding, removing and hiding surfaces, and saved mappings stay on the panel.
+
+| Controller | Into and out of the mode | In the mode |
+| --- | --- | --- |
+| nanoKONTROL2 | M 8, twice | Track < and > choose the surface, Marker < and > the corner, **knob 2 nudges left and right, knob 3 up and down**, Cycle is the step, Marker Set undoes |
+| Launchpad Mini | the last round button along the top (Top 8), twice | row 7: surface before, next surface, corner before, next corner, then **up** on its sixth pad and undo on its eighth; row 8: the step on its fourth pad, then **left, down, right**: the arrows of a keyboard, under the sixth column |
+| MIDI Mix | no button for it in the standard layout (it has none free with a light); put "Mapping mode on / off" and the nudges on controls from the card | |
+
+Over OSC: the same, behind the same switch (`pvj/OSC.md`, `/pvj/mapping/...`).
+
+**None of this has been on a controller, a projector or the Pi.** Unit tests with a fake player and pipes only.
+
 ### What changes when you update
 
 **From the version with the first layouts to this one (D75).** A box that has one of the three controllers plugged in behaves differently after this update. Mappings you made keep working and still win over the standard for their control. What changes:
 
 - **Most controls of the three layouts do something else.** The tables above are the whole truth; the ones a hand had learned:
-  - *nanoKONTROL2*: knobs 1 to 3 were shader controls 1 to 3 and are zoom, position X and position Y; knobs 4 to 7 were shader controls 4 to 7 and are 1 to 4; knob 8 was shader control 8 and is Vibes time. R 6 was Fade in and is spare; R 7 was Fade out and is the one fade button; M 7 was preset 7 and is the quarter turn, M 8 was preset 8 and is spare. Shader controls 5 to 8 and presets 7 and 8 are not on it any more.
+  - *nanoKONTROL2*: the eight knobs are the shader's controls 1 to 8, as they were; new is that M 6 turns knobs 1 to 3 into zoom and the two positions while it flashes. R 6 was Fade in and is spare; R 7 was Fade out and is the one fade button; M 6 was preset 6 and is Geometry, M 7 was preset 7 and is the quarter turn, M 8 was preset 8 and is mapping mode (nothing until the owner's switch is on). Presets 6 to 8 are not on it any more.
   - *MIDI Mix*: knob B2 was position X and still is; B1 (size) is the same under the name Zoom; B3 was Vibes time and is position Y; B4 was spare and is Vibes time. The Solo+Mute row was Stop, Pause, Vibes, previous shader, next shader, Fade in, Fade out, Blackout and is Vibes, previous shader, next shader, effect on / off, fade, Freeze, Stop, Blackout. Rec Arm 8 was preset 8 and is the quarter turn.
   - *Launchpad Mini*: the pads of the three banks are where they were (rows of six, A, B, C from the top). Everything else moved: the two columns beside the banks were the effect's buttons and controls and are the shader's presets 1 to 8; row 7 was the presets and is Vibes and the shader's steps (left) and the effect (right); row 8 was the shader's controls 1 to 8 and is the clip's transport (left) and the shader's controls 1 to 4 (right). The top row was previous and next shader, Vibes, previous and next clip, Pause, Fade in, Fade out and is the two Vibes sets, the quarter turn, the overlay and Mute. On the right, E and F were the two Vibes sets and are Fade and Freeze; Stop and Blackout (G and H) and the Room scenes (A to D) are where they were. The presenter code moved from the pad with note 7 to the pad with note 87.
 - **A zoom or position knob waits for pickup** on these three controllers, also one you mapped yourself there: it does nothing until it reaches the value the box has.
@@ -224,6 +264,7 @@ Add one file, `pvj/controllers.d/<id>.json`; nothing else changes. All keys are 
 - `send`: `type` is `note` or `cc`, `number` 0 to 127, `channel` 1 to 16 or 0 for any (use 0 unless two controls differ only by channel).
 - `action` is `null` for a spare control, or an action from the table below with its fields (`pad` needs `bank` 0 to 2 and `index` 0 to 11, `bank_pad` needs `index`). A fader or knob needs an action that follows it; a button or pad one that is pressed. A scene by id and `none` are not allowed in a profile.
 - `zone` (optional): which part of the controller the control belongs to, for the drawing: `pads`, `clips`, `screen`, `picture`, `sound`, `shaders`, `effects`, `room` or `access`.
+- `layers` (optional): the control's other self while a layer is on, `{"geometry": {"action": "size"}}` or `{"mapping": {"action": "map_left"}}`; `null` in `geometry` means "nothing in that layer". A fader or knob needs an action that follows it, a button or pad one that is pressed; in `mapping` only the `map_...` actions. The layer's own button is a control with the action `layer_geometry` or `mapping_mode`.
 - `guard` (optional, buttons and pads): the press is needed twice. Use it for blackout and anything room-wide. `unverified` (optional): the number is not confirmed by the maker's document; say so in `note` too.
 - Up to 160 controls; no two in one place, no two sending the same message.
 
@@ -295,6 +336,7 @@ A light follows **what its control does now**: if you put another action on a co
 | Pause / resume | | something is playing | it is paused |
 | Stop | something is playing | nothing is playing | |
 | Blackout on / off | (marks the button) | | **Flashing for as long as Blackout is on** (the owner, 2026-10-10: "flashing when active, same with blackout"). Each of the two buttons shows its own state: under Blackout the fade button is steady unless a fade out is also on |
+| Geometry on / off, mapping mode on / off (styles `layer` and `mapping`, or the style of Vibes where a file has none) | mapping mode: the owner's switch is on | | **Flashing**: that layer is on |
 | **Fade out, then in** (the one button; style `fade`, or the style of Fade out where a file has none) | (marks the button) | | a fade in is running. **Flashing**: the picture is going down or is black from a fade. Under Blackout it is steady: Blackout's own button is the one that shows it |
 | Back 10 seconds, forward 10 seconds (style `step`) | something is playing | | |
 | Fade out | (marks the button) | the picture was faded out and is still down | |
@@ -395,6 +437,10 @@ A mapping belongs to one controller (by its ALSA card id, such as `nanoKONTROL2`
 | Overlay picture on / off (`overlay`) | trigger | The other state of the overlay's switch; nothing when no picture was chosen. It is saved, as from the panel |
 | Back 10 seconds, forward 10 seconds (`seek_back`, `seek_forward`) | trigger | As the panel's two buttons |
 | Loop on / off, sound off / on (`loop`, `mute`) | trigger | The other state; the box asks the player which it has |
+| Geometry on / off (`layer_geometry`) | trigger | Puts that controller's Geometry layer on or off: the controls that have another self in it (in the standard layouts, the nanoKONTROL2's knobs 1 to 3) take it. Nothing is asked of the box |
+| Mapping mode on / off (`mapping_mode`) | trigger | Enters and leaves mapping mode (press twice; needs the owner's switch). See "Layers" |
+| Mapping mode: the surface before, the next; the corner before, the next; nudge left, right, up, down; the step; undo (`map_surface_prev`, `map_surface_next`, `map_corner_prev`, `map_corner_next`, `map_left`, `map_right`, `map_up`, `map_down`, `map_step`, `map_undo`) | trigger | Only in mapping mode; outside it the box refuses them |
+| Mapping mode: nudge by turning (`map_x`, `map_y`) | a knob or fader | Only in mapping mode: a step for each step the knob is turned |
 | Test pattern on / off (`test_pattern`) | trigger | The colour bars, or off again (which clears the screen). In no standard layout: it takes the screen |
 | Blackout while held up | level | Black at 64 or more, shown below |
 | Vibes on / off | trigger | Starts the endless shader rotation, or stops it if it is running (see [SHADERS.md](SHADERS.md)) |
@@ -447,7 +493,7 @@ A level with a centre gives exactly the centre for nine steps around the middle 
 
 Looked at against the whole panel for D75. **Built with it:** position Y, the quarter turn, the two mirrors, the overlay's switch, ten seconds back and forward, loop, mute, the test pattern, the one fade button. **Not built, and why:**
 
-- **The Mapping screen** (mapping on / off, choosing a surface and a corner, nudging it, the outline on the display). Every change of the mapping is for a full-access device (`POST /api/mapper`), and a controller acts as a presenter: it would be refused. Making an exception means that whoever stands at the controller can change the saved mapping of the room. That is a decision for the owner, asked in D75. What would sit well on controls if he says yes: Mapping on / off (a guarded button), Edit on the display, next surface, next corner, and four nudge buttons or two knobs for the chosen corner.
+- **Of the Mapping screen**, a controller has mapping mode (above): the surface, the corner, nudges and undo, behind the owner's switch. Not: Mapping on / off, screen or picture corners, adding and removing surfaces, saved mappings. Those need a full-access device.
 - Seek to a place, a pad by its name, volume in steps, the transition and its duration, anything of System.
 
 A trigger fires once per press (a note-on, or a CC that goes from below 64 to 64 or more), not on release or repeat, and a button cannot fire again within a quarter of a second, so contact bounce cannot repeat it. Right after Learn captures a control, that control is ignored for about half a second so a fader you are still moving does not run its old mapping. A fader sweep is thinned to 20 changes a second and the last position always lands.
@@ -503,7 +549,7 @@ On unless you turn it off (System > MIDI controller > Built-in map). It exists s
 - Lights that are addressed differently from their control, more than one light per control, the Launchpad's double buffering, and lights for the Solo row of a MIDI Mix.
 - **The editor of D75's second and third part**: a control's name, kind, place and what it sends corrected by pressing it; a layout for a controller the box does not know; a layout as a file; the Learn section folded into the cards; the chooser's options for range, direction and takeover. Planned, not built.
 - **Map Mode** for MIDI and OSC (the owner, 2026-10-10: switch it on, pick a control on the screen, turn a knob, mapped; one controller per control, or several sharing it by soft pickup). The sharing by pickup is what the levels do already; the mode itself is not built.
-- The Mapping screen on a controller (see "What a controller still cannot do").
+- In mapping mode: a larger step while a button is held; a light for each control's other self (only the mode's own button shows the mode).
 - A light per shader input (row 8 of the Launchpad is lit while any shader is on screen; the box does not read the shader's input list for it).
 - Motor-fader feedback (needs MIDI output too).
 - Mapping to pads by name, banks that follow the controller's own bank buttons, and relative (endless) encoders.
@@ -519,3 +565,5 @@ Verified on a real Raspberry Pi 4 (2026-09-30): the module reads a controller th
 **Controller lights (2026-10-04): not tried on any real controller, and not on the Pi.** The messages are from Novation's Programmer's Reference for the Launchpad S (that the Mini shares its protocol is not confirmed by a primary source), from Korg's Parameter Guide (nanoKONTROL2: only with LED Mode set to External and the factory On and Off values and channel; unverified) and from a secondary source alone (MIDI Mix; nothing confirmed). An independent review of the pull request read both makers' documents and found one medium and seven low points; each is fixed with a test (the journal lists them). The writer, the mapping from the box's state to each light, unplug and replug, the switch, the brightness, Test lights and the refusal under an older service file ran against pipes and the browser test's fake controller. Whether `DeviceAllow=char-alsa rw` lets the panel open a controller for writing on the Pi's systemd has not been run there. The check list is in `tools/DEVICE-TESTING.md`.
 
 **The layouts, the levels and the fade button of D75 (2026-10-10): not tried on any real controller, and not on the Pi.** The three layouts were drawn afresh from the owner's report and from how each controller is built, not from pressing them. How zoom and position feel on a real knob (does the centre sit, does anything jump, is the curve too slow or too fast), whether the Launchpad's flash mode flashes the fade button and leaves every other light steady, whether a nanoKONTROL2's R 7 flashes in External LED mode, and whether three bank colours can be told apart, are all unknown. They ran in unit tests with a fake clock, pipes and a fake player, and the panel's button in the browser test. The check list is "The layouts, the levels and the fade button (D75)" in `tools/DEVICE-TESTING.md`.
+
+**Layers (2026-10-10): the nanoKONTROL2's Geometry and mapping mode have not been on a controller, a projector or the Pi.** Whether a shader knob's wait on the way back feels right or feels dead, whether two minutes is the right time for Geometry and three for mapping mode, whether a nudge of one pixel a knob step is too fine or too coarse on a real wall, and whether the outline with its yellow surface and pink corner can be seen from where the controller stands, are unknown. Rows G1 to G4 and P1 to P6 in `tools/DEVICE-TESTING.md`.

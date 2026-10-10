@@ -54,6 +54,12 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/shader/control/<n>` | 0 to 1 | The n-th input (1 to 8) of the shader on screen, as for an effect |
 | `/pvj/shader/preset/<n>` | value (press) | The n-th preset (1 to 8) of the shader on screen |
 | `/pvj/vibes/dwell` | 15 to 3600 | Seconds each shader of the rotation stays (saved) |
+| `/pvj/mapping/mode` | none, or 0/1 | Mapping mode ([MIDI.md](MIDI.md), "Layers"): 1 enters it, 0 leaves it, no argument switches over. **Every `/pvj/mapping/` address does nothing unless a full-access device switched "Controllers may adjust the mapping" on (the Mapping card), and all but this one only in the mode** |
+| `/pvj/mapping/surface/next`, `/prev`; `/pvj/mapping/corner/next`, `/prev` | value (press) | Choose the surface and the corner, round and round; the box's display marks them |
+| `/pvj/mapping/left`, `/right`, `/up`, `/down` | value (press) | Nudge the chosen corner by the step |
+| `/pvj/mapping/nudge` | two whole numbers | So many steps to the right and so many down (negative: left, up), -127 to 127 each; one message moves a corner 200 pixels at most |
+| `/pvj/mapping/step` | 1, 10 or 50 | Pixels a step |
+| `/pvj/mapping/undo` | value (press) | Take the last nudge back |
 | `/pvj/speed` | 0.1 to 4 | Playback speed |
 | `/pvj/volume` | 0 to 130 | Percent |
 | `/pvj/seek` | -3600 to 3600 | Seconds, relative |
