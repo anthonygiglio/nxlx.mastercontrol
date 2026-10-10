@@ -674,6 +674,12 @@ def resample_grid(s, cols, rows):
 REMOTE_STEPS = (1, 10, 50)      # pixels a nudge from a controller moves: the panel's own three choices
 REMOTE_REACH = 200              # and the most one message may move a corner, whatever the step and the count
 REMOTE_SECONDS = 180.0          # mapping mode ends by itself this long after the last thing done in it
+# A knob gives 20 nudges a second and OSC lets 200 through. Each is taken into the mapping at once (checked, in
+# memory); the settings file is written, and the display's picture made again, only so often, and once more when
+# the nudges stop, so the last position is always the one saved and shown.
+REMOTE_SAVE_GAP = 0.5           # seconds between two writes of the settings while nudges come
+REMOTE_SHOW_GAP = 0.04          # and between two pictures: 25 a second
+REMOTE_RUN_GAP = 1.0            # nudges of one corner closer together than this are one step of undo
 
 
 class Engine:
@@ -695,8 +701,12 @@ class Engine:
         self._job = None                       # the newest build waiting for the worker
         self._building = False
         # Mapping mode from a controller (D75): see "from a controller" below. Guarded by `_lock`, a few fields.
-        self._remote = {"on": False, "until": 0.0, "step": REMOTE_STEPS[0], "last": None, "serial": 0}
+        # "last": the run of nudges an undo takes back, {"id", "corner", "target", "point" (where the corner was
+        # before the run), "at" (the run's last nudge), "open"}; "panel": the panel's own edit state at entry.
+        self._remote = {"on": False, "until": 0.0, "step": REMOTE_STEPS[0], "last": None, "serial": 0, "panel": None}
         self._remote_clock = time.monotonic
+        # What a nudge left to do later: name -> {"due": something is owed, "timer": one is set, "last": when it was last done}
+        self._paced = {name: {"due": False, "timer": False, "last": -1e9} for name in ("save", "show")}
 
     @property
     def settings(self):
@@ -789,16 +799,75 @@ class Engine:
         self._remote["until"] = self._remote_clock() + REMOTE_SECONDS
 
     def _leave(self):
+        """End the mode, however it ends. What the nudges left unsaved is saved now, and the panel's own editor is
+        put back as it was at entry: off if it was off; on, with the surface and corner the person had chosen, if a
+        full-access person had "Edit on the display" on (the mode borrowed it, and its choosing moved theirs)."""
         with self._lock:
-            was = self._remote["on"]
-            self._remote.update(on=False, until=0.0, last=None)
+            was, panel = self._remote["on"], self._remote["panel"]
+            self._remote.update(on=False, until=0.0, last=None, panel=None)
             self._remote["serial"] += 1
-        if was and self.edit.get("on"):
-            try:
+        if not was:
+            return was
+        self._now("save")
+        try:
+            if panel and panel.get("on"):
+                back = {"action": "edit", "on": True, "selected": panel["selected"], "target": panel["target"]}
+                if panel["selected"] is not None:
+                    back["corner"] = panel["corner"]
+                try:
+                    self.handle(back)
+                except MapperError:                                 # that surface is gone, or has fewer corners now
+                    self.handle({"action": "edit", "on": True})
+            elif self.edit.get("on"):
                 self.handle({"action": "edit", "on": False})        # the show picture is built again, as after the panel's edit
-            except Exception as e:
-                self.log("mapper: leaving mapping mode: %r" % (e,))
+        except Exception as e:
+            self.log("mapper: leaving mapping mode: %r" % (e,))
         return was
+
+    # A nudge is neither saved nor shown by itself (handle(..., later=True)): it asks for both here.
+    def _soon(self, name):
+        """Do `name` ("save" or "show") now if it was not done for its gap, else once when the gap is over: one
+        timer however many ask."""
+        gap = REMOTE_SAVE_GAP if name == "save" else REMOTE_SHOW_GAP
+        with self._lock:
+            p = self._paced[name]
+            p["due"] = True
+            if p["timer"]:
+                return
+            wait = p["last"] + gap - time.monotonic()
+            if wait > 0:
+                p["timer"] = True
+        if wait > 0:
+            t = threading.Timer(wait, self._now, (name, True))
+            t.daemon = True
+            t.start()
+        else:
+            self._now(name)
+
+    def _now(self, name, timer=False):
+        """Do what is owed of `name`, if anything is."""
+        with self._lock:
+            p = self._paced[name]
+            if timer:
+                p["timer"] = False
+            due, p["due"] = p["due"], False
+            if due:
+                p["last"] = time.monotonic()
+        if not due:
+            return
+        try:
+            if name == "save":
+                with self.settings.lock:
+                    self.settings.save()
+            else:
+                self.apply()
+        except Exception as e:
+            self.log("mapper: a nudge could not be %s: %r" % ("saved" if name == "save" else "shown", e))
+
+    def _settled(self, name):
+        """It was just done by another road (the panel's own change saves and shows everything)."""
+        with self._lock:
+            self._paced[name]["due"] = False
 
     def _expire(self, serial):
         with self._lock:
@@ -836,9 +905,11 @@ class Engine:
                 self._leave()
                 return self.state()
             if not self.remote_on():
+                self._leave()                                       # one that ran out and was not cleared away yet
+                panel = dict(self.edit)
                 self.handle({"action": "edit", "on": True})         # the outlines, the chosen surface and corner marked
                 with self._lock:
-                    self._remote.update(on=True, last=None, step=REMOTE_STEPS[0])
+                    self._remote.update(on=True, last=None, step=REMOTE_STEPS[0], panel=panel)
                     self._remote["serial"] += 1
                     self._stay()
                     serial = self._remote["serial"]
@@ -873,6 +944,8 @@ class Engine:
                 if step not in REMOTE_STEPS or isinstance(step, bool):
                     raise MapperError("step must be one of %s" % ", ".join(map(str, REMOTE_STEPS)))
                 self._remote["step"] = step
+                if self._remote["last"] is not None:        # what is nudged at another step size is another step of undo
+                    self._remote["last"]["open"] = False
                 self._stay()
             return self.state()
         if "undo" in body:
@@ -882,7 +955,12 @@ class Engine:
                 last, self._remote["last"] = self._remote["last"], None
             if last is None:
                 raise MapperError("there is no nudge to undo")
-            self.handle(dict(last, action="move", dx=-last["dx"], dy=-last["dy"]))
+            # The corner goes back to where it was before the run, by the panel's own "place": exact (a move the
+            # other way is not, where a point of the picture was held at its edge), and checked like every change.
+            self.handle({"action": "place", "id": last["id"], "corner": last["corner"], "target": last["target"],
+                         "x": last["point"][0], "y": last["point"][1]}, later=True)
+            self._soon("show")
+            self._soon("save")
             with self._lock:
                 self._stay()
             return self.state()
@@ -897,10 +975,20 @@ class Engine:
                 size = self._remote["step"]
             dx = max(-REMOTE_REACH, min(REMOTE_REACH, steps[0] * size))
             dy = max(-REMOTE_REACH, min(REMOTE_REACH, steps[1] * size))
-            move = {"id": chosen["id"], "corner": self.edit.get("corner", 0), "target": self.edit.get("target", "screen"), "dx": dx, "dy": dy}
-            self.handle(dict(move, action="move"))      # the panel's own move: the whole mapping is checked, or nothing is changed
+            corner, target = self.edit.get("corner", 0), self.edit.get("target", "screen")
+            points = chosen["vertices" if target == "screen" else "tex"]
+            was = list(points[corner]) if 0 <= corner < len(points) else None       # None: the move below refuses it
+            # the panel's own move: the whole mapping is checked, or nothing is changed. Saved and shown a little later.
+            self.handle({"action": "move", "id": chosen["id"], "corner": corner, "target": target, "dx": dx, "dy": dy}, later=True)
+            self._soon("show")
+            self._soon("save")
             with self._lock:
-                self._remote["last"] = move
+                now, run = self._remote_clock(), self._remote["last"]
+                if (run is not None and run["open"] and (run["id"], run["corner"], run["target"]) == (chosen["id"], corner, target)
+                        and now - run["at"] < REMOTE_RUN_GAP):
+                    run["at"] = now                     # one more of the same run: an undo takes all of it back
+                else:
+                    self._remote["last"] = {"id": chosen["id"], "corner": corner, "target": target, "point": was, "at": now, "open": True}
                 self._stay()
             return self.state()
         raise MapperError("send one of mode, surface, corner, steps, step, undo")
@@ -1034,8 +1122,11 @@ class Engine:
                 self.log("pvj-web: mapper: %s" % e)
 
     # -- requests from the panel --
-    def handle(self, body):
-        """One change from the panel (see MAPPER.md for the actions). Returns the state. Raises MapperError."""
+    def handle(self, body, later=False):
+        """One change from the panel (see MAPPER.md for the actions). Returns the state. Raises MapperError.
+        `later` is for a controller's nudge only: the change is checked and taken into the mapping in memory as
+        always, but the caller sees to the saving and the showing (`_soon`), so a flood of them is not a flood of
+        file writes."""
         if not isinstance(body, dict):
             raise MapperError("send an object")
         action = body.get("action")
@@ -1166,7 +1257,11 @@ class Engine:
             if edit["selected"] is not None and not any(s["id"] == edit["selected"] for s in clean):
                 edit.update(selected=clean[0]["id"] if clean else None, corner=0)
             self.settings.data["mapper"] = {"on": on, "screen": list(size), "surfaces": clean, "sets": sets}
-            self.settings.save()
+            if not later:
+                self.settings.save()
+                self._settled("save")
             self.edit = edit
-        self.apply()
+        if not later:
+            self._settled("show")
+            self.apply()
         return self.state()
