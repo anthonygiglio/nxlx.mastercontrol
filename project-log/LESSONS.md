@@ -279,3 +279,7 @@ A cookie is identified by name, domain and path, not by scheme. With one name, p
 ## The last statement of app.js is pinned by a test (2026-10-10)
 
 `tests/test_page_files.py` asserts that `window.pvjApp = true;` is the very last statement of `app.js`, so the loader can tell a script that arrived from one that ran. Anything a browser test needs from inside the module goes on its own `window.` name before `boot()`, not on `pvjApp`.
+
+## A check that could never pass hid behind the step before it (2026-10-10)
+
+The Secure connection page's "Does this device trust the box?" fetched `https://<host>/api/https/probe` from the `http://` page under `connect-src 'self'`, on the strength of a CSP level 3 rule that only holds for the default ports and was never verified for Safari on iOS. The browser test collects every policy violation and asserts there are none, so it would have said so at once; but for several runs an earlier step of the same test failed first (the Download button after the request, then the iPad reading of a Mac), and the run stopped there. Only when those were fixed did the violation surface. Two lessons: a feature whose working depends on a browser rule gets a test that exercises the rule, not a comment that cites it; and when a long browser test fails early, read the console problems it collected anyway, because the step that stops it is not always the one that matters.

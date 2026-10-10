@@ -9,7 +9,8 @@ Security model, in one place:
 * every state-changing call is a POST with JSON, the X-PVJ-Request header and a
   matching Origin (if the browser sends one), so other websites cannot drive it
 * the panel is served with a Content-Security-Policy that forbids inline script,
-  external resources and framing
+  external resources and framing; over plain http, while a certificate is in use, the page's connect-src also names
+  the box's own https:// origin (page_csp), so the Secure connection page can ask whether this device trusts the box
 * the same panel and API answer on a second, TLS listener when PVJ_HTTPS_PORT is set (D79, pvj/httpsbox.py): there
   the cookie is __Host-pvj_token with Secure; a switch keeps owner access off plain HTTP (the gate below)
 """
@@ -41,6 +42,16 @@ SECURE_COOKIE = "__Host-pvj_token"      # over TLS only (D79): the prefix forces
                                         # because browsers leave a Secure cookie alone when plain http tries to replace it
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
        "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+CSP_ORIGIN = re.compile(r"https://(?:[a-z0-9.-]{1,253}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?")   # the one shape page_csp adds
+
+
+def page_csp(origin):
+    """The policy for the HTML document. With `origin` (httpsbox.page_origin: the box's own https:// origin, from a
+    Host header that passed its checks) connect-src names that origin too, and nothing else: no scheme source, no
+    wildcard, no second host. Anything that is not exactly that shape is dropped and the plain policy goes out."""
+    if not origin or not CSP_ORIGIN.fullmatch(origin):
+        return CSP
+    return CSP.replace("connect-src 'self';", "connect-src 'self' %s;" % origin, 1)
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2"}
 HTML_TAG = b'<html lang="en">'          # in index.html; the style of the chosen theme is written into it (styled_html)
@@ -149,7 +160,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("X-Frame-Options", "DENY")
                 self.send_header("Referrer-Policy", "no-referrer")
-                self.send_header("Content-Security-Policy", CSP)
+                self.send_header("Content-Security-Policy", self._csp(content_type))
                 self.send_header("Cache-Control", cache)
                 for k, v in (extra or []):
                     self.send_header(k, v)
@@ -165,6 +176,14 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
 
         def _secure(self):
             return bool(getattr(self.server, "secure", False))
+
+        def _csp(self, content_type):
+            """The HTML document over plain http, with a certificate in use, may connect to the box's own https://
+            origin (D79, the trust check); over TLS 'self' already is that origin, and no other answer is a document."""
+            if self._secure() or not content_type.startswith("text/html"):
+                return CSP
+            box = self._https()
+            return page_csp(box.trusted_origin(self.headers.get("Host")) if box is not None else None)
 
         def _token(self):
             header = self.headers.get("Authorization", "")

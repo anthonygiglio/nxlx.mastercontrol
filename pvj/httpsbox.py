@@ -212,6 +212,38 @@ def host_of(header):
     return h.rsplit(":", 1)[0] if re.search(r":[0-9]{1,5}$", h) else h
 
 
+# A Host header the page's policy may name: a DNS name of ASCII labels, a dotted IPv4 address or a bracketed IPv6
+# address, with at most a port. Nothing else, however the browser spelled it: this string goes into a header.
+_DNS_HOST = re.compile(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
+_HOST_HEADER = re.compile(r"(?:(?P<name>[a-z0-9.-]{1,253})|\[(?P<v6>[0-9a-f:.]{2,45})\])(?::[0-9]{1,5})?")
+
+
+def page_origin(header, dns, ips, port):
+    """The one https:// origin the http page may ask "does this device trust the box?" (D79): the host the browser
+    reached the box by, if and only if it is a clean name or address AND one of the names in the certificate in use;
+    the port is the TLS listener's, never the header's. None otherwise: for a name the certificate does not carry no
+    browser would trust that origin, so the page has nothing to ask. The header's value is never copied through:
+    what is written is the matched name, lower case, with nothing else in it."""
+    import ipaddress
+    h = (header or "").strip().lower()
+    m = _HOST_HEADER.fullmatch(h)
+    if not m or not port:
+        return None
+    if m.group("v6") is not None:
+        try:
+            name = "[%s]" % ipaddress.IPv6Address(m.group("v6")).compressed
+        except ValueError:
+            return None
+        bare = name[1:-1]
+    else:
+        name = bare = m.group("name")
+        if not _DNS_HOST.fullmatch(name):
+            return None
+    if not name_matches(bare, dns, ips):
+        return None
+    return "https://%s%s" % (name, "" if int(port) == 443 else ":%d" % int(port))
+
+
 # --- the box's files, the context, the switch ---------------------------------------------------------------------------
 class HttpsBox:
     def __init__(self, folder, settings, openssl="openssl", hostname=None, addresses=None, clock_trusted=None,
@@ -732,6 +764,13 @@ class HttpsBox:
                 "load_error": self.load_error, "default_names": self.default_names(), "host": host_of(host),
                 "this_device_secure": self.device_secure(device) if device else False, "warn_days": WARN_DAYS, "relief": self.relief(),
                 "https_address": self.https_address(host), "http_address": "http://%s/" % (host_of(host) or self.first_name())}
+
+    def trusted_origin(self, host):
+        """For the page over plain http: the https:// origin its policy may let it probe, or None while no certificate
+        is in use or the Host is not a name the certificate carries (page_origin)."""
+        if self.context is None or self.info is None:
+            return None
+        return page_origin(host, self.info["dns"], self.info["ips"], self.port)
 
     def https_address(self, host=None):
         name = host_of(host) or self.first_name()

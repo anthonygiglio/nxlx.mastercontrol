@@ -1555,7 +1555,10 @@ function startServer() {
     await fitsOn(page, 'Secure connection at 320 with the request made');
     await page.click('#httpsprobe');
     await page.waitForFunction(() => /^(Yes|No)/.test(document.getElementById('httpstrust').textContent), null, { timeout: 15000 });
-    assert(/^No/.test(await page.textContent('#httpstrust')), 'with no certificate the trust check says no');
+    // With no certificate the page answers by itself and makes no fetch: a fetch of https://<host> from this http
+    // page would be refused by the page's policy, which names that origin only once a certificate is in use (page_csp),
+    // and the CSP check at the end of this test would fail. That is the check that found this (2026-10-10).
+    assert(/^No\. The box has no certificate/.test(await page.textContent('#httpstrust')), 'with no certificate the trust check says no, without asking: ' + await page.textContent('#httpstrust'));
     await page.setViewportSize({ width: 390, height: 844 });
     const platforms = await page.evaluate(() => [
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',

@@ -203,6 +203,50 @@ class HttpsTest(HttpsBase):
         self.assertEqual(self.call("GET", "/api/https/probe")[1], {"https": False})
         self.assertEqual(self.scall("GET", "/api/https/probe")[1], {"https": True})
 
+    def test_the_page_policy_names_the_https_origin_only_for_a_good_host_with_a_certificate_in_use(self):
+        plain = server.CSP
+
+        def csp(host, path="/", secure=False):
+            st, _, r = (self.scall if secure else self.call)("GET", path, headers={"Host": host})
+            return st, r.getheader("Content-Security-Policy")
+
+        def allowed(origin):
+            return plain.replace("connect-src 'self';", "connect-src 'self' %s;" % origin)
+
+        # no certificate in use: the plain policy, and the probe route answers with no CORS header at all
+        self.assertEqual(csp("testbox.local"), (200, plain))
+        self.assertEqual(csp("127.0.0.1:%d" % self.port), (200, plain))
+        self.install(self.request_and_sign())
+        # a good host over plain http: the box's own https:// origin, with the TLS listener's port
+        self.assertEqual(csp("testbox.local"), (200, allowed("https://testbox.local:%d" % self.tls_port)))
+        self.assertEqual(csp("TestBox.Local:%d" % self.port), (200, allowed("https://testbox.local:%d" % self.tls_port)))
+        self.assertEqual(csp("127.0.0.1:%d" % self.port), (200, allowed("https://127.0.0.1:%d" % self.tls_port)))
+        # over TLS 'self' already is that origin: nothing is added
+        self.assertEqual(csp("testbox.local", secure=True), (200, plain))
+        self.assertEqual(csp("127.0.0.1", secure=True), (200, plain))
+        # only the document carries it; the API's answers and the page's files do not
+        for path in ("/api/https/probe", "/app.js", "/app.css", "/api/hello"):
+            self.assertEqual(csp("testbox.local", path)[1], plain, path)
+        # a host the box answers to but the certificate does not carry, a foreign one (refused with 421 before anything
+        # else), an IPv6 literal (never in the certificate), a name with another port, and the injection shapes a
+        # client can still send: the plain policy every time, whatever the status
+        for host in ("other.local", "elsewhere.local", "localhost", "testbox.local.", "[fe80::1]", "[::1]:%d" % self.port, "evil.example",
+                     "testbox.local.evil.example", "testbox.local:443:1", "testbox.local:abc", "testbox.local; script-src *",
+                     "testbox.local https://evil.example", "testbox.local\ttab", "xn--testbox.local"):
+            st, got = csp(host)
+            self.assertEqual(got, plain, "%r gave %d: %s" % (host, st, got))
+        self.assertEqual(csp("evil.example")[0], 421)
+        # the probe route itself: a tiny answer, no Access-Control-Allow-Origin, so a page elsewhere learns nothing from it
+        for secure in (False, True):
+            st, body, r = (self.scall if secure else self.call)("GET", "/api/https/probe")
+            self.assertEqual((st, body), (200, {"https": secure}))
+            self.assertEqual([k for k, _ in r.getheaders() if k.lower().startswith("access-control")], [])
+        # the status the page decides by agrees with the header: this host is in the certificate, that one is not
+        st, body, _ = self.call("GET", "/api/https", token=self.full, headers={"Host": "testbox.local"})
+        self.assertTrue(body["certificate"]["names_this_host"])
+        st, body, _ = self.call("GET", "/api/https", token=self.full, headers={"Host": "other.local"})
+        self.assertFalse(body["certificate"]["names_this_host"])
+
     def test_each_kind_of_bad_certificate_is_refused_with_its_message(self):
         good = self.request_and_sign()
         cases = [
@@ -635,6 +679,36 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(httpsbox.host_of("TestBox.local:8080"), "testbox.local")
         self.assertEqual(httpsbox.host_of("[fe80::1]:443"), "fe80::1")
         self.assertEqual(httpsbox.host_of("192.168.0.2"), "192.168.0.2")
+
+    def test_the_page_origin_is_the_matched_name_and_nothing_else(self):
+        """The http page's policy may name the box's https:// origin (D79, the trust check). The Host header is a value
+        the browser sends; only a clean name or address that the certificate carries comes out, in canonical form,
+        with the TLS port, never anything copied from the header."""
+        dns, ips = ["testbox.local", "*.wild.local"], ["127.0.0.1", "fe80::1"]
+        po = lambda h, port=8443: httpsbox.page_origin(h, dns, ips, port)   # noqa: E731
+        self.assertEqual(po("testbox.local"), "https://testbox.local:8443")
+        self.assertEqual(po("TestBox.LOCAL:80"), "https://testbox.local:8443")     # case folded, the http port dropped
+        self.assertEqual(po("testbox.local", 443), "https://testbox.local")        # the default port is left out
+        self.assertEqual(po("127.0.0.1:8080"), "https://127.0.0.1:8443")
+        self.assertEqual(po("[fe80::1]"), "https://[fe80::1]:8443")
+        self.assertEqual(po("[FE80:0000:0000:0000:0000:0000:0000:0001]:80"), "https://[fe80::1]:8443")   # canonical, not as sent
+        self.assertEqual(po("a.wild.local"), "https://a.wild.local:8443")
+        for bad in (None, "", " ", "testbox.local.", "testbox", "evil.example", "testbox.local.evil.example", "evil.example#testbox.local",
+                    "testbox.local; script-src *", "testbox.local https://evil.example", "testbox.local\r\nX-Injected: 1",
+                    "testbox.local\x00", "https://testbox.local", "testbox.local/", "testbox.local:443:1", "testbox.local:x",
+                    "testbox.local:", "wild.local", "b.a.wild.local", "[::1]", "[fe80::1%25eth0]", "[fe80::1%eth0]", "[::ffff:127.0.0.1]",
+                    "fe80::1", "[fe80::1", "[testbox.local]", "xn--testbox.local", "t" * 254 + ".local", "testbox.lоcal"):   # the last has a Cyrillic o
+            self.assertIsNone(po(bad), repr(bad))
+        self.assertIsNone(po("testbox.local", 0))
+        self.assertIsNone(po("testbox.local", None))
+        # the header is built from that origin alone, and refuses anything that is not exactly that shape
+        plain = server.CSP
+        self.assertEqual(server.page_csp("https://testbox.local:8443"), plain.replace("connect-src 'self';", "connect-src 'self' https://testbox.local:8443;"))
+        self.assertEqual(server.page_csp("https://[fe80::1]"), plain.replace("connect-src 'self';", "connect-src 'self' https://[fe80::1];"))
+        for bad in (None, "", "https:", "*", "https://*", "https://*.local", "http://testbox.local", "https://testbox.local; script-src *",
+                    "https://testbox.local https://evil.example", "https://testbox.local/", "https://testbox.local:8443:1", "testbox.local"):
+            self.assertEqual(server.page_csp(bad), plain, repr(bad))
+        self.assertEqual(server.page_csp("https://x").count("connect-src"), 1)
 
     @unittest.skipUnless(openssls(), "no openssl on this machine")
     def test_the_der_reader_agrees_with_openssl(self):
