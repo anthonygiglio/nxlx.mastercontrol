@@ -107,9 +107,11 @@ class ProfileFilesTest(unittest.TestCase):
         self.assertEqual([control(PAD, "side_" + x)["action"]["action"] for x in "abcdefgh"],
                          ["scene_1", "scene_2", "scene_3", "scene_4", "fade", "pause", "stop", "blackout"])
         act = lambda r, c: (control(PAD, "pad%d%d" % (r, c))["action"] or {}).get("action")
-        self.assertEqual([[act(r, c) for c in (7, 8)] for r in range(1, 7)],        # beside the banks: the presets, then spare and the code
+        self.assertEqual([[act(r, c) for c in (7, 8)] for r in range(1, 7)],        # beside the banks: the presets, then spare (the code is not beside a bank's pad 12)
                          [["shader_preset_1", "shader_preset_2"], ["shader_preset_3", "shader_preset_4"], ["shader_preset_5", "shader_preset_6"],
-                          ["shader_preset_7", "shader_preset_8"], [None, None], [None, "code_join"]])
+                          ["shader_preset_7", "shader_preset_8"], [None, None], [None, None]])
+        self.assertEqual([(control(PAD, "top%d" % n)["action"] or {}).get("action") for n in range(1, 9)],       # the top row: what is used least
+                         ["vibes_ambient", "vibes_show", "code_join", None, "rotate", "overlay", "mute", "mapping_mode"])
         self.assertEqual([[act(r, c) for c in range(1, 9)] for r in (7, 8)],        # the fourth pair of rows: shaders, the effect, the clip
                          [["vibes", "shader_prev", "shader_next", None, "effect_toggle", "effect_prev", "effect_next", None],
                           ["clip_prev", "seek_back", "seek_forward", "clip_next", "shader_control_1", "shader_control_2", "shader_control_3", "shader_control_4"]])

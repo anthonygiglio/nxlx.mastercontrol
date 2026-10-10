@@ -3303,8 +3303,8 @@ class MidiTest(Base):
                 if c["id"] in got:
                     kind = M.ACTIONS[got[c["id"]]][0]
                     self.assertTrue(kind != "trigger" if c["kind"] in ("fader", "knob") else kind != "level", (p["id"], c["id"]))
-            if p["id"] == "novation-launchpad-mini":                                   # the last pad beside bank C shows a pairing code (D61)
-                self.assertEqual([c["id"] for c in p["controls"] if c["action"] and c["action"]["action"] == "code_join"], ["pad68"])
+            if p["id"] == "novation-launchpad-mini":                                   # the third round button along the top shows a pairing code (D61, moved off pad 6.8)
+                self.assertEqual([c["id"] for c in p["controls"] if c["action"] and c["action"]["action"] == "code_join"], ["top3"])
             else:
                 self.assertTrue(any(c["action"] is None for c in p["controls"]), p["id"])  # and something is still spare
 

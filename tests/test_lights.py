@@ -115,9 +115,11 @@ class LightsFilesTest(unittest.TestCase):
         may make a profile fail its check (it would lose its whole layout): the section only lists which controls
         have a light, and a light with nothing to show is dark."""
         p = raw(PAD)
-        spare = next(c for c in p["controls"] if c["id"] == "pad68")         # the last pad beside bank C: it asks for a code (D61)
-        self.assertEqual(spare["action"], {"action": "code_join"})
-        self.assertIsNone(midi.light_meaning(spare["action"]))               # nothing about a code is ever shown on a controller
+        code = next(c for c in p["controls"] if c["id"] == "top3")           # the third round button along the top: it asks for a code (D61)
+        self.assertEqual(code["action"], {"action": "code_join"})
+        self.assertIsNone(midi.light_meaning(code["action"]))                # nothing about a code is ever shown on a controller
+        spare = next(c for c in p["controls"] if c["id"] == "pad68")         # the last pad beside bank C: spare
+        self.assertIsNone(spare["action"])
         spare["action"] = {"action": "blackout"}
         clean = midi.validate_profile(p, PAD)
         self.assertIn("pad68", clean["lights"]["controls"])
