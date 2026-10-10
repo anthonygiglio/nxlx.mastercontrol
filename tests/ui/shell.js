@@ -891,7 +891,7 @@ const TRANSITIONS = {};
 const ADDED = {
   owner: Object.assign({ '#showpin': 'People and codes', '#copypin': 'People and codes', '#pinvalue': 'People and codes', '#logoutbtn': 'People and codes',
     '#nav-https': 'setup/index', '#httpsrequest': 'Secure connection', '#httpsprobe': 'Secure connection', '#httpsowneronly': 'Secure connection',
-    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC', '#osckeyshow': 'OSC', '#osckeynew': 'OSC' }, TRANSITIONS),
+    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
   presenter: Object.assign({}, TRANSITIONS),
   guest: Object.assign({}, TRANSITIONS),
 };

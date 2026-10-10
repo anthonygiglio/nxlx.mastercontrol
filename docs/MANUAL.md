@@ -277,7 +277,7 @@ Check the box time before relying on the schedule: a Pi has no battery clock, an
 
 This is for the people who run the room. You do not need to know how the box works.
 
-Open the panel on your phone and tap **Room** at the bottom. (If you joined with a presenter code, you start there.)
+Open the panel on your phone and tap **Room** (at the foot of a phone's screen; on a tablet or a laptop it is in the rail at the left). (If you joined with a presenter code, you start there.)
 
 - **Start ambience** is the big button at the very top (it is there when the owner has switched Shaders and Vibes on). Tap it and the box starts drawing slow moving pictures, one after another, for as long as you like. The button then reads **Ambience is playing: Aurora. Tap to stop**; tap it to stop. **Next one** beside it moves on to the next picture. If there is a small list beside the button ("Set: Ambient", "Set: Show"), it chooses which collection of pictures plays; leave it alone unless you were told otherwise. Ambience is the same thing the owner's pages call **Vibes**: one feature, two names.
 - **Scenes** are the big buttons under it, with names such as "Console night" or "Film". Tap one. The projectors it needs switch on, choose the right source and the box starts what belongs to it. A projector takes about a minute to warm up; the line under the buttons says how it is going ("Main wall: switching on (warming up)") and then how it went, for example "Main wall: on, input Console. Painting wall: no answer."

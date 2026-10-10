@@ -627,8 +627,9 @@ main.ws:focus, .deskcol:focus { outline: none; }
 @container app (max-width: 1639px) {
   .wsdock .tpscrub { position: absolute; left: 0; right: 0; top: -12px; height: 24px; z-index: 1; display: block; }
   .wsdock .tpscrub input.seek { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; accent-color: auto; }
-  .wsdock .tpscrub input.seek::-webkit-slider-runnable-track { height: 4px; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ac) var(--fill, 0%), var(--ln) var(--fill, 0%)); }
-  .wsdock .tpscrub input.seek::-moz-range-track { height: 4px; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ac) var(--fill, 0%), var(--ln) var(--fill, 0%)); }
+  /* (the fill is --ink where a look defines it: the colour that reads as a thin line; Signal light's accent is 1.2:1 on its page, the review of #112) */
+  .wsdock .tpscrub input.seek::-webkit-slider-runnable-track { height: 4px; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ink, var(--ac)) var(--fill, 0%), var(--ln) var(--fill, 0%)); }
+  .wsdock .tpscrub input.seek::-moz-range-track { height: 4px; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ink, var(--ac)) var(--fill, 0%), var(--ln) var(--fill, 0%)); }
   .wsdock .tpscrub input.seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5px; border: 0; border-radius: 50%; background: var(--ac); box-shadow: none; opacity: 0; }
   .wsdock .tpscrub input.seek::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--ac); opacity: 0; }
   .wsdock .tpscrub input.seek:not(:disabled):hover::-webkit-slider-runnable-track, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-webkit-slider-runnable-track, .wsdock .tpscrub input.seek:not(:disabled):active::-webkit-slider-runnable-track { height: 8px; }

@@ -489,10 +489,17 @@
       });
     }
     function soon(ms) { clearTimeout(soonTimer); soonTimer = setTimeout(function () { if (root.isConnected) refresh(); }, ms); }
+    // A column of a desk that is not shown (a phone with the pads open, a laptop under 1700 px: D72) asks nothing;
+    // the timer keeps running, and the panel says when the column is shown again (pvjshown), which asks at once.
+    function hidden() { return root.isConnected && !root.getClientRects().length; }
     function watch() {
       clearTimeout(timer);
-      timer = setTimeout(function () { if (root.isConnected) refresh().then(watch); }, data && data.playing ? 3000 : 5000);
+      timer = setTimeout(function () { if (!root.isConnected) return; if (hidden()) return watch(); refresh().then(watch); }, data && data.playing ? 3000 : 5000);
     }
+    window.addEventListener('pvjshown', function onShown() {
+      if (!root.isConnected) return window.removeEventListener('pvjshown', onShown);
+      if (!hidden()) soon(0);
+    });
     // Once a second, between two answers from the box: the countdown moves, and a shader that changed on the screen
     // (the status poll knows first) is asked about at once.
     function tick() {

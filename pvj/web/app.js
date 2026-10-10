@@ -581,7 +581,11 @@
     np.textContent = pl.running && pl.path ? (pl.stream || base(pl.path)) : (pl.running ? 'Player idle' : 'Player not running');
     var seekEl = document.getElementById('seek');
     var frac = pl.duration > 0 && pl.position >= 0 ? Math.min(1, pl.position / pl.duration) : 0;
-    if (seekEl && !seeking) { seekEl.value = Math.round(frac * 1000); seekEl.disabled = !can('live') || !(pl.duration > 0); fillRanges(); }
+    if (seekEl && !seeking) {
+      seekEl.value = Math.round(frac * 1000); seekEl.disabled = !can('live') || !(pl.duration > 0); fillRanges();
+      // a screen reader hears the place as time, not as a number of thousandths (the review of #112)
+      seekEl.setAttribute('aria-valuetext', pl.duration > 0 ? clock(pl.position) + ' of ' + clock(pl.duration) : 'Nothing to seek in');
+    }
     var timeEl = document.getElementById('time');
     if (timeEl && !seeking) timeEl.textContent = clock(pl.position) + ' / ' + clock(pl.duration);
     var speed = document.getElementById('mv');
@@ -4846,6 +4850,8 @@
     S.last[S.tab] = S.tab + '/' + part;
     Array.prototype.forEach.call(desk.children, function (el) { if (el.hasAttribute('data-col')) el.classList.toggle('cur', el.getAttribute('data-col') === part); });
     redrawChrome();
+    // a column that asks the box by itself (the Shaders page) waits while it is hidden, and is told when it is shown again
+    try { window.dispatchEvent(new CustomEvent('pvjshown', { detail: part })); } catch (e) { /* an old browser: the column's own timer looks within seconds */ }
   }
   function colShown(el) { return !!el && el.getClientRects().length > 0; }
   // Open a screen by its key. Another column of the build that is on the page is shown without drawing anything
