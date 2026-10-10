@@ -45,9 +45,9 @@
     });
     var amb = ambience();
     var root = h('div', { class: 'screen', id: 'roomscreen' },
-      h('div', { class: 'top' }, h('h1', { text: 'Room' }), live ? null : h('div', { class: 'pill k', id: 'roomviewonly', text: 'View only' })),
+      h('div', { class: 'top' }, h('h1', { text: 'Room' }), live ? null : h('div', { class: 'pill k', id: 'roomviewonly', text: c.guestOpen && c.guestOpen() ? 'Guest' : 'Watching' })),
       h('div', { id: 'msg', class: 'msg' + (c.state.msgErr ? ' err' : ''), role: 'status', text: c.state.msg }),
-      amb, scenes, groups, letin, setup);
+      amb, scenes, groups, c.guestLock ? c.guestLock() : null, letin, setup);
     var shownLive = null, shownSetup = null, last = null;
 
     // ---- ambience: the Vibes rotation, under the name staff use for it ----
@@ -351,7 +351,7 @@
       d.scenes.forEach(function (s) {
         slist.appendChild(h('div', { class: 'item room-sitem' }, h('span', {}, s.name, h('br'), h('span', { class: 'addr', text: describe(s, d) })),
           h('div', { class: 'row' },
-            c.moduleOn('control-midi') ? h('button', { class: 'btn small', text: 'MIDI', 'aria-label': 'Learn a MIDI control for ' + s.name, onclick: function () { learn(s); } }) : null,
+            c.moduleOn('control-midi') && c.owner() ? h('button', { class: 'btn small', text: 'MIDI', 'aria-label': 'Learn a MIDI control for ' + s.name, onclick: function () { learn(s); } }) : null,
             h('button', { class: 'btn small', text: 'Edit', 'aria-label': 'Edit scene ' + s.name, onclick: function () {
               keep();
               var rows = {};
@@ -435,8 +435,8 @@
         scenes.textContent = '';
         scenes.appendChild(h('h2', { text: 'Scenes' }));
         scenes.appendChild(h('div', { class: 'hint warn', id: 'roommsg' },
-          h('div', { text: 'Projectors is switched off, so the room can do nothing.' + (c.can('full') ? '' : ' Ask the owner to switch it on.') }),
-          c.can('full') && c.switchFeature ? h('div', { class: 'row' }, h('button', { class: 'btn', id: 'roomprojon', text: 'Switch Projectors on', onclick: function () {
+          h('div', { text: 'Projectors is switched off, so the room can do nothing.' + (c.owner() ? '' : ' Ask the owner to switch it on.') }),
+          c.owner() && c.switchFeature ? h('div', { class: 'row' }, h('button', { class: 'btn', id: 'roomprojon', text: 'Switch Projectors on', onclick: function () {
             c.switchFeature('projectors', true).then(function (r) {
               if (!r.ok) return c.say(r.data.error || 'Could not switch Projectors on.', true);
               c.say('Projectors is switched on.');

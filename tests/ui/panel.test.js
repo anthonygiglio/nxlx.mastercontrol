@@ -1222,7 +1222,8 @@ function startServer() {
       assert(await staff.isDisabled('.room-scene') === (role === 'view'), role + ': the scene button is ' + (role === 'view' ? 'not ' : '') + 'for tapping');
       assert.strictEqual(await staff.locator('#roomalloff').count(), role === 'view' ? 0 : 1, role + ': All off');
       assert.strictEqual(await staff.locator('#roomviewonly').count(), role === 'view' ? 1 : 0, role + ': the view only note');
-      assert.strictEqual(await staff.locator('#roomsetup').count(), 0, role + ': no set-up');
+      assert.strictEqual(await staff.locator('#roomsetup').count(), role === 'view' ? 0 : 1, role + ': the set-up is the Operator\'s since D80, never a guest\'s');
+      assert.strictEqual(await staff.locator('#guestlockcard #guestlock').count(), role === 'view' ? 0 : 1, role + ': the lock on guest controls');
       assert.strictEqual(await staff.locator('#roomambience, #roomamboff').count(), 0, role + ': nothing about ambience while Shaders and Vibes is off');
       // Letting a guest in is on the Room screen itself for staff (a presenter), and not there for a guest
       assert.strictEqual(await staff.locator('#roomletin').count(), role === 'view' ? 0 : 1, role + ': Let someone in');
@@ -1559,9 +1560,9 @@ function startServer() {
     await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(0, 0, 0)');
     await onPage('Look');
     await sys('People and codes');
-    assert.deepStrictEqual(await page.$$eval('#linkrole option', (os) => os.map((o) => o.textContent)), ['Guest (can watch)', 'Presenter (can play and mix)'], 'the link roles, in the one vocabulary');
+    assert.deepStrictEqual(await page.$$eval('#linkrole option', (os) => os.map((o) => o.textContent)), ['Guest (can watch)', 'Operator (runs the room)'], 'the link roles, in the one vocabulary');
     assert(/Owner \(everything\)/.test(await page.textContent('#devicescard')), 'this device is named Owner (everything) in the list');
-    assert(!/watch only|View only|\(play and mix\)/.test(await page.textContent('#sysbody')), 'no other names for the roles on People and codes: ' + await page.textContent('#sysbody'));
+    assert(!/watch only|View only|\(play and mix\)|[Pp]resenter/.test(await page.textContent('#sysbody')), 'no other names for the roles on People and codes: ' + await page.textContent('#sysbody'));
     // The owner PIN (D77): not on the screen until Show, then the box's own PIN, gone again by itself; Copy; this
     // device marked in the list with Log out, whose question (as the last owner device) shows the PIN; all of it
     // at 320 px without anything leaving its card.
@@ -1688,6 +1689,14 @@ function startServer() {
     guest.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push('guest: ' + m.text()); });
     await guest.goto(guestLink.replace(/^https?:\/\/[^/]+/, base));
     await guest.waitForSelector('.pads');
+    // Guest controls (D80): open unless locked, in a card of their own; the owner locks and the guest reads one plain line
+    await guest.waitForSelector('#guestcard #gnext');
+    assert.strictEqual(await guest.locator('#guestcard button:disabled').count(), 0, 'nothing disabled among the guest controls');
+    assert.strictEqual(await post('/api/guests', { locked: true }), 200);
+    await guest.waitForSelector('#guestlocked:has-text("The room is locked for a show: you can watch")', { timeout: 20000 });
+    assert.strictEqual(await guest.locator('#guestcard').count(), 0, 'no guest controls while they are locked');
+    assert.strictEqual(await post('/api/guests', { locked: false }), 200);
+    await guest.waitForSelector('#guestcard #gnext', { timeout: 20000 });
     assert(await guest.isDisabled('#black'), 'view-only guest cannot blackout');
     assert(await guest.isDisabled('#stop'), 'view-only guest cannot stop');
     assert(!(await guest.isVisible('text=Edit pads')), 'view-only guest cannot edit pads');
@@ -2469,19 +2478,17 @@ function startServer() {
     assert(!(await presenter.isDisabled('#vibes')), 'a presenter can use the Vibes button');
     await presenter.click('#shaderslink');
     await presenter.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
-    assert.deepStrictEqual(await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard'], 'a presenter gets no settings and no links to MIDI and DMX');
-    assert.strictEqual(await presenter.locator('#syspage .switch').count(), 0, 'no module switch and no rotation switches for a presenter');
-    assert.strictEqual(await presenter.locator('#shaderupload, #vibesdwell, #vibesvary, #shaderpage button:has-text("Remove")').count(), 0, 'no upload, settings or Remove for a presenter');
-    assert.strictEqual(await presenter.locator('#shaderheight, #shaderguard, #setadd, #setlist, #shaderpage [data-midi], #shaderpage button:has-text("Put it back")').count(), 0, 'no picture detail, guard, sets to edit or MIDI teaching for a presenter');
+    // An Operator (D80; "presenter" in the names below is the same live-role device): the settings of the page are his,
+    // the module's switch and the links to MIDI and DMX stay the Owner's
+    assert((await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id))).includes('shadercard'), 'an operator gets the shader list');
+    assert.strictEqual(await presenter.locator('#sysswitch, #shadermidi, #shaderdmx').count(), 0, 'no module switch and no MIDI or DMX for an operator');
+    assert.strictEqual(await presenter.locator('#shaderpage [data-midi]').count(), 0, 'no MIDI teaching for an operator');
     assert.strictEqual(await presenter.locator('#shadercard button[aria-label^="Play "]').count(), (await get('/api/shaders')).shaders.length, 'a presenter can play each shader');
-    assert(/in Vibes/.test(await presenter.textContent('#shadercard [data-shader="nxlx-tide.fs"]')), 'a presenter reads whether a shader is in Vibes');
-    assert.strictEqual(await presenter.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a presenter\'s Shaders page');
     await presenter.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play Tide"]');
     await presenter.waitForFunction(() => (document.getElementById('shaderplaying') || {}).textContent === 'Tide');
     await presenter.waitForSelector('#shin-speed');                  // a presenter gets the controls
     // a presenter moves controls and applies presets, and saves none
-    await presenter.waitForSelector('#nopresets:has-text("Someone with full access saves them")');
-    assert.strictEqual(await presenter.locator('#presetsave, #presetname, #presetmore').count(), 0, 'a presenter cannot save, rename or delete a preset');
+    await presenter.waitForSelector('#nopresets:has-text("None yet. Set the controls as you like them, then save.")');     // saving a preset is the Operator's since D80
     assert.strictEqual(await post('/api/shaders/presets', { action: 'save', id: 'nxlx-tide.fs', name: 'Calm' }), 200);       // the owner saves one
     await presenter.waitForSelector('#presetrow [data-preset="Calm"]', { timeout: 20000 });
     {
@@ -2510,8 +2517,15 @@ function startServer() {
     await presenter.waitForSelector('.pads');
     await presenter.click('nav >> text=System');
     await presenter.waitForSelector('#sysindex');
-    assert.deepStrictEqual(await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent)),
-      ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
+    {     // an Operator's rows (D80): what a presenter had, the daily pages that were the owner's, and nothing system critical
+      const rows = await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent));
+      for (const name of ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'At power-up', 'Streams', 'Boxes in step', 'About and power']) {
+        assert(rows.includes(name), 'an operator sees ' + name + ': ' + rows.join(', '));
+      }
+      for (const name of ['Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'MIDI controller', 'DMX lighting desk', 'OSC']) {
+        assert(!rows.includes(name), 'an operator does not see ' + name + ': ' + rows.join(', '));
+      }
+    }
     assert.strictEqual(await presenter.locator('#notbuilt').count(), 0, 'a presenter gets no list of modules');
     // A presenter's People and codes (D48): the guest code and nothing else. The owner has a guest code and a
     // presenter code active; the presenter sees the first, is asked before replacing or ending it, and never sees

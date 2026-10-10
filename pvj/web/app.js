@@ -34,7 +34,25 @@
     for (var i = 2; i < arguments.length; i++) add(arguments[i]);
     return el;
   }
-  function can(role) { return !!S.device && RANK[S.device.role] >= RANK[role]; }
+  function can(role) { return role === 'op' ? canOp() : !!S.device && RANK[S.device.role] >= RANK[role]; }
+  // Who may do what (D80). The box says this device's reach in one word (GET /api/status, "reach": owner, operator,
+  // presenter, guest or watch); before the first status it is taken from the role. can('op') is what an Operator
+  // gained with D80; a "presenter" (a support session below full, a device paired from a controller before D80)
+  // keeps what a presenter had. The box decides all of it again (pvj/policy.py): this only leaves out what it refuses.
+  function reach() {
+    if (S.status && S.status.reach) return S.status.reach;
+    var d = S.device;
+    if (!d) return 'watch';
+    if (d.role === 'full') return 'owner';
+    if (d.role === 'live') return d.remote || d.via === 'controller' ? 'presenter' : 'operator';
+    return 'watch';
+  }
+  function canOp() { var r = reach(); return r === 'owner' || r === 'operator'; }
+  function canGuest() { return reach() === 'guest'; }
+  function guestsLocked() { return !!(S.status && S.status.guest_controls && S.status.guest_controls.locked); }
+  // What room.js, shaders.js and effects.js ask with can('full') is the Operator's since D80 (setting up the room,
+  // presets, sets, uploads); what stays the Owner's there (MIDI, DMX, switching a feature) they ask with owner().
+  function ctxCan(role) { return role === 'full' ? canOp() : can(role); }
   function base(path) { return (path || '').split('/').pop(); }
   function clock(sec) {
     if (typeof sec !== 'number' || sec < 0) return '--:--';
@@ -85,7 +103,7 @@
   function loadAll() {
     return Promise.all([
       api('GET', '/api/status'), api('GET', '/api/pads'), api('GET', '/api/media'),
-      api('GET', '/api/modules'), api('GET', '/api/theme'), can('full') ? api('GET', '/api/devices') : null
+      api('GET', '/api/modules'), api('GET', '/api/theme'), canOp() ? api('GET', '/api/devices') : null
     ]).then(function (r) {
       if (r[0].ok) { S.status = r[0].data; S.device = r[0].data.device; }
       if (r[1].ok) S.banks = r[1].data.banks;
@@ -99,10 +117,11 @@
     if (!S.device || document.visibilityState === 'hidden') return;
     api('GET', '/api/status').then(function (r) {
       if (r.ok) {
-        var was = !!(S.status && S.status.support && S.status.support.active);
+        var was = !!(S.status && S.status.support && S.status.support.active), reached = reach();
         S.status = r.data;
         var now = !!(r.data.support && r.data.support.active);
         if (was !== now) return render();          // a session started or ended: show or hide the banner
+        if (reached !== reach() && S.device && S.device.role === 'view') return render();      // guest controls were locked or opened
         var left = document.getElementById('supportleft');
         if (left && now) left.textContent = (S.device && S.device.remote ? 'You are connected as remote support' : 'Remote support session is open') + ' · ' + mins(r.data.support.seconds_left) + ' left';
         patchLive();
@@ -135,7 +154,7 @@
     var sc = S.scanned;
     if (sc && sc.kind === 'pin') sc.value.split('').forEach(function (c, j) { if (pins[j]) pins[j].value = c; });
     var code = h('input', { class: 'text-input mono', id: 'joincode', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6,
-      'aria-label': 'Guest or presenter code (6 digits)', placeholder: '6 digit code', value: sc && sc.kind === 'code' ? sc.value : '' });
+      'aria-label': 'Guest or operator code (6 digits)', placeholder: '6 digit code', value: sc && sc.kind === 'code' ? sc.value : '' });
     code.addEventListener('input', function () { code.value = code.value.replace(/\D/g, '').slice(0, 6); });
     var name = h('input', { class: 'text-input', value: sc && sc.kind === 'code' ? 'Phone' : 'My phone', 'aria-label': 'Name for this device', maxlength: 40 });
     function join(secret, button) {
@@ -170,7 +189,7 @@
         h('h1', { text: 'Connect to your box' }),
         h('p', { text: 'Scan the QR code on the screen, or type the code shown there. The box\'s owner can use the 4 digit PIN instead. No internet needed.' }),
         scannedNote,
-        h('div', { class: 'k', text: 'Guest or presenter code' }), code,
+        h('div', { class: 'k', text: 'Guest or operator code' }), code,
         h('label', { class: 'k', for: 'devname', text: 'Name for this device' }),
         (name.id = 'devname', name),
         codeButton,
@@ -222,7 +241,7 @@
     var timer = null;
     function refresh() { api('GET', '/api/support').then(function (r) { if (document.getElementById('supportcard') && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } draw(r.data); } }); }
     function post(path, b) { return act('POST', path, b, function (data) { say(''); draw(data); poll(); }); }
-    var ROLES = { full: 'check and change everything', live: 'play and mix only', view: 'watch only' };
+    var ROLES = { full: 'check and change everything', live: 'play and mix only, as an operator could before', view: 'watch only' };
     function draw(d) {
       clearTimeout(timer);
       body.textContent = '';
@@ -314,9 +333,10 @@
     var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file ? '' : ' empty'), 'aria-pressed': playing ? 'true' : 'false', 'data-pad': index },
       h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }), h('span', { class: 't', text: label }));
     b.addEventListener('click', function () {
-      if (S.editing && can('full')) return openSheet(bank, index);
-      if (!pad.file) return say(can('full') ? 'Empty pad. Tap "Edit pads" to assign a clip.' : 'Empty pad.', true);
-      if (!can('live')) return say('This device is view only.', true);
+      if (S.editing && canOp()) return openSheet(bank, index);
+      if (!pad.file) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip.' : 'Empty pad.', true);
+      if (canGuest()) return guestSend('/api/play', { pad: [bank, index] }, '', b);
+      if (!can('live')) return say(guestsLocked() ? LOCKED_TEXT : 'This device can watch only.', true);
       act('POST', '/api/play', { pad: [bank, index] }, function () { say(''); poll(); });
     });
     return b;
@@ -358,7 +378,7 @@
           onclick: function () { S.bank = i; render(); } });
       })),
       pads,
-      can('full') ? h('button', { class: 'btn small', text: S.editing ? 'Done editing' : 'Edit pads', onclick: function () { S.editing = !S.editing; render(); } }) : null,
+      canOp() ? h('button', { class: 'btn small', text: S.editing ? 'Done editing' : 'Edit pads', onclick: function () { S.editing = !S.editing; render(); } }) : null,
       h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg })),
       h('div', { class: 'grow' }),
       h('div', { class: 'row' },
@@ -422,10 +442,10 @@
   }
   // Shaders and Vibes lives in shaders.js; it borrows these helpers.
   function shaderCtx() {
-    return { h: h, api: api, act: act, can: can, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
+    return { h: h, api: api, act: act, can: ctxCan, owner: function () { return can('full'); }, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
       rowShown: function (id) { return sysRows().some(function (r) { return r.id === id && rowShown(r); }); },
       // a feature's one switch, used where its controls are shown on another page (MIDI and DMX on the Shaders page)
-      switchFeature: function (id, on) {
+      switchFeature: !can('full') ? null : function (id, on) {
         var row = sysRows().filter(function (r) { return r.id === id; })[0];
         S.sysFresh = false;
         return runSwitch([moduleStep(row.module)].concat(row.steps || []), on, row.offInner, null);
@@ -608,7 +628,7 @@
       body.appendChild(h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under System, Projection mapping (beta).' }));
       return card;
     }
-    var full = can('full'), d = null, canvas = null, drag = null, lastSend = 0, waiting = null;
+    var full = canOp(), d = null, canvas = null, drag = null, lastSend = 0, waiting = null;      // the mapping is the Operator's (D80)
     // Answers can arrive out of order (the first state read can land after a change already drawn): each request is
     // numbered, and an answer older than one already drawn is not drawn.
     var asked = 0, shown = 0;
@@ -928,7 +948,7 @@
       api('GET', '/api/media/import').then(function (r) { if (r.ok && r.data.active) watchImport(r.data); });
     }, 0);
     var info = S.mediaInfo || {};
-    var full = can('full');
+    var full = canOp();           // uploading, renaming and deleting clips are the Operator's (D80)
     var details = info.details || S.media.map(function (n) { return { name: n, size: 0 }; });
     var uploads = h('div', { class: 'list', id: 'uploads' });
     (S.uploadNotes || []).forEach(function (t) { uploads.appendChild(h('div', { class: 'item' }, h('div', { class: 'k', text: t }))); });
@@ -1038,7 +1058,7 @@
               h('span', { class: 'row' },
                 h('button', { class: 'btn small', text: 'Play', 'aria-label': 'Play ' + f.name + ' from USB', disabled: !can('live'),
                   onclick: function () { act('POST', '/api/play', { usb: drive.drive + '/' + f.name }, function () { say('Playing ' + f.name); poll(); }); } }),
-                can('full') ? h('button', { class: 'btn small', text: have ? 'Copy again' : 'Copy to the box', 'aria-label': 'Copy ' + f.name + ' to the box',
+                canOp() ? h('button', { class: 'btn small', text: have ? 'Copy again' : 'Copy to the box', 'aria-label': 'Copy ' + f.name + ' to the box',
                   onclick: function (e) {
                     function copy() {
                       S.importNote = '';
@@ -1076,7 +1096,7 @@
     return el;
   }
   function sysRows() {
-    var full = can('full'), remote = !!(S.device && S.device.remote);
+    var full = can('full'), op = canOp(), remote = !!(S.device && S.device.remote);
     var rows = [
       { id: 'health', group: 'top', name: 'Health', role: 'view', url: '/api/health',
         blurb: 'Whether the box is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
@@ -1088,7 +1108,7 @@
       { id: 'room', group: 'everyday', name: 'Room', role: 'live', module: 'room', url: '/api/room',
         blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off. It needs Projectors to be on. Not yet tried on a real projector.',
         body: function () { return window.pvjRoom ? [roomInPage()] : []; } },
-      { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'full', module: 'scheduler', url: '/api/schedule',
+      { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'op', module: 'scheduler', url: '/api/schedule',
         blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
         steps: [scheduleStep()], offInner: true,
         body: function () { return [scheduleCard()]; } },
@@ -1099,21 +1119,22 @@
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
         },
         body: function () { return window.pvjShaders ? [window.pvjShaders.page(shaderCtx())] : []; } },
-      // A presenter gets this row too (D48): the guest code, to make, show on the room screen and end, and nothing else.
+      // An Operator gets this row too (D48, D80): the guest code and the guest link, the guests to remove, the lock on
+      // guest controls, and nothing else.
       { id: 'access', group: 'everyday', name: 'People and codes', role: 'live', url: '/api/access', urlRole: 'live',
-        blurb: full ? 'The phones and tablets paired with this box, codes for guests and presenters, and the PIN.' :
-          'Let a guest watch from their own phone, with a code that stops working by itself.',
+        blurb: full ? 'The phones and tablets paired with this box, codes for guests and operators, and the PIN.' :
+          'Let a guest in from their own phone, with a code that stops working by itself.',
         body: accessCards },
       { id: 'sound', group: 'everyday', name: 'Sound', role: 'live', url: '/api/audio',
         blurb: 'Where the sound comes out, and a test tone to check left and right.',
-        body: function () { return [audioCard(full)]; } },
-      { id: 'autostart', group: 'show', name: 'At power-up', role: 'full', url: '/api/autostart',
+        body: function () { return [audioCard(op)]; } },
+      { id: 'autostart', group: 'show', name: 'At power-up', role: 'op', url: '/api/autostart',
         blurb: 'What the box plays by itself when it is powered up, with nobody at the panel.',
-        body: function () { return [autostartCard(full)]; } },
+        body: function () { return [autostartCard(op)]; } },
       { id: 'streams', group: 'show', name: 'Streams', role: 'live', module: 'inputs-srt', url: '/api/streams',
         blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
         body: function () { return [streamsCard(full)]; } },
-      { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',
+      { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'op', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
         body: function () { return [mapperCard()]; } },
@@ -1251,9 +1272,9 @@
       return n ? st('ready', plural(n, 'shader') + ' in the rotation') : st('setup', 'No shader is in the rotation');
     },
     access: function (d) {
-      var guests = d.codes.filter(function (c) { return c.role === 'view'; }).length, presenters = d.codes.length - guests;
+      var guests = d.codes.filter(function (c) { return c.role === 'view'; }).length, operators = d.codes.length - guests;
       if (!can('full')) return st(null, guests ? 'A guest code is active' : 'No guest code');
-      return st(null, [plural(S.devices.length, 'device'), guests ? plural(guests, 'guest code') : '', presenters ? plural(presenters, 'presenter code') : ''].filter(Boolean).join(', '));
+      return st(null, [plural(S.devices.length, 'device'), guests ? plural(guests, 'guest code') : '', operators ? plural(operators, 'operator code') : ''].filter(Boolean).join(', '));
     },
     sound: function (d) {
       var name = d.device === 'auto' ? d.automatic_is : d.device, dev = d.devices.filter(function (x) { return x.name === name; })[0];
@@ -1923,15 +1944,15 @@
     .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one']])
     .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['effect_control_' + n, 'Effect: control ' + n + ' of the one that is on (knob)']; }))
     // a pairing code on the box's own display (System > People and codes switches it on): held 3 to 10 seconds, then let go
-    .concat([['code_join', 'Show a one-time presenter code on the display (hold 3 seconds, let go)'],
-      ['code_owner', 'Show a one-time full access code on the display (hold 3 seconds, let go)']]);
+    .concat([['code_join', 'Show a one-time guest code on the display (hold 3 seconds, let go)'],
+      ['code_owner', 'Show a one-time owner code on the display (hold 3 seconds, let go)']]);
   // the actions that follow a fader or knob; a shader control does both (a knob sets it, a button steps or toggles it)
   var MIDI_LEVELS = ['opacity', 'size', 'position', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
   // What an action is called on the drawn layout of a controller: short, since a control is a small box.
   var MIDI_SHORT = { shader_speed: 'Shader speed', shader_prev: 'Previous shader', shader_next: 'Next shader', shader_hue: 'Shader colour turn',
     shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
     effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
-    code_join: 'Presenter code (hold)', code_owner: 'Full access code (hold)' };
+    code_join: 'Guest code (hold)', code_owner: 'Owner code (hold)' };
   function midiWhat(a) {
     if (!a) return 'Spare';
     if (a.action === 'none') return 'Nothing';
@@ -3568,7 +3589,7 @@
       'Open the panel on the tablet once; then TouchOSC on the same tablet may send, for the hours set here. Removing the device under People and codes, or logging out on it, stops it at once.'));
     if (d.paired_on) {
       var roles = h('select', { class: 'text-input', id: 'oscpairedroles', onchange: function () { set({ paired_roles: roles.value }); } },
-        [['full', 'Owner devices only'], ['live', 'Owner and presenter devices']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: d.paired_roles === o[0] }); }));
+        [['full', 'Owner devices only'], ['live', 'Owner and operator devices']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: d.paired_roles === o[0] }); }));
       var hours = h('select', { class: 'text-input', id: 'oscpairedhours', onchange: function () { set({ paired_hours: parseInt(hours.value, 10) }); } },
         [1, 3, 6, 12, 24, 48, 72].concat([1, 3, 6, 12, 24, 48, 72].indexOf(d.paired_hours) < 0 ? [d.paired_hours] : []).map(function (n) { return h('option', { value: String(n), text: plural(n, 'hour'), selected: d.paired_hours === n }); }));
       box.appendChild(labelled('Which paired devices count', roles));
@@ -3834,7 +3855,9 @@
   var accessForm = { pin: false, view: true, live: false, seconds: 300, minutes: 60 };  // survives redraws
   var accessTimer = null;
   // One vocabulary for the three kinds of access, wherever the panel names them.
-  function roleName(r) { return r === 'view' ? 'Guest (can watch)' : r === 'live' ? 'Presenter (can play and mix)' : 'Owner (everything)'; }
+  // The one place the three roles are named (D80). The stored ids stay view, live and full.
+  function roleName(r) { return r === 'view' ? 'Guest (can watch)' : r === 'live' ? 'Operator (runs the room)' : 'Owner (everything)'; }
+  var LOCKED_TEXT = 'The room is locked for a show: you can watch';
   var JOIN_MINUTES = [[15, '15 minutes'], [60, '1 hour'], [120, '2 hours']];       // how long a new code works; what a presenter may choose (auth.py)
   var PIN_SHOW_MS = 12000;         // how long the owner PIN stays on the screen after Show (D77)
   var SHOW_SECONDS = [[60, '1 minute'], [300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour']];
@@ -3878,7 +3901,7 @@
       live.appendChild(chooser('joinminutes', 'A new code works for', JOIN_MINUTES, accessForm.minutes, function (v) { accessForm.minutes = v; }));
       live.appendChild(h('div', { class: 'row wrap' },
         h('button', { class: 'btn on pri small', id: 'newguest', text: 'Guest code', onclick: function (e) { make('view', e.target); } }),
-        all ? h('button', { class: 'btn small', id: 'newpresenter', text: 'Presenter code', onclick: function (e) { make('live', e.target); } }) : null,
+        all ? h('button', { class: 'btn small', id: 'newpresenter', text: 'Operator code', onclick: function (e) { make('live', e.target); } }) : null,
         all ? h('button', { class: 'btn small', id: 'printsheet', text: 'Print access sheet', onclick: function () { printSheet(d); } }) : null));
       if (!codes.length) live.appendChild(h('div', { class: 'hint', id: 'nocodes', text: all ? 'No code is active.' : 'No guest code is active.' }));
       codes.forEach(function (c) {
@@ -3952,7 +3975,7 @@
   function controllerCodeCard() {
     var card = h('div', { class: 'card', id: 'ctlcodecard' }, h('h2', { text: 'A code from a controller' }));
     var body = h('div', { class: 'list', id: 'ctlcodebody' });
-    var KIND = { join: 'presenter', owner: 'full access' };
+    var KIND = { join: 'guest', owner: 'owner' };
     var HOW = { used: 'used', expired: 'ran out unused', 'pressed again': 'hidden at the controller', cancelled: 'ended from the panel',
       replaced: 'replaced by a newer one', 'switched off': 'ended when the switch went off', 'not shown': 'the display could not show it' };
     function send(change, said, sw) {
@@ -3976,17 +3999,17 @@
       body.appendChild(h('div', { class: 'hint', id: 'ctlcodehint', text: 'For when you stand at the box with a MIDI controller and no paired phone. ' +
         'Hold the pad or button that has this action for 3 seconds and let go: the box draws a one-time code on its own display for ' +
         plural(Math.round(c.seconds / 60), 'minute') + ', and one new device pairs with it. Anyone who can reach the controller can do this, so it is off until you switch it on here.' }));
-      body.appendChild(toggle('ctlcode-on', 'Presenter codes from a controller', c.enabled,
-        flip('enabled', 'Let a controller show a presenter code? Anyone who can hold a button on a controller plugged into the box can then pair a device that plays and mixes.',
+      body.appendChild(toggle('ctlcode-on', 'Guest codes from a controller', c.enabled,
+        flip('enabled', 'Let a controller show a guest code? Anyone who can hold a button on a controller plugged into the box can then pair a device as a guest.',
           'Switch it on', 'Codes from a controller are on.', 'Codes from a controller are off.'),
-        'Pairs one device as ' + roleName('live') + '. The MIDI action is "Show a one-time presenter code".'));
-      if (c.enabled) body.appendChild(toggle('ctlcode-owner', 'Full access codes too', c.owner,
-        flip('owner', 'Let a controller show a full access code? Anyone who can hold a button on a controller plugged into the box can then pair a device with everything allowed.',
-          'Allow full access codes', 'Full access codes from a controller are allowed.', 'Full access codes from a controller are off.'),
-        'Pairs one device as ' + roleName('full') + ', like the PIN. Leave it off unless you need it. The MIDI action is "Show a one-time full access code".'));
+        'Pairs one device as ' + roleName('view') + '. It goes by itself after a week unused. The MIDI action is "Show a one-time guest code".'));
+      if (c.enabled) body.appendChild(toggle('ctlcode-owner', 'Owner codes too', c.owner,
+        flip('owner', 'Let a controller show an owner code? Anyone who can hold a button on a controller plugged into the box can then pair a device with everything allowed.',
+          'Allow owner codes', 'Owner codes from a controller are allowed.', 'Owner codes from a controller are off.'),
+        'Pairs one device as ' + roleName('full') + ', like the PIN. Leave it off unless you need it. The MIDI action is "Show a one-time owner code".'));
       if (c.enabled && !c.midi_on) body.appendChild(h('div', { class: 'hint', id: 'ctlcodemidi', text: 'MIDI controllers are switched off (System, MIDI controller), so no control can ask for a code yet.' }));
       if (c.enabled) body.appendChild(h('div', { class: 'hint', id: 'ctlcodehow', text: 'Give a pad or button the action under System, MIDI controller: tap it on its controller\'s card, or use Learn. ' +
-        'On a Launchpad Mini the eighth pad of the top row shows a presenter code already. A second press takes the code off the display. At most ' + c.status.per_hour + ' codes an hour.' }));
+        'On a Launchpad Mini the eighth pad of the top row shows a guest code already. A second press takes the code off the display. At most ' + c.status.per_hour + ' codes an hour.' }));
       var s = c.status;
       if (s.active) {
         body.appendChild(h('div', { class: 'codeshown', id: 'ctlcodeshown', role: 'status' },
@@ -4009,7 +4032,7 @@
   function accessCards() {
     var full = can('full');
     var first = h('div', { class: 'card', id: 'accesscard' }, h('h2', { text: 'Let someone in' }), letSomeoneIn(full));
-    if (!full) return [first];
+    if (!full) return canOp() ? [first, guestDevicesCard(), guestLockCard()] : [first];
     var card = h('div', { class: 'card', id: 'devicescard' }, h('h2', { text: 'Paired devices' }));
     var devices = h('div', { class: 'list sp', id: 'devicelist' });
     var pinOut = h('div', { class: 'msg inmsg', id: 'pinout', role: 'status' });
@@ -4082,9 +4105,9 @@
     var linkQr = h('img', { class: 'qr', id: 'linkqr', alt: 'QR code for the link', hidden: true });
     var role = h('select', { class: 'text-input', id: 'linkrole' }, h('option', { value: 'view', text: roleName('view') }), h('option', { value: 'live', text: roleName('live') }));
     card.appendChild(devices);
-    card.appendChild(labelled('A link that does not expire', role, 'For someone who is here often. It works until you remove its device from the list above.'));
+    card.appendChild(labelled('A link that does not expire', role, 'For someone who is here often. It works until you remove its device from the list above. An operator runs the room day to day: clips, pads, scenes, the schedule, guests. Give that link only to someone you trust with the room.'));
     card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'makelink', text: 'Create link', onclick: function () {
-      act('POST', '/api/devices/invite', { name: role.value === 'view' ? 'Guest link' : 'Presenter link', role: role.value, origin: location.origin }, function (d) {
+      act('POST', '/api/devices/invite', { name: role.value === 'view' ? 'Guest link' : 'Operator link', role: role.value, origin: location.origin }, function (d) {
         link.value = location.origin + '/#token=' + d.token; link.hidden = false; link.select();
         if (d.qr_svg) { linkQr.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(d.qr_svg); linkQr.hidden = false; }
         api('GET', '/api/devices').then(function (r) { if (r.ok) { S.devices = r.data.devices; drawDevices(); } });
@@ -4108,7 +4131,140 @@
     } })));
     card.appendChild(h('div', { class: 'hint', text: 'After too many wrong PINs or codes the box stops taking them for a while. Unblock joining opens it again at once.' }));
     card.appendChild(pinOut);
-    return [first, controllerCodeCard(), card];
+    return [first, controllerCodeCard(), card, guestLockCard()];
+  }
+  // The lock on guest controls (D80): one state for the box, open unless an Operator or an Owner locks it. On People
+  // and codes and on the Room screen.
+  function guestLockCard() {
+    var locked = guestsLocked();
+    var card = h('div', { class: 'card', id: 'guestlockcard' }, h('h2', { text: 'Guest controls' }),
+      h('div', { class: 'state', id: 'guestlockline', text: locked ? 'Locked: guests can watch and nothing else.' :
+        'Open: guests can apply a scene, play a pad or a clip, choose a shader and switch the projectors.' }),
+      h('div', { class: 'row' }, h('button', { class: 'btn big grow' + (locked ? '' : ' on pri'), id: 'guestlock', 'aria-pressed': locked ? 'true' : 'false',
+        text: locked ? 'Open guest controls' : 'Lock guest controls for a show', onclick: function () {
+          act('POST', '/api/guests', { locked: !locked }, function (d) {
+            if (S.status) S.status.guest_controls = d.guest_controls;
+            say(d.guest_controls.locked ? 'Guest controls are locked.' : 'Guest controls are open.');
+            if (card.parentNode) card.parentNode.replaceChild(guestLockCard(), card);
+          });
+        } })),
+      h('div', { class: 'hint', text: 'One lock for every guest on every phone. It holds until someone opens it again, also after a restart.' }));
+    return card;
+  }
+  // An Operator's part of the paired devices (D80): the guests, to remove, and a guest link. The box gives him the
+  // guests only and refuses the removal of anyone else.
+  function guestDevicesCard() {
+    var list = h('div', { class: 'list sp', id: 'guestlist' });
+    var link = h('input', { class: 'text-input mono', id: 'guestlinkout', readonly: true, 'aria-label': 'Guest link', hidden: true });
+    var card = h('div', { class: 'card', id: 'guestdevices' }, h('h2', { text: 'Guests' }), list);
+    function draw() {
+      list.textContent = '';
+      var guests = S.devices.filter(function (d) { return d.role === 'view'; });
+      if (!guests.length) list.appendChild(h('div', { class: 'hint', id: 'noguests', text: 'No guest is paired.' }));
+      guests.forEach(function (d) {
+        list.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role),
+          primary: h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function (e) {
+            confirmRow('Remove ' + d.name + '? It needs a code or a link to get back in.', 'Remove', 'Keep it', function () {
+              act('POST', '/api/devices/revoke', { id: d.id }, function () {
+                S.devices = S.devices.filter(function (x) { return x.id !== d.id; });
+                say(d.name + ' is removed.');
+                draw();
+              });
+            }, e.currentTarget);
+          } }) }));
+      });
+    }
+    function load() { api('GET', '/api/devices').then(function (r) { if (r.ok && card.isConnected) { S.devices = r.data.devices; draw(); } }); }
+    card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'makeguestlink', text: 'Create a guest link', onclick: function () {
+      act('POST', '/api/devices/invite', { name: 'Guest link', role: 'view', origin: location.origin }, function (d) {
+        link.value = location.origin + '/#token=' + d.token; link.hidden = false; link.select();
+        load();
+      });
+    } })));
+    card.appendChild(h('div', { class: 'hint', text: 'A guest link does not expire: it works until you remove its device here. The devices of operators and owners are the owner\'s to remove.' }));
+    card.appendChild(link);
+    draw();
+    setTimeout(load, 0);
+    return card;
+  }
+  // What a Guest may do while guest controls are open (D80), in one card of its own on Live and on Room. The other
+  // controls of those pages stay as they are for a guest (disabled or left out), so nothing a guest can press is
+  // refused. Locked: one plain line.
+  var guestData = { at: 0, scenes: [], shaders: [] };
+  function guestSend(path, body, said, control) {
+    return api('POST', path, body).then(function (r) {
+      if (r.status === 409 && r.data.confirm && control && control.isConnected) {
+        // switching projectors off takes two requests from a guest: the box hands out a token for the second one
+        confirmRow('Switch the projectors off? They take a while to come back on.', 'Switch off', 'Leave them on', function () {
+          var again = { confirm: r.data.confirm.token };
+          Object.keys(body).forEach(function (k) { again[k] = body[k]; });
+          guestSend(path, again, said, null);
+        }, control);
+        return r;
+      }
+      if (!r.ok) say(r.data.error || 'Something went wrong', true);
+      else say(said || '');
+      poll();
+      return r;
+    });
+  }
+  function guestCard() {
+    var body = h('div', { class: 'list', id: 'guestbody' });
+    var card = h('div', { class: 'card', id: 'guestcard' }, h('h2', { text: 'Guest controls' }), body);
+    function btn(id, text, path, send, said) {
+      return h('button', { class: 'btn grow', id: id, text: text, onclick: function (e) { guestSend(path, send, said, e.currentTarget); } });
+    }
+    function draw() {
+      body.textContent = '';
+      body.appendChild(h('div', { class: 'hint', id: 'guesthint', text: 'You are a guest: you can choose what plays and switch the projectors. Whoever runs the room can lock this for a show.' }));
+      body.appendChild(h('div', { class: 'row wrap' }, btn('gprev', 'Previous', '/api/control', { action: 'prev' }), btn('gnext', 'Next', '/api/control', { action: 'next' }),
+        btn('gstop', 'Stop', '/api/control', { action: 'stop' }),
+        h('button', { class: 'btn grow', id: 'gblack', text: 'Blackout on or off', onclick: function (e) {
+          guestSend('/api/blackout', { on: !(S.status && S.status.mix && S.status.mix.blackout) }, '', e.currentTarget);
+        } })));
+      if (S.media.length) {
+        var clip = h('select', { class: 'text-input', id: 'gclip', 'aria-label': 'Clip to play' }, S.media.map(function (n) { return h('option', { value: n, text: n }); }));
+        body.appendChild(h('div', { class: 'row' }, clip, h('button', { class: 'btn', id: 'gplay', text: 'Play', onclick: function (e) { guestSend('/api/play', { file: clip.value }, 'Playing ' + clip.value, e.currentTarget); } })));
+      }
+      var scenes = guestData.scenes.filter(function (x) { return !(x.box && x.box.action === 'stream'); });
+      if (moduleOn('room') && scenes.length) {
+        body.appendChild(h('div', { class: 'k', text: 'Scenes' }));
+        body.appendChild(h('div', { class: 'row wrap', id: 'gscenes' }, scenes.map(function (x) {
+          return h('button', { class: 'btn grow', 'data-id': x.id, text: x.name, onclick: function (e) { guestSend('/api/room/scene', { scene: x.id }, x.name + ': started', e.currentTarget); } });
+        })));
+      }
+      if (moduleOn('shaders')) {
+        body.appendChild(h('div', { class: 'k', text: 'Shaders' }));
+        body.appendChild(h('div', { class: 'row wrap' }, btn('gvibes', 'Start ambience', '/api/vibes', { on: true }, 'Ambience started'),
+          btn('gvibesnext', 'Next', '/api/vibes', { next: true }), btn('gvibesstop', 'Stop ambience', '/api/vibes', { on: false }, 'Ambience stopped')));
+        var shaders = guestData.shaders.filter(function (x) { return !x.refused; });
+        if (shaders.length) {
+          var pick = h('select', { class: 'text-input', id: 'gshader', 'aria-label': 'Shader to show' }, shaders.map(function (x) { return h('option', { value: x.id, text: x.name || x.id }); }));
+          body.appendChild(h('div', { class: 'row' }, pick, h('button', { class: 'btn', id: 'gshow', text: 'Show', onclick: function (e) { guestSend('/api/shaders/play', { id: pick.value }, '', e.currentTarget); } })));
+        }
+      }
+      if (moduleOn('projector')) {
+        body.appendChild(h('div', { class: 'k', text: 'Projectors' }));
+        body.appendChild(h('div', { class: 'row' }, btn('gprojon', 'Projectors on', '/api/projector', { id: 'all', action: 'on' }, 'Switching the projectors on'),
+          btn('gprojoff', 'Projectors off', '/api/projector', { id: 'all', action: 'off' }, 'Switching the projectors off')));
+      }
+    }
+    draw();
+    if (Date.now() - guestData.at > 15000) {
+      guestData.at = Date.now();
+      Promise.all([moduleOn('room') ? api('GET', '/api/room') : null, moduleOn('shaders') ? api('GET', '/api/shaders') : null]).then(function (r) {
+        guestData.scenes = r[0] && r[0].ok ? r[0].data.scenes || [] : [];
+        guestData.shaders = r[1] && r[1].ok ? r[1].data.shaders || [] : [];
+        if (card.isConnected && !asking(card)) draw();
+      });
+    }
+    return card;
+  }
+  function guestNote() {
+    var d = S.device;
+    if (!d || d.role !== 'view' || d.remote || (S.tab !== 'live' && S.tab !== 'room')) return null;
+    if (canGuest()) return guestCard();
+    return guestsLocked() ? h('div', { class: 'card', id: 'guestlocked', role: 'status' }, h('div', { text: LOCKED_TEXT })) : null;
   }
   // A page to print and pin up in a studio: the panel address as a QR code (no access in it), plus the current guest
   // and presenter codes if any. Printed from the browser; nothing leaves the box.
@@ -4137,7 +4293,8 @@
   // The Room screen lives in room.js; it borrows these helpers.
   // letIn: the guest code part of People and codes, so staff on the Room screen need not leave it to let a guest in.
   function roomCtx() {
-    return { h: h, api: api, say: say, can: can, moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
+    return { h: h, api: api, say: say, can: ctxCan, owner: function () { return can('full'); }, guestOpen: canGuest, guestLock: canOp() ? guestLockCard : null,
+      moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
       confirmRow: confirmRow, switchFeature: shaderCtx().switchFeature, poll: poll,
       openShaders: function () { openSys('vibes', S.tab === 'system' ? null : S.tab); },
       openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
@@ -4168,7 +4325,9 @@
       return h('button', { class: 'btn' + (S.tab === t[0] ? ' on' : ''), text: t[1], 'aria-current': S.tab === t[0] ? 'page' : false,
         onclick: function () { goTab(t[0]); } });
     }));
-    app.appendChild(h('div', { class: 'shell' }, supportBanner(), screens[S.tab](), tabs));
+    var screen = screens[S.tab](), note = guestNote();
+    if (note) screen.insertBefore(note, screen.children[1] || null);       // under the page's title
+    app.appendChild(h('div', { class: 'shell' }, supportBanner(), screen, tabs));
     if (S.sheet) app.appendChild(sheet());
     patchLive();
   }
