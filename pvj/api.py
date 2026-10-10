@@ -1998,6 +1998,40 @@ class Api:
             self.on_pin(pin)
         return {"ok": True, "pin": pin}
 
+    def show_pin(self, body, device, client):
+        """The owner PIN for the full-access device that asks (D77). A POST, so it needs the request header like
+        every change and is never cached or in an address. Never for a support login, whatever its role (also in
+        support.REMOTE_DENY), never for a device removed meanwhile, at most auth.PIN_SHOWS times in a while, and
+        each answer leaves one journal line naming the device and never the PIN. {"known": false} when this run of
+        the panel has only the PIN's hash (it was started without making a new one); New PIN then makes one."""
+        if device.get("remote"):
+            raise ApiError(403, "the PIN is never shown through remote support")
+        if not self._still_paired(device):
+            raise ApiError(401, "this device is no longer paired")
+        try:
+            pin = self.auth.show_pin(device["id"])
+        except AuthError as e:
+            raise ApiError(429, str(e), e.retry_after)
+        self.log("pvj-web: owner PIN %s device %s (%s) from %s"
+                 % ("shown to" if pin else "asked for by", device["id"], device["name"], client)
+                 + ("" if pin else "; not known to this run of the panel"))
+        return {"known": pin is not None, "pin": pin}
+
+    def logout(self, body, device, client):
+        """Log this device out (D77): its token is removed from the box, and the server clears the cookie (server.py
+        does that for every 200 from here). Any role; a token that is already dead (removed by the owner, a second
+        press) gets the same answer, so the client ends up logged out either way. A support login forgets its own
+        token only (support.logout). The last full-access device may log out: the PIN screen then returns on the
+        box's display when nothing plays (pinscreen.auto_wanted), and sudo pvj-pin prints the PIN."""
+        if device is None:
+            return {"ok": True, "ended": False}
+        if device.get("remote"):
+            self.support.logout(device)
+        else:
+            self.auth.revoke(device["id"])
+            self.log("pvj-web: device %s (%s, %s) logged out from %s" % (device["id"], device["name"], device["role"], client))
+        return {"ok": True, "ended": True}
+
     def get_osc(self, body, device, client):
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
@@ -3039,6 +3073,8 @@ class Api:
             ("POST", "/api/devices/revoke"): ("full", self.revoke),
             ("POST", "/api/pin/rotate"): ("full", self.rotate_pin),
             ("POST", "/api/pin/unlock"): ("full", self.unlock_pairing),
+            ("POST", "/api/pin/show"): ("full", self.show_pin),           # the owner PIN, to the owner only (D77)
+            ("POST", "/api/logout"): (None, self.logout),                 # any role; None: a dead token is logged out already
             ("POST", "/api/player/restart"): ("full", self.stop_player),
         }
 

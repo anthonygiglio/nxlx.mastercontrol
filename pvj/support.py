@@ -16,7 +16,7 @@ How it works for the people involved:
   deadline (the helper enforces it), on Stop, on a restart or a reboot; support's logins end with it. They are never
   saved as devices.
 * Over the tunnel support cannot: change these settings, start, extend or restart a session, pair or invite devices,
-  make guest or presenter codes, change the PIN or lift its lockout, import settings, reset the box to factory
+  make guest or presenter codes, change, read or unlock the PIN, import settings, reset the box to factory
   settings, export settings with their passwords, or power the box off (a reboot is allowed; it ends the session).
 
 All of this is logged (the journal, and the last sessions in the panel).
@@ -48,7 +48,7 @@ DEFAULTS_FILE = "/etc/pvj/support.json"
 REMOTE_DENY = {
     ("POST", "/api/support/config"), ("POST", "/api/support/start"), ("POST", "/api/support/extend"),
     ("POST", "/api/pair"), ("POST", "/api/session"), ("POST", "/api/devices/invite"), ("POST", "/api/devices/revoke"),
-    ("POST", "/api/pin/rotate"), ("POST", "/api/pin/unlock"), ("POST", "/api/system/poweroff"), ("GET", "/api/qr.svg"),
+    ("POST", "/api/pin/rotate"), ("POST", "/api/pin/unlock"), ("POST", "/api/pin/show"), ("POST", "/api/system/poweroff"), ("GET", "/api/qr.svg"),
     # an import can switch on OSC, DMX or MIDI (new ways in); a reset removes every device (see boxcare.py)
     ("POST", "/api/system/settings/import"), ("POST", "/api/system/factory-reset"),
     # a theme is a file kept on the box: added and removed by someone at the studio (applying a look is not refused)
@@ -371,6 +371,21 @@ class SupportManager:
                 if hmac.compare_digest(k, h):
                     found = dev
             return dict(found) if found else None
+
+    def logout(self, device):
+        """Support's own Log out (D77): that one login's token is forgotten, as every login's is when the session
+        ends. The session itself goes on until Stop or its deadline, and the login still counts toward MAX_LOGINS,
+        so logging out buys no extra login. True if a token was forgotten."""
+        with self.lock:
+            s = self.session
+            if not s:
+                return False
+            gone = [k for k, dev in s["tokens"].items() if dev["id"] == device.get("id")]
+            for k in gone:
+                del s["tokens"][k]
+            if gone:
+                self.log("pvj-web: remote support %s logged out (the session goes on)" % device.get("id"))
+            return bool(gone)
 
     # -- what the panel shows -----------------------------------------------------------------------------------
     def banner(self):
