@@ -2808,6 +2808,25 @@ function startServer() {
       await page.click('.pad >> nth=0');
       await page.waitForFunction(() => /intro/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
       await page.waitForFunction(() => !document.querySelector('.pad.shader.on'));
+      // The two together (D73 and D74): with an effect on over the clip, the shader pad's tap brings its shader up
+      // under the effect. The pad is the one playing, Now playing names both, and the effect's strip still has Off.
+      {
+        assert.strictEqual(await post('/api/effects', { id: 'fx-wash.fs' }), 200);
+        await page.waitForFunction(() => /effect: Wash/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
+        await shaderPad.click();
+        await page.waitForFunction(() => /Shader: Aurora.*effect: Wash/.test(document.getElementById('np').textContent), null, { timeout: 20000 });
+        await page.waitForSelector('.pad.shader.on');
+        const both = (await get('/api/status')).player;
+        assert.deepStrictEqual([both.shader, both.effect, both.shader_refused], ['nxlx-aurora', 'fx-wash', undefined]);
+        assert.strictEqual(await page.locator('#livefxoff').count(), 1, 'Off is on the strip while the effect is on over the pad\'s shader');
+        assert.strictEqual(await page.locator('#padrefused').count(), 0, 'nothing is said under the pads: nothing was refused');
+        await fitsPhone('Live with a shader pad playing under an effect');
+        assert.strictEqual(await post('/api/effects', { off: true }), 200);
+        await page.waitForSelector('.pad.shader.on');                    // the effect off: the pad's shader plays on, and is still the one playing
+        await page.click('.pad >> nth=0');
+        await page.waitForFunction(() => /intro/.test(document.getElementById('np').textContent), null, { timeout: 15000 });
+        await page.waitForFunction(() => !document.querySelector('.pad.shader.on'));
+      }
       // A pad's shader that the box's graphics chip refused is said where the pads are: one line under them, and
       // the pad marked. (The box's answer is given a refusal here: the harness's player refuses nothing.)
       {

@@ -150,6 +150,32 @@ class PairCase(FxCase):
         self.fx.off()
         self.assertLess(differ(over, negative(self.still()))[1], 3.0)
 
+    def test_a_shader_pad_tapped_with_an_effect_on_comes_up_filtered_from_the_panel_and_from_a_controller(self):
+        """The two features together (D73 and D74), on the picture: a pad that holds a generator, tapped while an
+        effect is on over a clip. From a controller the tap is carried out by the generators' worker."""
+        self.fx.upload("invert.fs", INVERT)
+        self.engine.upload("gradient.fs", GRADIENT, replace=True)
+        self.assertTrue(self.engine.show("gradient.fs")["ok"])
+        plain = self.still()                                    # the generator alone, to judge by
+        self.api.set_pad({"bank": 0, "index": 0, "shader": "gradient.fs"}, None, "t")
+        for name, device in (("the panel", None), ("a controller", {"id": "midi"})):
+            self.play(CLIP)
+            self.put("invert.fs")
+            out = self.api.play({"pad": [0, 0]}, device, "t")
+            self.assertEqual(out["shader"], "gradient.fs", name)
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and not (self.engine.on_screen() or {}).get("id") == "gradient.fs":
+                time.sleep(0.05)
+            self.assertEqual((self.engine.on_screen() or {}).get("id"), "gradient.fs", name)
+            self.look()
+            self.assertEqual((self.kinds(), self.fx.state()["on"]["id"], self.fx.error), (["shader", "effect"], "invert.fs", None), name)
+            d = differ(self.still(), negative(plain))
+            self.say("a shader pad tapped from %s under an invert: against the generator's negative max %d mean %.2f", name, d[0], d[1])
+            self.assertLessEqual(d[0], 3, name)
+            st = self.api.status({}, None, "t")["player"]
+            self.assertEqual((st["shader"], st["effect"], st.get("shader_refused")), ("gradient", "invert", None), name)
+            self.fx.off()
+
     # -- sizes --
     def test_effect_detail_caps_the_effect_only_below_the_generators_lines(self):
         """The effect meets the generator's drawing (not the carrier's few pixels). At or above the generator's lines

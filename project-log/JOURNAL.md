@@ -4,6 +4,16 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-09, the night (#113 with the shaders on pads merged in: the two features used together for the first time)
+
+Branch `effect-over-shader`, pull request #113, a draft, now stacked on #114 (`shader-pads`, D73) as well as on #111, and to merge after both. `origin/shader-pads` at 8f54af2 was merged in, never rebased. **Nothing was run on hardware.**
+
+- **What conflicted:** `pvj/api.py` (the status for a shader), `pvj/shaderlive.py` (the worker: a new method each, and each branch's mark of the job in hand), `pvj/shaders.py` (`Engine.off`), `tests/test_transitions.py` (the stress test's table, set-up and actions), and the logs. Every one was two additions to one place; both stand. My row of the stress test's table is u now (D73 has r, s and t).
+- **After the merge, before any new test:** both branches' own test files, and the transitions, shaders, shader-engine, Vibes, MIDI, lights, controllers, lock and box-care suites: 768 tests, all passing. Nothing of either feature was broken by the other.
+- **Then the two together** (`tests/test_pads_and_effects.py`, nine tests; one more on the real mpv; a few lines of the browser test). D74 has what each found. In one line: nothing had to be changed. The one thing worth knowing is not a fault of the merge: a pad's shader that the GPU refuses over a clip stops the screen, as D73 says, and so takes an effect off with it.
+- **Honesty about the nine:** all passed at their first full run, which says little by itself, so each was made to fail by breaking the piece it stands on (eight breakages on the committed tree, each caught). Two of my first expectations were wrong and were corrected from what the code does, not the other way round: I had expected the effect to stay on over black after a refused pad's shader, and I had armed a refusal after the worker had already looked.
+- **Open:** the board's rows of both features; an independent read of the merged branch.
+
 ## 2026-10-09, late evening (the tenth read of #111: the rule against one strike had one strike in it)
 
 A re-check of the ninth read's answers by the second model found one high finding, in a rule the coordinator had asked for: "give up at once when a still took longer than the transition asked for". The box's default duration is one second and the limit for a slow still is one second, so at the default and at half a second (two of the panel's four choices) every slow still was again the last one for five minutes. The tests hid it: their helper raised the duration to two seconds. The Pi trial ran at two seconds, where the rule held.
