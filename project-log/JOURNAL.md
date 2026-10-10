@@ -4,6 +4,16 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-10, later (the review of #118: two findings and the lows, fixed on `osc-lockdown`)
+
+An independent review of #118 at `5e0c7a3` found two medium points and several low ones; all are answered, and master (#117, log out and the owner PIN) is merged in. Each fix has a test that failed when its code was broken on purpose after the commit (12 breakages, 12 caught). **Run on the development Mac; the browser test only in CI.**
+
+- **M1, the limit on wrong keys was a way to lock the tablet out.** Removed: nothing is refused by a sender's address for what it sent. Wrong keys are counted and shown per sender. Test: `KeyTest.test_a_flood_of_wrong_keys_never_holds_the_right_one_up`.
+- **M2, a device that reached the panel over IPv6 looked as if it counted.** `OscManager.status` names such addresses apart (`paired_v6`) and the page says to open the panel by the box's IPv4 address. Test: `ApiTest.test_a_device_that_reached_the_panel_over_ipv6_is_said_not_to_count`.
+- **Lows.** A key is never in a shown or logged address and a second `/k/` prefix is refused; every sender row says whether a paired panel device asked from there; showing or renewing the key is limited like the owner PIN and leaves a journal line without it; the key moved to `settings["osc_secret"]` (not `auth`, which a new PIN rewrites), proved against master's code, and a key under `osc` is moved without a schema bump.
+- **Log out** (#117) already stops an address at once through `auth.revoke`; one test added, and the three places that said the panel has no log out are corrected.
+- The entry below was written before this; where it says a flood "is compared 20 times" and that there is no log out, this entry is the present state.
+
 ## 2026-10-10 (OSC: three locks on who may send, D78; branch `osc-lockdown`)
 
 The owner asked to make the connection from TouchOSC to the box secure. Built as three locks on System > OSC, each off by default: a list of single devices, a paired device, a key in the address; plus the senders of the last ten minutes with "Allow this one" and the last 50 messages. The decision, the choices where the brief left one and the limits are in D78; the user's text is in `pvj/OSC.md` ("Who may send: three locks", "Setting up TouchOSC").

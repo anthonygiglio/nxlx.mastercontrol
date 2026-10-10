@@ -514,6 +514,8 @@ function startServer() {
     await page.waitForFunction((old) => { const t = document.getElementById('osckeyout').textContent; return /^\/k\/[0-9a-f]{20}$/.test(t) && t !== old; }, oscPrefix);
     await oscSend(oscPrefix + '/pvj/stop');                   // the old key stops at once
     await page.waitForSelector(`${oscRow} .warn:has-text("Refused: wrong key")`, { timeout: 15000 });
+    await page.waitForSelector(`${oscRow} .oscwrong:text-is("1 wrong key from this address.")`);
+    assert.strictEqual(await page.locator(`${oscRow} .oscnopanel`).count(), 0, 'this browser is a panel device at that address');
     await page.waitForFunction(() => document.getElementById('osckeyout').hidden && !document.getElementById('osckeyout').textContent, null, { timeout: 45000 });   // it hides itself
     // At 320 px with the longest addresses there are (IPv6, a full list, 64 character OSC addresses): nothing overruns.
     const oscLong = (n) => 'fd12:3456:789a:bcde:f012:3456:789a:' + (0xbc00 + n).toString(16);
@@ -522,9 +524,10 @@ function startServer() {
       const res = await route.fetch(), d = await res.json();
       d.only = Array.from({ length: 16 }, (_, n) => oscLong(n));
       d.paired_now = [oscLong(1), oscLong(2), oscLong(3)];
+      d.paired_v6 = [oscLong(5), oscLong(6)];
       d.refused = 1234567;
       d.senders = [{ address: oscLong(1), messages: 123456, refused: 0, last: '/pvj/' + 'x'.repeat(59), accepted: true, why: 'nothing to do (an unknown address, or a button release)', at: 1 },
-        { address: oscLong(40), messages: 0, refused: 98765, last: '', accepted: false, why: 'not in the list of devices that may send', at: 1 }];
+        { address: oscLong(40), messages: 0, refused: 98765, wrong_keys: 98765, panel: false, last: '', accepted: false, why: 'not in the list of devices that may send', at: 1 }];
       await route.fulfill({ response: res, json: d });
     };
     const oscWideLog = async (route) => route.fulfill({ json: { messages: [
@@ -536,6 +539,9 @@ function startServer() {
     await sys('OSC');
     await page.waitForFunction(() => document.querySelectorAll('#osconlylist .item').length === 16 && document.querySelectorAll('.oscsender').length === 2);
     await page.waitForSelector('#oscmessages .oscmsg:has-text("98765 times")');
+    assert(/reached the panel over IPv6 .*open the panel by the box's IPv4 address\.$/.test(await page.textContent('#oscpairednow')), 'an IPv6 panel device is said not to count');
+    assert.strictEqual(await page.textContent('.oscsender .oscwrong'), '98765 wrong keys from this address.');
+    assert.strictEqual(await page.textContent('.oscsender .oscnopanel'), 'No panel device here, check before allowing.');
     await page.click('#osckeyshow');
     await page.waitForFunction(() => /^\/k\/[0-9a-f]{20}$/.test(document.getElementById('osckeyout').textContent));
     await fitsOn(page, 'OSC at 320 px with IPv6 addresses');
