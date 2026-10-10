@@ -339,3 +339,15 @@ Vibes' guard was suspended while an effect was on, and a floor was added that ta
 
 - **A "leave" that only forgets in the browser is not a logout (2026-10-10).** "Leave this panel" cleared the device in the page and left the token good on the box for a year; the next visit with the same cookie was in again. Anything called leaving or logging out tells the box, and the box answers with the cookie expired; the page's own forgetting is the last step, not the whole of it.
 - **A half-done branch grows features nobody asked for (2026-10-10).** The cut-off WIP had a "Log out every device" button beside the two things the owner asked for. It was removed: it widened a security-sensitive change, and it did not do what it said (a support login was not ended). Read a WIP as a reviewer, against the owner's words, before finishing it.
+
+## One name outside a root's constraints voids the whole certificate (2026-10-10, D79)
+
+Signing a box's request with a root that permits `.local` names and private addresses, with the request's bare host name `nxlx-mastercontrol` still in it, gave a certificate that `openssl verify` refused outright ("permitted subtree violation"): a validator checks every name in the Subject Alternative Name against the constraints, and one bad name fails the chain, not just that name. So the tool leaves out what the constraints would refuse and says so, and the box never puts the bare host name or an IPv6 address into its request. Next time a certificate is "for the right name and still refused", read every name in it, not the one in the address bar.
+
+## A Secure cookie and a plain one need two names (2026-10-10, D79)
+
+A cookie is identified by name, domain and path, not by scheme. With one name, pairing over `https://` would replace the `http://` cookie, and pairing over `http://` afterwards would be silently refused by browsers that leave Secure cookies alone: the page would say "paired" and get 401 on every call. The secure connection therefore uses `__Host-pvj_token` and plain http keeps `pvj_token`; the server reads the secure name over TLS only. Tested with the standard library's client, not yet with a browser against two origins.
+
+## The last statement of app.js is pinned by a test (2026-10-10)
+
+`tests/test_page_files.py` asserts that `window.pvjApp = true;` is the very last statement of `app.js`, so the loader can tell a script that arrived from one that ran. Anything a browser test needs from inside the module goes on its own `window.` name before `boot()`, not on `pvjApp`.
