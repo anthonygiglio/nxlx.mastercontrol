@@ -3031,11 +3031,19 @@
     var plat = httpsPlatform(navigator.userAgent);
     var out = h('div', { class: 'msg inmsg', id: 'httpstrust', role: 'status', text: httpsForm.trust || '' });
     function probe() {
+      // The fetch below is a cross-origin one (http:// page, https:// box): the page's policy allows exactly that
+      // origin, and only while the box has a certificate that carries this host (pvj/server.py page_csp). In every
+      // other case the answer is known without asking, and asking would only trip the policy.
       if (d.secure) { httpsForm.trust = 'Yes: you are reading this over https://.'; return sayAt(out, httpsForm.trust); }
+      if (!d.https) { httpsForm.trust = 'No. The box has no certificate in use yet.'; return sayAt(out, httpsForm.trust, true); }
+      if (!(d.certificate && d.certificate.names_this_host)) {
+        httpsForm.trust = 'No. The certificate does not carry ' + (d.host || 'this address') + ', so no device trusts the box by it. Open the box as ' + (d.certificate ? d.certificate.names.join(' or ') : 'one of its names') + ' and check again there.';
+        return sayAt(out, httpsForm.trust, true);
+      }
       sayAt(out, 'Asking ' + d.https_address + '...');
       fetch(d.https_address + 'api/https/probe', { mode: 'no-cors', cache: 'no-store', credentials: 'omit' })
         .then(function () { httpsForm.trust = 'Yes. This device trusts the box. Open ' + d.https_address + ' and pair again there (it is a new address to the browser).'; sayAt(out, httpsForm.trust); },
-          function () { httpsForm.trust = 'No. ' + (d.https ? 'The root is not installed or not trusted yet on this device; follow the steps above.' : 'The box has no certificate in use yet.'); sayAt(out, httpsForm.trust, true); });
+          function () { httpsForm.trust = 'No. The root is not installed or not trusted yet on this device; follow the steps above.'; sayAt(out, httpsForm.trust, true); });
     }
     var rows = [h('div', { class: 'hint', text: 'Each of your own devices installs the root once and then trusts every box you sign. Guests do not do this; they stay on http://.' })];
     if (d.root) {
