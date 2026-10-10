@@ -224,6 +224,26 @@ L; ls /run/pvj
 
 Send back the output of `L` at every step, R0, and the output of R10. If any line differs from the table, stop and send it: do not "fix" an owner by hand.
 
+### OSC: who may send (D78)
+
+**Never run on a box or with a real TouchOSC.** Before: OSC is switched on (System > OSC), a tablet with TouchOSC is on the same network with the box's address and port 9876 as its target, a control in the layout sends `/pvj/stop`, a clip plays, and a paired full-access phone or laptop has System > OSC open. A second device that can send OSC (a laptop) helps for O3.
+
+| # | Do | See on System > OSC | See on the screen |
+| --- | --- | --- | --- |
+| O1 | With all three switches off, press the control on the tablet | The tablet's address under "Senders in the last ten minutes" with "Allow this one", and `/pvj/stop` under "Last messages" | The clip stops |
+| O2 | Switch "Only these devices may send" on. Play a clip, press the control | "Nobody may send yet"; the tablet's row says "Refused: not in the list of devices that may send" | The clip goes on playing |
+| O3 | Press "Allow this one" beside the tablet, press the control. If there is a second sender, send `/pvj/stop` from it too | The tablet is in the list and its row says the last one was `/pvj/stop`; the second sender is refused | The clip stops for the tablet only |
+| O4 | Press "Remove" beside the tablet's address, play a clip, press the control | Refused again, and the count of refused packets goes up | The clip goes on playing |
+| O5 | Switch the list off and "A sender must be a paired device" on. Press the control before the panel was ever opened on the tablet | "Refused: no paired device at this address" | The clip goes on playing |
+| O6 | Open the panel on the tablet (pair it if needed), go back to TouchOSC, press the control | "Counts now:" names the tablet's address; the message is let in | The clip stops |
+| O7 | Remove the tablet under System > People and codes, play a clip, press the control | Refused at once: "no paired device at this address" | The clip goes on playing |
+| O7b | Pair the tablet again, open the panel on it, press the control (it works); then About and power > Log out on the tablet, play a clip, press the control | Refused at once: "no paired device at this address" | The clip goes on playing |
+| O8 | Switch that off and "A key in the address" on. Press the control | "Refused: no key in the address" | The clip goes on playing |
+| O9 | Press "Show the key", put `/k/<key>` in front of the address in the layout, press the control. Wait 30 seconds | The message is let in, shown as `/pvj/stop` without the key; the key hides itself | The clip stops |
+| O10 | "Make a new key" (answer the question), play a clip, press the control with the old key in the layout | "Refused: wrong key" | The clip goes on playing |
+| O11 | On a presenter's and a guest's device, open System | No OSC page with lists or a key | Nothing |
+| O12 | Write down how the tablet's address looked in O1 and whether it changed during the test (a new address from the router) | | |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
