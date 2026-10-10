@@ -1530,9 +1530,35 @@ class Api:
         return {"ok": True, "pin": pin}
 
     def get_osc(self, body, device, client):
+        """Every paired device: whether OSC listens, and which layers are on. A full-access device also gets the list
+        of devices that may send and the senders seen lately. The key is in neither (osc_key)."""
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
-        return self.osc.status()
+        return self.osc.status(full=Auth.allows(device, "full"))
+
+    def osc_messages(self, body, device, client):
+        """Full access: the last messages (in memory only), newest first."""
+        if self.osc is None:
+            raise ApiError(404, "OSC is not available")
+        return {"messages": self.osc.watch.messages()}
+
+    def osc_key(self, body, device, client):
+        """Full access, never through the support tunnel: {} shows the key, {"new": true} makes a new one (the old
+        one stops working at once). It has its own route so that it is never part of what the page asks for by itself."""
+        if self.osc is None:
+            raise ApiError(404, "OSC is not available")
+        fresh = body.get("new", False)
+        if not isinstance(fresh, bool):
+            raise bad("new must be true or false")
+        key = osc_mod.layers(self.settings.data["osc"])["key"]
+        if fresh or not key:
+            key = self.osc.make_key()
+            self.settings.save()
+            try:
+                self.osc.apply()
+            except osc_mod.OscError as e:
+                raise ApiError(409, str(e))
+        return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/pvj/stop"}
 
     def set_osc(self, body, device, client):
         if self.osc is None:
@@ -1550,6 +1576,12 @@ class Api:
                 new["allow"] = osc_mod.validate_allow(body["allow"])
             except osc_mod.OscError as e:
                 raise bad(str(e))
+        try:                                  # the three layers (D78); the key itself is only ever made by the box
+            new.update(osc_mod.validate_layers(body, osc_mod.parse_networks(new["allow"])))
+        except osc_mod.OscError as e:
+            raise bad(str(e))
+        if new.get("key_on") and not osc_mod.valid_key(new.get("key")):
+            new["key"] = osc_mod.new_key()
         with self.settings.lock:
             self.settings.data["osc"] = new
         try:
@@ -1563,7 +1595,7 @@ class Api:
                 pass
             raise ApiError(409, str(e))
         self.settings.save()
-        return self.osc.status()
+        return self.osc.status(full=True)
 
     # --- a picture over the video ---------------------------------------------------
     def apply_overlay(self):
@@ -2461,6 +2493,8 @@ class Api:
             ("GET", "/api/theme"): ("view", self.get_theme),
             ("GET", "/api/osc"): ("view", self.get_osc),
             ("POST", "/api/osc"): ("full", self.set_osc),
+            ("GET", "/api/osc/messages"): ("full", self.osc_messages),
+            ("POST", "/api/osc/key"): ("full", self.osc_key),
             ("POST", "/api/play"): ("live", self.play),
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),

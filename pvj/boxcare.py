@@ -263,7 +263,11 @@ def check_osc(v, care):
     port = _obj(v).get("port")
     if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
         raise ValueError("port must be 1024 to 65535")
-    return {"enabled": _flag(v.get("enabled"), "enabled"), "port": port, "allow": osc_mod.validate_allow(v.get("allow", []))}
+    out = {"enabled": _flag(v.get("enabled"), "enabled"), "port": port, "allow": osc_mod.validate_allow(v.get("allow", []))}
+    # The three layers (D78), each checked like a request. The key is never read from a file: the box keeps its own
+    # (BoxCare._osc_layers), and an export never carries one.
+    out.update(osc_mod.validate_layers(v, osc_mod.parse_networks(out["allow"])))
+    return out
 
 
 def check_schedule(v, care):
@@ -579,6 +583,8 @@ class BoxCare:
         for name, _check in SECTIONS:
             if name in data:
                 out[name] = data[name]
+        if isinstance(out.get("osc"), dict):
+            out["osc"].pop("key", None)          # a secret of this box's network, like the PIN: never in a file (D78)
         out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
                                    "password": p.get("password", "") if passwords else ""},
                                   **{k: p[k] for k in ("details", "labels") if k in p})       # what it said it is; input labels
@@ -687,6 +693,22 @@ class BoxCare:
         if len(after) > themes_mod.MAX_ADDED:
             raise bad("themes: the file's themes and this box's own would be %d together, and %d is the most; remove some under Look first"
                       % (len(after), themes_mod.MAX_ADDED), 409)
+        return out
+
+    @staticmethod
+    def _osc_layers(incoming, mine):
+        """The OSC section of an import, for this box (D78): what the file says about the three layers is taken; what
+        it does not say (a file from an earlier version) stays as this box has it, so an old file cannot switch a
+        layer off; the key is always this box's own, and one is made if the file switches the layer on with none."""
+        out = dict(incoming)
+        for k in ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on"):
+            if k not in out and k in mine:
+                out[k] = copy.deepcopy(mine[k])
+        out.pop("key", None)
+        if osc_mod.valid_key(mine.get("key")):
+            out["key"] = mine["key"]
+        elif out.get("key_on"):
+            out["key"] = osc_mod.new_key()
         return out
 
     def _keep_secrets(self, clean, current):
@@ -802,6 +824,8 @@ class BoxCare:
                 raise bad("the file cannot be brought up to this version's settings: %s" % (e if isinstance(e, SettingsError) else type(e).__name__))
             new = copy.deepcopy(current)
             new.update({k: fresh[k] for k in clean})
+            if "osc" in clean:
+                new["osc"] = self._osc_layers(new["osc"], current.get("osc") or {})
             try:
                 backup = self._backup()
             except OSError as e:
@@ -1017,6 +1041,9 @@ class BoxCare:
                 except Exception:
                     pass
             pin = self._wipe_access()
+            api.auth.forget_address()                     # OSC (D78): no remembered address, sender or message is left
+            if api.osc:
+                api.osc.watch.clear()
             with api.support.lock:                        # one started between the first look and the wipe; none can be now
                 if api.support.session:
                     api.support._end("factory reset", tell_helper=True)
