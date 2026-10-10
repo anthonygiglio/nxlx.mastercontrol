@@ -131,7 +131,10 @@ input.seek { width: 100%; margin: 10px 0 4px; accent-color: var(--ac); height: 2
 .row.transport .btn { min-height: 44px; }
 
 /* Projection mapping editor: the display drawn small; touch drags a corner, never scrolls the page */
-canvas.mapcanvas { display: block; width: 100%; margin: 8px 0; border: 1px solid var(--ln); border-radius: 8px; touch-action: none; background: #111; }
+/* The display at its own aspect (--mapaspect, set by the script from the box's screen size), as wide as its card and
+   no taller than the room above the strip less the rows under it, so the whole display is in view while a corner is
+   dragged; narrower than the card it is centred. */
+canvas.mapcanvas { display: block; width: min(100%, calc((100dvh - var(--dock, 120px) - 340px) * var(--mapaspect, 1.7778))); max-width: 100%; margin: 8px auto; border: 1px solid var(--ln); border-radius: 8px; touch-action: none; background: #111; }
 canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 .row.nudge .btn { min-width: 44px; min-height: 44px; font-size: 18px; }
 .list .item.map-entry.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 8px; }
@@ -569,6 +572,20 @@ main.ws:focus, .deskcol:focus { outline: none; }
 #shaderslink { display: none; }
 .deskcol > .screen { max-width: 1100px; width: 100%; margin: 0 auto; padding-bottom: 24px; }
 .deskcol > .screen:has(#shaderpage) { max-width: 1600px; }
+/* The Mapping screen is a desk of its own (the owner, 2026-10-10): the whole width, the display's stage at the left and
+   the tools in a column of 360 px that scrolls by itself from 900 px of room; under that the tools follow the stage. */
+.deskcol > .screen[data-page="mapping"] { max-width: none; }
+.screen[data-page="mapping"] > .grid2 { grid-template-columns: minmax(0, 1fr); }
+.mapbody { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.mapbody > .card { min-width: 0; }
+.maptools .k:not(:first-child) { margin-top: 10px; }
+.maptools .list { gap: 6px; }
+.mapsurface { display: flex; flex-direction: column; gap: 8px; padding: 10px 0 0; border-top: 1px solid var(--ln); margin-top: 10px; }
+#maptest .hint.grow { flex: 1 1 160px; align-self: center; }
+@container ws (min-width: 900px) {
+  .mapbody { grid-template-columns: minmax(0, 1fr) 360px; }
+  .maptools { position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px) - 12px); overflow-y: auto; overscroll-behavior: contain; }
+}
 .libhead { justify-content: flex-end; }
 .wsdock { grid-area: dock; position: sticky; bottom: 0; z-index: 12; background: var(--bg); min-width: 0; }
 .wsdock .tabs { position: static; }

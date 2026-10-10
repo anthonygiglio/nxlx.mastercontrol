@@ -799,12 +799,12 @@
     return out;
   }
   function mapperCard() {
-    var body = h('div', { class: 'list', id: 'mapbody' }, h('div', { class: 'hint', text: 'Loading...' }));
-    var card = h('div', { class: 'card', id: 'mapcard' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }), body);
+    var body = h('div', { class: 'mapbody', id: 'mapbody' }, h('div', { class: 'card' }, h('div', { class: 'hint', text: 'Loading...' })));
+    var card = h('div', { class: 'mapdesk', id: 'mapcard' }, body);
     var mod = S.modules.filter(function (m) { return m.id === 'mapper'; })[0];
     if (!mod || !mod.enabled) {
       body.textContent = '';
-      body.appendChild(h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under Setup, Projection mapping (beta).' }));
+      body.appendChild(h('div', { class: 'card' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }), h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under Setup, Projection mapping (beta).' })));
       return card;
     }
     var full = can('full'), d = null, canvas = null, drag = null, lastSend = 0, waiting = null;
@@ -921,28 +921,39 @@
     // Every answer rebuilds the card, and one can arrive while a name is being typed or the canvas is being moved
     // with the arrow keys: the control in use keeps the cursor, and a field what was typed into it.
     function draw(data) { keepCursor(body, function () { build(data); }); }
+    // The screen as a desk (the owner, 2026-10-10: room to design the layout, and a place for what each surface
+    // will get later). The display is drawn at its own aspect, as large as the room above the strip allows, with
+    // what acts on the whole display under it: Mapping on, Edit on the display, Screen or Picture corners, Test
+    // pattern. The tools stand in a column beside it from 900 px of room (under it on a phone), which scrolls by
+    // itself: the surfaces, then the chosen surface's own panel (#mapsurface: its corners, name and grid; a source,
+    // a mask or an effect per surface would be rows of this panel, pvj/MAPPER.md), then the saved mappings. Every
+    // control keeps the id and the words it had; the inventory holds them.
     function build(data) {
       d = data;
       body.textContent = '';
       var st = d.status, s = selected();
       var words = { off: 'Mapping is off', building: 'Preparing the mapped picture...', on: 'Mapping is on', editing: 'Editing on the display', error: 'Problem: ' + st.message };
-      body.appendChild(h('div', { class: 'hint', id: 'mapstatus', text: (words[st.state] || st.state) + ' · screen ' + d.screen[0] + 'x' + d.screen[1] + ' · ' + d.surfaces.length + ' surface' + (d.surfaces.length === 1 ? '' : 's') }));
-      if (!full) { watch(); return; }
-      body.appendChild(h('div', { class: 'row' },
+      var stage = h('div', { class: 'card mapstage', id: 'mapstage' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }));
+      body.appendChild(stage);
+      stage.appendChild(h('div', { class: 'hint', id: 'mapstatus', text: (words[st.state] || st.state) + ' · screen ' + d.screen[0] + 'x' + d.screen[1] + ' · ' + d.surfaces.length + ' surface' + (d.surfaces.length === 1 ? '' : 's') }));
+      var testRow = h('div', { class: 'row', id: 'maptest' }, testPattern(), h('span', { class: 'hint grow', text: 'Colour bars in place of what plays, to line the projector up' }));
+      if (!full) { stage.appendChild(testRow); watch(); return; }
+      canvas = h('canvas', { class: 'mapcanvas', id: 'mapcanvas', tabindex: '0', 'aria-label': 'Mapping editor: drag a corner, or use the arrows beside it' });
+      canvas.style.setProperty('--mapaspect', String(d.screen[0] / Math.max(1, d.screen[1])));
+      stage.appendChild(canvas);
+      stage.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn grow' + (d.on ? ' on' : ''), id: 'mapon', 'aria-pressed': d.on ? 'true' : 'false', text: d.on ? 'Mapping on' : 'Mapping off',
           onclick: function () { send({ action: 'on', on: !d.on }); } }),
         h('button', { class: 'btn grow' + (d.edit.on ? ' on' : ''), id: 'mapedit', 'aria-pressed': d.edit.on ? 'true' : 'false', text: d.edit.on ? 'Editing on the display' : 'Edit on the display',
           onclick: function () { send({ action: 'edit', on: !d.edit.on }); } })));
-      body.appendChild(h('div', { class: 'row' }, [['quad', '+ Quad'], ['triangle', '+ Triangle'], ['grid', '+ Grid']].map(function (t) {
-        return h('button', { class: 'btn small grow', id: 'mapadd-' + t[0], text: t[1], disabled: d.surfaces.length >= d.limits.surfaces,
-          onclick: function () { send({ action: 'add', type: t[0] }); } });
-      })));
-      body.appendChild(h('div', { class: 'row' }, [['screen', 'Screen corners'], ['picture', 'Picture corners']].map(function (t) {
+      stage.appendChild(h('div', { class: 'row' }, [['screen', 'Screen corners'], ['picture', 'Picture corners']].map(function (t) {
         return h('button', { class: 'btn small grow' + (d.edit.target === t[0] ? ' on' : ''), id: 'maptarget-' + t[0], text: t[1], 'aria-pressed': d.edit.target === t[0] ? 'true' : 'false',
           onclick: function () { send({ action: 'edit', target: t[0] }); } });
       })));
-      canvas = h('canvas', { class: 'mapcanvas', id: 'mapcanvas', tabindex: '0', 'aria-label': 'Mapping editor: drag a corner, or use the arrows below' });
-      body.appendChild(canvas);
+      stage.appendChild(testRow);
+      stage.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture on Shape > Picture (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
+      var tools = h('div', { class: 'card maptools', id: 'maptools' });
+      body.appendChild(tools);
       canvas.addEventListener('pointerdown', function (e) {
         var pt = toModel(e), hit = nearest(pt);
         if (hit) {
@@ -968,43 +979,28 @@
         var k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
         if (k && selected()) { e.preventDefault(); nudge(k[0], k[1]); }
       });
+      // the canvas follows its room (a resize of the window, a column that comes or goes): drawn again at its new width
+      if (window.ResizeObserver) {
+        var painted = 0;
+        new ResizeObserver(function () {
+          if (!canvas.isConnected || canvas.clientWidth === painted) return;
+          painted = canvas.clientWidth; paint();
+        }).observe(canvas);
+      }
       function nudge(dx, dy) {
         var s1 = selected();
         if (!s1) return say('Add or choose a surface first.', true);
         send({ action: 'move', id: s1.id, target: d.edit.target, corner: mapUi.whole ? -1 : d.edit.corner, dx: dx * mapUi.step, dy: dy * mapUi.step });
       }
-      if (s) {
-        var n = corners(s, d.edit.target === 'picture').length;
-        body.appendChild(h('div', { class: 'hint', id: 'mapsel', text: 'Chosen: ' + s.name + (mapUi.whole ? ', the whole surface' : ', corner ' + (d.edit.corner + 1) + ' of ' + n) }));
-        body.appendChild(h('div', { class: 'row nudge' },
-          h('button', { class: 'btn small', id: 'mapleft', text: '←', 'aria-label': 'Move left', onclick: function () { nudge(-1, 0); } }),
-          h('button', { class: 'btn small', id: 'mapup', text: '↑', 'aria-label': 'Move up', onclick: function () { nudge(0, -1); } }),
-          h('button', { class: 'btn small', id: 'mapdown', text: '↓', 'aria-label': 'Move down', onclick: function () { nudge(0, 1); } }),
-          h('button', { class: 'btn small', id: 'mapright', text: '→', 'aria-label': 'Move right', onclick: function () { nudge(1, 0); } }),
-          h('select', { class: 'text-input', id: 'mapstep', 'aria-label': 'Step in pixels' }, [1, 10, 50].map(function (v) {
-            return h('option', { value: String(v), text: v + ' px', selected: v === mapUi.step });
-          }))));
-        body.lastChild.lastChild.addEventListener('change', function (e) { mapUi.step = +e.target.value; });
-        body.appendChild(h('div', { class: 'row' },
-          h('button', { class: 'btn small grow', id: 'mapnext', text: 'Next corner', disabled: mapUi.whole,
-            onclick: function () { send({ action: 'edit', corner: (d.edit.corner + 1) % n }); } }),
-          h('button', { class: 'btn small grow' + (mapUi.whole ? ' on' : ''), id: 'mapwhole', 'aria-pressed': mapUi.whole ? 'true' : 'false', text: 'Move the whole surface',
-            onclick: function () { mapUi.whole = !mapUi.whole; draw(d); } })));
-        var nm = h('input', { class: 'text-input', id: 'mapname', 'aria-label': 'Surface name', maxlength: 40, value: s.name });
-        body.appendChild(h('div', { class: 'row' }, nm, h('button', { class: 'btn small', id: 'maprename', text: 'Rename',
-          onclick: function () { send({ action: 'rename', id: s.id, name: nm.value.trim() }); } })));
-        if (s.type === 'grid') {
-          var sizes = [1, 2, 3, 4, 5, 6, 7, 8];
-          var cols = h('select', { class: 'text-input', id: 'mapcols', 'aria-label': 'Columns' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' columns', selected: v === s.cols }); }));
-          var rows = h('select', { class: 'text-input', id: 'maprows', 'aria-label': 'Rows' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' rows', selected: v === s.rows }); }));
-          body.appendChild(h('div', { class: 'row' }, cols, rows, h('button', { class: 'btn small', id: 'mapgrid', text: 'Set grid',
-            onclick: function () { send({ action: 'grid', id: s.id, cols: +cols.value, rows: +rows.value }); } })));
-          body.appendChild(h('div', { class: 'hint', text: 'Changing the grid size spreads the points evenly again.' }));
-        }
-      }
-      if (d.surfaces.length) body.appendChild(h('div', { class: 'hint', text: 'Surfaces (the first is on top)' }));
+      // the surfaces: add one, and the list (the first is on top)
+      tools.appendChild(h('div', { class: 'k', text: 'Surfaces' + (d.surfaces.length ? ' (the first is on top)' : '') }));
+      tools.appendChild(h('div', { class: 'row' }, [['quad', '+ Quad'], ['triangle', '+ Triangle'], ['grid', '+ Grid']].map(function (t) {
+        return h('button', { class: 'btn small grow', id: 'mapadd-' + t[0], text: t[1], disabled: d.surfaces.length >= d.limits.surfaces,
+          onclick: function () { send({ action: 'add', type: t[0] }); } });
+      })));
+      var list = h('div', { class: 'list', id: 'maplist' });
       d.surfaces.forEach(function (x, i) {
-        body.appendChild(h('div', { class: 'item map-entry' + (x.id === d.edit.selected ? ' on' : '') },
+        list.appendChild(h('div', { class: 'item map-entry' + (x.id === d.edit.selected ? ' on' : '') },
           h('button', { class: 'linkish', text: x.name + ' (' + x.type + (x.type === 'grid' ? ' ' + x.cols + 'x' + x.rows : '') + ')' + (x.on ? '' : ', hidden'), 'aria-label': 'Choose ' + x.name,
             onclick: function () { send({ action: 'edit', selected: x.id }); } }),
           h('span', { class: 'row' },
@@ -1013,10 +1009,47 @@
             h('button', { class: 'btn small', text: x.on ? 'Hide' : 'Show', 'aria-label': (x.on ? 'Hide ' : 'Show ') + x.name, onclick: function () { send({ action: 'show', id: x.id, on: !x.on }); } }),
             h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + x.name, onclick: function () { send({ action: 'remove', id: x.id }); } }))));
       });
-      body.appendChild(h('div', { class: 'hint', text: 'Saved mappings (' + d.sets.length + ' of ' + d.limits.sets + ')' }));
+      if (!d.surfaces.length) list.appendChild(h('div', { class: 'hint', text: 'No surface yet. Add one, then drag its corners on the display above.' }));
+      tools.appendChild(list);
+      // the chosen surface's own panel
+      if (s) {
+        var n = corners(s, d.edit.target === 'picture').length;
+        var panel = h('div', { class: 'mapsurface', id: 'mapsurface' },
+          h('div', { class: 'k', text: 'Chosen surface' }),
+          h('div', { class: 'hint', id: 'mapsel', text: 'Chosen: ' + s.name + (mapUi.whole ? ', the whole surface' : ', corner ' + (d.edit.corner + 1) + ' of ' + n) }));
+        var step = h('select', { class: 'text-input', id: 'mapstep', 'aria-label': 'Step in pixels' }, [1, 10, 50].map(function (v) {
+          return h('option', { value: String(v), text: v + ' px', selected: v === mapUi.step });
+        }));
+        step.addEventListener('change', function (e) { mapUi.step = +e.target.value; });
+        panel.appendChild(h('div', { class: 'row nudge' },
+          h('button', { class: 'btn small', id: 'mapleft', text: '←', 'aria-label': 'Move left', onclick: function () { nudge(-1, 0); } }),
+          h('button', { class: 'btn small', id: 'mapup', text: '↑', 'aria-label': 'Move up', onclick: function () { nudge(0, -1); } }),
+          h('button', { class: 'btn small', id: 'mapdown', text: '↓', 'aria-label': 'Move down', onclick: function () { nudge(0, 1); } }),
+          h('button', { class: 'btn small', id: 'mapright', text: '→', 'aria-label': 'Move right', onclick: function () { nudge(1, 0); } }),
+          step));
+        panel.appendChild(h('div', { class: 'row' },
+          h('button', { class: 'btn small grow', id: 'mapnext', text: 'Next corner', disabled: mapUi.whole,
+            onclick: function () { send({ action: 'edit', corner: (d.edit.corner + 1) % n }); } }),
+          h('button', { class: 'btn small grow' + (mapUi.whole ? ' on' : ''), id: 'mapwhole', 'aria-pressed': mapUi.whole ? 'true' : 'false', text: 'Move the whole surface',
+            onclick: function () { mapUi.whole = !mapUi.whole; draw(d); } })));
+        var nm = h('input', { class: 'text-input', id: 'mapname', 'aria-label': 'Surface name', maxlength: 40, value: s.name });
+        panel.appendChild(h('div', { class: 'row' }, nm, h('button', { class: 'btn small', id: 'maprename', text: 'Rename',
+          onclick: function () { send({ action: 'rename', id: s.id, name: nm.value.trim() }); } })));
+        if (s.type === 'grid') {
+          var sizes = [1, 2, 3, 4, 5, 6, 7, 8];
+          var cols = h('select', { class: 'text-input', id: 'mapcols', 'aria-label': 'Columns' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' columns', selected: v === s.cols }); }));
+          var rows = h('select', { class: 'text-input', id: 'maprows', 'aria-label': 'Rows' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' rows', selected: v === s.rows }); }));
+          panel.appendChild(h('div', { class: 'row' }, cols, rows, h('button', { class: 'btn small', id: 'mapgrid', text: 'Set grid',
+            onclick: function () { send({ action: 'grid', id: s.id, cols: +cols.value, rows: +rows.value }); } })));
+          panel.appendChild(h('div', { class: 'hint', text: 'Changing the grid size spreads the points evenly again.' }));
+        }
+        tools.appendChild(panel);
+      }
+      // the saved mappings
+      tools.appendChild(h('div', { class: 'k', text: 'Saved mappings (' + d.sets.length + ' of ' + d.limits.sets + ')' }));
       if (d.sets.length) {
         var pick = h('select', { class: 'text-input', id: 'mapsets', 'aria-label': 'Saved mapping' }, d.sets.map(function (n) { return h('option', { value: n, text: n }); }));
-        body.appendChild(h('div', { class: 'row' }, pick,
+        tools.appendChild(h('div', { class: 'row' }, pick,
           h('button', { class: 'btn small', id: 'mapload', text: 'Load', onclick: function () { send({ action: 'load', name: pick.value }); } }),
           h('button', { class: 'btn small', id: 'mapdelete', text: 'Delete', onclick: function () { send({ action: 'delete', name: pick.value }); } })));
       }
@@ -1026,16 +1059,15 @@
       // Safari) showed the saved name again while a second Save would have sent an empty one.
       var setName = h('input', { class: 'text-input', id: 'mapsetname', 'aria-label': 'Name for this mapping', placeholder: 'Name, e.g. Main stage', maxlength: 40, value: mapUi.name, 'data-kept': 'card' });
       setName.addEventListener('input', function () { mapUi.name = setName.value; });
-      body.appendChild(h('div', { class: 'row' }, setName, h('button', { class: 'btn small', id: 'mapsave', text: 'Save',
+      tools.appendChild(h('div', { class: 'row' }, setName, h('button', { class: 'btn small', id: 'mapsave', text: 'Save',
         onclick: function () { send({ action: 'save', name: mapUi.name.trim() }, function () { mapUi.name = ''; }); } })));
-      body.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture above (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
       if (body.isConnected) paint();     // at once, so the canvas has its height and nothing below it jumps for a frame under a finger
       requestAnimationFrame(paint);
       watch();
     }
     mapApi('GET').then(function (r) {
       if (!document.getElementById('mapcard') || r.stale) return;
-      if (r.ok) draw(r.data); else { body.textContent = ''; body.appendChild(h('div', { class: 'hint', text: r.data.error || 'Not available' })); }
+      if (r.ok) draw(r.data); else { body.textContent = ''; body.appendChild(h('div', { class: 'card' }, h('div', { class: 'hint', text: r.data.error || 'Not available' }))); }
     });
     return card;
   }
@@ -1347,8 +1379,8 @@
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'full', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
-        plain: function () { return [mapperCard(), testCard()]; },         // a presenter had the card on Mix, without the page
-        body: function () { return [mapperCard(), testCard()]; } },
+        plain: function () { return [mapperCard()]; },         // a presenter had the card on Mix, without the page; Test pattern is in it
+        body: function () { return [mapperCard()]; } },
       { id: 'sync', group: 'show', name: 'Boxes in step', role: 'live', module: 'wall', url: '/api/sync',
         blurb: 'Several boxes play together: one server leads and the clients follow its clip, position, pause and blackout. Each box can also show one tile of a video wall.',
         confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other boxes stop following.' : null); }); },
