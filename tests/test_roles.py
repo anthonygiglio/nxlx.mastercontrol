@@ -104,7 +104,7 @@ ROWS = {
     ("POST", "/api/access/cancel"): STUDIO("live"),
     ("POST", "/api/access/screen"): STUDIO("live"),
     ("GET", "/api/qr.svg"): STUDIO("live"),
-    ("POST", "/api/guests"): KINDS["op"],
+    ("POST", "/api/guests"): STUDIO("op"),
     ("POST", "/api/media/upload"): KINDS["op"],
     ("POST", "/api/media/import"): KINDS["op"],
     ("POST", "/api/media/import/cancel"): KINDS["op"],
@@ -444,6 +444,7 @@ class LockTest(RolesBase):
         self.assertTrue(self.api.mix["blackout"])
         self.assertEqual(self.h("GET", "/api/status", device=self.guest)[0], 200)        # he still watches
         self.lock(False)
+        self.later()                                 # past the guests' cooldown on blackout
         self.assertEqual(self.h("POST", "/api/blackout", {"on": False}, self.guest)[0], 200)
 
     def test_it_is_kept_across_a_restart_and_a_damaged_value_means_locked(self):
@@ -614,25 +615,25 @@ class PowerOffTest(RolesBase):
 
 class GuestLimitTest(RolesBase):
     def test_one_guest_and_all_guests_together_are_limited_and_others_are_not(self):
-        body = {"on": True}
+        body = {"action": "stop"}                # not one of the cooled routes (policy.COOLED)
         for _ in range(policy.GUEST_ACTIONS):
-            self.assertEqual(self.h("POST", "/api/blackout", body, self.guest)[0], 200)
-        st, out = self.h("POST", "/api/blackout", body, self.guest)
+            self.assertEqual(self.h("POST", "/api/control", body, self.guest)[0], 200)
+        st, out = self.h("POST", "/api/control", body, self.guest)
         self.assertEqual(st, 429, out)
         self.assertGreaterEqual(out["retry_after"], 1)
         self.assertEqual(self.h("GET", "/api/status", device=self.guest)[0], 200)            # watching is not an action
-        self.assertEqual(self.h("POST", "/api/blackout", body, self.operator)[0], 200)        # an operator is never held up by guests
+        self.assertEqual(self.h("POST", "/api/control", body, self.operator)[0], 200)        # an operator is never held up by guests
         self.later()
-        self.assertEqual(self.h("POST", "/api/blackout", body, self.guest)[0], 200)
+        self.assertEqual(self.h("POST", "/api/control", body, self.guest)[0], 200)
         # the box: many guests, each under his own limit
         self.later()
         guests = [self.auth.invite("g%d" % i, "view")[1] for i in range(policy.BOX_ACTIONS // 5 + 1)]
         done = 0
         for g in guests:
             for _ in range(5):
-                done += self.h("POST", "/api/blackout", body, g)[0] == 200
+                done += self.h("POST", "/api/control", body, g)[0] == 200
         self.assertEqual(done, policy.BOX_ACTIONS)
-        self.assertEqual(self.h("POST", "/api/blackout", body, self.operator)[0], 200)
+        self.assertEqual(self.h("POST", "/api/control", body, self.operator)[0], 200)
 
     def test_what_saves_in_the_modules_behind_the_guest_routes_is_known(self):
         """The rig above cannot run a shader, an effect or a projector to the end, so this is read from the source:
@@ -835,6 +836,12 @@ class AttackTest(RolesBase):
         table[("POST", "/api/room/scene")] = ("live", lambda b, d, c: done.append(self.api.room._pick(self.api.room.config()["scenes"], b, "scene", "scene")["id"]) or {})
         self.api.routes = lambda: table
         g = self.guest
+        real_h = self.h
+
+        def h(*a, **kw):                             # each try on its own: this is not about the limits
+            self.later()
+            return real_h(*a, **kw)
+        self.h = h
         self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE, "number": 2}, g)[0], 200)        # 2 is the stream scene
         self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE, "name": "Good night"}, g)[0], 200)
         self.assertEqual(done, [SCENE, SCENE])
@@ -845,8 +852,8 @@ class AttackTest(RolesBase):
         self.assertEqual(self.h("POST", "/api/room/scene", {"scene": ["x"], "name": "Show"}, g)[0], 404)      # as for anyone
         self.assertEqual(done, [SCENE, SCENE])
         # the confirm of one way of naming the scene is not the confirm of another
-        token = self.h("POST", "/api/room/scene", {"scene": OFF_SCENE}, g)[1]["confirm"]["token"]
-        self.assertEqual(self.h("POST", "/api/room/scene", {"name": "Good night", "confirm": token}, g)[0], 409)
+        token = real_h("POST", "/api/room/scene", {"scene": OFF_SCENE}, g)[1]["confirm"]["token"]
+        self.assertEqual(real_h("POST", "/api/room/scene", {"name": "Good night", "confirm": token}, g)[0], 409)
         self.assertEqual(done, [SCENE, SCENE])
 
     def test_a_scene_an_operator_edits_between_a_guests_two_taps(self):
@@ -950,6 +957,121 @@ class AttackTest(RolesBase):
             for t in threads:
                 t.join(5)
         self.assertEqual(bad, [])
+
+
+class ReviewTest(RolesBase):
+    """The Lows of the independent review of #120 at 571d2ac, each seen to fail before its fix."""
+    def test_a_switch_off_that_did_not_happen_is_not_counted_and_not_logged(self):
+        """No projector is added on this rig, so the handler answers 404: nothing was switched off. The journal does
+        not say it was, and the guest's one switch-off in five minutes is not spent."""
+        path, body = "/api/projector", {"id": "all", "action": "off"}
+        for _ in range(3):
+            self.later()
+            st, out = self.h("POST", path, body, self.guest)
+            self.assertEqual(st, 409, out)
+            self.assertEqual(self.h("POST", path, dict(body, confirm=out["confirm"]["token"]), self.guest)[0], 404)
+        self.assertEqual([line for line in self.lines if "guest " in line and "/api/projector" in line], [])
+        self.assertFalse(any(self.api.guests._offs.values()), self.api.guests._offs)
+        # and one that failed with something other than an API error is given back too
+        table = dict(self.api.routes())
+
+        def broken(b, d, c):
+            raise RuntimeError("boom")
+        table[("POST", path)] = ("live", broken)
+        self.api.routes = lambda: table
+        self.later()
+        token = self.h("POST", path, body, self.guest)[1]["confirm"]["token"]
+        with self.assertRaises(RuntimeError):
+            self.h("POST", path, dict(body, confirm=token), self.guest)
+        self.assertFalse(any(self.api.guests._offs.values()))
+
+    def test_guests_cannot_flash_the_room(self):
+        """Play, blackout and a scene: one of them for all guests together in policy.COOL_SECONDS. An Operator and an
+        Owner are never slowed by it, a request that failed does not start it, and Next, Stop and the rest are not in it."""
+        other = self.auth.invite("g2", "view")[1]
+        cooled = (("/api/blackout", {"on": True}), ("/api/play", {"file": "a.mp4"}), ("/api/room/scene", {"scene": SCENE}))
+        self.assertEqual(sorted(("POST", p) for p, _b in cooled), sorted(policy.COOLED))
+        for n, (path, body) in enumerate(cooled):
+            self.later()
+            self.assertEqual(self.h("POST", path, body, self.guest)[0], 200, path)
+            for who in (self.guest, other):
+                for again, send in cooled:
+                    st, out = self.h("POST", again, send, who)
+                    self.assertEqual(st, 429, "%s after %s: %s" % (again, path, out))
+                    self.assertGreaterEqual(out["retry_after"], 1)
+            self.assertEqual(self.h("POST", "/api/control", {"action": "stop"}, other)[0], 200)      # not one of the three
+            for dev in (self.operator, self.owner):
+                self.assertEqual(self.h("POST", path, body, dev)[0], 200, path)
+            self.gclock.t += policy.COOL_SECONDS
+            self.assertEqual(self.h("POST", path, body, other)[0], 200, path)
+        self.later()
+        self.assertEqual(self.h("POST", "/api/play", {"file": "missing.mp4"}, self.guest)[0], 404)
+        self.assertEqual(self.h("POST", "/api/blackout", {"on": False}, self.guest)[0], 200)
+
+    def test_the_lock_is_never_changed_through_the_support_tunnel(self):
+        self.assertIn(("POST", "/api/guests"), sp.REMOTE_DENY)
+        self.ready()
+        for role in ("live", "full"):
+            code = self.start(role=role)[1]["code"]
+            dev = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
+            for locked in (True, False):
+                self.assertEqual(self.h("POST", "/api/guests", {"locked": locked}, dev, TUNNEL)[0], 403, role)
+            self.h("POST", "/api/support/stop", device=self.owner)
+        self.assertFalse(self.api.guests.locked())
+        self.assertEqual(self.h("POST", "/api/guests", {"locked": True}, self.owner)[0], 200)      # at the studio, as before
+
+    def test_every_api_path_the_server_names_is_in_the_route_table_or_in_the_list_of_its_own(self):
+        """The gate is asked by `_who` for the paths server.py answers itself; a new branch there that forgets `_who`
+        would be a path with no check. Every "/api/..." in its source must be a route (answered by Api.handle, which is
+        the gate) or a key of policy.OUTSIDE (and then `_who` is asked for it: see the test of the table)."""
+        known = {p for _m, p in self.api.routes()} | {p for _m, p in policy.OUTSIDE}
+        named = set(re.findall(r'"(/api/[^"]+)"', inspect.getsource(server)))
+        self.assertGreaterEqual(len(named), 9)
+        self.assertEqual(sorted(named - known), [])
+        for path in sorted(p for _m, p in policy.OUTSIDE):
+            self.assertIn(path, named)
+
+    def test_a_refused_form_counts_as_an_action(self):
+        for _ in range(policy.GUEST_ACTIONS):
+            self.assertEqual(self.h("POST", "/api/control", {"action": "seek", "value": 5}, self.guest)[0], 403)
+        st, out = self.h("POST", "/api/control", {"action": "stop"}, self.guest)
+        self.assertEqual(st, 429, out)
+        self.later()
+        for _ in range(policy.GUEST_ACTIONS):                                   # a scene that is not there, asked for again and again
+            self.assertEqual(self.h("POST", "/api/room/scene", {"name": "nope"}, self.guest)[0], 404)
+        self.assertEqual(self.h("POST", "/api/room/scene", {"name": "nope"}, self.guest)[0], 429)
+        self.assertEqual(self.h("POST", "/api/control", {"action": "stop"}, self.operator)[0], 200)
+
+    def test_a_device_that_went_quiet_leaves_nothing_in_the_counters(self):
+        controls = self.api.guests
+        guests = [self.auth.invite("g%d" % i, "view")[1] for i in range(5)]
+        for g in guests:
+            self.assertEqual(self.h("POST", "/api/control", {"action": "stop"}, g)[0], 200)
+        self.assertEqual(len(controls._acts), 6)
+        self.later()
+        self.assertEqual(self.h("POST", "/api/control", {"action": "stop"}, self.guest)[0], 200)
+        self.assertEqual(sorted(controls._acts), sorted(["*", self.guest["id"]]))
+        self.assertFalse(any(not times for times in list(controls._acts.values()) + list(controls._offs.values())))
+
+    def test_head_and_the_servers_own_paths_over_http(self):
+        op = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=self.full)[1]["token"]
+        for path in ("/api/status", "/api/devices", "/api/preview.jpg", "/api/qr.svg?for=panel", "/api/system/diagnostics"):
+            self.assertEqual(self.call("HEAD", path)[0], 401, path)
+        self.assertEqual(self.call("HEAD", "/api/status", token=self.guest_token)[0], 200)
+        for path in ("/api/devices", "/api/qr.svg?for=panel", "/api/system/diagnostics", "/api/network"):
+            self.assertEqual(self.call("HEAD", path, token=self.guest_token)[0], 403, path)
+        for path in ("/api/system/diagnostics", "/api/network"):
+            self.assertEqual(self.call("HEAD", path, token=op)[0], 403, path)
+        # a guest, with guest controls open, on the paths the server answers itself
+        octet = {"Content-Type": "application/octet-stream"}
+        self.assertEqual(self.call("GET", "/api/qr.svg?for=panel", token=self.guest_token)[0], 403)
+        self.assertEqual(self.call("GET", "/api/qr.svg?for=view", token=self.guest_token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/media/upload?name=g.mp4", raw=b"0123", headers=octet, token=self.guest_token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/system/update/upload?name=u.pvjupdate", raw=b"0123", headers=octet, token=self.guest_token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/system/settings/import?confirm=import", raw=b"{}", token=self.guest_token)[0], 403)
+        self.api.preview_jpeg = lambda device: b"jpeg"          # the rig's player takes no snapshot
+        self.assertEqual(self.call("GET", "/api/preview.jpg", token=self.guest_token)[0], 200)
+        self.assertFalse(os.path.exists(os.path.join(self.media, "g.mp4")))
 
 
 class UploadTest(RolesBase):

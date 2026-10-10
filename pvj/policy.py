@@ -54,6 +54,7 @@ LEGACY_LIVE = frozenset(
 GUEST_ACTIONS, GUEST_WINDOW = 10, 10.0          # one guest device: this many actions in this many seconds
 BOX_ACTIONS, BOX_WINDOW = 30, 10.0              # all guests together
 OFF_DEVICE, OFF_BOX, OFF_WINDOW = 1, 2, 300.0   # power-offs carried out: per guest device, for the box, in seconds
+COOL_SECONDS = 2.0                              # play, blackout and a scene: one for all guests together in this long
 CONFIRM_SECONDS = 30                            # a power-off's second request must come within this
 MAX_CONFIRMS = 64                               # waiting confirms kept in memory, oldest dropped
 LOCKED_TEXT = "The room is locked for a show: you can watch"
@@ -158,6 +159,12 @@ GUEST = {
 }
 
 
+# What the room sees change at once and what a guest could flash it with: one of these for all guests together in
+# COOL_SECONDS (two seconds: slower than any flicker that harms, and still one tap after another for a person). The
+# Operator and the Owner never pass through here.
+COOLED = frozenset([("POST", "/api/play"), ("POST", "/api/blackout"), ("POST", "/api/room/scene")])
+
+
 def is_controller(device):
     return bool(device) and device.get("id") in CONTROLLERS
 
@@ -208,6 +215,7 @@ class GuestControls:
         self._acts = {}             # device id -> [times], and "*" for the box
         self._offs = {}             # the same for power-offs carried out
         self._confirms = {}         # token -> (device id, request key, expires)
+        self._cooled = None         # when a guest last played, blacked out or applied a scene (COOLED)
 
     # -- the lock --
     def locked(self):
@@ -241,14 +249,22 @@ class GuestControls:
 
     # -- one guest request --
     @staticmethod
-    def _recent(times, now, window):
-        return [t for t in times if now - t < window]
+    def _prune(store, now, window):
+        """Forget what is older than the window, and every device that has nothing left (so a device that went quiet
+        or was removed leaves no entry behind)."""
+        for key in list(store):
+            times = [t for t in store[key] if now - t < window]
+            if times:
+                store[key] = times
+            else:
+                del store[key]
 
     def _room_in(self, store, who, now, window, per_device, per_box):
-        """Seconds to wait, or 0. Looks only; _count writes."""
+        """Seconds to wait, or 0. Counts nothing; _count does."""
+        self._prune(store, now, window)
         wait = 0.0
         for key, most in ((who, per_device), ("*", per_box)):
-            times = store[key] = self._recent(store.get(key, []), now, window)
+            times = store.get(key, [])
             if len(times) >= most:
                 wait = max(wait, window - (now - times[0]))
         return wait
@@ -258,18 +274,30 @@ class GuestControls:
         store.setdefault(who, []).append(now)
         store.setdefault("*", []).append(now)
 
+    @staticmethod
+    def _uncount(store, who, now):
+        for key in (who, "*"):
+            times = store.get(key, [])
+            if now in times:
+                times.remove(now)
+            if not times:
+                store.pop(key, None)
+
     def admit(self, method, path, body, device, client):
-        """Let a guest's request through, or raise Refused. Returns the body for the handler (without "confirm")."""
+        """Let a guest's request through, or raise Refused. Returns (the body for the handler, without "confirm";
+        finish). The caller runs the handler and then calls finish(True) if it answered, finish(False) if it raised:
+        only what was really done is written in the journal, and a switch-off or a cooled action that did not happen
+        is given back (it is held from here on, so two requests at the same moment cannot both pass).
+
+        In order: the lock; the limit on actions, which counts every request that comes this far, a refused form too;
+        the form; the cooldown; for a switch-off its own limit and the confirm."""
         if self.locked():
             raise Refused(403, LOCKED_TEXT)
-        form = GUEST.get((method, path))
+        key = (method, path)
+        form = GUEST.get(key)
         body = dict(body) if isinstance(body, dict) else {}
         given = body.pop("confirm", None)
-        kind = form(body, self.api) if form else False
-        if kind is not True and kind != OFF:
-            raise Refused(403, "a guest may not do that (operator access needed)")
         who, now = device["id"], self._clock()
-        request = json.dumps([method, path, body], sort_keys=True)
         with self._lock:
             if self.locked():                   # again, under the lock set_locked holds: see there
                 raise Refused(403, LOCKED_TEXT)
@@ -277,6 +305,17 @@ class GuestControls:
             if wait:
                 raise Refused(429, "too many guest actions at once; wait a moment", retry_after=int(wait) + 1)
             self._count(self._acts, who, now)
+        kind = form(body, self.api) if form else False      # may ask the room for a scene: not under the lock
+        if kind is not True and kind != OFF:
+            raise Refused(403, "a guest may not do that (operator access needed)")
+        request = json.dumps([method, path, body], sort_keys=True)
+        cooled, before = key in COOLED, None
+        with self._lock:
+            if self.locked():
+                raise Refused(403, LOCKED_TEXT)
+            if cooled and self._cooled is not None and 0 <= now - self._cooled < COOL_SECONDS:
+                raise Refused(429, "a guest changed the picture a moment ago; wait a moment",
+                              retry_after=int(COOL_SECONDS - (now - self._cooled)) + 1)
             if kind == OFF:
                 wait = self._room_in(self._offs, who, now, OFF_WINDOW, OFF_DEVICE, OFF_BOX)
                 if wait:
@@ -292,6 +331,17 @@ class GuestControls:
                     raise Refused(409, "switching projectors off needs a second tap to confirm",
                                   extra={"confirm": {"token": token, "seconds": CONFIRM_SECONDS}})
                 self._count(self._offs, who, now)
-        self.api.log("pvj-web: guest %s (device %s, from %s): %s %s"
-                     % (json.dumps(str(device.get("name", ""))[:40]), who, client, path, json.dumps(body, sort_keys=True)[:160]))
-        return body
+            if cooled:
+                before, self._cooled = self._cooled, now
+
+        def finish(done):
+            if done:
+                self.api.log("pvj-web: guest %s (device %s, from %s): %s %s"
+                             % (json.dumps(str(device.get("name", ""))[:40]), who, client, path, json.dumps(body, sort_keys=True)[:160]))
+                return
+            with self._lock:                    # it did not happen: the switch-off and the cooldown are given back
+                if kind == OFF:
+                    self._uncount(self._offs, who, now)
+                if cooled and self._cooled == now:
+                    self._cooled = before
+        return body, finish

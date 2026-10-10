@@ -2684,7 +2684,7 @@ class Api:
 
     MODULE_ROUTE = "/api/modules/*"          # how POST /api/modules/<id> is named in the policy lists
 
-    def gate(self, method, path, body, device, client, need=False):
+    def gate(self, method, path, body, device, client, need=False, after=None):
         """The one check every request passes (D80), also the paths the server answers outside the route table
         (policy.OUTSIDE). Raises ApiError; returns the body the handler gets. In order: the support tunnel's rules;
         the box's own callers and a support session below full stay inside policy.LEGACY_LIVE; the route's minimum
@@ -2709,7 +2709,12 @@ class Api:
             return body
         if policy.is_guest(device) and need == "live" and key in policy.GUEST:
             try:
-                return self.guests.admit(method, path, body, device, client)
+                body, finish = self.guests.admit(method, path, body, device, client)
+                if after is None:                   # nobody will say how it went (no path outside the route table is a guest's)
+                    finish(False)
+                    raise ApiError(403, "a guest may not do that (operator access needed)")
+                after.append(finish)
+                return body
             except policy.Refused as e:
                 err = ApiError(e.status, e.message, e.retry_after)
                 err.extra = e.extra
@@ -2741,8 +2746,16 @@ class Api:
                     known = any(p == path for (_, p) in self.routes()) or bool(m)
                     raise ApiError(405 if known else 404, "method not allowed" if known else "not found")
                 need, handler = route
-            body = self.gate(method, path, body if isinstance(body, dict) else {}, device, client, need)
-            return 200, handler(body, device, client)
+            after = []                # for a guest's action: what to do once it is known whether it happened (policy.admit)
+            body = self.gate(method, path, body if isinstance(body, dict) else {}, device, client, need, after)
+            done = False
+            try:
+                out = handler(body, device, client)
+                done = True
+            finally:
+                for finish in after:
+                    finish(done)
+            return 200, out
         except ApiError as e:
             payload = dict(getattr(e, "extra", None) or {}, error=e.message)
             if e.retry_after:
