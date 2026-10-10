@@ -306,7 +306,8 @@ class HttpsTest(HttpsBase):
         # now, over plain http: the PIN is refused, every owner route is refused and points at https, a guest is fine
         st, body, _ = self.call("POST", "/api/pair", {"pin": self.pin, "name": "late owner"})
         self.assertEqual(st, 403, body)
-        self.assertIn("https://testbox.local/", body["error"])
+        self.assertIn(self.box.https_address("testbox.local"), body["error"])
+        self.assertIn(":%d/" % self.tls_port, body["error"], "the address names the port when it is not 443")
         code = self.scall("POST", "/api/access/join", {"role": "view"}, token=secure)[1].get("code")
         if code:
             self.assertEqual(self.call("POST", "/api/pair", {"pin": code, "name": "a guest by code"})[0], 200)
@@ -317,7 +318,7 @@ class HttpsTest(HttpsBase):
             for token in (secure, self.full):
                 st, body, _ = self.call(method, path, {} if method == "POST" else None, token=token)
                 self.assertEqual(st, 403, (path, body))
-                self.assertIn("https://testbox.local/", body["error"])
+                self.assertIn(self.box.https_address("testbox.local"), body["error"])
                 self.assertNotIn(self.pin, json.dumps(body))
         for method, path in (("GET", "/api/hello"), ("GET", "/api/https"), ("POST", "/api/logout")):
             st, body, _ = self.call(method, path, {} if method == "POST" else None, token=self.full if path != "/api/logout" else None)
@@ -347,6 +348,102 @@ class HttpsTest(HttpsBase):
         # over plain http, with no certificate: the switch route itself answers that it is for the secure connection
         st, body, _ = self.call("POST", "/api/https/owner-only", on, token=secure)
         self.assertEqual(st, 403, body)
+
+    def switched_on(self):
+        """A certificate in use and the switch on, by a device paired over TLS; returns that device's token."""
+        self.assertEqual(self.install(self.request_and_sign())[0], 200)
+        secure = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "owner, tls"})[1]["token"]
+        self.assertEqual(self.scall("POST", "/api/https/owner-only", {"on": True}, token=secure)[0], 200)
+        return secure
+
+    def test_m1_a_token_that_crossed_plain_http_is_never_secure_even_after_a_session_over_tls(self):
+        """Review of #119, M1: an owner token sniffed off plain http, presented once to /api/session over TLS while
+        the switch is off, must not become a secure token."""
+        self.assertEqual(self.install(self.request_and_sign())[0], 200)
+        st, body, r = self.scall("POST", "/api/session", {"token": self.full})       # the exact sequence
+        self.assertEqual(st, 200, body)
+        self.assertTrue(r.getheader("Set-Cookie").startswith("__Host-"))
+        self.assertFalse(self.box.device_secure(self.auth.authenticate(self.full)), "a session marks nothing")
+        secure = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "owner, tls"})[1]["token"]
+        self.assertEqual(self.scall("POST", "/api/https/owner-only", {"on": True}, token=secure)[0], 200)
+        for method, path in (("GET", "/api/status"), ("POST", "/api/pin/show")):
+            st, body, _ = self.scall(method, path, {} if method == "POST" else None, token=self.full)
+            self.assertEqual(st, 403, (path, body))
+            self.assertNotIn(self.pin, json.dumps(body))
+        # and the session route itself, over TLS with the switch on, does not let it in either
+        self.assertEqual(self.scall("POST", "/api/session", {"token": self.full})[0], 200)      # a cookie, nothing more
+        self.assertEqual(self.scall("POST", "/api/pin/show", {}, token=self.full)[0], 403)
+
+    def test_m2_a_run_out_certificate_stops_the_switch_biting_so_the_owner_gets_back_over_http(self):
+        short = self.request_and_sign(days=1, out="short.pem")
+        self.assertEqual(self.install(short)[0], 200)
+        secure = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "owner, tls"})[1]["token"]
+        self.assertEqual(self.scall("POST", "/api/https/owner-only", {"on": True}, token=secure)[0], 200)
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 403, "bites while the certificate is good")
+        self.clock.t += 3 * 86400
+        # the clock is from the network: it has run out, every device refuses https, http is the road back
+        st, body, _ = self.call("GET", "/api/https", token=self.full)
+        self.assertEqual((body["relief"], body["effective"], body["owner_only"]), ("run_out", False, True))
+        self.assertEqual(self.call("GET", "/api/https/request.csr", token=self.full)[0], 200)
+        self.assertEqual(self.call("POST", "/api/pair", {"pin": self.pin, "name": "owner back over http"})[0], 200)
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 200)
+        fresh = self.request_and_sign(days=100, out="fresh.pem")
+        st, body, _ = self.install(fresh, token=self.full)
+        self.assertEqual(st, 200, body)
+        self.assertIsNone(body["status"]["relief"])
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 403, "bites again at once")
+        st, body, _ = self.scall("GET", "/api/https", token=secure)
+        self.assertTrue(body["effective"])
+        # the same run-out certificate with a clock NOT from the network: the box cannot tell, the switch keeps biting
+        self.trusted = False
+        st, body, _ = self.scall("POST", "/api/https/certificate", {"certificate": short}, token=secure)   # over TLS: the switch bites again
+        self.assertEqual(st, 200, body)                                     # allowed: the box does not judge the date then
+        self.clock.t += 3 * 86400
+        self.assertEqual(self.call("GET", "/api/https", token=self.full)[1]["relief"], None)
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 403)
+        self.trusted = True
+        # a certificate removed while the switch is on: relief as well
+        self.assertEqual(self.scall("POST", "/api/https/remove", {}, token=secure)[0], 200)
+        self.assertEqual(self.call("GET", "/api/https", token=self.full)[1]["relief"], "no_certificate")
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full)[0], 200)
+        # an address the certificate does not carry is NOT a relief: the Host header is the sender's to choose
+        self.assertEqual(self.install(fresh, token=self.full)[0], 200)
+        st, body, _ = self.call("POST", "/api/pin/show", {}, token=self.full, headers={"Host": "other.local"})
+        self.assertEqual(st, 403, body)
+        self.assertEqual(self.call("POST", "/api/pin/show", {}, token=self.full, headers={"Host": "10.9.9.9"})[0], 403)
+
+    def test_m3_a_pem_made_to_backtrack_is_refused_at_once(self):
+        import time
+        nasty = "-----BEGIN CERTIFICATE-----\n" + " " * (httpsbox.MAX_PEM - 40)
+        t0 = time.monotonic()
+        st, body, _ = self.install(nasty)
+        self.assertLess(time.monotonic() - t0, 2.0, "the panel must not hang on a wrong file")
+        self.assertEqual(st, 400, body)
+        self.assertIn("no certificate", body["error"])
+        for text in ("-----BEGIN CERTIFICATE-----\n" + "-----BEGIN CERTIFICATE-----\n" * 2000, "\n".join(["-----END CERTIFICATE-----"] * 1500)):
+            t0 = time.monotonic()
+            self.assertIn(self.install(text)[0], (400, 413))
+            self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertEqual(httpsbox.pem_blocks("x\n-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\ny")[0][0], b"\x00")
+
+    def test_an_owner_code_from_a_controller_is_refused_over_plain_http_while_the_switch_is_on(self):
+        from pvj import auth as auth_mod
+        secure = self.switched_on()
+        with self.settings.lock:
+            self.settings.data["controller_code"] = {"enabled": True, "owner": True}
+        self.auth.create_controller_code("owner")
+        kind, digits, _ = self.auth.controller_digits()
+        before = len(self.settings.data["devices"])
+        st, body, _ = self.call("POST", "/api/pair", {"pin": digits, "name": "at the controller"})
+        self.assertEqual(st, 403, body)
+        self.assertIn("secure connection", body["error"])
+        self.assertEqual(len(self.settings.data["devices"]), before, "the device it made is taken back")
+        # a presenter code still works there
+        self.auth.create_controller_code("join")
+        kind, digits, _ = self.auth.controller_digits()
+        self.assertEqual(self.call("POST", "/api/pair", {"pin": digits, "name": "presenter"})[0], 200)
+        self.assertEqual(kind, "join")
+        self.assertIsNotNone(auth_mod)
 
     def test_nothing_secret_in_any_answer_export_or_diagnostics(self):
         pem = self.request_and_sign()

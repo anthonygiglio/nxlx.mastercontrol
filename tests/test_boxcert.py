@@ -33,13 +33,14 @@ def openssls():
     return found
 
 
-def make_request(exe, folder, names, ips, cn="nxlx-mastercontrol.local"):
-    """What the box does (pvj/httpsbox.py makes the same request its own way)."""
+def make_request(exe, folder, names, ips, cn="nxlx-mastercontrol.local", extra=""):
+    """What the box does (pvj/httpsbox.py makes the same request its own way). `extra`: more lines a hostile request
+    could carry in its extensions."""
     key, cnf, csr = (os.path.join(folder, n) for n in ("box.key", "req.cnf", "box.csr"))
     subprocess.run([exe, "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", key], check=True, capture_output=True)
     san = ",".join(["DNS:%s" % n for n in names] + ["IP:%s" % i for i in ips])
     with open(cnf, "w") as f:
-        f.write("[req]\ndistinguished_name=dn\nprompt=no\nreq_extensions=v3_req\n[dn]\nCN=%s\n[v3_req]\nsubjectAltName=%s\n" % (cn, san))
+        f.write("[req]\ndistinguished_name=dn\nprompt=no\nreq_extensions=v3_req\n[dn]\nCN=%s\n[v3_req]\nsubjectAltName=%s\n%s" % (cn, san, extra))
     subprocess.run([exe, "req", "-new", "-key", key, "-config", cnf, "-out", csr], check=True, capture_output=True)
     return key, csr
 
@@ -120,6 +121,19 @@ class BoxcertTest(unittest.TestCase):
         r = subprocess.run([exe, "verify", "-CAfile", os.path.join(ca, "root.pem"), os.path.join(folder, "wide.pem")], capture_output=True, text=True)
         self.assertNotEqual(r.returncode, 0, "a certificate from another root must not verify against this one")
 
+        # a hostile request asking to be a CA, with any key usage: the tool writes its own extensions and copies none
+        hostile = os.path.join(folder, "hostile")
+        os.makedirs(hostile)
+        _, bad_csr = make_request(exe, hostile, ["evil.local"], [], cn="evil.local",
+                                  extra="basicConstraints=critical,CA:TRUE\nkeyUsage=keyCertSign,cRLSign\nextendedKeyUsage=clientAuth,codeSigning\n")
+        self.assertEqual(self.run_tool(exe, ["--dir", ca, "sign", bad_csr, "--out", os.path.join(folder, "hostile.pem")]), 0, self.lines)
+        htext = self.text(exe, ["x509", "-in", os.path.join(folder, "hostile.pem"), "-noout", "-text"])
+        self.assertIn("CA:FALSE", htext)
+        self.assertNotIn("CA:TRUE", htext)
+        self.assertNotIn("Certificate Sign", htext)
+        self.assertNotIn("Code Signing", htext)
+        self.assertEqual(htext.count("Subject Alternative Name"), 1)
+        self.assertEqual(oct(os.stat(os.path.join(ca, "root.key")).st_mode & 0o777), "0o600")
         # show, list: what was signed and when it ends
         self.assertEqual(self.run_tool(exe, ["show", cert]), 0)
         self.assertTrue(any("ends on : %s" % info["end"].date().isoformat() in l for l in self.lines), self.lines)
@@ -127,7 +141,8 @@ class BoxcertTest(unittest.TestCase):
         self.assertTrue(any(l.startswith("nxlx-mastercontrol") and "396 days left" in l or "397 days left" in l for l in self.lines), self.lines)
         with open(os.path.join(ca, "signed.json")) as f:
             rows = json.load(f)
-        self.assertEqual([r["serial"] for r in rows], [info["serial"]])
+        self.assertEqual([r["serial"] for r in rows][0], info["serial"])
+        self.assertEqual(len(rows), 2, "the box and the hostile request")
         self.assertEqual(rows[0]["names"], ["nxlx-mastercontrol.local", "studio.local"])
         # the root itself shown: named as the root, so it is not uploaded as a box's certificate by mistake
         self.assertEqual(self.run_tool(exe, ["show", os.path.join(ca, "root.pem")]), 0)
@@ -137,8 +152,9 @@ class BoxcertTest(unittest.TestCase):
         again = boxcert.read_cert(exe, cert)
         self.assertNotEqual(again["serial"], info["serial"])
         self.assertEqual((again["end"] - again["start"]).days, 30)
-        rows = json.load(open(os.path.join(ca, "signed.json")))
-        self.assertEqual(len(rows), 2)
+        with open(os.path.join(ca, "signed.json")) as f:
+            rows = json.load(f)
+        self.assertEqual(len(rows), 3)
         # the list says what is due
         self.run_tool(exe, ["--dir", ca, "list"])
         self.assertTrue(any("due in" in l for l in self.lines), self.lines)

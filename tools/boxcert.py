@@ -140,10 +140,10 @@ def make_root(exe, folder, name, allowed, constraints, ask, out=print, ranges=PR
             _fail("could not make the root key", err)
         os.chmod(plain, 0o600)
         # PKCS#8 with AES-256 named outright: the default cipher differs between LibreSSL and OpenSSL versions
-        code, _, err = run(exe, ["pkcs8", "-topk8", "-v2", "aes-256-cbc", "-in", plain, "-out", key, "-passout", "stdin"], p1)
-        if code:
+        code, encrypted, err = run(exe, ["pkcs8", "-topk8", "-v2", "aes-256-cbc", "-in", plain, "-passout", "stdin"], p1)
+        if code or "ENCRYPTED PRIVATE KEY" not in encrypted:
             _fail("could not encrypt the root key", err)
-        os.chmod(key, 0o600)
+        write_private(key, encrypted)                       # 0600 from the first byte, never a wider mode for a moment
         code, _, err = run(exe, ["req", "-x509", "-new", "-key", key, "-passin", "stdin", "-sha256", "-days", str(ROOT_DAYS),
                                  "-config", cfg, "-extensions", "v3_ca", "-out", pem], p1)
         if code:

@@ -2606,7 +2606,9 @@
       : 'This device was paired over http://. Log out, pair again here over https://, and then this switch works.')
       : 'This switch is changed over https:// only, so you cannot lock yourself out. Open ' + d.https_address + ' first.');
     if (!d.secure || !d.this_device_secure || (!d.https && !d.owner_only)) sw.sw.disabled = true;
-    if (d.owner_only && !d.effective) lines.push(h('div', { class: 'hint', text: 'The switch is on but has no effect while no certificate is in use: nobody is locked out.' }));
+    if (d.owner_only && !d.effective) lines.push(h('div', { class: 'hint warn', id: 'httpsrelief', text: d.relief === 'run_out'
+      ? 'The switch is on but has no effect while the certificate has run out: the PIN, the request and the upload work over http:// again until a new certificate is in use.'
+      : 'The switch is on but has no effect while no certificate is in use: nobody is locked out.' }));
     return h('div', { class: 'card', id: 'httpsstate' }, h('h2', { text: 'State' }), h('div', { class: 'list sp' }, lines, sw));
   }
   function httpsCertificateCard(d) {
@@ -2672,7 +2674,8 @@
     }
     var rows = [h('div', { class: 'hint', text: 'Each of your own devices installs the root once and then trusts every box you sign. Guests do not do this; they stay on http://.' })];
     if (d.root) {
-      rows.push(h('div', { class: 'hint', text: 'On ' + (plat.name === 'this device' ? 'this device' : 'an ' + plat.name).replace('an Mac', 'a Mac').replace('an Windows', 'Windows').replace('an Chromebook', 'a Chromebook').replace('an Linux', 'Linux') + ':' }),
+      rows.push(h('div', { class: 'hint', text: 'On ' + (plat.name === 'this device' ? 'this device' : 'an ' + plat.name).replace('an Mac', 'a Mac').replace('an Windows', 'Windows').replace('an Chromebook', 'a Chromebook').replace('an Linux', 'Linux') + ':'
+        + (/iPhone|iPad/.test(plat.name) ? '' : ' (roughly: the exact words differ by version, and nobody has checked them on a real device yet)') }),
         h('ol', { class: 'hint', id: 'httpssteps' }, plat.steps.map(function (t) { return h('li', { text: t }); })),
         h('div', { class: 'row' }, h('a', { class: 'btn grow', id: 'httpsroot', href: '/api/https/root.crt', download: 'nxlx-root.crt', text: 'Download the root certificate' })));
     } else {

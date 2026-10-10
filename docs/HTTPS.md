@@ -73,9 +73,11 @@ Copy the folder `~/nxlx-root-ca` (all of it: `root.key`, `root.pem`, `signed.jso
 
 ## When a certificate has run out
 
-The page warns from 30 days before the end and says plainly after it. Devices then show the full-page warning on `https://`. Open the box over `http://` (it always works; with the switch on, from a guest's view you can still read the page, and the owner's way back in is the `https://` address with a fresh certificate, or the console). On System > Secure connection press "Download the request" (the same key, the same request), sign it again (`renew` is `sign`), upload the new certificate. Nothing changes on your devices.
+The page warns from 30 days before the end and says plainly after it. Devices then show the full-page warning on `https://`. Open the box over `http://`: once the certificate has run out (by the box's clock, when that clock is set from the network) the switch "Owner access only over the secure connection" stops biting by itself, so the PIN, the request download and the certificate upload work over `http://` again, and the page says so on both origins. Press "Download the request" (the same key, the same request), sign it again (`renew` is `sign`), upload the new certificate; the switch bites again from that moment. Nothing changes on your devices.
 
-If you cannot get to `https://` and the switch is on: at the box, `sudo rm -r /var/lib/pvj/tls && sudo systemctl restart pvj-web` takes HTTPS away and with it the switch's effect; `sudo pvj-pin` prints the PIN; then start again at step 2.
+Two neighbours of that case: a certificate **removed** while the switch is on also stops it biting (nothing is left to reach the owner by); a box whose **address changed** does not (the `.local` name is always in the certificate and keeps working; an address you type that the certificate does not carry is refused by the device, so use the `.local` name, or make a new request with the new address in it from `https://`).
+
+If the box's clock is not set from the network it cannot tell that the certificate has run out, and the switch keeps biting while your devices refuse `https://`. Then, at the box: `sudo rm -r /var/lib/pvj/tls && sudo systemctl restart pvj-web` takes HTTPS away and with it the switch's effect; `sudo pvj-pin` prints the PIN; then start again at step 2.
 
 ## If the root key is lost
 

@@ -100,15 +100,33 @@ def _name_cn(b):
     return ""
 
 
+def pem_blocks(text):
+    """Every CERTIFICATE block of a PEM text, in order, as (DER bytes, the block's own text). Read line by line: a
+    regular expression over the whole text could be made to backtrack for seconds on a file of one BEGIN line and
+    whitespace (review of #119), and this runs on the panel's one process."""
+    out, body, inside = [], None, False
+    for line in text.splitlines():
+        line = line.strip()
+        if line == "-----BEGIN CERTIFICATE-----":
+            body, inside = [], True
+        elif line == "-----END CERTIFICATE-----" and inside:
+            try:
+                der = base64.b64decode("".join(body), validate=True)
+            except (ValueError, TypeError):
+                raise ValueError("a certificate block is not base64")
+            out.append((der, "-----BEGIN CERTIFICATE-----\n" + "\n".join(body) + "\n-----END CERTIFICATE-----\n"))
+            body, inside = None, False
+        elif inside:
+            if line:
+                body.append(line)
+        if len(out) > 8:
+            raise ValueError("too many certificates in one file")
+    return out
+
+
 def pem_certificates(text):
     """The DER of every CERTIFICATE block in a PEM text, in order."""
-    out = []
-    for m in re.finditer(r"-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----", text, re.S):
-        try:
-            out.append(base64.b64decode(re.sub(r"\s+", "", m.group(1)), validate=True))
-        except (ValueError, TypeError):
-            raise ValueError("a certificate block is not base64")
-    return out
+    return [der for der, _ in pem_blocks(text)]
 
 
 def read_certificate(der):
@@ -198,6 +216,7 @@ class HttpsBox:
         self.info = None             # read_certificate() of cert.pem while it is loaded
         self.load_error = None       # why the certificate on disk could not be loaded at start, for the page
         self.port = None             # set by the server when it listens
+        self._openssl_ok = None
 
     # -- files --
     def path(self, name):
@@ -236,10 +255,14 @@ class HttpsBox:
         return (self._hostname or socket.gethostname() or "box").split(".")[0].lower()
 
     def has_openssl(self):
+        """Remembered once it is there (a status read must not start a process each time); asked again while it is not."""
+        if self._openssl_ok is True:
+            return True
         try:
-            return subprocess.run([self.openssl, "version"], capture_output=True, timeout=10).returncode == 0
+            self._openssl_ok = subprocess.run([self.openssl, "version"], capture_output=True, timeout=10).returncode == 0
         except (OSError, subprocess.TimeoutExpired):
-            return False
+            self._openssl_ok = False
+        return self._openssl_ok
 
     # -- the switch --
     def _section(self):
@@ -253,16 +276,29 @@ class HttpsBox:
     def extra_names(self):
         return [n for n in self._section().get("names", []) if isinstance(n, str)][:MAX_NAMES]
 
+    def relief(self):
+        """Why the switch does not bite right now, or None: no certificate is loaded (HTTPS cannot be reached), or the
+        one loaded has run out by a clock set from the network (every device refuses it, so http is the only road
+        back: the request, the upload and the PIN must work there). A certificate removed while the switch is on
+        is the first case. A name the certificate does not carry is NOT a reason: the .local name is always in it
+        and keeps working, and a gate that opened on the Host header could be opened by whoever sends the header."""
+        if not self.owner_only:
+            return None
+        if self.context is None:
+            return "no_certificate"
+        if self.info and self.clock_trusted() and self.info["not_after"] < int(self._now()):
+            return "run_out"
+        return None
+
     def effective(self):
-        """The switch bites only while a certificate is being served: with none, HTTPS cannot be reached and refusing
-        HTTP would lock the owner out."""
-        return self.owner_only and self.context is not None
+        """The switch bites only while a certificate is being served and has not run out (relief)."""
+        return self.owner_only and self.relief() is None
 
     def set_owner_only(self, on, secure, device_secure):
         if not isinstance(on, bool):
             raise HttpsError('"on" must be true or false')
         if not secure:
-            raise HttpsError("this switch is changed over the secure connection only: open https://%s/ and try there" % self.first_name(), 403)
+            raise HttpsError("this switch is changed over the secure connection only: open %s and try there" % self.https_address(), 403)
         if not device_secure:
             raise HttpsError("this device was paired over plain http: log out and pair it again over https://, then switch", 403)
         if on and self.context is None:
@@ -284,9 +320,9 @@ class HttpsBox:
         if path in OPEN_WHILE_OWNER_ONLY:
             return None
         if not secure:
-            return "owner access is only over the secure connection: open https://%s/" % self.first_name()
+            return "owner access is only over the secure connection: open %s" % self.https_address()
         if not self.device_secure(device):
-            return "this device was paired over plain http: log out and pair it again over https://%s/" % self.first_name()
+            return "this device was paired over plain http: log out and pair it again over %s" % self.https_address()
         return None
 
     def pin_allowed(self, secure):
@@ -300,8 +336,9 @@ class HttpsBox:
         return False
 
     def mark_secure(self, device_id):
-        """The token of this device was handed out over the secure connection (D79): remembered in its record; an
-        older release ignores the key."""
+        """The token of this device was MADE over the secure connection (D79: a pairing over TLS, never a session
+        started from a token that already existed, which may have crossed plain http before): remembered in its
+        record; an older release ignores the key."""
         with self.settings.lock:
             for d in self.settings.data.get("devices", []):
                 if d.get("id") == device_id and d.get("secure") is not True:
@@ -440,7 +477,7 @@ class HttpsBox:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.verify_mode = ssl.CERT_NONE                    # no client certificates
-        ctx.options |= getattr(ssl, "OP_NO_COMPRESSION", 0)
+        ctx.options |= getattr(ssl, "OP_NO_COMPRESSION", 0) | getattr(ssl, "OP_NO_RENEGOTIATION", 0)
         return ctx
 
     def clock_trusted(self):
@@ -456,9 +493,10 @@ class HttpsBox:
         if len(pem_text) > MAX_PEM:
             raise HttpsError("that file is too large to be a certificate", 413)
         try:
-            ders = pem_certificates(pem_text)
+            blocks = pem_blocks(pem_text)
         except ValueError as e:
             raise HttpsError("not a certificate file: %s" % e)
+        ders = [der for der, _ in blocks]
         if not ders:
             raise HttpsError("no certificate in the file (it should start with -----BEGIN CERTIFICATE-----); the request file or a key is not it")
         try:
@@ -480,13 +518,12 @@ class HttpsBox:
         if h and h not in ("localhost", "127.0.0.1", "::1") and not name_matches(h, leaf["dns"], leaf["ips"]):
             raise HttpsError("the certificate does not name %s, which is how you reached the box; it names %s. Make the request again with that name in it, or open the box by a name it has"
                              % (h, ", ".join(leaf["dns"] + leaf["ips"])))
-        blocks = re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", pem_text, re.S)
         root = None
-        for info, block in zip(infos[1:], blocks[1:]):
+        for info, (_, block) in zip(infos[1:], blocks[1:]):
             if info["ca"]:
-                root = block + "\n"
+                root = block
                 break
-        return leaf, blocks[0] + "\n", root
+        return leaf, blocks[0][1], root
 
     def install(self, pem_text, host):
         leaf, leaf_pem, root_pem = self.check(pem_text, host)
@@ -586,9 +623,14 @@ class HttpsBox:
                 "request": os.path.isfile(self.path(REQUEST)), "request_names": self._request_names(), "key": os.path.isfile(self.path(KEY)),
                 "root": os.path.isfile(self.path(ROOT)), "openssl": self.has_openssl(), "clock_trusted": self.clock_trusted(),
                 "load_error": self.load_error, "default_names": self.default_names(), "host": host_of(host),
-                "this_device_secure": self.device_secure(device) if device else False, "warn_days": WARN_DAYS,
-                "https_address": "https://%s/" % (host_of(host) or self.first_name()) + ("" if not self.port or self.port == 443 else ""),
-                "http_address": "http://%s/" % (host_of(host) or self.first_name())}
+                "this_device_secure": self.device_secure(device) if device else False, "warn_days": WARN_DAYS, "relief": self.relief(),
+                "https_address": self.https_address(host), "http_address": "http://%s/" % (host_of(host) or self.first_name())}
+
+    def https_address(self, host=None):
+        name = host_of(host) or self.first_name()
+        if ":" in name and not name.startswith("["):
+            name = "[%s]" % name
+        return "https://%s%s/" % (name, "" if not self.port or self.port == 443 else ":%d" % self.port)
 
     def _request_names(self):
         try:

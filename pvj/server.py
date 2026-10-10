@@ -470,13 +470,13 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             device = auth.authenticate(token) or api.support.authenticate(token)
             gate = self._gate(device, path)
             if gate:
-                return self._json(403, {"error": gate, "https": "https://%s/" % self._https().first_name()})
+                return self._json(403, {"error": gate, "https": self._https().https_address()})
             box = self._https()
             if method == "POST" and path == "/api/pair" and box is not None and not box.pin_allowed(self._secure()) \
                     and len(str(body.get("pin", ""))) != 6:
                 # a 6-digit code (a guest or presenter, or the code from a controller) is still taken over plain http
-                return self._json(403, {"error": "the PIN pairs an owner over the secure connection only: open https://%s/ and pair there"
-                                        % box.first_name(), "https": "https://%s/" % box.first_name()})
+                return self._json(403, {"error": "the PIN pairs an owner over the secure connection only: open %s and pair there"
+                                        % box.https_address(), "https": box.https_address()})
             try:
                 status, payload = api.handle(method, path, body, device, self.client_address[0])
             except Exception:
@@ -484,10 +484,19 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 traceback.print_exc()
                 return self._json(500, {"error": "internal error"})
             extra = []
+            if status == 200 and path == "/api/pair" and box is not None and not self._secure() and box.effective() \
+                    and isinstance(payload.get("device"), dict) and payload["device"].get("role") == "full":
+                # a six-digit OWNER code from a controller (D61) pairs full access: over plain http while the switch
+                # is on that is refused too, and the device it just made is taken back (review of #119)
+                auth.revoke(payload["device"].get("id"))
+                return self._json(403, {"error": "full access is paired over the secure connection only: open %s and use the code there" % box.https_address(),
+                                        "https": box.https_address()})
             if status == 200 and path in ("/api/pair", "/api/session") and payload.get("token"):
                 extra.append(("Set-Cookie", self._cookie_set(payload["token"], 31536000)))
-                if self._secure() and box is not None and isinstance(payload.get("device"), dict):
-                    box.mark_secure(payload["device"].get("id"))        # a token handed out over TLS (D79)
+                if self._secure() and path == "/api/pair" and box is not None and isinstance(payload.get("device"), dict):
+                    # a token MADE over TLS (D79). Never at /api/session: that is a token that already existed (a
+                    # guest link, or one sniffed off plain http) and only the cookie is new (review of #119, M1)
+                    box.mark_secure(payload["device"].get("id"))
             if status == 200 and path == "/api/logout":
                 extra.extend(self._cookies_cleared())
             if status == 200 and path == "/api/support/login" and payload.get("token"):
