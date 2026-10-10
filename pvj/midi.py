@@ -43,6 +43,7 @@ import threading
 import time
 import uuid
 
+from . import actions
 from .osc import RateLimiter
 
 MIDI_DEVICE = {"id": "midi", "name": "MIDI", "role": "live"}
@@ -926,6 +927,8 @@ class MidiMapper:
         return caught
 
     def _trigger_calls(self, e):
+        """The calls of a press. What needs more than the action's name is here (a pad, the controllers' bank, a
+        Room scene by its id); everything else is the one table MIDI shares with OSC (pvj/actions.py)."""
         a = e["action"]
         if a == "pad":
             return [("/api/play", {"pad": [e["bank"], e["index"]]})]
@@ -934,49 +937,10 @@ class MidiMapper:
         if a in ("bank_next", "bank_prev"):
             self.bank = (self.bank + (1 if a == "bank_next" else -1)) % BANKS
             return []
-        if a in ("clip_next", "clip_prev"):
-            return [("/api/control", {"action": "next" if a == "clip_next" else "prev"})]
-        if a == "fadein":
-            return [("/api/fadein", {"seconds": 2})]
-        if a == "fade":                                 # out, or in if the screen is down: the API looks and decides
-            return [("/api/fade", {"seconds": 2})]
-        if a in ("rotate", "flip_h", "flip_v", "mute", "loop"):
-            return [("/api/control", {"action": a, "value": "toggle"})]     # the next quarter turn, or the other state
-        if a in ("seek_back", "seek_forward"):
-            return [("/api/control", {"action": "seek", "value": ACTIONS[a][1]})]
-        if a == "overlay":
-            return [("/api/overlay", {"toggle": True})]
-        if a == "test_pattern":
-            return [("/api/testpattern", {"on": "toggle"})]
-        if a.startswith("scene_"):
-            return [("/api/room/scene", {"number": ACTIONS[a][1]})]
         if a == "scene":
             return [("/api/room/scene", {"scene": e["scene"]})]
-        if a in ("pause", "stop", "reset"):
-            return [("/api/control", {"action": a})]
-        if a == "fadeout":
-            return [("/api/fadeout", {"seconds": 2})]
-        if a == "blackout":
-            return [("/api/blackout", {"on": None})]           # None: toggle, decided by the caller from the live state
-        if a == "vibes":
-            return [("/api/vibes", {"on": None})]              # a toggle too
-        if a == "vibes_next":
-            return [("/api/vibes", {"next": True})]
-        if a in ("vibes_ambient", "vibes_show"):
-            return [("/api/vibes", {"on": True, "set": ACTIONS[a][1]})]
-        if a in ("shader_next", "shader_prev"):
-            return [("/api/shaders/step", {"dir": 1 if a == "shader_next" else -1})]
-        if a.startswith("shader_preset_"):
-            return [("/api/shaders/preset", {"index": ACTIONS[a][1]})]
-        if a.startswith("shader_control_"):
-            return [("/api/shaders/values", {"control": ACTIONS[a][1], "press": True})]
-        if a in ("effect_next", "effect_prev"):
-            return [("/api/effects/step", {"dir": 1 if a == "effect_next" else -1})]
-        if a == "effect_toggle":
-            return [("/api/effects", {"toggle": True})]
-        if a.startswith("effect_control_"):
-            return [("/api/effects/values", {"control": ACTIONS[a][1], "press": True})]
-        return []
+        call = actions.press(a)
+        return [call] if call else []
 
     @staticmethod
     def _level_calls(e, value):
@@ -986,15 +950,11 @@ class MidiMapper:
         if a == "vibes_dwell":
             return [("/api/vibes", {"dwell": VIBES_DWELLS[min(len(VIBES_DWELLS) - 1, value * len(VIBES_DWELLS) // 128)]})]
         if a.startswith("shader_control_"):
-            return [("/api/shaders/values", {"control": ACTIONS[a][1], "level": value})]
+            return [actions.control("shader", ACTIONS[a][1], value)]
         if a.startswith("effect_control_"):
-            return [("/api/effects/values", {"control": ACTIONS[a][1], "level": value})]
-        level = level_value(a, value, e)                # the action's shape, with this mapping's own range and direction
-        if a == "effect_amount":
-            return [("/api/effects/values", {"controls": {"amount": round(level, 3)}})]
-        if a in ("shader_speed", "shader_hue", "shader_brightness"):
-            return [("/api/shaders/values", {"controls": {a[7:]: round(level, 2)}})]
-        return [("/api/control", {"action": a, "value": round(level, 2)})]
+            return [actions.control("effect", ACTIONS[a][1], value)]
+        # the action's shape, with this mapping's own range and direction, then the same call OSC makes for the level
+        return [actions.level(a, level_value(a, value, e))]
 
     def forget_held(self, source=None, pressed=False):
         """Forget every hold that is under way (of one controller, or of all). For when a release may have been

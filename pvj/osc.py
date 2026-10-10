@@ -259,6 +259,67 @@ def _room(a, args):
     return "/api/room/group", body
 
 
+# --- the reach the controllers got with D75, from the table MIDI shares (pvj/actions.py) --------------------------
+_NOT_MINE = object()
+_PRESSES = {"/pvj/fade": "fade", "/pvj/clip/next": "clip_next", "/pvj/clip/prev": "clip_prev",
+            "/pvj/effect/next": "effect_next", "/pvj/effect/prev": "effect_prev",
+            "/pvj/shader/next": "shader_next", "/pvj/shader/prev": "shader_prev"}
+# address -> (the level's name in the shared table, what the number is multiplied by)
+_LEVELS = {"/pvj/position/x": ("position", 1.0), "/pvj/position/y": ("position_y", 1.0), "/pvj/effect/amount": ("effect_amount", 0.01),
+           "/pvj/shader/speed": ("shader_speed", 1.0), "/pvj/shader/hue": ("shader_hue", 1.0), "/pvj/shader/brightness": ("shader_brightness", 1.0)}
+_SLOT = re.compile(r"/pvj/(shader|effect)/(control|preset)/([1-8])")
+_SHADER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}")
+
+
+def _reach(a, args):
+    """(path, body) for one of the addresses added with D75, None for one of them with an argument that means
+    nothing, _NOT_MINE for any other address. Numbers are in real units and go to the API as they are: no curve
+    and no dead zone (those are for a knob that sends 0 to 127; see MIDI.md)."""
+    from . import actions
+    v = args[0] if args else None
+    number = v if _number(v) else None
+    flag = v if isinstance(v, bool) else ((v > 0.5) if number is not None else None)
+    if a in _PRESSES:
+        return actions.press(_PRESSES[a]) if pressed(args) else None
+    if a in _LEVELS:
+        name, scale = _LEVELS[a]
+        return actions.level(name, number * scale) if number is not None else None
+    m = _SLOT.fullmatch(a)
+    if m:
+        kind, what, n = m.group(1), m.group(2), int(m.group(3))
+        if what == "preset":                            # only a shader's presets have a place in the list
+            return actions.press("shader_preset_%d" % n) if kind == "shader" and pressed(args) else None
+        if number is None or not 0 <= number <= 1:      # 0 to 1, spread as a controller's knob is
+            return None
+        return actions.control(kind, n, int(round(number * 127)))
+    if a == "/pvj/fadein":
+        seconds = number if args else 2.0
+        return ("/api/fadein", {"seconds": seconds}) if seconds is not None else None
+    if a in ("/pvj/flip/h", "/pvj/flip/v"):
+        return ("/api/control", {"action": "flip_" + a[-1], "value": flag}) if flag is not None else None
+    if a == "/pvj/effect":
+        if not args:
+            return actions.press("effect_toggle")
+        return ("/api/effects", {"on": flag}) if flag is not None else None
+    if a == "/pvj/overlay":
+        if not args:
+            return actions.press("overlay")
+        return ("/api/overlay", {"on": flag}) if flag is not None else None
+    if a == "/pvj/overlay/file":
+        return ("/api/overlay", {"file": v}) if isinstance(v, str) else None
+    if a == "/pvj/transition":
+        return ("/api/mix", {"transition": v}) if isinstance(v, str) else None
+    if a == "/pvj/transition/duration":
+        return ("/api/mix", {"duration": number}) if number is not None else None
+    if a == "/pvj/vibes/dwell":
+        return ("/api/vibes", {"dwell": number}) if number is not None else None
+    if a == "/pvj/shader":                              # a shader by its name, with ".fs" or without
+        if not isinstance(v, str) or not _SHADER_NAME.fullmatch(v):
+            return None
+        return "/api/shaders/play", {"id": v if v.endswith(".fs") else v + ".fs"}
+    return _NOT_MINE
+
+
 # Old names that start with /start but are not playback presets: sync and sound output need full access
 # (System > Sync and video wall, Sound output), the audio player and the PDF presenter are not built.
 NOT_HERE = {"/startslave", "/startaudio", "/startaudioslave", "/startaudiousb", "/startpdf", "/startpdfusb"}
@@ -288,6 +349,9 @@ def translate(address, args, mix=None):
     # -- stable names --------------------------------------------------------
     if a.startswith(("/pvj/scene", "/pvj/group/")):
         return _room(a, args)
+    more = _reach(a, args)
+    if more is not _NOT_MINE:
+        return more
     if a.startswith("/pvj/pad/"):
         parts = a.split("/")[3:]
         if len(parts) == 2 and all(p.isdigit() for p in parts) and pressed(args):

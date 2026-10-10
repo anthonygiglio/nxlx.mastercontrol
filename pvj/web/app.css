@@ -170,7 +170,7 @@ canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2
 .ctlgrid .ctl.sel[class*=" z-"] { box-shadow: inset 0 0 0 2px var(--ac), inset 0 -4px 0 var(--zone, transparent); }
 .z-pads { --zone: #d9a400; } .z-clips { --zone: #8a8f98; } .z-screen { --zone: #d93025; } .z-picture { --zone: #1a73e8; } .z-sound { --zone: #00897b; }
 .z-shaders { --zone: #8e44ad; } .z-effects { --zone: #e67e22; } .z-room { --zone: #2e9e4f; } .z-access { --zone: #6d4c41; }
-.ctlzones { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--mu); }
+.ctlzones { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; color: var(--mu); }
 .ctlzone { padding: 0 0 6px; overflow-wrap: anywhere; min-width: 0; }
 .ctlgrid .ctl.haslight[data-lit="flash"]::after { background: var(--ac); border-color: var(--ac); }
 @media (prefers-reduced-motion: no-preference) { .ctlgrid .ctl.haslight[data-lit="flash"]::after { animation: ctlflash .5s steps(1, end) infinite; } @keyframes ctlflash { 50% { background: transparent; } } }

@@ -1459,6 +1459,18 @@ class Api:
             self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
         return {"ok": True}
 
+    def shader_play(self, body, device, client):
+        """Show one shader by its id, as the Shaders screen's Play does. From a controller (OSC's /pvj/shader, D75)
+        it goes the way a pad's shader goes from a controller (D73, _play_shader_pad): what can be said at once is
+        said, and the tap is queued for the engine's worker, so the thread that reads the controller never waits
+        while the GPU looks at a shader. From the panel it is the engine's own call, as before."""
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            sid = body.get("id")
+            if not isinstance(sid, str) or set(body) - {"id", "preset"}:
+                raise bad("a controller names a shader by its id, with a preset or without")
+            return self._play_shader_pad((sid, body.get("preset")), device)
+        return self.shaders.api_play(body, device, client)
+
     def fade(self, body, device, client):
         """The one fade button (D75): fades out, and at the next press in. Which of the two is decided here, from what
         the screen is doing, not from a count of presses, so it stays right when a fade was started somewhere else
@@ -1726,7 +1738,11 @@ class Api:
         return {"test_pattern": True}
 
     def set_mix(self, body, device, client):
-        mode, duration = body.get("transition"), body.get("duration")
+        # one of the two may be left out (OSC sets them one at a time, D75): the other stays as it is
+        if "transition" not in body and "duration" not in body:
+            raise bad("send transition, duration or both")
+        now = self._mix_settings()
+        mode, duration = body.get("transition", now["transition"]), body.get("duration", now["duration"])
         if mode not in transitions_mod.NAMES:
             raise bad("transition must be one of " + ", ".join(transitions_mod.NAMES))
         if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
@@ -2968,7 +2984,7 @@ class Api:
             ("POST", "/api/mapper"): ("full", self.set_mapper),
             ("GET", "/api/shaders"): ("view", self.shaders.api_get),
             ("POST", "/api/shaders"): ("full", self.shaders.api_set),
-            ("POST", "/api/shaders/play"): ("live", self.shaders.api_play),
+            ("POST", "/api/shaders/play"): ("live", self.shader_play),
             ("POST", "/api/shaders/values"): ("live", self.shaders.api_values),
             ("POST", "/api/shaders/step"): ("live", self.shaders.api_step),
             ("POST", "/api/shaders/preset"): ("live", self.shaders.api_preset),
