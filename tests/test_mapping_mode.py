@@ -486,6 +486,27 @@ class GeometryLayerTest(unittest.TestCase):
         self.assertEqual(self.cc(0, 126), [])
         self.assertTrue(self.m.waiting("nano", "cc", 0))
 
+    def test_into_mapping_mode_a_second_time_a_knob_does_not_nudge_by_where_it_was_turned_meanwhile(self):
+        """The other direction of the same change of layer: a knob that nudges remembers where it stood, and outside
+        the mode nothing tells it that it moved (it is the shader's knob there)."""
+        self.mapping[0] = True
+        self.cc(17, 10)
+        self.assertEqual(self.cc(17, 12), [(NUDGE, {"steps": [2, 0]})])
+        self.mapping[0] = False
+        self.cc(17, 100)                                            # the shader's second control, far up
+        self.mapping[0] = True
+        self.assertEqual(self.cc(17, 101), [])                      # its first touch in the mode moves nothing, the second time too
+        self.assertEqual(self.cc(17, 103), [(NUDGE, {"steps": [2, 0]})])
+        # steps turned but not yet sent when the mode ends are not sent into the next one
+        self.cc(17, 104, after=0.001)
+        self.mapping[0] = False
+        self.t[0] += 1
+        self.assertEqual(self.m.flush_calls(), [])
+        self.mapping[0] = True
+        self.t[0] += 1
+        self.assertEqual(self.m.flush_calls(), [])
+        self.assertEqual(self.cc(17, 104), [])
+
     def test_mapping_mode_over_geometry_and_back_nothing_jumps(self):
         self.cc(16, 30)                                             # knob 1 on the shader at 30
         self.button()
