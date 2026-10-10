@@ -48,7 +48,7 @@ PAIRED_ROLES = ("full", "live")  # "full": the owner's devices only; "live": own
 PAIRED_HOURS, PAIRED_HOURS_MAX = 12, 72
 KEY_PREFIX = "/k/"
 KEY_FORM = re.compile(r"[0-9a-f]{16,64}")
-WRONG_KEYS_BURST, WRONG_KEYS_PER_SECOND = 20.0, 0.5   # then one more try every two seconds
+KEY_SECTION = "osc_secret"        # where the key is kept: a section of its own that no release exports or imports
 SENDER_WINDOW = 600.0            # the page shows the senders of the last ten minutes
 MAX_SENDERS = 64
 MAX_LOG = 50
@@ -61,7 +61,7 @@ WHY_PAIRED = "no paired device at this address"
 WHY_PACKET = "not a valid OSC packet"
 WHY_NO_KEY = "no key in the address"
 WHY_KEY = "wrong key"
-WHY_KEYS = "too many wrong keys"
+WHY_TWICE = "the key prefix is there twice"
 WHY_UNSET = "the key is switched on but none is set"
 DID_NOTHING = "nothing to do (an unknown address, or a button release)"
 NOT_OVER_OSC = "not available over OSC"
@@ -294,9 +294,19 @@ def validate_layers(v, extra=()):
     return out
 
 
-def layers(cfg):
-    """settings["osc"] as the receiver reads it. A missing key is "off"; a damaged one fails closed (a list that is
-    not a list lets nobody in, a key layer with no proper key refuses everything)."""
+def stored_key(data):
+    """The key in a settings dict: its own section, or (a file written before the key moved there) under "osc"."""
+    for section in (KEY_SECTION, "osc"):
+        part = data.get(section)
+        if isinstance(part, dict) and valid_key(part.get("key")):
+            return part["key"]
+    return ""
+
+
+def layers(cfg, key=""):
+    """settings["osc"] as the receiver reads it, with the key (kept apart, see stored_key). A missing setting is
+    "off"; a damaged one fails closed (a list that is not a list lets nobody in, a key layer with no proper key
+    refuses everything)."""
     only = cfg.get("only")
     only = [plain_address(a) for a in only if isinstance(a, str)] if isinstance(only, list) else []
     hours = cfg.get("paired_hours")
@@ -306,11 +316,13 @@ def layers(cfg):
             "paired_on": cfg.get("paired_on", False) is not False,
             "paired_roles": cfg.get("paired_roles") if cfg.get("paired_roles") in PAIRED_ROLES else "full",
             "paired_hours": hours,
-            "key_on": cfg.get("key_on", False) is not False, "key": cfg.get("key") if valid_key(cfg.get("key")) else ""}
+            "key_on": cfg.get("key_on", False) is not False, "key": key if valid_key(key) else ""}
 
 
-def shown(address):
-    """An address as the page may show it: printable ASCII only, and short."""
+def shown(address, key=""):
+    """An address as the page or the journal may show it: never the key, printable ASCII only, and short."""
+    if key:
+        address = address.replace(key, "<key>")
     return re.sub(r"[^\x21-\x7e]", "?", address)[:SHOWN_ADDRESS]
 
 
@@ -343,13 +355,14 @@ class Watch:
             if s is None:
                 if len(self._senders) >= MAX_SENDERS:
                     self._make_room(t)
-                s = self._senders[source] = {"messages": 0, "refused": 0, "address": "", "passed": False}
+                s = self._senders[source] = {"messages": 0, "refused": 0, "wrong_keys": 0, "address": "", "passed": False}
             s["last"], s["at"], s["why"] = t, wall, why
             if address:                       # it passed every layer (whether or not it then meant anything)
                 s["messages"] += 1
                 s["address"], s["passed"] = address, True
             else:
                 s["refused"] += 1
+                s["wrong_keys"] += why == WHY_KEY
                 s["passed"] = False
             last = self._log[-1] if self._log else None
             if last and not address and (last["from"], last["why"], last["address"]) == (source, why, ""):
@@ -370,7 +383,7 @@ class Watch:
         t = self._clock()
         with self._lock:
             rows = [dict(address=k, messages=s["messages"], refused=s["refused"], last=s["address"], accepted=s["passed"],
-                         why=s["why"], at=s["at"]) for k, s in self._senders.items() if t - s["last"] <= SENDER_WINDOW]
+                         why=s["why"], at=s["at"], wrong_keys=s["wrong_keys"]) for k, s in self._senders.items() if t - s["last"] <= SENDER_WINDOW]
             order = {k: s["last"] for k, s in self._senders.items()}
         return sorted(rows, key=lambda r: -order[r["address"]])
 
@@ -395,12 +408,6 @@ class RateLimiter:
             return False
         self._buckets[source] = (tokens - 1, now)
         return True
-
-    def empty(self, source):
-        """True when `source` has no token left right now (nothing is taken)."""
-        now = self._clock()
-        tokens, last = self._buckets.get(source, (self._burst, now))
-        return min(self._burst, tokens + (now - last) * self._rate) < 1
 
 
 # --- meaning ----------------------------------------------------------------
@@ -571,15 +578,14 @@ def translate(address, args, mix=None):
 
 class OscServer:
     def __init__(self, api, port=9876, extra_allow=(), host="0.0.0.0", clock=time.monotonic, log=print,
-                 rules=None, paired=None, watch=None):
+                 rules=None, paired=None, watch=None, key=""):
         self.api = api
         self.port = port
         self.host = host
         self.extra = list(extra_allow)
         self.log = log
         self.limiter = RateLimiter(clock)
-        self.wrong_keys = RateLimiter(clock, WRONG_KEYS_PER_SECOND, WRONG_KEYS_BURST)
-        self.rules = layers(rules or {})
+        self.rules = layers(rules or {}, key)
         self.paired = paired or (lambda roles, hours: set())   # (roles, hours) -> the addresses that count now
         self.watch = watch or Watch(clock)
         self._clock = clock
@@ -604,26 +610,26 @@ class OscServer:
         self._note(why + ":" + source_ip, "ignoring %s (%s)" % (source_ip, why))
         return 0
 
-    def _unlock(self, messages, source_ip, rules):
+    def _unlock(self, messages, rules):
         """With the key layer on: every message of the packet must carry the key, or the whole packet is refused
         (returns the reason). The messages come back without the prefix. With the layer off a prefix is just dropped,
-        so a layout that has it goes on working."""
+        so a layout that has it goes on working. Nothing here depends on who sent: a wrong key is counted for the
+        owner to see and never held against the sender's address, which anyone on the network can forge (a limit
+        per address would be a way to lock the real tablet out, and 80 random bits need none)."""
         out = []
         if rules["key_on"] and not rules["key"]:
             return None, WHY_UNSET
-        if rules["key_on"] and self.wrong_keys.empty(source_ip):
-            return None, WHY_KEYS              # not even compared: guessing is slowed to one try every two seconds
         for address, args in messages:
             given, rest = split_key(address)
-            if not rules["key_on"]:
-                out.append((rest or address, args))
-                continue
-            if given is None:
-                return None, WHY_NO_KEY
-            if not key_matches(given, rules["key"]):
-                self.wrong_keys.allow(source_ip)
-                return None, WHY_KEY
-            out.append((rest, args))
+            if rules["key_on"]:
+                if given is None:
+                    return None, WHY_NO_KEY
+                if not key_matches(given, rules["key"]):
+                    return None, WHY_KEY
+            address = rest or address
+            if address.startswith(KEY_PREFIX):     # "/k/<key>/k/<key>/...": the rest would be shown with a key in it
+                return None, WHY_TWICE
+            out.append((address, args))
         return out, None
 
     def handle_packet(self, data, source_ip):
@@ -648,27 +654,28 @@ class OscServer:
             self.watch.note(source_ip, False, WHY_PACKET)
             self._note("parse", "bad packet from %s: %s" % (source_ip, e))
             return 0
-        messages, why = self._unlock(messages, source_ip, rules)
+        messages, why = self._unlock(messages, rules)
         if why:
             return self._refuse(source_ip, why)
         done = 0
         for address, args in messages:
+            seen = shown(address, rules["key"])      # for the page and the journal: never with the key in it
             if address in REFUSED:
-                self.watch.note(source_ip, False, NOT_OVER_OSC, address)
+                self.watch.note(source_ip, False, NOT_OVER_OSC, seen)
                 self._note("refused:" + address, "%s is not available over OSC" % address)
                 continue
             mapped = translate(address, args, self.api.mix)
             if mapped is None:
-                self.watch.note(source_ip, False, DID_NOTHING, address)
+                self.watch.note(source_ip, False, DID_NOTHING, seen)
                 continue
             status, payload = self.api.handle("POST", mapped[0], mapped[1], OSC_DEVICE, source_ip)
             if status == 200:
                 done += 1
                 self.stats["handled"] += 1
-                self.watch.note(source_ip, True, "", address)
+                self.watch.note(source_ip, True, "", seen)
             else:
-                self.watch.note(source_ip, False, VALUE_REFUSED, address)
-                self._note("err:" + shown(address), "%s -> %s %s" % (shown(address), status, payload.get("error", "")))
+                self.watch.note(source_ip, False, VALUE_REFUSED, seen)
+                self._note("err:" + seen, "%s -> %s %s" % (seen, status, payload.get("error", "")))
         return done
 
     # --- socket ---------------------------------------------------------
@@ -734,22 +741,39 @@ class OscManager:
         allowed = ("full",) if roles == "full" else ("full", "live")
         return {plain_address(a) for a in auth.paired_addresses(hours * 3600, allowed)} - {None}
 
+    def key(self):
+        return stored_key(self.settings.data)
+
     def make_key(self):
-        """A new key, saved. The old one stops working at once (the caller applies)."""
+        """A new key, in its own section (the caller saves and applies). The old one stops working at once."""
         key = new_key()
         with self.settings.lock:
-            self.settings.data["osc"]["key"] = key
+            self.settings.data[KEY_SECTION] = {"key": key}
+            self.settings.data["osc"].pop("key", None)
         return key
+
+    def _move_key(self):
+        """A key that an earlier build of this change kept under "osc" goes to its own section, once (no schema
+        change: this runs whenever the receiver is set up, and does nothing when there is nothing to move)."""
+        with self.settings.lock:
+            cfg = self.settings.data["osc"]
+            if "key" not in cfg:
+                return
+            old = cfg.pop("key")
+            if valid_key(old) and not valid_key((self.settings.data.get(KEY_SECTION) or {}).get("key")):
+                self.settings.data[KEY_SECTION] = {"key": old}
+            self.settings.save()
 
     def apply(self):
         """Make reality match settings["osc"]. Raises OscError if the port cannot be opened."""
         with self.lock:
+            self._move_key()
             cfg = self.settings.data["osc"]
             if self.server and self.server.listening and cfg["enabled"] and self.server.port == cfg["port"]:
                 # Same port: who may send changes in place. The socket stays open, so no message is lost while the
                 # owner switches a lock or allows a device in the middle of a show.
                 self.server.extra = parse_networks(cfg["allow"])
-                self.server.rules = layers(cfg)
+                self.server.rules = layers(cfg, self.key())
                 self.error = None
                 return
             if self.server:
@@ -759,7 +783,7 @@ class OscManager:
             if not cfg["enabled"]:
                 return
             server = OscServer(self.api, cfg["port"], parse_networks(cfg["allow"]), host=self.host, log=self.log,
-                               rules=cfg, paired=self._paired, watch=self.watch)
+                               rules=cfg, paired=self._paired, watch=self.watch, key=self.key())
             try:
                 server.start()
             except OscError as e:
@@ -770,15 +794,21 @@ class OscManager:
     def status(self, full=False):
         """What every paired device may read; with `full` also the lists (never the key: see Api.osc_key)."""
         cfg = self.settings.data["osc"]
-        rules = layers(cfg)
+        rules = layers(cfg, self.key())
         out = {"enabled": cfg["enabled"], "port": cfg["port"], "allow": list(cfg["allow"]),
                "listening": bool(self.server and self.server.listening), "error": self.error,
                "received": self.server.stats["received"] if self.server else 0,
                "only_on": rules["only_on"], "paired_on": rules["paired_on"], "key_on": rules["key_on"]}
         if full:
+            counting = self._paired(rules["paired_roles"], rules["paired_hours"])
+            # The receiver listens on IPv4 only: a device that opened the panel over IPv6 is paired, and can never
+            # be the sender of a packet. It is named apart, so the lock does not look satisfied when it is not.
+            v6 = sorted(a for a in counting if ":" in a)
+            panel = self._paired("live", rules["paired_hours"])      # a panel device of the owner or a presenter
+            senders = [dict(s, panel=s["address"] in panel) for s in self.watch.senders()]
             out.update(only=rules["only"], paired_roles=rules["paired_roles"], paired_hours=rules["paired_hours"],
-                       key_set=bool(rules["key"]), refused=self.watch.refused, senders=self.watch.senders(),
-                       paired_now=sorted(self._paired(rules["paired_roles"], rules["paired_hours"])))
+                       key_set=bool(rules["key"]), refused=self.watch.refused, senders=senders,
+                       paired_now=sorted(counting - set(v6)), paired_v6=v6)
         return out
 
     def stop(self):

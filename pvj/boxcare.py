@@ -584,7 +584,7 @@ class BoxCare:
             if name in data:
                 out[name] = data[name]
         if isinstance(out.get("osc"), dict):
-            out["osc"].pop("key", None)          # a secret of this box's network, like the PIN: never in a file (D78)
+            out["osc"].pop("key", None)          # the key has its own section, never exported (D78); this is for a file not yet moved
         out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
                                    "password": p.get("password", "") if passwords else ""},
                                   **{k: p[k] for k in ("details", "labels") if k in p})       # what it said it is; input labels
@@ -696,20 +696,20 @@ class BoxCare:
         return out
 
     @staticmethod
-    def _osc_layers(incoming, mine):
-        """The OSC section of an import, for this box (D78): what the file says about the three layers is taken; what
-        it does not say (a file from an earlier version) stays as this box has it, so an old file cannot switch a
-        layer off; the key is always this box's own, and one is made if the file switches the layer on with none."""
-        out = dict(incoming)
+    def _osc_layers(new, current):
+        """The OSC part of an import, for this box (D78), changed in `new`: what the file says about the three locks
+        is taken; what it does not say (a file from an earlier version) stays as this box has it, so an old file
+        cannot switch a lock off; the key is never the file's. It is this box's own, in its own section, and one is
+        made if the file switches the lock on and the box has none."""
+        mine, out = current.get("osc") or {}, dict(new["osc"])
         for k in ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on"):
             if k not in out and k in mine:
                 out[k] = copy.deepcopy(mine[k])
         out.pop("key", None)
-        if osc_mod.valid_key(mine.get("key")):
-            out["key"] = mine["key"]
-        elif out.get("key_on"):
-            out["key"] = osc_mod.new_key()
-        return out
+        new["osc"] = out
+        key = osc_mod.stored_key(current)
+        if key or out.get("key_on"):
+            new[osc_mod.KEY_SECTION] = {"key": key or osc_mod.new_key()}
 
     def _keep_secrets(self, clean, current):
         """A file made without passwords: keep the one this box already has for the same projector, and the box's
@@ -825,7 +825,7 @@ class BoxCare:
             new = copy.deepcopy(current)
             new.update({k: fresh[k] for k in clean})
             if "osc" in clean:
-                new["osc"] = self._osc_layers(new["osc"], current.get("osc") or {})
+                self._osc_layers(new, current)
             try:
                 backup = self._backup()
             except OSError as e:
@@ -862,8 +862,7 @@ class BoxCare:
         for s in data.get("streams", []):
             found.update(stream_secrets(s.get("url")))
         found.add((data.get("support") or {}).get("server_key"))
-        osc_key = (data.get("osc") or {}).get("key")       # the OSC key (D78), should it ever reach a log line
-        found.add(osc_key if isinstance(osc_key, str) else None)
+        found.add(osc_mod.stored_key(data) or None)        # the OSC key (D78), should it ever reach a log line
         try:
             found.update(j["code"] for j in api.auth.list_joins())
         except Exception:

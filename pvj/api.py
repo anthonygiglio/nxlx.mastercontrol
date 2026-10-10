@@ -149,6 +149,7 @@ class Api:
         self.spawn = spawn        # True only for development: start mpv ourselves
         self.on_pin = on_pin      # called with the new PIN so the box can show it
         self.osc = osc            # OscManager or None
+        self._osc_key_shows, self.osc_clock = {}, None     # device id -> when the OSC key was shown to it (D78)
         self._free_space = free_space or self._statvfs_free
         self.net = net            # NetdClient or None
         self._sysfs = net_sysfs
@@ -1578,21 +1579,38 @@ class Api:
 
     def osc_key(self, body, device, client):
         """Full access, never through the support tunnel: {} shows the key, {"new": true} makes a new one (the old
-        one stops working at once). It has its own route so that it is never part of what the page asks for by itself."""
+        one stops working at once). It has its own route so that it is never part of what the page asks for by itself.
+        Like the owner PIN (show_pin, D77): never for a support login or a device removed meanwhile, at most
+        auth.PIN_SHOWS times in a while per device, and one journal line each time that names the device and never
+        the key."""
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
         fresh = body.get("new", False)
         if not isinstance(fresh, bool):
             raise bad("new must be true or false")
+        if device.get("remote"):
+            raise ApiError(403, "the OSC key is never shown through remote support")
+        if not self._still_paired(device):
+            raise ApiError(401, "this device is no longer paired")
         with self.osc.lock:
-            key = osc_mod.layers(self.settings.data["osc"])["key"]
-            if fresh or not key:
+            t = time.monotonic() if self.osc_clock is None else self.osc_clock()
+            shows = [x for x in self._osc_key_shows.get(device["id"], []) if t - x < auth_mod.PIN_SHOW_WINDOW]
+            if len(shows) >= auth_mod.PIN_SHOWS:
+                raise ApiError(429, "the key was shown %d times in the last %d minutes; wait a little"
+                               % (auth_mod.PIN_SHOWS, int(auth_mod.PIN_SHOW_WINDOW // 60)),
+                               int(auth_mod.PIN_SHOW_WINDOW - (t - shows[0])) + 1)
+            self._osc_key_shows = {k: v for k, v in self._osc_key_shows.items() if self._still_paired({"id": k})}
+            self._osc_key_shows[device["id"]] = shows + [t]
+            key = self.osc.key()
+            made = fresh or not key
+            if made:
                 key = self.osc.make_key()
                 self.settings.save()
                 try:
                     self.osc.apply()
                 except osc_mod.OscError as e:
                     raise ApiError(409, str(e))
+        self.log("pvj-web: OSC key %s device %s (%s) from %s" % ("made new by" if made else "shown to", device["id"], device["name"], client))
         return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/pvj/stop"}
 
     def set_osc(self, body, device, client):
@@ -1619,8 +1637,9 @@ class Api:
             new.update(osc_mod.validate_layers(body, osc_mod.parse_networks(new["allow"])))
         except osc_mod.OscError as e:
             raise bad(str(e))
-        if new.get("key_on") and not osc_mod.valid_key(new.get("key")):
-            new["key"] = osc_mod.new_key()
+        new.pop("key", None)                   # the key lives in its own section (OscManager.make_key)
+        if new.get("key_on") and not self.osc.key():
+            self.osc.make_key()
         with self.settings.lock:
             self.settings.data["osc"] = new
         try:

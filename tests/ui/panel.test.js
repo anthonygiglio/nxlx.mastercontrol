@@ -490,7 +490,7 @@ function startServer() {
     await page.waitForSelector('#oscmessages .oscmsg:has-text("/pvj/stop")');
     await page.waitForSelector('#oscmessages .oscmsg:has-text("Refused: not in the list")');
     await page.click('#oscpaired');                           // lock 2: this browser is a paired device on loopback
-    await page.waitForFunction(() => { const n = document.getElementById('oscpairednow'); return n && n.textContent === 'Counts now: 127.0.0.1'; });
+    await page.waitForFunction(() => { const n = document.getElementById('oscpairednow'); return n && n.textContent === 'Counts now: 127.0.0.1.'; });
     await page.selectOption('#oscpairedhours', '3');
     for (let i = 0; i < 100; i++) { const d = await get('/api/osc'); if (d.paired_hours === 3 && d.listening) break; await page.waitForTimeout(100); }   // the choice is saved
     await page.waitForFunction(() => { const n = document.getElementById('oscpairedhours'); return n && n.value === '3'; });

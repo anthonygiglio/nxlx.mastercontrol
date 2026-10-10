@@ -3565,7 +3565,7 @@
     })));
     // 2. a paired device
     box.appendChild(toggle('oscpaired', 'A sender must be a paired device', d.paired_on, function (v) { set({ paired_on: v }); },
-      'Open the panel on the tablet once; then TouchOSC on the same tablet may send, for the hours set here. Removing the device under People and codes stops it at once.'));
+      'Open the panel on the tablet once; then TouchOSC on the same tablet may send, for the hours set here. Removing the device under People and codes, or logging out on it, stops it at once.'));
     if (d.paired_on) {
       var roles = h('select', { class: 'text-input', id: 'oscpairedroles', onchange: function () { set({ paired_roles: roles.value }); } },
         [['full', 'Owner devices only'], ['live', 'Owner and presenter devices']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: d.paired_roles === o[0] }); }));
@@ -3594,7 +3594,8 @@
     return box;
   }
   function oscPairedText(d) {
-    return d.paired_now.length ? 'Counts now: ' + d.paired_now.join(', ') : 'No paired device counts now. Open the panel on the tablet that sends.';
+    var v6 = (d.paired_v6 || []).length ? ' A paired device reached the panel over IPv6 (' + d.paired_v6.join(', ') + '); the receiver listens on IPv4 only: open the panel by the box\'s IPv4 address.' : '';
+    return (d.paired_now.length ? 'Counts now: ' + d.paired_now.join(', ') + '.' : 'No paired device counts now. Open the panel on the tablet that sends.') + v6;
   }
   function oscSenders(el, d, set) {
     var same = JSON.stringify([d.senders, d.only, d.refused]);
@@ -3608,7 +3609,9 @@
         : 'Refused: ' + x.why + ' (' + plural(x.refused, 'time') + ').' + (x.messages ? ' Before that ' + plural(x.messages, 'message') + ' let in.' : '');
       el.appendChild(h('div', { class: 'item lrow oscsender', 'data-id': x.address },
         h('div', { class: 'lhead' }, h('div', { class: 'lname mono', text: x.address }),
-          h('div', { class: x.accepted ? 'state' : 'hint warn', text: what })),
+          h('div', { class: x.accepted ? 'state' : 'hint warn', text: what }),
+          x.wrong_keys ? h('div', { class: 'hint oscwrong', text: plural(x.wrong_keys, 'wrong key') + ' from this address.' }) : null,
+          listed || x.panel ? null : h('div', { class: 'hint oscnopanel', text: 'No panel device here, check before allowing.' })),
         h('div', { class: 'row lacts' }, listed ? h('span', { class: 'hint', text: 'In the list' })
           : h('button', { class: 'btn small', text: 'Allow this one', 'aria-label': 'Allow ' + x.address, disabled: d.only.length >= 16,
             onclick: function () { set({ only: d.only.concat([x.address]) }); } }))));

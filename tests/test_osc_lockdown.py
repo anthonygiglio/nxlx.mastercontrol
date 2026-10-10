@@ -49,8 +49,11 @@ class LayerBase(unittest.TestCase):
 
     def rules(self, **keys):
         """Set the layer keys and make a receiver from the settings, as OscManager.apply does."""
+        if "key" in keys:
+            self.settings.data[osc.KEY_SECTION] = {"key": keys.pop("key")}
         self.settings.data["osc"].update(keys)
         self.server = OscServer(self.api, clock=self.clock, log=self.logs.append, rules=self.settings.data["osc"],
+                                key=self.manager.key(),
                                 paired=self.manager._paired, watch=self.manager.watch,
                                 extra_allow=osc.parse_networks(self.settings.data["osc"]["allow"]))
 
@@ -228,8 +231,9 @@ class KeyTest(LayerBase):
 
     def test_the_old_key_stops_at_once_when_a_new_one_is_made(self):
         self.manager.make_key()
-        new = self.settings.data["osc"]["key"]
+        new = self.manager.key()
         self.assertTrue(osc.valid_key(new))
+        self.assertNotIn("key", self.settings.data["osc"])
         self.assertNotEqual(new, KEY)
         self.rules()
         self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 2.0)), 0)
@@ -242,18 +246,34 @@ class KeyTest(LayerBase):
             self.assertEqual(self.send(msg("/k/nope/pvj/speed", 2.0)), 0)
         self.assertEqual([c.args for c in compare.call_args_list], [(KEY.encode(), KEY.encode()), (b"nope", KEY.encode())])
 
-    def test_wrong_keys_are_rate_limited_per_sender(self):
-        wrong = msg("/k/%s/pvj/speed" % ("f" * 20), 2.0)
-        with mock.patch("pvj.osc.hmac.compare_digest", side_effect=lambda a, b: a == b) as compare:
-            for _ in range(200):
-                self.send(wrong, OTHER)
-            self.assertEqual(compare.call_count, int(osc.WRONG_KEYS_BURST))   # after that, not even compared
-        self.assertEqual(self.why(OTHER), osc.WHY_KEYS)
-        self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 2.0), OTHER), 0)   # the right key waits too
-        self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 3.0)), 1)          # another sender is not held up
-        self.now[0] += 1 / osc.WRONG_KEYS_PER_SECOND
-        self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 4.0), OTHER), 1)
-        self.assertEqual(self.speeds(), [3.0, 4.0])
+    def test_a_flood_of_wrong_keys_never_holds_the_right_one_up(self):
+        # Review of #118 (M1): a limit per sender was a way to lock the tablet out, since its address can be forged.
+        wrong = msg("/k/%s/pvj/volume" % ("f" * 20), 40.0)
+        for i in range(300):                                      # forged as the tablet, inside its message allowance
+            self.assertEqual(self.send(wrong), 0)
+            if i % 50 == 0:
+                self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 2.0)), 1, i)
+        self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 3.0)), 1)
+        self.assertEqual(self.speeds(), [2.0] * 6 + [3.0])
+        self.assertEqual([c for c in self.player.calls if c[0] == "volume"], [])
+        row = next(r for r in self.manager.watch.senders() if r["address"] == TABLET)
+        self.assertEqual((row["wrong_keys"], row["accepted"]), (300, True))       # counted, for the owner to see
+        self.assertFalse(hasattr(self.server, "wrong_keys"))
+        self.assertFalse(hasattr(osc, "WHY_KEYS"))
+
+    def test_a_key_is_never_shown_and_a_second_prefix_is_refused(self):
+        twice = "/k/%s/k/%s/pvj/speed" % (KEY, KEY)
+        self.assertEqual(self.send(msg(twice, 2.0)), 0)
+        self.assertEqual(self.why(), osc.WHY_TWICE)
+        self.assertEqual(self.send(msg("/k/%s/pvj/%s" % (KEY, KEY), 2.0)), 0)     # let in, means nothing, shown without it
+        self.assertEqual(self.send(msg("/k/%s/pvj/opacity/" % KEY, 500.0)), 0)    # a refused value writes a journal line
+        self.rules(key_on=False)
+        self.assertEqual(self.send(msg("/k/x/k/%s/pvj/speed" % KEY, 2.0)), 0)     # also with the lock off
+        self.assertEqual(self.speeds(), [])
+        kept = json.dumps([self.manager.watch.senders(), self.manager.watch.messages(), self.logs])
+        self.assertNotIn(KEY, kept)
+        self.assertIn("/pvj/<key>", kept)
+        self.assertEqual(osc.shown("/a/%s/b" % KEY, KEY), "/a/<key>/b")
 
     def test_one_wrong_message_refuses_the_whole_packet(self):
         good, bad = msg("/k/%s/pvj/speed" % KEY, 2.0), msg("/pvj/volume", 40.0)
@@ -376,9 +396,14 @@ class WatchTest(LayerBase):
 class RealSocketTest(LayerBase):
     def test_real_udp_on_loopback_with_every_layer(self):
         token, _ = self.auth._add_device("laptop", "full")
+        # the key under "osc", where a build before the review kept it: setting the receiver up moves it
         self.settings.data["osc"].update(enabled=True, port=0, only_on=True, only=["127.0.0.1"], paired_on=True, key_on=True, key=KEY)
         self.manager.apply()
         self.addCleanup(self.manager.stop)
+        self.assertNotIn("key", self.settings.data["osc"])
+        self.assertEqual(self.settings.data[osc.KEY_SECTION], {"key": KEY})
+        self.assertEqual(json.loads(read(self.settings.path))[osc.KEY_SECTION], {"key": KEY})
+        self.assertNotIn("key", json.loads(read(self.settings.path))["osc"])
         server = self.manager.server
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.addCleanup(sock.close)
@@ -454,9 +479,11 @@ class ApiTest(CareBase):
         # a key cannot be chosen from outside
         st, d = self.post({"key_on": True, "key": "aaaaaaaaaaaaaaaaaaaa"})
         self.assertEqual(st, 200)
-        self.assertTrue(osc.valid_key(self.settings.data["osc"]["key"]))
-        self.assertNotEqual(self.settings.data["osc"]["key"], "aaaaaaaaaaaaaaaaaaaa")
-        self.assertEqual(json.loads(read(self.settings.path))["osc"]["key"], self.settings.data["osc"]["key"])
+        self.assertTrue(osc.valid_key(self.api.osc.key()))
+        self.assertNotEqual(self.api.osc.key(), "aaaaaaaaaaaaaaaaaaaa")
+        self.assertNotIn("key", self.settings.data["osc"])
+        on_disk = json.loads(read(self.settings.path))
+        self.assertEqual((on_disk[osc.KEY_SECTION], "key" in on_disk["osc"]), ({"key": self.api.osc.key()}, False))
 
     def test_saves_at_the_same_moment_do_not_trip_over_the_port(self):
         import threading
@@ -480,7 +507,7 @@ class ApiTest(CareBase):
 
     def test_the_key_is_shown_only_on_its_own_route_to_a_full_device_at_the_studio(self):
         self.assertEqual(self.post({"key_on": True})[0], 200)
-        key = self.settings.data["osc"]["key"]
+        key = self.api.osc.key()
         for dev in (self.full_dev, self.live_dev, self.view_dev):
             self.assertNotIn(key, json.dumps(self.h("GET", "/api/osc", device=dev)))
             self.assertNotIn(key, json.dumps(self.h("GET", "/api/status", device=dev)))
@@ -490,11 +517,73 @@ class ApiTest(CareBase):
         st, d = self.h("POST", "/api/osc/key", {"new": True}, self.full_dev)
         self.assertEqual(st, 200)
         self.assertNotEqual(d["key"], key)
-        self.assertEqual(json.loads(read(self.settings.path))["osc"]["key"], d["key"])
+        self.assertEqual(json.loads(read(self.settings.path))[osc.KEY_SECTION]["key"], d["key"])
         self.assertEqual(self.h("POST", "/api/osc/key", {"new": "yes"}, self.full_dev)[0], 400)
         self.assertEqual(self.h("GET", "/api/osc/key", device=self.full_dev)[0], 405)       # never a GET: no cache, no log line
         dev, _ = self.remote_login()
         self.assertEqual(self.h("POST", "/api/osc/key", {}, dev, TUNNEL)[0], 403)            # not through remote support
+
+    def test_showing_the_key_is_limited_and_leaves_a_journal_line_without_it(self):
+        from pvj import auth as auth_mod
+        lines, t = [], [50.0]
+        self.api.log, self.api.osc_clock = lines.append, lambda: t[0]
+        self.assertEqual(self.post({"key_on": True})[0], 200)
+        for _ in range(auth_mod.PIN_SHOWS - 1):
+            self.assertEqual(self.h("POST", "/api/osc/key", {}, self.full_dev)[0], 200)
+        st, d = self.h("POST", "/api/osc/key", {"new": True}, self.full_dev)
+        self.assertEqual(st, 200)
+        key = self.api.osc.key()
+        st, d = self.h("POST", "/api/osc/key", {}, self.full_dev)
+        self.assertEqual((st, "key" in d, d["retry_after"] > 0), (429, False, True))
+        self.assertEqual(self.h("POST", "/api/osc/key", {"new": True}, self.full_dev)[0], 429)
+        self.assertEqual(self.api.osc.key(), key)                                  # a refused request makes no new key
+        mine = [x for x in lines if "OSC key" in x]
+        self.assertEqual(len(mine), auth_mod.PIN_SHOWS)
+        self.assertIn("shown to device %s (Studio laptop) from %s" % (self.full_dev["id"], LAN), mine[0])
+        self.assertIn("made new by device", mine[-1])
+        self.assertNotIn(key, json.dumps(lines))
+        t[0] += auth_mod.PIN_SHOW_WINDOW + 1
+        self.assertEqual(self.h("POST", "/api/osc/key", {}, self.full_dev)[0], 200)
+        gone = dict(self.full_dev, id="nobody")                                    # removed after its token was checked
+        self.assertEqual(self.h("POST", "/api/osc/key", {}, gone)[0], 401)
+
+    def test_logging_out_stops_osc_from_that_address_at_once(self):
+        # D77's log out (#117) removes the device, and with it the address it asked from
+        token = self.call("POST", "/api/pair", {"pin": self.pin, "name": "tablet"})[1]["token"]
+        dev = self.auth.authenticate(token, TABLET)
+        for d in list(self.settings.data["devices"]):                              # only the tablet is left to count
+            if d["id"] != dev["id"]:
+                self.auth.forget_address(d["id"])
+        self.settings.data["osc"].update(enabled=True, port=0)
+        self.assertEqual(self.post({"paired_on": True})[0], 200)
+        server = self.api.osc.server
+        self.assertEqual(server.handle_packet(msg("/pvj/speed", 2.0), TABLET), 1)
+        self.assertEqual(self.call("POST", "/api/logout", {}, token=token)[0], 200)
+        self.assertEqual(server.handle_packet(msg("/pvj/speed", 3.0), TABLET), 0)
+        self.assertEqual(self.h("GET", "/api/osc", device=self.full_dev)[1]["senders"][0]["why"], osc.WHY_PAIRED)
+        self.assertNotIn(dev["id"], self.auth._addresses)
+
+    def test_a_device_that_reached_the_panel_over_ipv6_is_said_not_to_count(self):
+        # Review of #118 (M2): the receiver is IPv4 only, so such a device looked as if it counted and never could
+        self.auth.forget_address()
+        self.auth.authenticate(self.full, LONG6)
+        self.assertEqual(self.post({"paired_on": True})[0], 200)
+        d = self.h("GET", "/api/osc", device=self.full_dev)[1]
+        self.assertEqual((d["paired_now"], d["paired_v6"]), ([], [LONG6]))
+        self.auth.authenticate(self.full, "::ffff:" + TABLET)                      # IPv4 written the IPv6 way is IPv4
+        d = self.h("GET", "/api/osc", device=self.full_dev)[1]
+        self.assertEqual((d["paired_now"], d["paired_v6"]), ([TABLET], []))
+        self.assertNotIn("paired_v6", self.h("GET", "/api/osc", device=self.live_dev)[1])
+
+    def test_every_sender_says_whether_a_panel_device_asked_from_there(self):
+        self.auth.forget_address()
+        self.auth.authenticate(self.full, TABLET)
+        self.settings.data["osc"].update(enabled=True, port=0)
+        self.assertEqual(self.post({})[0], 200)                                    # no lock is on
+        for ip in (TABLET, OTHER):
+            self.api.osc.server.handle_packet(msg("/pvj/speed", 2.0), ip)
+        rows = {r["address"]: r["panel"] for r in self.h("GET", "/api/osc", device=self.full_dev)[1]["senders"]}
+        self.assertEqual(rows, {TABLET: True, OTHER: False})
 
     def test_a_presenter_and_a_guest_see_neither_the_key_nor_the_lists(self):
         self.settings.data["osc"].update(enabled=True, port=0)
@@ -532,7 +621,8 @@ class BoxCareTest(CareBase):
     def setUp(self):
         super().setUp()
         self.settings.data["osc"] = {"enabled": False, "port": 9001, "allow": [], "only_on": True, "only": [TABLET],
-                                     "paired_on": True, "paired_roles": "live", "paired_hours": 6, "key_on": True, "key": KEY}
+                                     "paired_on": True, "paired_roles": "live", "paired_hours": 6, "key_on": True}
+        self.settings.data[osc.KEY_SECTION] = {"key": KEY}
 
     def test_an_export_never_carries_the_key(self):
         file = self.export()
@@ -540,7 +630,10 @@ class BoxCareTest(CareBase):
         self.assertNotIn("key", file["settings"]["osc"])
         self.assertEqual(file["settings"]["osc"]["only"], [TABLET])
         self.assertNotIn(KEY, json.dumps(self.export(passwords=True)))
-        self.assertEqual(self.settings.data["osc"]["key"], KEY)             # the box still has it
+        self.assertNotIn(osc.KEY_SECTION, file["settings"])
+        self.assertEqual(self.api.osc.key(), KEY)                           # the box still has it
+        self.settings.data["osc"]["key"] = self.settings.data.pop(osc.KEY_SECTION)["key"]   # where an earlier build kept it
+        self.assertNotIn(KEY, json.dumps(self.export()))
 
     def test_the_diagnostics_file_does_not_show_it(self):
         from tests.test_boxcare import FakeJournal
@@ -549,6 +642,7 @@ class BoxCareTest(CareBase):
         self.assertEqual(st, 200, out)
         self.assertNotIn(KEY, json.dumps(out))
         self.assertEqual(out["file"]["settings"]["osc"]["only"], [TABLET])       # the rest of the section is there
+        self.assertIn(osc.KEY_SECTION, out["file"]["settings"]["not_shown"])
         self.assertEqual(boxcare_net({"osc": {"key": KEY}})["osc"]["key"], "(removed)")
 
     def test_an_import_checks_the_layers_and_keeps_the_boxes_own_key(self):
@@ -561,24 +655,31 @@ class BoxCareTest(CareBase):
                 self.care.import_settings(json.dumps(broken).encode(), "import", self.full_dev, LAN)
         self.assertEqual(self.settings.data["osc"]["only"], [TABLET])
         file["settings"]["osc"].update(key="f" * 20, only=[OTHER], paired_hours=2)          # a key in a file is not taken
+        file["settings"][osc.KEY_SECTION] = {"key": "e" * 20}                               # its own section is no part of a file
+        with self.assertRaises(Exception):
+            self.care.import_settings(json.dumps(file).encode(), "import", self.full_dev, LAN)
+        del file["settings"][osc.KEY_SECTION]
         self.care.import_settings(json.dumps(file).encode(), "import", self.full_dev, LAN)
         got = self.settings.data["osc"]
-        self.assertEqual((got["key"], got["only"], got["paired_hours"], got["key_on"]), (KEY, [OTHER], 2, True))
+        self.assertEqual((self.api.osc.key(), "key" in got, got["only"], got["paired_hours"], got["key_on"]), (KEY, False, [OTHER], 2, True))
+        self.assertEqual(json.loads(read(self.settings.path))[osc.KEY_SECTION], {"key": KEY})
 
     def test_a_file_from_an_earlier_version_switches_no_layer_off(self):
         file = self.export()
         file["settings"]["osc"] = {"enabled": False, "port": 9002, "allow": []}
         self.care.import_settings(json.dumps(file).encode(), "import", self.full_dev, LAN)
         got = self.settings.data["osc"]
-        self.assertEqual((got["port"], got["only_on"], got["only"], got["paired_on"], got["key_on"], got["key"]),
+        self.assertEqual((got["port"], got["only_on"], got["only"], got["paired_on"], got["key_on"], self.api.osc.key()),
                          (9002, True, [TABLET], True, True, KEY))
 
     def test_a_box_without_a_key_makes_one_when_the_file_switches_the_layer_on(self):
         file = self.export()
         self.settings.data["osc"] = {"enabled": False, "port": 9001, "allow": []}
+        del self.settings.data[osc.KEY_SECTION]
         self.care.import_settings(json.dumps(file).encode(), "import", self.full_dev, LAN)
         got = self.settings.data["osc"]
-        self.assertTrue(got["key_on"] and osc.valid_key(got["key"]) and got["key"] != KEY)
+        self.assertTrue(got["key_on"] and osc.valid_key(self.api.osc.key()) and self.api.osc.key() != KEY)
+        self.assertNotIn("key", got)
 
     def test_a_factory_reset_clears_all_of_it(self):
         self.api.osc.watch.note(TABLET, True, "", "/pvj/stop")
@@ -586,6 +687,7 @@ class BoxCareTest(CareBase):
         st, out = self.h("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, self.full_dev)
         self.assertEqual(st, 200, out)
         self.assertEqual(self.settings.data["osc"], {"enabled": False, "port": 9876, "allow": []})
+        self.assertNotIn(osc.KEY_SECTION, self.settings.data)
         self.assertNotIn(KEY, read(self.settings.path))
         self.assertNotIn(KEY, read(self.settings.path + ".bak"))
         self.assertEqual((self.api.osc.watch.senders(), self.api.osc.watch.messages(), self.auth._addresses), ([], [], {}))
