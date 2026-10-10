@@ -86,13 +86,14 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | K8 | Move the zoom on the nanoKONTROL2, then touch the MIDI Mix's zoom knob | The MIDI Mix's knob does nothing until it meets the picture's size; then it has it, and the nanoKONTROL2's knob waits in its turn |
 | K9 | Panel, Live: tap **Fade out** | The picture fades out in 2 seconds; the button reads **Fade in** and flashes about twice a second, without moving anything around it. Readable in both halves of the flash? |
 | K10 | Tap it again | The picture fades in; the button is steady while it comes up and reads Fade out afterwards |
+| K10a | Tap it, and tap again half way down; then again half way up | Each time the picture turns round from where it is: no jump to black and none to full |
 | K11 | Launchpad Mini: press the round button **E** (right side, fifth from the top) | The same fade. While the picture is down E **flashes red** by itself and every other light stays steady. **If other lights flash too, or the pads look wrong after plugging in, say so at once and switch Lights off**: that is the flash mode misbehaving |
 | K12 | nanoKONTROL2 with lights on (LED Mode External, L10 below): press **R 7** | The same fade; R 7 flashes while the picture is down, lit while it comes up, dark afterwards |
 | K13 | MIDI Mix: hold Solo and press **Mute 5** | The same fade. No light (this row has none); the panel's button flashes |
 | K14 | Fade out with a controller, then press Blackout twice, then twice again | After the Blackout is off the picture is back and the fade button is steady; its next press fades out |
 | K15 | Launchpad Mini with clips on A1, B1 and C1 | Three colours: top left amber, the first pad of the right half yellow-green, the first pad of row 4 orange. Can you tell them apart at Low, Medium and High? The pad that plays is bright green |
 | K16 | Launchpad Mini: the three rows right of bank C | Row 4: Vibes, previous shader, next shader. Row 5: effect on / off, previous, next. Row 6: previous clip, back 10 s, forward 10 s, next clip |
-| K17 | The quarter turn: R 6 (nanoKONTROL2), Solo+Mute 3 (MIDI Mix), the fifth round button along the top (Launchpad) | The picture turns a quarter each press, back to upright after four |
+| K17 | The quarter turn: M 7 (nanoKONTROL2, over Fade), Rec Arm 8 (MIDI Mix), the fifth round button along the top (Launchpad) | The picture turns a quarter each press, back to upright after four |
 
 ### TouchOSC: what the owner's layout can now be wired to (D75)
 
@@ -125,7 +126,7 @@ The layout open in the owner's TouchOSC editor (`touchosc/mastercontrol_tOSC-lay
 
 Left as they are: the Room page (`pvj/scene/1` to `8`, `pvj/group/...`), Live's pads and banks, `pvj/vibes`, `pvj/vibes/set`, the Mix faders `pvj/opacity`, `pvj/size`, `pvj/position`, `pvj/speed`, `pvj/volume`, `pvj/rotate`, `pvj/loop`, `pvj/mute`, `pvj/mix/reset`, the Tools page's test screen and tones, and the strip's `pvj/seek`, `pvj/pause` (Freeze is pause), `pvj/stop` and `pvj/blackout`.
 
-**One trap:** `/pvj/fadeout` and `/pvj/fadein` read their argument as the seconds. A plain TouchOSC button sends 1 on press and 0 on release, which is a fade of one second and then a refused 0 that the box writes in its log. Send no argument or the seconds you want, or use `/pvj/fade`, which takes a press.
+**The layout's `pvj/fadeout` button as it is:** a plain TouchOSC button sends 1 on press and 0 on release. The box used to read those as seconds (a fade of one second, then a refused 0 in its log); now the 1 is a press with the panel's 2 seconds and the 0 does nothing. For another time use `/pvj/fadeout/seconds` and `/pvj/fadein/seconds`.
 
 To try: O1, send each new address from the layout with a clip playing and look at the screen and the panel; O2, the fade button twice (out, in), then Blackout from the panel and the fade button once (the picture comes up); O3, `/pvj/shader` with a name while Vibes runs (Vibes ends, that shader shows); O4, `journalctl -u pvj-web | grep osc` for a refused value.
 

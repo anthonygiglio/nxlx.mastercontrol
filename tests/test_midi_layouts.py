@@ -227,6 +227,17 @@ class GeometryOnAKnobTest(unittest.TestCase):
 
 
 class HubGeometryTest(HubBase):
+    def test_a_stored_mapping_that_fails_the_check_is_named_in_the_log_once(self):
+        self.settings.data["control"]["midi"]["map"] = [
+            {"id": "aaaaaaaa", "source": "keys", "kind": "cc", "channel": 0, "number": 7, "action": "teleport"},
+            midi.validate_entry({"source": "keys", "kind": "cc", "number": 8, "action": "size"})]
+        self.enable()
+        self.enable()                                               # a second change of a switch: not said again
+        said = [line for line in self.said if "left out" in line]
+        self.assertEqual(len(said), 1, self.said)
+        self.assertIn("aaaaaaaa cc 7 on keys, action 'teleport'", said[0])
+        self.assertIn("unknown action", said[0])
+
     def test_the_hub_reads_where_the_picture_is_from_memory(self):
         self.api.mix.update(size=140, position=-30, position_y=55)
         self.assertEqual([self.hub._target(a) for a in ("size", "position", "position_y")], [140.0, -30.0, 55.0])
@@ -317,12 +328,59 @@ class FadeToggleTest(ServerBase):
         self.assertEqual(self.post("/api/fade")[1]["fade"], "out")  # no seconds: two, as the buttons had
         self.assertEqual(self.post("/api/fade", {"seconds": 0})[0], 400)
 
-    def test_a_press_in_the_middle_of_the_way_down_turns_it_round(self):
-        self.post("/api/fade", {"seconds": 5})
-        time.sleep(0.2)
-        self.assertEqual(self.post("/api/fade", {"seconds": 0.1})[1]["fade"], "in")
+    def writes(self):
+        return [c[1] for c in self.player.calls if c[0] == "opacity"]
+
+    def test_a_press_in_the_middle_of_the_way_down_turns_it_round_from_where_the_picture_is(self):
+        self.post("/api/fade", {"seconds": 2})
+        end = time.time() + 4
+        while time.time() < end and not 60 < self.level() < 200:
+            time.sleep(0.01)
+        before, n = self.level(), len(self.writes())
+        self.assertTrue(60 < before < 200, before)                  # about half way down
+        self.assertEqual(self.post("/api/fade", {"seconds": 0.4})[1]["fade"], "in")
         self.wait_level(255)
+        after = [v for v in self.writes()[n:] if v > before - 40]   # (a step of the old ramp may still land: one more step down at most)
+        self.assertEqual(self.writes()[n:], after, "the picture snapped to black before it came up")
+        self.assertNotIn(0, self.writes()[n:])
         self.settle(None)
+
+    def test_a_press_in_the_middle_of_the_way_up_turns_it_round_from_where_the_picture_is(self):
+        self.post("/api/fade", {"seconds": 0.1})
+        self.wait_level(0)
+        self.post("/api/fade", {"seconds": 2})                      # up again, slowly
+        end = time.time() + 4
+        while time.time() < end and not 60 < self.level() < 200:
+            time.sleep(0.01)
+        before, n = self.level(), len(self.writes())
+        self.assertTrue(60 < before < 200, before)
+        self.assertEqual(self.post("/api/fade", {"seconds": 0.4})[1]["fade"], "out")
+        self.wait_level(0)
+        self.assertLess(max(self.writes()[n:]), before + 40, "the picture snapped to full before it went down")
+        self.assertNotIn(255, self.writes()[n:])
+
+    def test_two_presses_that_meet_while_the_screen_is_black(self):
+        """Two controllers press the fade button at the same moment. The one that acts first must not find a fader
+        the other has just taken, judge the picture lit and fade OUT from the mix's level: a flash of the whole
+        picture out of black. Each takes the fader first and decides inside the lock; here the second press's
+        taking has happened before the first press decides."""
+        self.post("/api/fade", {"seconds": 0.1})
+        self.wait_level(0)
+        n = len(self.writes())
+        self.api.fader.take()                                       # the other press, so far: it took the fader
+        self.assertEqual(self.api.fader.was(), ("out", 0.0))        # and what the fader was doing is still known
+        self.assertEqual(self.post("/api/fade", {"seconds": 0.4})[1]["fade"], "in")
+        first = self.writes()[n:][:3]
+        self.assertTrue(first and max(first) < 128, "the picture flashed up out of black: %s" % (first,))
+        self.assertEqual(self.post("/api/fade", {"seconds": 0.2})[1]["fade"], "out")      # the other press, now acting: down again from where it is
+        self.wait_level(0)
+        self.assertLess(max(self.writes()[n:]), 200)                # it never reached the full picture
+        self.assertEqual(self.api.fader.label, "out")
+        # another wish for the level (Blackout) forgets what was kept
+        self.api.fader.take()
+        self.post("/api/blackout", {"on": True})
+        self.post("/api/blackout", {"on": False})
+        self.assertEqual(self.api.fader.was(), (None, None))
 
     def test_it_follows_a_fade_that_was_started_elsewhere(self):
         self.post("/api/fadeout", {"seconds": 0.1})                 # the old call (a stored mapping, OSC, a Room scene)

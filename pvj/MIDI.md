@@ -37,7 +37,7 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
   Pickup catches where the control really gives the box's value: the reverse of the level's own curve (see "How a level follows a knob"), not a straight line. **Two controllers on one level share it this way**: each takes the level over only where it meets it, and the one that was left behind waits again (tested with a nanoKONTROL2's and a MIDI Mix's zoom knob).
 
   Mappings you make on a recognised controller pick up the same way. Plain Learn mappings on a controller with no profile behave as before (no pickup). A mapping can say otherwise for itself: `"takeover": "pickup"` or `"jump"` (see "How a level follows a knob").
-- **The same press twice.** Blackout and the Room scenes need two presses of the same button within a second (and at least a quarter of a second apart); one press does nothing. They are marked "2x" on the card. A Room scene can switch projectors off for the whole room, so it is treated like blackout. If you put blackout or a Room scene on a control yourself (on its card), it is guarded too: the chooser shows a switch **Press twice**, on unless you switch it off. Saving a control without changing it stores nothing, so the guard cannot be lost by pressing Save. A mapping made with plain Learn is not guarded, as before.
+- **The same press twice.** Blackout and the Room scenes need two presses of the same button within a second (and at least a quarter of a second apart); one press does nothing. The time is counted from the LAST press: a second press that comes too early or too late does nothing itself and is the first press of a new pair, so a third press a quarter of a second to a second after it acts. They are marked "2x" on the card. A Room scene can switch projectors off for the whole room, so it is treated like blackout. If you put blackout or a Room scene on a control yourself (on its card), it is guarded too: the chooser shows a switch **Press twice**, on unless you switch it off. Saving a control without changing it stores nothing, so the guard cannot be lost by pressing Save. A mapping made with plain Learn is not guarded, as before.
 - **The controllers' bank.** A nanoKONTROL2 and a MIDI Mix have one row of eight pad buttons, so the box keeps a bank for controllers (A at start, not saved): the row plays pads 1 to 8 of that bank and two buttons step it. Pads 9 to 12 are not on these two layouts. The Launchpad Mini has room for all three banks and needs no bank button.
 - **Zones.** Every control of a layout belongs to one part of the controller: Pads, The clip, The screen (fade, freeze, stop, black), The picture (zoom, place, turn), Sound, Shaders and Vibes, Effects, Room, Access. The card tints the controls of a zone alike (a bar of colour along the foot of each) and names the zones once under the drawing.
 - **Same path as everything else.** A profile only chooses which API call a control makes; the call goes through the API as a presenter, so the module switches, every check and the 50 commands a second apply, and no control waits for the shader engine (tested with the engine's lock held, for every control of every layout).
@@ -52,8 +52,8 @@ A profile is one file in `pvj/controllers.d/`: which controller it is for, a dra
 ```
             knob     1 Zoom    2 Pos X   3 Pos Y   4 Sh c1   5 Sh c2   6 Sh c3   7 Sh c4   8 Vibes time
 Track < >   S        pad 1     pad 2     pad 3     pad 4     pad 5     pad 6     pad 7     pad 8
-Cycle  Marker        M        preset 1  preset 2  preset 3  preset 4  preset 5  preset 6  preset 7  preset 8
-<< >> Stop Play Rec  R        scene 1   scene 2   scene 3   scene 4   Effect    Rotate    FADE      BLACKOUT
+Cycle  Marker        M        preset 1  preset 2  preset 3  preset 4  preset 5  preset 6  Rotate    (spare)
+<< >> Stop Play Rec  R        scene 1   scene 2   scene 3   scene 4   Effect    (spare)   FADE      BLACKOUT
             fader    Opacity   Volume    Clip spd  Sh speed  Sh hue    Sh bright Fx amount (spare)
 ```
 
@@ -67,10 +67,12 @@ Cycle  Marker        M        preset 1  preset 2  preset 3  preset 4  preset 5  
 | Fader 7 | CC 6 | Effect amount (pickup) | unchanged |
 | Fader 8 | CC 7 | Spare | |
 | S 1 to 8 | CC 32 to 39 | Pad 1 to 8 of the controllers' bank | the top row of buttons is the one pressed most |
-| M 1 to 8 | CC 48 to 55 | Shader preset 1 to 8 | |
+| M 1 to 6 | CC 48 to 53 | Shader preset 1 to 6 | |
+| M 7 | CC 54 | Rotate a quarter turn | over Fade, not beside it: the buttons a hand reaches for in the dark have nothing drastic at their side (after the review of D75; it was on R 6) |
+| M 8 | CC 55 | Spare | over Blackout |
 | R 1 to 4 | CC 64 to 67 | Room scene 1 to 4 (press twice) | |
 | R 5 | CC 68 | Effect on / off | under the effect's strips |
-| R 6 | CC 69 | Rotate a quarter turn | the picture's last control; a press too many is undone by three more |
+| R 6 | CC 69 | Spare | left empty on purpose, beside Fade |
 | R 7 | CC 70 | **Fade out, then in** (one button; its light flashes while the picture is down) | beside Blackout: the two that darken the screen |
 | R 8 | CC 71 | Blackout on / off (press twice) | the last button of the row, where no other is beside it on the right |
 | Track <, Track > | CC 58, 59 | Previous shader, next shader | |
@@ -92,8 +94,8 @@ knob A   Sh c1    Sh c2    Sh c3    Sh c4    Sh c5    Sh c6    Sh c7    Sh c8
 knob B   Zoom     Pos X    Pos Y    Vibes t. (spare)  (spare)  (spare)  (spare)
 knob C   Fx c1    Fx c2    Fx c3    Fx c4    Fx c5    Fx c6    Fx c7    Fx c8
 Mute     pad 1    pad 2    pad 3    pad 4    pad 5    pad 6    pad 7    pad 8      Bank <
-Solo+M   Vibes    Shader > Rotate   Effect   FADE     Freeze   Stop     BLACKOUT   Bank >
-Rec Arm  preset 1 preset 2 preset 3 preset 4 preset 5 preset 6 preset 7 preset 8   Solo (shift)
+Solo+M   Vibes    Shader < Shader > Effect   FADE     Freeze   Stop     BLACKOUT   Bank >
+Rec Arm  preset 1 preset 2 preset 3 preset 4 preset 5 preset 6 preset 7 Rotate     Solo (shift)
 fader    Opacity  Volume   Clip spd Sh speed Sh hue   Sh brt   Fx amt   (spare)    Master (spare)
 ```
 
@@ -108,13 +110,14 @@ fader    Opacity  Volume   Clip spd Sh speed Sh hue   Sh brt   Fx amt   (spare) 
 | Fader 7 | CC 57 | Effect amount (pickup) |
 | Fader 8, Master | CC 61, 62 | Spare |
 | Mute 1 to 8 | Note 1, 4, 7, 10, 13, 16, 19, 22 | Pad 1 to 8 of the controllers' bank |
-| Rec Arm 1 to 8 | Note 3, 6, 9, 12, 15, 18, 21, 24 | Shader preset 1 to 8 |
-| Solo+Mute 1 to 4 | Note 2, 5, 8, 11 | Vibes on / off, next shader, rotate a quarter turn, effect on / off |
+| Rec Arm 1 to 7 | Note 3, 6, 9, 12, 15, 18, 21 | Shader preset 1 to 7 |
+| Rec Arm 8 | Note 24 | Rotate a quarter turn (not on the Solo row, between two switches, where the first layout of D75 had it) |
+| Solo+Mute 1 to 4 | Note 2, 5, 8, 11 | Vibes on / off, previous shader, next shader, effect on / off |
 | Solo+Mute 5 to 8 | Note 14, 17, 20, 23 | **Fade out, then in** (one button), Freeze / resume, Stop, Blackout (press twice): the panel's own order |
 | Bank Left, Bank Right | Note 25, 26 | Controllers' bank: the one before, the next |
 | Solo | Note 27 | Spare (it is the shift for the row above) |
 
-Room scenes, the two Vibes sets, the previous shader and the effect's previous and next are not on this layout (it has no free buttons); put one on a control from the card or the Room screen. **The fade button has no light here**: the box cannot light the Solo+Mute row, so on a MIDI Mix the flashing is on the panel only.
+Room scenes, the two Vibes sets and the effect's previous and next are not on this layout (it has no free buttons); put one on a control from the card or the Room screen. **The fade button has no light here**: the box cannot light the Solo+Mute row, so on a MIDI Mix the flashing is on the panel only.
 
 ### Novation Launchpad Mini (`novation-launchpad-mini`)
 
@@ -157,15 +160,31 @@ row 8         control 1 ... control 8 of it, as a press           (H) BLACKOUT  
 | Top 5, 6, 7 | CC 108, 109, 110 | Rotate a quarter turn, overlay picture on / off, sound off / on |
 | Top 3, 4, 8 | CC 106, 107, 111 | Spare |
 
-The effect's controls as presses, which filled eight pads of the first layout, are not on this one. **Other ways to lay it out**, if this is still not it (the question is with the owner): each bank as two rows of six with the zones in the two right-hand columns; or one bank only, drawn large, with the round buttons on the right choosing the bank.
+The effect's controls as presses, which filled eight pads of the first layout, are not on this one.
+
+**The other drawing, to compare** (proposed by the independent review of D75; not built, the question is with the owner). One bank per pair of rows, the banks stacked A, B, C down the grid, so a bank reads left to right as one line of pads and the three banks sit under each other as the three bank buttons of the panel sit side by side; the fourth pair of rows for shaders, effects and the clip. Eight pads a row leaves four columns free beside each bank's twelve:
+
+```
+top (round)   Vibes:Amb  Vibes:Show  .       .       Rotate   Overlay  Mute    .
+row 1         A1   A2   A3   A4   A5   A6   |  .    .           (A) Room scene 1   2x
+row 2         A7   A8   A9   A10  A11  A12  |  .    .           (B) Room scene 2   2x
+row 3         B1   B2   B3   B4   B5   B6   |  .    .           (C) Room scene 3   2x
+row 4         B7   B8   B9   B10  B11  B12  |  .    .           (D) Room scene 4   2x
+row 5         C1   C2   C3   C4   C5   C6   |  .    .           (E) FADE out / in
+row 6         C7   C8   C9   C10  C11  C12  |  .    .           (F) Freeze
+row 7         Vibes Shader< Shader> . | Effect Effect< Effect> code (G) Stop
+row 8         Prev  -10 s   +10 s  Next | preset 1 to 4            (H) BLACKOUT      2x
+```
+
+What each gives: **as built**, a bank looks like the panel's bank on a laptop (three rows of four) and the grid has room for eight presets and eight shader controls; **the other**, the banks follow one another top to bottom, which may be what a hand expects of "bank A, then B, then C", at the price of twelve pads left dark on the right and only four presets. A third way: one bank only, drawn large, with the round buttons on the right choosing the bank.
 
 ### What changes when you update
 
 **From the version with the first layouts to this one (D75).** A box that has one of the three controllers plugged in behaves differently after this update. Mappings you made keep working and still win over the standard for their control. What changes:
 
 - **Most controls of the three layouts do something else.** The tables above are the whole truth; the ones a hand had learned:
-  - *nanoKONTROL2*: knobs 1 to 3 were shader controls 1 to 3 and are zoom, position X and position Y; knobs 4 to 7 were shader controls 4 to 7 and are 1 to 4; knob 8 was shader control 8 and is Vibes time. R 6 was Fade in and is the quarter turn; R 7 was Fade out and is the one fade button. Shader controls 5 to 8 are not on it any more.
-  - *MIDI Mix*: knob B2 was position X and still is; B1 (size) is the same under the name Zoom; B3 was Vibes time and is position Y; B4 was spare and is Vibes time. The Solo+Mute row was Stop, Pause, Vibes, previous shader, next shader, Fade in, Fade out, Blackout and is Vibes, next shader, rotate, effect on / off, fade, Freeze, Stop, Blackout.
+  - *nanoKONTROL2*: knobs 1 to 3 were shader controls 1 to 3 and are zoom, position X and position Y; knobs 4 to 7 were shader controls 4 to 7 and are 1 to 4; knob 8 was shader control 8 and is Vibes time. R 6 was Fade in and is spare; R 7 was Fade out and is the one fade button; M 7 was preset 7 and is the quarter turn, M 8 was preset 8 and is spare. Shader controls 5 to 8 and presets 7 and 8 are not on it any more.
+  - *MIDI Mix*: knob B2 was position X and still is; B1 (size) is the same under the name Zoom; B3 was Vibes time and is position Y; B4 was spare and is Vibes time. The Solo+Mute row was Stop, Pause, Vibes, previous shader, next shader, Fade in, Fade out, Blackout and is Vibes, previous shader, next shader, effect on / off, fade, Freeze, Stop, Blackout. Rec Arm 8 was preset 8 and is the quarter turn.
   - *Launchpad Mini*: every pad of the grid and most round buttons. Above all the banks: note 4 was bank A pad 5 and is bank B pad 1. The top row was previous and next shader, Vibes, previous and next clip, Pause, Fade in, Fade out. Stop and Blackout are where they were (G and H); the Room scenes too (A to D). The presenter code moved from the pad with note 7 to the pad with note 71.
 - **A zoom or position knob waits for pickup** on these three controllers, also one you mapped yourself there: it does nothing until it reaches the value the box has.
 - **Zoom, position, clip speed, shader speed, colour turn and shader brightness have their normal value at the middle of the control**, over nine steps (60 to 68 of 0 to 127). For every mapping of these actions, yours and the built-in map's too:
@@ -274,7 +293,7 @@ In the drawing a small ring marks each control that has a light; the ring is fil
 
 A light follows **what its control does now**: if you put another action on a control, its light shows that action's state. Five states exist: off, "there is something here", "it is the one on now", "busy", and **flashing** (D75), which only the one fade button uses: it flashes while the picture goes down and while it is black from a fade.
 
-**How a light flashes.** Where the maker's document gives a way for the controller to flash a light by itself, the box uses it: one message, and nothing more is sent while it flashes (the Launchpad, below). Everywhere else the light's own writer switches it on and off, a quarter of a second each (two flashes a second), on its own thread and its own clock, through the same limit of 200 messages a second as every other light: a flashing light costs four messages a second, the thread that reads the controller never waits for it, and it ends with the state. A profile says which: `"flash": "device"` in its lights section and a `flash` value in a style, or nothing (the writer does it).
+**How a light flashes.** Where the maker's document gives a way for the controller to flash a light by itself, the box uses it: one message, and nothing more is sent while it flashes (the Launchpad, below). Everywhere else the light's own writer switches it on and off, a quarter of a second each (two flashes a second), on its own thread and its own clock, through the same limit of 200 messages a second as every other light: a flashing light costs four messages a second, the thread that reads the controller never waits for it, and it ends with the state. **If the panel's service dies without sending its clear message** (a crash, the power of the box and not of the controller), a light stays as it was at that moment: one the box was flashing itself stays lit or dark, whichever half it was in, and a Launchpad goes on flashing by itself until it is unplugged or the service is back. A profile says which: `"flash": "device"` in its lights section and a `flash` value in a style, or nothing (the writer does it).
 
 | The control does | Something here | On now | Busy |
 | --- | --- | --- | --- |
@@ -385,7 +404,7 @@ A mapping belongs to one controller (by its ALSA card id, such as `nanoKONTROL2`
 | --- | --- | --- |
 | Play a pad | trigger | Plays that pad (bank A to C, pads 1 to 12) |
 | Stop, Pause / resume (the panel's Freeze), Blackout on / off, Fade out, Reset mix | trigger | As in the panel |
-| **Fade out, then in** (`fade`) | trigger | The one fade button: fades out in 2 seconds, and at the next press in. The box decides which from what the screen is doing (`POST /api/fade`): the picture is down when a Fade out is running or has left it black, or when Blackout is on, and then the press fades in (which also ends the Blackout). It is not a count of presses, so it stays right when a fade was started elsewhere, when Blackout was used and when a play brought the picture back |
+| **Fade out, then in** (`fade`) | trigger | The one fade button: fades out in 2 seconds, and at the next press in. The box decides which from what the screen is doing (`POST /api/fade`): the picture is down when a Fade out is running or has left it black, or when Blackout is on, and then the press fades in (which also ends the Blackout). It is not a count of presses, so it stays right when a fade was started elsewhere, when Blackout was used and when a play brought the picture back. A press in the middle of a fade turns it round from where the picture is, and two presses that meet are taken one after the other |
 | Opacity, Zoom (`size`), Position X (`position`), Position Y (`position_y`), Speed, Volume | level | Follows the control: see "How a level follows a knob" |
 | Rotate a quarter turn (`rotate`) | trigger | 0, 90, 180, 270 degrees and round |
 | Mirror left to right, mirror top to bottom (`flip_h`, `flip_v`) | trigger | The other state |

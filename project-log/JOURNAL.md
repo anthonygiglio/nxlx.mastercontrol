@@ -17,7 +17,8 @@ Branch `midi-layouts`, pull request #115, a draft stacked on #113 (`effect-over-
 - **CI on 21dfbfc:** everything green but `panel-ui`, both runs, for one reason: the zone names under a controller's drawing were 12 px, and the Signal look allows no text under 13. Mended (13 px).
 - **OSC, the same day** ("yes, add those to the box's OSC"): one table of actions shared by MIDI and OSC (`pvj/actions.py`), twenty-odd new addresses in `pvj/OSC.md`, `tests/test_osc_reach.py` through the parser, the API and a real UDP socket. No replies were added; D75 has the next step. The owner's TouchOSC layout was read (not changed) through the editor's own tools, and the wiring list in `tools/DEVICE-TESTING.md` names its real controls. The rollback was also run through master's own `Settings.load` and hub in a scratch copy: the file loads, the unknown mappings are skipped and kept.
 - **Stopped a second time**, by a restart of the session, after the push of 21dfbfc. Nothing was lost.
-- **Not started:** parts 2 and 3 (the card as an editor), Map Mode, OSC feedback. Parts 2 and 3 wait for an independent review of part 1.
+- **The independent review's round** (D75, "After the independent review"): `effect-over-shader` at 802533b merged in first (two log files conflicted, both sides kept); three medium faults and the small ones mended; Rotate moved. Each new test was run against its fault put back, after the commit (the pull request's comment has which).
+- **Not started:** parts 2 and 3 (the card as an editor), Map Mode, OSC feedback. They wait until the owner has tried part 1 on the real controllers.
 
 ## 2026-10-10 (the three features on the test Pi; master with the owner PIN and Log out merged in)
 

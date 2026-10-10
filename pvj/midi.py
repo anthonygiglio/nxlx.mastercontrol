@@ -1540,6 +1540,24 @@ class MidiHub:
         self._quiet = None
         self._quiet_until = 0.0
         self._vibes_off_said = False
+        self._bad_said = set()    # stored mappings that failed the check and were said in the log, once each
+
+    def _check_map(self):
+        """Say in the log, once for each, which stored mapping fails the check and why. Such a mapping is skipped
+        whenever a message comes (a settings file a person edited, or one written by a newer version of this
+        program with an action this one does not know), and nothing said so before: the control just did nothing."""
+        for e in self.cfg().get("map", []):
+            try:
+                validate_entry(e, keep_id=True)
+            except MidiError as why:
+                key = json.dumps(e, sort_keys=True, default=str)[:400]
+                if key not in self._bad_said:
+                    if len(self._bad_said) > MAX_MAP:
+                        self._bad_said.clear()
+                    self._bad_said.add(key)
+                    what = e if not isinstance(e, dict) else "%s %s %s on %s, action %r" % (
+                        e.get("id", "?"), e.get("kind", "?"), e.get("number", "?"), e.get("source", "?"), e.get("action"))
+                    self.log("midi: a stored mapping is left out (%s): %s" % (str(what)[:160], why))
 
     # --- calls into the player ------------------------------------------
     def _note(self, text):
@@ -2082,6 +2100,7 @@ class MidiHub:
         if not enabled:
             self._stop_all()
             return
+        self._check_map()
         with self._lock:
             self._stop.clear()
             self.mapper.forget_held()                   # a switch or a layout choice changed: no hold runs across that

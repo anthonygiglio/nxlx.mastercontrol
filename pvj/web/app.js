@@ -2051,7 +2051,7 @@
     shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
     effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
     code_join: 'Presenter code (hold)', code_owner: 'Full access code (hold)',
-    fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror across', flip_v: 'Mirror down', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
+    fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror left to right', flip_v: 'Mirror top to bottom', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
     loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume' };
   // The parts of a controller that belong together (a control's "zone" in its profile): tinted alike in the drawing
   // and named once under it. The words are fixed here; a profile only picks among them.

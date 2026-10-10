@@ -271,6 +271,22 @@ _SLOT = re.compile(r"/pvj/(shader|effect)/(control|preset)/([1-8])")
 _SHADER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}")
 
 
+def _fade(path, args):
+    """/pvj/fadeout and /pvj/fadein. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and
+    these two used to read that as seconds: a fade of one second, then a refused 0 in the log. Now a 0 is a release
+    (nothing, and nothing logged), exactly 1 is a press (the 2 seconds of the panel's button), no argument is a
+    press too, and any other number is still the seconds, as it always was. For a real time of 1 second, or to be
+    plain about it, there are /pvj/fadein/seconds and /pvj/fadeout/seconds."""
+    if not args:
+        return path, {"seconds": 2.0}
+    v = args[0]
+    if v is True:
+        return path, {"seconds": 2.0}
+    if not _number(v) or v == 0:
+        return None
+    return path, {"seconds": 2.0 if v == 1 else v}
+
+
 def _reach(a, args):
     """(path, body) for one of the addresses added with D75, None for one of them with an argument that means
     nothing, _NOT_MINE for any other address. Numbers are in real units and go to the API as they are: no curve
@@ -293,8 +309,9 @@ def _reach(a, args):
             return None
         return actions.control(kind, n, int(round(number * 127)))
     if a == "/pvj/fadein":
-        seconds = number if args else 2.0
-        return ("/api/fadein", {"seconds": seconds}) if seconds is not None else None
+        return _fade("/api/fadein", args)
+    if a == "/pvj/fadein/seconds":
+        return ("/api/fadein", {"seconds": number}) if number is not None else None
     if a in ("/pvj/flip/h", "/pvj/flip/v"):
         return ("/api/control", {"action": "flip_" + a[-1], "value": flag}) if flag is not None else None
     if a == "/pvj/effect":
@@ -383,9 +400,10 @@ def translate(address, args, mix=None):
         if v is None:
             v = not (mix or {}).get("blackout", False) if not args else None
         return ("/api/blackout", {"on": v}) if v is not None else None
-    if a == "/pvj/fadeout":
-        seconds = num() if args else 2.0
-        return ("/api/fadeout", {"seconds": seconds}) if seconds is not None and pressed([]) else None
+    if a == "/pvj/fadeout":                             # a button's 1 and 0 are a press and a release, not seconds (_fade)
+        return _fade("/api/fadeout", args)
+    if a == "/pvj/fadeout/seconds":
+        return ("/api/fadeout", {"seconds": num()}) if num() is not None else None
     if a == "/pvj/mix/reset":
         return control("reset") if pressed(args) else None
     if a in ("/pvj/loop", "/pvj/mute"):

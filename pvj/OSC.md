@@ -28,14 +28,15 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/stop` | value (press) | Stop the clip (the player stays running) |
 | `/pvj/pause` | none, or 0/1 | No argument toggles; 1 pauses, 0 resumes |
 | `/pvj/blackout` | none, or 0/1 | No argument toggles |
-| `/pvj/fadeout` | seconds (default 2) | Fade to black |
+| `/pvj/fadeout` | none, or a button's 1 and 0 | Fade to black in 2 seconds. A 0 is a button's release and does nothing; exactly 1 is its press. Any other number is still read as the seconds, as before |
+| `/pvj/fadeout/seconds`, `/pvj/fadein/seconds` | 0.1 to 30 | The same two fades over that many seconds (also exactly 1) |
 | `/pvj/opacity` | 0 to 100 | Percent |
 | `/pvj/size` | 1 to 200 | Percent |
 | `/pvj/position`, `/pvj/position/x` | -100 to 100 | Horizontal shift (two names for the same thing) |
 | `/pvj/position/y` | -100 to 100 | Vertical shift |
 | `/pvj/flip/h`, `/pvj/flip/v` | 0/1 | Mirror left to right, top to bottom: set (an argument is required; the old `/fliph` and `/flipv` still switch over at each press) |
 | `/pvj/fade` | value (press) | The one fade button: fades out in 2 seconds, and at the next press in. The box decides which from what the screen is doing, so it is right whoever started the fade; it also brings the picture up out of a Blackout. A button's release (0) does nothing |
-| `/pvj/fadein` | seconds (default 2) | Fade in from black; also ends a blackout |
+| `/pvj/fadein` | none, or a button's 1 and 0 | Fade in from black in 2 seconds; also ends a blackout. Press and release as for `/pvj/fadeout` |
 | `/pvj/clip/next`, `/pvj/clip/prev` | value (press) | The next or the previous clip of the playlist that is playing |
 | `/pvj/transition` | name (string) | How one clip changes to the next: `cut`, `dip`, `crossfade`, `wipe-from-left`, `wipe-from-right`, `wipe-from-top`, `wipe-from-bottom`, `slide-left`, `slide-right`, `slide-up`, `slide-down` (the Mix screen's choice; it is saved) |
 | `/pvj/transition/duration` | 0.1 to 10 | Seconds a transition takes (saved) |

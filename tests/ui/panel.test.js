@@ -662,7 +662,8 @@ function startServer() {
     assert.deepStrictEqual(await page.locator(nano + ' .ctl[data-id^="knob"] .ctlwhat').allTextContents(),
       ['Zoom', 'Position X', 'Position Y', 'Shader control 1', 'Shader control 2', 'Shader control 3', 'Shader control 4', 'Vibes time']);
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r7"] .ctlwhat'), 'Fade out / in');
-    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r6"] .ctlwhat'), 'Rotate');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="m7"] .ctlwhat'), 'Rotate');      // over Fade, not beside it
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r6"] .ctlwhat'), 'Spare');
     // the parts of the controller are tinted and named once under the drawing
     assert.strictEqual(await page.locator(nano + ' .ctl.z-picture').count(), 5, 'zoom, X, Y, the opacity and the quarter turn are one zone');
     assert.deepStrictEqual(await page.locator(nano + ' .ctlzone').allTextContents(),

@@ -109,6 +109,8 @@ class Fader:
         # token inside it, so a step that was on its way cannot land after a level that was set since; whoever sets
         # a level waits for at most the one step that is in the player. Taken before `_lock`, never inside it.
         self.stepping = locks.make("fader.stepping")
+        self.at = None          # the level the running or the last ramp wrote last (percent), under `stepping`; read with the label
+        self._was = None        # (label, at) as `take` found them, until a ramp or another wish replaces them
         self.label = None       # "out" from a fade out until something else sets the picture, "in" while a fade in runs (read by the controller lights)
 
     def cancel(self):
@@ -116,17 +118,29 @@ class Fader:
         with self._lock:
             self._token += 1
             self.label = None
+            self._was = None
             return self._token
 
     def take(self):
-        """Take the fader as `cancel` does, and say what its label was at that moment: (token, label). For the one
-        fade button, which must know whether the picture was going down or was down BEFORE it took the fader
-        (taking it clears the label), with nobody able to change the label between the look and the taking."""
+        """Take the fader for the one fade button: a ramp that runs stops within a step, as after `cancel`, but
+        what the fader was doing is KEPT (its label and the level it had reached) until a ramp or another wish for
+        a level replaces it. The button decides from that inside the lock a level is written under (`was`). So of
+        two presses that meet while the screen is black, the second does not find a fader that looks idle and
+        take the picture for lit: it finds what the first found."""
         with self._lock:
-            was = self.label
+            if self.label is not None:
+                self._was = (self.label, self.at)
             self._token += 1
             self.label = None
-            return self._token, was
+            return self._token
+
+    def was(self):
+        """(label, level) of the ramp that runs, else what `take` kept, else (None, None). The level is the one
+        the ramp wrote last, in percent."""
+        with self._lock:
+            if self.label is not None:
+                return self.label, self.at
+            return self._was or (None, None)
 
     def mark(self):
         """The token as it is now, to ask `current` with later: has anybody taken the fader since? Every wish for a
@@ -148,6 +162,7 @@ class Fader:
             self._token += 1
             token = self._token
             self.label = label
+            self.at, self._was = start, None
         steps = max(1, int(seconds * 20))
         began = self._clock()
 
@@ -158,6 +173,9 @@ class Fader:
                         live = token == self._token
                     if live:
                         self._apply(start + (end - start) * i / steps)
+                        with self._lock:
+                            if token == self._token:
+                                self.at = start + (end - start) * i / steps
                 if not live:
                     return cancelled() if cancelled else None
                 wait = began + seconds * i / steps - self._clock()      # what is left of this step, if anything
@@ -1478,22 +1496,26 @@ class Api:
         picture back. The picture is DOWN when the operator's Fade out is on (its ramp runs, or the screen is black
         from it: the fader's label is "out") or when Blackout is on; then this fades in, which also ends the
         Blackout, as Fade in always did. Otherwise it fades out. Answers which it did.
-        The look and the taking of the fader are one step (Fader.take), and the decision is made again inside the
-        lock a level is written under if somebody took the fader in between: the newest wish is the one judged."""
+        The fader is taken first (a ramp that runs stops), which keeps what it was doing; the decision is made inside
+        the lock a level is written under, from that (Fader.was), so presses that meet are judged one after another.
+        A press in the middle of a ramp turns round FROM WHERE THE PICTURE IS: the new ramp starts at the level the
+        old one had reached, not at black and not at full."""
         seconds = number(body, "seconds", 0.1, 30) if "seconds" in body else 2.0
         self._player_call(self.player.status)
         self.transitions.end()
-        mark, was = self.fader.take()           # before the lock, as the other wishes for a level do; `was` is kept
+        self.fader.take()                       # before the lock, as the other wishes for a level do
         with self._levels():
-            if not self.fader.current(mark):    # somebody was quicker: judge what they left
-                was = getattr(self.fader, "label", None)
+            was, at = self.fader.was()
             down = was == "out" or self.mix["blackout"]
             if down:
+                start = at if was == "out" and at is not None and not self.mix["blackout"] else 0
                 self.mix["blackout"] = False
-                self._apply_opacity(0)
-                self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
+                if start == 0:
+                    self._apply_opacity(0)
+                self.fader.ramp(min(start, self.mix["opacity"]), self.mix["opacity"], seconds, label="in")
             else:
-                self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
+                start = at if was == "in" and at is not None else self.mix["opacity"]
+                self.fader.ramp(min(start, self.mix["opacity"]), 0, seconds, label="out")
         return {"ok": True, "fade": "in" if down else "out"}
 
     def test_tone(self, body, device, client):

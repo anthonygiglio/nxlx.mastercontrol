@@ -125,7 +125,31 @@ class ThroughTheApiTest(ServerLogicTest):
         self.assertEqual(self.send(msg("/pvj/fadein", 0.1)), 1)
         self.wait(lambda: self.api.fader.label is None)
         self.assertEqual(self.player.calls[-1], ("opacity", 255))
-        self.assertEqual(self.send(msg("/pvj/fadein", 0.0)), 0)         # a button's release sent as seconds: refused, as for /pvj/fadeout
+
+    def test_a_touchosc_button_on_the_two_fade_addresses(self):
+        """What TouchOSC sends for a plain button: 1.0 when it is pressed, 0.0 when it is let go. That is a press and
+        a release, not one second and zero seconds."""
+        for address, path in (("/pvj/fadeout", "/api/fadeout"), ("/pvj/fadein", "/api/fadein")):
+            self.assertEqual(tr(address, 1.0), (path, {"seconds": 2.0}), address)       # the press: the panel's two seconds
+            self.assertEqual(tr(address, 1), (path, {"seconds": 2.0}))
+            self.assertEqual(tr(address, True), (path, {"seconds": 2.0}))
+            for release in (0.0, 0, False):
+                self.assertIsNone(tr(address, release), (address, release))
+            self.assertEqual(tr(address, 5.0), (path, {"seconds": 5.0}))                # any other number is still the seconds
+            self.assertEqual(tr(address), (path, {"seconds": 2.0}))
+            self.assertIsNone(tr(address, "x"))
+            self.assertEqual(tr(address + "/seconds", 1.0), (path, {"seconds": 1.0}))   # a real second, said plainly
+            self.assertIsNone(tr(address + "/seconds"))
+        before = len(self.logs)
+        self.assertEqual(self.send(msg("/pvj/fadeout", 1.0)), 1)
+        self.assertEqual(self.send(msg("/pvj/fadeout", 0.0)), 0)        # the release: nothing done
+        self.assertEqual(self.api.fader.label, "out")
+        self.assertEqual(self.send(msg("/pvj/fadein", 1.0)), 1)
+        self.assertEqual(self.send(msg("/pvj/fadein", 0.0)), 0)
+        self.assertEqual(self.api.fader.label, "in")
+        self.assertEqual(self.logs[before:], [], "a button's release was written in the log as an error")
+        self.assertEqual(self.send(msg("/pvj/fadein/seconds", 0.0)), 0)                 # here 0 IS seconds, and the API refuses it
+        self.assertEqual(len(self.logs), before + 1)
 
     def test_the_clip_the_transition_and_the_overlay(self):
         self.assertEqual(self.send(msg("/pvj/clip/next", 1.0)), 1)
