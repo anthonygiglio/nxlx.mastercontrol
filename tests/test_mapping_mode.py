@@ -381,9 +381,35 @@ class OverOscTest(Base):
         for address, args in (("/pvj/mapping/nudge", (1,)), ("/pvj/mapping/nudge", (1.5, 0.0)), ("/pvj/mapping/step", (7,)),
                               ("/pvj/mapping/add", (1,)), ("/pvj/mapping/mode", ("x",))):
             self.assertEqual(self.osc(address, *args), 0, address)
-        self.assertEqual(self.osc("/pvj/mapping/mode", 0), 1)
+        self.assertEqual(self.osc("/pvj/mapping/mode/off", 1), 1)
         self.assertFalse(self.mapper.remote_on())
         self.assertEqual(osc.translate("/pvj/mapping/mode", []), ("/api/mapper/nudge", {"mode": "toggle"}))
+
+    def test_a_buttons_release_does_not_leave_the_mode(self):
+        """A TouchOSC button sends 1 when it is pressed and 0 when it is let go. The 0 used to be "leave": the mode
+        was over as the finger came up (the trap /pvj/fadein had)."""
+        self.allow()
+        logged = len(self.logs)
+        self.assertEqual(self.osc("/pvj/mapping/mode", 1.0), 1)
+        self.assertEqual(self.osc("/pvj/mapping/mode", 0.0), 0)     # the release: nothing, and nothing in the log
+        self.assertTrue(self.mapper.remote_on())
+        self.assertEqual(self.osc("/pvj/mapping/mode", False), 0)
+        self.assertTrue(self.mapper.remote_on())
+        self.assertEqual(self.osc("/pvj/mapping/mode/off", 0.0), 0) # and the release of the button that leaves
+        self.assertTrue(self.mapper.remote_on())
+        self.assertEqual(self.osc("/pvj/mapping/mode/off", 1.0), 1) # said outright
+        self.assertFalse(self.mapper.remote_on())
+        self.assertEqual(self.osc("/pvj/mapping/mode/off"), 1)      # off twice is off
+        self.assertEqual(self.osc("/pvj/mapping/mode/on", 1.0), 1)
+        self.assertEqual(self.osc("/pvj/mapping/mode/on", 0.0), 0)
+        self.assertTrue(self.mapper.remote_on())
+        for want in (False, True):                                  # one momentary button for both: press, release, press, release
+            self.assertEqual(self.osc("/pvj/mapping/mode/toggle", 1.0), 1)
+            self.assertEqual(self.osc("/pvj/mapping/mode/toggle", 0.0), 0)
+            self.assertEqual(self.mapper.remote_on(), want)
+        self.assertEqual(self.osc("/pvj/mapping/mode"), 1)          # no argument switches over, as it did
+        self.assertFalse(self.mapper.remote_on())
+        self.assertEqual(self.logs[logged:], [])
 
 
 class GeometryLayerTest(unittest.TestCase):
