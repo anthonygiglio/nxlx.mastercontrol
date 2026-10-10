@@ -806,6 +806,135 @@ class PeopleTest(RolesBase):
         self.assertFalse(auth_mod.Auth._expires({"role": "full", "via": "controller"}))
 
 
+class AttackTest(RolesBase):
+    """What was tried against it, as tests. The write-up is in project-log/JOURNAL.md (2026-10-10, D80)."""
+    def test_a_scene_cannot_be_named_one_way_and_checked_another(self):
+        """The guest's form looks the scene up exactly as the handler does (room._pick: "scene" before "number" before
+        "name"), so a harmless id beside the number of the stream scene or of the switch-off scene is the harmless
+        scene for both, and the other way round is refused or asks for the confirm."""
+        done = []
+        real = self.api.routes()
+        table = dict(real)
+        table[("POST", "/api/room/scene")] = ("live", lambda b, d, c: done.append(self.api.room._pick(self.api.room.config()["scenes"], b, "scene", "scene")["id"]) or {})
+        self.api.routes = lambda: table
+        g = self.guest
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE, "number": 2}, g)[0], 200)        # 2 is the stream scene
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE, "name": "Good night"}, g)[0], 200)
+        self.assertEqual(done, [SCENE, SCENE])
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": STREAM_SCENE, "number": 1}, g)[0], 403)
+        self.assertEqual(self.h("POST", "/api/room/scene", {"number": 2, "name": "Show"}, g)[0], 403)
+        self.assertEqual(self.h("POST", "/api/room/scene", {"name": " from OUTSIDE "}, g)[0], 403)            # names are matched loosely by the handler too
+        self.assertEqual(self.h("POST", "/api/room/scene", {"number": 3, "name": "Show"}, g)[0], 409)         # 3 switches off
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": ["x"], "name": "Show"}, g)[0], 404)      # as for anyone
+        self.assertEqual(done, [SCENE, SCENE])
+        # the confirm of one way of naming the scene is not the confirm of another
+        token = self.h("POST", "/api/room/scene", {"scene": OFF_SCENE}, g)[1]["confirm"]["token"]
+        self.assertEqual(self.h("POST", "/api/room/scene", {"name": "Good night", "confirm": token}, g)[0], 409)
+        self.assertEqual(done, [SCENE, SCENE])
+
+    def test_a_scene_an_operator_edits_between_a_guests_two_taps(self):
+        """Known and written down (SECURITY.md): the confirm is for the request, not for what the scene holds. A scene
+        that gained a stream meanwhile is refused at the second tap all the same, because the form is checked again."""
+        g = self.guest
+        token = self.h("POST", "/api/room/scene", {"scene": OFF_SCENE}, g)[1]["confirm"]["token"]
+        with self.settings.lock:
+            self.settings.data["room"]["scenes"][2]["box"] = {"action": "stream", "stream": "0f0f0f0f"}
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": OFF_SCENE, "confirm": token}, g)[0], 403)
+
+    def test_a_pad_holds_a_clip_of_the_box_and_nothing_else(self):
+        """A guest may play a pad, so a pad must never be a way to a stream, a drive or a file outside the media folder:
+        the Operator cannot store one, and one written into the settings by hand is refused when played."""
+        for file in ("srt://203.0.113.9:9000", "http://203.0.113.9/a.mp4", "../secret.mp4", "/etc/passwd", "STICK/a.mp4", "a.txt"):
+            st, out = self.h("POST", "/api/pads", {"bank": 0, "index": 0, "label": "x", "file": file}, self.operator)
+            self.assertEqual(st, 400, file)
+            with self.settings.lock:
+                self.settings.data["pads"]["banks"][0]["pads"][0] = {"label": "x", "file": file, "ending": "loop"}
+            self.later()
+            self.assertIn(self.h("POST", "/api/play", {"pad": [0, 0]}, self.guest)[0], (400, 404), file)
+        for body in ({"pad": [0, 0], "usb": "STICK/a.mp4"}, {"pad": [0, 0], "stream": "x"}, {"pad": [0, 0], "preset": "p"}, {"file": "a.mp4", "usb": "STICK/a.mp4"},
+                     {"file": "../secret.mp4"}, {"file": "http://203.0.113.9/a.mp4"}):
+            self.later()
+            self.assertIn(self.h("POST", "/api/play", body, self.guest)[0], (400, 403, 404), body)
+
+    def test_a_guest_cannot_say_he_is_someone_else(self):
+        g = self.guest
+        for extra in ({"role": "full"}, {"device": {"role": "full"}}, {"remote": True}, {"id": "midi"}, {"confirm": "x"}):
+            self.later()
+            self.assertEqual(self.h("POST", "/api/mix", dict({"transition": "cut", "duration": 1}, **extra), g)[0], 403, extra)
+            self.assertEqual(self.h("POST", "/api/guests", dict({"locked": False}, **extra), g)[0], 403, extra)
+        self.lock(True)
+        for extra in ({"confirm": "x"}, {"locked": False}, {"force": True}):
+            self.assertEqual(self.h("POST", "/api/blackout", dict({"on": True}, **extra), g)[0], 403, extra)
+        # a device record cannot be given a controller's id or a higher role through the API
+        st, out = self.h("POST", "/api/devices/invite", {"name": "midi", "role": "view", "id": "midi", "via": "controller"}, self.operator)
+        self.assertEqual(st, 200, out)
+        self.assertRegex(out["device"]["id"], r"^[0-9a-f]{8}$")
+        self.assertNotIn("via", [d for d in self.settings.data["devices"] if d["id"] == out["device"]["id"]][0])
+
+    def test_an_operator_finds_no_way_up(self):
+        op, before = self.operator, json.dumps(self.settings.data["devices"], sort_keys=True)
+        tries = (("/api/devices/invite", {"name": "x", "role": "live"}), ("/api/devices/invite", {"name": "x", "role": "full"}),
+                 ("/api/devices/invite", {"name": "x", "role": ["view", "full"]}), ("/api/devices/invite", {"name": "x"}),
+                 ("/api/devices/revoke", {"id": self.owner["id"]}), ("/api/devices/revoke", {"id": op["id"]}),
+                 ("/api/access/code", {"role": "live"}), ("/api/access/code", {"role": "full"}), ("/api/access/code", {"role": "view", "minutes": 100000}),
+                 ("/api/access/screen", {"show": True, "items": ["pin"]}), ("/api/access/screen", {"show": True, "items": ["view", "live"]}),
+                 ("/api/access/controller", {"enabled": True}), ("/api/pin/show", {}), ("/api/modules/control-osc", {"enabled": True}),
+                 ("/api/osc", {"enabled": True, "paired": False}), ("/api/dmx", {"enabled": True}), ("/api/midi", {"enabled": True}),
+                 ("/api/midi/map", {"add": {"action": "code_owner"}}), ("/api/support/start", {"confirm": "start", "role": "full"}),
+                 ("/api/support/config", {"allowed": True}), ("/api/sync", {"role": "server"}), ("/api/system/update", {}),
+                 ("/api/system/clock", {"time": "2030-01-01T00:00:00"}), ("/api/network/plan", {}), ("/api/theme/add", {"file": "{}"}),
+                 ("/api/streams", {"action": "add", "name": "x", "url": "srt://203.0.113.9:9000"}),
+                 ("/api/projectors", {"add": {"host": "192.168.0.5"}}))
+        for path, body in tries:
+            st, out = self.h("POST", path, body, op)
+            # 404: this rig has no room screen to draw on (with one, tests/test_join.py has the 403 for these two)
+            self.assertIn(st, (400, 403, 404) if path == "/api/access/screen" else (400, 403), "%s %s: %s" % (path, body, out))
+        self.assertEqual(json.dumps(self.settings.data["devices"], sort_keys=True), before)
+        self.assertEqual(self.auth.list_joins(), [])
+        # what he may store runs with the controllers' reach, never his own: a scene and the schedule act as "room"
+        self.assertEqual(room.ROOM_DEVICE["id"], "room")
+        self.assertTrue(policy.held_to_legacy(room.ROOM_DEVICE))
+        self.assertNotIn(("POST", "/api/room"), policy.LEGACY_LIVE)
+        self.assertNotIn(("POST", "/api/guests"), policy.LEGACY_LIVE)
+
+    def test_guests_and_the_lock_at_the_same_moment(self):
+        """Eight guests asking for the switch-off confirm while the lock goes on and off 60 times: whenever the lock
+        is on, no confirm is waiting, and a request that began after the lock was set is refused."""
+        import threading
+        guests = [self.auth.invite("g%d" % i, "view")[1] for i in range(8)]
+        controls = policy.GuestControls(self.api)             # the real clock: no limit is reached in so short a time per device
+        self.api.guests = controls
+        stop, bad = threading.Event(), []
+
+        def ask(dev):
+            while not stop.is_set():
+                try:
+                    controls.admit("POST", "/api/projector", {"id": "all", "action": "off"}, dev, LAN)
+                except policy.Refused:
+                    pass
+        threads = [threading.Thread(target=ask, args=(g,)) for g in guests]
+        for t in threads:
+            t.start()
+        try:
+            for n in range(60):
+                controls.set_locked(True)
+                with controls._lock:
+                    if controls._confirms:
+                        bad.append(n)
+                try:
+                    controls.admit("POST", "/api/blackout", {"on": True}, guests[0], LAN)
+                    bad.append("let in while locked, round %d" % n)
+                except policy.Refused as e:
+                    if e.status != 403:
+                        bad.append("round %d: %s" % (n, e.status))
+                controls.set_locked(False)
+        finally:
+            stop.set()
+            for t in threads:
+                t.join(5)
+        self.assertEqual(bad, [])
+
+
 class UploadTest(RolesBase):
     def upload(self, token, path="/api/media/upload?name=new.mp4"):
         return self.call("POST", path, raw=b"0123", headers={"Content-Type": "application/octet-stream"}, token=token)[0]
