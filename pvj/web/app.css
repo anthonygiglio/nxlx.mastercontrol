@@ -1055,3 +1055,4 @@ html[data-style="signal"] .seg .segbtn { min-width: 44px; }
 .oscwho .addr, .oscwho .lname, .oscwho .state { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .osckeyout { font-size: 15px; color: var(--fg); padding: 8px; border: 1.5px dashed var(--ln); border-radius: 6px; user-select: all; }
 .list .item.oscmsg { flex-direction: column; align-items: flex-start; gap: 2px; }
+.list .item.oscmsg > span:first-child { flex: none; }   /* a column here: the row rule's 10rem would be its height */
