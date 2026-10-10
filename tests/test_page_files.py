@@ -151,6 +151,18 @@ class PageFilesTest(unittest.TestCase):
             found = re.findall(r"^( *)window\.%s\s*=[^=]" % gives, read(name), re.M)
             self.assertEqual(found, ["  "], name)
 
+    def test_the_style_sheet_closes_every_block_it_opens_and_no_more(self):
+        """A closing brace too many is not an error to a browser: it drops the rule after it and says nothing.
+        (2026-10-09: one left behind by an edit took the rule for a wide Play desk with it; seen in a picture.)"""
+        with open(os.path.join(WEB, "app.css"), encoding="utf-8") as f:
+            css = re.sub(r"/\*.*?\*/", "", f.read(), flags=re.S)
+        depth = 0
+        for number, line in enumerate(css.split("\n"), 1):
+            for char in line:
+                depth += (char == "{") - (char == "}")
+                self.assertGreaterEqual(depth, 0, "app.css closes a block that is not open (counted without comments, near line %d of that)" % number)
+        self.assertEqual(depth, 0, "app.css leaves %d block(s) open" % depth)
+
     def test_load_js_reads_the_attribute_the_page_writes(self):
         text = read("load.js")
         self.assertIn("getAttribute('data-gives')", text)

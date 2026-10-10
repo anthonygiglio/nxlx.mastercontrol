@@ -10,6 +10,36 @@ SHOTS=docs/images/ui node tests/ui/screenshots.js     # needs playwright, Chromi
 
 The CI job "panel-ui" also runs it and uploads the result as the `ui-screenshots` artifact, so a change that breaks a screen shows up there.
 
+## The Workspace shell (2026-10-08, D65)
+
+The panel is laid out as four areas, each with screens that have one job. **The pictures further down this page were taken before that** and show the five tabs it had (Room, Live, Mix, Media, System); the cards in them are the same cards, in new places. New pictures come from the `ui-screenshots` artifact of a CI run of the browser job (`signal-<screen>-phone` and `-laptop` for every screen in `tests/ui/signal-pages.js`); none has been copied into `docs/images/ui` yet.
+
+| Area | Screens | What is on them (every card is the one the panel had) |
+| --- | --- | --- |
+| **Play** | Pads | the big Vibes button with its set chooser, the banks, the pads, Edit pads, Transition between clips and its duration, the Screen card (Take snapshot) |
+| | Library | everything the Media tab had: Refresh, Quick play, Live input, Slideshow, Upload clips, the clips (Play, Info, Rename, Delete), USB drives |
+| | Shaders | the Shaders and Vibes page (while its module is on) |
+| **Shape** | Effect | the Effects card (while Shaders and Vibes is on) |
+| | Picture | Opacity, Size, Position X and Y, Mirror, Overlay picture, Rotate, Reset mix |
+| | Sound | Volume, Audio on or mute, and the Sound page's output card |
+| | Mapping | the Projection mapping page with its switch (a presenter: the card alone) and Test pattern, while its module is on (with it off, Test pattern is on Picture) |
+| **Room** | Scenes | ambience, the scenes |
+| | Walls | each group, and Everything (All on, All off) |
+| | Guests | Let someone in (a presenter and the owner) |
+| **Setup** | the index, then a page per row | everything System had; the page Room holds the room's set-up (groups and scenes) |
+
+**Getting about (D72).** Under 600 px wide the areas are tabs at the foot and the open area's screens are a row under the title. From 600 px a rail at the left (96 px) has one button per area and nothing else, and the open area's screens are tabs across the top of the workspace. From 1200 px an area is a desk: Pads, Library and Shaders stand side by side on one page, as do Effect, Picture and Sound (Effect the widest; Mapping needs the whole width and is a tab beside the desk) and Scenes, Walls and Guests; each column has its name, and none is marked as the open one. A desk has the columns the device's role has and whose module is on; with one column left it is just that screen. In Setup the index stays at the left (272 px) while a page is open beside it, so one press leads from page to page; under 1200 px a row opens its page and Back leads to the index, and the phone's back gesture does the same at every width. The title bar names the area and says the open screen's job (the area's, where its screens share the page). The rows Shaders and Vibes, Projection mapping and Sound of the Setup index open the screens of Play and Shape where those things are used. A screen whose module is switched off is not there; its row of the owner's Setup index opens a page with its switch.
+
+An area is one build with a column per screen at every width, and the stylesheet shows one column or all of them: a tab of the same area or a change of the window's width draws nothing again, so what is being typed stays, and no card is on the page twice.
+
+**The transport strip** is at the foot of every screen at every width: what is playing, the time, the place in the clip, Speed, Loop, Previous, back and forward 10 seconds, Next, Fade in, Fade out, Freeze, Stop, Blackout. These are the controls Live had in its Now playing card and its bottom row, and Mix's Speed and Loop; they are nowhere else now. It is one line from 600 px, with Freeze, Stop and Blackout at its right end and at least 180 px for the name of what plays; the clip count and the time under the name are never broken. What else is on the line follows one order of who has the room first: Previous and Next from 800 px, Loop from 940, Speed from 1080, Fade in and Fade out from 1280, back and forward 10 seconds from 1440; what is not on the line is behind **More** (nothing from 1440 px). The place in the clip is never behind More: under 1640 px, a phone too, it is a slim bar along the strip's top edge, the whole width, 4 px of line in a target 24 px high that grows to 8 px with its handle under the pointer or with the cursor; from 1640 px it is a slider on the line. It is one control at every width. Under 600 px it shows what is playing, Previous, Next, Stop and Blackout, and **More** opens the rest under them, in place, until **Less** is tapped.
+
+**Sizes.** The size classes of the resizing study are asked of the panel itself through container queries: compact under 600 px, medium 600 to 899, expanded 900 to 1199, large 1200 to 1599, extra large from 1600; a window under 480 px high is short. The cards ask the column they are in how much room they have (every column of a desk, and the one screen of a narrower panel, is the container `ws`), so a page's two columns come when the page itself has 900 px, and the three of the Shaders page when it has 1100: in Setup beside the index from about 1270 px of panel, and for the Shaders column of Play from 1700 and 1900 px. A card in a 380 px column of a desk has the form it has on a phone. Control heights are the tokens, 44 and 56 px, at every size.
+
+**Who sees what.** Everyone has the four areas. A presenter has the pages of Setup a presenter can use (Health, Projectors, People and codes, Streams, Boxes in step, About and power) and the mapping card without its switch; a guest has no Guests screen and only Health and About and power in Setup, and every control a guest cannot use is greyed as before. Both start on Room > Scenes.
+
+Measured in headless Chromium (CI) and headless Edge (the dev Mac). Nobody has seen it on a phone, in Safari or on the box.
+
 ## Pairing
 
 Enter the four digit PIN shown on the box (`sudo pvj-pin`, or the projector test screen). A device is remembered until it is removed.

@@ -4,7 +4,7 @@
 
 Several boxes play the same clip in step: one **server** leads, the **clients** follow. With the video wall, each box shows its own tile of the picture. This replaces the old PocketVJ "master and slaves" (omxplayer-sync) and PiWall.
 
-Switch it on under System > Boxes in step on every box. Switching it off while a role is set asks first, because the other boxes stop following.
+Switch it on under Setup > Boxes in step on every box. Switching it off while a role is set asks first, because the other boxes stop following.
 
 ## Setting up
 

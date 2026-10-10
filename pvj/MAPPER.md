@@ -4,7 +4,7 @@
 
 Put pieces of the picture onto the surfaces of a set, a building or a curved screen. This replaces the old Mapping tab (ofxPiMapper, steered by a USB mouse and a fake keyboard): there is no mouse on the box and no separate program; the player's own GPU draws the mapping, and you set it up from a phone or laptop.
 
-Switch it on under System > Projection mapping (beta, off by default). The card is on the **Mix** screen; the System page has a button that takes you there. Full-access devices edit; everyone else sees the state.
+Switch it on under Setup > Projection mapping (beta, off by default). The card is on the screen Shape > Mapping, which is that page: for a full-access device with its switch at the top, for a presenter the card alone. Full-access devices edit; everyone else sees the state.
 
 ## Surfaces
 
@@ -20,7 +20,7 @@ Each surface shows a part of the picture: its **picture corners** (0 to 1 across
 
 ## Lining up
 
-1. Play something to line up with: Live > Test pattern is ideal.
+1. Play something to line up with: **Test pattern**, on the same screen under the mapping card, is ideal.
 2. Press **Edit on the display**: the projector shows every surface's outline (the chosen one yellow, the chosen corner as a pink dot).
 3. Drag a corner on the small screen in the card, or choose it and use the arrows (1, 10 or 50 pixels a press; the arrow keys work too when the drawing has focus). **Next corner** steps through them; **Move the whole surface** moves all corners together.
 4. Switch between **Screen corners** (where it lands) and **Picture corners** (what it shows).
