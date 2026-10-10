@@ -318,6 +318,7 @@ An effect changes the picture that is playing: it mirrors it, turns its colours,
 - **Updates** are signed bundles (`pvj-N.N.N.tar.gz` with its `.sig`; a `.sha256` is optional). System > **Updates** (full access) installs one from a `pvj-update` folder on a USB stick, or one you upload there; it is checked against your signing key, an older version is refused, and if the panel does not come back the box goes back to the version before by itself. The panel and the player restart during an update. From a terminal: `sudo pvj-update`. See [pvj/README.md](../pvj/README.md#updates-and-rollback).
 - **Player stuck?** System > About and power > Restart player (it asks first: the picture stops for a few seconds) asks it to quit and systemd brings it back. If mpv ignores that, run `sudo systemctl restart pvj-player` on the box.
 - **Network changes** always revert by themselves unless you confirm them. Test them with a keyboard and monitor on the box, never over SSH on the only link.
+- **A secure connection (https://)** for your own devices, with a certificate you sign yourself: System > **Secure connection** and [HTTPS.md](HTTPS.md). In short: once, on your computer, `python3 tools/boxcert.py make-root` makes your root (a key with a passphrase, never on a box, back it up); on the box's page you make a request and download it, sign it (`boxcert.py sign <the request>`), upload the certificate the tool wrote; then each of your devices installs the root once (the page shows the steps for the device in your hand) and opens `https://nxlx-mastercontrol.local/`, where you pair again. Guests stay on `http://` and install nothing. The switch "Owner access only over the secure connection" (changed over https:// only, so you cannot lock yourself out) then refuses the PIN and owner devices over plain http://; a certificate lasts about a year and the page warns a month before. Never run on a box or a real phone yet (D79).
 
 **Hostile drives and files.** A USB stick or an upload can hold a file that is named `.mp4` but is really a playlist or a script for the player. The player is started so that it plays media only: it does not follow references inside files (playlists, EDL), load sidecar subtitle or audio files, load scripts or run youtube-dl. This was tested on a Raspberry Pi 4 with fake playlists. A drive is also mounted read-only with `nosuid,nodev,noexec`, and only the top level of a drive is listed, up to a limit.
 
@@ -349,6 +350,8 @@ Without the tick a stream address is shortened to what is not secret: the name a
 Through a remote support session, the settings can be exported without passwords and the diagnostics file downloaded; importing, exporting with passwords and factory reset are refused.
 
 Not tested on a real box yet (2026-10-03): the three cards were tested with the automatic tests and a browser test only.
+
+A factory reset also removes the box's own key and certificate for the secure connection: the box answers on `http://` only afterwards, like a new box, and the root on your devices keeps working for the next certificate you sign (D79).
 
 ## 7. Troubleshooting
 

@@ -9,7 +9,10 @@ Security model, in one place:
 * every state-changing call is a POST with JSON, the X-PVJ-Request header and a
   matching Origin (if the browser sends one), so other websites cannot drive it
 * the panel is served with a Content-Security-Policy that forbids inline script,
-  external resources and framing
+  external resources and framing; over plain http, while a certificate is in use, the page's connect-src also names
+  the box's own https:// origin (page_csp), so the Secure connection page can ask whether this device trusts the box
+* the same panel and API answer on a second, TLS listener when PVJ_HTTPS_PORT is set (D79, pvj/httpsbox.py): there
+  the cookie is __Host-pvj_token with Secure; a switch keeps owner access off plain HTTP (the gate below)
 """
 
 import json
@@ -35,8 +38,20 @@ from .settings import Settings, SettingsError
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 MAX_BODY = 64 * 1024
 COOKIE = "pvj_token"
+SECURE_COOKIE = "__Host-pvj_token"      # over TLS only (D79): the prefix forces Secure, Path=/ and no Domain; a second name,
+                                        # because browsers leave a Secure cookie alone when plain http tries to replace it
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
        "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+CSP_ORIGIN = re.compile(r"https://(?:[a-z0-9.-]{1,253}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?")   # the one shape page_csp adds
+
+
+def page_csp(origin):
+    """The policy for the HTML document. With `origin` (httpsbox.page_origin: the box's own https:// origin, from a
+    Host header that passed its checks) connect-src names that origin too, and nothing else: no scheme source, no
+    wildcard, no second host. Anything that is not exactly that shape is dropped and the plain policy goes out."""
+    if not origin or not CSP_ORIGIN.fullmatch(origin):
+        return CSP
+    return CSP.replace("connect-src 'self';", "connect-src 'self' %s;" % origin, 1)
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2"}
 HTML_TAG = b'<html lang="en">'          # in index.html; the style of the chosen theme is written into it (styled_html)
@@ -145,7 +160,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("X-Frame-Options", "DENY")
                 self.send_header("Referrer-Policy", "no-referrer")
-                self.send_header("Content-Security-Policy", CSP)
+                self.send_header("Content-Security-Policy", self._csp(content_type))
                 self.send_header("Cache-Control", cache)
                 for k, v in (extra or []):
                     self.send_header(k, v)
@@ -159,6 +174,17 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
         def _json(self, status, payload, extra=None):
             self._send(status, json.dumps(payload).encode(), "application/json", extra)
 
+        def _secure(self):
+            return bool(getattr(self.server, "secure", False))
+
+        def _csp(self, content_type):
+            """The HTML document over plain http, with a certificate in use, may connect to the box's own https://
+            origin (D79, the trust check); over TLS 'self' already is that origin, and no other answer is a document."""
+            if self._secure() or not content_type.startswith("text/html"):
+                return CSP
+            box = self._https()
+            return page_csp(box.trusted_origin(self.headers.get("Host")) if box is not None else None)
+
         def _token(self):
             header = self.headers.get("Authorization", "")
             if header.startswith("Bearer "):
@@ -168,7 +194,31 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 jar.load(self.headers.get("Cookie", ""))
             except Exception:
                 return None
+            if self._secure() and SECURE_COOKIE in jar:     # the secure name is read over TLS only
+                return jar[SECURE_COOKIE].value
             return jar[COOKIE].value if COOKIE in jar else None
+
+        def _cookie_set(self, token, max_age):
+            if self._secure():
+                return "%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=%d" % (SECURE_COOKIE, token, max_age)
+            return "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d" % (COOKIE, token, max_age)
+
+        def _cookies_cleared(self):
+            """The same attributes as the cookie that was set, with no life left: the browser drops it (D77). Over TLS
+            both names, over plain http the plain one (a Secure cookie is never sent there and cannot be touched)."""
+            gone = "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            out = [("Set-Cookie", COOKIE + gone)]
+            if self._secure():
+                out.append(("Set-Cookie", SECURE_COOKIE + "=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
+            return out
+
+        def _https(self):
+            return getattr(api, "https", None)
+
+        def _gate(self, device, path):
+            """D79: while "Owner access only over the secure connection" is on, why this request is refused, or None."""
+            box = self._https()
+            return box.owner_gate(device, self._secure(), path) if box is not None else None
 
         def _csrf_ok(self):
             if self.headers.get("X-PVJ-Request") != "1":
@@ -242,6 +292,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._preview()
             if path == "/api/qr.svg":
                 return self._qr()
+            if path == "/api/https" or path.startswith("/api/https/"):
+                return self._https_route("GET", path, {})
             if path.startswith("/api/"):
                 return self._api("GET", path, {})
             if path == "/theme.css":
@@ -350,7 +402,71 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             body, err = self._body()
             if err:
                 return self._json(err[0], {"error": err[1]})
+            if path.startswith("/api/https/"):
+                return self._https_route("POST", path, body)
             self._api("POST", path, body)
+
+        def _https_route(self, method, path, body):
+            """The secure connection's own routes (D79, pvj/httpsbox.py), answered here because they need to know the
+            scheme and the Host of the request, which the API's handlers do not see. Full access for all but the
+            probe; the files (the request to sign, the root to install) are plain downloads for the owner's browser."""
+            from .httpsbox import HttpsError
+            box = self._https()
+            host = self.headers.get("Host", "")
+            try:
+                if box is None:
+                    raise ApiError(404, "not found")
+                if path == "/api/https/probe":              # does this device trust the box: a tiny answer, nothing secret
+                    if method != "GET":
+                        raise ApiError(405, "method not allowed")
+                    return self._json(200, {"https": self._secure()})
+                device = self._who(method, path)
+                api.require(device, "full")
+                if method == "GET":
+                    if path == "/api/https":
+                        return self._json(200, box.status(self._secure(), host, device))
+                    if path == "/api/https/request.csr":
+                        text = box.request_pem()
+                        if text is None:
+                            raise ApiError(404, "no request has been made yet")
+                        return self._send(200, text.encode(), "application/pkcs10",
+                                          [("Content-Disposition", 'attachment; filename="%s.csr"' % box.hostname())])
+                    if path == "/api/https/root.crt":
+                        text = box.root_pem()
+                        if text is None:
+                            raise ApiError(404, "the box has no root certificate to give: upload a certificate file that holds the root after the box's certificate")
+                        return self._send(200, text.encode(), "application/x-x509-ca-cert",
+                                          [("Content-Disposition", 'attachment; filename="nxlx-root.crt"')])
+                    raise ApiError(405 if path in ("/api/https/request", "/api/https/certificate", "/api/https/undo", "/api/https/remove", "/api/https/owner-only", "/api/https/root") else 404,
+                                   "method not allowed" if path.startswith("/api/https/") else "not found")
+                if path == "/api/https/request":
+                    names = body.get("names") if "names" in body else box.default_names()
+                    return self._json(200, box.make_request(names, body.get("new_key") is True))
+                if path == "/api/https/certificate":
+                    leaf = box.install(body.get("certificate"), host)
+                    api.log("pvj-web: certificate uploaded by device %s (%s)" % (device["id"], device["name"]))
+                    return self._json(200, {"installed": True, "status": box.status(self._secure(), host, device)})
+                if path == "/api/https/undo":
+                    box.undo()
+                    return self._json(200, {"undone": True, "status": box.status(self._secure(), host, device)})
+                if path == "/api/https/remove":
+                    had = box.remove()
+                    return self._json(200, {"removed": had, "status": box.status(self._secure(), host, device)})
+                if path == "/api/https/root":
+                    out = box.replace_root(body.get("root"), body.get("confirm"), self._secure(), box.device_secure(device))
+                    api.log("pvj-web: root replaced by device %s (%s)" % (device["id"], device["name"]))
+                    return self._json(200, dict(out, status=box.status(self._secure(), host, device)))
+                if path == "/api/https/owner-only":
+                    on = box.set_owner_only(body.get("on"), self._secure(), box.device_secure(device))
+                    return self._json(200, {"owner_only": on, "status": box.status(self._secure(), host, device)})
+                raise ApiError(404, "not found")
+            except HttpsError as e:
+                self._json(e.status, {"error": e.message})
+            except ApiError as e:
+                self._json(e.status, {"error": e.message})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "internal error"})
 
         def _method_not_allowed(self):
             self._json(405, {"error": "method not allowed"}, [("Allow", "GET, POST")])
@@ -373,11 +489,23 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 api.support.guard(method, path, device, self.client_address[0])
             except support_mod.SupportApiError as e:
                 raise ApiError(e.status, e.message)
+            gate = self._gate(device, path)
+            if gate:
+                raise ApiError(403, gate)
             return device
 
         def _api(self, method, path, body):
             token = self._token()
             device = auth.authenticate(token, self._seen_from()) or api.support.authenticate(token)
+            gate = self._gate(device, path)
+            if gate:
+                return self._json(403, {"error": gate, "https": self._https().https_address()})
+            box = self._https()
+            if method == "POST" and path == "/api/pair" and box is not None and not box.pin_allowed(self._secure()) \
+                    and len(str(body.get("pin", ""))) != 6:
+                # a 6-digit code (a guest or presenter, or the code from a controller) is still taken over plain http
+                return self._json(403, {"error": "the PIN pairs an owner over the secure connection only: open %s and pair there"
+                                        % box.https_address(), "https": box.https_address()})
             try:
                 status, payload = api.handle(method, path, body, device, self.client_address[0])
             except Exception:
@@ -385,17 +513,25 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 traceback.print_exc()
                 return self._json(500, {"error": "internal error"})
             extra = []
+            if status == 200 and path == "/api/pair" and box is not None and not self._secure() and box.effective() \
+                    and isinstance(payload.get("device"), dict) and payload["device"].get("role") == "full":
+                # a six-digit OWNER code from a controller (D61) pairs full access: over plain http while the switch
+                # is on that is refused too, and the device it just made is taken back (review of #119)
+                auth.revoke(payload["device"].get("id"))
+                return self._json(403, {"error": "full access is paired over the secure connection only: open %s and use the code there" % box.https_address(),
+                                        "https": box.https_address()})
             if status == 200 and path in ("/api/pair", "/api/session") and payload.get("token"):
-                extra.append(("Set-Cookie", "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
-                              % (COOKIE, payload["token"])))
+                extra.append(("Set-Cookie", self._cookie_set(payload["token"], 31536000)))
+                if self._secure() and path == "/api/pair" and box is not None and isinstance(payload.get("device"), dict):
+                    # a token MADE over TLS (D79). Never at /api/session: that is a token that already existed (a
+                    # guest link, or one sniffed off plain http) and only the cookie is new (review of #119, M1)
+                    box.mark_secure(payload["device"].get("id"))
             if status == 200 and path == "/api/logout":
-                # the same attributes as the cookie that was set, with no life left: the browser drops it (D77)
-                extra.append(("Set-Cookie", "%s=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT" % COOKIE))
+                extra.extend(self._cookies_cleared())
             if status == 200 and path == "/api/support/login" and payload.get("token"):
                 # support's login ends with the session on the box; the cookie only has to cover the longest a
                 # session can last (the studio may extend it), and is useless after that
-                extra.append(("Set-Cookie", "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d"
-                              % (COOKIE, payload["token"], supportd_max_seconds())))
+                extra.append(("Set-Cookie", self._cookie_set(payload["token"], supportd_max_seconds())))
             if payload.get("retry_after"):
                 extra.append(("Retry-After", str(payload["retry_after"])))
             self._json(status, payload, extra)
@@ -451,6 +587,36 @@ class PvjServer(ThreadingHTTPServer):
             self._slots.release()
 
 
+class TlsServer(PvjServer):
+    """The same panel on a second port, over TLS (D79). The handshake happens in the connection's own thread, after
+    the connection cap was taken, so a client that connects and says nothing, or one that refuses the certificate,
+    costs the accept loop nothing. With no certificate loaded (box.context None) every connection is closed at once:
+    "HTTPS off" and "no certificate" are the same thing and need no restart to change."""
+
+    secure = True
+
+    def __init__(self, address, handler, box, max_connections=64):
+        super().__init__(address, handler, max_connections)
+        self.box = box
+        box.port = self.server_address[1]
+
+    def process_request_thread(self, request, client_address):
+        import ssl
+        ctx = self.box.context
+        if ctx is None:
+            self.shutdown_request(request)
+            self._slots.release()
+            return
+        try:
+            request.settimeout(10)
+            request = ctx.wrap_socket(request, server_side=True)
+        except (ssl.SSLError, OSError, ValueError):       # a device without the root walks away mid-handshake
+            self.shutdown_request(request)
+            self._slots.release()
+            return
+        super().process_request_thread(request, client_address)
+
+
 def write_pin_file(rundir, pin):
     """Show-the-PIN channel: a tmpfs file the display or an admin can read. Cleared on reboot."""
     path = paths.pin_file(rundir)
@@ -486,6 +652,12 @@ def build(env=None, player=None):
     from . import capture as capture_mod
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
     api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
+    from . import httpsbox as httpsbox_mod
+    api.https = httpsbox_mod.HttpsBox(os.path.join(state, "tls"), settings, openssl=env.get("PVJ_OPENSSL", "openssl"),
+                                      addresses=lambda: [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
+                                                         for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")],
+                                      clock_trusted=lambda: api.clock_status().get("clock_from_network"), log=api.log)
+    api.https.load()                         # a certificate that will not load leaves HTTP as it is, with the reason on the page
     from . import supportd as supportd_mod
     api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
     api.support.panel_port = int(env.get("PVJ_PORT", "8080"))
@@ -533,11 +705,20 @@ def main(argv=None):
         return 1
     host, port = env.get("PVJ_BIND", "0.0.0.0"), int(env.get("PVJ_PORT", "8080"))
     httpd = PvjServer((host, port), make_handler(api, auth))
+    tls_port = int(env.get("PVJ_HTTPS_PORT", "0") or 0)
+    tlsd = None
+    if tls_port:
+        try:
+            tlsd = TlsServer((host, tls_port), make_handler(api, auth), api.https)
+            threading.Thread(target=tlsd.serve_forever, name="pvj-https", daemon=True).start()
+        except OSError as e:                 # the port in use or not allowed: the plain panel still comes up
+            print("pvj-web: https not listening on %s:%d: %s" % (host, tls_port, e), file=sys.stderr)
     api.scheduler.start()
     api.autostart.start()
     api.pinscreen.start()
-    print("pvj-web: listening on %s:%d; pairing PIN %s (also in %s/pin)" % (host, port, auth.current_pin, rundir),
-          flush=True)
+    print("pvj-web: listening on %s:%d%s; pairing PIN %s (also in %s/pin)"
+          % (host, port, " and https on %d (%s)" % (tls_port, "certificate loaded" if api.https.context else "no certificate yet") if tlsd else "",
+             auth.current_pin, rundir), flush=True)
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
     try:
         httpd.serve_forever()
@@ -545,6 +726,9 @@ def main(argv=None):
         pass
     finally:
         httpd.server_close()
+        if tlsd:
+            tlsd.shutdown()
+            tlsd.server_close()
         api.scheduler.stop()
         api.autostart.stop()
         api.pinscreen.stop()
