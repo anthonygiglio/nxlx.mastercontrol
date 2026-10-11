@@ -166,6 +166,81 @@ class ExistingBoxTest(Base):
         self.assertIs(self.settings.data["osc"][osc.EVER_ON], True)
 
 
+class ReviewTest(Base):
+    """The independent review of #124 at 8f8fb8a."""
+
+    def test_a_save_that_fails_at_the_first_start_does_not_stop_the_receiver(self):
+        """M1. The mark is written when the receiver is set up; on a full or read-only disk that save raised and
+        nothing listened, where master writes nothing there. The receiver starts, it is said once, and the mark is
+        written at the next start or change."""
+        self.api.osc.stop()
+        self.settings.data["osc"] = {"enabled": True, "port": 0, "allow": [], "paired_on": True}
+        self.settings.save()
+        self.settings.load()
+        lines, real = [], self.settings.save
+        self.api.osc.log = lines.append
+
+        def full(*a, **kw):
+            raise OSError(28, "No space left on device")
+        self.settings.save = full
+        try:
+            self.api.osc.apply()
+            self.api.osc.apply()
+        finally:
+            self.settings.save = real
+        self.assertTrue(self.api.osc.server and self.api.osc.server.listening, "the receiver listens")
+        self.assertEqual(self.api.osc.server.handle_packet(msg("/pvj/stop"), OTHER), 0, "and the lock that was on holds")
+        self.assertEqual(len([x for x in lines if "could not be saved" in x]), 1, lines)
+        self.api.osc.apply()                # the disk is back
+        with open(self.settings.path) as f:
+            self.assertIs(json.load(f)["osc"][osc.EVER_ON], True)
+
+    def test_an_import_does_not_lose_the_first_switch_on_lock(self):
+        """M2. A new box, the port changed, its own export imported, then switched on: the import had read the changed
+        port as "OSC was set up here" and marked it, so no lock came and the box was open."""
+        self.assertEqual(self.post({"port": 9050})[0], 200)
+        st, out = self.send(self.export())
+        self.assertEqual(st, 200, out)
+        self.assertIs(self.settings.data["osc"][osc.EVER_ON], False)
+        out = self.on()
+        self.assertEqual((out["paired_on"], out["paired_default"], out["open"]), (True, True, False))
+
+    def test_an_import_into_a_file_that_has_no_mark_yet_writes_the_mark_it_would_have_had(self):
+        from pvj import boxcare
+        for cfg, mark in (({"enabled": False, "port": 9876, "allow": []}, False), ({"enabled": False, "port": 9001, "allow": []}, True),
+                          ({"enabled": True, "port": 9876, "allow": []}, True)):
+            new = {"osc": {"enabled": False, "port": 9050, "allow": []}}
+            boxcare.BoxCare._osc_layers(new, {"osc": dict(cfg)})
+            self.assertIs(new["osc"][osc.EVER_ON], mark, cfg)
+            self.assertEqual(osc.never_on(new), not mark, "and the port the file brought does not count as a trace later")
+
+    def test_a_guest_is_not_told_that_osc_is_open_on_any_route(self):
+        """L1. GET /api/osc gave a Guest `open` and the words, against D83."""
+        self.on(paired_on=False)
+        seen = self.get(self.view_dev)
+        self.assertNotIn("open", seen)
+        self.assertNotIn("open_text", seen)
+        self.assertNotIn(osc.OPEN_TEXT, json.dumps(seen))
+        self.assertEqual((seen["enabled"], seen["paired_on"]), (True, False), "what he could read before is as it was (D78)")
+        for dev in (self.live_dev, self.full_dev):
+            self.assertIs(self.get(dev)["open"], True)
+
+    def test_the_health_summary_agrees_with_its_own_row(self):
+        """L4. The row said "Check" and `overall` said ok. An open OSC is a check, not a failure."""
+        st, out = self.h("GET", "/api/health", device=self.full_dev)
+        before = out["overall"]
+        self.on(paired_on=False)
+        for dev in (self.full_dev, self.live_dev):
+            out = self.h("GET", "/api/health", device=dev)[1]
+            self.assertEqual(out["osc_open"]["state"], "warn")
+            self.assertEqual(out["overall"], "bad" if before == "bad" else "warn")
+        self.assertEqual(self.h("GET", "/api/health", device=self.view_dev)[1]["overall"], before, "a Guest's summary does not tell him either")
+        self.api.health.report = lambda: {"overall": "bad"}
+        self.assertEqual(self.h("GET", "/api/health", device=self.full_dev)[1]["overall"], "bad", "a real problem stays a problem")
+        self.api.health.report = lambda: {"overall": "ok"}
+        self.assertEqual(self.h("GET", "/api/health", device=self.full_dev)[1]["overall"], "warn")
+
+
 class WarningTest(Base):
     def health(self, device):
         st, out = self.h("GET", "/api/health", device=device)
