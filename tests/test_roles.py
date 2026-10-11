@@ -1347,6 +1347,57 @@ class ReviewTest(RolesBase):
         self.assertFalse(os.path.exists(os.path.join(self.media, "g.mp4")))
 
 
+class SecondReviewTest(RolesBase):
+    """The re-check of #120 at bee3af6: three Lows, each seen to fail before its fix."""
+    midi_on = OwnerAnswersTest.midi_on
+    owner_maps = OwnerAnswersTest.owner_maps
+
+    def test_an_operator_cannot_put_a_mapping_in_front_of_a_control_that_shows_an_access_code(self):
+        """A mapping for one controller or one channel is matched before one for any ("*", channel 0), so it would
+        switch the Owner's pad off without touching his entry. The same for the code control of a standard layout."""
+        self.midi_on()
+        op, refused = self.operator, self.api.OWNER_MAPPING
+        self.owner_maps("code_owner", 40)
+        pad = next(c for c in FAKE_PROFILE["controls"] if c["id"] == "codepad")["send"]
+        before = json.dumps(self.settings.data["control"]["midi"]["map"], sort_keys=True)
+        tries = [{"source": "Mini", "kind": "note", "number": 40, "channel": 1, "action": "blackout"},
+                 {"source": "Mini", "kind": "note", "number": 40, "action": "stop"},
+                 {"source": "*", "kind": "note", "number": 40, "channel": 3, "action": "stop"},
+                 {"source": "Mini", "kind": pad["type"], "number": pad["number"], "channel": 2, "action": "blackout"},     # the layout's own code pad
+                 {"source": "Mini", "kind": pad["type"], "number": pad["number"], "action": "none"},
+                 {"source": "*", "kind": pad["type"], "number": pad["number"], "action": "stop"}]
+        for add in tries:
+            st, out = self.h("POST", "/api/midi/map", {"add": add}, op)
+            self.assertEqual((st, out.get("error")), (403, refused), add)
+            self.assertEqual(json.dumps(self.settings.data["control"]["midi"]["map"], sort_keys=True), before, add)
+        # what does not meet such a control is his as before: another number, and the same number of another kind
+        self.assertEqual(self.h("POST", "/api/midi/map", {"add": {"source": "Mini", "kind": "note", "number": 44, "channel": 1, "action": "blackout"}}, op)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi/map", {"add": {"source": "Mini", "kind": "cc", "number": 40, "action": "opacity"}}, op)[0], 200)
+        for add in tries:                                                           # and all of it is the Owner's
+            self.assertEqual(self.h("POST", "/api/midi/map", {"add": add}, self.owner)[0], 200, add)
+
+    def test_a_presenter_paired_from_a_controller_is_a_guest_for_the_osc_rule_too(self):
+        """Auth.role_of makes him a Guest everywhere; "a sender must be a paired device" (D78) counted his stored role."""
+        with self.settings.lock:
+            self.settings.data["devices"].append({"id": "0c0c0c0c", "name": "old", "role": "live", "created": 1, "via": "controller", "token_hash": "x"})
+            self.settings.data["devices"].append({"id": "0d0d0d0d", "name": "chosen", "role": "live", "created": 1, "via": "controller", "join": "live", "token_hash": "y"})
+        now = self.auth._clock()
+        self.auth._addresses["0c0c0c0c"] = ("10.0.0.7", now)
+        self.auth._addresses["0d0d0d0d"] = ("10.0.0.8", now)
+        self.assertEqual(self.auth.paired_addresses(3600, ("full", "live")), {"10.0.0.8"})
+        self.assertEqual(self.auth.paired_addresses(3600, ("full", "live", "view")), {"10.0.0.7", "10.0.0.8"})
+
+    def test_a_device_that_is_gone_removes_nobody(self):
+        """A factory reset or a removal ran while the request was on its way, after its token was checked."""
+        gone = dict(self.operator)
+        self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": gone["id"]}, self.owner)[0], 200)
+        for who in (gone, dict(self.owner, id="0e0e0e0e")):
+            st, out = self.h("POST", "/api/devices/revoke", {"id": self.guest["id"]}, who)
+            self.assertEqual((st, out.get("error")), (401, "this device is no longer paired"))
+            self.assertIn(self.guest["id"], [d["id"] for d in self.settings.data["devices"]])
+        self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": self.guest["id"]}, self.owner)[0], 200)
+
+
 class UploadTest(RolesBase):
     def upload(self, token, path="/api/media/upload?name=new.mp4"):
         return self.call("POST", path, raw=b"0123", headers={"Content-Type": "application/octet-stream"}, token=token)[0]
