@@ -1328,7 +1328,9 @@ function startServer(env) {          // env: more for the harness's environment 
       await staff.waitForFunction(() => !!document.querySelector('main.ws'), null, { timeout: 15000 });
       assert.strictEqual(await at(staff), 'room/scenes', role + ': starts on the Room screens');
       await staff.waitForSelector('#roomscreen .room-scene');
-      assert(await staff.isDisabled('.room-scene') === (role === 'view'), role + ': the scene button is ' + (role === 'view' ? 'not ' : '') + 'for tapping');
+      // (D80: a guest taps a scene too while guest controls are open, on the same buttons, and his card holds no second list)
+      assert(!(await staff.isDisabled('.room-scene')), role + ': the scene button is for tapping');
+      assert.strictEqual(await staff.locator('#gscenes, #roomscenes button:disabled').count(), 0, role + ': no second list of scenes and no dead button on the Room screens');
       assert.strictEqual(await staff.locator('#roomviewonly:visible').count(), role === 'view' ? 1 : 0, role + ': the view only note');
       assert.deepStrictEqual(await staff.$$eval('#wssub [data-go]', (bs) => bs.map((b) => b.getAttribute('data-go'))), role === 'view' ? ['room/scenes', 'room/walls'] : ['room/scenes', 'room/walls', 'room/guests'], role + ': the screens of Room');
       await go(staff, 'room/walls');
@@ -2060,7 +2062,8 @@ function startServer(env) {          // env: more for the harness's environment 
     // A guest sees what is playing, and nothing to press
     await go(guest, 'play/pads');
     await guest.waitForSelector('#vibes');
-    assert(await guest.isDisabled('#vibes'), 'a guest cannot start or stop Vibes');
+    assert(!(await guest.isDisabled('#vibes')), 'a guest starts and stops Vibes with the big button while guest controls are open (D80)');
+    assert.strictEqual(await guest.locator('#gvibes, #gvibesstop, #gclip, #gplay').count(), 0, 'and has no second copy of it, or of the Library\'s Play, in his card');
     await go(guest, 'play/shaders');
     await guest.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
     assert(/Vibes is playing/.test(await guest.textContent('#shaderline')), 'a guest sees that Vibes is playing');

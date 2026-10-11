@@ -30,6 +30,9 @@
 
   function screen(c) {
     var h = c.h, live = c.can('live'), full = c.can('full');
+    // a guest while guest controls are open (D80): the scenes are his to tap, sent as his own form; a device that
+    // only watches (a guest while they are locked) gets no scene buttons at all
+    var guest = !live && !!c.guestOpen && c.guestOpen() && !!c.guestSend;
     clearTimeout(timer);
     var scenes = h('div', { class: 'card', id: 'roomscenes' }, h('h2', { text: 'Scenes' }), h('div', { class: 'hint', text: 'Loading...' }));
     var groups = h('div', { class: 'room-groups', id: 'roomgroups' });
@@ -226,12 +229,17 @@
     }
     function drawLive(d) {
       scenes.textContent = '';
+      if (!live && !guest) scenes.hidden = true;      // (never shown again by this: the shell hides cards of other screens itself)
       scenes.appendChild(h('h2', { text: 'Scenes' }));
-      if (!d.scenes.length) scenes.appendChild(h('div', { class: 'hint', id: 'roomnoscenes', text: full ? 'No scenes yet. Add one under Setup, Room ("Set up the room").' : 'No scenes yet.' }));
-      else scenes.appendChild(h('div', { class: 'room-scenes' }, d.scenes.map(function (s) {
+      var mine = guest ? d.scenes.filter(function (s) { return !(s.box && s.box.action === 'stream'); }) : d.scenes;      // (the box refuses a guest a scene that plays a stream)
+      if (!mine.length) scenes.appendChild(h('div', { class: 'hint', id: 'roomnoscenes', text: full ? 'No scenes yet. Add one under Setup, Room ("Set up the room").' : 'No scenes yet.' }));
+      else scenes.appendChild(h('div', { class: 'room-scenes' }, mine.map(function (s) {
         var on = !!d.job && d.job.scene === s.id;
-        return h('button', { class: 'btn big room-scene' + (on ? ' on' : ''), 'data-id': s.id, text: s.name, disabled: !live, 'aria-pressed': on ? 'true' : 'false',
-          onclick: function () { send('/api/room/scene', { scene: s.id }, s.name + ': started'); } });
+        return h('button', { class: 'btn big room-scene' + (on ? ' on' : ''), 'data-id': s.id, text: s.name, 'aria-pressed': on ? 'true' : 'false',
+          onclick: function (e) {
+            if (guest) return c.guestSend('/api/room/scene', { scene: s.id }, s.name + ': started', e.currentTarget).then(function () { load(true); });
+            send('/api/room/scene', { scene: s.id }, s.name + ': started');
+          } });
       })));
       if (d.job) scenes.appendChild(result(d.job, 'roomjob', d.job.name + (d.job.running ? ' (working): ' : ': ')));
       groups.textContent = '';

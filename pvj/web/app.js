@@ -603,7 +603,7 @@
   }
   // Shaders and Vibes lives in shaders.js; it borrows these helpers.
   function shaderCtx() {
-    return { h: h, api: api, act: act, can: ctxCan, owner: function () { return can('full'); }, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
+    return { h: h, api: api, act: act, can: ctxCan, owner: function () { return can('full'); }, guestOpen: canGuest, guestSend: guestSend, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
       rowShown: function (id) { return sysRows().some(function (r) { return r.id === id && rowShown(r); }); },
       // a feature's one switch, used where its controls are shown on another page (MIDI and DMX on the Shaders page)
       switchFeature: !can('full') ? function () { return Promise.resolve({ ok: false, data: { error: 'Switching a feature on or off is the owner\'s.' } }); } : function (id, on) {
@@ -1252,7 +1252,10 @@
       return h('div', { class: 'item' },
         h('span', {}, d.name, h('br'), h('span', { class: 'k', text: d.size ? megabytes(d.size) : '' })),
         h('span', { class: 'row' },
-          h('button', { class: 'btn small', text: 'Play', disabled: !can('live'), onclick: function () { act('POST', '/api/play', { file: d.name }, function () { say('Playing ' + d.name); poll(); }); } }),
+          h('button', { class: 'btn small', text: 'Play', disabled: !can('live') && !canGuest(), onclick: function (e) {
+            if (canGuest()) return guestSend('/api/play', { file: d.name }, 'Playing ' + d.name, e.currentTarget);      // a guest's own form (D80)
+            act('POST', '/api/play', { file: d.name }, function () { say('Playing ' + d.name); poll(); });
+          } }),
           h('button', { class: 'btn small', text: 'Info', 'aria-label': 'Details of ' + d.name, onclick: function () {
             say('Reading ' + d.name + '...');
             act('POST', '/api/media/info', { name: d.name }, function (i) { say(describeClip(d.name, i)); });
@@ -1394,8 +1397,9 @@
       else if (part) { x.hidden = true; rest.push(x); }       // the set-up card (Setup > Room), and Guests for a device that has no such screen
     });
     // a guest's own card (D80), or the line that says the room is locked: first in Scenes
-    var note = guestNote('room');
-    if (note && cols.scenes) cols.scenes.lastChild.insertBefore(note, cols.scenes.lastChild.firstChild);
+    // (the locked line first; his card under the scenes, which are what he came for and are his own buttons now)
+    var note = guestNote('room'), part = cols.scenes && cols.scenes.lastChild, after = part && note && note.id === 'guestcard' && part.querySelector(':scope > #roomscenes');
+    if (note && part) part.insertBefore(note, after ? after.nextSibling : part.firstChild);
     mine.forEach(function (x) { el.appendChild(cols[x.part]); });
     rest.forEach(function (x) { el.appendChild(x); });       // (after the columns: what is first in the page is what is shown)
     el.className = 'desk';
@@ -4862,7 +4866,7 @@
   // What a Guest may do while guest controls are open (D80), in one card of its own on Live and on Room. The other
   // controls of those pages stay as they are for a guest (disabled or left out), so nothing a guest can press is
   // refused. Locked: one plain line.
-  var guestData = { at: 0, scenes: [], shaders: [] };
+  var guestData = { at: 0, shaders: [] };
   function guestSend(path, body, said, control) {
     return api('POST', path, body).then(function (r) {
       if (r.status === 409 && r.data.confirm && control && control.isConnected) {
@@ -4880,7 +4884,7 @@
       return r;
     });
   }
-  function guestCard() {
+  function guestCard(where) {
     var body = h('div', { class: 'list', id: 'guestbody' });
     var card = h('div', { class: 'card', id: 'guestcard' }, h('h2', { text: 'Guest controls' }), body);
     function btn(id, text, path, send, said) {
@@ -4888,28 +4892,20 @@
     }
     function draw() {
       body.textContent = '';
-      body.appendChild(h('div', { class: 'hint', id: 'guesthint', text: 'You are a guest: you can choose what plays and switch the projectors; Stop and Blackout are at the foot of the screen. Whoever runs the room can lock this for a show.' }));
+      body.appendChild(h('div', { class: 'hint', id: 'guesthint', text: 'You are a guest. Tap a scene, a pad or a clip to start it. Stop and Blackout are at the foot of the screen.' }));
       // (Previous, Next, Stop and Blackout are the strip's, at the foot of every screen: transport())
-      if (S.media.length) {
-        var clip = h('select', { class: 'text-input', id: 'gclip', 'aria-label': 'Clip to play' }, S.media.map(function (n) { return h('option', { value: n, text: n }); }));
-        body.appendChild(h('div', { class: 'row' }, clip, h('button', { class: 'btn', id: 'gplay', text: 'Play', onclick: function (e) { guestSend('/api/play', { file: clip.value }, 'Playing ' + clip.value, e.currentTarget); } })));
-      }
-      var scenes = guestData.scenes.filter(function (x) { return !(x.box && x.box.action === 'stream'); });
-      if (moduleOn('room') && scenes.length) {
-        body.appendChild(h('div', { class: 'k', text: 'Scenes' }));
-        body.appendChild(h('div', { class: 'row wrap', id: 'gscenes' }, scenes.map(function (x) {
-          return h('button', { class: 'btn grow', 'data-id': x.id, text: x.name, onclick: function (e) { guestSend('/api/room/scene', { scene: x.id }, x.name + ': started', e.currentTarget); } });
-        })));
-      }
+      // (a clip is played from the Library, a pad from Pads and a scene from Room > Scenes: those screens' own
+      // buttons are a guest's while guest controls are open, so this card holds no second copy of them)
       if (moduleOn('shaders')) {
         body.appendChild(h('div', { class: 'k', text: 'Shaders' }));
-        body.appendChild(h('div', { class: 'row wrap' }, btn('gvibes', 'Start ambience', '/api/vibes', { on: true }, 'Ambience started'),
-          btn('gvibesnext', 'Next', '/api/vibes', { next: true }), btn('gvibesstop', 'Stop ambience', '/api/vibes', { on: false }, 'Ambience stopped')));
+        // on Pads the big Vibes button above is the guest's own; on Room the ambience card only says what plays
+        if (where !== 'pads') body.appendChild(h('div', { class: 'row' }, btn('gvibes', 'Start ambience', '/api/vibes', { on: true }, 'Ambience started'),
+          btn('gvibesstop', 'Stop ambience', '/api/vibes', { on: false }, 'Ambience stopped')));
         var shaders = guestData.shaders.filter(function (x) { return !x.refused; });
-        if (shaders.length) {
-          var pick = h('select', { class: 'text-input', id: 'gshader', 'aria-label': 'Shader to show' }, shaders.map(function (x) { return h('option', { value: x.id, text: x.name || x.id }); }));
-          body.appendChild(h('div', { class: 'row' }, pick, h('button', { class: 'btn', id: 'gshow', text: 'Show', onclick: function (e) { guestSend('/api/shaders/play', { id: pick.value }, '', e.currentTarget); } })));
-        }
+        var pick = shaders.length ? h('select', { class: 'text-input', id: 'gshader', 'aria-label': 'Shader to show' }, shaders.map(function (x) { return h('option', { value: x.id, text: x.name || x.id }); })) : null;
+        body.appendChild(h('div', { class: 'row' }, pick,
+          pick ? h('button', { class: 'btn', id: 'gshow', text: 'Show', onclick: function (e) { guestSend('/api/shaders/play', { id: pick.value }, '', e.currentTarget); } }) : null,
+          h('button', { class: 'btn' + (pick ? '' : ' grow'), id: 'gvibesnext', text: 'Next', 'aria-label': 'Ambience: the next shader', onclick: function (e) { guestSend('/api/vibes', { next: true }, '', e.currentTarget); } })));
       }
       if (moduleOn('projector')) {
         body.appendChild(h('div', { class: 'k', text: 'Projectors' }));
@@ -4920,9 +4916,8 @@
     draw();
     if (Date.now() - guestData.at > 15000) {
       guestData.at = Date.now();
-      Promise.all([moduleOn('room') ? api('GET', '/api/room') : null, moduleOn('shaders') ? api('GET', '/api/shaders') : null]).then(function (r) {
-        guestData.scenes = r[0] && r[0].ok ? r[0].data.scenes || [] : [];
-        guestData.shaders = r[1] && r[1].ok ? r[1].data.shaders || [] : [];
+      Promise.all([moduleOn('shaders') ? api('GET', '/api/shaders') : null]).then(function (r) {
+        guestData.shaders = r[0] && r[0].ok ? r[0].data.shaders || [] : [];
         if (card.isConnected && !asking(card)) draw();
       });
     }
@@ -4934,7 +4929,7 @@
     var d = S.device;
     if (!d || d.role !== 'view' || d.remote) return null;
     if ((where === 'pads') === hasScreen('room/scenes')) return null;
-    if (canGuest()) return guestCard();
+    if (canGuest()) return guestCard(where);
     return guestsLocked() ? h('div', { class: 'card', id: 'guestlocked', role: 'status' }, h('div', { text: LOCKED_TEXT })) : null;
   }
   // A page to print and pin up in a studio: the panel address as a QR code (no access in it), plus the current guest
@@ -4964,7 +4959,7 @@
   // The Room screen lives in room.js; it borrows these helpers.
   // letIn: the guest code part of People and codes, so staff on the Room screen need not leave it to let a guest in.
   function roomCtx() {
-    return { h: h, api: api, say: say, can: ctxCan, owner: function () { return can('full'); }, guestOpen: canGuest, guestLock: canOp() ? guestLockCard : null,
+    return { h: h, api: api, say: say, can: ctxCan, owner: function () { return can('full'); }, guestOpen: canGuest, guestSend: guestSend, guestLock: canOp() ? guestLockCard : null,
       moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
       confirmRow: confirmRow, switchFeature: shaderCtx().switchFeature, poll: poll,
       openShaders: function () { openSys('vibes', S.tab === 'system' ? null : S.tab); },

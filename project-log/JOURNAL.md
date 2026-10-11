@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-11 (#120: one list of scenes for a guest, and the phone seen at its real widths)
+
+- **Nothing twice for a guest.** The scene buttons of Room > Scenes, Play in the Library and the big Vibes button are a guest's own while guest controls are open (`guestSend`); the copies in his card are gone (`gscenes`, `gclip`, `gplay`; on Pads also `gvibes` and `gvibesstop`), and the card stands under the scenes. Locked: no scene card, the one line first. D80 has the rule.
+- **Pictures at a real 390 and 320 px**, by a scratch wrapper outside the repository: a small proxy in front of `tests/ui/harness.py` that drops the two headers that forbid framing, and a page with two frames of those widths whose script presses the tabs. Seen as Guest (open, locked), Operator and Owner on Play, Room, the strip closed and open, and People and codes: no text cut and none over an edge. Found and changed: the card's three ambience buttons broke onto two lines at 390 px and the card pushed the scenes off the first screen; it is two rows now and under the scenes. The Library was empty in these pictures (no encoder on the Mac), so a clip's row was not seen.
+- **Still not on the box, a phone or Safari.**
+
 ## 2026-10-10, late night (#115 brought up to master: the four areas and the one transport strip; D75's panel pieces in the new layout)
 
 Branch `midi-layouts`, pull request #115, still a draft, now against `master` (it was stacked on `effect-over-shader`). `origin/master` at `0b5faeb` (#121 the four areas, #119 HTTPS) merged in, a merge and not a rebase. **Nothing here has met a controller, a phone or the box**: headless Edge on the dev Mac against the test harness, and CI.

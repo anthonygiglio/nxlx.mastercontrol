@@ -940,7 +940,7 @@ const ADDED = {
     '#nav-midi': 'setup/index', '#roomsnoguests': 'Setup index > Room', '#mapedit': 'shape/mapping', '#uploadbtn': 'play/' }, TRANSITIONS),
   // D80, a Guest while guest controls are open (the default): his card on Room > Scenes. Stop and Blackout are the
   // strip's own buttons, which were in the list before, disabled
-  guest: Object.assign({ '#gplay': 'room/scenes', '#gvibes': 'room/scenes', '#gshow': 'room/scenes', '#gprojon': 'room/scenes', '#gprojoff': 'room/scenes' }, TRANSITIONS),
+  guest: Object.assign({ '#gvibes': 'room/scenes', '#gshow': 'room/scenes', '#gprojon': 'room/scenes', '#gprojoff': 'room/scenes' }, TRANSITIONS),
 };
 // o: { open(token) -> a page loaded with that token (null: the owner's, already paired), prepare: the t for
 // inventory.prepare (its page is the owner's), log(text) }. The box behind it has no player (see inventory.js).
