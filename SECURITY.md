@@ -13,9 +13,11 @@ The box is a staff room controller and a VJ tool on a private network. It is not
 - **Someone who steals a box or its SD card** gets the box's key and certificate and can stand in for that one box, by its name, to devices with the root, until the certificate runs out (there is no revocation; `docs/HTTPS.md` says what to do). The root's key is never on a box, so no other box or name can be signed with what the card holds.
 - **Someone who steals the root's key file** needs its passphrase; with it they can sign for `.local` names and private addresses (the root's name constraints, where the device enforces them), not for sites on the internet. The cure is a new root, every box signed again, and the old root removed from every device.
 - **A guest with a code** gets view or live access over `http://`, cannot reach the certificate routes, and cannot read the root from the box.
+- **Someone who finds the owner's recovery sheet** (D81) has owner access until the set is cancelled; each code is 12 symbols of 31 (about 59 bits), stored as a salted scrypt hash, redeemed through the same route, lock and throttle as the PIN, burnt on use, and every use is shown to the owners with the device's name. A box without codes answers a guess exactly as a box with them. With the owner-only switch on, a code is taken over `https://` only.
+- **Someone at the box with a USB stick** can make it show a fresh owner PIN on the room's projector for two minutes (the file `pvj-recover` at the top of the stick; only the name is looked at, nothing on a stick is read or run). It is on by default and the owner can switch it off; it proves presence at the box, which already allows pulling the card. The PIN dies at its first use, at two minutes or when the stick comes out, and the box writes it down (never the digits) and shows the owners.
 - **Not covered:** a device of the owner's that is itself compromised; anybody who can run commands on the box; a four-digit PIN guessed over `https://` (the same throttle); the clear `http://` side, which stays for guests by design (no HSTS, no redirect).
 
-Nothing of the secure connection has run on a box or met a real phone as of 2026-10-10.
+Nothing of the secure connection has run on a box or met a real phone as of 2026-10-10; nor has owner recovery (D81) met a box or a real USB stick.
 
 ## OSC (the new player)
 

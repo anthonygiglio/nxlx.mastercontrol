@@ -317,7 +317,8 @@ class Auth:
             c = r.get("codes") if isinstance(r.get("codes"), dict) else None
             codes = ({"left": len(c.get("hashes") or []), "count": c.get("count", RECOVERY_COUNT),
                       "made": c.get("made"), "by": c.get("by")} if c else None)
-            return {"codes": codes, "usb": self.usb_enabled(), "log": list(r.get("log") or [])[-RECOVERY_LOG:]}
+            log = r.get("log") if isinstance(r.get("log"), list) else []        # a file a person edited
+            return {"codes": codes, "usb": self.usb_enabled(), "log": [e for e in log if isinstance(e, dict)][-RECOVERY_LOG:]}
 
     def usb_enabled(self):
         """The stick way: on unless the switch is exactly false (a missing key is on, as the owner asked)."""
@@ -337,7 +338,8 @@ class Auth:
             event = dict({"t": int(self._now()), "kind": kind}, **extra)
             if name is not None:
                 event["name"] = str(name)[:40]
-            r["log"] = (list(r.get("log") or []) + [event])[-RECOVERY_LOG:]
+            log = r.get("log") if isinstance(r.get("log"), list) else []
+            r["log"] = (log + [event])[-RECOVERY_LOG:]
             self.settings.data["recovery"] = r
             self.settings.save()
             return event
@@ -360,7 +362,7 @@ class Auth:
             r = self.settings.data["recovery"]
             burnt = r["codes"]["hashes"].pop(hit)
             left = len(r["codes"]["hashes"])
-            log = list(r.get("log") or [])
+            log = r.get("log") if isinstance(r.get("log"), list) else []
             r["log"] = (log + [{"t": int(self._now()), "kind": "code", "name": str(name or "device")[:40], "left": left,
                                 "client": str(client)}])[-RECOVERY_LOG:]
             try:

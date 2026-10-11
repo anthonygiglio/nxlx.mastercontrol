@@ -119,6 +119,17 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 | P1 | Owner: press **Show** under "The Owner (everything) PIN"; then **Copy**; then leave the page and come back | Four digits in the field, gone by themselves after about 12 seconds; "The PIN is copied" (or "Select the PIN and copy it"); the field empty again on return. Compare the digits with `sudo pvj-pin` | `journalctl -u pvj-web -b \| grep "owner PIN"`: one line per press with the device's id and name and no four digits of a PIN in it |
 | P2 | Guest: About and power > **Log out**, answer Log out; reload the page. Then owner: Log out on your own row under Paired devices, read the question, press Stay; then Log out and answer Log out | The guest is on the pairing screen after the reload, and gone from the owner's list. The owner's question names the PIN (last full-access device) or says "You will need the PIN"; after the real Log out the pairing screen, and the old PIN pairs again | When no device is left and nothing plays: the PIN screen on the display within a few seconds; `journalctl -u pvj-web -b \| grep "logged out"` has a line per logout |
 
+### Owner recovery: codes and the stick (D81)
+
+**Never run on a box, never met a real USB stick.** Before: a phone paired with the PIN (owner), a second phone with nothing, and a clip playing on the Pi's screen.
+
+| # | Do | See on the phone | See on the Pi |
+| --- | --- | --- | --- |
+| R1 | Owner: People and codes, last card, **Make recovery codes**; **Copy**; **Done, I kept them** | Eight codes like `XXXX-XXXX-XXXX`, then "8 of 8 codes left · made (now) by (your device)"; the codes nowhere on the card | `journalctl -u pvj-web -b \| grep recovery`: "8 recovery codes made by device ..."; `sudo grep -c hashes /var/lib/pvj/settings.json` is 1 and the codes themselves are not in the file |
+| R2 | Second phone: open the panel, **I have a recovery code**, type one code in lower case with spaces, **Pair with recovery code**; then try the same code on a third browser | The second phone is an owner (System shows everything); the third try says "wrong or was used already"; the owner's card says "A recovery code was used by ... ; 7 left" | one line "a recovery code was used by device ... ; 7 left", never the code |
+| R3 | With the clip playing: put in a stick that holds an empty file `pvj-recover` at its top (and a clip or two) | On the second phone (logged out first) the new PIN pairs it as an owner; the owner's card shows "The PIN was shown on the box's screen at ..." and, under Clips, the stick's clips still list | Within 3 s the screen shows "Recovery stick found", the panel address and "Owner PIN  dddd" over the clip; it goes the moment the PIN is used or the stick comes out; `sudo pvj-pin` then prints a different PIN |
+| R4 | Switch **A USB stick at the box shows the PIN** off; put the stick in again; then leave the stick in and reboot | Nothing on the card but the switch off | Nothing on the screen; the journal says "switched off; nothing shown". After the reboot with the switch on again and the stick in: one PIN screen for two minutes, then a new PIN |
+
 ### Secure connection (D79)
 
 **Never run on a box or a phone.** You need your computer with `openssl` (a Mac has it), the box reachable at `http://nxlx-mastercontrol.local/` with full access, and the devices below. Everything is in `docs/HTTPS.md`; this is the order to try it in.

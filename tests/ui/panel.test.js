@@ -1587,6 +1587,54 @@ function startServer() {
     await page.setViewportSize({ width: 390, height: 844 });
     assert((await get('/api/status')).device, 'Stay logs nothing out');
     await page.waitForSelector('#showpin');
+    // Recovery (D81): the card with no set yet; a set made and shown once, in the form for paper, and gone from the
+    // card after Done; the count; the stick switch on by default; all of it at 320 px. Then a fresh page (a found
+    // phone) pairs as an owner with one code through "I have a recovery code", the same code fails a second time,
+    // and the owner's card shows the notice with the device's name.
+    await page.waitForSelector('#recoverycard #makerecovery');
+    assert(/No recovery codes yet/.test(await page.textContent('#recoverycard')), 'no set on a new box');
+    assert.strictEqual(await page.getAttribute('#recovery-usb', 'aria-checked'), 'true', 'the stick way is on by default');
+    await page.click('#makerecovery');
+    await page.waitForSelector('#recoverycodes');
+    const codes = await page.$$eval('#recoverycodes li', (ls) => ls.map((l) => l.textContent));
+    assert.strictEqual(codes.length, 8, 'eight codes');
+    codes.forEach((c) => assert(/^[A-HJ-KM-NP-Z2-9]{4}-[A-HJ-KM-NP-Z2-9]{4}-[A-HJ-KM-NP-Z2-9]{4}$/.test(c), 'a code for paper: ' + c));
+    await page.setViewportSize({ width: 320, height: 844 });
+    await fitsOn(page, 'the recovery codes at 320');
+    await page.click('#recoverydone');
+    await page.waitForFunction(() => /8 of 8 codes left/.test(document.getElementById('recoverycard').textContent));
+    await fitsOn(page, 'the Recovery card at 320');
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(!(await page.textContent('#recoverycard')).includes(codes[0]), 'the codes are gone from the card');
+    assert(!JSON.stringify(await get('/api/recovery')).includes(codes[0].replace(/-/g, '')), 'and the box never gives them again');
+    const lostCtx = await browser.newContext({ viewport: { width: 320, height: 844 } });
+    const lost = await lostCtx.newPage();
+    await lost.goto(base);
+    await lost.waitForSelector('#recoverylink');
+    assert(await lost.isHidden('#recoverycode'), 'the code field is folded until asked for');
+    assert(/Locked out\?/.test(await lost.textContent('.screen')), 'the pairing screen has the Locked out help');
+    await lost.click('#recoverylink');
+    await lost.fill('#recoverycode', codes[2].toLowerCase());
+    assert.strictEqual(await lost.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the pairing screen fits at 320 with the code open');
+    await lost.click('#recoverybtn');
+    await lost.waitForSelector('.pads');
+    const lostDev = (await lost.evaluate(() => fetch('/api/status').then((r) => r.json()))).device;
+    assert.strictEqual(lostDev.role, 'full', 'a recovery code pairs an owner');
+    assert.strictEqual((await lost.evaluate(() => fetch('/api/recovery').then((r) => r.json()))).codes.left, 7, 'one code is burnt');
+    const again = await lostCtx.newPage();
+    await again.goto(base);
+    await again.click('#recoverylink');
+    await again.fill('#recoverycode', codes[2]);
+    await again.click('#recoverybtn');
+    await again.waitForFunction(() => /wrong or was used/.test(document.getElementById('msg').textContent));
+    await again.close();
+    await lost.close();
+    await lostCtx.close();
+    await sysIndex();
+    await sys('People and codes');
+    await page.waitForFunction(() => /A recovery code was used by "My phone"/.test((document.getElementById('recoverycard') || {}).textContent || ''));
+    assert(/7 of 8 codes left/.test(await page.textContent('#recoverycard')), 'the owner sees seven left');
+    await page.waitForSelector('#showpin');
     // A code from a controller (D61): off on a new box; a question in place before it goes on; the full access kind is
     // a second switch that is only there once the first is on; off applies at once and takes the second with it. The
     // card never holds a code: only a hold on a controller makes one, and this test has no controller on this page.

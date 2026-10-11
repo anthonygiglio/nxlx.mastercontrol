@@ -103,6 +103,12 @@ img.qr { width: 96px; height: 96px; background: #fff; border-radius: 4px; flex: 
 /* A code from a controller is on the box's display (People and codes): said so it is not missed, with End beside it */
 .codeshown { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1.5px solid var(--ac); border-radius: 6px; background: var(--cd); font-weight: 600; font-size: 14px; }
 #printsheet { display: none; }
+ol.codes { margin: 0; padding: 0 0 0 28px; columns: 2; column-gap: 16px; font-size: 17px; line-height: 1.8; letter-spacing: .04em; }
+ol.codes li { break-inside: avoid; }
+@media (max-width: 359px) { ol.codes { columns: 1; } }
+.recovery { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.recovery #recoveryentry { display: flex; flex-direction: column; gap: 8px; }
+.recovery #recoveryentry[hidden] { display: none; }
 @media print {
   body.printing > *:not(#printsheet) { display: none !important; }
   body.printing #printsheet { display: block; color: #000; background: #fff; font-family: Inter, system-ui, sans-serif; padding: 24px; }
@@ -110,6 +116,7 @@ img.qr { width: 96px; height: 96px; background: #fff; border-radius: 4px; flex: 
   #printsheet .sheet-row { display: flex; gap: 32px; flex-wrap: wrap; margin: 16px 0; }
   #printsheet figure { margin: 0; text-align: center; }
   #printsheet .qr-big { width: 60mm; height: 60mm; }
+  #printsheet ol.codes { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 20px; columns: 2; }
   #printsheet figcaption { font-size: 14px; margin-top: 6px; }
 }
 /* Transport: the position slider is the full card width and easy to hit with a thumb */

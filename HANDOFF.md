@@ -100,6 +100,7 @@ Further out, unchanged: live coding with a last-good fallback and projectM as an
 - An effect put on a paused clip is not drawn until the next frame; the projection mapping alone is heavy on a Pi 4 (see "Effects and Effect detail").
 - Never run on hardware: a real projector, the Wi-Fi feature, any controller control pressed by a person, a Pi 3, a Pi 5, x86, NDI on Linux.
 - The panel makes a new pairing PIN at every start, so each deploy changes it (`sudo -n pvj-pin` shows it); paired devices are unaffected.
+- Two ways back in when every owner device is lost (D81, branch `owner-recovery`, #122; never on hardware): printed recovery codes (People and codes, the last card; redeemed at the pairing screen under "I have a recovery code", through `/api/pair`), and a USB stick with an empty file `pvj-recover` at its top, which makes the PIN screen draw a fresh PIN for two minutes (`pvj/recovery.py`; switch `recovery.usb`, on by default). The manual's "Locked out?" is the venue manager's page.
 - A full-access device reads the PIN under System > People and codes > Show (D77): rate limited, one journal line per show (`journalctl -u pvj-web | grep "owner PIN"`). A panel started on kept settings does not know the PIN and says so; New PIN makes one. Log out is on People and codes for an owner and on About and power for a presenter or a guest.
 - Guests and presenters can pass 200 devices in all: their rule counts only the 180 shared places, not the total, so 160 of them beside 40 PIN devices still admit one more. That is so with the controller code off, and changing it is a decision of its own (seen in the third review of #93, left).
 - A person who taps a tab and opens a fold within the few tenths of a second before the redraw lands sees it close (seen in #91, not changed).
@@ -140,6 +141,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | Screen snapshot (on request; live view dropped, D20) | `docs/MANUAL.md` | on |
 | PIN and the box's address drawn on the screen | `pvj/pinscreen.py` | on |
 | The owner PIN read back on People and codes (Show, Copy, 12 seconds), and Log out for every role (D77, branch `pin-and-logout`; never on hardware) | `docs/MANUAL.md` ("Let someone in"), D77 | on |
+| Owner recovery: a set of 8 printed one-time codes, and a USB stick that shows a fresh PIN on the box's screen for two minutes (D81, branch `owner-recovery`, #122; never on hardware or with a real stick) | `docs/MANUAL.md` ("Locked out?"), `pvj/recovery.py`, D81 | codes: none until made; stick: on |
 | Health card (power, temperature, helpers, addresses) | `pvj/health.py` | on |
 | Updates from the panel: the Updates card takes signed bundles from USB or upload, with rollback (D33); what a power cut during an update or a save leaves is cleared the next time (D70, not tried on a box) | `pvj/README.md` | on (needs a signing key) |
 | Box care: settings export and import, diagnostics file, factory reset (D39; not run on hardware) | `pvj/boxcare.py`, `docs/MANUAL.md` | on |
