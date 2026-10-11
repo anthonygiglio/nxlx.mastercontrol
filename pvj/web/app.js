@@ -1530,7 +1530,7 @@
       { id: 'osc', group: 'show', name: 'OSC', role: 'full', url: '/api/osc',
         blurb: 'Control the box from TouchOSC, QLab, Resolume and other programs that send OSC messages over the network.',
         steps: [flagStep('osc', '/api/osc', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
-        body: function () { return [oscCard()]; } },
+        body: function () { return [oscCard(), oscStateCard()]; } },
       { id: 'network', group: 'box', name: 'Network', role: 'full', module: 'network', url: '/api/network', urlRole: 'full',
         blurb: 'Change the box\'s wired and Wi-Fi network: automatic, a fixed address, a direct cable, handing out addresses, joining a Wi-Fi network or making its own hotspot. Every change goes back by itself unless you confirm it.',
         body: function () { return [networkCard()]; } },
@@ -4253,6 +4253,7 @@
       if (saved) bar.result.textContent = 'Saved';
       body.appendChild(h('div', { class: 'hint', text: 'Shutdown and restart are never available over OSC.' }));
       if (d.senders) body.appendChild(oscWho(d, draw));
+      oscStateDraw(d.feedback);
       watch();
     }
     api('GET', '/api/osc').then(function (r) {
@@ -4360,6 +4361,83 @@
     oscSenders(el, d, who.set);
     if (now) now.textContent = oscPairedText(d);
     if (log && log.open) oscMessages(log);
+    oscStateDraw(d.feedback);
+  }
+  // "Send state back" (D82): the box tells the devices the Owner names what is really playing. The Owner's card only
+  // (the server sends `feedback` to nobody else). Off by default; nothing here is added by a packet: "Use the device
+  // that is sending now" fills the address into the form, and the Owner presses Add.
+  var oscStateForm = { name: '', address: '', port: '' };
+  var OSC_STATE_WHY = 'Off unless you switch it on. With it on, the box tells the devices below what is really playing (the clip and its pad, fade, blackout, the levels, the shader), so a TouchOSC layout shows the truth whoever acted. It is off by default because a box that answers over the network could be made to send at someone else. So it sends only to the devices you add here, on the box\'s own network, at a small fixed rate, and never as an answer to anybody else. No PIN, code or key is ever in it. Clip names are, and OSC is not encrypted.';
+  function oscStateCard() {
+    return h('div', { class: 'card oscstate', id: 'oscstatecard', hidden: true }, h('h2', { text: 'Send state back' }),
+      h('div', { class: 'list sp', id: 'oscstatebody' }));
+  }
+  function oscStatePost(body) {
+    api('POST', '/api/osc/feedback', body).then(function (r) {
+      if (r.ok) { say('Saved'); if (body.add) oscStateForm = { name: '', address: '', port: '' }; return oscStateDraw(r.data, true); }
+      say((r.data.error || 'Could not save') + '. Nothing was changed.', true);
+      api('GET', '/api/osc').then(function (g) { if (g.ok) oscStateDraw(g.data.feedback, true); });
+    });
+  }
+  function oscStateAge(t, on) {
+    if (t.why) return 'Not sent: ' + t.why + '.';
+    if (t.last_sent === null || t.last_sent === undefined) return on ? 'Nothing sent yet.' : 'Nothing is sent while this is off.';
+    return 'Last sent ' + (t.last_sent < 5 ? 'just now' : t.last_sent < 60 ? t.last_sent + ' seconds ago' : agoWords(t.last_sent)) + '.';
+  }
+  function oscStateRows(el, f) {
+    el.textContent = '';
+    if (!f.targets.length) el.appendChild(h('div', { class: 'hint', id: 'oscstatenone', text: 'No device yet: the box sends its state to nobody.' }));
+    f.targets.forEach(function (t) {
+      el.appendChild(h('div', { class: 'item lrow oscstaterow', 'data-id': t.address + ':' + t.port },
+        h('div', { class: 'lhead' }, h('div', { class: 'lname', text: t.name }),
+          h('div', { class: 'addr mono', text: t.address + ' port ' + t.port }),
+          h('div', { class: t.why ? 'hint warn' : 'state', text: oscStateAge(t, f.on && f.sending) })),
+        h('div', { class: 'row lacts' }, h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + t.name,
+          onclick: function () { oscStatePost({ remove: { address: t.address, port: t.port } }); } }))));
+    });
+  }
+  function oscStateAdd(f) {
+    function input(id, key, attrs) {
+      var el = h('input', Object.assign({ class: 'text-input', id: id, value: oscStateForm[key] }, attrs));
+      el.addEventListener('input', function () { oscStateForm[key] = el.value; });
+      return el;
+    }
+    var name = input('oscstatename', 'name', { maxlength: 32, placeholder: 'Desk tablet' });
+    var address = input('oscstateaddr', 'address', { class: 'text-input mono', maxlength: 15, placeholder: '192.168.1.50', inputmode: 'decimal' });
+    var port = input('oscstateport', 'port', { class: 'text-input mono', type: 'number', min: 1024, max: 65535, placeholder: '9000' });
+    var full = f.targets.length >= f.max, filled = h('div', { class: 'hint', id: 'oscstateused', hidden: true });
+    var use = h('button', { class: 'btn grow', id: 'oscstateuse', text: 'Use the device that is sending now', disabled: !f.sender || full, onclick: function () {
+      address.value = oscStateForm.address = f.sender;
+      filled.hidden = false;
+      filled.textContent = 'Filled in ' + f.sender + ', the last device whose message was let in. Check it is the tablet\'s own address (TouchOSC shows it in its connection settings), type its receive port and a name, then press Add. Nothing was added yet.';
+    } });
+    var add = h('button', { class: 'btn primary grow', id: 'oscstateadd', text: 'Add this device', disabled: full, onclick: function () {
+      oscStatePost({ add: { name: name.value.trim(), address: address.value.trim(), port: parseInt(port.value, 10) || 0 } });
+    } });
+    return h('div', { class: 'list sp', id: 'oscstateform' },
+      labelled('Name', name, 'Your own word for the device, shown in this list only. It is never sent.'),
+      labelled('Address', address, 'The tablet\'s own IPv4 address on the box\'s network. Give the tablet a fixed address in the router.'),
+      labelled('Receive port', port, 'The port TouchOSC listens on (its connection settings, "Receive port"), 1024 or higher. Not the port it sends to.'),
+      h('div', { class: 'row wrap' }, use, add), filled,
+      full ? h('div', { class: 'hint', id: 'oscstatefull', text: 'The list is full (' + f.max + ' devices). Remove one to add another.' }) : null);
+  }
+  function oscStateDraw(f, force) {
+    var card = document.getElementById('oscstatecard'), body = document.getElementById('oscstatebody');
+    if (!card || !body) return;
+    card.hidden = !f;
+    if (!f) return;
+    var rows = document.getElementById('oscstatelist');
+    var same = JSON.stringify([f.on, f.max, f.sender, f.targets.map(function (t) { return [t.name, t.address, t.port]; })]);
+    if (rows && !force && body.getAttribute('data-same') === same) return oscStateRows(rows, f);     // only the ages are new: the form stays under the finger
+    body.setAttribute('data-same', same);
+    body.textContent = '';
+    body.appendChild(toggle('oscstate', 'Send state back', f.on, function (v) { oscStatePost({ on: v }); }, OSC_STATE_WHY));
+    if (f.on && !f.targets.length) body.appendChild(h('div', { class: 'hint warn', id: 'oscstateempty', text: 'It is on, and nothing is sent: add a device below.' }));
+    body.appendChild(h('div', { class: 'switchlabel', text: 'Devices that are sent the state' }));
+    rows = h('div', { class: 'list', id: 'oscstatelist' });
+    oscStateRows(rows, f);
+    body.appendChild(rows);
+    body.appendChild(oscStateAdd(f));
   }
   function oscKeyBox() {
     var out = h('div', { class: 'addr osckeyout', id: 'osckeyout', hidden: true }), where = h('div', { class: 'hint', id: 'osckeywhere', hidden: true });

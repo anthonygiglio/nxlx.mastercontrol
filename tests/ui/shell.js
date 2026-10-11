@@ -928,6 +928,8 @@ const ADDED = {
   owner: Object.assign({ '#showpin': 'People and codes', '#copypin': 'People and codes', '#pinvalue': 'People and codes', '#logoutbtn': 'People and codes',
     '#nav-https': 'setup/index', '#httpsrequest': 'Secure connection', '#httpsprobe': 'Secure connection', '#httpsowneronly': 'Secure connection',
     '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC',      // (the key's Show and New are there only while the key lock is on)
+    // D82: "Send state back" on the OSC page, the Owner's only
+    '#oscstate': 'OSC', '#oscstatename': 'OSC', '#oscstateaddr': 'OSC', '#oscstateport': 'OSC', '#oscstateuse': 'OSC', '#oscstateadd': 'OSC',
     // D75: the layers' buttons and the new presses on the standard layouts, and the owner's switch for mapping mode on the Mapping desk
     'button: M #: Geometry': 'MIDI controller', 'button: M #: Mapping mode': 'MIDI controller', 'button: M #: Rotate': 'MIDI controller', 'button: Top #: Mapping mode': 'MIDI controller',
     'button: Top #: Rotate': 'MIDI controller', 'button: Top #: Overlay': 'MIDI controller', 'button: Top #: Sound off / on': 'MIDI controller',

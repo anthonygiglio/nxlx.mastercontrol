@@ -846,6 +846,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .oscwho { min-width: 0; border-top: 1px solid var(--ln); padding-top: 10px; }
 .oscwho .lname.mono { font-size: 14px; }
 .oscwho .addr, .oscwho .lname, .oscwho .state { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.oscstate .addr, .oscstate .lname, .oscstate .state, .oscstate .hint, .oscstate .btn { min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .osckeyout { font-size: 15px; color: var(--fg); padding: 8px; border: 1.5px dashed var(--ln); border-radius: 6px; user-select: all; }
 .list .item.oscmsg { flex-direction: column; align-items: flex-start; gap: 2px; }
 .list .item.oscmsg > span:first-child { flex: none; }   /* a column here: the row rule's 10rem would be its height */
