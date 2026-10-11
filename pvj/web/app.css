@@ -40,7 +40,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
   .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
   @keyframes fadeflash { 0%, 100% { background: var(--fg); color: var(--bg); } 50% { background: var(--cd); color: var(--fg); } }
   /* (Blackout's flash in the Signal look, which keeps it in its problem colour; the rule that uses it is at the end of that look's block) */
-  @keyframes blackflash { 0%, 100% { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); } 50% { background: var(--tk-plain, transparent); color: var(--fg); } }
+  @keyframes blackflash { 0%, 100% { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); } 50% { background: var(--flash-rest, transparent); color: var(--fg); } }
 }
 .btn.big { min-height: 56px; }
 .btn.small { min-height: 34px; padding: 0 10px; font-size: 14px; }
@@ -860,6 +860,7 @@ html[data-style="signal"] {
   --display: var(--tk-f-title, "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
   --mono: var(--tk-f-number, "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   --ink: var(--fg); --err: var(--st-error, var(--fg)); --rule: var(--tk-rule, 3px);
+  --flash-rest: var(--tk-plain, transparent);   /* what Blackout's flash rests on between beats (the keyframes stand above this block) */
 }
 html[data-style="signal"][data-area="room"] { --ac: var(--ar-room, #ffd60a); --on: var(--ar-room-on, #0b0b0d); --ink: var(--ar-room-ink, var(--fg)); }
 html[data-style="signal"][data-area="shaders"] { --ac: var(--ar-shaders, #ff4fa3); --on: var(--ar-shaders-on, #0b0b0d); --ink: var(--ar-shaders-ink, var(--fg)); }
