@@ -965,13 +965,25 @@ class OscManager:
     def _note_ever_on(self):
         """Once, the first time this code sets the receiver up on a box: write down whether OSC is on or was ever set
         up (D83). After that the mark only ever goes to true. A box that updates with OSC on is "was on": nothing of
-        its settings changes, so a working tablet is never locked out by an update."""
+        its settings changes, so a working tablet is never locked out by an update.
+
+        A save that fails (a full or read-only disk) must never stop the receiver, which the review of #124 found it
+        did: the mark then lives in memory for this run, it is said once, and the save is tried again whenever the
+        receiver is set up next (any change of the page, the next start)."""
         with self.settings.lock:
             cfg = self.settings.data["osc"]
-            if cfg.get(EVER_ON) is True or (EVER_ON in cfg and not cfg.get("enabled")):
-                return
-            cfg[EVER_ON] = used_before(self.settings.data)
-            self.settings.save()
+            unsaved = getattr(self, "_mark_unsaved", False)
+            if not unsaved:
+                if cfg.get(EVER_ON) is True or (EVER_ON in cfg and not cfg.get("enabled")):
+                    return
+                cfg[EVER_ON] = used_before(self.settings.data)
+            try:
+                self.settings.save()
+                self._mark_unsaved = False
+            except OSError as e:
+                if not unsaved:
+                    self._mark_unsaved = True
+                    self.log("osc: whether OSC was ever on could not be saved (%s); the receiver starts all the same" % (e.strerror or e))
 
     def apply(self):
         """Make reality match settings["osc"]. Raises OscError if the port cannot be opened."""

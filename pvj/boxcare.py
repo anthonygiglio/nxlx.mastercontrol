@@ -764,10 +764,10 @@ class BoxCare:
         out.pop("key", None)
         # D83: whether OSC was ever on is this box's own fact, never the file's, and an import never lowers it. A
         # file that has OSC on is the owner's own settings and comes as it is (its locks too): no lock is added.
-        if mine.get(osc_mod.EVER_ON) is True or out.get("enabled") or osc_mod.used_before(current):
-            out[osc_mod.EVER_ON] = True
-        elif osc_mod.EVER_ON in mine:
-            out[osc_mod.EVER_ON] = mine[osc_mod.EVER_ON]
+        # (The review of #124: this read the traces again, `used_before(current)`, so a new box whose port had been
+        # changed was marked "was on" by importing its own export and lost the lock. Only the mark counts once it is
+        # written, osc.never_on; and the mark is always written here, so what the file brings is never read as a trace.)
+        out[osc_mod.EVER_ON] = bool(out.get("enabled")) or not osc_mod.never_on(current)
         out.pop(osc_mod.PAIRED_DEFAULT, None)
         new["osc"] = out
         key = osc_mod.stored_key(current)

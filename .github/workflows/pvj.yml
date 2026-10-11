@@ -44,8 +44,9 @@ jobs:
       - name: Unit tests (real mpv, headless)
         # About eighteen minutes by 2026-10-11 (2,400 tests; it was nine when the limit was set at twenty, and a run
         # on 2026-10-11 was cut off at twenty with the last tests still to come). After twenty-five, SIGABRT:
-        # faulthandler prints every thread's stack and the step fails.
-        run: timeout -s ABRT 1500 python -X faulthandler -m unittest discover -s tests -t . -v
+        # faulthandler prints every thread's stack and the step fails. The 25 slowest tests are printed at the end,
+        # so what makes the suite long is seen (on Python 3.12 only: 3.9's unittest has no --durations).
+        run: timeout -s ABRT 1500 python -X faulthandler -m unittest discover -s tests -t . -v ${{ matrix.python == '3.12' && '--durations 25' || '' }}
       - name: Shaders on a real mpv with a software GPU (xvfb, Mesa; a skip here is a failure)
         run: |
           tools/ci-apt.sh xvfb xauth libegl1 libgles2 libgl1-mesa-dri

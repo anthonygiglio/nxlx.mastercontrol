@@ -586,6 +586,10 @@ class Feedback:
             self._note("state", "could not read the box's state: %r" % (e,))
             return 0
         before = self.stats["datagrams"]
+        # The cap for all targets together is spent in the order they are served, so the one that goes first changes
+        # with every look: under a load that fills the cap, no target is always the one left without.
+        self._turn = (getattr(self, "_turn", -1) + 1) % len(live)
+        live = live[self._turn:] + live[:self._turn]
         for t, st in live:
             if t["address"] in wanted and (st["asked"] is None or now - st["asked"] >= REQUEST_EVERY):
                 st["asked"], st["sent"], st["full"] = now, {}, now
@@ -594,7 +598,12 @@ class Feedback:
             if now - st["full"] >= FULL_EVERY:
                 st["sent"], st["full"] = {}, now
             messages = [(ALIVE, 1.0)] if st["beat"] is None or now - st["beat"] >= HEARTBEAT else []
-            messages += [m for m in state if st["sent"].get(m[0]) != m[1]]
+            # What this target was never sent goes before what it has an older value of: with many values changing
+            # at every look, the changes would otherwise take the whole budget and a full state would never complete
+            # (the review of #124). A changing value is lossy by design: the newest leaves when there is room.
+            sent = st["sent"]
+            messages += [m for m in state if m[0] not in sent]
+            messages += [m for m in state if m[0] in sent and sent[m[0]] != m[1]]
             bad = []
             packed = pack(messages, bad)
             for address, value in bad:          # left out, and not tried again until it changes; the rest leave
