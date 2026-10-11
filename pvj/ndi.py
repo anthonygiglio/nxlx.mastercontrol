@@ -224,6 +224,84 @@ def clean_address(text):
 
 
 MAX_ALLOWED = 32                          # sources that pads may hold (the "allowed" list, D62)
+MAX_GROUPS = 8                            # NDI groups this box looks in (the finder's p_groups; none means NDI's own default, "public")
+MAX_GROUP = 64
+# A group's name goes to the library in a list joined by commas, so it has no comma; letters, digits, a space, and
+# - _ . inside; no space at either end. Kept as typed: the SDK does not say that names fold case, so this box
+# never changes one.
+_GROUP = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9 _.-]{0,%d}[A-Za-z0-9_.-])?" % (MAX_GROUP - 2))
+
+
+MAX_DISCOVERY = 4                         # NDI Discovery Servers this box asks (ndi.networks.discovery in the library's own file)
+DISCOVERY_PORT = 5959                     # the server's default port (NDI's documentation); left out of what is stored when not typed
+CONFIG_NAME = "ndi-config.v1.json"        # the library's configuration file, looked for in $NDI_CONFIG_DIR
+CONFIG_MAX = 4096
+
+
+def clean_discovery(text):
+    """A Discovery Server to ask: a private or link-local IPv4 address, with ":port" if one was typed."""
+    if not isinstance(text, str) or len(text) > 21:
+        raise NdiError("enter a discovery server like 192.168.1.5 or 192.168.1.5:5959")
+    host, sep, port = text.partition(":")
+    try:
+        host = clean_address(host)
+    except NdiError as e:
+        raise NdiError(str(e).replace("enter an address like 192.168.1.20", "enter a discovery server like 192.168.1.5 or 192.168.1.5:5959"))
+    if not sep:
+        return host
+    if not re.fullmatch(r"[1-9][0-9]{0,4}", port) or int(port) > 65535:
+        raise NdiError("a port is a number from 1 to 65535")
+    return "%s:%d" % (host, int(port))
+
+
+def saved_discovery(section):
+    """The discovery servers of a stored `ndi` section that can be used; a bad or repeated one is left out."""
+    items = section.get("discovery") if isinstance(section, dict) else None
+    good = []
+    for d in (items if isinstance(items, list) else [])[:MAX_DISCOVERY * 4]:
+        try:
+            if clean_discovery(d) == d and d not in good and len(good) < MAX_DISCOVERY:
+                good.append(d)
+        except NdiError:
+            pass
+    return good
+
+
+def config_text(discovery):
+    """The library's configuration file as this box writes it: the discovery servers and nothing else. The key is
+    NDI's own, ndi.networks.discovery, one text of addresses joined by commas (each with ":port" or without)."""
+    return json.dumps({"ndi": {"networks": {"discovery": ",".join(discovery)}}} if discovery else {"ndi": {}}, sort_keys=True) + "\n"
+
+
+def config_discovery(folder):
+    """The discovery servers in the configuration file of `folder`, as a list; [] when there is no file, no folder,
+    or anything in it that this box did not write (then nothing of it is believed)."""
+    try:
+        with open(os.path.join(folder, CONFIG_NAME), "rb") as f:
+            raw = f.read(CONFIG_MAX + 1)
+        if len(raw) > CONFIG_MAX:
+            return []
+        text = json.loads(raw.decode("utf-8"))["ndi"]["networks"]["discovery"]
+        items = text.split(",") if isinstance(text, str) and text else []
+        return items if validate_saved({"addresses": [], "discovery": items})["discovery"] == items else []
+    except (OSError, ValueError, KeyError, TypeError, NdiError):
+        return []
+
+
+def clean_group(text):
+    if not isinstance(text, str) or not _GROUP.fullmatch(text):
+        raise NdiError("a group is 1 to %d letters, digits, spaces, dashes, dots or underscores, with no comma" % MAX_GROUP)
+    return text
+
+
+def saved_groups(section):
+    """The groups of a stored `ndi` section that can be used; a bad or repeated one is left out, never an error."""
+    items = section.get("groups") if isinstance(section, dict) else None
+    good = []
+    for g in (items if isinstance(items, list) else [])[:MAX_GROUPS * 4]:
+        if isinstance(g, str) and _GROUP.fullmatch(g) and g not in good and len(good) < MAX_GROUPS:
+            good.append(g)
+    return good
 
 
 def clean_allowed(row):
@@ -279,6 +357,27 @@ def validate_saved(cfg):
         if len({r["id"] for r in rows}) != len(rows):
             raise NdiError("an allowed NDI source is repeated")
         out["sources"] = rows
+    if "groups" in cfg:
+        groups = cfg["groups"]
+        if not isinstance(groups, list) or len(groups) > MAX_GROUPS:
+            raise NdiError("at most %d NDI groups" % MAX_GROUPS)
+        if len(set(clean_group(g) for g in groups)) != len(groups):
+            raise NdiError("an NDI group is repeated")
+        out["groups"] = list(groups)
+    if "discovery" in cfg:
+        servers = cfg["discovery"]
+        if not isinstance(servers, list) or len(servers) > MAX_DISCOVERY:
+            raise NdiError("at most %d NDI discovery servers" % MAX_DISCOVERY)
+        for d in servers:
+            if clean_discovery(d) != d or servers.count(d) != 1:
+                raise NdiError("bad or repeated NDI discovery server")
+        out["discovery"] = list(servers)
+    if "mdns" in cfg:
+        # Kept for a later release only: NDI documents no setting that stops a finder using mDNS (NDI.md), so
+        # nothing reads this yet. A file that carries it still loads.
+        if not isinstance(cfg["mdns"], bool):
+            raise NdiError("ndi.mdns must be true or false")
+        out["mdns"] = cfg["mdns"]
     return out
 
 
@@ -321,6 +420,8 @@ class Wanted:
         self._enabled, self._data, self.log, self.problem = enabled, data, log, ""
         self.sound = SOUND_DEFAULT                 # read with the rest at each call
         self.allowed = []                          # the sources pads may hold, read with the rest
+        self.groups = []                           # the NDI groups to look in, read with the rest (none: NDI's default)
+        self.discovery = []                        # the NDI Discovery Servers to ask, read with the rest
 
     def __call__(self):
         try:
@@ -329,6 +430,8 @@ class Wanted:
             addresses, problem = saved_addresses(section)
             self.sound = saved_sound(section)
             self.allowed = saved_sources(section)
+            self.groups = saved_groups(section)
+            self.discovery = saved_discovery(section)
             on = bool(self._enabled())
         except Exception as e:
             on, addresses, problem = False, [], "the NDI settings could not be read (%s)" % type(e).__name__
@@ -687,10 +790,12 @@ class CtypesLibrary:
         raw = _cstr(self.lib.NDIlib_version(), 80) or b""
         return "".join(ch for ch in raw.decode("ascii", "replace") if " " <= ch <= "~")[:80]
 
-    def find_open(self, extra_ips):
-        """`extra_ips` is text made of checked IPv4 addresses and commas, nothing else."""
+    def find_open(self, extra_ips, groups=""):
+        """`extra_ips` is text made of checked IPv4 addresses and commas, nothing else; `groups` is checked group
+        names joined by commas (NDIlib_find_create_t.p_groups), or "" for the library's own default (NULL)."""
         self._ips = extra_ips.encode("ascii")             # kept: the library may read it later
-        handle = self.lib.NDIlib_find_create_v2(ctypes.byref(_FindCreate(True, None, self._ips or None)))
+        self._groups = groups.encode("ascii")
+        handle = self.lib.NDIlib_find_create_v2(ctypes.byref(_FindCreate(True, self._groups or None, self._ips or None)))
         if not handle:
             raise NdiError("the NDI runtime could not start looking for sources (is avahi-daemon running?)")
         return handle
@@ -1296,6 +1401,12 @@ class Service:
         self._find_lock = threading.Lock()         # the finder: asked by status, replaced by configure
         self.lib, self.lib_error, self.version = None, "", ""
         self.configured, self.on, self.addresses = False, False, []
+        self.groups = []                           # the NDI groups the finder looks in (none: the library's default)
+        # The discovery servers the library was started with: read from its configuration file (which the panel's
+        # side writes; this helper can only read it) at the moment the library is loaded, the only moment the
+        # library reads it. None until then.
+        self.config_dir = os.environ.get("NDI_CONFIG_DIR") or ""
+        self.discovery = None
         self.sound = True                          # play a source's sound with its picture (the panel says; D62)
         self._finder, self._sources, self._sources_at, self._cut = None, [], None, False
         self.receiver = None
@@ -1303,7 +1414,9 @@ class Service:
     def _load(self):
         if self.lib is None:
             try:
+                loaded_with = config_discovery(self.config_dir) if self.config_dir else []
                 self.lib = self._loader(self.lib_path)
+                self.discovery = loaded_with
                 self.version, self.lib_error = self.lib.version(), ""
                 self.log("pvj-ndi: loaded the NDI runtime (%s)" % self.version)
             except NdiError as e:
@@ -1322,7 +1435,8 @@ class Service:
         if not isinstance(on, bool) or not isinstance(sound, bool):
             return {"ok": False, "error": "on and sound must be true or false"}
         try:
-            addresses = validate_saved({"addresses": addresses})["addresses"]
+            checked = validate_saved({"addresses": addresses, "groups": message.get("groups", []), "discovery": message.get("discovery", [])})
+            addresses, groups, discovery = checked["addresses"], checked["groups"], checked["discovery"]
         except NdiError as e:
             return {"ok": False, "error": str(e)}
         with self.lock:
@@ -1334,11 +1448,25 @@ class Service:
                 if self.lib is not None and self.on_unload is not None:
                     self.log("pvj-ndi: the NDI input was switched off; starting again without the NDI runtime")
                     self.on_unload()
-            elif self._load() is not None and (self._finder is None or addresses != self.addresses):
+            elif (self.lib is not None and self.on_unload is not None and discovery != self.discovery
+                    and self.config_dir and config_discovery(self.config_dir) == discovery):
+                # The discovery servers changed, and the file says what the panel asks. The library reads its file
+                # once, when it starts: so this process ends (after this answer) and a new one loads the library
+                # with the new file. A source on the screen ends with it and is shown again by the panel's watch.
+                # Where the file does not say what is asked (a box whose NDI set-up was not refreshed), nothing is
+                # restarted and the status says which servers are really in force.
+                self._close_receiver()
+                self._close_finder()
+                self.log("pvj-ndi: the discovery servers changed; starting again to read them")
+                self.on_unload()
+                return dict(self.status(), restarting=True)
+            elif self._load() is not None and (self._finder is None or addresses != self.addresses or groups != self.groups):
+                # A change of the addresses or the groups starts the looking again, and nothing else: a source that
+                # is being shown is connected to by its address and plays on, whatever group it is in now.
                 self._close_finder()
                 try:
                     with self._find_lock:
-                        self._finder = self.lib.find_open(",".join(addresses))
+                        self._finder = self.lib.find_open(",".join(addresses), ",".join(groups))
                 except NdiError as e:
                     self.lib_error = str(e)
             if on and sound != self.sound:         # a source that is open goes on in its old form until it is opened again
@@ -1346,7 +1474,7 @@ class Service:
                     r = self.receiver
                 if r is not None and r.state not in ENDED:
                     r._end("changed", "sound was switched %s" % ("on" if sound else "off"))
-            self.configured, self.on, self.addresses, self.sound = True, on, addresses, sound
+            self.configured, self.on, self.addresses, self.sound, self.groups = True, on, addresses, sound, groups
         return self.status()
 
     def sources(self):
@@ -1395,6 +1523,7 @@ class Service:
             finally:
                 self.lock.release()
         return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "sound": self.sound,
+                "groups": list(self.groups), "discovery": list(self.discovery or []),
                 "runtime": self.runtime(),
                 "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **({"twins": True} if s.get("twins") else {}))
                             for s in self.sources()], "cut": self._cut,
@@ -1639,8 +1768,12 @@ class Input:
 
     RETRY_SECONDS, RETRY_MAX = 3.0, 60.0   # between tries to show a source again: 3 s, then twice as long each time, to a minute
 
-    def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic, pipe_owner=os.getuid, setup=True):
+    def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic, pipe_owner=os.getuid, setup=True, config_dir=None):
         self.client, self.fifo, self._wanted, self.log, self._clock = client, fifo, wanted, log, clock
+        # The folder the library's configuration file is written to (root made it for the panel's account; the
+        # helper reads it and cannot write it), or None where there is none: a desk, the tests, a box whose NDI
+        # set-up is older than the discovery setting.
+        self.config_dir, self.config_problem = config_dir, ""
         # False on a box where nobody ran the opt-in command (server.py): there is no helper and never was, so its
         # socket is not even tried, and the page says how to set NDI up in place of "the helper is not running".
         self.setup = setup
@@ -1683,7 +1816,8 @@ class Input:
             return {"ok": False}
         try:
             on, addresses = self._wanted()
-            reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses, "sound": self.sound_wanted()}, timeout=10)
+            reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses, "sound": self.sound_wanted(),
+                                         "groups": self._groups(), "discovery": self.write_config()}, timeout=10)
         except Exception as e:             # never out of here: this runs while the panel starts
             if not isinstance(e, NdiError):
                 self.log("pvj-web: the NDI helper was not told the settings: %s" % type(e).__name__)
@@ -1710,6 +1844,51 @@ class Input:
                     at[s["id"]] = row
                     sources.append(row)
         return sources
+
+    def _groups(self):
+        """The NDI groups the owner wants looked in, as saved (none: the library's default group)."""
+        g = getattr(self._wanted, "groups", None)
+        return list(g) if isinstance(g, list) else []
+
+    def _discovery(self):
+        d = getattr(self._wanted, "discovery", None)
+        return list(d) if isinstance(d, list) else []
+
+    def write_config(self):
+        """Write the library's configuration file if it does not say what the owner wants; returns the discovery
+        servers wanted. Never raises: what went wrong is kept for the page (`config_problem`)."""
+        wanted = self._discovery()
+        if not self.config_dir:
+            self.config_problem = ("a discovery server needs this box's NDI set-up refreshed: update the box, or run "
+                                   "'sudo pvj-ndi-runtime refresh' at the box, then restart it") if wanted else ""
+            return wanted
+        path, text = os.path.join(self.config_dir, CONFIG_NAME), config_text(wanted)
+        try:
+            try:
+                with open(path) as f:
+                    if f.read(CONFIG_MAX + 1) == text:
+                        self.config_problem = ""
+                        return wanted
+            except (OSError, ValueError):
+                pass
+            fd, tmp = tempfile.mkstemp(dir=self.config_dir, prefix=".ndi-config.")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(text)
+                os.chmod(tmp, 0o644)               # the helper reads it as "other" inside a folder only it and the panel enter
+                os.replace(tmp, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            self.config_problem = ""
+        except OSError as e:
+            self.config_problem = ("the NDI discovery setting could not be written (%s); if the box was updated and not restarted since, restart it"
+                                   % (e.strerror or type(e).__name__))
+            self.log("pvj-web: %s" % self.config_problem)
+        return wanted
 
     def _allowed(self):
         """The allowed sources as they are saved, for the page: read through `allowed` of what is wanted, if it has one."""
@@ -1738,10 +1917,18 @@ class Input:
         st = self.client.status() if self.setup else {"ok": False}
         sound = self.sound_wanted()
         if st.get("ok") and (st.get("configured") is not True or st.get("on") is not on or st.get("addresses") != list(addresses)
-                             or ("sound" in st and st.get("sound") is not sound)):
+                             or ("sound" in st and st.get("sound") is not sound) or st.get("groups", []) != self._groups()):
             st = self.sync()
         helper = st.get("ok") is True or st.get("answered") is True
-        notice = [x for x in (getattr(self._wanted, "problem", ""), _text(st.get("error")) if st.get("answered") is True else "") if x]
+        notice = [x for x in (getattr(self._wanted, "problem", ""), _text(st.get("error")) if st.get("answered") is True else "",
+                              self.config_problem) if x]
+        now = []
+        for d in (st.get("discovery") if isinstance(st.get("discovery"), list) else [])[:MAX_DISCOVERY]:
+            try:
+                if clean_discovery(d) == d and d not in now:
+                    now.append(d)
+            except NdiError:
+                pass
         rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
         sources = self._rows(st)
         return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice), "sound": sound, "headroom_db": AUDIO_HEADROOM_DB,
@@ -1752,6 +1939,11 @@ class Input:
                 "sources": sources, "cut": st.get("cut") is True, "max_sources": MAX_SOURCES,
                 "addresses": list(addresses), "max_addresses": MAX_ADDRESSES,
                 "allowed": self._allowed(), "max_allowed": MAX_ALLOWED,
+                "discovery": self._discovery(), "max_discovery": MAX_DISCOVERY, "discovery_now": now, "discovery_port": DISCOVERY_PORT,
+                "groups": self._groups(), "max_groups": MAX_GROUPS,
+                # what the helper says it looks in now (checked again): the page shows it beside what was asked for
+                "groups_now": [g for g in (st.get("groups") if isinstance(st.get("groups"), list) else [])[:MAX_GROUPS]
+                               if isinstance(g, str) and _GROUP.fullmatch(g)],
                 "playing": _playing(st.get("playing")) if self.current else None,
                 "ended": dict(self.ended) if self.ended and not self.current else None}
 

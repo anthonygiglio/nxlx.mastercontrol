@@ -63,13 +63,19 @@ PACKAGES = (("avahi-daemon", ("/usr/sbin/avahi-daemon",)),
 _SAYS = "# Written by pvj-ndi-runtime (pvj/ndisetup.py) when NDI was set up on this box; removed by 'pvj-ndi-runtime remove'.\n"
 # In a drop-in these two settings add to what the unit itself has; they do not replace it.
 WEB_TEXT = (_SAYS + "# The panel may reach the NDI helper's socket (D62). This file is also the mark that the box opted in.\n"
-            "[Service]\nSupplementaryGroups=pvj-ndi\nEnvironment=PVJ_NDI_DIR=/run/pvj-ndi\n")
+            "[Service]\nSupplementaryGroups=pvj-ndi\nEnvironment=PVJ_NDI_DIR=/run/pvj-ndi\n"
+            # The folder of the NDI library's configuration file (the discovery servers): the panel writes it, the
+            # helper reads it. The dash: a box updated and not yet restarted has no such folder, and the panel starts.
+            "Environment=PVJ_NDI_CONFIG_DIR=/run/pvj-ndi-config\nReadWritePaths=-/run/pvj-ndi-config\n")
 # The pipe the player reads is made ONCE by root, in a folder of root's, at boot and by `pvj-ndi-runtime install`
 # (systemd-tmpfiles --create). The helper writes it by its group (0660 root:pvj-ndi) and can neither unlink, rename
 # nor replace it (the folder is 0750 root:pvj-ndi), so the name the player opens is always that pipe. The player
 # reads it by the same group. (The review of 2026-10-11, M3: before, the helper made the pipe in its own folder and
 # could have swapped it for a link between the panel's look and the player's opening.)
-TMPFILES_TEXT = (_SAYS + "d /run/pvj-ndi-pipe 0750 root pvj-ndi -\np /run/pvj-ndi-pipe/ndi.fifo 0660 root pvj-ndi -\n")
+# The third line is the folder of the NDI library's configuration file: the panel's account owns and writes it, the
+# helper enters it by its group and can change nothing in it.
+TMPFILES_TEXT = (_SAYS + "d /run/pvj-ndi-pipe 0750 root pvj-ndi -\np /run/pvj-ndi-pipe/ndi.fifo 0660 root pvj-ndi -\n"
+                 "d /run/pvj-ndi-config 0750 pvj-web pvj-ndi -\n")
 PLAYER_TEXT = (_SAYS + "# The player may read the picture from the NDI helper's pipe (D62); the helper itself is not in group pvj.\n"
                "[Service]\nSupplementaryGroups=pvj-ndi\n")
 

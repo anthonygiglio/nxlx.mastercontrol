@@ -158,6 +158,15 @@ def ndi_pipe_dir(env=None):
     return _env(env).get("PVJ_NDI_PIPE_DIR") or NDI_PIPE_DIR
 
 
+NDI_CONFIG_DIR = "/run/pvj-ndi-config"    # the NDI library's configuration file: the panel writes it, the helper reads it (pvj/ndisetup.py)
+
+
+def ndi_config_dir(env=None):
+    """Where the panel writes the NDI library's configuration file, or None on a box whose NDI set-up does not
+    have the folder (the panel's drop-in names it: pvj/ndisetup.py)."""
+    return _env(env).get("PVJ_NDI_CONFIG_DIR") or None
+
+
 def ndi_fifo(env=None):
     return os.path.join(ndi_pipe_dir(env), NDI_FIFO)
 

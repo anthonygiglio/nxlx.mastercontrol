@@ -45,8 +45,9 @@ class FakeLib:
     def version(self):
         return "fake 6.0"
 
-    def find_open(self, extra):
+    def find_open(self, extra, groups=""):
         self.finders.append(extra)
+        self.groups = getattr(self, "groups", []) + [groups]
         return ("finder", len(self.finders))
 
     def find_sources(self, handle):

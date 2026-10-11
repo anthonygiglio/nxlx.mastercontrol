@@ -3069,8 +3069,60 @@ class Api:
         from . import ndi as ndi_mod
         self._need_ndi()
         action = body.get("action")
-        if action not in ("add_address", "remove_address", "sound", "forget"):
-            raise bad("action must be add_address, remove_address, sound or forget")
+        if action not in ("add_address", "remove_address", "sound", "forget", "add_group", "remove_group", "add_discovery", "remove_discovery"):
+            raise bad("action must be add_address, remove_address, sound, forget, add_group, remove_group, add_discovery or remove_discovery")
+        if action in ("add_discovery", "remove_discovery"):
+            # NDI Discovery Servers this box asks (the Owner's). The library reads them from its own file when it
+            # starts, so the helper starts again; a source on the screen is shown again by the watch.
+            with self.settings.lock:
+                servers = ndi_mod.saved_discovery(self.settings.data.get("ndi"))
+                try:
+                    server = ndi_mod.clean_discovery(body.get("server"))
+                except ndi_mod.NdiError as e:
+                    raise bad(str(e))
+                if action == "add_discovery":
+                    if server in servers:
+                        raise bad("that discovery server is already in the list")
+                    if len(servers) >= ndi_mod.MAX_DISCOVERY:
+                        raise bad("at most %d discovery servers" % ndi_mod.MAX_DISCOVERY)
+                    servers.append(server)
+                else:
+                    if server not in servers:
+                        raise ApiError(404, "no such discovery server")
+                    servers.remove(server)
+                self._ndi_write(discovery=servers)
+                self.settings.save()
+            self.log("pvj-web: NDI discovery servers are now %s, by device %s (from %s)"
+                     % (", ".join(servers) or "none", (device or {}).get("id"), client))
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
+        if action in ("add_group", "remove_group"):
+            # Which NDI groups this box looks in (the Owner's, as this whole route is). None means NDI's own default
+            # group, "public". It decides what the box LOOKS for; it is not a password (NDI.md).
+            with self.settings.lock:
+                groups = ndi_mod.saved_groups(self.settings.data.get("ndi"))
+                try:
+                    group = ndi_mod.clean_group(body.get("group"))
+                except ndi_mod.NdiError as e:
+                    raise bad(str(e))
+                if action == "add_group":
+                    if group in groups:
+                        raise bad("that group is already in the list")
+                    if len(groups) >= ndi_mod.MAX_GROUPS:
+                        raise bad("at most %d groups" % ndi_mod.MAX_GROUPS)
+                    groups.append(group)
+                else:
+                    if group not in groups:
+                        raise ApiError(404, "no such group")
+                    groups.remove(group)
+                self._ndi_write(groups=groups)
+                self.settings.save()
+            self.log("pvj-web: NDI groups to look in are now %s, by device %s (from %s)"
+                     % (", ".join(groups) or "NDI's default (public)", (device or {}).get("id"), client))
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
         if action == "sound":
             if not isinstance(body.get("on"), bool):
                 raise bad("on must be true or false")
@@ -3124,7 +3176,16 @@ class Api:
         rows = ndi_mod.saved_sources(before)
         if rows:
             new["sources"] = rows
+        groups = ndi_mod.saved_groups(before)
+        if groups:
+            new["groups"] = groups
+        servers = ndi_mod.saved_discovery(before)
+        if servers:
+            new["discovery"] = servers
         new.update(changes)
+        for key in ("groups", "discovery"):
+            if not new.get(key):
+                new.pop(key, None)
         if not new.get("sources"):
             new.pop("sources", None)
         self.settings.data["ndi"] = new

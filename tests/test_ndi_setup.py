@@ -63,7 +63,8 @@ class FilesTest(Base):
         # the pipe is made once, by root, in a folder of root's: the helper writes it and cannot unlink, rename or
         # replace it (review of 2026-10-11, M3). 0660 root:pvj-ndi: the helper writes by its group, the player reads by it.
         lines = [l for l in self.read(ndisetup.TMPFILES_PATH).splitlines() if l and not l.startswith("#")]
-        self.assertEqual(lines, ["d /run/pvj-ndi-pipe 0750 root pvj-ndi -", "p /run/pvj-ndi-pipe/ndi.fifo 0660 root pvj-ndi -"])
+        self.assertEqual(lines, ["d /run/pvj-ndi-pipe 0750 root pvj-ndi -", "p /run/pvj-ndi-pipe/ndi.fifo 0660 root pvj-ndi -",
+                                 "d /run/pvj-ndi-config 0750 pvj-web pvj-ndi -"])      # the library's configuration file: the panel's to write
         unit = self.read(ndisetup.UNIT_PATH)
         self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-ndi\n", unit)
         self.assertNotIn("@PVJ", unit)

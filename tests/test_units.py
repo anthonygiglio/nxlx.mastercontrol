@@ -346,7 +346,7 @@ class RuntimeFolderTest(unittest.TestCase):
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR, p.NDI_PIPE_DIR, p.NDI_PIPE_DIR + "/" + p.NDI_FIFO,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
                  p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
-                 p.RUN + "/<name>", p.NDI_DIR}
+                 p.RUN + "/<name>", p.NDI_DIR, p.NDI_CONFIG_DIR}
         files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*")) + glob.glob(os.path.join(NDI_UNITS, "*"))
         seen = set()
         for path in files:
@@ -589,7 +589,8 @@ class NdiUnitTest(unittest.TestCase):
         # The opt-in gives it to exactly these two, in drop-ins, where the setting adds to the unit's own list.
         self.assertEqual(sorted(self.dropins), ["pvj-player.service", "pvj-web.service"])
         self.assertEqual(self.dropins["pvj-player.service"], {"SupplementaryGroups": ["pvj-ndi"]})
-        self.assertEqual(self.dropins["pvj-web.service"], {"SupplementaryGroups": ["pvj-ndi"], "Environment": ["PVJ_NDI_DIR=/run/pvj-ndi"]})
+        self.assertEqual(self.dropins["pvj-web.service"], {"SupplementaryGroups": ["pvj-ndi"], "Environment": ["PVJ_NDI_DIR=/run/pvj-ndi", "PVJ_NDI_CONFIG_DIR=/run/pvj-ndi-config"],
+                                                           "ReadWritePaths": ["-/run/pvj-ndi-config"]})      # the library's configuration file is the panel's to write
         for text in (self.setup.WEB_TEXT, self.setup.PLAYER_TEXT):
             self.assertEqual([line for line in text.splitlines() if line.startswith("[")], ["[Service]"])
         self.assertEqual(self.setup.WEB_DROPIN, "/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf")
@@ -718,7 +719,7 @@ class NdiUnitTest(unittest.TestCase):
     def test_the_library_is_given_nowhere_to_write_that_lasts_and_comes_from_a_folder_that_is_roots(self):
         from pvj import ndi
         env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
-        self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/tmp", ndi.LIB_DIR))
+        self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/tmp", "/run/pvj-ndi-config"))     # the panel's to write, never the helper's (ndisetup.TMPFILES_TEXT)
         self.assertFalse(ndi.LIB_DIR.startswith(("/usr/lib", "/lib", "/usr/local/lib", "/var", "/run", "/tmp")))   # not the system path, not writable state
         self.assertNotIn("libndi", self.sh)                # the installer never fetches or copies the runtime
         self.assertNotRegex(self.sh, r"ndi\.(video|tv)|downloads\.ndi")

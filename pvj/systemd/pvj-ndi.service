@@ -26,11 +26,13 @@ UMask=0027
 RuntimeDirectory=pvj-ndi
 RuntimeDirectoryMode=0750
 Environment=PVJ_NDI_DIR=/run/pvj-ndi
-# The runtime keeps its settings under $HOME/.ndi unless told otherwise. It is told a folder that is root's and
-# read-only here (where root also puts the library). Its home is the small private /tmp below, so anything it
-# writes there is bounded, is seen by nobody else and is gone at the next start.
+# The runtime keeps its settings under $HOME/.ndi unless told otherwise. It is told a folder that it can read and
+# cannot write: /run/pvj-ndi-config, which root makes for the panel's account (tmpfiles, pvj/ndisetup.py). The
+# panel writes one file there, ndi-config.v1.json, with the discovery servers the Owner chose and nothing else
+# (pvj/ndi.py: config_text); with no file the runtime uses its own defaults. Its home is the small private /tmp
+# below, so anything it writes there is bounded, is seen by nobody else and is gone at the next start.
 Environment=HOME=/tmp
-Environment=NDI_CONFIG_DIR=/opt/pvj-ndi
+Environment=NDI_CONFIG_DIR=/run/pvj-ndi-config
 ExecStart=@PVJ_DIR@/bin/pvj-ndi
 Restart=always
 RestartSec=2

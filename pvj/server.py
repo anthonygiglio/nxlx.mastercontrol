@@ -654,7 +654,8 @@ def build(env=None, player=None):
     ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
     api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
                             ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log,
-                            pipe_owner=ndi_mod.pipe_owner, setup=bool(env.get("PVJ_NDI_DIR")))      # root makes the pipe (M3, 2026-10-11)
+                            pipe_owner=ndi_mod.pipe_owner, setup=bool(env.get("PVJ_NDI_DIR")),
+                            config_dir=paths.ndi_config_dir(env))      # root makes the pipe (M3, 2026-10-11)
     try:                                     # whatever the helper answers, the panel starts
         api.ndi.sync()
     except Exception as e:
