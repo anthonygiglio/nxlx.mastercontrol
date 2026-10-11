@@ -4483,7 +4483,7 @@
       var scr = d.screen, codes = d.codes.filter(function (c) { return all || c.role === 'view'; });
       live.appendChild(h('div', { class: 'hint', id: 'accesshint', text: all ?
         'A code lets someone open this panel on their own phone, by typing it or scanning its QR code. It stops working by itself.' :
-        'A guest code lets someone open this panel on their own phone as ' + roleName('view') + ': they see what plays and change nothing. It stops working by itself.' }));
+        'A guest code lets someone open this panel on their own phone as ' + roleName('view') + ': they see what plays, and while guest controls are open they can choose what plays and switch the projectors. It stops working by itself.' }));
       live.appendChild(chooser('joinminutes', 'A new code works for', JOIN_MINUTES, accessForm.minutes, function (v) { accessForm.minutes = v; }));
       live.appendChild(h('div', { class: 'row wrap' },
         h('button', { class: 'btn on pri small', id: 'newguest', text: 'Guest code', onclick: function (e) { make('view', e.target); } }),

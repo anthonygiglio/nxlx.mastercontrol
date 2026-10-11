@@ -6,16 +6,16 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
 ## 2026-10-10, late (closing #120: master merged in twice, HTTPS's routes behind the gate, the roles carried into the four areas)
 
-The builder of the owner's answers was cut off by the usage limit at "Now the panel edits"; everything was committed. **Run on the development Mac only; nothing here has run on the box, on a phone or with a controller.** (The two entries below are dated the 11th by their builder; they were written on the 10th.)
+The builder of the owner's answers was cut off by the usage limit at "Now the panel edits"; everything was committed. **Run on the development Mac only; nothing here has run on the box, on a phone or with a controller.**
 
 - **What was missing against the owner's answers: nothing on the server, one line in the panel.** `Auth.role_of`, its tests and the sentences in D80, the manual and the hand-off were there, and People and codes names such a phone Guest because the box sends the role it works out. `reach()` still had a fallback that called a controller-paired `live` device a presenter, from a field the box never sends: removed.
 - **Master with #119 (HTTPS, D79), a merge.** D79 before D80; the journal by date. `server.py`: `_who` asks `Api.gate` and then D79's owner gate. **Found:** with both sides kept as they stood, every `/api/https...` route answered 500 (the gate looked for a row that was not there). The nine routes are in `policy.OUTSIDE` as the Owner's, in D80's table and in `tests/test_roles.py`; a path without a row asks for an Owner; the probe asks nobody (`policy.NO_GATE`). A test over HTTP holds each route against nobody, a Guest and an Operator.
 - **Not changed, a question for the owner:** "Owner access only over the secure connection" keeps Owners off plain http. D79 says a code "gives view or live access, over HTTP, as before" and D80 does not ask more, so an Operator still works over plain http while the switch is on.
 - **Master with #121 (the four areas, D65 and D72), a merge.** `pvj/web/app.js`: master's structure, with each piece of D80 put where D80's paragraph "The panel in the four areas" says. `tests/ui/shell.js`: the Operator's screens (`MENUS.presenter`), a guest's strip, the Operator's Mapping page, `#nav-room` off the list of removed controls, the lock and the guest link on the list of added ones. `tests/ui/panel.test.js`: the guest's steps moved to the strip and the card's new place. Master's own leftover conflict markers in `SECURITY.md` and this journal were taken out.
-- **Pictures:** headless Edge against `tests/ui/harness.py` without a player, as owner, Operator, Guest and Guest locked. Seen whole at 1366 px; the ones asked for at 390 px are cut by the browser's smallest window and prove nothing about a phone. CI's `panel-ui` is the judge of the widths.
+- **Pictures:** headless Edge against `tests/ui/harness.py` without a player, as owner, Operator, Guest and Guest locked. Seen whole at 1366 px; the ones asked for at 390 px are the left part of a 492 px window (the browser's smallest, measured) and prove nothing about a phone. CI's `panel-ui` is the judge of the widths.
 - **Open:** the question above; the last-used day of a guest device is still saved; an Operator cannot switch the standard layout of a controller that has a code pad; not in the panel: effects, shader presets, one projector's input and one group for a Guest, the Look page, the Schedule's own switch and the player's restart for an Operator.
 
-## 2026-10-11, later (the owner's answers on D80, built on `roles-operator`)
+## 2026-10-10, later still (the owner's answers on D80, built on `roles-operator`; first written under the 11th)
 
 His words are in D80, "The owner's answers". Built, each with tests (`OwnerAnswersTest` and the rewritten `HeldBackTest` and `PeopleTest`): the Owner's choice of what a controller's join code pairs (Guest by default, never changed by the box); presenters paired from a controller before the update are Guests (`Auth.role_of`, no rewrite of the record); MIDI layout, Learn, mappings and lights for the Operator, with the server refusing every change to a control that shows an access code; the per-scene mark "Not for guests"; an Operator removes other Operators, never himself or an Owner. **Run on the development Mac; nothing on the box.**
 
@@ -23,7 +23,7 @@ His words are in D80, "The owner's answers". Built, each with tests (`OwnerAnswe
 - **Attacked:** an Operator mapping `code_owner` and `code_join` by a posted mapping, after Learn, on a drawn control, by editing or resetting the Owner's override, by removing or clearing, by a map sent to `POST /api/midi`, by an import; a guest naming a marked scene by id, number, name and with a confirm; an Operator removing himself, an Owner, and ids that are no device (`midi`, `support-1`).
 - **Master's code with the new keys** (tree of `ef891c8` in a scratch folder): `room.validate` reads a scene with `no_guests` and leaves the key out; `controller_setting` drops `join`; `Settings.load` and `Auth` load a file with all three, and a controller-paired `live` device is `live` there, as before the update.
 
-## 2026-10-11 (the independent review of #120 at `571d2ac`: no High, no Medium, six Lows fixed)
+## 2026-10-10, later (the independent review of #120 at `571d2ac`: no High, no Medium, six Lows fixed; first written under the 11th)
 
 Each Low has a test in `tests/test_roles.py`, `ReviewTest`, written first and seen to fail (five failed on the code as it was; the sixth is a guard, seen to fail with a path added to `server.py` without the gate). **Run on the development Mac; nothing on the box.**
 
