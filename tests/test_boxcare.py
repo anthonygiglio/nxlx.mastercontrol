@@ -681,6 +681,8 @@ class ImportTest(Base):
             ("room", {"groups": [{"name": "Main wall", "projectors": []}]}),
             ("room", {"scenes": [{"name": "Close", "box": {"action": "poweroff"}}]}),
             ("room", []),
+            ("recovery", {"usb": "yes"}),
+            ("recovery", []),
         ]
         self.assertEqual({section for section, _ in bad}, {name for name, _ in boxcare.SECTIONS})      # no section without a bad value
         for section, value in bad:
