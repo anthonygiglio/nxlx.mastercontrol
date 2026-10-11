@@ -27,7 +27,7 @@ import re
 import socket
 import threading
 
-from . import qr
+from . import locks, qr
 from .player import PlayerError
 
 SAFE = re.compile(r"[^A-Za-z0-9 .:/_\-]")
@@ -74,7 +74,7 @@ class PinScreen:
         self.manual = None       # {"until": t, "items": [...]} while shown on request
         self._controller_up = False     # a controller code (or a notice about one) was drawn at the last tick
         self._notice = None      # (until, text): why a hold on a controller gave no code, for a few seconds
-        self._lock = threading.RLock()
+        self._lock = locks.make("pinscreen", reentrant=True)
         self._qr_sig = None      # what the QR overlays currently show (so they are only redrawn when it changes)
         self._qr_stale = False   # a QR code could not be taken off (the player did not answer): tried again each tick
         self._qr_at = 0.0

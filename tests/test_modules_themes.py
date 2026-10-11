@@ -8,6 +8,7 @@ import unittest
 
 from pvj import modules, themes
 from pvj.settings import Settings
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 def registry(board="pi5"):
@@ -278,10 +279,11 @@ class ThemeTest(unittest.TestCase):
                         faces += 1
                     elif sel.startswith("@keyframes signal-"):
                         pass      # an animation named for the style: only a scoped rule can use it
-                    elif not sel.startswith("@media"):
+                    elif not sel.startswith(("@media", "@container")):
                         unscoped += [part.strip() for part in sel.split(",") if not part.strip().startswith(scope)]
                 if depth == 0:
-                    at_media = sel.startswith("@media")
+                    # (a rule inside a query of the window or of the panel's own width, D65, is held to the scope too)
+                    at_media = sel.startswith(("@media", "@container"))
                 depth += 1
                 selector = ""
             elif ch == "}":

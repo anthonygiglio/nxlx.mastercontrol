@@ -452,7 +452,11 @@ class SyncManager:
 
             def stop(self):
                 try:
-                    api.player.clear()
+                    stop = getattr(api, "_stop_screen", None)
+                    if stop is not None:
+                        stop()      # as the panel's Stop: a clip of this box's own that is on its way loads nothing
+                    else:           # after it, and its dip does not leave the picture dark
+                        api.player.clear()
                 except Exception:
                     pass
 

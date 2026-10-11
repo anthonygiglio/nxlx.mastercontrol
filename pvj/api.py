@@ -22,7 +22,8 @@ import unicodedata
 
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
-from . import paths
+from . import locks, paths
+from . import transitions as transitions_mod
 from .auth import Auth, AuthError
 from .modules import ModuleError
 from .player import AUDIO_EXTENSIONS, ENDINGS, IMAGE_EXTENSIONS, PlayerError, VIDEO_EXTENSIONS
@@ -36,6 +37,11 @@ _USB_LABEL = re.compile(r"[A-Za-z0-9._-]{1,64}")
 USB_SCAN_LIMIT = 2000          # directory entries looked at per drive; a hostile drive can hold millions
 USB_CACHE_SECONDS = 2.0
 PRESET_MAX_FILES = 200         # files a preset will queue in the player
+# The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
+# dmx.DMX_DEVICE, room.ROOM_DEVICE). Each runs its calls one after the other on the thread that reads the controller,
+# so a call of theirs must not wait for the player longer than a question takes. A paired device's id is eight hex
+# digits, so none of these can be one.
+CONTROLLERS = ("midi", "osc", "dmx", "room")
 
 
 def _usb_label_ok(label):
@@ -94,15 +100,40 @@ class Fader:
         self._apply = apply
         self._clock, self._sleep = clock, sleep
         self._token = 0
-        self._lock = threading.Lock()
+        # `_lock` guards the token and the label, and nothing else is ever done while it is held: no callback, no
+        # call to the player, no other lock. (A callback that ran under it once made every Blackout, opacity change
+        # and Stop wait for a clip's load, and could deadlock against the start of a live input.)
+        self._lock = locks.make("fader.lock")
+        # `stepping` is held over one write of the picture's level: a step of a ramp, or a level somebody sets by
+        # hand (Api takes it for Blackout, the Opacity slider, a Reset and a play's own level). A step looks at the
+        # token inside it, so a step that was on its way cannot land after a level that was set since; whoever sets
+        # a level waits for at most the one step that is in the player. Taken before `_lock`, never inside it.
+        self.stepping = locks.make("fader.stepping")
         self.label = None       # "out" from a fade out until something else sets the picture, "in" while a fade in runs (read by the controller lights)
 
     def cancel(self):
+        """Take the fader: a ramp that runs stops within a step. Returns the token of this taking (see `current`)."""
         with self._lock:
             self._token += 1
             self.label = None
+            return self._token
 
-    def ramp(self, start, end, seconds, then=None, label=None):
+    def mark(self):
+        """The token as it is now, to ask `current` with later: has anybody taken the fader since? Every wish for a
+        level takes it (Blackout, the Opacity slider, a Reset, a Fade in, a Fade out, a ramp), so this is how
+        something that loads for a while learns that a newer wish for the level came meanwhile."""
+        with self._lock:
+            return self._token
+
+    def current(self, token):
+        """True while nobody has taken the fader since `token` (from `ramp`, `cancel` or `mark`)."""
+        with self._lock:
+            return token is not None and token == self._token
+
+    def ramp(self, start, end, seconds, then=None, label=None, cancelled=None):
+        """`then` is called when the ramp has run to its end, `cancelled` when something else took the fader first
+        (within a step). A play that dips hangs its clip on both: the clip must load either way (D71). Both are
+        called with no lock held. Returns the ramp's token (see `current`)."""
         with self._lock:
             self._token += 1
             token = self._token
@@ -112,21 +143,26 @@ class Fader:
 
         def run():
             for i in range(1, steps + 1):
-                with self._lock:
-                    if token != self._token:
-                        return
-                self._apply(start + (end - start) * i / steps)
+                with self.stepping:
+                    with self._lock:
+                        live = token == self._token
+                    if live:
+                        self._apply(start + (end - start) * i / steps)
+                if not live:
+                    return cancelled() if cancelled else None
                 wait = began + seconds * i / steps - self._clock()      # what is left of this step, if anything
                 if wait > 0:
                     self._sleep(wait)
             with self._lock:
-                if token != self._token:
-                    return
-                if self.label == "in":
+                over = token != self._token
+                if not over and self.label == "in":
                     self.label = None
+            if over:
+                return cancelled() if cancelled else None
             if then:
                 then()
         threading.Thread(target=run, daemon=True).start()
+        return token
 
 
 class Api:
@@ -160,6 +196,7 @@ class Api:
                     "flip_h": False, "flip_v": False}
         self.levels = {"volume": 100.0, "speed": 1.0}    # what was last set here (mpv's own start values until then); a
         self.fader = Fader(self._apply_opacity)          # MIDI fader reads them for pickup without asking the player
+        self.transitions = transitions_mod.Transitions(self, log=lambda line: self.log(line))   # the crossfade (D71)
         self._preview_lock = threading.Lock()
         self._control_lock = threading.RLock()
         self._usb_cache = (0.0, [])
@@ -199,11 +236,114 @@ class Api:
         self.boxcare = boxcare_mod.BoxCare(self)                   # settings export and import, diagnostics, factory reset
 
     # --- helpers -------------------------------------------------------
+    # The picture's level: one rule for everything that loads something (a clip by a cut, a dip or a blend, a list, a
+    # stream, a live input, the test pattern, a generator). It notes the fader's mark when it is asked for
+    # (`_level_mark`) and, when its load is done, sets the level to what the mix says only if nobody has taken the
+    # fader since (`_show_level(mark)`): every wish for a level takes the fader, so A WISH FOR THE LEVEL THAT WAS MADE
+    # AFTER THE TAP WINS, however long the load took, and the label and the level never disagree. A fade that was
+    # already running at the tap is older than the tap and is ended by it, when the load is done and not before.
+    def _player_lock(self):
+        """The player's own lock (Player._lock), or a stand-in for a player that has none (tests)."""
+        return getattr(self.player, "_lock", None) or locks.make("player")
+
+    def _level_mark(self):
+        mark = getattr(self.fader, "mark", None)
+        return mark() if mark else None
+
+    def _as_newest(self, why, fn, *args):
+        """Another way of playing, a Stop, a Next: this is the newest wish from now on, and its own change of what
+        plays is ONE STEP with that under the player's lock. A clip that is still on its way (its still is being
+        taken, it waits its turn, its dip goes down) loads nothing after it, and a play that is asked for after it
+        comes after it: an older wish's change can never land on a newer wish's picture. The still of a transition
+        goes too (the player's brightness does not reach it). Returns what `fn` returned."""
+        with self._player_lock():
+            self.transitions.end(why, newer=True)
+            return self._player_call(fn, *args)
+
+    def _level_back(self, mark=None):
+        """After a Stop, or for a dip whose clip did not load: the picture must not stay at the dark a way down had
+        reached (the mix says 100 and the next shader would come up black). The fader is taken and the level put
+        back to what the mix says. Not after the operator's own Fade out, which Stop never undid, looked at inside
+        the lock a level is written under; and, with `mark`, not if anybody has taken the fader since it."""
+        with self._levels():
+            if getattr(self.fader, "label", None) == "out" or (mark is not None and not self.fader.current(mark)):
+                return False
+            self.fader.cancel()
+            self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+            return True
+
+    def _stop_screen(self, clear=None):
+        """Stop: the newest wish and the clearing of the screen as one step (see _as_newest), with the fader taken
+        between the two, unless the operator's Fade out is on (Stop never undid that). Taken after the generation
+        has moved, so a clip whose way down this cuts short finds itself overtaken, and before the screen is cleared,
+        so that clip's own putting-back of the level cannot show the old picture at full for a moment. The level
+        goes back to what the mix says after the screen is cleared, and only if nobody has taken the fader since
+        (a Fade out that comes at this moment is newer than the Stop)."""
+        mark = None
+        try:
+            with self._player_lock():
+                self.transitions.end("Stop", newer=True)
+                with self._levels():
+                    if getattr(self.fader, "label", None) != "out":
+                        mark = self.fader.cancel()
+                self._player_call(clear or self.player.clear)
+        finally:
+            if mark is not None:
+                self._level_back(mark)
+
+    def restore_level(self):
+        """A player that has just started (the panel restarted it, or it came back by itself) shows its picture at
+        its own full brightness, whatever the mix says: under a Blackout the next clip would be lit. The watcher
+        that puts the overlay and the mapping back on a new player calls this: the level is written as the mix
+        has it, dark under Blackout and after the operator's Fade out. The fader is not taken: a ramp that runs
+        goes on from its next step, and this is nobody's wish for a level. (Found by the stress test: a load that
+        leaves the level to a newer wish, as it must, left it at the new process's own.) Returns False if the
+        player did not take the level (it was not up yet): the watcher then tries again on its next rounds."""
+        with self._levels():
+            dark = self.mix["blackout"] or getattr(self.fader, "label", None) == "out"
+            return self._apply_opacity(0 if dark else self.mix["opacity"])
+
+    def _levels(self):
+        """The lock one write of the picture's level is made under (Fader.stepping): a ramp's step that was on its
+        way cannot land after a level set under it."""
+        return getattr(self.fader, "stepping", None) or locks.make("fader.stepping")
+
+    def _show_level(self, mark=None, rise=False):
+        """Set the picture's level to what the mix says now (dark under Blackout, the mix opacity otherwise) and
+        take the fader, unless somebody has taken it since `mark` (see the rule above): then nothing is touched and
+        False is returned. Without a mark it is always done. The look, the taking and the write are one step, and
+        the mix is read inside it, so of two that meet the later one has the last word and reads the newer state.
+        With `rise` (a shader chosen by hand or by a pad), a screen the operator had faded out comes up from black
+        over half the Mix's duration, as a clip does after a Fade out, and does not jump to full."""
+        with self._levels():
+            current = getattr(self.fader, "current", None)
+            if mark is not None and current is not None and not current(mark):
+                return False
+            faded_out = getattr(self.fader, "label", None) == "out"
+            if rise and faded_out and not self.mix["blackout"] and getattr(self.fader, "ramp", None) is not None:
+                self._apply_opacity(0)
+                self.fader.ramp(0, self.mix["opacity"], self.settings.data["mix"]["duration"] / 2)
+                return True
+            self.fader.cancel()
+            self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+            return True
+
+    def _mix_settings(self):
+        """The Mix settings as the API gives them: the transition by its name (see pvj/transitions.py for how it is
+        kept), the duration, and `fallback` with the reason while the box dips instead of a crossfade."""
+        mix = self.settings.data["mix"]
+        out = {"transition": transitions_mod.named(mix), "duration": mix["duration"]}
+        why = self.transitions.fallback() if out["transition"] in transitions_mod.STYLES else ""      # asks the player nothing
+        if why:
+            out["fallback"] = why
+        return out
+
     def _apply_opacity(self, percent):
         try:
             self.player.opacity(round(min(100, max(0, percent)) * 2.55))
+            return True
         except PlayerError:
-            pass
+            return False
 
     def resolve_media(self, name):
         """A media file by name, guaranteed to live inside the media folder."""
@@ -303,7 +443,17 @@ class Api:
 
     def status(self, body, device, client):
         temps = hardware.temperatures()
-        return {"player": self._public_player_status(), "mix": dict(self.mix, **self.settings.data["mix"]),
+        player = self._public_player_status()
+        # What the GPU last refused, for the Live page, where the pads are: a controller's tap of a shader pad
+        # answers before the GPU has looked, so its refusal has no answer to ride on (D73). From the engine's own
+        # record: the player is asked nothing more.
+        try:
+            refused = self.shaders.error if self.registry.enabled("shaders") else None
+        except Exception:
+            refused = None
+        if isinstance(refused, dict) and refused.get("id") and refused.get("epoch") == getattr(self.player, "source_epoch", None):
+            player["shader_refused"] = {"id": refused["id"], "message": refused.get("message", ""), "at": refused.get("at", "")}
+        return {"player": player, "mix": dict(self.mix, **self._mix_settings()),
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner()}
@@ -435,6 +585,10 @@ class Api:
         if self.shaders.is_carrier(path):                 # a shader source: the blank picture under it is not a clip
             showing = self.shaders.on_screen()
             status["path"], status["shader"], status["vibes"] = None, (showing["id"][:-3] if showing else ""), self.vibes.running
+            status["shader_preset"] = (showing.get("preset") if showing else None) or ""        # for the pad that started it (D73)
+            effect = self.effects.current()               # an effect over the shader (D74)
+            if effect is not None:
+                status["effect"] = effect["id"][:-3]
             return status
         effect = self.effects.current()                   # an effect over the picture: its name, for the Live screen
         if effect is not None:
@@ -704,7 +858,33 @@ class Api:
     def get_pads(self, body, device, client):
         return {"banks": self.settings.data["pads"]["banks"]}
 
+    @staticmethod
+    def pad_shader(pad):
+        """(shader id, preset name or None) of a pad that holds a generator shader, else None (D73). Such a pad keeps
+        `file` empty and names the shader under `shader`, with `preset` beside it if one was chosen: no new schema,
+        and a release that does not know the keys sees an empty pad. A pad with a clip is a clip pad whatever else
+        it carries."""
+        if not isinstance(pad, dict) or pad.get("file"):
+            return None
+        sid = pad.get("shader")
+        if not isinstance(sid, str) or not sid:
+            return None
+        preset = pad.get("preset")
+        return sid, (preset if isinstance(preset, str) and preset else None)
+
+    def _shader_preset(self, sid, preset):
+        """The preset of `sid` that is called `preset`, by its stored name, or 404."""
+        from . import shaderlive
+        if isinstance(preset, str) and shaderlive.name_ok(preset):
+            want = shaderlive.name_key(preset)
+            for row in self.shaders.config().get("presets", {}).get(sid, []):
+                if shaderlive.name_key(row["name"]) == want:
+                    return row["name"]
+        raise ApiError(404, "%s has no preset of that name" % sid)
+
     def set_pad(self, body, device, client):
+        """{"bank", "index", "label"?, "file"?, "ending"?} for a clip, or {"bank", "index", "label"?, "shader",
+        "preset"?} for a generator shader (D73). A shader pad stores no ending: a shader has no end."""
         bank = number(body, "bank", 0, len(self.settings.data["pads"]["banks"]) - 1, integer=True)
         index = number(body, "index", 0, 11, integer=True)
         label, file = body.get("label", ""), body.get("file", "")
@@ -716,10 +896,81 @@ class Api:
         if file != "":
             if not valid_name(file) or not file.lower().endswith(MEDIA_EXTENSIONS):
                 raise bad("invalid file name")
+        pad = {"label": label, "file": file, "ending": ending}
+        shader = body.get("shader", "")
+        if shader != "":
+            if file != "":
+                raise bad("a pad holds a clip or a shader, not both")
+            path, _ = self.shaders._path(shader)            # 400 for a name that is none, 404 for one that is not here
+            try:
+                self.shaders._parsed(path)
+            except ValueError as e:
+                raise ApiError(422, "%s cannot be shown: %s" % (shader, e))
+            pad = {"label": label, "file": "", "shader": shader}
+            if body.get("preset") not in (None, ""):
+                pad["preset"] = self._shader_preset(shader, body["preset"])
+        elif body.get("preset") not in (None, ""):
+            raise bad("a preset belongs to a shader: name the shader too")
         with self.settings.lock:
-            self.settings.data["pads"]["banks"][bank]["pads"][index] = {"label": label, "file": file, "ending": ending}
+            self.settings.data["pads"]["banks"][bank]["pads"][index] = pad
             self.settings.save()
         return {"banks": self.settings.data["pads"]["banks"]}
+
+    def pads_follow_preset(self, sid, was, to):
+        """A preset of `sid` was renamed: the pads that start the shader with it follow, as a clip's pads follow the
+        clip's new name. The caller holds the settings' lock and saves (LiveEngine.preset_rename: one write for the
+        preset's new name and the pads)."""
+        from . import shaderlive
+        for bank in self.settings.data["pads"]["banks"]:
+            for pad in bank["pads"]:
+                held = self.pad_shader(pad)
+                if held and held[0] == sid and held[1] is not None and shaderlive.name_key(held[1]) == shaderlive.name_key(was):
+                    pad["preset"] = to
+
+    def _play_shader_pad(self, held, device):
+        """A pad that holds a generator shader (D73): the shader is shown exactly as choosing it by hand on the
+        Shaders screen shows it, through the one path a generator has (LiveEngine.play, which ends the rotation,
+        takes the screen under the player's lock as the newest wish and sets the level by the level's rule). It is
+        called before this play has claimed anything: the engine's lock stands before the player's (pvj/locks.py),
+        and a ticket taken here would be a second newest wish.
+
+        From the panel, the autostart and anything else that waits for its answer, the answer says whether the GPU
+        took the shader. A controller (MIDI, OSC, DMX, a Room scene) must not wait while the GPU looks at a shader
+        it has not seen: its tap is queued for the engine's worker, as its own shader actions are (apply_preset),
+        and a refusal is kept where the Shaders screen shows it. What can be said at once is said at once either
+        way: the module off, the shader gone, the preset gone."""
+        sid, preset = held
+        engine = self.shaders
+        engine._need()
+        try:
+            path, _ = engine._path(sid)
+        except ApiError as e:
+            if e.status != 404:
+                raise
+            raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+        said = {}
+        if preset is not None:
+            try:
+                preset = self._shader_preset(sid, preset)
+            except ApiError:
+                # The pad's preset was deleted (a rename carries the pads): the shader is there, so it is shown
+                # with its own start, as Vibes does for a set that names a preset that is gone, and the answer and
+                # the journal say so. (It used to refuse the tap.)
+                said["note"] = "this pad's preset, %s, is gone: the shader starts as it does by itself. Choose a preset for the pad again" % preset
+                log = getattr(self, "log", None)
+                if log is not None:
+                    log("pvj-web: a pad's preset of %s is gone (%s); shown with the shader's own start" % (sid, preset))
+                preset = None
+        try:
+            engine._parsed(path)                    # before Vibes is ended: a file that no longer reads shows nothing
+        except ValueError as e:
+            raise ApiError(422, "this pad's shader, %s, cannot be shown: %s" % (sid, e))
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            self.vibes.yield_screen()               # now, at the tap: the worker never ends a rotation
+            engine.queue_show(sid, preset)          # with the epoch and the level's mark of this moment
+            return dict({"playing": sid, "shader": sid, "pending": True}, **said)
+        engine.play(sid, None, None, preset)
+        return dict({"playing": sid, "shader": sid}, **said)
 
     @staticmethod
     def _ending(body, default):
@@ -746,9 +997,9 @@ class Api:
             import random
             paths = list(paths)
             random.SystemRandom().shuffle(paths)
-        self.fader.cancel()
-        self._player_call(self.player.play, paths, ending == "loop", None, False, self.spawn, ending, image_seconds)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        mark = self._level_mark()
+        self._as_newest("another play", self.player.play, paths, ending == "loop", None, False, self.spawn, ending, image_seconds)
+        self._show_level(mark)
         self._started_playing()
         return paths
 
@@ -847,6 +1098,9 @@ class Api:
             banks = self.settings.data["pads"]["banks"]
             if not (0 <= pad[0] < len(banks) and 0 <= pad[1] < 12):
                 raise bad("no such pad")
+            held = self.pad_shader(banks[pad[0]]["pads"][pad[1]])
+            if held:                    # before anything is claimed: see _play_shader_pad
+                return self._play_shader_pad(held, device)
             name = banks[pad[0]]["pads"][pad[1]]["file"]
             if not name:
                 raise bad("pad is empty")
@@ -863,28 +1117,147 @@ class Api:
         loop = ending == "loop"
         transition = self.settings.data["mix"]
         playing = self._player_call(self.player.status).get("running")
+        # This play is the newest wish from here on, and whatever is asked for after it (another play of any kind,
+        # a Stop) is newer. Two things are one step under the player's own lock: the screen is claimed, so that a
+        # shader rotation or a generator's queued change, which hold the epoch from before, are refused by the
+        # player from now on (with a dip or a still the clip loads later); and the ticket is taken. A generator that
+        # got the lock first has had its turn and this play is newer than it; one that comes after is refused and
+        # never becomes a newer wish. So a rotation never beats a tap. The ticket is taken here, in the caller,
+        # before any thread is started and before any wait for another play's still.
+        player_lock = self._player_lock()
         claim = getattr(self.player, "claim_screen", None)
-        if claim:            # with a dip the clip loads later; a shader rotation must know now that the screen is taken
-            claim()
-        self.fader.cancel()  # a fade still running from an earlier action must not darken the new clip
+        with player_lock:
+            if claim:
+                claim()
+            ticket = self.transitions.claim()
+        tapped = self._level_mark()         # a wish for the level that comes after this is newer than the tap (see _show_level)
+        faded_out = getattr(self.fader, "label", None) == "out"     # the operator's Fade out: the screen is dark or going dark
+        # A fade still running from an earlier action must not darken the new clip: the fader is taken when the clip
+        # loads (in `start`), not here at the tap. A clip that is overtaken before it loads (its still was being
+        # taken, a Next came) would otherwise have stopped a Fade in half way with nobody to finish it (found by
+        # the stress test).
 
-        dip = transition["transition"] == "dip" and not self.mix["blackout"]
+        kind = transitions_mod.named(transition)
+        # A crossfade, a wipe or a slide lays a still of the screen over the new clip (pvj/transitions.py). A screen
+        # that is dark (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there.
+        # Where the box cannot do one it dips; where the still itself fails, time has passed already and the clip
+        # is cut to. Whether anything is loaded in the player is the still's own first question.
+        blend = False
+        if kind in transitions_mod.STYLES:
+            if playing and not self.mix["blackout"] and self.mix["opacity"] > 0 and not faded_out:
+                if self.transitions.look() or self.access_on_screen():
+                    kind = "dip"
+                else:
+                    blend = True
+        if not blend:
+            self.transitions.end()
+        dip = kind == "dip" and not self.mix["blackout"]
+        # After the operator's Fade out there is no picture to blend from: a crossfade, a wipe or a slide then
+        # brings the new clip up from black as the dip does (it used to snap to full brightness at once).
+        rise = dip or (kind in transitions_mod.STYLES and faded_out and not self.mix["blackout"])
+        if self.pinscreen is not None:
+            self.pinscreen.clear()          # an on-screen pairing PIN goes at the tap, as it always did
 
-        def start():
-            self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
-            if self.mix["blackout"]:
-                return
-            if dip:
-                self._apply_opacity(0)
-                self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
-            else:
-                self._apply_opacity(self.mix["opacity"])
+        def start(token=0, mark=tapped):
+            """Load the clip, if this play is still the newest wish. True if it was loaded. The picture's level is
+            then set, unless somebody has taken the fader since `mark` (the tap; for a dip, its own way down): a
+            Blackout, a fade or an opacity change that came meanwhile is the newer wish for the level."""
+            try:
+                # Newest wins. The look and the load are one step under the player's own lock, which every way of
+                # playing and Stop take for their own change: whoever became the newest wish before this look is
+                # seen here and nothing is loaded, and whoever becomes it after waits for this lock and comes after
+                # this clip. No window is left between the look and the load.
+                with player_lock:
+                    if not self.transitions.newest(ticket):
+                        self.transitions.abandon(token)
+                        return False
+                    self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
+                # This clip plays now, so a live input that was on the screen is not shown any more and its helper
+                # goes (see _stop_capture for how it is decided; not by "is this still the newest wish": a Next a
+                # moment later is newer, and the helper would have stayed with the device open).
+                self._stop_capture()
+                # The level, by the one rule (see _show_level): only if nobody has taken the fader since the mark.
+                # The look and the write are one step under the lock a level is written under, so a Blackout that
+                # comes at this moment either was seen or comes after and has the last word.
+                current = getattr(self.fader, "current", None)
+                with self._levels():
+                    if mark is None or current is None or current(mark):
+                        if rise and not self.mix["blackout"]:
+                            self._apply_opacity(0)
+                            self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
+                        else:
+                            self.fader.cancel()
+                            self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+            except BaseException:
+                # Whatever it was: no still stays over a clip that did not start, and the old clip, which the still
+                # froze, plays on.
+                self.transitions.abandon(token)
+                raise
+            self.transitions.run(token, transition["duration"])
+            return True
 
-        if playing and dip:
-            self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=start)
+        def lit():
+            """Asked by the still just before it is laid down: is the screen still one to blend from?"""
+            return not self.mix["blackout"] and self.mix["opacity"] > 0 and getattr(self.fader, "label", None) != "out"
+
+        def blended():
+            """The still, then the clip under it. The still takes time and nothing waits for it, so the ticket says
+            what came meanwhile: after a newer wish (a Stop, any other play) nothing is loaded; after an end() the
+            clip loads without the blend."""
+            return start(self.transitions.hold(kind, ticket, lit, transition["duration"]))
+
+        loaded = True
+        if blend and isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            # A controller's actions come one after the other on one thread (MIDI, OSC, DMX, a Room scene): a pad
+            # that waited here for its still would hold the same controller's Blackout or Stop behind it. So the
+            # still and the clip are another thread's, as the clip after a dip's way down already is.
+            def later():
+                try:
+                    blended()
+                except Exception as e:
+                    self.log("pvj-web: a clip played from a controller did not start: %s" % e)
+            threading.Thread(target=later, name="transition-play", daemon=True).start()
+            return {"playing": name, "pending": True}       # asked for, not loaded yet: see the manual
+        elif blend:
+            loaded = blended()
+        elif playing and dip and not faded_out:
+            # The clip hangs on the ramp's end and on its being cut short alike. Before, it hung on the end only:
+            # a Blackout, a fade, a Reset or an opacity change during the way down (a MIDI fader that moves) took
+            # the fader, and the tapped clip was silently never loaded. Now it loads then as a cut, at the level
+            # that action set; only a newer play or a Stop drops it, by the ticket.
+            # (After the operator's Fade out there is no way down to go: the screen is dark. The clip comes up
+            # from black by the branch below. The way down used to begin at the mix's level: a flash.)
+            way_down = []
+
+            def dipped(cut_short=False):
+                """The dip's clip, on the fader's thread. If it does not load (a newer wish overtook it, or the
+                load failed) and nobody has taken the fader since the way down, the picture is still at the dark
+                the dip left it at with nobody to bring it back: the level goes back to what the mix says. That
+                covers every newer wish, also one that does not touch the fader (Next, Previous) and any added
+                later."""
+                try:
+                    done = start(mark=way_down[0])
+                except Exception as e:
+                    done = False
+                    self.log("pvj-web: a clip did not start after its dip to black: %s" % e)
+                if not done:
+                    self._level_back(way_down[0])
+            current = getattr(self.fader, "current", None)
+            with self._levels():        # the ramp's first step waits for this: its token is noted before any callback can run
+                # only if nobody has taken the fader since the tap: a Fade out that came between the two is the
+                # newer wish for the level, and the way down must not take its place
+                if tapped is None or current is None or current(tapped):
+                    way_down.append(self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=dipped, cancelled=lambda: dipped(True)))
+            if not way_down:
+                loaded = start()        # no dip: the clip loads now, and the level stays as that wish set it
+                return {"playing": name} if loaded else {"playing": None, "superseded": name}
+            return {"playing": name, "pending": True}       # asked for, not loaded yet, as a controller's blend
         else:
-            start()
-        self._started_playing()
+            loaded = start()
+        if not loaded:
+            # Something newer was asked for while this clip's still was taken (or between its claim and its load):
+            # this clip is not what plays. What plays is not asked of the player here; the status says.
+            return {"playing": None, "superseded": name}
         return {"playing": name}
 
     def _need_streams(self):
@@ -897,9 +1270,9 @@ class Api:
         match = [s for s in self.settings.data["streams"] if s["id"] == sid]
         if not match:
             raise ApiError(404, "no such stream")
-        self.fader.cancel()
-        self._player_call(self.player.play, [match[0]["url"]], False, None, False, self.spawn)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        mark = self._level_mark()
+        self._as_newest("another play", self.player.play, [match[0]["url"]], False, None, False, self.spawn)
+        self._show_level(mark)
         self._started_playing()
         return {"playing": match[0]["name"]}
 
@@ -951,10 +1324,17 @@ class Api:
             self._player_call(p.volume, number(body, "value", 0, 130))
             self.levels["volume"] = float(body["value"])
         elif action == "opacity":
-            self.mix["opacity"] = number(body, "value", 0, 100)
-            if not self.mix["blackout"]:
-                self.fader.cancel()
-                self._player_call(p.opacity, round(self.mix["opacity"] * 2.55))
+            value = number(body, "value", 0, 100)
+            self.transitions.end()
+            # Taken once before the lock: a ramp whose steps wait for a player that does not answer holds the lock
+            # for a whole answer time at each step, and must stop taking it now, not when this gets its turn (locks
+            # are not handed over in order). Then the value, the fader and the level as one step (Fader.stepping).
+            self.fader.cancel()
+            with self._levels():
+                self.mix["opacity"] = value
+                if not self.mix["blackout"]:
+                    self.fader.cancel()
+                    self._player_call(p.opacity, round(self.mix["opacity"] * 2.55))
         elif action == "size":
             self.mix["size"] = number(body, "value", 1, 200)
             self._player_call(p.size, self.mix["size"])
@@ -984,7 +1364,7 @@ class Api:
                 raise bad("value must be true or false")
             self._player_call(p.mute, body["value"])
         elif action == "stop":
-            self._player_call(p.clear)
+            self._stop_screen()
             self._stop_capture()
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
             if self.effects.on is not None:     # a Stop takes the effect off (the player did); its text goes too. Only
@@ -994,20 +1374,25 @@ class Api:
         elif action == "shuffle":
             self._player_call(p.shuffle)
         elif action in ("next", "prev"):
-            if not self._player_call(p.playlist_step, action == "next"):
+            # the operator asked for another clip: a blend ends, and a clip on its way is the older wish
+            if not self._as_newest("another clip", p.playlist_step, action == "next"):
                 raise ApiError(409, "no %s clip in the playlist" % ("next" if action == "next" else "previous"))
         elif action == "volume_step":
             self._player_call(p.volume_step, number(body, "value", -50, 50))
             self.levels["volume"] = min(130.0, max(0.0, self.levels["volume"] + float(body["value"])))
         elif action == "reset":
             flipped = [k for k in ("flip_h", "flip_v") if self.mix[k]]
-            self.mix.update(opacity=100, size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)
+            self.mix.update(size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)     # the opacity: below, in its lock
             for k in flipped:
                 self._player_call(p.flip, k == "flip_h", False)
-            self.fader.cancel()
+            self.transitions.end()
             # During a blackout the screen must stay dark: reset changes the stored mix, not the picture.
-            shown = 0 if self.mix["blackout"] else 255
-            for fn, arg in ((p.opacity, shown), (p.size, 100), (p.position, 0), (p.speed, 1), (p.rotate, 0)):
+            self.fader.cancel()                 # once before the lock, as for the Opacity slider
+            with self._levels():
+                self.mix["opacity"] = 100
+                self.fader.cancel()
+                self._player_call(p.opacity, 0 if self.mix["blackout"] else 255)
+            for fn, arg in ((p.size, 100), (p.position, 0), (p.speed, 1), (p.rotate, 0)):
                 self._player_call(fn, arg)
             self.levels["speed"] = 1.0
         else:
@@ -1018,15 +1403,32 @@ class Api:
         on = body.get("on")
         if not isinstance(on, bool):
             raise bad("on must be true or false")
-        self.fader.cancel()
-        self.mix["blackout"] = on
-        self._player_call(self.player.opacity, 0 if on else round(self.mix["opacity"] * 2.55))
+        try:
+            self.fader.cancel()                 # once before the lock, as for the Opacity slider: the dark must not wait
+            # The switch, the fader and the level are one step (see Fader.stepping): a Fade in that meets a Blackout
+            # either comes first and is ended by it, or comes after and ends it. (Found by the stress test: with the
+            # switch outside, a Fade in's ramp could go up under a Blackout that the mix said was on.)
+            with self._levels():
+                self.mix["blackout"] = on
+                self.fader.cancel()
+                self._player_call(self.player.opacity, 0 if self.mix["blackout"] else round(self.mix["opacity"] * 2.55))
+        finally:
+            # After the picture went dark, not before: ending a transition can wait for a still that is being
+            # taken, and the dark must not wait with it. (A still taken meanwhile is not laid down: it sees the end.)
+            self.transitions.end()
         return {"blackout": on}
 
     def fadeout(self, body, device, client):
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
-        self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
+        self.transitions.end()
+        self.fader.cancel()                     # once before the lock, as the other four wishes for a level do
+        with self._levels():
+            # Under Blackout the screen is dark already and there is nothing to fade: a ramp would begin at the
+            # mix's level and show the picture during a Blackout (older than the transitions; found by the stress
+            # test). One step with the look, so a Blackout that comes now ends the ramp or is seen by it.
+            if not self.mix["blackout"]:
+                self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
         return {"ok": True}
 
     def fadein(self, body, device, client):
@@ -1034,10 +1436,12 @@ class Api:
         a fade in; until now the only way back from black here was an instant Show."""
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
-        self.fader.cancel()
-        self.mix["blackout"] = False
-        self._apply_opacity(0)
-        self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
+        self.transitions.end()
+        self.fader.cancel()                     # once before the lock, as for the Opacity slider
+        with self._levels():                    # the switch, the level and the ramp as one step, as in blackout()
+            self.mix["blackout"] = False
+            self._apply_opacity(0)
+            self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
         return {"ok": True}
 
     def test_tone(self, body, device, client):
@@ -1046,8 +1450,7 @@ class Api:
         tones = getattr(self.player, "TEST_TONES", {})
         if channel not in tones:
             raise bad("channel must be left, right or both")
-        self.fader.cancel()
-        self._player_call(self.player.play, [tones[channel]], False, None, False, self.spawn, "stop")
+        self._as_newest("another play", self.player.play, [tones[channel]], False, None, False, self.spawn, "stop")
         self._started_playing()
         return {"test_tone": channel}
 
@@ -1271,30 +1674,36 @@ class Api:
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         if not on:
-            self._player_call(self.player.clear)
+            self._stop_screen()
             self._stop_capture()
             return {"test_pattern": False}
-        self.fader.cancel()
-        self._player_call(self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        mark = self._level_mark()
+        self._as_newest("another play", self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
+        self._show_level(mark)
         self._started_playing()
         return {"test_pattern": True}
 
     def set_mix(self, body, device, client):
         mode, duration = body.get("transition"), body.get("duration")
-        if mode not in ("cut", "dip"):
-            raise bad("transition must be cut or dip (crossfade is not built yet)")
+        if mode not in transitions_mod.NAMES:
+            raise bad("transition must be one of " + ", ".join(transitions_mod.NAMES))
         if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
             raise bad("duration must be 0.1 to 10 seconds")
         with self.settings.lock:
-            self.settings.data["mix"] = {"transition": mode, "duration": float(duration)}
+            self.settings.data["mix"] = transitions_mod.stored(mode, duration)
             self.settings.save()
-        return self.settings.data["mix"]
+        self.transitions.chosen_again()         # a box that gave up on crossfades tries again when somebody chooses
+        return self._mix_settings()
 
     def stop_player(self, body, device, client):
         # The systemd unit (Restart=always) brings the player straight back.
-        self._player_call(self.player.ipc.request, "quit")
-        self._stop_capture()
+        quit_player = getattr(self.player, "quit", None)        # Player.quit: what was loaded goes with the process
+        try:
+            self._as_newest("the player's restart", quit_player or (lambda: self.player.ipc.request("quit")))
+        finally:
+            # also when the player did not answer (it may have gone all the same, and Player.quit has put the pipe
+            # down as not playing before it asked): a helper must never be left writing into a pipe nobody reads
+            self._stop_capture()
         return {"ok": True}
 
     def get_modules(self, body, device, client):
@@ -2020,14 +2429,14 @@ class Api:
         if not isinstance(spec, dict):
             raise bad("capture must be an object")
         mode = spec.get("mode", "720p30")
+        mark = self._level_mark()
         with self.capture.lock:            # prepare, load and start as one step: a double tap cannot leak a helper
             try:
                 w, h, fps = self.capture.prepare(spec.get("device"), mode)
             except capture_mod.CaptureError as e:
                 raise bad(str(e))
-            self.fader.cancel()
             try:
-                self._player_call(self.player.play_pipe, self.capture.fifo, w, h, fps)
+                self._as_newest("another play", self.player.play_pipe, self.capture.fifo, w, h, fps)
             except ApiError:
                 self.capture.stop()
                 raise
@@ -2035,14 +2444,25 @@ class Api:
                 self.capture.start(spec["device"], mode)
             except capture_mod.CaptureError as e:
                 raise ApiError(409, str(e))
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._show_level(mark)              # the helper's start takes a second or more: a Fade out made meanwhile stands
         self._started_playing(capture=True)
         return {"playing": "capture", "device": spec["device"], "mode": mode}
 
     def _stop_capture(self):
+        """Stop the live input's helper, unless the live input is what the player plays. Whoever has just put
+        something else on the screen (a clip, a list, a generator, a Stop) calls this afterwards. It is decided by
+        what plays now, under the lock a live input is started under from its first step to its helper's start: so
+        a live input that somebody started in the same moment is either not begun (and what plays is not its pipe)
+        or complete (and its helper is left alone), never half. Before, the helper was stopped whatever played: a
+        Stop or a clip that met the start of a live input could leave the pipe playing with nothing writing into it
+        (older than the transitions; found by the stress test)."""
         if self.capture is not None:
             with self.capture.lock:
-                self.capture.stop()
+                # What plays is what this side last loaded (Player.pipe_playing, set and cleared under the player's
+                # lock with each load), not what the player says its path is: that changes a moment after a load,
+                # and the wait for it gives up after three seconds without a word.
+                if not getattr(self.player, "pipe_playing", False):
+                    self.capture.stop()
 
     def get_inputs(self, body, device, client):
         if self.capture is None:
@@ -2102,11 +2522,11 @@ class Api:
                 new = autostart_mod.validate(body, self.settings.data["autostart"])
             except autostart_mod.AutostartError as e:
                 raise bad(str(e))
-            if new["mode"] == "pad":           # a pad that exists and has a clip, or it would fail at every start
+            if new["mode"] == "pad":           # a pad that exists and has a clip or a shader, or it would fail at every start
                 banks = self.settings.data["pads"]["banks"]
                 b, i = new["pad"]
-                if not (b < len(banks) and i < 12 and banks[b]["pads"][i].get("file")):
-                    raise bad("choose a pad that has a clip")
+                if not (b < len(banks) and i < 12 and (banks[b]["pads"][i].get("file") or self.pad_shader(banks[b]["pads"][i]))):
+                    raise bad("choose a pad that has a clip or a shader")
             self.settings.data["autostart"] = new
             self.settings.save()
         return self.autostart.status()

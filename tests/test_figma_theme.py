@@ -11,6 +11,7 @@ import tempfile
 import unittest
 
 from pvj import themes
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 TOOL = os.path.join(ROOT, "tools", "figma-theme.py")

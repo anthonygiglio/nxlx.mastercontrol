@@ -874,12 +874,16 @@ class NoBlockingTest(Live):
         self.assertEqual(errors, [])
         self.assertLess(max(took)[0], 2.0, max(took))
         # and the calls were real ones: everything this fake box can do answered 200. What is left: a pad with no clip
-        # on it, Room scenes with the Room module off, effects with no picture they could be put on (this fake player
-        # plays none; tests/test_effects.py holds the same lock with an effect on)
-        # (and, once a Stop button of a layout has been pressed, shader values and presets with no shader on)
+        # on it, Room scenes with the Room module off, a value for an effect when none is on (the worker that would
+        # put one on waits for the lock held here; tests/test_effects.py holds the same lock with an effect on)
+        # (and, once a Stop button of a layout has been pressed, shader values and presets with no shader on).
+        # An effect's one button and its Next and Previous answered 409 here while a generator had the screen; since
+        # D74 one goes on over a generator, so a controller's wish is noted and answered 200 like any other.
         refused = sorted({(path, status) for (path, status) in answers if status != 200})
-        self.assertEqual(refused, [("/api/effects", 409), ("/api/effects/step", 409), ("/api/effects/values", 409), ("/api/play", 400),
+        self.assertEqual(refused, [("/api/effects/values", 409), ("/api/play", 400),
                                    ("/api/room/scene", 409), ("/api/shaders/preset", 409), ("/api/shaders/values", 409)], answers)
+        for path in ("/api/effects", "/api/effects/step"):
+            self.assertIn((path, 200), answers, path)
         for path in ("/api/shaders/values", "/api/shaders/step", "/api/vibes", "/api/blackout", "/api/fadein", "/api/fadeout", "/api/control"):
             self.assertIn((path, 200), answers, path)
         self.assertTrue({"/api/shaders/values", "/api/shaders/step", "/api/shaders/preset", "/api/vibes", "/api/play", "/api/blackout",

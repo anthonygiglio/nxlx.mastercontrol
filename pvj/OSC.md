@@ -1,6 +1,6 @@
 # OSC control
 
-Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **System > OSC** with the switch at the top of the page (full-access devices only); there is no other switch, and the port and networks have their own Save button. Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
+Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **Setup > OSC** with the switch at the top of the page (full-access devices only); there is no other switch, and the port and networks have their own Save button. Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
 
 ## Safety
 
@@ -14,7 +14,7 @@ Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Com
 
 ## Who may send: three locks
 
-On **System > OSC**, under "Who may send", for a full-access device. **What changes when you update: nothing until you switch one on.** Each lock is off on a box that updates, and the receiver behaves exactly as before. They can be on together; a packet must then pass every one that is on, and the old names without `/pvj` (`/stopall`, `/startmaster05` and so on) follow the same rules.
+On **Setup > OSC**, under "Who may send", for a full-access device. **What changes when you update: nothing until you switch one on.** Each lock is off on a box that updates, and the receiver behaves exactly as before. They can be on together; a packet must then pass every one that is on, and the old names without `/pvj` (`/stopall`, `/startmaster05` and so on) follow the same rules.
 
 **What "secure" means here, and what it does not.** OSC is plain UDP. It cannot be encrypted by this box, anyone who can listen on the network can read every message, and a device on the same network can send a packet that claims to come from another device's address. So these locks do three honest things: far fewer devices may send, a sender must know a secret, and you can see who sent. They keep out devices that are merely on the network (a guest's phone, a laptop with a stray OSC program, a neighbour's lighting desk). They do not keep out someone on the network who captures traffic and forges packets on purpose. What such a person could do is limited to what OSC can do at all: play, stop, mix, scenes. Shutdown, reset, updates and passwords are not reachable over OSC.
 
@@ -26,7 +26,7 @@ On **System > OSC**, under "Who may send", for a full-access device. **What chan
 
 **The list of devices.** You do not type an address. Send one message from the tablet; it appears under "Senders in the last ten minutes" with **Allow this one** beside it. Check that the address is the tablet's own (TouchOSC shows it in its connection settings) before you press it; a row from which no paired panel device has asked says "No panel device here, check before allowing": with the list on and empty, nobody may send, and the page says so. A listed address must be inside the outer wall (a private range, or a network you added); an address outside it is refused when you save, and the private ranges and your extra networks stay the outer wall even for a listed address. The receiver listens on IPv4 only, as before, so an IPv6 address in the list matches nothing today.
 
-**A paired device.** The box remembers, in memory only, the address each paired device last asked the panel from. It is never written to the settings file or to an export, and it is gone after a restart of the panel (open the panel on the tablet again). Removing the device under System > People and codes stops its address at once, and so does a factory reset. Logging out on the device itself (About and power > Log out) does the same. Some plain consequences:
+**A paired device.** The box remembers, in memory only, the address each paired device last asked the panel from. It is never written to the settings file or to an export, and it is gone after a restart of the panel (open the panel on the tablet again). Removing the device under Setup > People and codes stops its address at once, and so does a factory reset. Logging out on the device itself (About and power > Log out) does the same. Some plain consequences:
 - **Several devices behind one address count together.** If the tablet reaches the box through a router that shares one address (NAT), or the box is on a phone's hotspot and sees the hotspot's own address, every device behind that address may send while one paired device there counts.
 - **A changed address.** When the router gives the tablet a new address, open the panel on it again. The old address still counts until the hours are over, for whichever device holds it then; set fewer hours, or remove and pair the device again, if that matters.
 - The panel request is HTTP over TCP, which is much harder to forge than a UDP packet, but the OSC packet that follows is still UDP: this lock ties OSC to an address, not to the device itself.
@@ -45,8 +45,8 @@ On **System > OSC**, under "Who may send", for a full-access device. **What chan
 
 Not tried with a real TouchOSC or on a box yet; the receiver was tested with packets built by the tests.
 
-1. In TouchOSC's connections, OSC: host is the box's address (System > Network or the box's display shows it), send port **9876** (or the port on System > OSC), UDP. A receive port is not needed: the box never replies.
-2. On the box: System > OSC, switch it on.
+1. In TouchOSC's connections, OSC: host is the box's address (Setup > Network or the box's display shows it), send port **9876** (or the port on Setup > OSC), UDP. A receive port is not needed: the box never replies.
+2. On the box: Setup > OSC, switch it on.
 3. Press a control in the layout. The tablet appears under "Senders in the last ten minutes". For the list lock, press **Allow this one**; for the paired-device lock, open the panel on the same tablet once.
 4. For the key: press **Show the key**, and put `/k/<key>` at the front of every address the layout sends, so `/pvj/stop` becomes `/k/<key>/pvj/stop`. In TouchOSC an OSC message's address is built from parts: add a constant part with `/k/<key>` before the others in each control's message, or add it in one place with a script. After **Make a new key**, change it in the layout.
 
@@ -81,18 +81,18 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/scene` | name (string) or number (2 or 2.0) | The same, by the scene's name or its place in the list. A scene that plays something also takes a blackout off |
 | `/pvj/group/<n>/on`, `/pvj/group/<n>/off` | value (press) | Switch the projectors of the n-th group on or off; `all` in place of the number is every projector |
 | `/pvj/group/<n>/mute`, `/mute_picture`, `/mute_sound` | 0/1 | Mute (1) or unmute (0) picture and sound, the picture, or the sound of that group (an argument is required) |
-| `/pvj/group/<n>/input` | input code (`31`, as a string or a number) | Switch that group's projectors to that input; the codes are listed in System > Projectors |
+| `/pvj/group/<n>/input` | input code (`31`, as a string or a number) | Switch that group's projectors to that input; the codes are listed in Setup > Projectors |
 
 **Buttons fire on press only.** TouchOSC sends `1.0` when a button is pressed and `0.0` when it is released; a command marked "press" acts on a non-zero value (or no argument) and ignores the release, so a pad does not fire twice.
 
 ## Names kept from the old receiver
 
-`/stopall`, `/stopvideo` (both stop the clip), `/pause`, `/fastforward` (seek forward 10 s), `/volumeup`, `/volumedown` (10 percent steps), `/rotate0`, `/rotate90`, `/rotate180`, `/rotate270`, `/beameron` and `/beameroff` (every projector added under System > Projectors on or off, see [PROJECTORS.md](PROJECTORS.md)), and every start preset: `/startmaster`, `/startmaster05`, `/startlessonce03`, `/startlesseronce07`, `/startseamless02`, ... (the same names and files as the old scripts; see the preset table in `pvj/presets.py`).
+`/stopall`, `/stopvideo` (both stop the clip), `/pause`, `/fastforward` (seek forward 10 s), `/volumeup`, `/volumedown` (10 percent steps), `/rotate0`, `/rotate90`, `/rotate180`, `/rotate270`, `/beameron` and `/beameroff` (every projector added under Setup > Projectors on or off, see [PROJECTORS.md](PROJECTORS.md)), and every start preset: `/startmaster`, `/startmaster05`, `/startlessonce03`, `/startlesseronce07`, `/startseamless02`, ... (the same names and files as the old scripts; see the preset table in `pvj/presets.py`).
 
 Also from the old receiver: `/startmasteronce01` to `/startmasteronce99` (play the clip numbered so, once; these failed silently before), `/testscreen` and `/testscreenoff` (the test pattern), `/testtone`, `/testtoneleft`, `/testtoneright`, `/overlay` and `/stopoverlay` (the overlay picture chosen on the Mix screen), `/image` (the slideshow of the media folder) and `/stopimage`, `/fliph` and `/flipv` (each press switches the mirror over, like the old buttons).
 
 Not carried over:
-- on purpose, because they change settings or the system, which needs a full-access device: `/audiohdmiout`, `/audiojack`, `/audiousb`, `/audioboth` (System > Sound), `/startslave` (System > Boxes in step), `/reboot`, `/shutdown`, `/rebootall`, `/shutdownall`, `/customfunction1` and `/customfunction2` (they ran shell scripts);
+- on purpose, because they change settings or the system, which needs a full-access device: `/audiohdmiout`, `/audiojack`, `/audiousb`, `/audioboth` (Setup > Sound), `/startslave` (Setup > Boxes in step), `/reboot`, `/shutdown`, `/rebootall`, `/shutdownall`, `/customfunction1` and `/customfunction2` (they ran shell scripts);
 - not built yet: `/screenon` and `/screenoff` (display sleep), the clock (`/clockdisplay` and colours), `/imageusb` and `/imagemanual`, the audio player (`/startaudio...`, `/stopaudio`), the PDF presenter (`/startpdf...`), the camera and its effects, soft edge, `/getcontent`;
 - replaced: PiWall (`/piwallmaster`, `/piwallloop`) by Sync and video wall; Syphon (`/tcpsserver`) and `/ndisend`, `/ndireceiver` wait for NDI.
 

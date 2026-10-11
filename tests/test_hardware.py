@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from pvj import hardware
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 def make_tree(files):
