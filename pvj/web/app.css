@@ -66,6 +66,12 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 #padrefused { margin: 8px 0 0; }
 .pad.shader span.t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; }
 #padshaders { min-width: 0; max-width: 100%; }
+#padndi { min-width: 0; max-width: 100%; }
+.padpick .t.s { font-size: 12px; opacity: .8; white-space: normal; overflow-wrap: anywhere; }
+#padndinote { overflow-wrap: anywhere; }
+.pad.na { opacity: .5; border-style: dotted; }
+.pad.busy { opacity: .7; }
+#padkind .segbtn { min-width: 0; padding-left: 6px; padding-right: 6px; }
 .padpick { min-width: 0; width: 100%; box-sizing: border-box; overflow: hidden; }
 .padpick .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
 /* Why the box dips instead of the chosen transition, under the picker (D71): its words wrap at any width. */

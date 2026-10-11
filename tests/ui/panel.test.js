@@ -3421,6 +3421,133 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('.pads:visible');
     }
 
+    // A pad can hold an NDI source (D62, 2026-10-11): the pad editor's third kind. The harness has no NDI helper (as a
+    // box where nobody ran the opt-in command), so the empty states are the box's own answers, and the source, the
+    // saved pad and what plays are given to the page as the box would give them (the routes below).
+    // WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    {
+      const SRC = { id: '0123456789ab', name: 'STAGE-LAPTOP-WITH-A-LONG-NAME (Resolume Arena Output 1)', from: '192.168.100.200:5961' };
+      const AWAY = { id: 'ba9876543210', name: 'CAMERA (Out)', from: '192.168.1.30:5961' };
+      const NOTE = "A pad follows a sender's name at one machine's address, not the sender itself. Anyone on the network can announce a name, and an address can change hands. On a network you do not control, give the sender's address under NDI input.";
+      const before = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: before.height });
+      await go(page, 'play/pads');
+      await page.waitForSelector('.pads:visible');
+      await page.click('text=Edit pads');
+      await page.click('.pad >> nth=7');
+      await page.waitForSelector('#padkind');
+      assert.deepStrictEqual(await page.$$eval('#padkind button', (bs) => bs.map((b) => b.textContent)), ['Clip', 'Shader', 'NDI source'], 'the three kinds of pad');
+      await page.click('#padkindndi');
+      assert.strictEqual(await page.textContent('#padndioff'), 'NDI is off. Turn on NDI input in Setup, then give the pad a source.', 'with NDI off the editor says where to switch it on');
+      assert(!(await page.isVisible('#padending')), 'an NDI source has no ending to choose');
+      await fitsPhone('the pad editor on NDI source, NDI off');
+      await page.click('.sheet button:text-is("Cancel")');
+      assert.strictEqual(await post('/api/modules/inputs-ndi', { enabled: true }), 200);
+      await page.reload();
+      await go(page, 'play/pads');
+      await page.waitForSelector('.pads:visible');
+      await page.click('text=Edit pads');
+      await page.click('.pad >> nth=7');
+      await page.click('#padkindndi');
+      await page.waitForSelector('#padndiempty');
+      assert(/NDI is not set up on this box yet/.test(await page.textContent('#padndiempty')), 'a box without NDI set up says so in the editor');
+      // a source on the network, one at an address the owner gave that is away, and two senders under one name
+      await page.route('**/api/ndi', async (route) => {
+        if (route.request().method() !== 'GET') return route.continue();
+        const response = await route.fetch();
+        const body = await response.json();
+        Object.assign(body, { setup: true, helper: true, runtime: { present: true, loaded: true, version: 'fake', problem: '' },
+          sources: [SRC, { id: 'cccccccccccc', name: 'TWICE (Out)', from: '192.168.1.40:5961', twins: true }], allowed: [AWAY], addresses: ['192.168.1.30'] });
+        await route.fulfill({ response, json: body });
+      });
+      await page.click('#padkindclip');
+      await page.click('#padkindndi');
+      await page.waitForSelector('#padndi .padndirow');
+      assert.deepStrictEqual(await page.$$eval('#padndi .padndirow', (rs) => rs.map((r) => [r.getAttribute('data-ndi'), r.querySelector('.t.s').textContent, r.disabled])), [
+        [SRC.id, '192.168.100.200:5961 · found by its announcement · on the network now', false],
+        ['cccccccccccc', '192.168.1.40:5961 · found by its announcement · two senders use this name here: not for a pad', true],
+        [AWAY.id, '192.168.1.30:5961 · an address the owner gave · not on the network now', false]], 'each source with where it comes from');
+      assert.strictEqual(await page.textContent('#padndinote'), NOTE, 'the honest line about names');
+      assert.strictEqual(await page.locator('#padndi input, #padndi textarea').count(), 0, 'nothing is typed into the pad: a source is chosen from the list');
+      const sheetOut = await page.evaluate(() => { const box = document.querySelector('.sheet').getBoundingClientRect();
+        return Array.from(document.querySelectorAll('#padkind *, #padndi *')).filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > box.right + 1 || r.left < box.left - 1); }).map((e) => e.textContent.slice(0, 40))
+          .concat(document.documentElement.scrollWidth > window.innerWidth ? ['the page is wider than the phone'] : []); });
+      assert.deepStrictEqual(sheetOut, [], 'text sticks out of the pad editor at 320 px: ' + JSON.stringify(sheetOut));
+      // choosing it saves the id and nothing else of the source (the box's answer is given: the harness has no sender)
+      const banks = (await get('/api/pads')).banks;
+      banks[0].pads[7] = { label: SRC.name.slice(0, 40), file: '', ndi: SRC.id };
+      let sent = null;
+      await page.route('**/api/pads', async (route) => {
+        if (route.request().method() === 'POST') sent = route.request().postDataJSON();
+        await route.fulfill({ status: 200, json: { banks, ndi: { [SRC.id]: { name: SRC.name, from: SRC.from } } } });
+      });
+      await page.click('#padndi .padndirow >> nth=0');
+      await page.waitForSelector('.pad.ndi');
+      assert.deepStrictEqual(sent, { bank: 0, index: 7, label: SRC.name.slice(0, 40), ndi: SRC.id }, 'the pad is given the id, never a name or an address');
+      await page.click('text=Done editing');
+      const ndiPad = page.locator('.pad >> nth=7');
+      assert.strictEqual(await ndiPad.locator('.padkind').textContent(), 'NDI');
+      assert.strictEqual(await ndiPad.getAttribute('title'), 'NDI source: ' + SRC.name + ', from ' + SRC.from);
+      const padOut = await page.evaluate(() => Array.from(document.querySelectorAll('.pad')).map((el) => {
+        const b = el.getBoundingClientRect(), t = el.querySelector('.t').getBoundingClientRect(), n = el.querySelector('.n').getBoundingClientRect();
+        return { text: el.textContent, inside: t.right <= b.right + 0.5 && n.right <= b.right + 0.5 && t.bottom <= b.bottom + 0.5, page: document.documentElement.scrollWidth <= window.innerWidth };
+      }).filter((x) => !x.inside || !x.page));
+      assert.deepStrictEqual(padOut, [], 'an NDI pad whose text sticks out at 320 px: ' + JSON.stringify(padOut));
+      // the playing pad lights by the source's id, and a refusal is said under the pads as a shader's is
+      let state = 'playing';
+      await page.route('**/api/status', async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        if (state === 'playing') Object.assign(body.player, { running: true, path: null, ndi: SRC.name, ndi_id: SRC.id });
+        if (state === 'other') Object.assign(body.player, { running: true, path: null, ndi: 'ANOTHER (Out)', ndi_id: 'dddddddddddd' });
+        if (state === 'refused') body.player.ndi_refused = { id: SRC.id, message: "NDI source '" + SRC.name + "' is not on the network now" };
+        await route.fulfill({ response, json: body });
+      });
+      await page.waitForSelector('.pad.ndi.on');
+      assert.strictEqual(await ndiPad.getAttribute('aria-pressed'), 'true');
+      await page.waitForFunction(() => /^NDI: STAGE-LAPTOP/.test(document.getElementById('np').textContent));
+      state = 'other';
+      await page.waitForFunction(() => !document.querySelector('.pad.ndi.on'));
+      state = 'refused';
+      await page.waitForSelector('#padrefused');
+      assert.strictEqual(await page.textContent('#padrefused'), "A pad's NDI source was not shown. NDI source '" + SRC.name + "' is not on the network now.");
+      assert(await ndiPad.evaluate((el) => el.classList.contains('refused')), 'the pad is marked');
+      await fitsPhone('Play > Pads with an NDI pad refused');
+      state = 'none';
+      await page.waitForFunction(() => !document.getElementById('padrefused') && !document.querySelector('.pad.refused'));
+      // a press with the box's real answer (no helper here): the reason is said, in a sentence
+      await ndiPad.click();
+      await page.waitForFunction(() => /not allowed any more|NDI is not set up|not running|empty/i.test(document.getElementById('msg').textContent));
+      // a guest sees such a pad as not available, and his tap is answered in place and never sent
+      const guestToken = await page.evaluate(() => fetch('/api/devices/invite', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'NDI guest', role: 'view' }) }).then((r) => r.json()).then((d) => d.token));
+      const guestCtx = await browser.newContext({ viewport: { width: 320, height: 700 } });
+      const gp = await guestCtx.newPage();
+      const asked = [];
+      await gp.route('**/api/pads', (route) => route.fulfill({ status: 200, json: { banks } }));
+      await gp.route('**/api/play', (route) => { asked.push(route.request().postData()); return route.continue(); });
+      await gp.goto(base + '/#token=' + guestToken);
+      await gp.waitForFunction(() => !!document.querySelector('main.ws'), null, { timeout: 15000 });
+      await go(gp, 'play/pads');
+      await gp.waitForSelector('.pad.ndi.na');
+      const guestPad = gp.locator('.pad >> nth=7');
+      assert.strictEqual(await guestPad.getAttribute('aria-disabled'), 'true');
+      assert.strictEqual(await guestPad.locator('.padkind').textContent(), 'Operator');
+      assert.strictEqual(await guestPad.locator('.t').textContent(), SRC.name.slice(0, 40), 'the label the operator gave; no address');
+      assert.strictEqual(await guestPad.getAttribute('title'), 'This pad plays an NDI source. Ask an operator to start it.');
+      await guestPad.click();
+      await gp.waitForFunction(() => /This pad plays an NDI source\. Ask an operator to start it\./.test(document.getElementById('msg').textContent));
+      assert.deepStrictEqual(asked, [], 'the guest\'s tap on an NDI pad is not sent');
+      await guestCtx.close();
+      await page.unroute('**/api/status');
+      await page.unroute('**/api/pads');
+      await page.unroute('**/api/ndi');
+      assert.strictEqual(await post('/api/modules/inputs-ndi', { enabled: false }), 200);
+      await page.setViewportSize(before);
+      await page.reload();
+      await go(page, 'play/pads');
+      await page.waitForSelector('.pads:visible');
+    }
+
     // A laptop (D72, changed 2026-10-10): Play is a desk. At 1366 px the pads and the library stand side by side
     // beside the rail, each in its phone's form, inside the window, and the Shaders screen is a tab beside them
     // with the whole width, where it has its own laptop form; the link from the pads to the Shaders screen is not

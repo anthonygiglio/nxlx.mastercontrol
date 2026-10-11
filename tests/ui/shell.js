@@ -920,7 +920,7 @@ const MOVED = {
 const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn', '#fade', 'button: End the Operator (runs the room) code'].concat(LAYOUT_NOW), presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#fade'], guest: ['button: Crossfade', '#fade'] };
 // Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D78 the OSC locks, D79 the Secure
 // connection page, D75 the controllers' new presses and the mapping mode switch, D81 the Recovery card): each must be found, and on the screen named here. What shows only while something plays, in
-// the pad editor's sheet (Clip or Shader, D73) or after the box gave up a transition (the reason and Try again, D71)
+// the pad editor's sheet (Clip, Shader or NDI source: D73, D62) or after the box gave up a transition (the reason and Try again, D71)
 // is held by the steps of panel.test.js, not by the list, which is taken with nothing playing.
 const TRANSITIONS = {};
 ['Wipe from left', 'Wipe from right', 'Wipe from top', 'Wipe from bottom', 'Slide off left', 'Slide off right', 'Slide off up', 'Slide off down'].forEach((n) => { TRANSITIONS['button: ' + n] = 'play/pads'; });

@@ -112,7 +112,7 @@
       api('GET', '/api/modules'), api('GET', '/api/theme'), canOp() ? api('GET', '/api/devices') : null
     ]).then(function (r) {
       if (r[0].ok) { S.status = r[0].data; S.device = r[0].data.device; }
-      if (r[1].ok) S.banks = r[1].data.banks;
+      if (r[1].ok) padsGot(r[1].data);
       if (r[2].ok) { S.media = r[2].data.files; S.mediaInfo = r[2].data; }
       if (r[3].ok) S.modules = r[3].data.modules;
       if (r[4].ok) { S.theme = r[4].data.theme; S.themes = r[4].data.available; S.themeSkipped = r[4].data.skipped || []; S.accentDropped = r[4].data.accent_dropped || ''; markLook(); }
@@ -391,7 +391,17 @@
   function padShader(pad) { return !pad.file && typeof pad.shader === 'string' && pad.shader ? pad.shader : ''; }
   function padShaderName(pad) { return padShader(pad).replace(/\.fs$/, ''); }
   function padShaderNice(id) { return window.pvjShaders && window.pvjShaders.nice ? window.pvjShaders.nice(id) : String(id || '').replace(/\.fs$/, ''); }
+  // A pad that holds an NDI source (D62): `file` is empty and `ndi` is the source's id, nothing else. The names come
+  // beside the banks (`ndi` in the answer of /api/pads) for everyone above a guest; a guest gets none and sees such
+  // a pad as not available. Everything the pads know of such a pad is in these functions and in padKinds.
+  function padsGot(d) { S.banks = d.banks; S.padNdi = d.ndi || {}; }
+  function padNdi(pad) { return !pad.file && !padShader(pad) && typeof pad.ndi === 'string' && /^[0-9a-f]{12}$/.test(pad.ndi) ? pad.ndi : ''; }
+  function padNdiName(id) { var r = (S.padNdi || {})[id]; return r && r.name ? r.name : 'NDI source'; }
+  function padNdiHost(from) { return String(from || '').replace(/:[0-9]{1,5}$/, '').replace(/^\[|\]$/g, '').toLowerCase(); }
+  var NDI_PAD_GUEST = 'This pad plays an NDI source. Ask an operator to start it.';
+  var NDI_PAD_NOTE = 'A pad follows a sender\'s name at one machine\'s address, not the sender itself. Anyone on the network can announce a name, and an address can change hands. On a network you do not control, give the sender\'s address under NDI input.';
   function padPlaying(pad, pl) {
+    if (padNdi(pad)) return !!pl.ndi && pl.ndi_id === padNdi(pad);
     // a shader pad is the one playing while its shader is on with the preset the pad starts it with (a pad without
     // one starts the preset called default, or none), and not while Vibes shows that shader: that is nobody's pad
     if (padShader(pad)) {
@@ -404,32 +414,44 @@
   // them, and marked on the pad. A controller's tap is answered before the chip has looked, so its refusal has no
   // answer to ride on; the box's status carries the last refusal (player.shader_refused) until that shader shows.
   function padRefusal(pads, pl) {
-    var r = pl.shader_refused, line = document.getElementById('padrefused');
+    var r = pl.shader_refused, n = pl.ndi_refused, line = document.getElementById('padrefused');
     var held = !!(r && (S.banks || []).some(function (b) { return (b.pads || []).some(function (p) { return padShader(p) === r.id; }); }));
+    var heldNdi = !!(n && (S.banks || []).some(function (b) { return (b.pads || []).some(function (p) { return padNdi(p) === n.id; }); }));
     ((S.banks[S.bank] || {}).pads || []).forEach(function (p, i) {
-      if (pads.children[i]) pads.children[i].classList.toggle('refused', held && padShader(p) === r.id);
+      if (pads.children[i]) pads.children[i].classList.toggle('refused', (held && padShader(p) === r.id) || (heldNdi && padNdi(p) === n.id));
     });
-    if (!held) { if (line && line.parentNode) line.parentNode.removeChild(line); return; }
+    if (!held && !heldNdi) { if (line && line.parentNode) line.parentNode.removeChild(line); return; }
     if (!line) {
       line = h('div', { class: 'hint warn', id: 'padrefused', role: 'status' });
       pads.parentNode.insertBefore(line, pads.nextSibling);
     }
-    var text = 'A pad\'s shader was not shown. ' + String(r.message || '').replace(/^the player refused /, 'The box refused ');
+    var text = [held ? 'A pad\'s shader was not shown. ' + String(r.message || '').replace(/^the player refused /, 'The box refused ') : '',
+      heldNdi ? 'A pad\'s NDI source was not shown. ' + ndiSentence(String(n.message || '')) : ''].filter(Boolean).join(' ');
     if (line.textContent !== text) line.textContent = text;
   }
   function padButton(bank, index, pad) {
-    var held = padShader(pad);
+    var held = padShader(pad), src = padNdi(pad);
+    var na = !!src && !can('live') && !S.editing;        // an NDI pad is the Operator's: a guest sees it as not available
     var playing = padPlaying(pad, (S.status && S.status.player) || {});
-    var label = pad.label || (pad.file ? pad.file.replace(/\.[^.]+$/, '') : held ? padShaderNice(held) : 'Empty');
-    var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file || held ? '' : ' empty') + (held ? ' shader' : ''), 'aria-pressed': playing ? 'true' : 'false', 'data-pad': index,
-      title: held ? 'Shader: ' + padShaderNice(held) + (pad.preset ? ', preset ' + pad.preset : '') : null },
-      h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }, held ? h('span', { class: 'padkind', text: 'Shader' }) : null), h('span', { class: 't', text: label }));
+    var label = pad.label || (pad.file ? pad.file.replace(/\.[^.]+$/, '') : held ? padShaderNice(held) : src ? padNdiName(src) : 'Empty');
+    var from = src && (S.padNdi || {})[src] ? (S.padNdi[src].from || '') : '';
+    var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file || held || src ? '' : ' empty') + (held ? ' shader' : '') + (src ? ' shader ndi' : '') + (na ? ' na' : ''),
+      'aria-pressed': playing ? 'true' : 'false', 'aria-disabled': na ? 'true' : null, 'data-pad': index,
+      title: held ? 'Shader: ' + padShaderNice(held) + (pad.preset ? ', preset ' + pad.preset : '') : src ? (na ? NDI_PAD_GUEST : 'NDI source: ' + padNdiName(src) + (from ? ', from ' + from : '')) : null },
+      h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }, held ? h('span', { class: 'padkind', text: 'Shader' }) : src ? h('span', { class: 'padkind', text: na ? 'Operator' : 'NDI' }) : null), h('span', { class: 't', text: label }));
     b.addEventListener('click', function () {
       if (S.editing && canOp()) return openSheet(bank, index);
-      if (!pad.file && !held) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip or a shader.' : 'Empty pad.', true);
+      if (!pad.file && !held && !src) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip, a shader or an NDI source.' : 'Empty pad.', true);
+      if (src && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : NDI_PAD_GUEST, true);     // never sent: the box refuses a guest an NDI pad (D80)
       if (canGuest()) return guestSend('/api/play', { pad: [bank, index] }, '', b);
       if (!can('live')) return say(guestsLocked() ? LOCKED_TEXT : 'This device can watch only.', true);
-      act('POST', '/api/play', { pad: [bank, index] }, function () { say(''); poll(); });
+      if (src && b.classList.contains('busy')) return;
+      if (src) { b.classList.add('busy'); say('Connecting to ' + padNdiName(src) + '...'); }
+      api('POST', '/api/play', { pad: [bank, index] }).then(function (r) {
+        b.classList.remove('busy');
+        if (!r.ok) { say(src ? ndiSentence(r.data.error || 'the source could not be shown') : (r.data.error || 'Request failed'), true); poll(); return; }
+        say(''); poll();
+      });
     });
     return b;
   }
@@ -749,7 +771,7 @@
     var save = function (id, preset) {
       var body = { bank: s.bank, index: s.index, label: padShaderNice(id).slice(0, 40), shader: id };
       if (preset) body.preset = preset;
-      act('POST', '/api/pads', body, function (d) { S.banks = d.banks; close(); });
+      act('POST', '/api/pads', body, function (d) { padsGot(d); close(); });
     };
     var row = function (text, title, go, on) { return h('button', { class: 'btn padpick' + (on ? ' on' : ''), title: title, onclick: go }, h('span', { class: 't', text: text })); };
     var presets = function (sh) {
@@ -772,23 +794,61 @@
         });
       });
     };
+    // The third kind (D62): an NDI source, chosen from the sources that are allowed already and the ones on the
+    // network now, each with where it comes from. Nothing is typed: the pad takes an id from this list.
+    var ndiList = h('div', { class: 'list', id: 'padndi' });
+    var saveNdi = function (src) {
+      act('POST', '/api/pads', { bank: s.bank, index: s.index, label: String(src.name).slice(0, 40), ndi: src.id }, function (d) { padsGot(d); close(); });
+    };
+    var fillNdi = function () {
+      ndiList.textContent = '';
+      if (!moduleOn('inputs-ndi')) { ndiList.appendChild(h('div', { class: 'k', id: 'padndioff', text: 'NDI is off. Turn on NDI input in Setup, then give the pad a source.' })); return; }
+      ndiList.appendChild(h('div', { class: 'k', text: 'Looking for sources...' }));
+      api('GET', '/api/ndi').then(function (r) {
+        if (!ndiList.isConnected) return;
+        ndiList.textContent = '';
+        if (!r.ok) { ndiList.appendChild(h('div', { class: 'k', id: 'padndierr', text: ndiSentence(r.data.error || 'the NDI sources could not be read') })); return; }
+        var d = r.data, seen = {}, rows = [];
+        (d.sources || []).forEach(function (x) { seen[x.id] = true; rows.push({ id: x.id, name: x.name, from: x.from, here: true, twins: !!x.twins }); });
+        (d.allowed || []).forEach(function (x) { if (!seen[x.id]) rows.push({ id: x.id, name: x.name, from: x.from, here: false }); });
+        if (!rows.length) {
+          ndiList.appendChild(h('div', { class: 'k', id: 'padndiempty', text: d.setup === false ? 'NDI is not set up on this box yet. Setup, NDI input says how.'
+            : !d.helper || !d.runtime.loaded ? 'NDI cannot look for sources on this box yet. Setup, NDI input says why.'
+              : 'No NDI sources found yet. Switch on NDI output in the sending program, on the same network as the box. Setup, NDI input lists what the box finds.' }));
+          return;
+        }
+        rows.forEach(function (x) {
+          var given = (d.addresses || []).indexOf(padNdiHost(x.from)) >= 0;
+          var sub = x.from + ' \u00b7 ' + (given ? 'an address the owner gave' : 'found by its announcement') + ' \u00b7 ' +
+            (x.twins ? 'two senders use this name here: not for a pad' : x.here ? 'on the network now' : 'not on the network now');
+          ndiList.appendChild(h('button', { class: 'btn padpick padndirow' + (padNdi(current) === x.id ? ' on' : ''), 'data-ndi': x.id, title: x.name + ', ' + sub, disabled: !!x.twins,
+            onclick: function () { saveNdi(x); } }, h('span', { class: 't', text: x.name }), h('span', { class: 't s', text: sub })));
+        });
+        ndiList.appendChild(h('div', { class: 'hint', id: 'padndinote', text: NDI_PAD_NOTE }));
+      });
+    };
+    var kinds = ['clip', 'shader', 'ndi'];
     var show = function (kind) {
       s.kind = kind;        // kept on the open sheet: a redraw of the page while it is open must not flip it back
       clips.forEach(function (c) { if (c) c.hidden = kind !== 'clip'; });
       list.hidden = kind !== 'shader';
-      seg.children[0].classList.toggle('on', kind === 'clip');
-      seg.children[1].classList.toggle('on', kind === 'shader');
-      seg.children[0].setAttribute('aria-pressed', kind === 'clip' ? 'true' : 'false');
-      seg.children[1].setAttribute('aria-pressed', kind === 'shader' ? 'true' : 'false');
+      ndiList.hidden = kind !== 'ndi';
+      kinds.forEach(function (k, i) {
+        seg.children[i].classList.toggle('on', kind === k);
+        seg.children[i].setAttribute('aria-pressed', kind === k ? 'true' : 'false');
+      });
       if (kind === 'shader') fill();
+      if (kind === 'ndi') fillNdi();
     };
     var seg = h('div', { class: 'seg', id: 'padkind', role: 'group', 'aria-label': 'What this pad plays' },
       h('button', { class: 'btn segbtn', id: 'padkindclip', text: 'Clip', onclick: function () { show('clip'); } }),
-      h('button', { class: 'btn segbtn', id: 'padkindshader', text: 'Shader', onclick: function () { show('shader'); } }));
+      h('button', { class: 'btn segbtn', id: 'padkindshader', text: 'Shader', onclick: function () { show('shader'); } }),
+      h('button', { class: 'btn segbtn', id: 'padkindndi', text: 'NDI source', onclick: function () { show('ndi'); } }));
     var head = box.querySelector('h2');
     box.insertBefore(seg, head.nextSibling);
     box.insertBefore(list, clips[2] ? clips[2].nextSibling : null);
-    show(s.kind || (padShader(current) ? 'shader' : 'clip'));
+    box.insertBefore(ndiList, list.nextSibling);
+    show(s.kind || (padNdi(current) ? 'ndi' : padShader(current) ? 'shader' : 'clip'));
     return el;
   }
   function sheet() {
@@ -799,7 +859,7 @@
       ENDINGS.map(function (e) { return h('option', { value: e[0], text: e[1], selected: e[0] === (current.ending || 'loop') }); }));
     var pick = function (file) {
       var label = file ? file.replace(/\.[^.]+$/, '').slice(0, 40) : '';
-      act('POST', '/api/pads', { bank: s.bank, index: s.index, label: label, file: file, ending: ending.value }, function (d) { S.banks = d.banks; close(); });
+      act('POST', '/api/pads', { bank: s.bank, index: s.index, label: label, file: file, ending: ending.value }, function (d) { padsGot(d); close(); });
     };
     var el = padKinds(h('div', { class: 'picker', onclick: function (e) { if (e.target.className === 'picker') close(); } },
       h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Choose a clip for this pad' },
