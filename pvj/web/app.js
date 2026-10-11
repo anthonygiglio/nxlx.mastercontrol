@@ -960,17 +960,19 @@
       var stage = h('div', { class: 'card mapstage', id: 'mapstage' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }));
       body.appendChild(stage);
       stage.appendChild(h('div', { class: 'hint', id: 'mapstatus', text: (words[st.state] || st.state) + ' · screen ' + d.screen[0] + 'x' + d.screen[1] + ' · ' + d.surfaces.length + ' surface' + (d.surfaces.length === 1 ? '' : 's') }));
-      // Mapping mode from a controller (D75): everyone who looks at the stage sees that it is on; full access holds the
-      // switch that allows it (further down the stage, with what acts on the whole mapping)
+      // Mapping mode from a controller (D75): everyone who looks at the stage sees that it is on, directly under the
+      // display (above it, its three lines pushed the display under the strip); full access holds the switch that
+      // allows it, further down the stage with what acts on the whole mapping.
       var rc = d.controllers || {};
-      if (rc.mode) stage.appendChild(h('div', { class: 'msg', id: 'mapremoteon', role: 'status', text: 'A controller is adjusting the mapping (mapping mode): it chooses a surface and a corner and nudges it, ' +
+      var remote = rc.mode ? h('div', { class: 'msg', id: 'mapremoteon', role: 'status', text: 'A controller is adjusting the mapping (mapping mode): it chooses a surface and a corner and nudges it, ' +
         rc.step + ' px a step. It uses "Edit on the display" and the surface and corner chosen here, so those move while it lasts; ' +
-        'afterwards they are as you had them. It ends by itself ' + Math.ceil(rc.seconds_left / 60) + ' min after the last nudge.' }));
+        'afterwards they are as you had them. It ends by itself ' + Math.ceil(rc.seconds_left / 60) + ' min after the last nudge.' }) : null;
       var testRow = h('div', { class: 'row', id: 'maptest' }, testPattern(), h('span', { class: 'hint grow', text: 'Colour bars in place of what plays, to line the projector up' }));
-      if (!full) { stage.appendChild(testRow); watch(); return; }
+      if (!full) { if (remote) stage.appendChild(remote); stage.appendChild(testRow); watch(); return; }
       canvas = h('canvas', { class: 'mapcanvas', id: 'mapcanvas', tabindex: '0', 'aria-label': 'Mapping editor: drag a corner, or use the arrows beside it' });
       canvas.style.setProperty('--mapaspect', String(d.screen[0] / Math.max(1, d.screen[1])));
       stage.appendChild(canvas);
+      if (remote) stage.appendChild(remote);
       stage.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn grow' + (d.on ? ' on' : ''), id: 'mapon', 'aria-pressed': d.on ? 'true' : 'false', text: d.on ? 'Mapping on' : 'Mapping off',
           onclick: function () { send({ action: 'on', on: !d.on }); } }),

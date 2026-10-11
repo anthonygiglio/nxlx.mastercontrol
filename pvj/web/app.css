@@ -622,10 +622,10 @@ main.ws:focus, .deskcol:focus { outline: none; }
 /* The transport strip. A phone: what is playing on a line of its own, the clip count and the time under it, then
    the row the thumb finds: Freeze, Stop, Blackout and More (the three that are never behind More at any width,
    and the way to the rest). More opens the rest in place, UNDER that row, which stays where it was: Previous,
-   Next, Fade; back and forward 10 s and Loop; then Speed on a row of its own, so the slider is as wide
+   Next, back and forward 10 s; Fade and Loop, each two wide; then Speed on a row of its own, so the slider is as wide
    as the strip. Closed, the strip and the tabs are what they were; open, in a 568 px phone the last row is reached
    by scrolling inside the strip, whose lower edge then says so. (On a phone the rows are placed by `order`, so the
-   cursor's order there is the laptop's: Previous, back, forward, Next, Fade, Freeze, Stop, Blackout.) */
+   cursor's order there is Previous, Next, back, forward, Fade, Loop, Speed, Freeze, Stop, Blackout.) */
 .tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 16px; border-top: 1.5px solid var(--ln); }
 .tpinfo { display: contents; }     /* (a phone: its three parts are cells of the strip's own grid; from 600 px a box of its own, below) */
 /* What plays has a line, cut with dots where it is long (whole in its title, app.js), and under it the clip count
@@ -671,6 +671,10 @@ main.ws:focus, .deskcol:focus { outline: none; }
    as wide as a button, and Speed is the last row that More opens, as wide as the strip, with its value over the
    slider's name. */
 .tp .tploop { order: 4; grid-column: span 2; }
+/* (one fade button since D75: on a phone it is on the row of Loop, each two wide, Fade first, under Previous, Next,
+   back and forward 10 s; with four cells a row the seven controls left a hole beside Loop. Under 600 px only: from there the
+   fold's own order places it, and an id would outweigh the fold's classes.) */
+@container app (max-width: 599px) { .tp #fade { order: 3; grid-column: span 2; } }
 .tp .tpspeed { order: 5; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tp:not(.open) .tpspeed { display: none; }
 .tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }

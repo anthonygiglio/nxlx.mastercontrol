@@ -876,15 +876,39 @@ const FX_STRIP = {
 const CROSSFADE = 'D71: Crossfade is built, so its button reads "Crossfade" (button: Crossfade), on Play > Pads with the wipes and slides';
 const OWN_ROW = 'D77: the owner\'s own row under Paired devices has Log out (#logoutbtn) in place of Remove';
 const ONE_FADE = 'D75: Fade in and Fade out are one button, #fade on the strip, which reads Fade out and then Fade in (and flashes) while the picture is down';
+// D75 drew the three standard layouts afresh in zones after the owner tried the controllers (pvj/MIDI.md has the
+// drawings and what moved): on the harness's nanoKONTROL2 and Launchpad Mini these labels are gone, and the label
+// in each reason stands for the old one on the same card.
+const LAYOUT = (now) => 'D75: the standard layouts were drawn afresh; on the same card it is now ' + now;
+const LAYOUTS = {
+  'button: E: Vibes: Ambient': LAYOUT('"E: Fade out / in" (the Launchpad\'s round buttons E to H are the screen\'s four; Vibes: Ambient is on Top 1)'),
+  'button: F: Vibes: Show': LAYOUT('"F: Freeze / resume" (Vibes: Show is on Top 2)'),
+  'button: Pad #.#: Effect control #': LAYOUT('nothing: the effect\'s controls as presses are gone from the Launchpad (D75, "Cost")'),
+  'button: Pad #.#: Presenter code (hold)': LAYOUT('"Top #: Presenter code (hold)" (Top 3)'),
+  'button: Play: Pause / resume': LAYOUT('"Play: Freeze / resume" (the panel\'s word for it)'),
+  'button: R #: Fade in': LAYOUT('"R #: Fade out / in" (one fade button, on R 7 of the nanoKONTROL2)'),
+  'button: R #: Fade out': LAYOUT('"R #: Fade out / in"'),
+  'button: Top #: Fade in': LAYOUT('"E: Fade out / in" (one fade button, on the Launchpad\'s round button E)'),
+  'button: Top #: Fade out': LAYOUT('"E: Fade out / in"'),
+  'button: Top #: Next clip': LAYOUT('"Pad #.#: Next clip" (the clip is on the Launchpad\'s row 8)'),
+  'button: Top #: Previous clip': LAYOUT('"Pad #.#: Previous clip"'),
+  'button: Top #: Next shader': LAYOUT('"Pad #.#: Next shader" (the shaders are on the Launchpad\'s row 7)'),
+  'button: Top #: Previous shader': LAYOUT('"Pad #.#: Previous shader"'),
+  'button: Top #: Pause / resume': LAYOUT('"F: Freeze / resume"'),
+  'button: Top #: Vibes on / off': LAYOUT('"Pad #.#: Vibes on / off" (row 7)'),
+};
+// what stands for them, by the card they are on
+const LAYOUT_NOW = ['button: E: Fade out / in', 'button: F: Freeze / resume', 'button: Top #: Presenter code (hold)', 'button: Play: Freeze / resume', 'button: R #: Fade out / in',
+  'button: Pad #.#: Next clip', 'button: Pad #.#: Previous clip', 'button: Pad #.#: Next shader', 'button: Pad #.#: Previous shader', 'button: Pad #.#: Vibes on / off'];
 const MOVED = {
-  owner: Object.assign({ '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, 'button: Remove local': OWN_ROW, '#fadein': ONE_FADE }, FX_STRIP),
+  owner: Object.assign({ '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, 'button: Remove local': OWN_ROW, '#fadein': ONE_FADE }, FX_STRIP, LAYOUTS),
   presenter: Object.assign({ '#nav-room': 'the row "Room" of a presenter\'s System index led to the Room screen\'s own cards; they are the screens of the Room area now', '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, '#fadein': ONE_FADE }, FX_STRIP),
   guest: { '#livefxmore': FX_STRIP['#livefxmore'], '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, '#fadein': ONE_FADE },
 };
 // What stands for each of them: the list fails if a control that replaced a removed copy is not there.
-const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn', '#fade'], presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#fade'], guest: ['button: Crossfade', '#fade'] };
+const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn', '#fade'].concat(LAYOUT_NOW), presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#fade'], guest: ['button: Crossfade', '#fade'] };
 // Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D78 the OSC locks, D79 the Secure
-// connection page): each must be found, and on the screen named here. What shows only while something plays, in
+// connection page, D75 the controllers' new presses and the mapping mode switch): each must be found, and on the screen named here. What shows only while something plays, in
 // the pad editor's sheet (Clip or Shader, D73) or after the box gave up a transition (the reason and Try again, D71)
 // is held by the steps of panel.test.js, not by the list, which is taken with nothing playing.
 const TRANSITIONS = {};
@@ -892,7 +916,11 @@ const TRANSITIONS = {};
 const ADDED = {
   owner: Object.assign({ '#showpin': 'People and codes', '#copypin': 'People and codes', '#pinvalue': 'People and codes', '#logoutbtn': 'People and codes',
     '#nav-https': 'setup/index', '#httpsrequest': 'Secure connection', '#httpsprobe': 'Secure connection', '#httpsowneronly': 'Secure connection',
-    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
+    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC',
+    // D75: the layers' buttons and the new presses on the standard layouts, and the owner's switch for mapping mode on the Mapping desk
+    'button: M #: Geometry': 'MIDI controller', 'button: M #: Mapping mode': 'MIDI controller', 'button: M #: Rotate': 'MIDI controller', 'button: Top #: Mapping mode': 'MIDI controller',
+    'button: Top #: Rotate': 'MIDI controller', 'button: Top #: Overlay': 'MIDI controller', 'button: Top #: Sound off / on': 'MIDI controller',
+    'button: Pad #.#: Back # s': 'MIDI controller', 'button: Pad #.#: Forward # s': 'MIDI controller', '#mapremote': 'Mapping' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
   presenter: Object.assign({}, TRANSITIONS),
   guest: Object.assign({}, TRANSITIONS),
 };
