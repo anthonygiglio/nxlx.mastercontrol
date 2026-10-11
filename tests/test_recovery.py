@@ -9,8 +9,10 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 import types
 import unittest
+from unittest import mock
 
 from pvj import auth as auth_mod, pinscreen as pinscreen_mod, recovery as recovery_mod
 from tests.test_server import ServerBase
@@ -85,8 +87,10 @@ class RecoveryCodesTest(ServerBase):
         codes = self.make()
         st, body, r = self.redeem(codes[3], "Anna's phone")
         self.assertEqual(st, 200, body)
-        self.assertEqual(body["device"]["role"], "full")
+        self.assertEqual((body["device"]["role"], body["device"].get("via")), ("full", "recovery"))
         self.assertNotIn(self.pin, json.dumps(body))
+        devices = self.call("GET", "/api/devices", token=self.full)[1]["devices"]
+        self.assertEqual([d.get("via") for d in devices if d["name"] == "Anna's phone"], ["recovery"])    # owners see which came by a code
         self.assertTrue(r.getheader("Set-Cookie").startswith("pvj_token="))
         self.assertEqual(self.call("GET", "/api/recovery", token=body["token"])[0], 200)      # it is an owner now
         line = [x for x in self.lines if "recovery code was used" in x]
@@ -284,6 +288,7 @@ class StickTest(ServerBase):
         self.player.ipc = types.SimpleNamespace(request=lambda *a: self.shown.append(a))
         self.screen = pinscreen_mod.PinScreen(self.api, self.auth, log=self.lines.append, hostname="nxlx-mastercontrol", clock=self.clock)
         self.api.pinscreen = self.screen
+        self.auth._now = lambda: 1700000000 + int(self.clock.t)       # the log's times follow the test's clock too
         self.pair("owner")                      # a paired device: the first-run screen is off, as at a venue
 
     def insert(self, name="pvj-recover", content=b""):
@@ -336,6 +341,79 @@ class StickTest(ServerBase):
         self.assertEqual(self.call("POST", "/api/pair", {"pin": pin, "name": "second"})[0], 403)
         self.assertEqual((self.rec.status()["last"]["how"], self.rec.status()["last"]["device"]), ("used", "found phone"))
         self.assertEqual(self.call("POST", "/api/pin/show", {}, token=body["token"])[1]["pin"], self.auth.current_pin)   # the new owner reads the new PIN
+
+    def test_a_use_of_the_sticks_pin_is_written_down_tagged_and_said_on_the_screen(self):
+        """Review of #122, Medium 1: whoever read the PIN off the projector leaves a durable trace (the log, the
+        device's `via`), the screen says who took it for a few seconds, and People and codes shows it."""
+        self.insert()
+        self.screen.tick()
+        pin = self.auth.current_pin
+        st, body, _ = self.call("POST", "/api/pair", {"pin": pin, "name": "found phone"})
+        self.assertEqual(st, 200, body)
+        self.assertEqual(body["device"].get("via"), "stick")
+        log = self.auth.recovery_status()["log"]
+        self.assertEqual((log[-1]["kind"], log[-1]["name"]), ("stick-used", "found phone"))
+        text = self.texts()[-1]
+        self.assertIn("The PIN was used by found phone", text)
+        self.assertNotIn(pin, text)
+        devices = self.call("GET", "/api/devices", token=body["token"])[1]["devices"]
+        self.assertEqual([d.get("via") for d in devices if d["name"] == "found phone"], ["stick"])
+        self.assertTrue(any("used by device" in x and "found phone" in x and "stick" in x for x in self.lines), self.lines[-3:])
+        self.clock.t += recovery_mod.STICK_NOTICE_SECONDS + 1
+        self.screen.tick()
+        self.assertEqual(self.shown[-1][:2], ("show-text", ""))             # the notice has gone by itself
+
+    def test_a_restart_within_the_hour_with_the_stick_in_shows_nothing_more(self):
+        """Review of #122, Low 5: the count per hour lived in memory, so pvj-web restarting with a stick left in
+        showed a fresh PIN at every start. The log's last stick event under an hour old holds the at-boot fire."""
+        self.insert()
+        self.screen.tick()
+        self.assertIsNotNone(self.rec.active())
+        self.clock.t += 200
+        fresh = recovery_mod.Recovery(self.api, self.auth, log=self.lines.append, clock=self.clock, now=self.auth._now)
+        self.api.recovery = fresh
+        self.screen.tick()
+        self.assertIsNone(fresh.active())
+        self.assertTrue(any("start" in x and "nothing shown" in x for x in self.lines), self.lines[-2:])
+        self.remove()
+        self.screen.tick()
+        self.insert()                                                    # out and in again: a person at the box, shown
+        self.screen.tick()
+        self.assertIsNotNone(fresh.active())
+        self.remove()
+        self.screen.tick()
+        self.clock.t += 3601
+        later = recovery_mod.Recovery(self.api, self.auth, log=self.lines.append, clock=self.clock, now=self.auth._now)
+        self.api.recovery = later
+        self.insert()
+        self.screen.tick()
+        self.assertIsNotNone(later.active())                            # an hour on, a start with the stick in shows it
+
+    def test_the_disk_is_looked_at_on_the_sticks_own_thread_never_under_the_screens_lock(self):
+        """Review of #122, Low 6: poll() did USB disk IO at every tick under the PIN screen's lock."""
+        calls = []
+        real = recovery_mod.stick_present
+
+        def counting(root):
+            calls.append(threading.current_thread().name)
+            return real(root)
+        with mock.patch.object(recovery_mod, "stick_present", counting):
+            self.rec.start(interval=0.05)
+            self.addCleanup(self.rec.stop)
+            self.insert()
+            deadline = time.time() + 5
+            while time.time() < deadline and self.rec.active() is None:
+                self.screen.tick()
+                time.sleep(0.05)
+            self.assertIsNotNone(self.rec.active())
+            self.assertTrue(calls)
+            self.assertEqual(set(calls), {"pvj-recovery-stick"}, set(calls))
+            self.remove()
+            deadline = time.time() + 5
+            while time.time() < deadline and self.rec.active() is not None:
+                self.screen.tick()
+                time.sleep(0.05)
+            self.assertIsNone(self.rec.active())
 
     def test_it_expires_and_a_stick_left_in_shows_nothing_more(self):
         self.insert()

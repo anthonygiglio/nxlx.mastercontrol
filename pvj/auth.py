@@ -344,6 +344,24 @@ class Auth:
             self.settings.save()
             return event
 
+    def mark_via(self, device_id, via):
+        """Write down, after the fact, how a device came in: "stick" for one paired with the PIN shown for a recovery
+        stick (D81), which pair() cannot know. True when the device was found."""
+        with self.settings.lock:
+            for d in self.settings.data["devices"]:
+                if d["id"] == device_id:
+                    d["via"] = via
+                    self.settings.save()
+                    return True
+        return False
+
+    def last_recovery_event(self, kind):
+        """The newest event of `kind` in the recovery log, or None."""
+        with self.settings.lock:
+            log = self._recovery().get("log")
+            events = [e for e in (log if isinstance(log, list) else []) if isinstance(e, dict) and e.get("kind") == kind]
+            return dict(events[-1]) if events else None
+
     def _use_recovery(self, code, name, client):
         """(token, device) when `code` is one of the set, burning it, else None. Call with `_pair_lock` held.
         One scrypt whether a set exists or not; every hash compared. The hash goes and the device comes in one save
@@ -695,7 +713,10 @@ class Auth:
 
     @staticmethod
     def _public(device):
-        return {k: device[k] for k in ("id", "name", "role", "created")}
+        out = {k: device[k] for k in ("id", "name", "role", "created")}
+        if device.get("via"):               # how it came in ("code", "controller", "recovery", "stick"): owners read it on People and codes
+            out["via"] = device["via"]
+        return out
 
     @staticmethod
     def allows(device, needed):

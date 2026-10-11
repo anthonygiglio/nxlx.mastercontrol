@@ -223,7 +223,8 @@ class PinScreen:
     # --- the PIN for a recovery stick (D81) ----------------------------------------------------------------
     def _recovery(self):
         """{"pin", "seconds_left", ...} while the PIN is on the screen for a stick, else None. The poll that notices
-        a stick lives here too, so it runs as often as the display is drawn."""
+        a stick runs here too, as often as the display is drawn; the disk is read by the stick's own thread
+        (recovery.Recovery.start), never under this lock."""
         r = getattr(self.api, "recovery", None)
         if r is None:
             return None
@@ -233,9 +234,12 @@ class PinScreen:
             self.log("pvj-web: recovery stick check: %s" % e)
         return r.active()
 
-    def recovery_changed(self):
-        """The PIN for a stick had its use: off the display now, not at the next tick."""
+    def recovery_notice(self, name):
+        """The PIN for a stick had its use: off the display now, and "The PIN was used by <name>" in its place for
+        STICK_NOTICE_SECONDS, so the owner at the box sees who took it (D81; review of #122, M1)."""
+        from . import recovery as recovery_mod
         with self._lock:
+            self._notice = (self._clock() + recovery_mod.STICK_NOTICE_SECONDS, "The PIN was used by %s" % clean(str(name or "a device"))[:40])
             return self.tick()
 
     def recovery_lines(self, active):

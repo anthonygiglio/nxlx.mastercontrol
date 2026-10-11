@@ -20,9 +20,13 @@ import stat
 import threading
 import time
 
+from . import locks
+
 NAMES = ("pvj-recover", "pvj-recover.txt")   # compared case-blind: a vfat or exfat stick may upper-case a short name
 STICK_SECONDS = 120
 STICK_PER_HOUR = 6
+STICK_NOTICE_SECONDS = 10   # "The PIN was used by <name>" stays on the display this long after the one use (review of #122, M1)
+SCAN_INTERVAL = 3.0         # the scan thread looks at the drives this often
 SCAN_LIMIT = 2000           # entries looked at per drive (a hostile drive can hold millions)
 DRIVES_LIMIT = 16
 
@@ -59,11 +63,38 @@ class Recovery:
     def __init__(self, api, auth, log=print, clock=time.monotonic, now=time.time):
         self.api, self.auth, self.log = api, auth, log
         self._clock, self._now = clock, now
-        self._lock = threading.Lock()
+        self._lock = locks.make("recovery")   # under the PIN screen's lock in the order (D71); never held while the screen is called
         self._present = None        # the label seen at the last poll, or None
         self._active = None         # {"until", "shown", "label"} while the PIN is on the screen for a stick
         self._made = []             # when (monotonic) the PIN was shown for a stick, within the last hour
         self.last = None            # what became of the one before: {"shown", "ended", "how"}
+        self._first = True          # the next poll is the first since this process started (a stick already in is "at boot")
+        self._label = None          # what the scan thread saw last; poll() reads it and does no disk IO while the thread runs
+        self._thread, self._stop = None, threading.Event()
+
+    # --- the scan thread (review of #122, L6: no disk IO under the PIN screen's lock) --------------------------
+    def start(self, interval=SCAN_INTERVAL):
+        """Look at the drives on a thread of this module's own, every `interval` seconds. poll() then only reads
+        what it saw last, so a stalled filesystem stalls this thread and nothing else."""
+        if self._thread is not None:
+            return
+        self._stop.clear()
+
+        def loop():
+            while not self._stop.is_set():
+                try:
+                    self._label = stick_present(self.api.usb_root)
+                except Exception as e:                      # a drive that vanished mid-scan
+                    self.log("pvj-web: recovery stick check: %s" % e)
+                self._stop.wait(interval)
+        self._thread = threading.Thread(target=loop, name="pvj-recovery-stick", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        t, self._thread = self._thread, None
+        if t is not None:
+            t.join(2.0)
 
     # --- state --------------------------------------------------------------------------------------------
     def active(self):
@@ -88,10 +119,11 @@ class Recovery:
     # --- the tick -----------------------------------------------------------------------------------------
     def poll(self):
         """Look at the drives once. Returns True when the display should be drawn to now (something changed)."""
-        label = stick_present(self.api.usb_root)
+        label = self._label if self._thread is not None else stick_present(self.api.usb_root)
         changed = False
         with self._lock:
             arrived = label is not None and self._present is None
+            boot, self._first = self._first, False
             self._present = label
             a = self._active
             if a is not None:
@@ -102,15 +134,22 @@ class Recovery:
                 elif not self.auth.usb_enabled():
                     changed = self._end("switched off")
             if arrived and self._active is None:
-                changed = self._start(label) or changed
+                changed = self._start(label, boot) or changed
         return changed
 
-    def _start(self, label):
+    def _start(self, label, boot=False):
         """Call with the lock held. A fresh PIN on the screen, or a journal line saying why not."""
         label = "".join(c for c in str(label)[:32] if c.isprintable())    # the mounter sanitises labels already; the journal line is kept clean here too
         if not self.auth.usb_enabled():
             self.log("pvj-web: a recovery stick was put in (%s) but the stick way is switched off; nothing shown" % label)
             return False
+        if boot:                                             # a stick already in when this process started (review of #122, L5)
+            last = self.auth.last_recovery_event("stick")
+            age = self._now() - last["t"] if last and isinstance(last.get("t"), (int, float)) else None
+            if age is not None and 0 <= age < 3600.0:
+                self.log("pvj-web: a recovery stick (%s) is in at start, but the PIN was shown for a stick %d minutes ago; nothing shown "
+                         "(take the stick out and put it back in to show it)" % (label, age // 60))
+                return False
         t = self._clock()
         self._made = [x for x in self._made if t - x < 3600.0]
         if len(self._made) >= STICK_PER_HOUR:
@@ -153,10 +192,22 @@ class Recovery:
             ended = self._end("used")
             if ended:
                 self.last["device"] = device.get("name")
+        if not ended:
+            return False
+        # whoever read the PIN off the projector leaves a trace (review of #122, M1): the device is tagged, the log
+        # and the journal say who, and the display says it for a few seconds; People and codes shows it to owners
+        name = device.get("name")
+        device["via"] = "stick"
+        try:
+            self.auth.mark_via(device.get("id"), "stick")
+            self.auth.recovery_event("stick-used", name=name)
+        except OSError as e:
+            self.log("pvj-web: the use of the PIN shown for a recovery stick could not be written down: %s" % e)
+        self.log("pvj-web: the PIN shown for a recovery stick was used by device %s (%s)" % (device.get("id"), name))
         screen = self.api.pinscreen
-        if ended and screen is not None:
-            screen.recovery_changed()
-        return ended
+        if screen is not None:
+            screen.recovery_notice(name)
+        return True
 
     def lines(self, active, addresses):
         """What the display says. Only characters from the PIN screen's safe set are used by the caller."""
