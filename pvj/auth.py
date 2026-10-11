@@ -20,6 +20,13 @@
   digits, and at most CONTROLLER_PER_HOUR are made in an hour. Its "join" kind pairs a presenter, its "owner" kind
   a full-access device. Both need the box setting `controller_code` (off unless a full-access device switched it
   on; the owner kind has its own switch), which is read again when the code is used.
+* RECOVERY CODES (D81): a set of RECOVERY_COUNT one-time codes an owner prints and keeps, for the day every owner
+  device is lost. Each is RECOVERY_LENGTH symbols from RECOVERY_ALPHABET (no look-alikes; typed case-blind, spaces
+  and dashes ignored), about 59 bits. They are kept in `settings["recovery"]["codes"]` as one salt per set and one
+  scrypt hash per code, shown once when made, and never again. A code is redeemed through pair(), in the `pin`
+  field: one lock, one throttle; one scrypt per attempt whether a set exists or not, and the same answer for a wrong
+  code as for no set. Burning the code and adding the device is one save, so two devices racing one code get one
+  winner. `recovery` is a key an older release keeps and ignores (no schema change).
 * The PIN is stored as a salted scrypt hash. Because it is short, guessing is
   throttled per client and globally, and comparisons are constant-time. The PIN in clear is known to the run that
   made it (`current_pin`), and a paired full-access device may read it back (`show_pin`, D77; rate limited, and
@@ -54,6 +61,10 @@ PER_CLIENT_FAILS, PER_CLIENT_WINDOW = 5, 60.0
 GLOBAL_FAILS, GLOBAL_WINDOW = 20, 600.0
 LOCKOUT_SECONDS = 60.0
 PIN_SHOWS, PIN_SHOW_WINDOW = 10, 300.0          # a full-access device may ask for the PIN this often (D77)
+RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no 0 and O, no 1, I and L: what is on paper cannot be misread
+RECOVERY_LENGTH, RECOVERY_GROUP, RECOVERY_COUNT = 12, 4, 8    # 12 symbols of 31 is about 59 bits; 8 codes per set (D81)
+RECOVERY_LOG = 20                               # events kept for the owners (a code used, the PIN shown for a stick)
+_NO_SET_SALT = b"nxlx-no-recovery-set"          # scrypt runs against this when no set exists, so timing says nothing
 
 
 class AuthError(Exception):
@@ -100,6 +111,27 @@ def _scrypt(secret, salt):
     return hashlib.scrypt(secret.encode(), salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
 
 
+def generate_recovery_code():
+    return "".join(secrets.choice(RECOVERY_ALPHABET) for _ in range(RECOVERY_LENGTH))
+
+
+def format_recovery_code(code):
+    """XXXX-XXXX-XXXX, for paper."""
+    return "-".join(code[i:i + RECOVERY_GROUP] for i in range(0, len(code), RECOVERY_GROUP))
+
+
+def normalise_recovery(text):
+    """What a person typed as the symbols of a recovery code (upper case, spaces and dashes dropped), or None when it
+    is not the shape of one: then pair() treats the text as a PIN. Only the shape is decided here, never whether
+    the code is right."""
+    if not isinstance(text, str) or len(text) > 4 * RECOVERY_LENGTH:
+        return None
+    bare = "".join(c for c in text.upper() if c not in " -\t")
+    if len(bare) != RECOVERY_LENGTH or any(c not in RECOVERY_ALPHABET for c in bare):
+        return None
+    return bare
+
+
 def _token_hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -122,6 +154,7 @@ class Auth:
         self.controller_last = None  # the one before: {"kind", "shown", "ended" (wall), "how", "device"?}, for the panel
         self.current_pin = None     # the PIN in clear, known only to this run and only once made here (_new_pin); never saved
         self._pin_shows = {}        # device id -> when (monotonic) it was given the PIN, within PIN_SHOW_WINDOW
+        self.recovery_last_use = None   # (device id, codes left) of the last recovery code redeemed (D81)
         self._prune_idle()
         with settings.lock:                 # at load: the section is written as what it means (controller_setting)
             if "controller_code" in settings.data and settings.data["controller_code"] != controller_setting(settings.data["controller_code"]):
@@ -225,11 +258,120 @@ class Auth:
                     return self._add_device(name, role, via="code")
                 self._record_fail(client)
                 raise AuthError("wrong or expired code")
+            code = normalise_recovery(given)
+            if code is not None:              # a recovery code (D81): burnt and the device added in one save
+                result = self._use_recovery(code, name, client)
+                if result is None:            # a wrong or used code, or no set at all: the same words, the same cost
+                    self._record_fail(client)
+                    raise AuthError("wrong or used recovery code")
+                return result
             if not self._check_pin(pin):
                 self._record_fail(client)
                 raise AuthError("wrong PIN")
             self._fails.pop(client, None)
             return self._add_device(name, "full")
+
+    # --- recovery codes and the stick (D81) ------------------------------
+    def _recovery(self):
+        """The `recovery` section as a dict (a missing or damaged one counts as empty). Read under settings.lock."""
+        r = self.settings.data.get("recovery")
+        return r if isinstance(r, dict) else {}
+
+    def _codes(self):
+        """The set in the settings as (salt bytes, [hash bytes]) or None; anything malformed counts as no set."""
+        c = self._recovery().get("codes")
+        try:
+            if not isinstance(c, dict) or not isinstance(c.get("hashes"), list):
+                return None
+            return bytes.fromhex(c["salt"]), [bytes.fromhex(h) for h in c["hashes"]]
+        except (TypeError, ValueError, KeyError):
+            return None
+
+    def make_recovery_codes(self, by="owner"):
+        """A new set in the place of any old one. Returns the codes in clear, once; nothing else ever does."""
+        codes = [generate_recovery_code() for _ in range(RECOVERY_COUNT)]
+        salt = secrets.token_bytes(16)
+        with self._pair_lock, self.settings.lock:
+            r = dict(self._recovery())
+            r["codes"] = {"salt": salt.hex(), "hashes": [_scrypt(c, salt).hex() for c in codes],
+                          "made": int(self._now()), "by": str(by or "owner")[:40], "count": RECOVERY_COUNT}
+            self.settings.data["recovery"] = r
+            self.settings.save()
+        return [format_recovery_code(c) for c in codes]
+
+    def cancel_recovery_codes(self):
+        """Remove the set. True when there was one."""
+        with self._pair_lock, self.settings.lock:
+            r = dict(self._recovery())
+            had = r.pop("codes", None) is not None
+            if had:
+                self.settings.data["recovery"] = r
+                self.settings.save()
+            return had
+
+    def recovery_status(self):
+        """What an owner may know: how many codes are left, when and by whom the set was made, the stick switch and
+        the last events. Never a hash, never a salt."""
+        with self.settings.lock:
+            r = self._recovery()
+            c = r.get("codes") if isinstance(r.get("codes"), dict) else None
+            codes = ({"left": len(c.get("hashes") or []), "count": c.get("count", RECOVERY_COUNT),
+                      "made": c.get("made"), "by": c.get("by")} if c else None)
+            return {"codes": codes, "usb": self.usb_enabled(), "log": list(r.get("log") or [])[-RECOVERY_LOG:]}
+
+    def usb_enabled(self):
+        """The stick way: on unless the switch is exactly false (a missing key is on, as the owner asked)."""
+        return self._recovery().get("usb") is not False
+
+    def set_usb(self, on):
+        with self.settings.lock:
+            r = dict(self._recovery())
+            r["usb"] = bool(on)
+            self.settings.data["recovery"] = r
+            self.settings.save()
+
+    def recovery_event(self, kind, name=None, **extra):
+        """Keep an event for the owners (no secret in it): the last RECOVERY_LOG. Saves."""
+        with self.settings.lock:
+            r = dict(self._recovery())
+            event = dict({"t": int(self._now()), "kind": kind}, **extra)
+            if name is not None:
+                event["name"] = str(name)[:40]
+            r["log"] = (list(r.get("log") or []) + [event])[-RECOVERY_LOG:]
+            self.settings.data["recovery"] = r
+            self.settings.save()
+            return event
+
+    def _use_recovery(self, code, name, client):
+        """(token, device) when `code` is one of the set, burning it, else None. Call with `_pair_lock` held.
+        One scrypt whether a set exists or not; every hash compared. The hash goes and the device comes in one save
+        (inside _add_device); if the device cannot be added the hash is put back and the code is still good."""
+        found = self._codes()
+        salt, hashes = found if found else (_NO_SET_SALT, [])
+        given = _scrypt(code, salt)
+        hit = None
+        for i, h in enumerate(hashes):
+            if hmac.compare_digest(h, given):
+                hit = i
+        if hit is None:
+            return None
+        self._prune_idle()
+        with self.settings.lock:
+            r = self.settings.data["recovery"]
+            burnt = r["codes"]["hashes"].pop(hit)
+            left = len(r["codes"]["hashes"])
+            log = list(r.get("log") or [])
+            r["log"] = (log + [{"t": int(self._now()), "kind": "code", "name": str(name or "device")[:40], "left": left,
+                                "client": str(client)}])[-RECOVERY_LOG:]
+            try:
+                token, device = self._add_device(name, "full", via="recovery")     # the one save
+            except Exception:
+                r["codes"]["hashes"].insert(hit, burnt)
+                r["log"] = log
+                raise
+        self.recovery_last_use = (device["id"], left)    # for the API's journal line (never the code)
+        self._fails.pop(client, None)
+        return token, device
 
     # --- join codes ----------------------------------------------------
     def _prune_joins(self):

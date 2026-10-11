@@ -220,6 +220,33 @@ class PinScreen:
             out.append(LOCKED_LINE % -(-locked // 60))
         return out
 
+    # --- the PIN for a recovery stick (D81) ----------------------------------------------------------------
+    def _recovery(self):
+        """{"pin", "seconds_left", ...} while the PIN is on the screen for a stick, else None. The poll that notices
+        a stick lives here too, so it runs as often as the display is drawn."""
+        r = getattr(self.api, "recovery", None)
+        if r is None:
+            return None
+        try:
+            r.poll()
+        except Exception as e:                      # a drive that vanished mid-scan must not stop the display
+            self.log("pvj-web: recovery stick check: %s" % e)
+        return r.active()
+
+    def recovery_changed(self):
+        """The PIN for a stick had its use: off the display now, not at the next tick."""
+        with self._lock:
+            return self.tick()
+
+    def recovery_lines(self, active):
+        addr = ["http://%s.local/" % clean(self.hostname)] if self.hostname else []
+        addr += ["http://%s/" % clean(a) for a in self.addresses()[:1]]
+        out = [clean(line) for line in self.api.recovery.lines(active, addr)]
+        locked = getattr(self.auth, "pairing_locked", lambda: 0)()
+        if locked:
+            out.append(LOCKED_LINE % -(-locked // 60))
+        return out
+
     def auto_wanted(self):
         """True when the first-run screen (PIN and its QR code) should be up: no device paired, player idle."""
         if self.auth.list_devices():
@@ -315,6 +342,16 @@ class PinScreen:
             if self.manual is not None and m is None:        # a request just ran out: take it off the screen
                 self.manual = None
                 self.clear()
+            rec = self._recovery()
+            if rec:                                          # the PIN for a recovery stick: before anything else (D81)
+                self.draw_qr([])
+                self._controller_up = True                   # so that it is cleared the moment it ends, like a controller code
+                try:
+                    self.api.player.ipc.request("show-text", "\n".join(self.recovery_lines(rec)), SHOW_MS)
+                except PlayerError:
+                    return False
+                self.shown += 1
+                return True
             c = self._controller()
             notice = self._notice[1] if self._notice and self._clock() < self._notice[0] else None
             if c or notice:                                  # a code from a controller, before anything else

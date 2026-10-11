@@ -167,6 +167,7 @@ class Api:
         self.scheduler = None     # Scheduler or None
         self.autostart = None     # Autostart or None
         self.pinscreen = None     # PinScreen or None
+        self.recovery = None      # recovery.Recovery or None: the stick way in (D81)
         from . import controllercode as controllercode_mod
         self.controller_codes = controllercode_mod.ControllerCodes(self, log=lambda line: self.log(line))   # a code on the display from a MIDI controller (D61)
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
@@ -292,7 +293,18 @@ class Api:
         except AuthError as e:
             raise ApiError(429 if e.retry_after else 403, str(e), e.retry_after)
         self.controller_codes.used()       # if it was the code shown from a controller, it leaves the display now
+        self._recovery_used(dev, client)
         return {"device": dev, "token": token}
+
+    def _recovery_used(self, dev, client):
+        """After a pairing (D81): a recovery code was burnt (one journal line, never the code), or the PIN shown for a
+        stick had its one use and leaves the display."""
+        last = getattr(self.auth, "recovery_last_use", None)
+        if last and last[0] == dev["id"]:
+            self.auth.recovery_last_use = None
+            self.log("pvj-web: a recovery code was used by device %s (%s) from %s; %d left" % (dev["id"], dev["name"], client, last[1]))
+        if self.recovery is not None:
+            self.recovery.used(dev)
 
     def session(self, body, device, client):
         """Start a session from a token (a guest link): the server sets the cookie."""
@@ -315,7 +327,8 @@ class Api:
             return False
         try:
             shown = getattr(ps, "controller_up", None)        # a code asked for from a MIDI controller (D61)
-            return bool(ps.status()["showing"]) or bool(shown and shown()) or ps.auto_wanted()
+            stick = self.recovery.active() is not None if self.recovery is not None else False     # the PIN for a stick (D81)
+            return bool(ps.status()["showing"]) or bool(shown and shown()) or stick or ps.auto_wanted()
         except Exception:
             return True                           # when unsure, treat it as shown: a snapshot then leaves the text out
 
@@ -1550,6 +1563,47 @@ class Api:
                  + ("" if pin else "; not known to this run of the panel"))
         return {"known": pin is not None, "pin": pin}
 
+    # --- recovery codes and the stick (D81): full access, never through remote support (REMOTE_DENY_PREFIX) ----
+    def _owner_here(self, device):
+        if device.get("remote"):
+            raise ApiError(403, "recovery is never handled through remote support")
+        if not self._still_paired(device):
+            raise ApiError(401, "this device is no longer paired")
+
+    def get_recovery(self, body, device, client):
+        """How many codes are left, when the set was made, the stick switch, the stick's state and the last events.
+        Never a code, a hash or the PIN."""
+        self._owner_here(device)
+        out = self.auth.recovery_status()
+        out["stick"] = self.recovery.status() if self.recovery is not None else None
+        return out
+
+    def make_recovery(self, body, device, client):
+        """A new set of codes, in the place of any old one; the codes in clear in this answer and nowhere else."""
+        self._owner_here(device)
+        codes = self.auth.make_recovery_codes(by=device["name"])
+        self.log("pvj-web: %d recovery codes made by device %s (%s) from %s" % (len(codes), device["id"], device["name"], client))
+        return {"codes": codes, "made": self.auth.recovery_status()["codes"]}
+
+    def cancel_recovery(self, body, device, client):
+        self._owner_here(device)
+        had = self.auth.cancel_recovery_codes()
+        if had:
+            self.log("pvj-web: recovery codes cancelled by device %s (%s) from %s" % (device["id"], device["name"], client))
+        return {"ok": True, "had": had}
+
+    def set_recovery_usb(self, body, device, client):
+        """{"on": true | false}: the stick way. Off ends a PIN that is on the screen for a stick at the next tick."""
+        self._owner_here(device)
+        on = body.get("on")
+        if not isinstance(on, bool):
+            raise bad("on must be true or false")
+        self.auth.set_usb(on)
+        self.log("pvj-web: the recovery stick way was switched %s by device %s (%s) from %s" % ("on" if on else "off", device["id"], device["name"], client))
+        if not on and self.recovery is not None:
+            self.recovery.poll()
+        return {"usb": on}
+
     def logout(self, body, device, client):
         """Log this device out (D77): its token is removed from the box, and the server clears the cookie (server.py
         does that for every 200 from here). Any role; a token that is already dead (removed by the owner, a second
@@ -2650,6 +2704,10 @@ class Api:
             ("POST", "/api/pin/rotate"): ("full", self.rotate_pin),
             ("POST", "/api/pin/unlock"): ("full", self.unlock_pairing),
             ("POST", "/api/pin/show"): ("full", self.show_pin),           # the owner PIN, to the owner only (D77)
+            ("GET", "/api/recovery"): ("full", self.get_recovery),        # recovery codes and the stick (D81)
+            ("POST", "/api/recovery/codes"): ("full", self.make_recovery),
+            ("POST", "/api/recovery/cancel"): ("full", self.cancel_recovery),
+            ("POST", "/api/recovery/usb"): ("full", self.set_recovery_usb),
             ("POST", "/api/logout"): (None, self.logout),                 # any role; None: a dead token is logged out already
             ("POST", "/api/player/restart"): ("full", self.stop_player),
         }

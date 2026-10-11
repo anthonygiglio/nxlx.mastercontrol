@@ -446,12 +446,20 @@ def check_room(v, care):
     return room_mod.validate(_obj(v))
 
 
+def check_recovery(v, care):
+    """The stick switch only (D81). The code hashes belong to one box: never in a file, never taken from one."""
+    on = _obj(v).get("usb", True)
+    if not isinstance(on, bool):
+        raise ValueError("usb must be true or false")
+    return {"usb": on}
+
+
 # Every section that is exported and imported, in the order they are checked.
 SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_theme), ("mix", check_mix), ("osc", check_osc),
             ("schedule", check_schedule), ("streams", check_streams), ("control", check_control),
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
             ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
-            ("room", check_room))
+            ("room", check_room), ("recovery", check_recovery))
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
                 projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError)
@@ -476,9 +484,13 @@ def public_settings(data, support_configured=None):
     taking things out: a section this version does not know is named, not copied."""
     out = {"schema": data.get("schema")}
     for name, _check in SECTIONS:
-        if name in ("streams", "projectors") or name not in data:
+        if name in ("streams", "projectors", "recovery") or name not in data:
             continue
         out[name] = _net(copy.deepcopy(data[name]))
+    rec = data.get("recovery") if isinstance(data.get("recovery"), dict) else {}
+    codes = rec.get("codes") if isinstance(rec.get("codes"), dict) else None
+    out["recovery"] = {"usb": rec.get("usb") is not False, "codes_left": len(codes.get("hashes") or []) if codes else None,
+                       "made": codes.get("made") if codes else None}
     out["streams"] = [{"id": s.get("id"), "name": s.get("name"), "from": stream_where(s.get("url")),
                        "has_login": strip_login(s.get("url")) != s.get("url")} for s in data.get("streams", [])]
     out["projectors"] = [{"id": p.get("id"), "name": p.get("name"), "host": p.get("host"), "port": p.get("port"),
@@ -585,6 +597,8 @@ class BoxCare:
                 out[name] = data[name]
         if isinstance(out.get("osc"), dict):
             out["osc"].pop("key", None)          # the key has its own section, never exported (D78); this is for a file not yet moved
+        if "recovery" in out:
+            out["recovery"] = {"usb": self.api.auth.usb_enabled()}      # the switch only: the code hashes stay on the box (D81)
         out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
                                    "password": p.get("password", "") if passwords else ""},
                                   **{k: p[k] for k in ("details", "labels") if k in p})       # what it said it is; input labels
@@ -826,6 +840,8 @@ class BoxCare:
             new.update({k: fresh[k] for k in clean})
             if "osc" in clean:
                 self._osc_layers(new, current)
+            if "recovery" in clean:              # the file's switch beside the box's own codes and events (D81)
+                new["recovery"] = dict(current.get("recovery") or {}, usb=clean["recovery"]["usb"])
             try:
                 backup = self._backup()
             except OSError as e:
