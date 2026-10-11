@@ -1626,13 +1626,15 @@ function startServer() {
     const lostDev = (await lost.evaluate(() => fetch('/api/status').then((r) => r.json()))).device;
     assert.strictEqual(lostDev.role, 'full', 'a recovery code pairs an owner');
     assert.strictEqual((await lost.evaluate(() => fetch('/api/recovery').then((r) => r.json()))).codes.left, 7, 'one code is burnt');
-    const again = await lostCtx.newPage();
+    const againCtx = await browser.newContext({ viewport: { width: 320, height: 844 } });   // its own context: no cookie from the phone that just paired
+    const again = await againCtx.newPage();
     await again.goto(base);
     await again.click('#recoverylink');
     await again.fill('#recoverycode', codes[2]);
     await again.click('#recoverybtn');
     await again.waitForFunction(() => /wrong or was used/.test(document.getElementById('msg').textContent));
     await again.close();
+    await againCtx.close();
     await lost.close();
     await lostCtx.close();
     await sysIndex();
