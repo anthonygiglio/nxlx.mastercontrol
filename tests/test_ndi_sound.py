@@ -1071,6 +1071,40 @@ class PlayerSoundTest(unittest.TestCase):
         p._end_source = lambda: None
         return p, sent
 
+    def player_with_pid(self, pid):
+        """As `player`, with a real is_running (the first word of a panel with its player asks for the pid)."""
+        p, sent = self.player()
+        del p.is_running
+        p.ipc.request = (lambda req: lambda *a: (sent.append(a), pid[0])[1] if a[:2] == ("get_property", "pid") else req(*a))(p.ipc.request)
+        return p, sent
+
+    def test_a_new_panel_takes_the_narrowing_back_from_a_player_it_did_not_narrow(self):
+        """Review of b46410c, medium 1. The narrowing (vd, ad, sid, ...) is a property of the whole mpv, taken back from
+        an in-memory list. A panel that restarts while a source with sound is on the screen has no list, mpv keeps the
+        narrowing, and every clip after it fails to find a decoder. So a Player sends the defaults for every MKV_ONLY
+        key at its first word with a player and again whenever the player is another process."""
+        pid = [100]
+        old, sent = self.player_with_pid(pid)
+        old.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")               # the panel before the restart narrowed mpv
+        self.assertIn(("set_property", "vd", "rawvideo,-"), sent)
+        new, sent2 = self.player_with_pid(pid)                                         # the new panel's Player: no list
+        self.assertIsNone(new._pipe_globals)
+        new.is_running()
+        widened = {a[1]: a[2] for a in sent2 if a[0] == "set_property" and a[1] in Player.MKV_ONLY}
+        self.assertEqual(widened, {k: Player.PIPE_DEFAULTS[k] for k in Player.MKV_ONLY})
+        del sent2[:]
+        new.is_running()
+        self.assertEqual([a for a in sent2 if a[0] == "set_property"], [], "sent again for the same player")
+        pid[0] = 101                                                                   # the player is another process
+        new.is_running()
+        self.assertEqual({a[1] for a in sent2 if a[0] == "set_property"}, set(Player.MKV_ONLY))
+        # and not in the middle of a pipe load, which narrows on purpose
+        del sent2[:]
+        pid[0] = 102
+        new.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
+        sets = [a for a in sent2 if a[0] == "set_property" and a[1] == "vd"]
+        self.assertEqual(sets[-1], ("set_property", "vd", "rawvideo,-"), "the load's own narrowing must be the last word")
+
     def test_the_stream_with_sound_is_loaded_with_mpvs_own_reader_named_and_no_cache(self):
         self.assertIn("matroska", Player.PIPE_FORMATS)
         p, sent = self.player()

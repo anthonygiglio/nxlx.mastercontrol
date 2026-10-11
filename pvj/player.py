@@ -205,6 +205,8 @@ class Player:
         ended it): its screen began empty, which is a clearing for whatever was asked for before (see `clears`).
         Every play and every status asks for the pid, so it is noticed by whoever comes first."""
         with self._pid_lock:                # status polls come from several threads, unlocked: one restart is counted once
+            if self._seen_pid is None or pid != self._seen_pid:
+                self._widen_due = True      # a player this Player has not spoken to yet: see _widen
             if self._seen_pid is not None and pid != self._seen_pid:
                 if self._new_expected:
                     # The panel itself ended the old one (quit), which was counted then. A wish made since is for
@@ -216,7 +218,27 @@ class Player:
                     self.clears += 1
                     self.cleared_by = "restart"
             self._seen_pid = pid
+        if self._widen_due and not self._pipe_loading:
+            self._widen()
         return pid
+
+    _widen_due, _pipe_loading = False, False
+
+    def _widen(self):
+        """The narrowing for the NDI stream with sound (MKV_ONLY) is a property of the whole mpv, taken back from an
+        in-memory list (_pipe_globals). A panel that restarted while such a source was on the screen has no list, and
+        mpv would keep refusing every decoder but raw video ("Failed to initialize a decoder" for every clip) until
+        the player restarted (the review of 2026-10-11, M1). So at this Player's first word with a player, and again
+        whenever the player is another process, the defaults are sent for every MKV_ONLY key, whatever this side
+        remembers; not in the middle of a pipe load, which narrows on purpose (the load's own words come last)."""
+        try:
+            for k in self.MKV_ONLY:
+                self.ipc.request("set_property", k, self.PIPE_DEFAULTS[k])
+        except PlayerError:
+            return                          # the player is not answering: tried again at the next word with it
+        self._widen_due = False
+        if getattr(self, "_pipe_globals", None):
+            self._pipe_globals = [k for k in self._pipe_globals if k not in self.MKV_ONLY] or None
 
     def mpv_command(self, audio_device=None, windowed=False):
         args = [self.mpv_bin, "--idle=yes", "--input-ipc-server=" + self.socket_path,
@@ -394,12 +416,14 @@ class Player:
             # does: this player's device, volume and mute.
             opts = {"demuxer": "mkv", "cache": "no", "demuxer-readahead-secs": 0, "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
             self._pipe_globals = []
+            self._pipe_loading = True              # a status poll that meets a new player now must not widen under this load
             try:
                 for k, v in self.MKV_ONLY.items():
                     self._pipe_globals.append(k)
                     self.ipc.request("set_property", k, v)
             except PlayerError:
                 self._undo_pipe_globals()          # not narrowed: not loaded
+                self._pipe_loading = False
                 raise
         self.ipc.request("set_property", "keep-open", "no")
         self.ipc.request("set_property", "loop-file", "no")
@@ -412,6 +436,7 @@ class Player:
             for k, v in opts.items():
                 self.ipc.request("set_property", k, v)
             self.ipc.request("loadfile", path, "replace")
+        self._pipe_loading = False
         self.ipc.request("set_property", "pause", False)
 
     def shuffle(self):
