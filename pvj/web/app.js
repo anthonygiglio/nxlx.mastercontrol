@@ -445,12 +445,12 @@
       if (src && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : NDI_PAD_GUEST, true);     // never sent: the box refuses a guest an NDI pad (D80)
       if (canGuest()) return guestSend('/api/play', { pad: [bank, index] }, '', b);
       if (!can('live')) return say(guestsLocked() ? LOCKED_TEXT : 'This device can watch only.', true);
-      if (src && b.classList.contains('busy')) return;
-      if (src) { b.classList.add('busy'); say('Connecting to ' + padNdiName(src) + '...'); }
+      if (!src) return act('POST', '/api/play', { pad: [bank, index] }, function () { say(''); poll(); });
+      if (b.classList.contains('busy')) return;         // a source takes seconds to connect: one press at a time, and the pad says so
+      b.classList.add('busy'); say('Connecting to ' + padNdiName(src) + '...');
       api('POST', '/api/play', { pad: [bank, index] }).then(function (r) {
         b.classList.remove('busy');
-        if (!r.ok) { say(src ? ndiSentence(r.data.error || 'the source could not be shown') : (r.data.error || 'Request failed'), true); poll(); return; }
-        say(''); poll();
+        say(r.ok ? '' : ndiSentence(r.data.error || 'the source could not be shown'), !r.ok); poll();
       });
     });
     return b;

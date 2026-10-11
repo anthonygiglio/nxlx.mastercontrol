@@ -975,7 +975,8 @@ class Api:
 
     def _pads_answer(self, device):
         """The banks, and for anyone above a Guest the names of the NDI sources that pads hold: {"ndi": {id: {"name",
-        "from"}}}. A pad stores the id alone (D62); a Guest, who has no NDI page, gets no names and addresses."""
+        "from"}}}. A pad stores the id alone (D62); a Guest, who has no NDI page, gets no such list and no addresses
+        (he sees a pad's label like anyone, and the editor fills it with the source's name)."""
         out = {"banks": self.settings.data["pads"]["banks"]}
         if not policy.is_guest(device):
             from . import ndi as ndi_mod

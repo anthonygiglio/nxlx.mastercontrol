@@ -1058,7 +1058,8 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('.ndidisc-entry:has-text("192.168.1.5:5959")');
       const scoped = await get('/api/ndi');
       assert.deepStrictEqual([scoped.discovery, scoped.discovery_now], [['192.168.1.5:5959'], []], 'saved, and not said to be in force on a box that cannot hand it to NDI');
-      assert(/pvj-ndi-runtime refresh/.test(scoped.notice), 'the page is told what the box needs: ' + scoped.notice);
+      assert(!/pvj-ndi-runtime refresh/.test(scoped.notice), 'a box with no NDI set-up at all is not told to refresh one: ' + scoped.notice);
+      assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this box.', 'and the line still says why nothing is looked for');
       assert.strictEqual(await page.textContent('#ndiallowedempty'), 'No pad holds an NDI source yet.');
       const before = page.viewportSize();
       await page.setViewportSize({ width: 320, height: before.height });
