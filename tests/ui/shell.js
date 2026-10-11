@@ -773,7 +773,7 @@ async function stripText(pg, post, get) {
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
-  owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'sync', 'midi', 'dmx', 'osc',
+  owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
     'network', 'updates', 'support', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
   presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
@@ -939,7 +939,7 @@ const ADDED = {
     '#guestlock': 'People and codes', '#ctlcode-join': 'People and codes', '#roomsnoguests': 'Setup index > Room',
     // D62 (2026-10-11): the NDI input's page under Setup > Show tools; its sound switch and address form are the Owner's
     '#nav-ndi': 'setup/index', '#ndisound': 'NDI® input', '#ndiaddress': 'NDI® input', '#ndiaddradd': 'NDI® input',
-    '#ndigroupopen': 'NDI® input', '#ndidiscopen': 'NDI® input' }, TRANSITIONS),      // the groups and the discovery servers (2026-10-11), the Owner's      // (the key's Show and New are there only while the key lock is on)
+    '#ndigroupopen': 'NDI® input', '#ndidiscopen': 'NDI® input', '#nav-ndisc': 'setup/index' }, TRANSITIONS),      // the groups and the discovery servers (2026-10-11), the Owner's      // (the key's Show and New are there only while the key lock is on)
   // D80, an Operator: the lock on guest controls and a guest link; the rows of Setup that are his now, the room's
   // set-up with a scene's mark, the mapping's own controls, a clip to upload
   presenter: Object.assign({ '#guestlock': 'People and codes', '#makeguestlink': 'People and codes', '#nav-schedule': 'setup/index', '#nav-autostart': 'setup/index',

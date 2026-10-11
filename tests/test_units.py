@@ -748,8 +748,18 @@ class NdiUnitTest(unittest.TestCase):
         self.assertLess(self.sh.index("NDI_OPTED_IN=0"), mark)
         install = self.sh[self.sh.index('if [ "$UNINSTALL" = 1 ]'):]
         acts = [line.strip() for line in install.splitlines()
-                if not line.lstrip().startswith("#") and re.search(r"systemctl [a-z-]+( --now)? pvj-ndi|pvj-ndi-runtime\" refresh", line)]
+                if not line.lstrip().startswith("#") and re.search(r"systemctl [a-z-]+( --now)? pvj-ndi(?!-discovery)|pvj-ndi-runtime\" refresh", line)]
         self.assertEqual(len(acts), 6, acts)               # two more are in the removal of a helper without the mark (below)
+        # the discovery server (D85) the same: the installer acts on it only behind ITS mark, and never sets it up
+        disc = [line.strip() for line in install.splitlines()
+                if not line.lstrip().startswith("#") and re.search(r"pvj-ndi-discovery|pvj-ndi-runtime\" server", line)]
+        self.assertEqual(len(disc), 3, disc)
+        self.assertIn('server refresh --root "$ROOT" --prefix "$PREFIX"', disc[0])
+        self.assertEqual(self.sh.count("NDISC_SET_UP=1"), 1)
+        self.assertIn('if [ -f "$NDISC_MARK" ] && [ ! -L "$NDISC_MARK" ]; then\n\tNDISC_SET_UP=1', self.sh)
+        self.assertIn('if [ "$NDISC_SET_UP" = 1 ] && [ -f "$NDISC_UNIT" ]; then\n\t\tsystemctl enable pvj-ndi-discovery.service', self.sh)
+        for never in ("groupadd --system pvj-ndisc", '> "$NDISC_UNIT"', '> "$NDISC_MARK"', 'pvj-ndi-runtime" server install', "ndiscovery"):
+            self.assertNotIn(never, commands, never)
         self.assertIn("systemctl disable --now pvj-ndi.service", acts[1])
         self.assertIn("systemctl enable --now pvj-ndi.service", acts[2])       # only where the mark turned up meanwhile
         del acts[1:3]

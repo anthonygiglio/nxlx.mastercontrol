@@ -130,7 +130,9 @@ uninstall() {
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
 	# The owner's copy of NDI's library is theirs: it goes only with --purge.
-	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi" "${ROOT}/opt/pvj-ndi-server"; fi
+	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi"; fi
+	# So is their copy of NDI's discovery server program (D85).
+	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi-server"; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
 	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place (remove them with deluser and delgroup if you want them gone)."

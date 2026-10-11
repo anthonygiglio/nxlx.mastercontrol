@@ -1585,6 +1585,9 @@
         confirmOff: function (ask) { ndiWasOn = !!((S.status && S.status.player) || {}).ndi; ask(ndiWasOn ? 'The NDI picture comes off the screen now.' : null); },
         offSaid: function () { return ndiWasOn ? 'Switched off. The NDI picture came off the screen because the input was switched off.' : null; },
         body: function () { return ndiCards(full); } },
+      { id: 'ndisc', group: 'show', name: 'NDI\u00ae discovery server', role: 'full', module: 'ndi-discovery', url: '/api/ndi/discovery', urlRole: 'full',
+        blurb: 'Run NDI\'s own Discovery Server on this box, so senders and receivers on a network you control find each other through it. The program is NDI\'s, not part of this box: someone with a keyboard or SSH puts it in place from your copy first. It is not a password: whatever can reach it can register with it and ask it. Switching it on makes the box listen on the network.',
+        body: function () { return ndiscCards(); } },
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'op', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
@@ -1648,6 +1651,7 @@
   }
   function rowShown(row) {
     if (row.id === 'access' && S.device && S.device.remote) return false;      // codes are refused through the support connection, whatever the role
+    if (row.id === 'ndisc' && S.device && S.device.remote) return false;       // a listener on the network is opened by the Owner in the room (D85)
     if (!can(row.role) && !(row.id === 'support' && S.device && S.device.remote)) return false;
     if (!row.module) return true;
     var m = mod(row.module);
@@ -1753,6 +1757,15 @@
       if (!d.streams.length) return st('setup', 'No streams saved yet');
       if (pl.stream) return st('active', 'Playing: ' + pl.stream);
       return st('ready', d.streams.length + ' saved');
+    },
+    ndisc: function (d) {
+      if (d.setup === false) return st('setup', 'Not set up on this box');
+      if (!d.supervisor) return st('problem', 'Its service is not running');
+      if (!d.installed) return st('setup', 'NDI\'s program is not on this box yet');
+      if (d.state === 'running' && d.listening) return st('active', 'Listening on ' + d.listening.address + ':' + d.listening.port);
+      if (d.state === 'failed') return st('problem', 'It stopped and is being started again');
+      if (!d.bind) return st('check', 'No address on that network now');
+      return st('check', 'Starting');
     },
     ndi: function (d) {
       var p = d.playing;
@@ -3028,6 +3041,100 @@
   // link to ndi.video beside the place a source is chosen. The runtime is not part of the box; when it is missing
   // the page says so and how to get it, with the list and the address form still here.
   var NDI_MARK = 'NDI® is a registered trademark of Vizrt NDI AB.';
+  // ---- The NDI discovery server on this box (pvj/ndiscovery.py, D85). The Owner's page: what is listening, which of
+  // the box's networks it listens on, the port, and the one line to give to senders and receivers. NDI's program is
+  // not part of the box; the page says how it gets here, and what a discovery server is not.
+  var ndiscTimer = null, ndiscForm = null;
+  var NDISC_NOTE = 'This is NDI\'s own closed program, listening on the network. The box runs it under an account of its own that cannot reach the box\'s settings, PIN, clips or controls, and cannot reach the internet. A discovery server is not a password: anything that can reach it can register with it and ask it who is there. Use it on a network you control. The program comes from your copy of NDI\'s SDK or Discovery Server download, under NDI\'s licence; it is never part of nxlx.mastercontrol and the box never downloads it.';
+  function ndiscCards() {
+    var NAMES = { wired: 'The wired network', wifi: 'The Wi-Fi', all: 'All the box\'s networks' };
+    var state = h('div', { class: 'list sp', id: 'ndiscbody' }, h('div', { class: 'hint', text: 'Looking...' }));
+    var setBody = h('div', { class: 'list sp', id: 'ndiscsetbody' });
+    var card = h('div', { class: 'card', id: 'ndisccard' }, h('h2', { text: 'Discovery server' }), state);
+    var setCard = h('div', { class: 'card', id: 'ndiscsetcard' }, h('h2', { text: 'Where it listens' }), setBody);
+    var noteCard = h('div', { class: 'card', id: 'ndiscnotecard' }, h('h2', { text: 'What this is' }), h('div', { class: 'hint', id: 'ndiscnote', text: NDISC_NOTE }),
+      h('div', { class: 'hint', id: 'ndiscmark' }, NDI_MARK + ' About NDI: ', ndiLink('https://ndi.video/', 'ndi.video'), '.'));
+    function addressOf(d, net) {
+      if (net === 'all') return d.addresses.length ? d.addresses.map(function (a) { return a.address; }).join(', ') : '';
+      var want = net === 'wired' ? /^(eth|en)/ : /^wl/;
+      var row = d.addresses.filter(function (a) { return want.test(a.interface); })[0];
+      return row ? row.address : '';
+    }
+    function drawState(d) {
+      state.textContent = '';
+      if (d.setup === false) {
+        state.appendChild(h('div', { class: 'hint warn', id: 'ndiscnotsetup' },
+          h('div', { text: 'The discovery server is not set up on this box, so nothing listens. NDI\'s program is not part of nxlx.mastercontrol and cannot be added from a phone. Someone with a keyboard or SSH on the box does this once:' }),
+          h('div', {}, '1. Get the NDI SDK for Linux, or NDI\'s Discovery Server for Linux, from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the box or a USB stick.'),
+          h('div', { text: '2. Run this at the box, with the folder you unpacked:' }),
+          h('div', { class: 'addr', id: 'ndisccommand', text: d.install.command }),
+          h('div', { text: 'It prints the program\'s sha256 so you can compare it with your copy. Then come back to this page.' })));
+        return;
+      }
+      if (!d.supervisor) { state.appendChild(h('div', { class: 'hint warn', id: 'ndiscdown', text: 'The discovery server\'s service (pvj-ndi-discovery) is not running on this box, so nothing listens. Restarting the box usually brings it back.' })); return; }
+      if (!d.installed) {
+        state.appendChild(h('div', { class: 'hint warn', id: 'ndiscmissing' }, h('div', { text: ndiSentence(d.problem || 'NDI\'s program is not on this box yet') + ' Someone with a keyboard or SSH on the box runs:' }),
+          h('div', { class: 'addr', id: 'ndisccommand', text: d.install.command })));
+        return;
+      }
+      var line = d.state === 'running' && d.listening ? 'Running: listening on ' + d.listening.address + ', port ' + d.listening.port + (d.seconds >= 60 ? ', for ' + Math.floor(d.seconds / 60) + ' min' : '') + '.'
+        : d.state === 'failed' ? 'It stopped: ' + ndiSentence(d.message || 'the program ended') + ' The box is starting it again' + (d.restarts ? ' (' + plural(d.restarts, 'try', 'tries') + ' so far)' : '') + '.'
+          : !d.bind ? NAMES[d.network] + ' has no address now, so the server is stopped. It starts by itself when that network is back; it does not move to another network.'
+            : 'Starting...';
+      state.appendChild(h('div', { class: 'hint' + (d.state === 'running' ? '' : ' warn'), id: 'ndiscstate', role: 'status', text: line }));
+      if (d.state === 'failed' && d.last) state.appendChild(h('div', { class: 'hint', id: 'ndisclast', text: 'Its last words: ' + d.last }));
+      if (d.tell) {
+        var tell = h('input', { class: 'text-input mono', id: 'ndisctell', readonly: true, value: d.tell, 'aria-label': 'This discovery server\'s address' });
+        state.appendChild(h('div', { class: 'fieldwrap', id: 'ndisctellwrap' }, h('div', { class: 'field', id: 'ndisctellline', text: 'Senders and receivers on this network should use discovery server ' + d.tell }),
+          h('div', { class: 'row' }, tell, h('button', { class: 'btn', id: 'ndisccopy', text: 'Copy', onclick: function () {
+            tell.select();
+            (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(d.tell) : Promise.reject()).then(function () { say('Copied.'); }, function () { say('Select the address and copy it.'); });
+          } })),
+          h('div', { class: 'hint', text: 'In NDI Access Manager on a computer: Advanced, Discovery Servers. A sender given a discovery server stops announcing itself on the local network.' })));
+      }
+    }
+    function drawSet(d) {
+      setBody.textContent = '';
+      ndiscForm = ndiscForm || { network: d.network, port: String(d.port) };
+      var net = h('select', { class: 'text-input', id: 'ndiscnetwork' }, d.networks.map(function (n) {
+        var a = addressOf(d, n);
+        return h('option', { value: n, selected: n === ndiscForm.network, text: NAMES[n] + (n === 'all' ? '' : a ? ' (' + a + ')' : ' (no address now)') });
+      }));
+      var port = h('input', { class: 'text-input mono', id: 'ndiscport', inputmode: 'numeric', maxlength: 5, autocomplete: 'off', value: ndiscForm.port });
+      var err = h('div', { class: 'msg inmsg', id: 'ndiscerr', role: 'alert' });
+      net.addEventListener('change', function () { ndiscForm.network = net.value; warn(); });
+      port.addEventListener('input', function () { ndiscForm.port = port.value; });
+      var all = h('div', { class: 'hint warn', id: 'ndiscallwarn', text: 'All the box\'s networks: the server is then reachable from every network the box is on, the Wi-Fi and a hotspot included.' });
+      function warn() { all.hidden = net.value !== 'all'; }
+      warn();
+      setBody.appendChild(labelled('Network', net, 'The server listens on this network\'s address only. If that address changes (a new lease), the box starts the server again on the new one and the line above changes: senders and receivers must then be given the new address, so a fixed address for the box is better.'));
+      setBody.appendChild(all);
+      setBody.appendChild(labelled('Port', port, 'NDI\'s own is ' + d.default_port + '. Change it only if something else needs that port. ' + d.min_port + ' to ' + d.max_port + '.'));
+      setBody.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'ndiscsave', text: 'Save', onclick: function () {
+        var n = /^[0-9]{1,5}$/.test(ndiscForm.port.trim()) ? parseInt(ndiscForm.port.trim(), 10) : -1;
+        api('POST', '/api/ndi/discovery', { network: ndiscForm.network, port: n }).then(function (r) {
+          if (!r.ok) return sayAt(err, ndiSentence(r.data.error || 'could not save it'), true);
+          ndiscForm = null; drawSet(r.data); drawState(r.data); say('Saved. The server starts again where you set it.');
+        });
+      } })));
+      setBody.appendChild(err);
+    }
+    var first = true, drawn = '';
+    function refresh() {
+      clearTimeout(ndiscTimer);
+      api('GET', '/api/ndi/discovery').then(function (r) {
+        if (!document.getElementById('ndisccard')) return;
+        ndiscTimer = setTimeout(refresh, 3000);
+        if (!r.ok) { if (first) { state.textContent = ''; state.appendChild(h('div', { class: 'hint', id: 'ndiscmsg', text: ndiSentence(r.data.error || 'not available') })); } return; }
+        var now = JSON.stringify([r.data.setup, r.data.supervisor, r.data.installed, r.data.state, r.data.message, r.data.last, r.data.listening, r.data.tell, r.data.bind, r.data.restarts, Math.floor(r.data.seconds / 60)]);
+        if (now !== drawn) { drawn = now; drawState(r.data); }
+        if (first) { ndiscForm = null; drawSet(r.data); }
+        first = false;
+      });
+    }
+    refresh();
+    return [card, setCard, noteCard];
+  }
   var ndiForm = { address: '' }, ndiTimer = null, ndiBusy = null, ndiWasOn = false;      // ndiBusy: the id of a source being connected to; ndiWasOn: a source was on the screen when the switch was asked
   function ndiLink(url, text) { return h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: text }); }
   function ndiSentence(text) { return text ? text.charAt(0).toUpperCase() + text.slice(1) + (/[.!?]$/.test(text) ? '' : '.') : ''; }
@@ -3163,7 +3270,7 @@
     var groupBody = h('div', { class: 'list sp', id: 'ndigroupbody' }), discBody = h('div', { class: 'list sp', id: 'ndidiscbody' });
     var scopeCard = h('div', { class: 'card', id: 'ndiscopecard' }, h('h2', { text: 'Which senders this box looks for' }), scopeNow,
       h('div', { class: 'field', text: 'Groups to look in' }), groupBody,
-      h('div', { class: 'field', text: 'Discovery servers' }), discBody,
+      h('div', { class: 'field', text: 'Discovery servers' }), discBody, h('div', { class: 'list sp', id: 'ndiownbody' }),
       h('div', { class: 'hint', id: 'ndiscopenote', text: 'Groups and a discovery server decide what this box looks for, and keep the list short and the network in order. They are not a password and they encrypt nothing: a sender that puts itself in the same group, or registers with the same discovery server, is found. For a venue: a group of your own, a discovery server on a machine that is always on, or fixed addresses below. This box also goes on listening for senders that announce themselves on the local network: NDI documents no setting that stops that.' }));
     function scopeWords(d) {
       var g = d.groups_now && d.groups_now.length ? 'Looking in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') : 'Looking in NDI\'s default group (Public)';
@@ -3205,11 +3312,22 @@
     }
     function drawScope(d) {
       scopeNow.textContent = scopeWords(d);
+      var own = document.getElementById('ndiownbody') || scopeCard.querySelector('#ndiownbody');
+      if (own) {
+        // "Use this box's own discovery server" (D85): shown where the box has one set up; it follows that server's address.
+        own.textContent = '';
+        if (mod('ndi-discovery') && full) own.appendChild(toggle('ndiown', 'Use this box\'s own discovery server', !!d.own_discovery, function (v, sw) {
+          api('POST', '/api/ndi', { action: 'own_discovery', on: v }).then(function (r) {
+            if (!r.ok) { sw.setAttribute('aria-checked', v ? 'false' : 'true'); return say(ndiSentence(r.data.error || 'could not change it'), true); }
+            drawScope(r.data); say(v ? 'This box now also asks its own discovery server, while that is switched on.' : 'This box no longer asks its own discovery server.');
+          });
+        }, moduleOn('ndi-discovery') ? 'The box\'s own input then finds the senders that registered with the server this box runs.' : 'The box\'s discovery server is switched off (Setup, NDI discovery server), so this does nothing until it is on.'));
+      }
       drawScopeList(d, { body: groupBody, items: d.groups || [], max: d.max_groups, cls: 'ndigroup-entry', key: 'ndigroup', field: 'group', id: 'ndigroup', what: 'a group',
         label: 'Group', placeholder: 'Leyline', maxlength: 64, add: 'add_group', remove: 'remove_group', removed: 'The box stops looking in it.',
         hint: 'The name exactly as the sending program has it, capitals included. Letters, digits, spaces, dashes, dots and underscores.',
         empty: 'No group set: the box looks in NDI\'s default group, Public.' });
-      drawScopeList(d, { body: discBody, items: d.discovery || [], max: d.max_discovery, cls: 'ndidisc-entry', key: 'ndidisc', field: 'server', id: 'ndidiscovery', what: 'a discovery server',
+      drawScopeList(d, { body: discBody, items: d.discovery_saved || d.discovery || [], max: d.max_discovery, cls: 'ndidisc-entry', key: 'ndidisc', field: 'server', id: 'ndidiscovery', what: 'a discovery server',
         label: 'Discovery server', placeholder: '192.168.1.5', maxlength: 21, add: 'add_discovery', remove: 'remove_discovery', removed: 'The box stops asking it.',
         hint: 'The address of the machine that runs NDI\'s Discovery Server, on a private network. Add :port only if it is not ' + (d.discovery_port || 5959) + '. Changing this starts NDI on the box again: a source on the screen stops and is started again by hand.',
         empty: 'No discovery server set.' });

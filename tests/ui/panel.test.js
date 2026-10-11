@@ -400,7 +400,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
-      'At power-up', 'Streams', 'NDI\u00ae input', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
+      'At power-up', 'Streams', 'NDI\u00ae input', 'NDI\u00ae discovery server', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
       'Network', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
@@ -1077,6 +1077,49 @@ function startServer(env) {          // env: more for the harness's environment 
     await sys(NDI);
     await switchOff(NDI);
     assert(!(await moduleIsOn('inputs-ndi')), 'the NDI input is off again, as it is on a new box');
+    // The NDI discovery server on the box (D85): the Owner's page. The harness, like a box where nobody ran the command,
+    // has nothing of it set up: the page says so with the one command, the settings are kept all the same, and the
+    // honest words are on the page. WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    {
+      const DS = 'NDI® discovery server';
+      await sysIndex();
+      await chip(DS, 'Off');
+      assert(!(await moduleIsOn('ndi-discovery')), 'the discovery server is off on a new box');
+      await sys(DS);
+      await switchOn(DS);
+      await page.waitForSelector('#ndiscnotsetup');
+      assert(/is not set up on this box, so nothing listens/.test(await page.textContent('#ndiscnotsetup')), 'a box without the set-up says so');
+      assert.strictEqual(await page.textContent('#ndisccommand'), 'sudo pvj-ndi-runtime server install "/path/to/NDI SDK for Linux"', 'the one command is named');
+      const ds = await get('/api/ndi/discovery');
+      assert.deepStrictEqual([ds.setup, ds.supervisor, ds.listening, ds.network, ds.port, ds.module], [false, false, null, 'wired', 5959, true]);
+      assert(/not a password: anything that can reach it can register with it/.test(await page.textContent('#ndiscnote')), 'what a discovery server is not');
+      assert(/never part of nxlx\.mastercontrol and the box never downloads it/.test(await page.textContent('#ndiscnote')), 'and where the program comes from');
+      assert((await page.textContent('#ndiscmark')).includes('NDI® is a registered trademark of Vizrt NDI AB.'), 'the trademark sentence');
+      assert.deepStrictEqual(await page.$$eval('#ndiscnetwork option', (os) => os.map((o) => o.value)), ['wired', 'wifi', 'all']);
+      assert(!(await page.isVisible('#ndiscallwarn')), 'no warning while one network is chosen');
+      await page.selectOption('#ndiscnetwork', 'all');
+      assert(await page.isVisible('#ndiscallwarn'), 'choosing every network says what that means');
+      await page.fill('#ndiscport', '80');
+      await page.click('#ndiscsave');
+      await page.waitForFunction(() => /1024 to 65535/.test(document.getElementById('ndiscerr').textContent));
+      await page.fill('#ndiscport', '6000');
+      await page.click('#ndiscsave');
+      await page.waitForFunction(() => fetch('/api/ndi/discovery').then((r) => r.json()).then((d) => d.network === 'all' && d.port === 6000));
+      const before = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: before.height });
+      const dsOut = await page.$$eval('#ndisccard *, #ndiscsetcard *, #ndiscnotecard *', (els) => els.filter((e) => { const card = e.closest('.card').getBoundingClientRect(), r = e.getBoundingClientRect();
+        return r.width && (r.right > card.right + 1 || r.left < card.left - 1); }).map((e) => e.textContent.slice(0, 40)));
+      assert.deepStrictEqual(dsOut, [], 'text sticks out of the discovery server cards at 320 px: ' + JSON.stringify(dsOut));
+      await fitsPhone('NDI discovery server, not set up');
+      await page.setViewportSize(before);
+      assert.strictEqual(await post('/api/ndi/discovery', { network: 'wired', port: 5959 }), 200);
+      await onPage(DS);
+      await sysIndex();
+      await chip(DS, 'Set up');
+      await sys(DS);
+      await switchOff(DS);
+      assert(!(await moduleIsOn('ndi-discovery')), 'the discovery server is off again, as it is on a new box');
+    }
     // Schedule: switch the module on, add an entry, turn the schedule on and off, remove the entry
     await sys('Schedule');
     await switchOn('Schedule');
