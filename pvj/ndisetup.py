@@ -49,6 +49,7 @@ SYSTEMD = "/etc/systemd/system"
 UNIT_PATH = SYSTEMD + "/" + UNIT
 WEB_DROPIN = SYSTEMD + "/pvj-web.service.d/50-pvj-ndi.conf"           # also the mark that this box opted in
 PLAYER_DROPIN = SYSTEMD + "/pvj-player.service.d/50-pvj-ndi.conf"
+TMPFILES_PATH = "/etc/tmpfiles.d/pvj-ndi.conf"                         # the pipe's folder and the pipe, root's (M3, 2026-10-11)
 ACCOUNT = GROUP = "pvj-ndi"
 RESTART = ("pvj-web.service", "pvj-player.service")                   # the units the drop-ins change
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "systemd", UNIT)
@@ -63,6 +64,12 @@ _SAYS = "# Written by pvj-ndi-runtime (pvj/ndisetup.py) when NDI was set up on t
 # In a drop-in these two settings add to what the unit itself has; they do not replace it.
 WEB_TEXT = (_SAYS + "# The panel may reach the NDI helper's socket (D62). This file is also the mark that the box opted in.\n"
             "[Service]\nSupplementaryGroups=pvj-ndi\nEnvironment=PVJ_NDI_DIR=/run/pvj-ndi\n")
+# The pipe the player reads is made ONCE by root, in a folder of root's, at boot and by `pvj-ndi-runtime install`
+# (systemd-tmpfiles --create). The helper writes it by its group (0660 root:pvj-ndi) and can neither unlink, rename
+# nor replace it (the folder is 0750 root:pvj-ndi), so the name the player opens is always that pipe. The player
+# reads it by the same group. (The review of 2026-10-11, M3: before, the helper made the pipe in its own folder and
+# could have swapped it for a link between the panel's look and the player's opening.)
+TMPFILES_TEXT = (_SAYS + "d /run/pvj-ndi-pipe 0750 root pvj-ndi -\np /run/pvj-ndi-pipe/ndi.fifo 0660 root pvj-ndi -\n")
 PLAYER_TEXT = (_SAYS + "# The player may read the picture from the NDI helper's pipe (D62); the helper itself is not in group pvj.\n"
                "[Service]\nSupplementaryGroups=pvj-ndi\n")
 
@@ -127,7 +134,7 @@ def _write(path, text):
 def check_paths(root=""):
     """Refuses, and changes nothing: each of the three files must be a plain file or not there, in a folder that is a
     plain folder or not there. Asked before a setup changes anything, so that it does not stop half-way at one."""
-    for path in (UNIT_PATH, PLAYER_DROPIN, WEB_DROPIN):
+    for path in (UNIT_PATH, TMPFILES_PATH, PLAYER_DROPIN, WEB_DROPIN):
         full, folder = root + path, os.path.dirname(root + path)
         if os.path.islink(folder) or (os.path.lexists(folder) and not os.path.isdir(folder)):
             raise SetupError("%s is not a plain folder; nothing was changed. Look at what is there and remove it by hand" % folder)
@@ -137,9 +144,10 @@ def check_paths(root=""):
 
 
 def write_units(root="", prefix=DEFAULT_PREFIX, template=None):
-    """The helper's unit and the two drop-ins. The mark (the panel's drop-in) is written last."""
+    """The helper's unit, the tmpfiles lines for root's pipe, and the two drop-ins. The mark (the panel's drop-in) is written last."""
     text = unit_text(prefix, template)             # read and checked before anything is written
     _write(root + UNIT_PATH, text)
+    _write(root + TMPFILES_PATH, TMPFILES_TEXT)
     _write(root + PLAYER_DROPIN, PLAYER_TEXT)
     _write(root + WEB_DROPIN, WEB_TEXT)
 
@@ -148,7 +156,7 @@ def remove_units(root=""):
     """The mark first, so a removal that is cut short is not taken for a box that opted in. Something that cannot be
     removed (a folder where a file should be) does not stop the rest: returns what was left, in words."""
     left = []
-    for path in (WEB_DROPIN, PLAYER_DROPIN, UNIT_PATH):
+    for path in (WEB_DROPIN, PLAYER_DROPIN, TMPFILES_PATH, UNIT_PATH):
         try:
             os.unlink(root + path)
         except FileNotFoundError:
@@ -350,6 +358,8 @@ def enable(run=_run, say=print, systemd=_systemd_runs, account=ensure_account, w
                 raise SetupError("could not enable %s" % UNIT)
             say("systemd is not running here: the NDI helper is enabled and starts at the next boot")
             return True
+        if run(["systemd-tmpfiles", "--create", TMPFILES_PATH]) != 0:      # the pipe's folder and the pipe, as at boot
+            raise SetupError("systemd-tmpfiles could not make the NDI pipe's folder; the NDI helper was not started")
         if run(["systemctl", "daemon-reload"]) != 0:
             raise SetupError("systemctl daemon-reload failed; the NDI helper was not started")
         if run(["systemctl", "enable", UNIT]) != 0:

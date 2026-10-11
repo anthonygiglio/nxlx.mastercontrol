@@ -1234,11 +1234,14 @@ class Service:
     the panel has said the module is on (configure), and it knows no settings but what the panel sends."""
 
     def __init__(self, rundir, lib_path, loader=load_library, problem=runtime_problem, log=print, clock=time.monotonic,
-                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver):
+                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver, fifo=None):
         self.rundir, self.lib_path, self._loader, self._problem, self.log, self._clock = rundir, lib_path, loader, problem, log, clock
         self._first_frame, self._receiver = first_frame, receiver
         self.on_unload = None                      # called when the module is switched off with the library loaded (main: exit)
-        self.fifo = os.path.join(rundir, paths.NDI_FIFO)
+        # On a box the pipe is root's, made once in root's folder (paths.NDI_PIPE_DIR, pvj/ndisetup.py): this helper
+        # opens and writes it and can neither unlink nor replace it. Where nobody made one (tests, a desk) it makes
+        # one in its own folder; and it never unlinks a pipe, its own or not (_remove_pipe).
+        self.fifo = fifo or os.path.join(rundir, paths.NDI_FIFO)
         self.lock = threading.RLock()              # configure, open and close, one at a time
         self._recv_lock = threading.Lock()         # self.receiver: set and read under it, never held while anything waits
         self._find_lock = threading.Lock()         # the finder: asked by status, replaced by configure
@@ -1321,15 +1324,12 @@ class Service:
         return {"present": problem is None, "loaded": False, "version": "", "problem": problem or self.lib_error}
 
     def _remove_pipe(self):
-        """Only here is the pipe taken away. A reader still waiting on it (an old player blocked in opening it,
-        a player waiting for a first byte) is woken first: a writer that opens and closes gives it the end."""
+        """The pipe is let go of, never unlinked: on a box it is root's (the review of 2026-10-11, M3), and a pipe
+        holds nothing once every writer has closed. A reader still waiting on it (an old player blocked in opening
+        it, a player waiting for a first byte) is woken: a writer that opens and closes gives it the end."""
         try:
             wake = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
             os.close(wake)
-        except OSError:
-            pass
-        try:
-            os.unlink(self.fifo)
         except OSError:
             pass
 
@@ -1371,10 +1371,21 @@ class Service:
                 return {"ok": False, "error": "that source is not on the network now"}
             self._close_receiver()
             try:
-                os.mkfifo(self.fifo, 0o640)        # the helper writes; the player reads through the helper's group
+                st = os.lstat(self.fifo)
+            except FileNotFoundError:
+                st = None
             except OSError as e:
-                self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
-                return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
+                return {"ok": False, "error": "the NDI helper could not look at its pipe (%s)" % (e.strerror or "error")}
+            if st is not None and not stat.S_ISFIFO(st.st_mode):
+                # Not a pipe, and not this helper's to remove (root's folder on a box): said, not "fixed"
+                self.log("pvj-ndi: %s is not a pipe; not touching it" % self.fifo)
+                return {"ok": False, "error": "what is in the NDI pipe's place is not a pipe; look at %s" % self.fifo}
+            if st is None:
+                try:
+                    os.mkfifo(self.fifo, 0o640)    # a desk or the tests: the helper writes; the player reads through the helper's group
+                except OSError as e:
+                    self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
+                    return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
             r = self._receiver(self.lib, match[0], self.fifo, log=self.log, sound=self.sound)
             try:
                 r.start()
@@ -1424,11 +1435,8 @@ def main(argv=None):
         allowed.add(pwd.getpwnam("pvj-web").pw_uid)
     except KeyError:
         allowed.add(os.getuid())                   # on a desk: whoever runs it
-    service = Service(rundir, os.environ.get("PVJ_NDI_LIB") or os.path.join(LIB_DIR, LIB_NAME), log=lambda m: print(m, flush=True))
-    try:
-        os.unlink(service.fifo)                    # a pipe left by a run that was killed
-    except OSError:
-        pass
+    service = Service(rundir, os.environ.get("PVJ_NDI_LIB") or os.path.join(LIB_DIR, LIB_NAME), log=lambda m: print(m, flush=True),
+                      fifo=paths.ndi_fifo())      # root's pipe in root's folder (pvj/ndisetup.py); never unlinked by this helper
     service.on_unload = lambda: threading.Timer(0.5, os._exit, [0]).start()      # Restart=always brings up a clean one
     server = NetServer(os.path.join(rundir, paths.NDI_SOCKET), service, lambda uid: uid in allowed)
     print("pvj-ndi: ready (%s)" % (service.runtime()["problem"] or "the NDI runtime is in place"), flush=True)
@@ -1463,6 +1471,12 @@ def json_depth(raw):
         elif byte in b"]}":
             depth = max(0, depth - 1)      # closing brackets that open nothing do not buy depth for later
     return deepest
+
+
+def pipe_owner():
+    """Who owns the pipe on a box: root, which makes it once (the tmpfiles lines pvj-ndi-runtime writes). The helper
+    writes it by its group and is not its owner (Input.check_pipe)."""
+    return 0
 
 
 def helper_uid():
@@ -1677,10 +1691,10 @@ class Input:
         return p
 
     def check_pipe(self):
-        """Before the player is told to read it: the path is a pipe, not a link or a file, and the helper's own.
-        The helper could swap it a moment after this look (the player opens it later, by name), so this is a
-        tripwire for a mistake or a crude swap, not a guarantee. What holds is this: the helper cannot write
-        anywhere else; with sound off the player reads whatever is there as raw video only (the demuxer is forced);
+        """Before the player is told to read it: the path is a pipe, not a link or a file, the pipe owner's (root on
+        a box), in a folder of the owner's that nobody else may change. The helper cannot swap it (it cannot unlink,
+        rename or make a name in root's folder); on a desk, where the pipe is in the helper's own folder, this is a
+        tripwire only. What holds besides: the helper cannot write anywhere else; with sound off the player reads whatever is there as raw video only (the demuxer is forced);
         with sound on, and only then, the player reads it with its Matroska reader and decodes nothing but
         uncompressed video and float PCM (player.py, MKV_ONLY). The Matroska reader itself is then in reach of a
         helper that was taken over, which bare frames never were: the cost of sound, written down in NDI.md."""
@@ -1690,6 +1704,16 @@ class Input:
             raise NdiError("the NDI helper's pipe is not there; not loading it")
         if not stat.S_ISFIFO(st.st_mode) or st.st_uid != self._pipe_owner():
             raise NdiError("the NDI helper's pipe is not what it should be; not loading it")
+        # The look and the opening are two moments. What holds between them is the folder: the pipe owner's (root on
+        # a box), and nobody else may add, rename or remove a name in it, so the name the player opens is this pipe.
+        try:
+            folder = os.lstat(os.path.dirname(self.fifo))
+        except OSError:
+            raise NdiError("the NDI helper's pipe is not there; not loading it")
+        if not stat.S_ISDIR(folder.st_mode) or folder.st_uid != self._pipe_owner():
+            raise NdiError("the NDI helper's pipe is not what it should be; not loading it")
+        if folder.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise NdiError("the NDI helper's pipe is in a folder that is not root's alone; not loading it")
 
     def client_close(self):
         """Longer than the helper may hold its lock while it waits for a first frame: a close must not be lost."""

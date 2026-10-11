@@ -10,9 +10,13 @@ On a box each service has a folder of its own that only it can write, under a pa
     /run/pvj/netd           root:pvj        0750   pvj-netd: netd.sock
     /run/pvj-sysd           root:pvj        0750   pvj-sysd: sysd.sock
     /run/pvj-supportd       root:pvj        0750   pvj-supportd: supportd.sock
-    /run/pvj-ndi            pvj-ndi:pvj-ndi 0750   pvj-ndi: ndi.sock, ndi.fifo (D62: its own group, never group pvj). Only on
-                                                   a box that was set up for NDI (pvj/ndisetup.py): there the panel and
-                                                   the player are each given the extra group pvj-ndi by a drop-in
+    /run/pvj-ndi            pvj-ndi:pvj-ndi 0750   pvj-ndi: ndi.sock (D62: its own group, never group pvj). Only on a box
+                                                   that was set up for NDI (pvj/ndisetup.py): there the panel and the
+                                                   player are each given the extra group pvj-ndi by a drop-in
+    /run/pvj-ndi-pipe       root:pvj-ndi    0750   ndi.fifo (0660 root:pvj-ndi), made ONCE by root (the tmpfiles lines
+                                                   pvj-ndi-runtime writes): the helper writes it by its group and can
+                                                   neither unlink nor replace it, so the name the player opens is
+                                                   always that pipe (the review of 2026-10-11, M3)
     /run/pvj-update         root:root       0755   the update units: result.json, update.lock
 
 A folder is a `RuntimeDirectory=` of exactly one unit, so systemd never hands it to another account. Before this
@@ -28,7 +32,8 @@ Environment:
   and a player started by hand use.
 * `PVJ_SYSD_DIR`, `PVJ_SUPPORTD_DIR` and `PVJ_UPDATE_RESULT` are as before.
 * `PVJ_NDI_DIR` is the NDI helper's folder. It is set for the panel only on a box that was set up for NDI, and the
-  panel takes its absence to mean exactly that: no helper here (server.py).
+  panel takes its absence to mean exactly that: no helper here (server.py). `PVJ_NDI_PIPE_DIR` is the pipe's folder
+  (tests and a desk only; on a box it is the fixed root-owned folder).
 
 A process creates and checks only its own folder (`own_dir`). It never creates a peer's folder: a missing one
 means that the peer is not running.
@@ -45,6 +50,7 @@ NETD_DIR = RUN + "/netd"
 SYSD_DIR = "/run/pvj-sysd"
 SUPPORTD_DIR = "/run/pvj-supportd"
 NDI_DIR = "/run/pvj-ndi"
+NDI_PIPE_DIR = "/run/pvj-ndi-pipe"
 UPDATE_DIR = "/run/pvj-update"
 UPDATE_RESULT = UPDATE_DIR + "/result.json"
 
@@ -147,8 +153,13 @@ def ndi_socket(env=None):
     return os.path.join(ndi_dir(env), NDI_SOCKET)
 
 
+def ndi_pipe_dir(env=None):
+    """The pipe's folder: root's, made once (see the table above). Not the helper's own folder."""
+    return _env(env).get("PVJ_NDI_PIPE_DIR") or NDI_PIPE_DIR
+
+
 def ndi_fifo(env=None):
-    return os.path.join(ndi_dir(env), NDI_FIFO)
+    return os.path.join(ndi_pipe_dir(env), NDI_FIFO)
 
 
 def update_result(env=None):

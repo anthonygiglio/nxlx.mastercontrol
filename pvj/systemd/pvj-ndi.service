@@ -46,7 +46,9 @@ ProtectHome=yes
 # and have no bound). With ProtectSystem=strict these and /run/pvj-ndi are the only places it can write.
 TemporaryFileSystem=/tmp:rw,nosuid,nodev,size=8M,mode=1777 /var/tmp:rw,nosuid,nodev,size=8M,mode=1777
 PrivateDevices=yes
-ReadWritePaths=/run/pvj-ndi
+# And root's pipe folder (pvj/ndisetup.py, tmpfiles): the pipe is written through it; the folder itself is root's,
+# so the helper cannot add, rename or remove a name there.
+ReadWritePaths=/run/pvj-ndi /run/pvj-ndi-pipe
 # Bounds, so that a library gone wrong (or taken over) cannot starve the player. How they were chosen, none of
 # them measured on a device: memory, three buffers of the largest frame taken (3840 x 2160, 16.6 MB each) plus the
 # library's own decoding, with room, and what it writes to /run and its /tmp counts against the same figure;
@@ -71,7 +73,10 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # The runtime may talk to private and link-local addresses and to multicast (mDNS), and to nothing else: not the
 # internet, whatever a sender or the runtime itself asks for. Addresses added in the panel are held to the same ranges.
 IPAddressDeny=any
-# Not localhost: nothing here listens on it for the helper (the panel is asked over a Unix socket, avahi over D-Bus).
+# Not 127.0.0.1: nothing here listens on it for the helper (the panel is asked over a Unix socket, avahi over D-Bus).
+# The box's OWN LAN address is inside the private ranges, so the panel, OSC and sync are reachable from the helper
+# as any unauthenticated LAN client is: that is the trust boundary written down in SECURITY.md (M3, 2026-10-11).
+# Denying the box's own address is not static here; what to try on the Pi is in tools/DEVICE-TESTING.md.
 IPAddressAllow=link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
 RestrictNamespaces=yes
 RestrictRealtime=yes

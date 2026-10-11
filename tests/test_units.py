@@ -343,7 +343,7 @@ class RuntimeFolderTest(unittest.TestCase):
     def test_every_runtime_path_in_bin_and_install_is_one_the_paths_module_knows(self):
         # Shell and unit files cannot import pvj/paths.py, so every /run/pvj... they name must be one of its paths.
         p = self.paths
-        known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR,
+        known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR, p.NDI_PIPE_DIR, p.NDI_PIPE_DIR + "/" + p.NDI_FIFO,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
                  p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
                  p.RUN + "/<name>", p.NDI_DIR}
@@ -602,7 +602,10 @@ class NdiUnitTest(unittest.TestCase):
         self.assertNotIn("PVJ_NDI_DIR", " ".join(words(self.units["pvj-web.service"], "Environment")))     # the panel's own unit does not say it
         self.assertEqual(env["PVJ_NDI_DIR"], paths.NDI_DIR)
         self.assertEqual(paths.ndi_socket(web), paths.ndi_socket(env))
-        self.assertEqual(paths.ndi_fifo(web), paths.NDI_DIR + "/" + paths.NDI_FIFO)
+        # the pipe is not in the helper's folder: root makes it once, in a folder of root's, so the helper can write it
+        # and cannot replace it with a link (the review of 2026-10-11, M3)
+        self.assertEqual((paths.NDI_PIPE_DIR, paths.ndi_fifo(web)), ("/run/pvj-ndi-pipe", "/run/pvj-ndi-pipe/" + paths.NDI_FIFO))
+        self.assertEqual(paths.ndi_fifo({"PVJ_NDI_PIPE_DIR": "/x"}), "/x/" + paths.NDI_FIFO)
 
     def test_the_group_exists_before_any_unit_that_names_it_is_written_or_started(self):
         # systemd refuses to start a unit whose extra group does not exist: the player would stay down. In the opt-in
@@ -627,7 +630,7 @@ class NdiUnitTest(unittest.TestCase):
                            ("RestrictNamespaces", "yes"), ("RestrictRealtime", "yes"), ("RestrictSUIDSGID", "yes"),
                            ("LockPersonality", "yes"), ("SystemCallArchitectures", "native")):
             self.assertEqual(n[key], [value], key)
-        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi"])
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi", "/run/pvj-ndi-pipe"])
         self.assertEqual(sorted(words(n, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
         self.assertEqual(words(n, "InaccessiblePaths"), ["-/var/lib/pvj", "-/etc/pvj", "-/run/pvj"])
         for key in ("DeviceAllow", "BindPaths", "StateDirectory", "ExecStartPre", "ExecStartPost", "EnvironmentFile"):
@@ -790,7 +793,7 @@ class NdiUnitTest(unittest.TestCase):
         self.assertEqual(words(n, "TemporaryFileSystem"), ["/tmp:rw,nosuid,nodev,size=8M,mode=1777", "/var/tmp:rw,nosuid,nodev,size=8M,mode=1777"])
         env = dict(w.split("=", 1) for w in words(n, "Environment"))
         self.assertEqual(env["HOME"], "/tmp")              # a home in the bounded private /tmp, not in /run
-        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi"])
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi", "/run/pvj-ndi-pipe"])
         self.assertEqual(n["Restart"], ["always"])         # the helper ends itself when the module goes off, and comes back clean
 
     def test_the_system_bus_stays_reachable_and_the_unit_says_why(self):

@@ -16,6 +16,13 @@ Master had moved 335 commits since the branch was last merged (the area desks of
 - **Docs.** HANDOFF, `pvj/NDI.md`, `docs/UI.md`, `docs/MANUAL.md`, `pvj/README.md`, N0 in `tools/DEVICE-TESTING.md`.
 - **CI's first run of the merge** (`0d36ef1`): `panel-ui`, `effects-gpu`, `real-install` and `shellcheck` green; the unit test job was cut at its own twenty-minute budget (`timeout -s ABRT 1200`), with no deadlock in the dump: master alone took 1027 s that morning, and the NDI modules add a few minutes of real pipes and measured waits. The budget is thirty minutes now (the job's limit of 45 stands). The slowest test in the run is master's own (`test_roles`, 94 s).
 
+**The independent review of `b46410c`** (nothing High; three Medium, two Low; "safe for the owner's test box, merge after these"), each fixed with a test seen to fail first, one commit each:
+- M1: the decoder narrowing for the stream with sound outlived a panel restart (an in-memory list). `Player._widen` sends the `MKV_ONLY` defaults at a Player's first word with mpv and whenever mpv is another process, not in the middle of a pipe load.
+- M2: the module switched off under a source on the screen skipped the clear (because the pipe played), kept the note and the speed hold, and the helper went anyway. Now: clear, let go with a reason (`ndi.SWITCHED_OFF`, shown on the page as "RESOLUME stopped: the NDI input was switched off"), the hold goes, the panel's switch says it.
+- M3: the pipe is root's, made once by tmpfiles lines the setup writes, in a folder of root's; the helper writes it and never unlinks it; the panel checks the owner and the folder. The sentence "cannot reach localhost" was true of 127.0.0.1 only: corrected in D62, NDI.md and the unit, and the helper's trust boundary is a section of SECURITY.md. Denying the box's own address: not static, so written down and a device row (N21); `SystemCallFilter` a device row (N20), not set blind.
+- L4: the flaky second-open test waits for the second open instead of a tenth of a second. L5: `pvj-ndi-runtime install` prints the sha256 of the placed library.
+- The coordinator's default: NDI sound is OFF until it has been heard on a box; the page says why. Guests see no NDI page.
+
 Nothing of this ran on hardware. What the Pi has seen is what the entries of 2026-10-08 below say: the opt-in, discovery, a moving source for a minute and a still source over SSH, nobody at the monitor; the sound never heard anywhere. The helper service `pvj-ndi.service` from that trial is still enabled on the test Pi.
 
 ## 2026-10-11, owner recovery after its review (`owner-recovery`, #122, D81 amended)

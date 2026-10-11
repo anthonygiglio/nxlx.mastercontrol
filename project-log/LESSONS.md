@@ -489,3 +489,11 @@ The NDI play held a lock of its own from "is my ticket still good" to the end of
 
 `Player.pipe_playing` said that a pipe was what the player last loaded, and the capture helper was stopped when it was not. With a second live input that has a pipe of its own, "a pipe plays" is true while the other helper's pipe plays, and the first helper is left writing into a pipe nobody reads. A flag that stands for "mine" must say whose.
 
+## A look at a name is not a hold on it (2026-10-11, D62)
+
+The panel checked that the helper's pipe was a pipe of the helper's, then told mpv to open it by name. A helper that owns the folder can put a link in the pipe's place between the two moments, and mpv follows links. No check at the moment of the look can close that; only ownership can: a name in a folder that the suspect cannot write stays what root made it. When a check guards a path that another account's process can change, ask who owns the folder, not what the file looked like.
+
+## "Cannot reach localhost" was a sentence about one address (2026-10-11, D62)
+
+The unit denies 127.0.0.1 and allows the private ranges, and the box's own LAN address is a private address: everything the box listens on (the panel, OSC, sync) was in the helper's reach as it is in any LAN client's, while the decision said the opposite. A sandbox sentence must name what it denies, not what it feels like it denies.
+

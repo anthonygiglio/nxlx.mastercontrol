@@ -58,7 +58,12 @@ class FilesTest(Base):
         self.assertTrue(ndisetup.opted_in(self.root))
         self.assertEqual(self.tree(), ["/etc/systemd/system/pvj-ndi.service",
                                        "/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf",
-                                       "/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf"])
+                                       "/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf",
+                                       "/etc/tmpfiles.d/pvj-ndi.conf"])
+        # the pipe is made once, by root, in a folder of root's: the helper writes it and cannot unlink, rename or
+        # replace it (review of 2026-10-11, M3). 0660 root:pvj-ndi: the helper writes by its group, the player reads by it.
+        lines = [l for l in self.read(ndisetup.TMPFILES_PATH).splitlines() if l and not l.startswith("#")]
+        self.assertEqual(lines, ["d /run/pvj-ndi-pipe 0750 root pvj-ndi -", "p /run/pvj-ndi-pipe/ndi.fifo 0660 root pvj-ndi -"])
         unit = self.read(ndisetup.UNIT_PATH)
         self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-ndi\n", unit)
         self.assertNotIn("@PVJ", unit)
@@ -75,12 +80,12 @@ class FilesTest(Base):
         real = ndisetup._write
         with mock.patch.object(ndisetup, "_write", lambda path, text: (order.append(path[len(self.root):]), real(path, text))):
             ndisetup.write_units(self.root, "/opt/pvj")
-        self.assertEqual(order, [ndisetup.UNIT_PATH, ndisetup.PLAYER_DROPIN, ndisetup.WEB_DROPIN])
+        self.assertEqual(order, [ndisetup.UNIT_PATH, ndisetup.TMPFILES_PATH, ndisetup.PLAYER_DROPIN, ndisetup.WEB_DROPIN])
         gone = []
         real_unlink = os.unlink
         with mock.patch.object(ndisetup.os, "unlink", lambda path: (gone.append(path[len(self.root):]), real_unlink(path))):
             ndisetup.remove_units(self.root)
-        self.assertEqual(gone, [ndisetup.WEB_DROPIN, ndisetup.PLAYER_DROPIN, ndisetup.UNIT_PATH])
+        self.assertEqual(gone, [ndisetup.WEB_DROPIN, ndisetup.PLAYER_DROPIN, ndisetup.TMPFILES_PATH, ndisetup.UNIT_PATH])
         self.assertEqual(self.tree(), [])
         self.assertEqual(os.listdir(self.p("/etc/systemd/system")), [])       # the two folders went too
         ndisetup.remove_units(self.root)                   # and again, on a box that has none of it: nothing to do, no error
@@ -374,6 +379,7 @@ class EnableTest(Base):
         self.assertIs(self.enable(run, missing=["avahi-daemon", "libavahi-client3"]), True)
         self.assertEqual(run.ran, ["apt-get install -y --no-install-recommends avahi-daemon libavahi-client3",
                                    "ACCOUNT", "FILES /opt/pvj",
+                                   "systemd-tmpfiles --create /etc/tmpfiles.d/pvj-ndi.conf",       # the pipe's folder and the pipe, as at boot
                                    "systemctl daemon-reload", "systemctl enable pvj-ndi.service", "systemctl restart pvj-ndi.service"]
                          + self.UP + ["systemctl try-restart pvj-web.service pvj-player.service"])
         self.assertTrue(ndisetup.opted_in(self.root))

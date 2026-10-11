@@ -8,6 +8,7 @@ import json
 import os
 import queue
 import shutil
+import stat
 import struct
 import tempfile
 import threading
@@ -538,7 +539,7 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(self.s.fifo, os.path.join(self.dir, paths.NDI_FIFO))
         self.assertEqual(self.s.handle({"cmd": "status"})["playing"]["id"], self.rid)
         self.assertEqual(self.s.handle({"cmd": "close"}), {"ok": True})
-        self.assertFalse(os.path.exists(self.s.fifo))
+        self.assertTrue(os.path.exists(self.s.fifo))                     # the pipe stays: on a box it is root's (M3)
         self.assertEqual(self.lib.closed, 1)
         self.assertFalse([t for t in threading.enumerate() if t.name.startswith("ndi-")])
 
@@ -547,7 +548,7 @@ class ServiceTest(unittest.TestCase):
         reply = self.s.handle({"cmd": "open", "id": self.rid})
         self.assertEqual(reply["ok"], False)
         self.assertIn("sent no picture", reply["error"])
-        self.assertEqual((self.lib.closed, self.s.receiver, os.path.exists(self.s.fifo)), (1, None, False))
+        self.assertEqual((self.lib.closed, self.s.receiver, os.path.exists(self.s.fifo)), (1, None, True))      # let go, the pipe left in place
 
     def test_a_source_that_vanished_from_the_network_cannot_be_opened(self):
         self.s.handle({"cmd": "configure", "on": True, "addresses": []})
@@ -556,6 +557,22 @@ class ServiceTest(unittest.TestCase):
         reply = self.s.handle({"cmd": "open", "id": self.rid})         # within the second the list is kept for
         self.assertEqual((reply["ok"], reply["error"]), (False, "that source is not on the network now"))
         self.assertEqual(self.lib.opened, [])
+
+    def test_a_pipe_made_beforehand_is_used_as_it_is_and_never_unlinked(self):
+        """On a box root makes the pipe once (tmpfiles); the helper opens it, writes it, and leaves it there."""
+        before = os.stat(self.s.fifo).st_ino if os.path.exists(self.s.fifo) else None
+        if before is None:
+            os.mkfifo(self.s.fifo, 0o660)
+            before = os.stat(self.s.fifo).st_ino
+        self.s.handle({"cmd": "configure", "on": True, "addresses": []})
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": self.rid})["ok"])
+        self.assertEqual(os.stat(self.s.fifo).st_ino, before, "the pipe was replaced")
+        self.s.handle({"cmd": "close"})
+        self.assertTrue(stat.S_ISFIFO(os.stat(self.s.fifo).st_mode), "the pipe was removed")
+        self.assertEqual(os.stat(self.s.fifo).st_ino, before)
+        self.s.handle({"cmd": "configure", "on": False, "addresses": []})
+        self.assertTrue(os.path.exists(self.s.fifo))
 
     def test_a_refused_first_frame_gives_the_reason(self):
         self.s.handle({"cmd": "configure", "on": True, "addresses": []})
@@ -588,7 +605,7 @@ class ServiceTest(unittest.TestCase):
         self.assertTrue(wait(lambda: self.s.receiver.state == "changed"))
         self.assertTrue(wait(lambda: self.lib.closed == 1))
         st = self.s.handle({"cmd": "status"})
-        self.assertEqual((st["playing"]["state"], self.lib.closed, os.path.exists(self.s.fifo)), ("changed", 1, False))
+        self.assertEqual((st["playing"]["state"], self.lib.closed, os.path.exists(self.s.fifo)), ("changed", 1, True))
 
 
 class InputTest(unittest.TestCase):
@@ -1779,17 +1796,18 @@ class OffMeansNoNdiCodeTest(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         with open(os.path.join(d, paths.NDI_FIFO), "w"):
-            pass                                                         # a pipe left by a run that was killed
+            pass                                                         # a file in the pipe's place (root's folder: the helper cannot remove it)
         import pwd
         web = mock.Mock(pw_uid=4242)
-        with mock.patch.dict(os.environ, {"PVJ_NDI_DIR": d}), mock.patch("pvj.netd.NetServer", Server), \
+        with mock.patch.dict(os.environ, {"PVJ_NDI_DIR": d, "PVJ_NDI_PIPE_DIR": d}), mock.patch("pvj.netd.NetServer", Server), \
                 mock.patch.object(pwd, "getpwnam", lambda name: web if name == "pvj-web" else (_ for _ in ()).throw(KeyError(name))), \
                 mock.patch("builtins.print"):
             self.assertEqual(ndi.main([]), 0)
         self.assertEqual(made["path"], os.path.join(d, paths.NDI_SOCKET))
         self.assertEqual([made["is_allowed"](uid) for uid in (4242, 0, os.getuid(), 4243, 65534)],
                          [True, False, os.getuid() == 4242, False, False])
-        self.assertFalse(os.path.exists(os.path.join(d, paths.NDI_FIFO)))
+        self.assertTrue(os.path.exists(os.path.join(d, paths.NDI_FIFO)), "the helper is not the pipe's owner and never unlinks it")
+        self.assertEqual(made["service"].fifo, os.path.join(d, paths.NDI_FIFO))
         self.assertIsNotNone(made["service"].on_unload)
 
 
@@ -1834,6 +1852,21 @@ class PipeCheckTest(NdiApiTest):
         self.swap(to_link)
         self.refused("the NDI helper's pipe is not what it should be; not loading it")
 
+    def test_a_pipe_in_a_folder_others_may_change_is_not_loaded(self):
+        """Review of 2026-10-11, M3: the look at the pipe and the player's opening of it are two moments, so what
+        holds is the folder: root's, and nobody else may add, rename or remove a name in it."""
+        self.enable()
+        folder = os.path.dirname(self.service.fifo)
+        mode = os.stat(folder).st_mode & 0o777
+        self.addCleanup(os.chmod, folder, mode)
+        self.swap(lambda: os.chmod(folder, 0o770))
+        self.refused("the NDI helper's pipe is in a folder that is not root's alone; not loading it")
+        os.chmod(folder, 0o707)
+        self.refused("the NDI helper's pipe is in a folder that is not root's alone; not loading it")
+        os.chmod(folder, mode)
+        self.api.ndi._pipe_owner = lambda: os.getuid() + 1                   # the folder is not the pipe owner's either
+        self.refused("the NDI helper's pipe is not what it should be; not loading it")
+
     def test_a_pipe_that_is_somebody_elses_or_gone_is_not_loaded(self):
         self.enable()
         self.api.ndi._pipe_owner = lambda: os.getuid() + 1
@@ -1847,7 +1880,9 @@ class PipeCheckTest(NdiApiTest):
         from unittest import mock
         import pwd
         from pvj import server
-        self.assertIn("pipe_owner=ndi_mod.helper_uid", inspect.getsource(server.build))
+        # root makes the pipe (the tmpfiles lines pvj-ndi-runtime writes), so root is its owner; the helper only writes it
+        self.assertIn("pipe_owner=ndi_mod.pipe_owner", inspect.getsource(server.build))
+        self.assertEqual(ndi.pipe_owner(), 0)
         with mock.patch.object(pwd, "getpwnam", lambda name: mock.Mock(pw_uid=777) if name == "pvj-ndi" else None):
             self.assertEqual(ndi.helper_uid(), 777)
 
@@ -1947,7 +1982,7 @@ class LifetimeTest(unittest.TestCase):
         self.assertEqual(s.handle({"cmd": "close"}), {"ok": True})
         t.join(3)
         self.assertFalse(t.is_alive(), "the reader was left waiting on a pipe nobody will write")
-        self.assertFalse(os.path.exists(s.fifo))
+        self.assertTrue(os.path.exists(s.fifo))                          # and the close left it too: the helper never unlinks the pipe (M3)
 
     def test_a_pipe_that_cannot_be_made_is_an_answer_with_the_reason(self):
         lib, logged = FakeLib(), []
