@@ -1781,6 +1781,21 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await onHttp.getAttribute('#recoveryhttpslink', 'href'), 'https://nxlx-mastercontrol.local/', 'the link to the secure address');
     assert(/in the clear/.test(await onHttp.textContent('#recoveryhttps')), 'one sentence why');
     assert.strictEqual(await onHttp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the https hint fits at 320');
+    // the same after Log out (review of #122, second read): the pairing screen reached from inside the panel asks the
+    // box afresh, so the field is withheld there too (hello stubbed on this context as above)
+    const pins = await onHttp.$$('input.pin');
+    for (let i = 0; i < 4; i++) await pins[i].fill(info.pin[i]);
+    await onHttp.click('#pairbtn');
+    await onHttp.waitForSelector('.pads');
+    await go(onHttp, 'setup/about');
+    await onHttp.waitForSelector('#forgetdevice');
+    await onHttp.click('#forgetdevice');
+    await onHttp.waitForSelector('#confirmrow');
+    await onHttp.click('#confirmyes');
+    await onHttp.waitForSelector('#pairbtn');
+    await onHttp.click('#recoverylink');
+    await onHttp.waitForSelector('#recoveryhttps');
+    assert.strictEqual(await onHttp.locator('#recoverycode').count(), 0, 'no code field after Log out either');
     await onHttp.close();
     await httpsCtx.close();
     await lost.close();

@@ -38,6 +38,7 @@ import hmac
 import secrets
 import threading
 import time
+import unicodedata
 
 ROLES = {"view": 1, "live": 2, "full": 3}
 PIN_LENGTH = 4
@@ -130,6 +131,13 @@ def normalise_recovery(text):
     if len(bare) != RECOVERY_LENGTH or any(c not in RECOVERY_ALPHABET for c in bare):
         return None
     return bare
+
+
+def clean_name(name):
+    """A device's name as it is kept: no control or format characters (Unicode Cc and Cf: a bell, a zero-width space,
+    a direction override), at most 40, never empty. Where a device is added; an older record is read as it is."""
+    text = "".join(c for c in str(name or "") if unicodedata.category(c) not in ("Cc", "Cf")).strip()
+    return text[:40] or "device"
 
 
 def _token_hash(token):
@@ -633,7 +641,7 @@ class Auth:
         """`via`: "code" for a device that joined with a join code (kept in its record; a guest that joined so is
         the only kind that expires)."""
         token = secrets.token_urlsafe(24)
-        device = {"id": secrets.token_hex(4), "name": str(name or "device")[:40], "role": role,
+        device = {"id": secrets.token_hex(4), "name": clean_name(name), "role": role,
                   "token_hash": _token_hash(token), "created": int(self._now())}
         if via:
             device["via"] = via

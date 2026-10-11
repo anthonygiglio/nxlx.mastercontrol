@@ -354,7 +354,7 @@ class StickTest(ServerBase):
         log = self.auth.recovery_status()["log"]
         self.assertEqual((log[-1]["kind"], log[-1]["name"]), ("stick-used", "found phone"))
         text = self.texts()[-1]
-        self.assertIn("The PIN was used by found phone", text)
+        self.assertIn('The PIN was used by "found phone"', text)
         self.assertNotIn(pin, text)
         devices = self.call("GET", "/api/devices", token=body["token"])[1]["devices"]
         self.assertEqual([d.get("via") for d in devices if d["name"] == "found phone"], ["stick"])
@@ -362,6 +362,48 @@ class StickTest(ServerBase):
         self.clock.t += recovery_mod.STICK_NOTICE_SECONDS + 1
         self.screen.tick()
         self.assertEqual(self.shown[-1][:2], ("show-text", ""))             # the notice has gone by itself
+
+    def test_a_name_that_reads_like_a_pin_is_quoted_on_the_screen_and_control_characters_never_get_into_a_record(self):
+        """Review of #122 (second read): the display printed the taker's name inline, so a device named
+        "Owner PIN 0000" read like a PIN on the projector. Quoted and short now; control and format characters
+        (Cc, Cf) leave a name where a device is added; an older record with such a name still loads."""
+        self.insert()
+        self.screen.tick()
+        pin = self.auth.current_pin
+        st, body, _ = self.call("POST", "/api/pair", {"pin": pin, "name": "Owner PIN 0000\u200b\x07 and a very long tail of words"})
+        self.assertEqual(st, 200, body)
+        self.assertEqual(body["device"]["name"], "Owner PIN 0000 and a very long tail of w")      # Cc and Cf gone, 40 kept
+        text = self.texts()[-1]
+        self.assertIn('The PIN was used by "Owner PIN 0000 and a ver"', text)                   # quoted, 24 characters
+        self.assertNotIn("used by Owner PIN", text)
+        log = self.auth.recovery_status()["log"]
+        self.assertEqual(log[-1]["name"], "Owner PIN 0000 and a very long tail of w")
+        with self.settings.lock:                                                                  # a record from before this rule
+            self.settings.data["devices"].append({"id": "deadbeef", "name": "old\x00name\u202e", "role": "view", "token_hash": "0" * 64,
+                                                  "created": int(self.auth._now())})
+        self.assertIn("deadbeef", [d["id"] for d in self.auth.list_devices()])
+        self.assertEqual(self.call("GET", "/api/devices", token=body["token"])[0], 200)
+
+    def test_a_pulled_stick_ends_the_pin_within_about_a_second_with_no_tick_at_all(self):
+        """Review of #122 (second read): the PIN could outlive a pulled stick by scan plus tick, about 6 s. While the
+        PIN shows, the scan thread runs every second and ends it itself, display included."""
+        self.rec.start(interval=0.05)
+        self.addCleanup(self.rec.stop)
+        self.insert()
+        deadline = time.time() + 5
+        while time.time() < deadline and self.rec.active() is None:
+            self.screen.tick()
+            time.sleep(0.05)
+        self.assertIsNotNone(self.rec.active())
+        pin = self.auth.current_pin
+        self.remove()
+        deadline = time.time() + 1.5                              # no tick from here on: the thread alone
+        while time.time() < deadline and (self.rec.active() is not None or self.shown[-1][:2] != ("show-text", "")):
+            time.sleep(0.05)
+        self.assertIsNone(self.rec.active())
+        self.assertNotEqual(self.auth.current_pin, pin)
+        self.assertEqual(self.shown[-1][:2], ("show-text", ""), self.shown[-1][:2])       # and the display was cleared by it
+        self.assertEqual(self.rec.status()["last"]["how"], "removed")
 
     def test_a_restart_within_the_hour_with_the_stick_in_shows_nothing_more(self):
         """Review of #122, Low 5: the count per hour lived in memory, so pvj-web restarting with a stick left in

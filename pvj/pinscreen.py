@@ -239,7 +239,8 @@ class PinScreen:
         STICK_NOTICE_SECONDS, so the owner at the box sees who took it (D81; review of #122, M1)."""
         from . import recovery as recovery_mod
         with self._lock:
-            self._notice = (self._clock() + recovery_mod.STICK_NOTICE_SECONDS, "The PIN was used by %s" % clean(str(name or "a device"))[:40])
+            # quoted and short, so a device named like a PIN cannot make this line read like one (review of #122)
+            self._notice = (self._clock() + recovery_mod.STICK_NOTICE_SECONDS, 'The PIN was used by "%s"' % clean(str(name or "a device"))[:24])
             return self.tick()
 
     def recovery_lines(self, active):

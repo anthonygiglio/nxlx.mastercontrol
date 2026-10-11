@@ -83,10 +83,20 @@ class Recovery:
         def loop():
             while not self._stop.is_set():
                 try:
-                    self._label = stick_present(self.api.usb_root)
+                    label = stick_present(self.api.usb_root)
                 except Exception as e:                      # a drive that vanished mid-scan
                     self.log("pvj-web: recovery stick check: %s" % e)
-                self._stop.wait(interval)
+                    label = self._label
+                changed, self._label = label != self._label, label
+                if changed and self._active is not None:
+                    # a pulled stick ends the PIN now, display included, not at the screen's next tick: with the scan
+                    # every second while the PIN shows, the digits outlive the stick by about a second (review of #122)
+                    try:
+                        if self.poll() and self.api.pinscreen is not None:
+                            self.api.pinscreen.tick()
+                    except Exception as e:
+                        self.log("pvj-web: recovery stick check: %s" % e)
+                self._stop.wait(min(interval, 1.0) if self._active is not None else interval)
         self._thread = threading.Thread(target=loop, name="pvj-recovery-stick", daemon=True)
         self._thread.start()
 

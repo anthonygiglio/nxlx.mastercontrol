@@ -119,6 +119,13 @@
   }
 
   // ---- connect --------------------------------------------------------
+  // Every path to the pairing screen (boot, a 401, Log out, a factory reset) comes through render() and here: the
+  // screen asks the box afresh each time it is drawn whether owner codes are https-only, and "I have a recovery
+  // code" withholds its field until the answer is in (review of #122, M2).
+  function askHello(then) {
+    S.hello = null;
+    api('GET', '/api/hello').then(function (r) { S.hello = r.ok ? r.data : {}; S.remote = !!(r.ok && r.data.remote); then(S.hello); });
+  }
   function connect() {
     if (S.remote) return supportConnect();
     var pins = [0, 1, 2, 3].map(function (i) {
@@ -206,15 +213,25 @@
     });
     // While "Owner access only over the secure connection" is on, a code typed here over http:// would cross the
     // network in the clear before the box refused it: the page learns that from hello and offers the link instead.
-    var hello = S.hello || {};
-    var httpsOnly = !!(hello.owner_https_only && hello.https && location.protocol === 'http:');
-    var entry = h('div', { id: 'recoveryentry', hidden: true }, h('div', { class: 'k', text: 'Owner: recovery code' }),
-      httpsOnly ? h('div', { class: 'hint', id: 'recoveryhttps' },
-        'This box takes owner codes over https:// only, so the code is not typed here: over http:// it would cross the network in the clear. ',
-        h('a', { id: 'recoveryhttpslink', href: hello.https, text: 'Open ' + hello.https }),
-        ' and type it there; accept the browser\'s warning if this phone has not got the box\'s root certificate.') : [code, go]);
+    var waiting = h('div', { class: 'hint', id: 'recoverywait', text: 'One moment: asking the box how it takes owner codes.' });
+    var entry = h('div', { id: 'recoveryentry', hidden: true }, h('div', { class: 'k', text: 'Owner: recovery code' }), waiting);
+    var httpsOnly = false;
+    askHello(function (hello) {
+      if (!entry.isConnected && !entry.parentNode) return;
+      httpsOnly = !!(hello.owner_https_only && hello.https && location.protocol === 'http:');
+      entry.removeChild(waiting);
+      if (httpsOnly) {
+        entry.appendChild(h('div', { class: 'hint', id: 'recoveryhttps' },
+          'This box takes owner codes over https:// only, so the code is not typed here: over http:// it would cross the network in the clear. ',
+          h('a', { id: 'recoveryhttpslink', href: hello.https, text: 'Open ' + hello.https }),
+          ' and type it there; accept the browser\'s warning if this phone has not got the box\'s root certificate.'));
+      } else {
+        entry.appendChild(code); entry.appendChild(go);
+        if (!entry.hidden) code.focus();
+      }
+    });
     var open = h('button', { class: 'btn plain small', id: 'recoverylink', text: 'I have a recovery code', 'aria-expanded': 'false', onclick: function () {
-      entry.hidden = !entry.hidden; open.setAttribute('aria-expanded', entry.hidden ? 'false' : 'true'); if (!entry.hidden && !httpsOnly) code.focus();
+      entry.hidden = !entry.hidden; open.setAttribute('aria-expanded', entry.hidden ? 'false' : 'true'); if (!entry.hidden && code.parentNode) code.focus();
     } });
     var help = h('details', { class: 'fold', id: 'lockedout' }, h('summary', { class: 'k', text: 'Locked out?' }),
       h('div', { class: 'hint', text: 'If every owner phone is lost: a recovery code from the sheet the owner printed (above). ' +
