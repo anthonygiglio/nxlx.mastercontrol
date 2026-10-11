@@ -32,6 +32,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Fetch the release before owner recovery (the rollback test of D81 runs its Auth on a file written here)
+        run: git fetch --depth=1 origin b62f203a5c45fc0c20386a8ab476ad3d7b511736
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv

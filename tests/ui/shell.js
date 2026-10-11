@@ -883,7 +883,7 @@ const MOVED = {
 // What stands for each of them: the list fails if a control that replaced a removed copy is not there.
 const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn'], presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade'], guest: ['button: Crossfade'] };
 // Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D78 the OSC locks, D79 the Secure
-// connection page): each must be found, and on the screen named here. What shows only while something plays, in
+// connection page, D81 the Recovery card): each must be found, and on the screen named here. What shows only while something plays, in
 // the pad editor's sheet (Clip or Shader, D73) or after the box gave up a transition (the reason and Try again, D71)
 // is held by the steps of panel.test.js, not by the list, which is taken with nothing playing.
 const TRANSITIONS = {};
@@ -891,7 +891,8 @@ const TRANSITIONS = {};
 const ADDED = {
   owner: Object.assign({ '#showpin': 'People and codes', '#copypin': 'People and codes', '#pinvalue': 'People and codes', '#logoutbtn': 'People and codes',
     '#nav-https': 'setup/index', '#httpsrequest': 'Secure connection', '#httpsprobe': 'Secure connection', '#httpsowneronly': 'Secure connection',
-    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
+    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC',      // (the key's Show and New are there only while the key lock is on)
+    '#makerecovery': 'People and codes', '#recovery-usb': 'People and codes' }, TRANSITIONS),      // D81 the Recovery card (Cancel is there only once a set exists)
   presenter: Object.assign({}, TRANSITIONS),
   guest: Object.assign({}, TRANSITIONS),
 };

@@ -1683,6 +1683,20 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.setViewportSize({ width: 390, height: 844 });
     assert(!(await page.textContent('#recoverycard')).includes(codes[0]), 'the codes are gone from the card');
     assert(!JSON.stringify(await get('/api/recovery')).includes(codes[0].replace(/-/g, '')), 'and the box never gives them again');
+    // a new set in the place of the old (a question first); the codes leave the screen by themselves when the page
+    // is hidden for more than a moment (review of #122, L4). The new set is the one the found phone uses below.
+    await page.click('#makerecovery');
+    await page.waitForSelector('#recoverycard #confirmrow');
+    await page.click('#confirmyes');
+    await page.waitForSelector('#recoverycodes');
+    assert(/not while this screen is shared or projected/.test(await page.textContent('#recoverycard')), 'the words about a shared screen');
+    const codes2 = await page.$$eval('#recoverycodes li', (ls) => ls.map((l) => l.textContent));
+    assert.strictEqual(codes2.length, 8, 'a new set of eight');
+    assert(!codes2.includes(codes[0]), 'a new set, not the old one');
+    await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForFunction(() => !document.getElementById('recoverycodes'), null, { timeout: 8000 });
+    await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    assert(/8 of 8 codes left/.test(await page.textContent('#recoverycard')), 'the card is back to its count after the page was hidden');
     const lostCtx = await browser.newContext({ viewport: { width: 320, height: 844 } });
     const lost = await lostCtx.newPage();
     await lost.goto(base);
@@ -1695,7 +1709,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await lost.fill('#recoverycode', 'ABCD-EFGH-JKL0');
     await lost.click('#recoverybtn');
     await lost.waitForFunction(() => /never have 0, O, 1, I or L/.test(document.getElementById('msg').textContent));
-    await lost.fill('#recoverycode', codes[2].toLowerCase());
+    await lost.fill('#recoverycode', codes2[2].toLowerCase());
     assert.strictEqual(await lost.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the pairing screen fits at 320 with the code and the help open');
     await lost.click('#recoverybtn');
     await lost.waitForSelector('.pads');
@@ -1706,7 +1720,7 @@ function startServer(env) {          // env: more for the harness's environment 
     const again = await againCtx.newPage();
     await again.goto(base);
     await again.click('#recoverylink');
-    await again.fill('#recoverycode', codes[2]);
+    await again.fill('#recoverycode', codes2[2]);
     await again.click('#recoverybtn');
     await again.waitForFunction(() => /wrong or was used/.test(document.getElementById('msg').textContent));
     await again.close();
@@ -1732,6 +1746,20 @@ function startServer(env) {          // env: more for the harness's environment 
     await sys('People and codes');
     await page.waitForFunction(() => /A recovery code was used by "My phone"/.test((document.getElementById('recoverycard') || {}).textContent || ''));
     assert(/7 of 8 codes left/.test(await page.textContent('#recoverycard')), 'the owner sees seven left');
+    assert(/My phone.*came in with a recovery code/.test(await page.textContent('#devicelist')), 'the device list says which owner came by a code');
+    assert.strictEqual(await page.locator('#recoveryfew').count(), 0, 'no nudge at seven left');
+    // five more spent, each from its own cookie jar: two left, and the card says to make a new set (review of #122)
+    for (let i = 3; i < 8; i++) {
+      const jar = await browser.newContext();
+      const r = await jar.request.post(base + '/api/pair', { data: { pin: codes2[i], name: 'spent ' + i }, headers: { 'X-PVJ-Request': '1' } });
+      assert.strictEqual(r.status(), 200, 'code ' + i + ' pairs');
+      await jar.close();
+    }
+    await sysIndex();
+    await sys('People and codes');
+    await page.waitForSelector('#recoveryfew');
+    assert(/Only 2 codes left/.test(await page.textContent('#recoveryfew')), 'the nudge: ' + await page.textContent('#recoveryfew'));
+    await fitsOn(page, 'the Recovery card with the nudge');
     // the stick switch: off applies on the box and says what remains; on again. Cancel: a question in place, then no set
     await page.click('#recovery-usb');
     await page.waitForFunction(() => /shows nothing now/.test(document.getElementById('msg').textContent));

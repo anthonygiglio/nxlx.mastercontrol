@@ -4732,6 +4732,7 @@
         'A USB stick: a stick with an empty file named pvj-recover at its top makes the box draw a fresh owner PIN on its own screen for 2 minutes.' }));
       var c = d.codes;
       body.appendChild(h('div', { class: 'field', id: 'recoverystate', text: c ? c.left + ' of ' + c.count + ' codes left · made ' + when(c.made) + ' by ' + (c.by || 'an owner') : 'No recovery codes yet.' }));
+      if (c && c.left <= 2) body.appendChild(h('div', { class: 'hint warn', id: 'recoveryfew', text: (c.left ? 'Only ' + plural(c.left, 'code') + ' left.' : 'No codes left.') + ' Make a new set soon and keep the new sheet; the old sheet is then waste paper.' }));
       body.appendChild(h('div', { class: 'row wrap' },
         h('button', { class: 'btn grow', id: 'makerecovery', text: c ? 'Make a new set' : 'Make recovery codes', onclick: function (e) {
           var go = function () { act('POST', '/api/recovery/codes', {}, function (r) { showCodes(r.codes); }); };
@@ -4760,7 +4761,15 @@
     // clipboard (or selects them to copy by hand on plain http), and the hint says to keep the paper, not the phone.
     function showCodes(codes) {
       body.textContent = '';
-      body.appendChild(h('div', { class: 'hint warn', text: 'These codes are on this screen now and never again. Print them or write them down, then keep the paper where you keep the box\'s keys. Each works once and pairs a phone as ' + roleName('full') + '.' }));
+      // They stay only while this screen is looked at: hidden for more than a moment (another app, the phone locked)
+      // or ten minutes on, they go and the card is back to its count (review of #122, L4).
+      var hiddenTimer = null, tenMinutes = null;
+      function away() { clearTimeout(hiddenTimer); clearTimeout(tenMinutes); document.removeEventListener('visibilitychange', onVis); }
+      function gone() { away(); if (card.isConnected) load(); }
+      function onVis() { if (document.visibilityState === 'hidden') hiddenTimer = setTimeout(gone, 1500); else clearTimeout(hiddenTimer); }
+      document.addEventListener('visibilitychange', onVis);
+      tenMinutes = setTimeout(gone, 600000);
+      body.appendChild(h('div', { class: 'hint warn', text: 'These codes are on this screen now and never again, not while this screen is shared or projected. Print them or write them down, then keep the paper where you keep the box\'s keys. Each works once and pairs a phone as ' + roleName('full') + '. They leave this screen by themselves when you switch away or after ten minutes.' }));
       var list = h('ol', { class: 'codes', id: 'recoverycodes' }, codes.map(function (c) { return h('li', { class: 'mono', text: c }); }));
       body.appendChild(list);
       var area = h('textarea', { class: 'text-input mono', id: 'recoverytext', readonly: true, rows: 8, 'aria-label': 'The recovery codes, to copy', hidden: true });
@@ -4769,7 +4778,7 @@
       body.appendChild(h('div', { class: 'row wrap' },
         h('button', { class: 'btn grow', id: 'printrecovery', text: 'Print', onclick: function () { printCodes(codes); } }),
         h('button', { class: 'btn grow', id: 'copyrecovery', text: 'Copy', onclick: function () { copyCodes(area, codes); } }),
-        h('button', { class: 'btn grow', id: 'recoverydone', text: 'Done, I kept them', onclick: function () { load(); } })));
+        h('button', { class: 'btn grow', id: 'recoverydone', text: 'Done, I kept them', onclick: gone })));
     }
     function copyCodes(area, codes) {
       area.hidden = false;
