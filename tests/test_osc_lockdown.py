@@ -81,7 +81,8 @@ class NothingChangesTest(LayerBase):
         self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)
         self.assertEqual(self.send(msg("/stopall", 1.0), "10.1.2.3"), 1)
         self.assertEqual(self.send(msg("/pvj/speed", 2.0), "8.8.8.8"), 0)
-        self.assertEqual(set(self.settings.data["osc"]), {"enabled", "port", "allow"})   # nothing is written by itself
+        # nothing is written by itself but the mark of D83 (whether OSC was ever on here), which is no lock and changes nothing by itself
+        self.assertEqual(set(self.settings.data["osc"]), {"enabled", "port", "allow", "ever_on"})
 
     def test_a_prefix_is_dropped_while_the_key_layer_is_off(self):
         self.assertEqual(self.send(msg("/k/whatever/pvj/speed", 3.0)), 1)
