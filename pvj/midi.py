@@ -1798,79 +1798,11 @@ class MidiHub:
         return out
 
     def _snapshot(self, now, fresh=False):
-        """The box as the lights need it, from memory, plus ONE status call to the player at most every
-        LIGHT_PLAYER_EVERY seconds for all lights together. Runs on the lights thread only, never under the hub's lock,
-        and never takes the shader engine's lock. A part that cannot be read keeps its quiet default."""
-        api = self.api
-        snap = {"pads": [], "pad_shaders": [], "pad_presets": [], "shader_on": False, "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
-                "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
-                "scenes": [], "applying": None, "effect": None, "effect_ready": False}
-        try:
-            snap["pads"] = [[str(p.get("file") or "") for p in b["pads"]] for b in api.settings.data["pads"]["banks"]]
-            snap["pad_shaders"] = [[("" if p.get("file") else str(p.get("shader") or "")) for p in b["pads"]]
-                                   for b in api.settings.data["pads"]["banks"]]
-            snap["pad_presets"] = [[("" if p.get("file") else str(p.get("preset") or "")) for p in b["pads"]]
-                                   for b in api.settings.data["pads"]["banks"]]
-        except Exception:
-            pass
-        if fresh or self._player_seen is None or now - self._player_seen[0] >= LIGHT_PLAYER_EVERY:
-            seen = {"running": False, "paused": False, "playing": None, "playlist": False}
-            try:
-                st = api.player.status()
-                path = st.get("path")
-                seen = {"running": bool(st.get("running")) and isinstance(path, str) and bool(path), "paused": bool(st.get("paused")),
-                        "playing": os.path.basename(path) if isinstance(path, str) else None,
-                        "playlist": isinstance(st.get("playlist_count"), int) and st["playlist_count"] > 1}
-            except Exception:
-                pass
-            self._player_seen = (now, seen)
-        snap.update(self._player_seen[1])
-        try:
-            snap["blackout"] = bool(api.mix.get("blackout"))
-            snap["fade"] = getattr(getattr(api, "fader", None), "label", None)
-        except Exception:
-            pass
-        try:
-            if api.registry.enabled("shaders"):
-                from . import shaderlive
-                snap["vibes_ready"], snap["vibes"] = True, bool(api.vibes.running)
-                cfg = api.shaders.config()
-                rows = cfg.get("sets") or [{"id": shaderlive.FIRST_SET, "name": "Ambient"}, {"id": shaderlive.SHOW_SET, "name": "Show"}]
-                snap["sets"] = {e["name"]: e["id"] for e in rows}
-                snap["set"] = api.vibes.set_id or cfg.get("active") or rows[0]["id"]
-                on = api.shaders.playing
-                # What the engine showed last is remembered after a clip has taken the screen: a shader is "on"
-                # only while the screen is still its own. The player's count of what took the screen is compared, a
-                # plain number, so the player is not asked and no lock is taken. (Before, the preset lights and
-                # the shader pads went on showing a shader under a clip.)
-                epoch = getattr(api.player, "source_epoch", None)
-                if on and (epoch is None or epoch == on.get("epoch")):
-                    snap["shader_on"] = True
-                    snap["shader"], snap["preset"] = on["id"], on.get("preset")
-                    snap["presets"] = [p["name"] for p in cfg.get("presets", {}).get(on["id"], [])]
-                fx = getattr(api, "effects", None)          # from what the engine remembers: the player is not asked
-                if fx is not None:
-                    seen = fx._seen()
-                    # "ready" was "no generator has the screen" until an effect could go on over one (D74)
-                    snap["effect"], snap["effect_ready"] = (seen["id"] if seen else None), True
-        except Exception:
-            pass
-        try:
-            snap["mapping"] = self._mapping_mode()
-            snap["mapping_ready"] = bool(api.registry.enabled("mapper") and api.mapper.remote_allowed())
-        except Exception:
-            pass
-        try:
-            room = api.room
-            if room.enabled():
-                snap["scenes"] = [s["id"] for s in room.config()["scenes"]]
-                with room.lock:                     # held for moments only (room.py: never while talking to a projector)
-                    job = room._scene_job
-                    if job is not None and "scene" in job and room._report(job)["running"]:
-                        snap["applying"] = job["scene"]
-        except Exception:
-            pass
-        return snap
+        """The box as the lights need it (pvj/boxstate.py, shared with the state sent back over OSC): from memory, plus
+        ONE status call to the player at most every LIGHT_PLAYER_EVERY seconds for all lights together. Runs on the
+        lights thread only, never under the hub's lock, and never takes the shader engine's lock."""
+        from . import boxstate
+        return boxstate.snapshot(self.api, now, fresh, self, LIGHT_PLAYER_EVERY)
 
     def _light_table(self, source, profile, level, snap, bank, phase, c):
         """({the two leading bytes of a light's message: its value}, {control id: its state}) for one controller."""

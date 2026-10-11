@@ -1,6 +1,6 @@
 # OSC control
 
-Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **Setup > OSC** with the switch at the top of the page (full-access devices only); there is no other switch, and the port and networks have their own Save button. Default port **9876**, the same as the old receiver, so existing controller layouts keep their target.
+OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **Setup > OSC** with the switch at the top of the page (full-access devices only); there is no other switch, and the port and networks have their own Save button. Default port **9876**, the same as the old receiver, so existing controller layouts keep their target. The box receives; it sends its state back only where the Owner switched that on and named the device ("State sent back", below).
 
 ## Safety
 
@@ -8,7 +8,7 @@ Receive-only OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Com
 - **Only private networks may send**: loopback, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local `169.254.0.0/16` (a direct Ethernet cable between laptop and box) and their IPv6 equivalents. Add your show network under "Also accept from these networks". Ranges wider than a /8 are refused. UDP source addresses can be forged, so this keeps the internet out; it does not stop a hostile device on your own network, so keep the show network private. This is the outer wall, and it always applies.
 - **Three more locks, each off until you switch it on** ("Who may send", below): a list of single devices, a rule that the sender is a paired device, and a key in the address. They narrow who may send inside the outer wall. None of them is encryption.
 - **Nothing dangerous is reachable.** `/shutdown`, `/reboot`, `/rebootall`, `/shutdownall`, factory reset, password changes and updates do not exist over OSC. They need a paired full-access device in the panel.
-- **No replies are ever sent**, so the receiver cannot be used to bounce traffic at someone else.
+- **Nothing is ever sent unless the Owner switched "Send state back" on and named the device it goes to** (D82, "State sent back" below). It is off on every box until then, and a box that updates sends nothing. Even with it on, the box never answers a stranger: no packet decides where anything is sent, a refused or malformed packet is answered with nothing, and there are no error replies. So the receiver cannot be used to bounce traffic at someone else.
 - Each sender is limited to 200 messages a second (burst 400); packets are parsed strictly and bounded in size, arguments, and bundle depth. Log lines about bad or refused packets appear at most once every 10 seconds.
 - Every value goes through the same validation as the web panel. A wrong value is dropped and logged, never applied.
 
@@ -37,7 +37,7 @@ On **Setup > OSC**, under "Who may send", for a full-access device. **What chang
 
 **What you can see.** "Senders in the last ten minutes" (the address, how many messages, the last OSC address, let in or refused and why) and "Last messages" (the last 50). Both are kept in memory only, are bounded (64 senders, 50 messages), and only a full-access device gets them; an operator or a guest gets neither the lists nor the key. Of a refused packet only the sender's address, a count and the reason are kept: never its OSC address or its arguments, and never the key it tried. A flood of refused packets from many forged addresses can push the older lines out of "Last messages"; the tablet that works stays in the senders list.
 
-**The existing limits stay**: the outer wall, 200 messages a second per sender, the packet size and parsing limits, no replies. Switching a lock, allowing a device or making a new key does not close the port, so nothing sent in that moment is lost; changing the port does reopen it.
+**The existing limits stay**: the outer wall, 200 messages a second per sender, the packet size and parsing limits, no answer to a refused packet. Switching a lock, allowing a device or making a new key does not close the port, so nothing sent in that moment is lost; changing the port does reopen it.
 
 **An older release and these settings.** No settings schema change: the locks are extra settings under `osc` (`only_on`, `only`, `paired_on`, `paired_roles`, `paired_hours`, `key_on`), and the key is kept apart, in a section of its own (`osc_secret`) that no release exports or imports. Tried with the code of master before this change: it loads a settings file that has all of this, keeps it when its own OSC page saves and when a new PIN is made, and its export does not hold the key. But it does not enforce the locks: after going back to an older release every lock is silently off, although the file still says on, and its import drops the lock settings. Switch OSC off before going back if the locks matter. A key that a test build of this change kept under `osc` is moved to its own section the first time the receiver is set up.
 
@@ -45,10 +45,85 @@ On **Setup > OSC**, under "Who may send", for a full-access device. **What chang
 
 Not tried with a real TouchOSC or on a box yet; the receiver was tested with packets built by the tests.
 
-1. In TouchOSC's connections, OSC: host is the box's address (Setup > Network or the box's display shows it), send port **9876** (or the port on Setup > OSC), UDP. A receive port is not needed: the box never replies.
+1. In TouchOSC's connections, OSC: host is the box's address (Setup > Network or the box's display shows it), send port **9876** (or the port on Setup > OSC), UDP. A receive port is needed only for "State sent back" (below); without that the box sends nothing.
 2. On the box: Setup > OSC, switch it on.
 3. Press a control in the layout. The tablet appears under "Senders in the last ten minutes". For the list lock, press **Allow this one**; for the paired-device lock, open the panel on the same tablet once.
 4. For the key: press **Show the key**, and put `/k/<key>` at the front of every address the layout sends, so `/pvj/stop` becomes `/k/<key>/pvj/stop`. In TouchOSC an OSC message's address is built from parts: add a constant part with `/k/<key>` before the others in each control's message, or add it in one place with a script. After **Make a new key**, change it in the layout.
+
+## State sent back
+
+Off until the Owner switches it on (D82, 2026-10-11). With it on, the box tells the devices the Owner named what is really playing, so a layout's lights are right whoever acted: the panel, a MIDI controller, a second tablet. A fader you are moving is sent its own value back within a fifth of a second; if it jumps under the finger, a small script in the layout ignores received values while the control is touched (the box does not hold anything back). Not tried with a real TouchOSC, a real tablet or on a box yet; the sender was tested with packets read back by the tests.
+
+**Why it is off by default.** UDP has no connection, and a device on the network can send a packet that claims to come from another address. A box that answers "whoever sent the last message" can be made to send packets at someone else. So this box never does that:
+
+- **It sends only to the devices in the list on Setup > OSC, "Send state back"**: at most 4, each a name, an IPv4 address and a port, added by the Owner at the studio. Not an Operator, not a controller, never through remote support, and never by a packet. "Use the device that is sending now" only fills the address into the form from the last sender that passed every lock; the Owner still gives the port and a name and presses Add.
+- **A target must be another device on the box's own network**: a private or link-local IPv4 address on a subnet the box is directly connected to, not the box itself, not a broadcast or multicast address, not loopback, and a port from 1024 up. "The box's own network" means a subnet of one of its real ports: wired (`eth0`, `end0`, `enx...`) or Wi-Fi (`wlan0`, which is also its hotspot). The support tunnel, any other VPN port (`wg*`, `tun*`, `tap*`, `tailscale*`, `zt*`), and the ports a container or a bridge makes (`docker*`, `veth*`, `br-*`, `virbr*`) are never counted, and neither is loopback. This is checked when a device is added and again whenever something is sent, so a box that moved to another network sends nothing to the old address: its row then says "Not on this network now, nothing is sent to it", it stays in the list until you press Remove, and it does not stand in the way of adding a new one. Packets are sent with a time to live of 1: they cannot cross a router.
+- **The locks of "Who may send" hold for a target too.** With "Only these devices may send" on, a target must be in that list; with "A sender must be a paired device" on, a paired device must have opened the panel from that address (removing the device stops its state at once). With neither on, the list of targets alone decides.
+- **A hard cap, whatever comes in.** To one device at most 20 packets and 12,000 bytes in any second; to all of them together at most 60 packets and 36,000 bytes in any second; one packet is at most 1200 bytes. What does not fit waits for the next look and leaves as the newest value only; nothing queues up. A flood of requests is answered at most once in 2 seconds per device.
+- **Nothing secret is in it**: no PIN, no code, no key, no device name or address, no network detail, no folder. A clip's file name and a shader's name are in it, and since OSC is not encrypted anyone on the network can read them.
+- **The key (lock 3) is never in a packet the box sends**, on or off. See "Setting up TouchOSC to listen".
+- **State is not a command.** Every address the box sends starts with `/pvj/state/`, which does nothing when it is sent to a box. So a target that is another box, or two boxes that name each other, drive nothing.
+- **It only sends while OSC itself is on**, from a thread of its own with a socket that never waits: a tablet that left the network holds up nothing.
+
+**When.** The box looks at its state 5 times a second and sends what changed since the last look, each address once with its newest value. `/pvj/state/alive` goes out every 2 seconds, changed or not. Everything goes out again every 30 seconds, and at once when a listed device asks: send `/pvj/state` (any argument or none; with the key lock on, `/k/<key>/pvj/state`) from the device itself. The request must pass every lock, and its sender's address must be in the list; from any other address it does nothing and is answered with nothing.
+
+**Types.** Every number is a float32 (`f`) and every name a string (`s`), one argument per message: what a TouchOSC control binds directly. Several messages travel together as one OSC bundle (a full state is 92 messages in 3 packets; as single messages it would be 92 packets and break the cap). **Whether TouchOSC takes bundles is to be confirmed on the tablet**; it has not been tried. On and off are `1.0` and `0.0`. Each address has the tail and the range of its control address, so `/pvj/opacity` (0 to 100) is `/pvj/state/opacity` (0 to 100).
+
+| Address | Argument | What it says |
+| --- | --- | --- |
+| `/pvj/state/alive` | f, always 1 | The heartbeat, every 2 seconds. No heartbeat for 6 seconds or more: the box is not answering (or this device is no longer a target) |
+| `/pvj/state/playing` | f 0/1 | Something plays |
+| `/pvj/state/pause` | f 0/1 | Paused. Freeze on the panel is pause, as for `/pvj/pause` |
+| `/pvj/state/clip/name` | s | The playing clip's file name, without its folder; empty for a shader, a stream, a live input and when nothing plays |
+| `/pvj/state/clip/number` | f | Its place in the playlist that plays, from 1; 0 when nothing plays |
+| `/pvj/state/clip/count` | f | How many clips that playlist has |
+| `/pvj/state/time` | f | Seconds into the clip, whole seconds |
+| `/pvj/state/length` | f | The clip's length in seconds; 0 when it has none |
+| `/pvj/state/progress` | f 0 to 1 | Time over length, in steps of 0.01: for a fader or a bar |
+| `/pvj/state/fade` | s | `idle`, `out` (the picture is going down), `black` (it is down, from a fade out), `in` (it is coming up) |
+| `/pvj/state/fade/on` | f 0/1 | 1 while the fade is anything but `idle`: the light of the one fade button (`/pvj/fade`) |
+| `/pvj/state/blackout` | f 0/1 | Blackout is on |
+| `/pvj/state/transition` | s | The transition's name, as `/pvj/transition` takes it |
+| `/pvj/state/transition/duration` | f 0.1 to 10 | Its seconds |
+| `/pvj/state/opacity` | f 0 to 100 | Percent |
+| `/pvj/state/size` | f 1 to 200 | Percent |
+| `/pvj/state/position/x`, `/pvj/state/position/y` | f -100 to 100 | The shift |
+| `/pvj/state/rotate` | f 0, 90, 180, 270 | Degrees |
+| `/pvj/state/flip/h`, `/pvj/state/flip/v` | f 0/1 | Mirrored |
+| `/pvj/state/speed` | f 0.1 to 4 | Playback speed |
+| `/pvj/state/volume` | f 0 to 130 | Percent |
+| `/pvj/state/loop`, `/pvj/state/mute` | f 0/1 | Loop and mute of what plays |
+| `/pvj/state/overlay` | f 0/1 | The overlay picture is on |
+| `/pvj/state/shader` | s | The shader on the screen, as `/pvj/shader` takes it (`silk`); empty when none |
+| `/pvj/state/shader/speed` | f 0 to 4 | As `/pvj/shader/speed` |
+| `/pvj/state/shader/hue` | f -180 to 180 | Degrees |
+| `/pvj/state/shader/brightness` | f 0 to 2 | 1 leaves it alone |
+| `/pvj/state/shader/control/<n>` | f 0 to 1 | The n-th input (1 to 8) of the shader on screen, spread as `/pvj/shader/control/<n>` takes it; 0 for one that is not there |
+| `/pvj/state/shader/preset/<n>` | f 0/1 | The n-th preset (1 to 8) is the one on now |
+| `/pvj/state/effect` | s | The effect that is on; empty when none |
+| `/pvj/state/effect/on` | f 0/1 | An effect is on |
+| `/pvj/state/effect/amount` | f 0 to 100 | Percent, as `/pvj/effect/amount` |
+| `/pvj/state/vibes` | f 0/1 | Vibes runs |
+| `/pvj/state/vibes/set` | s | The name of its set |
+| `/pvj/state/vibes/dwell` | f 15 to 3600 | Seconds each shader stays |
+| `/pvj/state/mapping/mode` | f 0/1 | Mapping mode is on |
+| `/pvj/state/guests/open` | f 0/1 | Guest controls are open (1) or locked for a show (0) |
+| `/pvj/state/pad/bank` | f | The bank (1 to 3) of the pad that plays; 0 when no pad does |
+| `/pvj/state/pad/number` | f | That pad's number (1 to 12); 0 when no pad does |
+| `/pvj/state/pad/<bank>/<pad>` | f 0/1 | That pad is the one playing: the light of the button that sends `/pvj/pad/<bank>/<pad>` |
+
+The pad lights, the fade and Blackout come from the same picture of the box the MIDI controllers' lights are worked out from (`pvj/boxstate.py`), so a pad lit on a controller is lit in the layout. Not sent: the inputs of an effect, the Room's scenes and projectors, the overlay's file.
+
+## Setting up TouchOSC to listen
+
+Not tried with a real TouchOSC yet; this is written from how OSC and TouchOSC's connection settings work, and the first try on a tablet may correct it.
+
+1. In TouchOSC's connections, OSC, the same connection that sends to the box: set a **receive port** (9000 is a usual choice; any port from 1024 up). The tablet needs a fixed address: give it one in the router, or the state stops when its address changes.
+2. On the box: Setup > OSC, "Send state back". Send one message from the tablet, press **Use the device that is sending now**, check the address is the tablet's own (TouchOSC shows it in its connection settings), type the receive port and a name, press **Add**. Then switch "Send state back" on.
+3. In the layout, give a control a message that **receives**: its address is the state address (`/pvj/state/opacity` for the opacity fader, `/pvj/state/pad/1/3` for the third pad of bank A, `/pvj/state/clip/name` for a label's text), with the message's Receive ticked and Send not. The message that sends stays as it is (`/pvj/opacity`). A fader's range is the same in both directions.
+4. With the key lock on, only the sending message carries `/k/<key>`; the receiving one never does.
+5. For "box not answering": a label or light bound to `/pvj/state/alive`, with a small script that dims it when nothing came for 6 seconds.
+6. A layout opened late shows everything within 30 seconds by itself, or at once when it sends `/pvj/state` (a button, or a script when the layout opens).
 
 ## Stable addresses
 
@@ -123,8 +198,6 @@ Every address in this table, the ones added with D75 and `/pvj/mapping/...` amon
 
 **One table with MIDI.** The addresses above that are a press or a level (the fade, the clip's and the shader's and the effect's steps, the presets, position, the shader's speed, hue and brightness, the effect's amount) make their calls from the same table as a MIDI controller's actions (`pvj/actions.py`), so what a controller can do and what OSC can do do not drift apart.
 
-**No replies, still.** The box sends nothing back, so a TouchOSC layout cannot show the box's state (which pad plays, whether the screen is black). That is the safety property above and it was kept. Feedback is a later step and the owner's decision (D75): off unless switched on, sent only to addresses on the allow-list, and limited in rate.
-
 **Buttons fire on press only.** TouchOSC sends `1.0` when a button is pressed and `0.0` when it is released; a command marked "press" acts on a non-zero value (or no argument) and ignores the release, so a pad does not fire twice.
 
 ## Names kept from the old receiver
@@ -141,3 +214,5 @@ Not carried over:
 ## Tested
 
 The parser is tested on every type and padding length, on malformed packets, bundle nesting bombs and 4000 random or corrupted packets; the receiver on the allow-list, rate limit, a real UDP socket on loopback (and that it never replies), and through the settings API. The three locks: each alone and all together, the list replacing the private ranges, the paired-device rule against removing a device, forgetting, expiry and two devices behind one address, the key (missing, wrong, right, an old key after a new one, the constant-time comparison, a flood of wrong keys that does not hold the right one up), that nothing of a refused packet is applied or kept, what an operator and a guest are sent, a real UDP socket on loopback with all three on, and in a browser the page at 320 px wide with IPv6 addresses. The addresses added with D75 (2026-10-10) are tested through the parser, through the API with a fake player and a real shader engine with a fake graphics chip, and over a real UDP socket on loopback (`tests/test_osc_reach.py`); each of the three locks, and all three together, against one of those addresses and against mapping mode's, with the key's prefix in front (`BehindTheLocksTest` there). Not tested with a real TouchOSC layout or hardware controller, and never on a box.
+
+State sent back (D82, `tests/test_osc_feedback.py`): off by default and nothing sent under any input while off; what may be a target (public, broadcast, multicast, loopback, the box's own, IPv6, a name, the ports) when it is added and again at every send; only the Owner at the studio changes it, and every other identity in the roles table is refused; every packet is a documented address with a float or a string, and the table above is compared with what the code sends; the caps under a flood of changes and requests on a clock the test owns; a forged sender that is no target gets nothing and causes nothing; what the box sends does nothing when it is sent back to it; a dead target, a socket that fails and a look at the box that hangs stall neither the receiver nor a tick; no PIN, key, code, token, device name, address or folder in any packet of a full scenario; the code of master before this change keeps the settings and sends nothing. Not tried with a real TouchOSC, a real tablet or on a box.

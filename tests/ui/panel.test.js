@@ -585,6 +585,29 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector(`${oscRow} .warn:has-text("no key in the address")`, { timeout: 15000 });
     await oscSend(oscPrefix + '/pvj/stop');
     await page.waitForSelector(`${oscRow} .state:has-text("the last one /pvj/stop")`, { timeout: 15000 });
+    // Send state back (D82): off, nobody in the list, and the reason said in place. "Use the device that is sending
+    // now" fills the form and adds nothing; this browser's loopback address is then refused as a target by the box.
+    await page.waitForSelector('#oscstatecard:not([hidden]) #oscstate[aria-checked="false"]');
+    assert(/off by default because a box that answers over the network could be made to send at someone else/.test(await page.textContent('#oscstatecard')), 'why it is off is said on the card');
+    assert.deepStrictEqual(await get('/api/osc').then((d) => [d.feedback.on, d.feedback.targets, d.feedback.max, d.feedback.sending]), [false, [], 4, false], 'state feedback is off with no target until the owner says so');
+    await page.waitForSelector('#oscstatenone');
+    await page.waitForSelector('#oscstateuse:not([disabled])', { timeout: 15000 });
+    await page.click('#oscstateuse');
+    assert.strictEqual(await page.inputValue('#oscstateaddr'), '127.0.0.1', 'the last sender that was let in fills the address');
+    assert(/Nothing was added yet/.test(await page.textContent('#oscstateused')));
+    assert.deepStrictEqual((await get('/api/osc')).feedback.targets, [], 'filling the form adds nothing');
+    await page.fill('#oscstatename', 'Desk tablet');
+    await page.fill('#oscstateport', '9000');
+    await page.click('#oscstateadd');
+    await page.waitForFunction(() => /not an address on a private network.*Nothing was changed/.test(document.getElementById('msg').textContent));
+    assert.deepStrictEqual((await get('/api/osc')).feedback.targets, [], 'loopback is never a target');
+    await page.click('#oscstate');
+    await page.waitForSelector('#oscstateempty');
+    assert.deepStrictEqual(await get('/api/osc').then((d) => [d.feedback.on, d.feedback.sending]), [true, false], 'on with nobody in the list sends nothing');
+    await page.click('#oscstate');
+    await page.waitForSelector('#oscstate[aria-checked="false"]');
+    for (let i = 0; i < 100; i++) { if (!(await get('/api/osc')).feedback.on) break; await page.waitForTimeout(100); }
+    assert.strictEqual((await get('/api/osc')).feedback.on, false);
     await page.click('#osckeyshow');
     assert(!(await page.isVisible('#osckeyout')) && (await page.textContent('#osckeyout')) === '', 'Hide takes the key off the page');
     await page.click('#osckeynew');
@@ -606,6 +629,8 @@ function startServer(env) {          // env: more for the harness's environment 
       d.refused = 1234567;
       d.senders = [{ address: oscLong(1), messages: 123456, refused: 0, last: '/pvj/' + 'x'.repeat(59), accepted: true, why: 'nothing to do (an unknown address, or a button release)', at: 1 },
         { address: oscLong(40), messages: 0, refused: 98765, wrong_keys: 98765, panel: false, last: '', accepted: false, why: 'not in the list of devices that may send', at: 1 }];
+      d.feedback = { on: true, sending: true, max: 4, sender: '192.168.100.200', targets: [0, 1, 2, 3].map((n) => ({ name: 'A_tablet_with_a_long_name_' + 'x'.repeat(5) + n, address: '192.168.100.20' + n, port: 65530 + n,
+        last_sent: n === 0 ? null : n * 40, why: n === 3 ? 'not on this network now, nothing is sent to it' : '' })) };
       await route.fulfill({ response: res, json: d });
     };
     const oscWideLog = async (route) => route.fulfill({ json: { messages: [
@@ -626,6 +651,14 @@ function startServer(env) {          // env: more for the harness's environment 
     const oscOver = await page.$$eval('#oscwho *', (els) => { const card = document.getElementById('osccard').getBoundingClientRect();
       return els.filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > card.right + 1 || r.left < card.left - 1 || (e.matches('.addr, .lname, .state, .hint') && e.scrollWidth > e.clientWidth + 1)); }).map((e) => (e.id || e.className) + ': ' + e.textContent.slice(0, 30)); });
     assert.deepStrictEqual(oscOver, [], 'nothing in "Who may send" overruns at 320 px');
+    await page.waitForFunction(() => document.querySelectorAll('.oscstaterow').length === 4 && !!document.getElementById('oscstatefull'));
+    assert.deepStrictEqual(await page.$$eval('.oscstaterow .state, .oscstaterow .warn', (els) => els.map((e) => e.textContent)),
+      ['Nothing sent yet.', 'Last sent 40 seconds ago.', 'Last sent 1 minute ago.', 'Not on this network now, nothing is sent to it.'], 'each target says when it was last sent to, or why not');
+    assert.strictEqual(await page.locator('.oscstaterow button:text-is("Remove")').count(), 4, 'a stale target can be removed');
+    assert(await page.isDisabled('#oscstateadd') && await page.isDisabled('#oscstateuse'), 'a full list takes no fifth');
+    const oscStateOver = await page.$$eval('#oscstatecard *', (els) => { const card = document.getElementById('oscstatecard').getBoundingClientRect();
+      return els.filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > card.right + 1 || r.left < card.left - 1 || (e.matches('.addr, .lname, .state, .hint, .btn') && e.scrollWidth > e.clientWidth + 1)); }).map((e) => (e.id || e.className) + ': ' + e.textContent.slice(0, 30)); });
+    assert.deepStrictEqual(oscStateOver, [], 'nothing in "Send state back" overruns at 320 px');
     assert.strictEqual(await page.locator('.oscsender button:text-is("Allow this one")').count(), 1, 'a listed sender has no button, the other one has');
     assert(await page.isDisabled('.oscsender button:text-is("Allow this one")'), 'a full list takes no more');
     await page.unroute('**/api/osc', oscWide);

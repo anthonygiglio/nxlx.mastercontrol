@@ -287,6 +287,9 @@ def check_osc(v, care):
     # The three layers (D78), each checked like a request. The key is never read from a file: the box keeps its own
     # (BoxCare._osc_layers), and an export never carries one.
     out.update(osc_mod.validate_layers(v, osc_mod.parse_networks(out["allow"])))
+    # "Send state back" (D82): the switch and the targets, their form only. Whether a target is on one of this box's
+    # own networks is decided again at every send, so a file from another building sends nothing here.
+    out.update(osc_mod.oscfeedback.validate(v))
     return out
 
 
@@ -489,6 +492,8 @@ def _printable(v):
     return re.sub(r"[^A-Za-z0-9 ._-]", "?", str(v))[:40]
 
 
+FEEDBACK_KEYS = ("feedback_on", "feedback")      # "Send state back" (D82): the Owner's, at the studio
+
 # ---- diagnostics: what may be shown of the settings --------------------------------------------------------------
 def _net(value):
     """A copy with every value under a key that sounds like a secret removed (for what a later version may add)."""
@@ -507,6 +512,9 @@ def public_settings(data, support_configured=None):
         if name in ("streams", "projectors", "recovery") or name not in data:
             continue
         out[name] = _net(copy.deepcopy(data[name]))
+    if isinstance(out.get("osc"), dict):         # where the box sends its state (D82): a device's address and the Owner's
+        for key in FEEDBACK_KEYS:                # name for it. A diagnostics file leaves the box, so never in one.
+            out["osc"].pop(key, None)
     rec = data.get("recovery") if isinstance(data.get("recovery"), dict) else {}
     codes = rec.get("codes") if isinstance(rec.get("codes"), dict) else None
     out["recovery"] = {"usb": rec.get("usb") is not False, "codes_left": len(codes.get("hashes") or []) if codes else None,
@@ -617,6 +625,9 @@ class BoxCare:
                 out[name] = data[name]
         if isinstance(out.get("osc"), dict):
             out["osc"].pop("key", None)          # the key has its own section, never exported (D78); this is for a file not yet moved
+            if (isinstance(device, dict) and device.get("remote")) or self.api.support.is_remote(client):
+                for key in FEEDBACK_KEYS:        # a support session never reads where the box sends its state (D82); an
+                    out["osc"].pop(key, None)    # import of such a file leaves the box's own (_osc_layers)
         if "recovery" in out:
             out["recovery"] = {"usb": self.api.auth.usb_enabled()}      # the switch only: the code hashes stay on the box (D81)
         out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
@@ -736,7 +747,7 @@ class BoxCare:
         cannot switch a lock off; the key is never the file's. It is this box's own, in its own section, and one is
         made if the file switches the lock on and the box has none."""
         mine, out = current.get("osc") or {}, dict(new["osc"])
-        for k in ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on"):
+        for k in ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on", "feedback_on", "feedback"):
             if k not in out and k in mine:
                 out[k] = copy.deepcopy(mine[k])
         out.pop("key", None)
