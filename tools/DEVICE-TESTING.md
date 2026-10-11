@@ -426,6 +426,23 @@ What cannot be made on purpose: a pair the GPU refuses. If the Effects card ever
 | O11 | On an operator's and a guest's device, open System | No OSC page with lists or a key | Nothing |
 | O12 | Write down how the tablet's address looked in O1 and whether it changed during the test (a new address from the router) | | |
 
+### OSC: state sent back (D82)
+
+**Never run on a box, with a real TouchOSC or a real tablet.** Before: OSC is on, a tablet with TouchOSC sends to the box (O1 works), the tablet has a fixed address, and TouchOSC's connection has a receive port (9000 here). In the layout a few controls have a receiving message: a pad on `/pvj/state/pad/1/1`, the Blackout button on `/pvj/state/blackout`, the fade button on `/pvj/state/fade/on`, the opacity fader on `/pvj/state/opacity`, a label on `/pvj/state/clip/name`, a light on `/pvj/state/alive`.
+
+| # | Do | See on Setup > OSC | See in the layout |
+| --- | --- | --- | --- |
+| F1 | Before anything is switched: play, black out and fade from the panel | "Send state back" is off, the list is empty | Nothing changes by itself (the box sends nothing) |
+| F2 | Press a control on the tablet, then "Use the device that is sending now"; type 9000 and a name; "Add this device"; switch "Send state back" on | The address filled in is the tablet's own; the row says "Last sent just now" | The alive light is on; the label shows the clip's name. **Write down whether anything arrives at all: the box sends OSC bundles, and whether TouchOSC takes them is not known** |
+| F3 | From the panel: play pad 1 of bank A, then another pad, Blackout on and off, Fade out and in, the Opacity slider | | The pad's light follows within half a second; Blackout's and the fade's lights follow; the fader moves |
+| F4 | The same from a MIDI controller if there is one | | The layout and the controller's own lights agree |
+| F5 | A second tablet, added as a second device: act on one | Two rows, both "Last sent" | The other stays in step |
+| F6 | Drag the opacity fader on the tablet slowly | | **Write down whether the fader jumps or stutters under the finger** (its own value comes back) |
+| F7 | Take the tablet off the network (Wi-Fi off) for a minute, play and stop clips from the panel, then back | The row still says "Last sent" (the box cannot know); nothing else on the page changes | The panel and the screen stay as quick as before; back on the network the layout is right within 30 seconds, or at once after a control that sends `/pvj/state` |
+| F8 | Switch "Only these devices may send" on without the tablet in it; then remove the tablet's row | "Not let in by the locks that are on, nothing is sent to it"; after Remove the list is empty | The alive light goes out (after 6 seconds with the script) |
+| F8b | Move the box to another network (or change its address range) with the tablet still in the list; add the tablet's new address | The old row says "Not on this network now, nothing is sent to it" and has Remove; the new one is added beside it | The layout follows again at the new address |
+| F9 | On an Operator's device and through a remote support session, open Setup > OSC | No card "Send state back" | |
+
 ### Owner, Operator, Guest and the lock on guest controls (D80)
 
 **Never run on a box, with a phone, a projector or a controller.** Before: one phone paired with the PIN (Owner), one with an Operator link, one with a guest code; Projectors and Room on with at least one projector, one scene that switches a group on and one that switches it off; a clip on a pad.

@@ -40,7 +40,7 @@ one thread, for an inversion to show; the interleaving that would hang is not ne
 | 15    | leaves               | vibes.state, shaderlive.queue, mapper.state, player.pid, ndi.ticket: a few fields each, never held over a call |
 
 Not in the order, because their holders never call into these paths while holding them (read, not checked by the
-machine): the settings' lock, the MIDI, DMX, OSC and sync managers' own locks, the Room's `lock` ("never held while
+machine): the settings' lock, the MIDI, DMX, OSC and sync managers' own locks, the OSC state sender's lock (pvj/oscfeedback.py: flags and counters, never held over a look at the box or a send), the Room's `lock` ("never held while
 talking to a projector or the player"), the projectors' and the health checks' locks.
 
 The uploads' lock (Api._upload_lock) is not in the order for another reason, and its holders DO call into these
