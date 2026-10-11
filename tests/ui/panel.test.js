@@ -630,7 +630,7 @@ function startServer(env) {          // env: more for the harness's environment 
       d.senders = [{ address: oscLong(1), messages: 123456, refused: 0, last: '/pvj/' + 'x'.repeat(59), accepted: true, why: 'nothing to do (an unknown address, or a button release)', at: 1 },
         { address: oscLong(40), messages: 0, refused: 98765, wrong_keys: 98765, panel: false, last: '', accepted: false, why: 'not in the list of devices that may send', at: 1 }];
       d.feedback = { on: true, sending: true, max: 4, sender: '192.168.100.200', targets: [0, 1, 2, 3].map((n) => ({ name: 'A_tablet_with_a_long_name_' + 'x'.repeat(5) + n, address: '192.168.100.20' + n, port: 65530 + n,
-        last_sent: n === 0 ? null : n * 40, why: n === 3 ? 'not on one of the box\'s own networks now' : '' })) };
+        last_sent: n === 0 ? null : n * 40, why: n === 3 ? 'not on this network now, nothing is sent to it' : '' })) };
       await route.fulfill({ response: res, json: d });
     };
     const oscWideLog = async (route) => route.fulfill({ json: { messages: [
@@ -653,7 +653,8 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.deepStrictEqual(oscOver, [], 'nothing in "Who may send" overruns at 320 px');
     await page.waitForFunction(() => document.querySelectorAll('.oscstaterow').length === 4 && !!document.getElementById('oscstatefull'));
     assert.deepStrictEqual(await page.$$eval('.oscstaterow .state, .oscstaterow .warn', (els) => els.map((e) => e.textContent)),
-      ['Nothing sent yet.', 'Last sent 40 seconds ago.', 'Last sent 1 minute ago.', 'Not sent: not on one of the box\'s own networks now.'], 'each target says when it was last sent to, or why not');
+      ['Nothing sent yet.', 'Last sent 40 seconds ago.', 'Last sent 1 minute ago.', 'Not on this network now, nothing is sent to it.'], 'each target says when it was last sent to, or why not');
+    assert.strictEqual(await page.locator('.oscstaterow button:text-is("Remove")').count(), 4, 'a stale target can be removed');
     assert(await page.isDisabled('#oscstateadd') && await page.isDisabled('#oscstateuse'), 'a full list takes no fifth');
     const oscStateOver = await page.$$eval('#oscstatecard *', (els) => { const card = document.getElementById('oscstatecard').getBoundingClientRect();
       return els.filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > card.right + 1 || r.left < card.left - 1 || (e.matches('.addr, .lname, .state, .hint, .btn') && e.scrollWidth > e.clientWidth + 1)); }).map((e) => (e.id || e.className) + ': ' + e.textContent.slice(0, 30)); });

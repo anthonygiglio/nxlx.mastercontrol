@@ -161,6 +161,16 @@ class TargetTest(Base):
         self.assertEqual(fb.validate_targets(five[:4] and [T1, T2], NETS), [T1, T2])
         self.assertEqual(len(fb.validate_targets(five[:4], NETS)), 4)
 
+    def test_only_the_box_s_real_ports_are_its_own_networks(self):
+        """Wired (eth0, end0, enx...) and Wi-Fi with its hotspot (wlan0) count; what a container, a bridge or a VPN
+        makes does not."""
+        def nets(name):
+            return fb.local_nets([{"ifname": name, "addr_info": [{"family": "inet", "local": "172.17.0.1", "prefixlen": 16}]}])
+        for name in ("docker0", "veth1a2b", "br-4f5e", "tun0", "tap0", "wg0", "wg-pvj", "lo", "virbr0", "tailscale0", "", None, 5):
+            self.assertEqual(nets(name), [], name)
+        for name in ("eth0", "end0", "enx00e04c680001", "enp1s0", "wlan0", "wlan1", "usb0"):
+            self.assertEqual(len(nets(name)), 1, name)
+
     def test_the_box_s_networks_leave_out_loopback_the_tunnel_ipv6_and_what_cannot_be_read(self):
         self.assertEqual([str(n) for n in NETS], ["192.168.1.5/24"])
         self.assertEqual(fb.local_nets(None), [])
@@ -244,6 +254,40 @@ class OwnerOnlyTest(Base):
         self.assertNotIn(TABLET, json.dumps(out), "the answer to a save of the page through support names no target")
         st, out = self.api.handle("GET", "/api/osc", {}, self.owner, LAN)
         self.assertEqual(out["feedback"]["targets"][0]["address"], TABLET)
+
+    def test_a_support_session_reads_the_targets_in_no_export_and_nobody_in_a_diagnostics_file(self):
+        """The review of #123: the settings export and the diagnostics file carried the osc section whole."""
+        self.post({"add": dict(T1, name="Desk-Name-Sentinel")})
+        self.post({"on": True})
+        care, remote = self.api.boxcare, dict(self.owner, remote=True)
+        mine = care.export({}, self.owner, LAN)["file"]["settings"]["osc"]
+        self.assertEqual((mine["feedback_on"], mine["feedback"][0]["address"]), (True, TABLET), "the Owner's own export holds them, as settings")
+        self.api.support.is_remote = lambda client: client == TUNNEL
+        for device, client in ((remote, LAN), (self.owner, TUNNEL), (remote, TUNNEL)):
+            got = care.export({}, device, client)
+            self.assertIn("enabled", got["file"]["settings"]["osc"])
+            for word in (TABLET, "Desk-Name-Sentinel", "feedback"):
+                self.assertNotIn(word, json.dumps(got), (word, client))
+        for device, client in ((self.owner, LAN), (remote, TUNNEL)):
+            got = care.diagnostics({}, device, client)["file"]
+            self.assertIn("enabled", got["settings"]["osc"])
+            for word in (TABLET + '"', "Desk-Name-Sentinel", "feedback"):
+                self.assertNotIn(word, json.dumps(got["settings"]), (word, client))
+        self.assertNotIn("Desk-Name-Sentinel", json.dumps(care.diagnostics({}, self.owner, LAN)))
+
+    def test_a_new_target_is_added_beside_one_that_is_no_longer_on_this_network(self):
+        self.post({"add": T1})
+        self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "10.0.0.5", "prefixlen": 24}]}]
+        st, out = self.post({"add": {"name": "New", "address": "10.0.0.20", "port": 9000}})
+        self.assertEqual(st, 200, out)
+        self.assertEqual([t["address"] for t in out["targets"]], [TABLET, "10.0.0.20"])
+        self.assertEqual(out["targets"][0]["why"], fb.WHY_NETWORK, "the stale one is said to be stale at once, before any tick")
+        self.assertEqual(out["targets"][1]["why"], "")
+        st, out = self.post({"add": {"name": "Old net", "address": "192.168.1.30", "port": 9000}})
+        self.assertEqual(st, 400)
+        self.assertIn("192.168.1.30", out["error"])
+        self.assertEqual(self.post({"add": {"name": "Twice", "address": "10.0.0.20", "port": 9000}})[0], 400)
+        self.assertEqual(self.post({"remove": {"address": TABLET, "port": 9000}})[0], 200)
 
     def test_a_removed_owner_changes_nothing(self):
         self.auth.revoke(self.owner["id"])
@@ -350,6 +394,30 @@ class StateTest(Base):
         self.run_for(f, fb.FULL_EVERY)
         self.assertGreaterEqual(len(decode(self.sock.sent)), first, "everything again at the slow interval")
 
+    def test_a_name_or_a_number_that_cannot_be_sent_stops_nothing_else(self):
+        """The review of #123: a file name with a broken byte (a lone surrogate, as `os` hands it over) or a number
+        beyond a float32 raised in the encoder and silenced the sender until the clip changed."""
+        bad = "05_\udcff\udce9x.mp4"
+        raw = fb.encode(fb.PREFIX + "clip/name", bad)
+        self.assertEqual(osc.parse_message(raw)[1], ["05_??x.mp4"])
+        for v in (1e39, -1e39, 3.5e38, float("inf"), float("nan")):
+            self.assertLessEqual(abs(osc.parse_message(fb.encode("/x", fb._num(v)))[1][0]), 3.1e38, v)
+            self.assertLessEqual(abs(osc.parse_message(fb.encode("/x", v))[1][0]), 3.1e38, v)
+        self.player.running = True
+        self.player.status = lambda: {"running": True, "path": "/m/" + bad, "position": 1e300, "duration": 2e300, "speed": 1e39, "volume": -1e39}
+        f = self.feedback()
+        self.run_for(f, 1)
+        got = {a: args for a, args, _w in decode(self.sock.sent)}
+        self.assertEqual(got[fb.PREFIX + "clip/name"], ["05_??x.mp4"])
+        self.assertEqual(got[fb.PREFIX + "playing"], [1.0])
+        self.assertEqual(len(got), 92)
+        # and whatever else a later address might hold: one message that cannot be built is left out, the rest leave
+        del self.sock.sent[:]
+        f2 = self.feedback(state=lambda now: [(fb.PREFIX + "a", 1.0), (fb.PREFIX + "b", object()), (fb.PREFIX + "c", "x"), (fb.PREFIX + "d", 1e300)])
+        self.run_for(f2, 1)
+        self.assertEqual(sorted(a for a, _v, _w in decode(self.sock.sent)), sorted([fb.ALIVE, fb.PREFIX + "a", fb.PREFIX + "c", fb.PREFIX + "d"]))
+        self.assertEqual(len([x for x in self.logs if "could not be sent" in x]), 1, "said once")
+
     def test_fade_words_and_a_stream_s_address_is_never_a_name(self):
         self.assertEqual([fb.fade_word(*x) for x in ((None, None), ("out", 60), ("out", 0), ("in", 30), (None, 0))], ["idle", "out", "black", "in", "idle"])
         for path in ("rtsp://user:Stream-Pass-7@cam/1", "http://x/y.mp4", "relative.mp4", None, 5, "/tmp/a://b"):
@@ -388,6 +456,12 @@ class ShaderStateTest(Live):
         self.send("/pvj/vibes/dwell", 45)
         got, snap = self.state()
         self.assertEqual(got[fb.PREFIX + "vibes/dwell"], 45.0)
+        self.api.vibes.running = True                        # the rotation's own flag, as the lights read it
+        self.assertEqual(self.state()[0][fb.PREFIX + "vibes"], 1.0)
+        self.api.vibes.running = False
+        self.api.effects._seen = lambda: {"id": "glow.fs", "controls": {"amount": 0.35}}
+        got, snap = self.state()
+        self.assertEqual([got[fb.PREFIX + t] for t in ("effect", "effect/on", "effect/amount")], ["glow", 1.0, 35.0])
         self.assertEqual((got[fb.PREFIX + "vibes"], bool(got[fb.PREFIX + "vibes/set"])), (0.0, True))
         self.assertEqual(osc.parse_packet(fb.pack(sorted(got.items()))[0][0])[0][1].__class__, list)
         for a, v in got.items():

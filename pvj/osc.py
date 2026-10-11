@@ -875,10 +875,16 @@ class OscManager:
             return False
         return True
 
-    def local_nets(self):
-        """The box's own IPv4 networks now, for what may be a target."""
-        ip_json = getattr(self.api, "_ip_json", None)
-        return oscfeedback.local_nets(ip_json()) if ip_json else []
+    def local_nets(self, fresh=True):
+        """The box's own IPv4 networks now, for what may be a target. Without `fresh`, what was read in the last
+        seconds will do (the page asks every few seconds, and reading them starts a program)."""
+        at, nets = getattr(self, "_nets_seen", (None, []))
+        now = time.monotonic()
+        if fresh or at is None or now - at >= oscfeedback.NETS_EVERY:
+            ip_json = getattr(self.api, "_ip_json", None)
+            nets = oscfeedback.local_nets(ip_json()) if ip_json else []
+            self._nets_seen = (now, nets)
+        return nets
 
     def _apply_feedback(self):
         """Make the sender match the settings: it runs only while OSC listens, the switch is on and there is a
@@ -948,12 +954,16 @@ class OscManager:
             self.server = server
             self._apply_feedback()
 
-    def feedback_status(self):
+    def feedback_status(self, fresh=False):
         """For the Owner at the studio: the switch, the targets with the age of the last packet to each, and the
         last sender that passed every lock (for "Use the device that is sending now": it fills the form, no more)."""
         on, targets = oscfeedback.stored(self.settings.data["osc"])
         feedback = self.feedback
         rows = feedback.status() if feedback is not None else [dict(t, last_sent=None, why="") for t in targets]
+        nets = self.local_nets(fresh=fresh)
+        for row in rows:                    # a target that is not on the box's network now is said so at once, sender or no sender
+            if oscfeedback.not_local(row["address"], nets):
+                row["why"] = oscfeedback.WHY_NETWORK
         now = next((s["address"] for s in self.watch.senders() if s["accepted"] and ":" not in s["address"]), "")
         return {"on": on, "targets": rows, "max": oscfeedback.MAX_TARGETS, "sending": feedback is not None, "sender": now}
 

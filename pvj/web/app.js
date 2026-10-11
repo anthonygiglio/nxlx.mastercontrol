@@ -4380,7 +4380,7 @@
     });
   }
   function oscStateAge(t, on) {
-    if (t.why) return 'Not sent: ' + t.why + '.';
+    if (t.why) return t.why.charAt(0).toUpperCase() + t.why.slice(1) + '.';
     if (t.last_sent === null || t.last_sent === undefined) return on ? 'Nothing sent yet.' : 'Nothing is sent while this is off.';
     return 'Last sent ' + (t.last_sent < 5 ? 'just now' : t.last_sent < 60 ? t.last_sent + ' seconds ago' : agoWords(t.last_sent)) + '.';
   }

@@ -2240,7 +2240,12 @@ class Api:
                     nets = self.osc.local_nets()
                     if not nets:
                         raise ApiError(409, "the box's own network addresses could not be read; try again in a moment")
-                    targets = oscfeedback.validate_targets(targets[:] + [body["add"]], nets)
+                    # only the one that is added is checked against the networks: one that went stale with a move
+                    # of the box stays in the list (nothing is sent to it) and does not stand in a new one's way
+                    new_one = oscfeedback.validate_targets([body["add"]], nets)[0]
+                    if any((t["address"], t["port"]) == (new_one["address"], new_one["port"]) for t in targets):
+                        raise bad("%s port %d is in the list already" % (new_one["address"], new_one["port"]))
+                    targets = targets + [new_one]
                     said.append("added a target")
             except oscfeedback.FeedbackError as e:
                 raise bad(str(e))
@@ -2258,7 +2263,7 @@ class Api:
                     pass
                 raise ApiError(409, str(e))
             self.settings.save()
-            out = self.osc.feedback_status()
+            out = self.osc.feedback_status(fresh=True)
         self.log("pvj-web: OSC state feedback %s by device %s (%s) from %s; %d target(s), %s"
                  % (", ".join(said), device["id"], device["name"], client, len(targets), "on" if on else "off"))
         return out

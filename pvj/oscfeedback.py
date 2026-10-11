@@ -31,7 +31,10 @@ MAX_TARGETS = 4
 MIN_PORT = 1024                 # below it sit DNS, NTP and SNMP: what a reflected packet is aimed at
 NAME_FORM = re.compile(r"[^\x00-\x1f\x7f]{1,32}")
 PRIVATE = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16")]
-NOT_INTERFACES = ("lo", "wg-pvj")       # loopback and the support tunnel are never "the box's own local network"
+# What is never "the box's own local network": loopback, the support tunnel and any other WireGuard or VPN port, and
+# the ports a container or a bridge makes. The box's own are wired (eth0, end0, enx...) and Wi-Fi (wlan0, which is
+# also its hotspot: NetworkManager runs the hotspot on the Wi-Fi port itself), and none of those names starts so.
+NOT_INTERFACES = ("lo", "wg", "docker", "veth", "br-", "virbr", "tun", "tap", "tailscale", "zt")
 
 PREFIX = "/pvj/state/"
 REQUEST = "/pvj/state"          # a listed target asks for everything; the box itself never sends this address
@@ -50,8 +53,9 @@ ALL_PACKETS, ALL_PACKET_BURST = 45.0, 15.0              # all targets together: 
 ALL_BYTES, ALL_BYTE_BURST = 27000.0, 9000.0             # and at most 36,000 bytes
 MAX_TEXT = 96                   # characters of a name in a packet
 
-WHY_NETWORK = "not on one of the box's own networks now"
-WHY_LOCKS = "not let in by the locks that are on"
+WHY_NETWORK = "not on this network now, nothing is sent to it"
+WHY_LOCKS = "not let in by the locks that are on, nothing is sent to it"
+WHY_ADD = "not on one of the box's own networks"
 SLOTS = 8
 
 
@@ -66,7 +70,8 @@ def local_nets(ip_json):
     out = []
     try:
         for entry in ip_json or []:
-            if entry.get("ifname") in NOT_INTERFACES:
+            name = entry.get("ifname")
+            if not isinstance(name, str) or not name or name.startswith(NOT_INTERFACES):
                 continue
             for a in entry.get("addr_info", []):
                 if a.get("family") != "inet":
@@ -139,7 +144,7 @@ def validate_targets(items, nets=None):
         if nets is not None:
             why = not_local(t["address"], nets)
             if why:
-                raise FeedbackError("%s is %s" % (t["address"], why))
+                raise FeedbackError("%s is %s" % (t["address"], WHY_ADD if why == WHY_NETWORK else why))
         if any((t["address"], t["port"]) == (o["address"], o["port"]) for o in out):
             raise FeedbackError("%s port %d is in the list already" % (t["address"], t["port"]))
         out.append(t)
@@ -169,8 +174,11 @@ def stored(cfg):
 
 
 # --- the wire -------------------------------------------------------------------------------------------------------
+FLOAT_MOST = 3.0e38             # a float32 holds a little more; beyond it the encoder would raise
+
+
 def _string(text):
-    raw = text.encode("utf-8") + b"\0"
+    raw = text.encode("utf-8", "replace") + b"\0"      # a file name with a broken byte comes with a lone surrogate: a "?"
     return raw + b"\0" * (-len(raw) % 4)
 
 
@@ -178,18 +186,26 @@ def encode(address, value):
     """One OSC message with one argument: a float32 for a number, a string for text. Nothing else is ever sent."""
     if isinstance(value, str):
         return _string(address) + _string(",s") + _string(value)
-    return _string(address) + _string(",f") + struct.pack(">f", float(value))
+    value = float(value)
+    value = 0.0 if value != value else max(-FLOAT_MOST, min(FLOAT_MOST, value))
+    return _string(address) + _string(",f") + struct.pack(">f", value)
 
 
 _BUNDLE = b"#bundle\0" + struct.pack(">Q", 1)       # time tag 1: "now"
 
 
-def pack(messages):
+def pack(messages, bad=None):
     """[(address, value)] -> [(datagram, [the messages in it])], each datagram at most MAX_DATAGRAM bytes: one message
-    alone as it is, several as one bundle."""
+    alone as it is, several as one bundle. A message that cannot be built is left out and named in `bad`: one bad
+    value never stops the rest."""
     out, part, size = [], [], len(_BUNDLE)
     for m in messages:
-        raw = encode(*m)
+        try:
+            raw = encode(*m)
+        except Exception:
+            if bad is not None:
+                bad.append(m)
+            continue
         if part and size + 4 + len(raw) > MAX_DATAGRAM:
             out.append(part)
             part, size = [], len(_BUNDLE)
@@ -229,7 +245,7 @@ def _num(v, default=0.0, digits=3):
         return default
     if v != v or abs(v) == float("inf"):
         return default
-    return round(v, digits)
+    return round(max(-FLOAT_MOST, min(FLOAT_MOST, v)), digits)
 
 
 def _stem(name):
@@ -537,7 +553,12 @@ class Feedback:
                 st["sent"], st["full"] = {}, now
             messages = [(ALIVE, 1.0)] if st["beat"] is None or now - st["beat"] >= HEARTBEAT else []
             messages += [m for m in state if st["sent"].get(m[0]) != m[1]]
-            for data, part in pack(messages):
+            bad = []
+            packed = pack(messages, bad)
+            for address, value in bad:          # left out, and not tried again until it changes; the rest leave
+                st["sent"][address] = value
+                self._note("encode", "%s could not be sent (a value that is no number and no text); the rest is sent" % address)
+            for data, part in packed:
                 if not self._send(st, data, (t["address"], t["port"]), now):
                     break
                 for address, value in part:
