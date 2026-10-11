@@ -247,7 +247,11 @@ Send back the output of `L` at every step, R0, and the output of R10. If any lin
 | R12 | Operator: People and codes | "Let someone in" with the guest code only, a card "Guests" with the guest's phone and Remove, "Create a guest link", the lock. No PIN, no operator code, no owner or operator device | Remove the guest: its panel returns to the pairing screen |
 | R13 | A MIDI controller and an OSC sender that worked before the update: every control once | Nothing | Each does what it did before, no more; with guest controls locked too (the lock is for guests only) |
 | R14 | Hold the controller's code pad (switch on first), pair a phone with the code | The phone is a Guest | Paired devices names it Guest (can watch) |
-| R15 | If a phone was paired from a controller before the update: open its System | What a presenter had: no Schedule, no Edit pads, no upload | |
+| R15 | If a phone was paired from a controller before the update: open its panel | It is a guest: the Guest controls card, and "Guest (can watch)" under About and power | The owner's Paired devices names it Guest |
+| R16 | Owner: People and codes, A code from a controller, "A controller's join code pairs": Operator (answer the question). Hold the code pad, pair a phone | The display says "One-time operator code"; the phone is an Operator | Set it back to Guest: that phone stays an Operator, the next one is a Guest |
+| R17 | Operator: Room, set up, edit a scene, tick "Not for guests", save | On the guest's phone the scene is gone from the Guest controls card after a reload | The Operator still starts it |
+| R18 | Operator: System > MIDI controller: teach a pad with Learn, change one control of a drawn layout, switch the lights | Each works | The pad that shows a code reads "Only the owner changes it"; no code action in the lists |
+| R19 | Operator A: People and codes, remove Operator B | B's panel returns to the pairing screen at once | A has no Remove on his own row and sees no owner |
 
 ### What to send back
 

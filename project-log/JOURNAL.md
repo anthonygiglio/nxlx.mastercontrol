@@ -4,6 +4,14 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-11, later (the owner's answers on D80, built on `roles-operator`)
+
+His words are in D80, "The owner's answers". Built, each with tests (`OwnerAnswersTest` and the rewritten `HeldBackTest` and `PeopleTest`): the Owner's choice of what a controller's join code pairs (Guest by default, never changed by the box); presenters paired from a controller before the update are Guests (`Auth.role_of`, no rewrite of the record); MIDI layout, Learn, mappings and lights for the Operator, with the server refusing every change to a control that shows an access code; the per-scene mark "Not for guests"; an Operator removes other Operators, never himself or an Owner. **Run on the development Mac; nothing on the box.**
+
+- **Decided while building:** `code_join` is the Owner's like `code_owner` (it can pair an Operator); an Operator's "Remove all mappings" leaves the Owner's; an Operator may not switch the standard layout of a controller that has a code pad, or of one that is not plugged in; a mapping on the same note as the Owner's is refused (it would replace it; the test first expected 200 and the box was right); a controller-paired Operator still goes after 7 unused days.
+- **Attacked:** an Operator mapping `code_owner` and `code_join` by a posted mapping, after Learn, on a drawn control, by editing or resetting the Owner's override, by removing or clearing, by a map sent to `POST /api/midi`, by an import; a guest naming a marked scene by id, number, name and with a confirm; an Operator removing himself, an Owner, and ids that are no device (`midi`, `support-1`).
+- **Master's code with the new keys** (tree of `ef891c8` in a scratch folder): `room.validate` reads a scene with `no_guests` and leaves the key out; `controller_setting` drops `join`; `Settings.load` and `Auth` load a file with all three, and a controller-paired `live` device is `live` there, as before the update.
+
 ## 2026-10-11 (the independent review of #120 at `571d2ac`: no High, no Medium, six Lows fixed)
 
 Each Low has a test in `tests/test_roles.py`, `ReviewTest`, written first and seen to fail (five failed on the code as it was; the sixth is a guard, seen to fail with a path added to `server.py` without the gate). **Run on the development Mac; nothing on the box.**
