@@ -1613,9 +1613,14 @@ function startServer() {
     await lost.waitForSelector('#recoverylink');
     assert(await lost.isHidden('#recoverycode'), 'the code field is folded until asked for');
     assert(/Locked out\?/.test(await lost.textContent('.screen')), 'the pairing screen has the Locked out help');
+    await lost.click('#lockedout summary');
+    assert(/pvj-recover/.test(await lost.textContent('#lockedout')) && /factory reset/.test(await lost.textContent('#lockedout')), 'the help names the stick and the reset');
     await lost.click('#recoverylink');
+    await lost.fill('#recoverycode', 'ABCD-EFGH-JKL0');
+    await lost.click('#recoverybtn');
+    await lost.waitForFunction(() => /never have 0, O, 1, I or L/.test(document.getElementById('msg').textContent));
     await lost.fill('#recoverycode', codes[2].toLowerCase());
-    assert.strictEqual(await lost.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the pairing screen fits at 320 with the code open');
+    assert.strictEqual(await lost.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the pairing screen fits at 320 with the code and the help open');
     await lost.click('#recoverybtn');
     await lost.waitForSelector('.pads');
     const lostDev = (await lost.evaluate(() => fetch('/api/status').then((r) => r.json()))).device;
@@ -1634,6 +1639,18 @@ function startServer() {
     await sys('People and codes');
     await page.waitForFunction(() => /A recovery code was used by "My phone"/.test((document.getElementById('recoverycard') || {}).textContent || ''));
     assert(/7 of 8 codes left/.test(await page.textContent('#recoverycard')), 'the owner sees seven left');
+    // the stick switch: off applies on the box and says what remains; on again. Cancel: a question in place, then no set
+    await page.click('#recovery-usb');
+    await page.waitForFunction(() => /shows nothing now/.test(document.getElementById('msg').textContent));
+    await page.waitForSelector('#recovery-usb[aria-checked="false"]');
+    assert.strictEqual((await get('/api/recovery')).usb, false, 'the stick way is off on the box');
+    await page.click('#recovery-usb');
+    await page.waitForSelector('#recovery-usb[aria-checked="true"]');
+    await page.click('#cancelrecovery');
+    await page.waitForSelector('#recoverycard #confirmrow');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => /No recovery codes yet/.test(document.getElementById('recoverycard').textContent));
+    assert.strictEqual((await get('/api/recovery')).codes, null, 'the set is gone from the box');
     await page.waitForSelector('#showpin');
     // A code from a controller (D61): off on a new box; a question in place before it goes on; the full access kind is
     // a second switch that is only there once the first is on; off applies at once and takes the second with it. The

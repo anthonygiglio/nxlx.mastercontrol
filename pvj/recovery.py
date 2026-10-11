@@ -107,6 +107,7 @@ class Recovery:
 
     def _start(self, label):
         """Call with the lock held. A fresh PIN on the screen, or a journal line saying why not."""
+        label = "".join(c for c in str(label)[:32] if c.isprintable())    # the mounter sanitises labels already; the journal line is kept clean here too
         if not self.auth.usb_enabled():
             self.log("pvj-web: a recovery stick was put in (%s) but the stick way is switched off; nothing shown" % label)
             return False

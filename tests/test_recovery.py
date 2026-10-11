@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 """Owner recovery (D81): printed recovery codes, and the USB stick that shows a fresh PIN on the box's screen."""
+import copy
 import json
 import os
 import re
+import subprocess
+import sys
+import textwrap
 import threading
 import types
 import unittest
@@ -13,6 +17,8 @@ from tests.test_server import ServerBase
 from tests.test_support import LAN, SupportBase
 
 CODE = re.compile(r"^[A-HJ-KM-NP-Z2-9]{4}-[A-HJ-KM-NP-Z2-9]{4}-[A-HJ-KM-NP-Z2-9]{4}$")
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OLDER = "b62f203"     # master where this branch left it: the release before recovery existed, for the rollback test
 
 
 class Clock:
@@ -130,6 +136,58 @@ class RecoveryCodesTest(ServerBase):
             t.join()
         self.assertEqual(sorted(results), [200] + [403] * 5)
         self.assertEqual(self.call("GET", "/api/recovery", token=self.full)[1]["codes"]["left"], 7)
+
+    def test_two_devices_racing_two_codes_both_get_in_and_each_gets_its_journal_line(self):
+        codes = self.make()
+        threads = [threading.Thread(target=lambda i=i: self.redeem(codes[i], "racer %d" % i)) for i in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(self.call("GET", "/api/recovery", token=self.full)[1]["codes"]["left"], 4)
+        lines = [x for x in self.lines if "recovery code was used" in x]
+        self.assertEqual(len(lines), 4, lines)
+        self.assertEqual(sorted(int(re.search(r"; (\d+) left", x).group(1)) for x in lines), [4, 5, 6, 7])
+
+    def test_rollback_an_older_release_keeps_the_section_through_new_pins_and_answers_wrong_pin_to_a_code(self):
+        """The release before this one, run from this clone on a settings file written here (D81, "no schema change"):
+        it loads, keeps the section through two new PINs, and a code is a wrong PIN to it. Skipped where the older
+        commit is not in the clone (a shallow checkout)."""
+        codes = self.make()
+        try:
+            tree = subprocess.run(["git", "archive", OLDER, "pvj"], cwd=REPO, capture_output=True, check=True, timeout=60).stdout
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            self.skipTest("the older release %s is not in this clone" % OLDER)
+        old = os.path.join(self.tmp, "older")
+        os.makedirs(old)
+        subprocess.run(["tar", "-x", "-C", old], input=tree, check=True, timeout=60)
+        self.assertFalse(os.path.exists(os.path.join(old, "pvj", "recovery.py")))
+        before = copy.deepcopy(self.settings.data["recovery"])
+        script = textwrap.dedent("""
+            import json, sys
+            sys.path.insert(0, sys.argv[1])
+            from pvj.settings import Settings
+            from pvj.auth import Auth, AuthError
+            s = Settings(sys.argv[2])
+            s.load()
+            a = Auth(s, rotate_on_start=True)
+            a.rotate_pin()
+            for code in sys.argv[3:]:
+                try:
+                    a.pair(code, "thief", "1.2.3.4")
+                    print("PAIRED")
+                except AuthError as e:
+                    print("refused: %s" % e)
+            print(json.dumps(json.load(open(sys.argv[2])).get("recovery"), sort_keys=True))
+        """)
+        run = subprocess.run([sys.executable, "-I", "-c", script, old, self.settings.path, codes[0], codes[1].replace("-", "").lower()],
+                             capture_output=True, text=True, timeout=120)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        lines = run.stdout.strip().splitlines()
+        self.assertEqual(lines[:2], ["refused: wrong PIN", "refused: wrong PIN"])
+        self.assertEqual(json.loads(lines[-1]), json.loads(json.dumps(before, sort_keys=True)))
+        self.settings.load()                                 # back on this release: the same file, the codes still good
+        self.assertEqual(self.redeem(codes[0])[0], 200)
 
     def test_a_failed_pairing_costs_no_code(self):
         codes = self.make()

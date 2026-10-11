@@ -148,6 +148,7 @@
           var wait = r.data.retry_after ? ' Try again in ' + r.data.retry_after + ' seconds.' : '';
           // a 403 with an https address: the box takes owner codes over the secure connection only (D79, D81)
           var why = r.status === 403 && !r.data.https ? WRONG[kind || (secret.length === 6 ? 'code' : 'pin')] : (r.data.error || 'Could not connect.');
+          if (r.status === 403 && r.data.https && kind === 'recovery') why = 'This box takes owner codes over https:// only. Open ' + r.data.https + ' and type the code there; accept the browser\'s warning if this phone has not got the box\'s root certificate.';
           return say(why + wait, true);
         }
         S.scanned = null;
@@ -187,12 +188,15 @@
   }
   // "I have a recovery code" (D81), folded under the PIN, and the "Locked out?" help that names every way in.
   function recoveryEntry(join) {
-    var code = h('input', { class: 'text-input mono', id: 'recoverycode', autocomplete: 'one-time-code', autocapitalize: 'characters', maxlength: 20,
+    var code = h('input', { class: 'text-input mono', id: 'recoverycode', autocomplete: 'one-time-code', autocapitalize: 'characters', spellcheck: 'false', maxlength: 20,
       'aria-label': 'Recovery code', placeholder: 'XXXX-XXXX-XXXX' });
     code.addEventListener('input', function () { code.value = code.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20); });
     var go = h('button', { class: 'btn big', id: 'recoverybtn', text: 'Pair with recovery code' });
     go.addEventListener('click', function () {
-      if (code.value.replace(/-/g, '').length !== 12) return say('Type the 12 character code from your paper, like XXXX-XXXX-XXXX.', true);
+      var bare = code.value.replace(/-/g, '');
+      if (bare.length !== 12) return say('Type the 12 character code from your paper, like XXXX-XXXX-XXXX.', true);
+      // the alphabet has no 0, O, 1, I or L: a code with one was misread, and the box would count it as a wrong guess
+      if (/[01OIL]/.test(bare)) return say('Recovery codes never have 0, O, 1, I or L in them. Read the paper again.', true);
       join(code.value, go, 'recovery');
     });
     var entry = h('div', { id: 'recoveryentry', hidden: true }, h('div', { class: 'k', text: 'Owner: recovery code' }), code, go);
@@ -4423,17 +4427,11 @@
     }
     function printCodes(codes) {
       if (typeof window.print !== 'function') return say('This browser cannot print. Use Copy, or write the codes down.', true);
-      var sheet = h('div', { id: 'printsheet' },
+      printPage(h('div', { id: 'printsheet' },
         h('h1', { text: 'nxlx.mastercontrol recovery codes' }),
-        h('p', { text: 'Box: ' + location.host + ' · made ' + new Date().toLocaleString() + '. Each code works once and pairs a phone with everything allowed. Keep this sheet where you keep the keys.' }),
+        h('p', { text: 'Box: ' + location.host + ', made ' + new Date().toLocaleString() + '. Each code works once and pairs a phone with everything allowed. Keep this sheet where you keep the keys, never with the box.' }),
         h('ol', { class: 'codes' }, codes.map(function (c) { return h('li', { text: c }); })),
-        h('p', { text: 'To use one: open the panel, tap "I have a recovery code" and type it. Then make a new set under System, People and codes.' }));
-      document.body.appendChild(sheet);
-      document.body.classList.add('printing');
-      var done = function () { document.body.classList.remove('printing'); if (sheet.parentNode) sheet.parentNode.removeChild(sheet); window.removeEventListener('afterprint', done); };
-      window.addEventListener('afterprint', done);
-      window.print();
-      setTimeout(done, 1000);
+        h('p', { text: 'To use one: open the panel, tap "I have a recovery code" and type it. Cross it off. Then make a new set under System, People and codes.' })));
     }
     card.appendChild(body);
     load();
@@ -4452,6 +4450,11 @@
           h('figcaption', { text: roleName(c.role) + ': ' + c.code + ' (expires)' }));
       })) : null,
       h('p', { class: 'k', text: 'Codes shown here expire. The panel address above does not.' }));
+    printPage(sheet);
+  }
+  // A sheet (#printsheet) printed by itself: on the page only while the print dialog is up, gone again after it,
+  // and only once its images have loaded. Shared by the access sheet and the recovery codes.
+  function printPage(sheet) {
     document.body.appendChild(sheet);
     document.body.classList.add('printing');
     var done = function () { document.body.classList.remove('printing'); if (sheet.parentNode) sheet.parentNode.removeChild(sheet); window.removeEventListener('afterprint', done); };

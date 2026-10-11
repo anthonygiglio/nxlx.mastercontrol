@@ -154,7 +154,7 @@ class Auth:
         self.controller_last = None  # the one before: {"kind", "shown", "ended" (wall), "how", "device"?}, for the panel
         self.current_pin = None     # the PIN in clear, known only to this run and only once made here (_new_pin); never saved
         self._pin_shows = {}        # device id -> when (monotonic) it was given the PIN, within PIN_SHOW_WINDOW
-        self.recovery_last_use = None   # (device id, codes left) of the last recovery code redeemed (D81)
+        self.recovery_uses = {}         # device id -> codes left, for each recovery code redeemed and not yet journaled (D81)
         self._prune_idle()
         with settings.lock:                 # at load: the section is written as what it means (controller_setting)
             if "controller_code" in settings.data and settings.data["controller_code"] != controller_setting(settings.data["controller_code"]):
@@ -371,7 +371,7 @@ class Auth:
                 r["codes"]["hashes"].insert(hit, burnt)
                 r["log"] = log
                 raise
-        self.recovery_last_use = (device["id"], left)    # for the API's journal line (never the code)
+        self.recovery_uses[device["id"]] = left    # for the API's journal line (never the code); per device, so two at once both get theirs
         self._fails.pop(client, None)
         return token, device
 

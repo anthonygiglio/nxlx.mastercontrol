@@ -299,10 +299,9 @@ class Api:
     def _recovery_used(self, dev, client):
         """After a pairing (D81): a recovery code was burnt (one journal line, never the code), or the PIN shown for a
         stick had its one use and leaves the display."""
-        last = getattr(self.auth, "recovery_last_use", None)
-        if last and last[0] == dev["id"]:
-            self.auth.recovery_last_use = None
-            self.log("pvj-web: a recovery code was used by device %s (%s) from %s; %d left" % (dev["id"], dev["name"], client, last[1]))
+        left = getattr(self.auth, "recovery_uses", {}).pop(dev["id"], None)
+        if left is not None:
+            self.log("pvj-web: a recovery code was used by device %s (%s) from %s; %d left" % (dev["id"], dev["name"], client, left))
         if self.recovery is not None:
             self.recovery.used(dev)
 
