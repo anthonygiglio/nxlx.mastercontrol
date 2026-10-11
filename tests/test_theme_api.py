@@ -47,8 +47,9 @@ class AddAndRemove(Base):
         self.assertEqual(st, 200, out)
         self.assertEqual((out["added"], out["name"], out["replaced"], out["warnings"]), ("soft", "Soft", False, []))
         self.assertEqual(self.files(), ["soft.json"])
-        # a guest and a presenter get what the panel needs to draw itself (names, styles), not every look's tokens
-        for token in (self.view, self.live):
+        # a guest gets what the panel needs to draw itself (names, styles), not every look's tokens (an Operator
+        # chooses the look since D80 and gets the Look page's details: tests/test_roles.py)
+        for token in (self.view,):
             st, less, _ = self.call("GET", "/api/theme", token=token)
             self.assertEqual(set(less), {"theme", "available"})
             self.assertEqual({t["id"]: (t["style"], t["areas"], t["source"]) for t in less["available"]}["soft"], ("signal", True, "addon"))
@@ -142,8 +143,9 @@ class AddAndRemove(Base):
         body = {"file": json.dumps(mine())}
         for path, send in ((ADD, body), (REMOVE, {"id": "mine"}), (EXPORT, {})):
             self.assertEqual(self.call("POST", path, send)[0], 401, path)
-            for token in (self.view, self.live):
-                self.assertEqual(self.call("POST", path, send, token=token)[0], 403, path)
+            self.assertEqual(self.call("POST", path, send, token=self.view)[0], 403, path)
+            if path != EXPORT:                      # saving the look as a file is the Operator's since D80; adding and removing stay the Owner's
+                self.assertEqual(self.call("POST", path, send, token=self.live)[0], 403, path)
             self.assertEqual(self.call("POST", path, send, token=self.full, csrf=False)[0], 403, path)
             self.assertEqual(self.call("POST", path, send, token=self.full, headers={"Origin": "http://evil.example"})[0], 403, path)
             self.assertEqual(self.call("GET", path, token=self.full)[0], 405, path)
@@ -384,7 +386,7 @@ class Files(Base):
         # the owner sees it on the Look page; a guest and a presenter are not told what is in the box's folders
         st, got, _ = self.call("GET", "/api/theme", token=self.full)
         self.assertEqual({k["file"] for k in got["skipped"]}, set(skipped))
-        for token in (self.view, self.live):
+        for token in (self.view,):
             self.assertNotIn("skipped", self.call("GET", "/api/theme", token=token)[1])
         with open(os.path.join(server.WEB_DIR, "app.js")) as f:
             js = f.read()

@@ -212,13 +212,17 @@ class ServerTest(ServerBase):
         st, body, _ = self.call("POST", "/api/devices/invite", {"name": "tech", "role": "live"}, token=full)
         live = body["token"]
         self.assertEqual(self.call("GET", "/api/status", token=view)[0], 200)
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=view)[0], 403)
         self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=live)[0], 200)
         for path, body in (("/api/pads", {"bank": 0, "index": 0, "label": "x", "file": "a.mp4"}),
                            ("/api/theme", {"name": "light"}), ("/api/modules/mapper", {"enabled": False}),
                            ("/api/devices/invite", {"name": "x", "role": "view"}), ("/api/pin/rotate", {})):
-            self.assertEqual(self.call("POST", path, body, token=live)[0], 403, path)
-        self.assertEqual(self.call("GET", "/api/devices", token=live)[0], 403)
+            self.assertEqual(self.call("POST", path, body, token=view)[0], 403, path)
+            # the Operator (D80): everything here but the two that are system critical
+            self.assertEqual(self.call("POST", path, body, token=live)[0], 403 if path in ("/api/modules/mapper", "/api/pin/rotate") else 200, path)
+        self.assertEqual(self.call("GET", "/api/devices", token=view)[0], 403)
+        self.assertEqual([d["role"] for d in self.call("GET", "/api/devices", token=live)[1]["devices"]], ["view", "live", "view"])
         self.assertEqual(self.call("POST", "/api/devices/invite", {"name": "x", "role": "full"}, token=full)[0], 400)
 
     def test_guest_link_session_and_revoke(self):
@@ -676,8 +680,9 @@ class MediaTest(MediaBase):
         self.assertEqual(sorted(os.listdir(self.media)), sorted([".hidden.mp4", "a.mp4", "b.mov", "link.mp4", "notes.txt"]))
 
     def test_only_full_devices_with_the_header_may_upload(self):
+        """An Operator uploads too since D80 (tests/test_roles.py); here `live` is a guest, who never does."""
         full, _ = self.pair()
-        _, body, _ = self.call("POST", "/api/devices/invite", {"name": "tech", "role": "live"}, token=full)
+        _, body, _ = self.call("POST", "/api/devices/invite", {"name": "guest", "role": "view"}, token=full)
         live = body["token"]
         self.assertEqual(self.upload("x.mp4", b"data", live)[0], 403)
         self.assertEqual(self.upload("x.mp4", b"data", None)[0], 401)
@@ -743,7 +748,7 @@ class MediaTest(MediaBase):
             st, _, _ = self.call("POST", "/api/media/delete", {"name": name}, token=token)
             self.assertIn(st, (400, 404), repr(name))
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "secret.mp4")))  # the symlink target is safe
-        _, body, _ = self.call("POST", "/api/devices/invite", {"name": "tech", "role": "live"}, token=token)
+        _, body, _ = self.call("POST", "/api/devices/invite", {"name": "guest", "role": "view"}, token=token)     # an Operator deletes since D80
         self.assertEqual(self.call("POST", "/api/media/delete", {"name": "b.mov"}, token=body["token"])[0], 403)
 
 

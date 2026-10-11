@@ -254,10 +254,11 @@ class GroupTest(RoomBase):
         view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
         live = self.post("/api/devices/invite", {"name": "p", "role": "live"})[1]["token"]
         self.assertEqual(self.state(view)["scenes"][0]["name"], "Evening")                # a guest sees the state
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         for path, body in (("/api/room/scene", {"scene": sid}), ("/api/room/group", {"group": main, "action": "on"})):
             self.assertEqual(self.post(path, body, token=view)[0], 403)
             self.assertEqual(self.post(path, body, token=live)[0], 200)
-        for token in (view, live):
+        for token in (view,):                           # setting the room up is the Operator's since D80 (tests/test_roles.py)
             self.assertEqual(self.post("/api/room", {"group": {"name": "Mine", "projectors": [pa]}}, token=token)[0], 403)
             self.assertEqual(self.post("/api/room", {"remove_scene": sid}, token=token)[0], 403)
         self.assertEqual(self.call("GET", "/api/room")[0], 401)

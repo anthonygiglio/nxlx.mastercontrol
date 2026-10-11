@@ -45,6 +45,12 @@ def validate(body, current):
             if not isinstance(body[key], bool):
                 raise ControllerCodeError("%s must be true or false" % key)
             new[key] = body[key]
+    if "join" in body:                          # what the join kind pairs (D80): a Guest unless the owner says an Operator
+        if body["join"] not in ("view", "live"):
+            raise ControllerCodeError("join must be view (a guest) or live (an operator)")
+        new.pop("join", None)
+        if body["join"] == "live":
+            new["join"] = "live"
     if not new["enabled"]:
         new["owner"] = False                    # switching it off switches the full-access kind off with it
     return new
@@ -58,7 +64,7 @@ class ControllerCodes:
 
     def cfg(self):
         on, owner = self.api.auth._controller_cfg()
-        return {"enabled": on, "owner": owner}
+        return {"enabled": on, "owner": owner, "join": self.api.auth.controller_role("join")}
 
     def _screen(self):
         return getattr(self.api, "pinscreen", None)

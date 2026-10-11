@@ -183,8 +183,8 @@ class UsbImportTest(ServerBase):
     def test_bad_references_and_roles(self):
         for ref in ("../SHOW/film.mp4", "SHOW/../film.mp4", "SHOW", "SHOW/missing.mp4", "SHOW/notes.txt", 5):
             self.assertIn(self.call("POST", "/api/media/import", {"usb": ref}, token=self.full)[0], (400, 404), ref)
-        live = self.call("POST", "/api/devices/invite", {"name": "p", "role": "live"}, token=self.full)[1]["token"]
-        self.assertEqual(self.call("POST", "/api/media/import", {"usb": "SHOW/film.mp4"}, token=live)[0], 403)
+        view = self.call("POST", "/api/devices/invite", {"name": "g", "role": "view"}, token=self.full)[1]["token"]     # an Operator copies since D80
+        self.assertEqual(self.call("POST", "/api/media/import", {"usb": "SHOW/film.mp4"}, token=view)[0], 403)
 
     def test_an_empty_file_and_a_stick_that_stops_answering(self):
         open(os.path.join(self.usb, "SHOW", "empty.mp4"), "w").close()
