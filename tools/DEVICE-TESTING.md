@@ -203,6 +203,23 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 | P1 | Owner: press **Show** under "The Owner (everything) PIN"; then **Copy**; then leave the page and come back | Four digits in the field, gone by themselves after about 12 seconds; "The PIN is copied" (or "Select the PIN and copy it"); the field empty again on return. Compare the digits with `sudo pvj-pin` | `journalctl -u pvj-web -b \| grep "owner PIN"`: one line per press with the device's id and name and no four digits of a PIN in it |
 | P2 | Guest: About and power > **Log out**, answer Log out; reload the page. Then owner: Log out on your own row under Paired devices, read the question, press Stay; then Log out and answer Log out | The guest is on the pairing screen after the reload, and gone from the owner's list. The owner's question names the PIN (last full-access device) or says "You will need the PIN"; after the real Log out the pairing screen, and the old PIN pairs again | When no device is left and nothing plays: the PIN screen on the display within a few seconds; `journalctl -u pvj-web -b \| grep "logged out"` has a line per logout |
 
+### Secure connection (D79)
+
+**Never run on a box or a phone.** You need your computer with `openssl` (a Mac has it), the box reachable at `http://nxlx-mastercontrol.local/` with full access, and the devices below. Everything is in `docs/HTTPS.md`; this is the order to try it in.
+
+| # | Do | See |
+| --- | --- | --- |
+| H1 | On your computer: `python3 tools/boxcert.py make-root` (a passphrase twice) | `~/nxlx-root-ca/root.key` and `root.pem` exist; a second `make-root` refuses. Back the folder up now |
+| H2 | On the box's panel over http://, System > Secure connection: check the names, press **Make the request**, then **Download the request** | The row says "HTTP only · request made"; the file `nxlx-mastercontrol.csr` is on your computer; on the box `sudo ls -la /var/lib/pvj/tls` shows the folder `drwx------ pvj-web` and `key.pem` `-rw-------` |
+| H3 | `python3 tools/boxcert.py sign ~/Downloads/nxlx-mastercontrol.csr`, then on the page **Upload the certificate...** with the file it wrote | "Certificate in use for nxlx-mastercontrol.local, <addresses>, until <a date about 13 months away>"; the row says "On · until ..."; `journalctl -u pvj-web -b \| grep certificate` has one line without any key material |
+| H4 | iPhone: **Download the root certificate**, follow the four steps on the page (the profile, then Settings > General > About > Certificate Trust Settings), then **Does this device trust the box?**, then **Open https://...** and pair with the PIN | "Yes"; Safari shows the lock with no warning at `https://nxlx-mastercontrol.local/`; the pairing works; the page over https says "You are reading this over https://" |
+| H5 | The same on an iPad, an Android phone (Chrome), a Mac (Safari and Chrome; Firefox needs its own import), and Windows if you have one | Each says Yes and opens https:// without a warning. Write down which words on the page did not match what the device showed |
+| H6 | Over https:// on the iPhone, switch **Owner access only over the secure connection** on. Then on any device open `http://nxlx-mastercontrol.local/` and try to pair with the PIN; then try a guest code there | The PIN is refused with the https address in the message; the guest code works; an owner device that is still on http:// sees the notice with the link at the top |
+| H7 | On the Mac over http://, with the switch on, try System > People and codes > Show | Refused: the notice points at https:// |
+| H8 | A short-lived certificate: `boxcert.py sign <the request> --days 1 --out short.pem`, upload it, wait a day (or set a phone's clock two days ahead) | The row turns to "Certificate ends ..." then "Certificate ran out ..."; the phone refuses https:// with its own warning; http:// still opens the page, which says what is wrong; **Back to the one before** restores the long one |
+| H9 | Backup and reset > Reset to factory settings (clips kept) | The confirm says the key and certificate go; afterwards the box is HTTP only, `/var/lib/pvj/tls` is gone, the root on the phones still trusts the next certificate you sign |
+| H10 | `sudo pvj-update` to a newer bundle, or the Updates card | `/var/lib/pvj/tls` is untouched and https:// works after the restart |
+
 ### Runtime folders: who owns what in /run (D45)
 
 **Not run on any box yet.** The change that gives each service its own runtime folder ran in CI only: the unit tests, and one job that runs the installer for real as root under the runner's systemd (`tests/real_install_test.sh`: no display, not a Pi, not the box's systemd). This list is the proof for a box; until someone has run it, nothing may be claimed about how the folders behave on hardware.
@@ -372,6 +389,7 @@ Before: Shaders and Vibes on, nothing mapped, Effect detail on Automatic. Note t
 | E16 | Press a controller's effect Next and at once Stop on the panel, then play a clip | Nothing goes on over the clip; the Effects card says the effect "did not go on" because the screen was cleared | |
 
 What cannot be made on purpose: a pair the GPU refuses. If the Effects card ever says "the player refused ... over the shader", send the whole sentence and the two names.
+
 ### OSC: who may send (D78)
 
 **Never run on a box or with a real TouchOSC.** Before: OSC is switched on (System > OSC), a tablet with TouchOSC is on the same network with the box's address and port 9876 as its target, a control in the layout sends `/pvj/stop`, a clip plays, and a paired full-access phone or laptop has System > OSC open. A second device that can send OSC (a laptop) helps for O3.

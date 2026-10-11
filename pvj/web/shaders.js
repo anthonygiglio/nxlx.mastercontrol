@@ -356,7 +356,7 @@
   // The big button starts and stops Vibes and says what is playing; beside it the shader before and the next one
   // while a shader is on, the set to play when there is more than one, and the way to the page. Presenters (live
   // access) and above use it; everyone sees whether it is on.
-  var L = { data: null, shader: null, at: 0, busy: false, shape: '', ctls: [], rig: null };
+  var L = { data: null, shader: null, at: 0, busy: false };
   function liveRow(c) {
     if (!c.moduleOn('shaders')) return null;
     var pl = player(c), on = typeof pl.shader === 'string', can = c.can('live');
@@ -368,7 +368,7 @@
       ui.startSet = pick.value; pick.blur();
       if (player(c).vibes && L.data) c.act('POST', '/api/vibes', vibesBody(L.data, true), function () { c.say(''); setTimeout(c.poll, 1200); });
     });
-    L.shader = null; L.at = 0; L.shape = '';
+    L.shader = null; L.at = 0;
     return c.h('div', { class: 'vibesrow', id: 'vibesrow' },
       c.h('button', { class: 'btn big vibesbig' + (pl.vibes ? ' on' : ''), id: 'vibes', 'aria-pressed': pl.vibes ? 'true' : 'false', disabled: !can,
         onclick: function () {
@@ -380,12 +380,10 @@
       pick,
       c.h('button', { class: 'btn big', id: 'shaderslink', text: 'Shaders ›', 'aria-label': 'Shaders: the list, controls, presets and Vibes settings', onclick: c.openShaders }));
   }
-  // The strip: Speed and the first four controls of the shader that is on, so a performer need not leave Live.
-  function liveStrip(c) {
-    if (!c.moduleOn('shaders') || !c.can('live')) return null;
-    return c.h('div', { class: 'card liveside', id: 'liveshader', hidden: true });
-  }
-  function drawLive(c, d, box) {
+  // (Until D72 a strip with Speed and the first four controls of the shader that is on stood on Live, then on
+  // Shape > Controls: a second copy of what the Controls card of the Shaders screen holds, and gone as that.)
+  // The set chooser of the Vibes row: the sets, and the one that plays or would be started.
+  function drawLive(c, d) {
     var pick = document.getElementById('liveset');
     if (pick) {
       var shape = JSON.stringify(d.sets.map(function (e) { return [e.id, e.name]; }));
@@ -397,60 +395,29 @@
       pick.hidden = d.sets.length < 2;
       if (document.activeElement !== pick) pick.value = (d.vibes.running && d.vibes.set && d.vibes.set.id) || (startSet(d) || activeSet(d) || {}).id || '';
     }
-    var s = d.playing && d.shaders.filter(function (x) { return x.id === d.playing.id; })[0];
-    box.hidden = !s;
-    if (box.parentNode) box.parentNode.classList.toggle('has-side', !!s);
-    if (!s) { L.shape = ''; L.ctls = []; return; }
-    var shape2 = JSON.stringify([s.id, inputShape(s)]);
-    if (shape2 !== L.shape) {
-      L.shape = shape2;
-      L.rig = makeRig(c, function () { return L.data && L.data.playing ? L.data.playing.id : null; }, function () { L.at = Date.now() - 3000; });
-      L.ctls = [];
-      box.textContent = '';
-      box.appendChild(c.h('div', { class: 'row between' }, c.h('h2', { id: 'livename', text: nice(s.name) }),
-        c.h('button', { class: 'btn', id: 'livemore', text: 'All controls ›', onclick: c.openShaders })));
-      var list = c.h('div', { class: 'ctls', id: 'livectls' });
-      var speed = commonControl('speed', speedSpec(d, s), d.playing.controls.speed, { h: c.h, rig: L.rig, compact: true, prefix: 'live-' });
-      L.ctls.push({ common: 'speed', ctl: speed });
-      list.appendChild(speed.el);
-      s.inputs.slice(0, 4).forEach(function (i) {
-        var v = d.playing.values[i.name];
-        var ctl = inputControl(i, v === undefined ? i['default'] : v, { h: c.h, rig: L.rig, compact: true, prefix: 'live-', size: d.render });
-        if (ctl) { L.ctls.push({ name: i.name, ctl: ctl }); list.appendChild(ctl.el); }
-      });
-      box.appendChild(list);
-      return;
-    }
-    syncControls(L.ctls, d.playing);
   }
-  // Called with every status poll: the Now playing line, the button and the strip follow the player.
+  // Called with every status poll: the Now playing line and the Vibes row follow the player.
   function patch(c, pl, np) {
     if (np && typeof pl.shader === 'string') np.textContent = (pl.vibes ? 'Vibes: ' : 'Shader: ') + (nice(pl.shader) || 'starting');
     var b = document.getElementById('vibes'), w = document.getElementById('vibeswords'), s = document.getElementById('vibessub');
-    if (!b || !w || !s) return;
-    w.textContent = words(pl);
-    s.textContent = sub(pl);
-    b.className = 'btn big vibesbig' + (pl.vibes ? ' on' : '');
-    b.setAttribute('aria-pressed', pl.vibes ? 'true' : 'false');
     var on = typeof pl.shader === 'string';
-    ['liveprev', 'vibesskip'].forEach(function (id) { var el = document.getElementById(id); if (el) el.hidden = !on; });
-    var box = document.getElementById('liveshader');
-    if (!box || L.busy) return;
-    // The strip and the set chooser need the shader list: asked for when the shader changes, and every few seconds
-    // while one is on (its values may be moved from elsewhere).
+    if (b && w && s) {
+      w.textContent = words(pl);
+      s.textContent = sub(pl);
+      b.className = 'btn big vibesbig' + (pl.vibes ? ' on' : '');
+      b.setAttribute('aria-pressed', pl.vibes ? 'true' : 'false');
+      ['liveprev', 'vibesskip'].forEach(function (id) { var el = document.getElementById(id); if (el) el.hidden = !on; });
+    }
+    if (!document.getElementById('liveset') || L.busy) return;
+    // The set chooser needs the shader list: asked for when the shader changes, and now and then otherwise.
     var name = on ? pl.shader : null;
-    // Live was drawn again (another bank, a tab and back): the strip comes back from what is known, without a gap
-    if (!L.shape && L.data && L.data.playing && L.data.playing.name === name) { drawLive(c, L.data, box); L.shader = name; }
-    if (name === L.shader && (Date.now() - L.at < (on ? 4000 : 20000))) return;
+    if (name === L.shader && (Date.now() - L.at < 20000)) return;
     L.busy = true;
     c.api('GET', '/api/shaders').then(function (r) {
       L.busy = false; L.at = Date.now(); L.shader = name;
-      if (!r.ok || !box.isConnected) return;
+      if (!r.ok) return;
       L.data = loaded(r.data) ? r.data : null;
-      if (L.data) return drawLive(c, r.data, box);
-      box.hidden = true;                    // the module is off: no strip, and nothing kept to draw it from
-      if (box.parentNode) box.parentNode.classList.remove('has-side');
-      L.shape = ''; L.ctls = [];
+      if (L.data) drawLive(c, r.data);
     });
   }
 
@@ -522,10 +489,17 @@
       });
     }
     function soon(ms) { clearTimeout(soonTimer); soonTimer = setTimeout(function () { if (root.isConnected) refresh(); }, ms); }
+    // A column of a desk that is not shown (a phone with the pads open, a laptop under 1700 px: D72) asks nothing;
+    // the timer keeps running, and the panel says when the column is shown again (pvjshown), which asks at once.
+    function hidden() { return root.isConnected && !root.getClientRects().length; }
     function watch() {
       clearTimeout(timer);
-      timer = setTimeout(function () { if (root.isConnected) refresh().then(watch); }, data && data.playing ? 3000 : 5000);
+      timer = setTimeout(function () { if (!root.isConnected) return; if (hidden()) return watch(); refresh().then(watch); }, data && data.playing ? 3000 : 5000);
     }
+    window.addEventListener('pvjshown', function onShown() {
+      if (!root.isConnected) return window.removeEventListener('pvjshown', onShown);
+      if (!hidden()) soon(0);
+    });
     // Once a second, between two answers from the box: the countdown moves, and a shader that changed on the screen
     // (the status poll knows first) is asked about at once.
     function tick() {
@@ -1227,10 +1201,12 @@
   // Never while typing or choosing: not in a field, a list or the XY pad, not with a modifier, not while a question
   // waits. Space on a button stays that button's own press.
   document.addEventListener('keydown', function (e) {
-    if (!keys || !keys.root.isConnected || !keys.live) return;
+    if (!keys || !keys.root.isConnected || !keys.root.getClientRects().length || !keys.live) return;     // (the page is also built while another tab of Play is shown)
     if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.defaultPrevented || document.getElementById('confirmrow')) return;
     var a = document.activeElement, tag = a && a.tagName;
     if (a && (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || a.isContentEditable || (a.closest && a.closest('.xypad')))) return;
+    var col = a && a.closest && a.closest('.deskcol');
+    if (col && !col.contains(keys.root)) return;        // the cursor is in another column of the desk (the pads, the library): its keys are its own
     if (e.key === ' ' || e.code === 'Space') {
       if (tag === 'BUTTON' || tag === 'SUMMARY' || tag === 'A') return;
       e.preventDefault();
@@ -1245,6 +1221,6 @@
   // Vibes row on Live, so a set chosen on one screen is the set the other starts.
   var lend = { player: player, activeSet: activeSet, startSet: startSet, body: vibesBody, choose: function (id) { ui.startSet = id; }, detailHigh: detailHigh, loaded: loaded };
   // `kit` is what effects.js draws its controls with: the same controls, the same way of sending.
-  window.pvjShaders = { liveRow: liveRow, liveStrip: liveStrip, patch: patch, page: page, nice: nice, vibes: lend,
+  window.pvjShaders = { liveRow: liveRow, patch: patch, page: page, nice: nice, vibes: lend,
     kit: { makeRig: makeRig, inputControl: inputControl, noteLine: noteLine, slider: slider, syncControls: syncControls, knobOf: knobOf, round: round } };
 })();

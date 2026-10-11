@@ -56,7 +56,7 @@ REMOTE_DENY = {
     # the OSC key is a secret of the studio's own network (D78); the rest of the OSC page stays readable for support
     ("POST", "/api/osc/key"),
 }
-REMOTE_DENY_PREFIX = ("/api/access",)
+REMOTE_DENY_PREFIX = ("/api/access", "/api/https")      # /api/https: the box's key, certificate and the owner-only switch (D79)
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
 
 

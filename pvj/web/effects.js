@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Effects: the panel's part. An effect is a filter over whatever plays (a clip, a stream, a live input); see
 // pvj/effects.py. Loaded after shaders.js, whose controls it draws with (window.pvjShaders.kit), and before app.js,
-// which hands over its helpers each time it draws. Two things are drawn here: a compact strip on Live (the
-// effect's name, Amount, Off, Previous and Next) and the Effects card on Mix (the list of filters, the controls of
-// the one that is on with Amount first, presets, and the MIDI teach buttons beside what they drive).
+// which hands over its helpers each time it draws. One thing is drawn here, the Effects card on Shape > Effect: the
+// effect that is on with Previous, On or Off and Next, the list of filters, the controls of the one that is on with
+// Amount first, presets, and the MIDI teach buttons beside what they drive. (Until D72 a compact strip with the
+// name, Previous, On or Off, Next and Amount stood on Live, then on Shape > Controls: a second copy of what the
+// card's head and its Amount are, and gone as that.)
 (function () {
   'use strict';
 
   // Survives redraws, never saved: the list's filters, the MIDI action being taught, what the last upload said.
   var ui = { filter: '', weight: 'all', open: '', teach: '', taught: '', upload: null, more: false };
-  var X = { data: null, at: 0, busy: false, key: '' };          // the box's last answer, shared by the strip and the card
-  var strip = { shape: '', amount: null };
+  var X = { data: null, at: 0, busy: false, key: '' };          // the box's last answer
   var card = { head: '', det: '', ctl: '', pre: '', list: '', add: '', ctls: [] };
   var midi = { data: null, asked: false };
   var teachers = [], learnTimer = null, soonTimer = null;
@@ -75,8 +76,7 @@
   // ---- asking the box -------------------------------------------------------------------------------------------
   function drawAll(c) {
     if (!X.data) return;
-    var s = document.getElementById('livefx'), m = document.getElementById('fxcard');
-    if (s) drawStrip(c, X.data, s);
+    var m = document.getElementById('fxcard');
     if (m) drawCard(c, X.data, m);
   }
   function load(c) {
@@ -105,7 +105,7 @@
   // Called with every status poll. The state is asked for again when what plays has changed hands, every few
   // seconds while an effect is on (its values may be moved from a controller), and now and then otherwise.
   function patch(c) {
-    if (!document.getElementById('livefx') && !document.getElementById('fxcard')) return;
+    if (!document.getElementById('fxcard')) return;
     if (!c.moduleOn('shaders')) return;
     var pl = player(c);
     var key = [pl.effect || '', typeof pl.shader === 'string', !!pl.path, !!pl.running, !!pl.capture, !!pl.test_pattern].join('|');
@@ -132,42 +132,6 @@
   }
   function rigFor(c) {
     return kit().makeRig(c, function () { return X.data && X.data.on ? X.data.on.id : null; }, function () { X.at = Date.now() - 3000; }, WHERE);
-  }
-
-  // ---- Live: the strip ----------------------------------------------------------------------------------------------
-  function liveStrip(c) {
-    if (!c.moduleOn('shaders') || !kit()) return null;
-    strip.shape = '';
-    var box = c.h('div', { class: 'card fxstrip', id: 'livefx' });
-    if (X.data) drawStrip(c, X.data, box);
-    else box.appendChild(c.h('div', { class: 'k', text: 'Effect' }));
-    return box;
-  }
-  function drawStrip(c, d, box) {
-    var h = c.h, can = c.can('live'), on = d.on;
-    var shape = JSON.stringify([d.enabled, d.available, d.unavailable, on && on.id, can]);
-    if (shape === strip.shape) {
-      if (on && strip.amount && strip.amount.ch.free() && !on.pending) strip.amount.apply(on.controls.amount);
-      return;
-    }
-    strip.shape = shape; strip.amount = null;
-    box.textContent = '';
-    box.appendChild(h('div', { class: 'row between wrap' },
-      h('div', { class: 'fxtitle' }, h('span', { class: 'k', text: 'Effect' }), h('span', { class: 'fxname', id: 'livefxname', text: on ? nice(on.name) : 'None' })),
-      h('button', { class: 'btn', id: 'livefxmore', text: 'Effects ›', 'aria-label': 'Effects: the list, all controls and presets', onclick: c.openMix })));
-    if (!on && !d.available) box.appendChild(h('div', { class: 'hint', id: 'livefxwhy', text: d.unavailable || 'Not available now.' }));
-    if (!can) return;
-    var off = !on && !d.available;
-    function step(dir) { return function () { send(c, '/api/effects/step', { dir: dir }); }; }
-    box.appendChild(h('div', { class: 'row fxbuttons' },
-      h('button', { class: 'btn grow', id: 'livefxprev', text: '‹ Previous', 'aria-label': 'The effect before', disabled: off, onclick: step(-1) }),
-      on ? h('button', { class: 'btn grow', id: 'livefxoff', text: 'Off', 'aria-label': 'Take the effect off', onclick: function () { send(c, '/api/effects', { off: true }); } })
-        : h('button', { class: 'btn grow', id: 'livefxon', text: 'On', 'aria-label': 'Put the last effect back on', disabled: off, onclick: function () { send(c, '/api/effects', { toggle: true }); } }),
-      h('button', { class: 'btn grow', id: 'livefxnext', text: 'Next ›', 'aria-label': 'The next effect', disabled: off, onclick: step(1) })));
-    if (on) {
-      strip.amount = numberControl(c, rigFor(c), { key: 'amount', id: 'live-fx-amount', label: 'Amount', min: 0, max: 1, value: on.controls.amount, reset: 1, text: percent, compact: true });
-      box.appendChild(h('div', { class: 'ctls' }, strip.amount.el));
-    }
   }
 
   // ---- MIDI teach buttons (full access, with the MIDI row in view) -----------------------------------------------
@@ -263,7 +227,7 @@
     card.head = card.det = card.ctl = card.pre = card.list = card.add = '';
     card.ctls = []; teachers = [];
     if (!c.moduleOn('shaders') || !kit()) {
-      box.appendChild(h('div', { class: 'hint', id: 'fxmsg', text: 'Off. Switch it on under System, Shaders and Vibes (beta).' }));
+      box.appendChild(h('div', { class: 'hint', id: 'fxmsg', text: 'Off. Switch it on under Setup, Shaders and Vibes (beta).' }));
       return box;
     }
     var stage = h('div', { class: 'fxstage' }, h('div', { id: 'fxhead' }), h('div', { id: 'fxdetail' }), h('div', { id: 'fxctl' }), h('div', { id: 'fxpre' }));
@@ -510,5 +474,5 @@
     el.appendChild(h('div', { class: 'msg' + (ui.upload && ui.upload.err ? ' err' : ''), id: 'fxuploadmsg', role: 'status', text: ui.upload ? ui.upload.text : '' }));
   }
 
-  window.pvjEffects = { liveStrip: liveStrip, mixCard: mixCard, patch: patch, nice: nice };
+  window.pvjEffects = { mixCard: mixCard, patch: patch, nice: nice };
 })();

@@ -13,7 +13,9 @@ const path = require('path');
 function describe() {
   // The sections of a screen: each becomes a named group at the top of the SVG and a layer group in the PSD. A System
   // page has a Back button, a header with the switch, a description, a message and a state line above its cards.
-  const SECTIONS = '.top, .pads, .card, nav.tabs, .btn.back, #sysblurb, #sysstate, #msg, .danger-h, .support-banner, .banks';
+  // The Workspace shell (D65) adds its own parts round the screen: the title bar, the row of the area's screens (a
+  // phone, tabs from 600 px), the rail of the areas (from 600 px), the transport strip and the area tabs (a phone).
+  const SECTIONS = '#wshead, #wssub, #wsside, #wstp, .top, .pads, .card, nav.tabs, .btn.back, #sysblurb, #sysstate, #msg, .danger-h, .support-banner, .banks';
   const CONTROL = 'button, input, select, textarea, canvas, img, svg, .pad';
   const used = {};
   const uniq = (s) => { s = s.replace(/\s+/g, ' ').trim().slice(0, 48) || 'item'; used[s] = (used[s] || 0) + 1; return used[s] > 1 ? s + ' ' + used[s] : s; };
@@ -29,6 +31,10 @@ function describe() {
     if (el.matches('.card.navgroup')) { const h = el.querySelector('h2'); return 'Group: ' + (h ? h.textContent : 'top'); }
     if (el.matches('.card.ctlcard')) { const h = el.querySelector('h2'); return 'Controller: ' + (h ? h.textContent : 'unknown'); }
     if (el.matches('.card')) { const h = el.querySelector('h2'); return 'Card: ' + (h ? h.textContent : el.id || 'untitled'); }
+    if (el.matches('#wshead')) return 'Title bar';
+    if (el.matches('#wssub')) return 'Screens of the area';
+    if (el.matches('#wsside')) return 'Rail';
+    if (el.matches('#wstp')) return 'Transport strip';
     if (el.matches('.top.syshead')) return 'Page header';
     if (el.matches('.top')) return 'Header';
     if (el.matches('.btn.back')) return 'Back button';
@@ -49,7 +55,7 @@ function describe() {
     if (el.matches('.hint')) return 'Hint: ' + el.textContent;
     if (el.matches('.state')) return 'State: ' + el.textContent;
     if (el.matches('.pads')) return 'Pads';
-    if (el.matches('nav.tabs')) return 'Tab bar';
+    if (el.matches('nav.tabs')) return 'Area tabs';
     if (el.matches('.pad')) return 'Pad ' + el.textContent;
     if (el.matches('button')) return 'Button: ' + (el.textContent || el.getAttribute('aria-label') || '');
     if (el.matches('input[type=range]')) return 'Slider: ' + (el.getAttribute('aria-label') || el.id || '');

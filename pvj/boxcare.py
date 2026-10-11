@@ -1084,6 +1084,8 @@ class BoxCare:
             if media == "delete":
                 deleted = self._delete_media(problems)
             problems += api.theme_store.clear(api.themes)      # the owner's added themes go with the settings
+            if api.https is not None:
+                problems += api.https.wipe()                   # the box's key and certificate: HTTP only, as a new box (D79)
             problems += self._apply()
         finally:
             api._upload_lock.release()
