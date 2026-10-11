@@ -1098,6 +1098,13 @@ class PlayerSoundTest(unittest.TestCase):
         pid[0] = 101                                                                   # the player is another process
         new.is_running()
         self.assertEqual({a[1] for a in sent2 if a[0] == "set_property"}, set(Player.MKV_ONLY))
+        # a player this side has just started is a fresh process: nothing to widen, and nothing to wait for while it
+        # makes its window (_spawn marks it; tests/test_player.py DeafAtTheStartTest counts on the start staying quiet)
+        del sent2[:]
+        pid[0] = 103
+        new._own_start = True
+        new.is_running()
+        self.assertEqual([a for a in sent2 if a[0] == "set_property"], [], "a player this side started was widened")
         # and not in the middle of a pipe load, which narrows on purpose
         del sent2[:]
         pid[0] = 102

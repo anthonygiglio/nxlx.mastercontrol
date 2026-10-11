@@ -206,7 +206,10 @@ class Player:
         Every play and every status asks for the pid, so it is noticed by whoever comes first."""
         with self._pid_lock:                # status polls come from several threads, unlocked: one restart is counted once
             if self._seen_pid is None or pid != self._seen_pid:
-                self._widen_due = True      # a player this Player has not spoken to yet: see _widen
+                if self._own_start:         # a player this side has just started: fresh, with nothing to widen (and
+                    self._own_start = False     # maybe still making its window: not a moment to wait on six answers)
+                else:
+                    self._widen_due = True  # a player this Player has not spoken to yet: see _widen
             if self._seen_pid is not None and pid != self._seen_pid:
                 if self._new_expected:
                     # The panel itself ended the old one (quit), which was counted then. A wish made since is for
@@ -222,7 +225,7 @@ class Player:
             self._widen()
         return pid
 
-    _widen_due, _pipe_loading = False, False
+    _widen_due, _pipe_loading, _own_start = False, False, False
 
     def _widen(self):
         """The narrowing for the NDI stream with sound (MKV_ONLY) is a property of the whole mpv, taken back from an
@@ -282,6 +285,7 @@ class Player:
             raise PlayerError("mpv not found; install it (sudo apt install mpv)")
         self._proc = proc
         self.ipc.patient_until = time.monotonic() + START_GRACE     # a player that is coming up is given time to answer
+        self._own_start = True                                      # its first pid is a fresh process's: nothing to widen (_note_pid)
         with open(self.pid_path, "w") as f:
             f.write(str(proc.pid))
         deadline = time.monotonic() + 10
