@@ -134,10 +134,10 @@ ROWS = {
     ("POST", "/api/osc/key"): STUDIO("owner"),
     ("GET", "/api/dmx"): KINDS["owner"],
     ("POST", "/api/dmx"): KINDS["owner"],
-    ("POST", "/api/midi"): KINDS["owner"],
-    ("POST", "/api/midi/learn"): KINDS["owner"],
-    ("POST", "/api/midi/map"): KINDS["owner"],
-    ("POST", "/api/midi/lights"): KINDS["owner"],
+    ("POST", "/api/midi"): KINDS["op"],
+    ("POST", "/api/midi/learn"): KINDS["op"],
+    ("POST", "/api/midi/map"): KINDS["op"],
+    ("POST", "/api/midi/lights"): KINDS["op"],
     ("POST", "/api/access/controller"): STUDIO("owner"),
     ("POST", "/api/streams"): KINDS["owner"],
     ("POST", "/api/projectors"): KINDS["owner"],
@@ -698,47 +698,43 @@ class GuestLimitTest(RolesBase):
 
 class HeldBackTest(RolesBase):
     """What does not rise with the Operator, beside the controllers and support of the table."""
-    def test_a_presenter_paired_from_a_controller_before_the_update_keeps_the_presenters_reach(self):
-        with self.settings.lock:
-            old = {"id": "0123abcd", "name": "From the Launchpad", "role": "live", "via": "controller", "created": 1, "hash": "x"}
-            self.settings.data["devices"].append(old)
-        self.assertTrue(policy.held_to_legacy(old))
-        self.assertFalse(policy.is_operator(old))
-        self.assertFalse(policy.held_to_legacy(self.operator))
-        self.assertFalse(policy.held_to_legacy(dict(old, role="full")))      # an owner code from a controller is an owner
-        self.assertFalse(policy.held_to_legacy(dict(old, role="view")))      # and a guest is a guest
-        legacy = {k for k, row in ROWS.items() if row[8] == 200}
-        real = self.api.routes()
-        stubbed = {k: (need, (lambda b, d, c: {})) for k, (need, _h) in real.items()}
-        self.api.routes = lambda: stubbed
-        self.api.set_module = lambda *a: {}
-        for method, path in sorted(ROWS):
-            if (method, path) in policy.OUTSIDE:
-                try:
-                    self.api.gate(method, path, {}, old, LAN)
-                    got = 200
-                except api_mod.ApiError as e:
-                    got = e.status
-            else:
-                got = self.api.handle(method, path.replace("*", "shaders"), {}, old, LAN)[0]
-            self.assertEqual(got, 200 if (method, path) in legacy else 403, "%s %s" % (method, path))
-
-    def test_the_same_through_pairing_and_a_token_over_http(self):
-        """Not a device written by hand: one paired as the controller code paired before D80, asked with its token."""
+    def test_a_presenter_paired_from_a_controller_before_the_update_is_a_guest(self):
+        """The owner, 2026-10-10: "Old presenters are moved up to Guests." The record stays as it was (an older
+        release reads it as before); the box treats it as a Guest everywhere, the lock included. Through pairing and
+        a token over HTTP, not a device written by hand."""
         token, dev = self.auth._add_device("From the Launchpad", "live", via="controller")
-        self.assertEqual(self.auth.authenticate(token).get("via"), "controller")
-        self.assertEqual(self.call("GET", "/api/status", token=token)[1]["reach"], "presenter")
-        self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=token)[0], 200)
-        for path, body in (("/api/pads", {"bank": 0, "index": 0, "label": "x", "file": "a.mp4"}), ("/api/media/delete", {"name": "a.mp4"}),
-                           ("/api/guests", {"locked": True}), ("/api/devices/invite", {"name": "x", "role": "view"}), ("/api/schedule", {"enabled": True, "entries": []})):
+        stored = [d for d in self.settings.data["devices"] if d["id"] == dev["id"]][0]
+        self.assertEqual((stored["role"], stored["via"], dev["role"]), ("live", "controller", "view"))
+        self.assertEqual(self.auth.authenticate(token)["role"], "view")
+        status = self.call("GET", "/api/status", token=token)[1]
+        self.assertEqual((status["reach"], status["device"]["role"]), ("guest", "view"))
+        self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=token)[0], 200)          # a guest's form, the lock open
+        for path, body in (("/api/mix", {"transition": "cut", "duration": 1}), ("/api/fadeout", {"seconds": 1}), ("/api/pads", {"bank": 0, "index": 0, "label": "x", "file": "a.mp4"}),
+                           ("/api/media/delete", {"name": "a.mp4"}), ("/api/guests", {"locked": True}), ("/api/access/code", {"role": "view"}),
+                           ("/api/devices/invite", {"name": "x", "role": "view"}), ("/api/control", {"action": "seek", "value": 5})):
             self.assertEqual(self.call("POST", path, body, token=token)[0], 403, path)
         self.assertEqual(self.call("GET", "/api/devices", token=token)[0], 403)
-        self.assertEqual(self.call("POST", "/api/media/upload?name=new.mp4", raw=b"0123", headers={"Content-Type": "application/octet-stream"}, token=token)[0], 403)
-        # the others carry no such mark, and an operator from a link is an operator
-        self.assertNotIn("via", self.auth.authenticate(self.guest_token))
+        self.assertEqual(self.call("GET", "/api/access", token=token)[0], 403)
+        self.lock(True)
+        self.later()
+        st, out, _ = self.call("POST", "/api/play", {"file": "a.mp4"}, token=token)
+        self.assertEqual((st, out["error"]), (403, policy.LOCKED_TEXT))
+        self.assertEqual(self.call("GET", "/api/status", token=token)[1]["reach"], "watch")
+        self.lock(False)
+        # the owner sees it as a Guest, and an Operator removes it as one
+        listed = {d["id"]: d["role"] for d in self.h("GET", "/api/devices", device=self.owner)[1]["devices"]}
+        self.assertEqual(listed[dev["id"]], "view")
+        # a presenter the owner invited, by a link or a code, is an Operator
         op = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=self.full)[1]["token"]
         self.assertEqual(self.call("GET", "/api/status", token=op)[1]["reach"], "operator")
-        self.assertEqual(self.call("POST", "/api/guests", {"locked": False}, token=op)[0], 200)
+        code = self.h("POST", "/api/access/code", {"role": "live"}, self.owner)[1]["codes"][0]["code"]
+        joined = self.call("POST", "/api/pair", {"pin": code, "name": "by code"})[1]
+        self.assertEqual(self.call("GET", "/api/status", token=joined["token"])[1]["reach"], "operator")
+        # an owner paired from a controller stays an owner; the unused ones still go after a week
+        self.assertEqual(auth_mod.Auth.role_of({"role": "full", "via": "controller"}), "full")
+        self.assertTrue(auth_mod.Auth._expires(stored))
+        self.assertFalse(policy.held_to_legacy(self.auth.authenticate(token)))
+        self.assertEqual(sorted(k for k in dev), ["created", "id", "name", "role"])              # nothing else is handed out
 
     def test_the_panel_is_told_the_reach_in_one_word(self):
         def reach(dev, client=LAN):
@@ -747,7 +743,6 @@ class HeldBackTest(RolesBase):
         self.lock(True)
         self.assertEqual([reach(self.owner), reach(self.operator), reach(self.guest)], ["owner", "operator", "watch"])
         self.lock(False)
-        self.assertEqual(policy.reach({"id": "0123abcd", "role": "live", "via": "controller"}, False), "presenter")
         self.assertEqual(policy.reach({"id": "support-1", "role": "live", "remote": True}, False), "presenter")
         self.assertEqual(policy.reach({"id": "support-1", "role": "view", "remote": True}, False), "watch")   # never guest controls
         self.assertEqual(policy.reach({"id": "support-1", "role": "full", "remote": True}, False), "owner")
@@ -765,22 +760,31 @@ class PeopleTest(RolesBase):
     def invite(self, role, by):
         return self.h("POST", "/api/devices/invite", {"name": "new", "role": role}, by)
 
-    def test_an_operator_removes_a_guest_and_never_an_operator_or_an_owner(self):
-        second = self.auth.invite("op2", "live")[1]
-        for target in (self.owner, self.operator, second):
-            st, out = self.h("POST", "/api/devices/revoke", {"id": target["id"]}, self.operator)
-            self.assertEqual(st, 403, out)
-        self.assertEqual(len(self.settings.data["devices"]), 4)
-        self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": self.guest["id"]}, self.operator)[0], 200)
+    def test_an_operator_removes_guests_and_other_operators_never_himself_and_never_an_owner(self):
+        """The owner, 2026-10-10: "Operators can remove other operators just not themselves or owners." """
+        a_token = self.call("POST", "/api/devices/invite", {"name": "A", "role": "live"}, token=self.full)[1]["token"]
+        b_token = self.call("POST", "/api/devices/invite", {"name": "B", "role": "live"}, token=self.full)[1]["token"]
+        a, b = self.auth.authenticate(a_token), self.auth.authenticate(b_token)
+        self.assertEqual(self.call("GET", "/api/status", token=b_token)[0], 200)
+        self.assertEqual(self.call("POST", "/api/devices/revoke", {"id": self.owner["id"]}, token=a_token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/devices/revoke", {"id": a["id"]}, token=a_token)[0], 403)            # himself
+        self.assertEqual(self.call("GET", "/api/status", token=a_token)[0], 200)
+        self.assertEqual(self.call("POST", "/api/devices/revoke", {"id": b["id"]}, token=a_token)[0], 200)
+        self.assertEqual(self.call("GET", "/api/status", token=b_token)[0], 401)                                      # dead at once
+        self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=b_token)[0], 401)
+        self.assertTrue(any("operator device %s removed by operator device %s" % (b["id"], a["id"]) in line for line in self.lines))
+        self.assertEqual(self.call("POST", "/api/devices/revoke", {"id": self.guest["id"]}, token=a_token)[0], 200)
         self.assertIsNone(self.auth.authenticate(self.guest_token))
-        self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": self.guest["id"]}, self.operator)[0], 404)
-        self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": ["x"]}, self.operator)[0], 404)
-        self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": second["id"]}, self.owner)[0], 200)   # the owner still removes anyone
+        # what is not a paired device cannot be named: a controller, a support session, the box's own callers
+        for did in ("midi", "osc", "dmx", "room", "support-1", "*", "", b["id"], ["x"], None):
+            self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": did}, a)[0], 404, did)
+        self.assertEqual(sorted(d["role"] for d in self.settings.data["devices"]), ["full", "live", "live"])
+        self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": a["id"]}, self.owner)[0], 200)   # the owner still removes anyone
         self.assertEqual(self.h("POST", "/api/devices/revoke", {"id": self.owner["id"]}, self.guest)[0], 403)
 
-    def test_an_operator_sees_the_guests_only(self):
+    def test_an_operator_sees_guests_and_operators_and_never_an_owner(self):
         seen = self.h("GET", "/api/devices", device=self.operator)[1]["devices"]
-        self.assertEqual([d["id"] for d in seen], [self.guest["id"]])
+        self.assertEqual(sorted(d["id"] for d in seen), sorted([self.guest["id"], self.operator["id"]]))
         self.assertEqual(len(self.h("GET", "/api/devices", device=self.owner)[1]["devices"]), 3)
         self.assertEqual(self.h("GET", "/api/devices", device=self.guest)[0], 403)
 
@@ -809,7 +813,7 @@ class PeopleTest(RolesBase):
                 ("POST", "/api/access/controller", {"enabled": True, "owner": True}),
                 ("POST", "/api/system/settings/export", {}), ("GET", "/api/system/diagnostics", {}),
                 ("POST", "/api/system/factory-reset", {"confirm": "reset"}), ("POST", "/api/support/start", {"confirm": "start"}),
-                ("POST", "/api/modules/midi", {"enabled": True}), ("POST", "/api/midi/map", {}), ("POST", "/api/osc", {"enabled": True}),
+                ("POST", "/api/modules/midi", {"enabled": True}), ("POST", "/api/access/controller", {"join": "live"}), ("POST", "/api/osc", {"enabled": True}),
                 ("POST", "/api/osc/key", {}), ("POST", "/api/streams", {}), ("POST", "/api/projectors", {})):
             st, out = self.h(method, path, body, op)
             self.assertEqual(st, 403, "%s %s" % (path, out))
@@ -822,6 +826,222 @@ class PeopleTest(RolesBase):
         self.assertEqual(auth_mod.CONTROLLER_KINDS, {"join": "view", "owner": "full"})
         self.assertTrue(auth_mod.Auth._expires({"role": "view", "via": "controller"}))
         self.assertFalse(auth_mod.Auth._expires({"role": "full", "via": "controller"}))
+
+
+FAKE_PROFILE = {"controls": [
+    {"id": "codepad", "kind": "pad", "send": {"type": "note", "channel": 0, "number": 7}, "action": {"action": "code_join"}, "guard": False},
+    {"id": "stoppad", "kind": "pad", "send": {"type": "note", "channel": 0, "number": 1}, "action": {"action": "stop"}, "guard": False},
+    {"id": "spare", "kind": "pad", "send": {"type": "note", "channel": 0, "number": 2}, "action": None, "guard": False}]}
+PLAIN_PROFILE = {"controls": FAKE_PROFILE["controls"][1:]}
+
+
+class OwnerAnswersTest(RolesBase):
+    """What the owner decided on 2026-10-10 after the first build (D80 has his words)."""
+    # -- a controller's join code: a Guest, or an Operator when the Owner chose so --
+    def pair_from_controller(self, name="phone"):
+        self.auth.create_controller_code("join")
+        return self.call("POST", "/api/pair", {"pin": self.auth.controller_digits()[1], "name": name})[1]
+
+    def test_the_join_code_pairs_a_guest_unless_the_owner_chose_an_operator(self):
+        ctl = lambda: self.h("GET", "/api/access", device=self.owner)[1]["controller"]
+        self.assertEqual(self.h("POST", "/api/access/controller", {"enabled": True}, self.owner)[0], 200)
+        self.assertEqual(ctl()["join"], "view")
+        self.assertEqual(self.settings.data["controller_code"], {"enabled": True, "owner": False})         # nothing new in the file by default
+        first = self.pair_from_controller()
+        self.assertEqual(first["device"]["role"], "view")
+        # only an Owner, only at the studio, only the two words
+        for dev in (self.operator, self.guest):
+            self.assertEqual(self.h("POST", "/api/access/controller", {"join": "live"}, dev)[0], 403)
+        for junk in ("full", "owner", True, 1, None, ["live"], ""):
+            self.assertEqual(self.h("POST", "/api/access/controller", {"join": junk}, self.owner)[0], 400, junk)
+        self.assertEqual(ctl()["join"], "view")
+        # a code that is on the display when the choice changes is over: it said the other thing
+        self.auth.create_controller_code("join")
+        shown = self.auth.controller_digits()[1]
+        st, out = self.h("POST", "/api/access/controller", {"join": "live"}, self.owner)
+        self.assertEqual((st, out["controller"]["join"], out["controller"]["status"]["active"]), (200, "live", False))
+        self.assertEqual(self.call("POST", "/api/pair", {"pin": shown, "name": "late"})[0], 403)             # a wrong code, like any other
+        self.assertEqual(self.settings.data["controller_code"], {"enabled": True, "owner": False, "join": "live"})
+        self.assertTrue(any("the join code pairs an operator" in line for line in self.lines))
+        second = self.pair_from_controller("op phone")
+        self.assertEqual(second["device"]["role"], "live")
+        status = self.call("GET", "/api/status", token=second["token"])[1]
+        self.assertEqual(status["reach"], "operator")                                                      # a full Operator: the owner chose it
+        self.assertEqual(self.call("POST", "/api/guests", {"locked": False}, token=second["token"])[0], 200)
+        stored = [d for d in self.settings.data["devices"] if d["id"] == second["device"]["id"]][0]
+        self.assertEqual((stored["via"], stored["join"]), ("controller", "live"))
+        self.assertTrue(auth_mod.Auth._expires(stored))                                                    # unused for a week, it goes, like every device from a controller
+        # the lock does not flip the choice, and the choice does not flip the lock
+        self.lock(True)
+        self.assertEqual(ctl()["join"], "live")
+        self.assertEqual(self.h("POST", "/api/access/controller", {"join": "view"}, self.owner)[0], 200)
+        self.assertTrue(self.api.guests.locked())
+        self.assertEqual(self.settings.data["controller_code"], {"enabled": True, "owner": False})
+        # who was paired under either choice stays what he was
+        self.assertEqual(self.call("GET", "/api/status", token=second["token"])[1]["device"]["role"], "live")
+        self.assertEqual(self.call("GET", "/api/status", token=first["token"])[1]["device"]["role"], "view")
+        third = self.pair_from_controller("third")
+        self.assertEqual(third["device"]["role"], "view")
+        # the owner kind is not touched by it, and switching codes off keeps the choice out of the way
+        self.assertEqual(self.auth.controller_role("owner"), "full")
+        self.assertEqual(auth_mod.controller_setting({"enabled": False, "join": "live"}), {"enabled": False, "owner": False, "join": "live"})
+        for junk in ("full", True, 1, ["live"], "view"):
+            self.assertNotIn("join", auth_mod.controller_setting({"enabled": True, "join": junk}))
+
+    def test_the_display_says_which_of_the_two_the_code_pairs(self):
+        from pvj import pinscreen
+
+        class A:
+            role = "view"
+
+            def controller_pairs(self):
+                return self.role
+        screen = pinscreen.PinScreen.__new__(pinscreen.PinScreen)
+        screen.auth = A()
+        self.assertEqual(screen._controller_label("join"), "One-time guest code")
+        screen.auth.role = "live"
+        self.assertEqual(screen._controller_label("join"), "One-time operator code")
+        self.assertEqual(screen._controller_label("owner"), "One-time full access code")
+
+    # -- a scene marked "Not for guests" --
+    def mark(self, scene, on, by=None):
+        s = dict([x for x in self.settings.data["room"]["scenes"] if x["id"] == scene][0], no_guests=on)
+        return self.h("POST", "/api/room", {"scene": s}, by or self.operator)
+
+    def test_a_scene_marked_not_for_guests_is_refused_however_a_guest_names_it(self):
+        self.assertFalse(any("no_guests" in s for s in self.settings.data["room"]["scenes"]))             # every scene as it was
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE}, self.guest)[0], 200)
+        self.assertEqual(self.mark(SCENE, True, self.guest)[0], 403)
+        st, out = self.mark(SCENE, True)
+        self.assertEqual(st, 200, out)
+        self.assertIs(self.settings.data["room"]["scenes"][0]["no_guests"], True)
+        for body in ({"scene": SCENE}, {"number": 1}, {"name": "Show"}, {"name": " SHOW "}, {"scene": SCENE, "number": 3}, {"scene": SCENE, "confirm": "x"}):
+            self.later()
+            st, out = self.h("POST", "/api/room/scene", body, self.guest)
+            self.assertEqual((st, out["error"]), (403, "this scene is not for guests; ask an operator to start it"), body)
+        self.assertEqual([s["id"] for s in self.h("GET", "/api/room", device=self.guest)[1]["scenes"]], [STREAM_SCENE, OFF_SCENE])
+        for dev in (self.operator, self.owner):
+            self.assertEqual(len(self.h("GET", "/api/room", device=dev)[1]["scenes"]), 3)
+            self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE}, dev)[0], 200)
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE}, room.ROOM_DEVICE, "schedule")[0], 200)   # the schedule and controllers as before
+        # the switch-off scene marked: no confirm is even offered
+        self.assertEqual(self.mark(OFF_SCENE, True)[0], 200)
+        self.later()
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": OFF_SCENE}, self.guest)[0], 403)
+        # taken off again, the key is gone from the file, and the scene is a guest's again
+        self.assertEqual(self.mark(SCENE, False)[0], 200)
+        self.assertNotIn("no_guests", self.settings.data["room"]["scenes"][0])
+        self.later()
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE}, self.guest)[0], 200)
+        for junk in (1, "yes", None, [True]):
+            self.assertEqual(self.mark(SCENE, junk)[0], 400, junk)
+        # the stream scene is refused with or without a mark
+        self.later()
+        self.assertEqual(self.h("POST", "/api/room/scene", {"scene": STREAM_SCENE}, self.guest)[0], 403)
+
+    # -- MIDI is the Operator's, but never a control that shows an access code --
+    def midi_on(self, profile=FAKE_PROFILE):
+        hub = midi.MidiHub(self.api, self.settings, log=lambda *_: None, open_fn=lambda p: (_ for _ in ()).throw(OSError()),
+                           lister=lambda: [], scan_interval=0.05)
+        self.api.midi = hub
+        self.addCleanup(hub.stop)
+        self.assertEqual(self.h("POST", "/api/modules/control-midi", {"enabled": True}, self.owner)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi", {"enabled": True}, self.owner)[0], 200)
+        self.api.midi.profile_of = lambda name: profile if name == "Mini" else None
+        self.api.midi.known_sources = lambda: {"Mini"}
+
+    def owner_maps(self, action="code_owner", number=40):
+        st, out = self.h("POST", "/api/midi/map", {"add": {"source": "*", "kind": "note", "number": number, "action": action}}, self.owner)
+        self.assertEqual(st, 200, out)
+        return [e for e in out["map"] if e["number"] == number][0]
+
+    def test_an_operator_edits_the_midi_layout(self):
+        self.midi_on()
+        op = self.operator
+        st, out = self.h("POST", "/api/midi/map", {"add": {"source": "*", "kind": "cc", "number": 3, "action": "opacity"}}, op)
+        self.assertEqual(st, 200, out)
+        eid = out["map"][0]["id"]
+        self.assertEqual(self.h("POST", "/api/midi/map", {"set": {"controller": "Mini", "control": "stoppad", "action": {"action": "blackout"}}}, op)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi/map", {"set": {"controller": "Mini", "control": "spare", "action": {"action": "pause"}}}, op)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi/map", {"reset": {"controller": "Mini", "control": "stoppad"}}, op)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi/map", {"remove": eid}, op)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi", {"enabled": True}, op)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi/learn", {"start": True}, op)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi/learn", {"start": False}, op)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi", {"controller": "Mini", "lights": True}, op)[0], 200)
+        for dev in (self.guest, midi.MIDI_DEVICE, osc.OSC_DEVICE):
+            self.later()
+            self.assertEqual(self.h("POST", "/api/midi/map", {"clear": True}, dev)[0], 403)
+        self.assertEqual(self.h("POST", "/api/modules/control-midi", {"enabled": False}, op)[0], 403)      # the module's switch stays the Owner's
+
+    def test_an_operator_never_sets_changes_or_removes_a_control_that_shows_an_access_code(self):
+        """Every way in: a posted mapping, what Learn found, the drawn layout's own control, an existing mapping edited,
+        removed, cleared or reset away, the standard layout switched, a whole map sent to another route, an import."""
+        self.midi_on()
+        op, refused = self.operator, self.api.OWNER_MAPPING
+        mine = self.owner_maps("code_owner", 40)
+        join = self.owner_maps("code_join", 41)
+        kept = lambda: [e for e in self.settings.data["control"]["midi"]["map"] if e["action"].startswith("code_")]
+        before = json.dumps(kept(), sort_keys=True)
+        self.assertEqual(sorted(a for a in midi.ACTIONS if self.api._owner_action(a)), ["code_join", "code_owner"])
+
+        def no(path, body, status=403):
+            st, out = self.h("POST", path, body, op)
+            self.assertEqual(st, status, "%s %s: %s" % (path, body, out))
+            if status == 403:
+                self.assertIn("owner access needed", out["error"])
+            self.assertEqual(json.dumps(kept(), sort_keys=True), before, body)
+        for action in ("code_owner", "code_join"):
+            no("/api/midi/map", {"add": {"source": "*", "kind": "note", "number": 50, "action": action}})                 # a posted mapping
+            no("/api/midi/map", {"set": {"controller": "Mini", "control": "spare", "action": {"action": action}}})       # on the drawn layout
+            no("/api/midi/map", {"set": {"controller": "Mini", "control": "stoppad", "action": {"action": action}}})
+        # by Learn: Learn only finds the control; the mapping is the same posted one
+        self.assertEqual(self.h("POST", "/api/midi/learn", {"start": True}, op)[0], 200)
+        no("/api/midi/map", {"add": {"source": "Mini", "kind": "note", "number": 9, "action": "code_owner"}})
+        # the layout's own code pad: not given another action, not switched off
+        no("/api/midi/map", {"set": {"controller": "Mini", "control": "codepad", "action": {"action": "stop"}}})
+        no("/api/midi/map", {"set": {"controller": "Mini", "control": "codepad", "action": {"action": "none"}}})
+        no("/api/midi", {"controller": "Mini", "standard": False})
+        no("/api/midi", {"controller": "Mini", "standard": True})
+        no("/api/midi", {"controller": "Gone", "standard": False})                                                       # not plugged in: nothing to judge by
+        # the owner's existing mappings: not removed, not replaced, not reset away
+        no("/api/midi/map", {"remove": mine["id"]})
+        no("/api/midi/map", {"remove": join["id"]})
+        no("/api/midi/map", {"add": dict(mine, action="code_owner", number=60)})                                         # an id of his own choosing changes nothing
+        no("/api/midi/map", {"add": {"source": "*", "kind": "note", "number": 40, "action": "stop"}})                    # a mapping on the same note would take the owner's place
+        st, out = self.h("POST", "/api/midi/map", {"clear": True}, op)                                                   # his Clear leaves the owner's
+        self.assertEqual((st, json.dumps([e for e in out["map"]], sort_keys=True)), (200, before))
+        # an owner's override of a drawn control with a code action: the Operator cannot put something else there
+        st, out = self.h("POST", "/api/midi/map", {"set": {"controller": "Mini", "control": "spare", "action": {"action": "code_owner"}}}, self.owner)
+        self.assertEqual(st, 200, out)
+        before = json.dumps(kept(), sort_keys=True)
+        no("/api/midi/map", {"set": {"controller": "Mini", "control": "spare", "action": {"action": "stop"}}})
+        no("/api/midi/map", {"reset": {"controller": "Mini", "control": "spare"}})
+        no("/api/midi/map", {"reset": {"controller": "Mini"}})
+        # a whole map sent where switches are expected is not read; a settings file is the owner's to load
+        st, out = self.h("POST", "/api/midi", {"enabled": True, "map": [dict(mine, id="0a0a0a0a", number=70)]}, op)
+        self.assertEqual(json.dumps(kept(), sort_keys=True), before)
+        op_token = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=self.full)[1]["token"]
+        self.assertEqual(self.call("POST", "/api/system/settings/import?confirm=import", raw=b"{}", token=op_token)[0], 403)
+        self.assertEqual(self.h("POST", "/api/access/controller", {"enabled": True, "owner": True}, op)[0], 403)        # nor the switches that make the pad do anything
+        # he sees them (read only), and the owner still does all of it
+        self.assertEqual(len([e for e in self.h("GET", "/api/midi", device=op)[1]["map"] if e["action"].startswith("code_")]), 3)
+        self.assertEqual(self.h("POST", "/api/midi/map", {"remove": mine["id"]}, self.owner)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi", {"controller": "Mini", "standard": False}, self.owner)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi/map", {"clear": True}, self.owner)[1]["map"], [])
+
+    def test_a_layout_without_a_code_control_is_the_operators_to_switch(self):
+        self.midi_on(PLAIN_PROFILE)
+        self.assertEqual(self.h("POST", "/api/midi", {"controller": "Mini", "standard": False}, self.operator)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi", {"controller": "Mini", "standard": True}, self.operator)[0], 200)
+
+    def test_what_an_operator_maps_does_no_more_than_a_presenter_could(self):
+        """A mapped control calls the API as "midi", which is held to the list of before D80: nothing an Operator
+        gained, and nothing an Operator lacks, can be put on a pad."""
+        self.assertTrue(policy.held_to_legacy(midi.MIDI_DEVICE))
+        for key in (("POST", "/api/midi/map"), ("POST", "/api/midi"), ("POST", "/api/guests"), ("POST", "/api/pads"), ("POST", "/api/access/controller")):
+            self.assertNotIn(key, policy.LEGACY_LIVE)
+            self.assertEqual(self.h(key[0], key[1], {}, midi.MIDI_DEVICE, "midi")[0], 403)
 
 
 class AttackTest(RolesBase):
@@ -903,8 +1123,8 @@ class AttackTest(RolesBase):
                  ("/api/access/code", {"role": "live"}), ("/api/access/code", {"role": "full"}), ("/api/access/code", {"role": "view", "minutes": 100000}),
                  ("/api/access/screen", {"show": True, "items": ["pin"]}), ("/api/access/screen", {"show": True, "items": ["view", "live"]}),
                  ("/api/access/controller", {"enabled": True}), ("/api/pin/show", {}), ("/api/modules/control-osc", {"enabled": True}),
-                 ("/api/osc", {"enabled": True, "paired": False}), ("/api/dmx", {"enabled": True}), ("/api/midi", {"enabled": True}),
-                 ("/api/midi/map", {"add": {"action": "code_owner"}}), ("/api/support/start", {"confirm": "start", "role": "full"}),
+                 ("/api/osc", {"enabled": True, "paired": False}), ("/api/dmx", {"enabled": True}), ("/api/access/controller", {"join": "live"}),
+                 ("/api/modules/control-midi", {"enabled": True}), ("/api/support/start", {"confirm": "start", "role": "full"}),
                  ("/api/support/config", {"allowed": True}), ("/api/sync", {"role": "server"}), ("/api/system/update", {}),
                  ("/api/system/clock", {"time": "2030-01-01T00:00:00"}), ("/api/network/plan", {}), ("/api/theme/add", {"file": "{}"}),
                  ("/api/streams", {"action": "add", "name": "x", "url": "srt://203.0.113.9:9000"}),

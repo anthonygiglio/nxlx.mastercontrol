@@ -211,7 +211,7 @@ class ServerTest(ServerBase):
             # the Operator (D80): everything here but the two that are system critical
             self.assertEqual(self.call("POST", path, body, token=live)[0], 403 if path in ("/api/modules/mapper", "/api/pin/rotate") else 200, path)
         self.assertEqual(self.call("GET", "/api/devices", token=view)[0], 403)
-        self.assertEqual([d["role"] for d in self.call("GET", "/api/devices", token=live)[1]["devices"]], ["view", "view"])
+        self.assertEqual([d["role"] for d in self.call("GET", "/api/devices", token=live)[1]["devices"]], ["view", "live", "view"])
         self.assertEqual(self.call("POST", "/api/devices/invite", {"name": "x", "role": "full"}, token=full)[0], 400)
 
     def test_guest_link_session_and_revoke(self):

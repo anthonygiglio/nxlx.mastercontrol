@@ -638,8 +638,9 @@ class LightsHubTest(LightsHubBase):
         self.plug(C_PAD)
         self.wait(lambda: C_PAD in self.out and len(self.out[C_PAD].lit()) == 80)
         guest = self.call("POST", "/api/devices/invite", {"role": "live"}, token=self.full)[1]["token"]
-        self.assertEqual(self.call("POST", "/api/midi/lights", {"controller": "Mini", "test": True}, token=guest)[0], 403)
-        self.assertEqual(self.call("POST", "/api/midi", {"controller": "Mini", "lights": False}, token=guest)[0], 403)
+        view = self.call("POST", "/api/devices/invite", {"role": "view"}, token=self.full)[1]["token"]       # the lights are the Operator's since D80
+        self.assertEqual(self.call("POST", "/api/midi/lights", {"controller": "Mini", "test": True}, token=view)[0], 403)
+        self.assertEqual(self.call("POST", "/api/midi", {"controller": "Mini", "lights": False}, token=view)[0], 403)
         seen = self.call("GET", "/api/midi", token=guest)
         self.assertEqual((seen[0], seen[1]["controllers"][0]["lights"]["state"]), (200, "on"))       # a presenter may look
         for bad in ({"controller": "Mini"}, {"controller": "Mini", "test": False}, {"controller": "Mini", "test": True, "bytes": [144, 0, 127]},

@@ -136,6 +136,8 @@ def _scene(body, api):
     room = api.room
     room._need()
     scene = room._pick(room.config()["scenes"], body, "scene", "scene")
+    if scene.get("no_guests") is True:
+        raise Refused(403, "this scene is not for guests; ask an operator to start it")
     if (scene.get("box") or {}).get("action") == "stream":
         raise Refused(403, "this scene plays a stream; ask an operator to start it")
     return OFF if any(r.get("power") == "off" for r in scene.get("groups", [])) else True
@@ -175,15 +177,11 @@ def is_guest(device):
 
 
 def held_to_legacy(device):
-    """The callers that keep the presenter's old reach whatever the route table says: the box's own callers, a support
-    session below full, and a device that was paired as a presenter with a code drawn from a controller before D80
-    (anyone at the controller could make that code with no owner there; such a code pairs a Guest now, and the
-    devices it made earlier do not rise with the Operator; they go after 7 unused days as before)."""
+    """The callers that keep the presenter's old reach whatever the route table says: the box's own callers and a
+    support session below full. (A presenter paired from a controller's code before D80 is a Guest: Auth.role_of.)"""
     if not device:
         return False
-    if is_controller(device) or (device.get("remote") and device.get("role") != "full"):
-        return True
-    return device.get("via") == "controller" and device.get("role") == "live"
+    return bool(is_controller(device) or (device.get("remote") and device.get("role") != "full"))
 
 
 def is_operator(device):

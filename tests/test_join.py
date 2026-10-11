@@ -611,16 +611,17 @@ class PresenterGuestCodeTest(AccessApiTest):
             self.post("/api/access/screen", {"show": False})
 
     def test_never_a_permanent_link_and_never_device_removal(self):
-        """Since D80 an Operator makes a guest link and removes a guest; never a link above a guest, never the
-        removal of an Operator or an Owner, and of the devices he sees the guests only (tests/test_roles.py)."""
+        """Since D80 an Operator makes a guest link and removes guests and other Operators; never a link above a
+        guest, never the removal of himself or an Owner, and he sees no Owner's device (tests/test_roles.py)."""
         devices = [d["id"] for d in self.auth.list_devices()]
         roles = {d["id"]: d["role"] for d in self.auth.list_devices()}
         for role in ("live", "full"):
             self.assertEqual(self.as_live("/api/devices/invite", {"name": "x", "role": role})[0], 403)
         seen = self.call("GET", "/api/devices", token=self.live)[1]["devices"]
-        self.assertEqual([d["id"] for d in seen], [d for d in devices if roles[d] == "view"])
+        self.assertEqual([d["id"] for d in seen], [d for d in devices if roles[d] != "full"])
+        mine = self.auth.authenticate(self.live)["id"]
         for did in devices:
-            if roles[did] != "view":
+            if roles[did] == "full" or did == mine:
                 self.assertEqual(self.as_live("/api/devices/revoke", {"id": did})[0], 403)
         self.assertEqual([d["id"] for d in self.auth.list_devices()], devices)
 

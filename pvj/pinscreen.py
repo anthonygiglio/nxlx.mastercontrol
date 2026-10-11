@@ -207,12 +207,18 @@ class PinScreen:
             self._notice = (self._clock() + NOTICE_SECONDS, text % minutes if "%d" in text else text)
             self.tick()
 
+    def _controller_label(self, kind):
+        pairs = getattr(self.auth, "controller_pairs", None)
+        if kind == "join" and pairs and pairs() == "live":      # the owner chose that the join kind pairs an Operator (D80)
+            return "One-time operator code"
+        return CONTROLLER_LABELS[kind]
+
     def controller_lines(self, c):
         kind, digits, left = c
         addr = ["http://%s.local/" % clean(self.hostname)] if self.hostname else []
         addr += ["http://%s/" % clean(a) for a in self.addresses()[:1]]
         out = ["nxlx.mastercontrol", "Open " + "  or  ".join(addr) if addr else "Open the panel in a browser",
-               "%s  %s" % (CONTROLLER_LABELS[kind], clean(digits)),
+               "%s  %s" % (self._controller_label(kind), clean(digits)),
                "Scan the QR code or type it in the 6 digit code field" if kind == "join" else "Type it in the 6 digit code field",
                "Works once. Hides in %d s. Press the control again to hide it now" % left]
         locked = getattr(self.auth, "pairing_locked", lambda: 0)()

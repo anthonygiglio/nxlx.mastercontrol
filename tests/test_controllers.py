@@ -594,8 +594,10 @@ class HubTest(HubBase):
         for path, body in (("/api/midi", {"controller": "Mini", "standard": False}),
                            ("/api/midi/map", {"set": {"controller": "Mini", "control": "side_g", "action": {"action": "none"}}}),
                            ("/api/midi/map", {"reset": {"controller": "Mini"}})):
-            self.assertEqual(self.post(path, body, token=live)[0], 403, path)
             self.assertEqual(self.post(path, body, token=view)[0], 403, path)
+        # an Operator edits the layout since D80, but not the standard layout of a controller with a pad that shows an
+        # access code (the Launchpad Mini's eighth pad): tests/test_roles.py has the rest
+        self.assertEqual(self.post("/api/midi", {"controller": "Mini", "standard": False}, token=live)[0], 403)
 
     def test_nothing_is_acted_on_once_midi_is_switched_off(self):
         self.present = ["/dev/snd/midiC1D0"]
