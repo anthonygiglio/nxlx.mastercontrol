@@ -2338,6 +2338,16 @@ class Api:
         except osc_mod.OscError as e:
             raise bad(str(e))
         new.pop("key", None)                   # the key lives in its own section (OscManager.make_key)
+        # D83: the first time OSC is switched on, on a box where it never was on, the paired-device lock comes on
+        # with it (OSC has no login). A request that says what it wants for that lock is obeyed; a box where OSC is
+        # on or ever was keeps its settings exactly. Any word about the lock from the owner ends "by default".
+        if "paired_on" in body:
+            new.pop(osc_mod.PAIRED_DEFAULT, None)
+        elif new["enabled"] and osc_mod.never_on(self.settings.data):
+            new["paired_on"] = True
+            new[osc_mod.PAIRED_DEFAULT] = True
+        if new["enabled"] or cfg.get("enabled"):
+            new[osc_mod.EVER_ON] = True
         if new.get("key_on") and not self.osc.key():
             self.osc.make_key()
         with self.settings.lock:
@@ -2418,7 +2428,16 @@ class Api:
         return state
 
     def get_health(self, body, device, client):
-        return self.health.report()
+        out = self.health.report()
+        # D83: OSC on with every lock off is said on the health page, to an Owner and an Operator (who sees the
+        # warning and not the settings); a Guest is not told what is open.
+        if self.osc is not None and Auth.allows(device, "live"):
+            try:
+                if osc_mod.is_open(self.settings.data["osc"]):
+                    out = dict(out, osc_open={"state": "warn", "text": osc_mod.OPEN_TEXT})
+            except Exception:
+                pass
+        return out
 
     # --- remote support (see support.py) --------------------------------------------------
     def _support_clash_networks(self):

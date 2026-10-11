@@ -1561,7 +1561,7 @@
         body: dmxCard },
       { id: 'osc', group: 'show', name: 'OSC', role: 'full', url: '/api/osc',
         blurb: 'Control the box from TouchOSC, QLab, Resolume and other programs that send OSC messages over the network.',
-        steps: [flagStep('osc', '/api/osc', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
+        steps: [oscStep()],
         body: function () { return [oscCard(), oscStateCard()]; } },
       { id: 'network', group: 'box', name: 'Network', role: 'full', module: 'network', url: '/api/network', urlRole: 'full',
         blurb: 'Change the box\'s wired and Wi-Fi network: automatic, a fixed address, a direct cable, handing out addresses, joining a Wi-Fi network or making its own hotspot. Every change goes back by itself unless you confirm it.',
@@ -1652,6 +1652,7 @@
       var lines = [['Power', d.power], ['Temperature', d.temperature], ['Player', d.player]];
       (d.helpers || []).forEach(function (x) { if (!x.running && x.name !== 'pvj-netd') lines.push([x.label, { state: 'bad', text: 'Not running' }]); });
       (d.projectors || []).forEach(function (x) { lines.push(['Projector ' + x.name, x]); });
+      if (d.osc_open) lines.push(['OSC', { state: 'warn', text: 'open, anyone on this network can control the box' }]);    // D83
       var worst = lines.filter(function (l) { return l[1] && l[1].state === 'bad'; })[0] || lines.filter(function (l) { return l[1] && l[1].state === 'warn'; })[0];
       if (!worst) return st(null, name + ' · all well');
       return st(worst[1].state === 'bad' ? 'problem' : 'check', worst[0] + ': ' + worst[1].text);
@@ -1742,6 +1743,7 @@
     osc: function (d) {
       if (!d.enabled) return st('off', '');
       if (d.error) return st('problem', d.error);
+      if (d.open) return st('check', 'Open: anyone on this network can control the box');     // D83: on, with every lock off
       return st('ready', d.listening ? 'Listening on UDP ' + d.port : 'Starting');
     },
     network: function (d) {
@@ -1979,6 +1981,19 @@
     return { inner: true,
       isOn: function () { var d = S.sysData[rowId]; return d ? !!read(d.now) : null; },
       set: function (value) { return api('POST', postUrl || url, body(value)).then(function (r) { if (r.ok) keepAnswer({ id: rowId }, r); return r; }); } };
+  }
+  // OSC's own switch (D83): the first time it is switched on, the box puts the paired-device lock on with it, and
+  // what that asks of the owner is said at that moment, wherever the switch was pressed.
+  function oscStep() {
+    var step = flagStep('osc', '/api/osc', function (d) { return d.enabled; }, function (v) { return { enabled: v }; });
+    var plain = step.set;
+    step.set = function (value) {
+      return plain(value).then(function (r) {
+        if (value && r.ok && r.data.paired_default) say('OSC is on, with the lock "A sender must be a paired device": open the panel on the tablet and pair it once, and again if its address changes.');
+        return r;
+      });
+    };
+    return step;
   }
   // The schedule is saved whole (the entries go with the flag), so the saved entries are read just before each
   // change and sent back as they are. Saved entries start running as soon as it is on, so that is asked first.
@@ -2247,6 +2262,9 @@
           x.running ? 'Running' : (x.name === 'pvj-netd' ? 'Not running (only needed for network settings)' : 'Not running')));
       });
       (d.projectors || []).forEach(function (x) { body.appendChild(row('healthproj-' + x.id, 'Projector: ' + x.name, x.state, x.text)); });
+      // D83: OSC on with every lock off. An Owner and an Operator are told (the box leaves it out for a Guest); the
+      // locks are the Owner's, on Setup > OSC, so an Operator reads who can switch one on.
+      if (d.osc_open) body.appendChild(row('healthosc', 'OSC', d.osc_open.state, can('full') ? d.osc_open.text.replace(/\.$/, '') + ' on the OSC page of Setup.' : d.osc_open.text.replace(/ Switch on a lock\.$/, '') + ' The owner can switch on a lock.'));
       body.appendChild(h('div', { class: 'field', text: 'Open the panel from another device at' }));
       body.appendChild(h('div', { class: 'list mono', id: 'healthaddr' }, d.addresses.map(function (a) { return h('div', { class: 'item' }, h('span', { text: a })); })));
       if (can('full')) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'healthshowaddr', text: 'Show the address on the display (2 minutes)', onclick: function () {
@@ -4264,6 +4282,9 @@
     function draw(d, saved) {
       body.textContent = '';
       body.appendChild(h('div', { class: d.error ? 'hint warn' : 'state', id: 'oscline', text: lineText(d) }));
+      // D83: on with every lock off. OSC has no login, and the roles and the guest lock do not apply to it.
+      if (d.open) body.appendChild(h('div', { class: 'hint warn', id: 'oscopen', role: 'status', text: (d.open_text || 'OSC is open: anyone on this network can control the box. Switch on a lock.') +
+        ' OSC has no login: with no lock on, any device on this network can play, stop, black out and move the picture, and the roles and the guest lock do not apply to it. The locks are below, under "Who may send".' }));
       var port = h('input', { class: 'text-input mono', id: 'oscport', type: 'number', min: 1024, max: 65535, value: oscForm.port === null ? d.port : oscForm.port });
       var allow = h('input', { class: 'text-input mono', id: 'oscallow', placeholder: '192.168.50.0/24', value: oscForm.allow === null ? d.allow.join(', ') : oscForm.allow });
       function nets() { return allow.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
@@ -4300,6 +4321,8 @@
   // last messages. All of it belongs to the OSC page (oscCard draws it, and keeps the lists fresh while it is open).
   // Only a full-access device is sent the lists; the key is asked for when Show is pressed, and hides itself.
   var oscKeyTimer = null, oscLogOpen = false, OSC_KEY_SECONDS = 30;
+  // D83: said beside the switch while the lock is on because the box put it on with the first switch-on of OSC.
+  var OSC_PAIRED_DEFAULT = 'This lock came on with OSC, because OSC has no login of its own. What it asks of you: open the panel on the tablet and pair it once, as an Owner device (or choose "Owner and operator devices" below); then TouchOSC on that tablet may send. If the tablet\'s address changes, open the panel on it again. Switch the lock off here if you would rather use another one.';
   function oscWho(d, redraw) {
     function set(body) {
       api('POST', '/api/osc', body).then(function (r) {
@@ -4310,7 +4333,7 @@
     }
     var box = h('div', { class: 'list sp oscwho', id: 'oscwho' },
       h('div', { class: 'switchlabel', text: 'Who may send' }),
-      h('div', { class: 'hint', id: 'oscwhohint', text: 'Three locks, each off until you switch it on; a message must pass every one that is on. None of them is encryption: OSC travels in the clear, and a device on this network can pretend to be another one. They keep out devices that are merely on the network.' }));
+      h('div', { class: 'hint', id: 'oscwhohint', text: 'Three locks; a message must pass every one that is on. None of them is encryption: OSC travels in the clear, and a device on this network can pretend to be another one. They keep out devices that are merely on the network.' }));
     // 1. the list of devices
     box.appendChild(toggle('osconly', 'Only these devices may send', d.only_on, function (v) { set({ only_on: v }); },
       'Only the addresses in this list, in place of every device on a private network.'));
@@ -4322,6 +4345,7 @@
     // 2. a paired device
     box.appendChild(toggle('oscpaired', 'A sender must be a paired device', d.paired_on, function (v) { set({ paired_on: v }); },
       'Open the panel on the tablet once; then TouchOSC on the same tablet may send, for the hours set here. Removing the device under People and codes, or logging out on it, stops it at once.'));
+    if (d.paired_default) box.appendChild(h('div', { class: 'hint', id: 'oscpaireddefault', text: OSC_PAIRED_DEFAULT }));
     if (d.paired_on) {
       var roles = h('select', { class: 'text-input', id: 'oscpairedroles', onchange: function () { set({ paired_roles: roles.value }); } },
         [['full', 'Owner devices only'], ['live', 'Owner and operator devices']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: d.paired_roles === o[0] }); }));

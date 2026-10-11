@@ -232,6 +232,7 @@ class ImportTest(Base):
         st, out = self.send(file)
         self.assertEqual(st, 200, out)
         self.assertEqual(out["problems"], [])
+        before["osc"]["ever_on"] = True                          # D83: this box's own mark, set because OSC was set up here
         self.assertEqual(self.settings.data, before)             # passwords too: kept from the box
         self.assertEqual(out["passwords_kept"], 4)              # one projector, a login, a passphrase, a stream key
         self.assertEqual(self.call("GET", "/api/devices", token=self.full)[0], 200)      # still paired

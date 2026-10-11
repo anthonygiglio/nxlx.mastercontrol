@@ -81,7 +81,8 @@ class NothingChangesTest(LayerBase):
         self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)
         self.assertEqual(self.send(msg("/stopall", 1.0), "10.1.2.3"), 1)
         self.assertEqual(self.send(msg("/pvj/speed", 2.0), "8.8.8.8"), 0)
-        self.assertEqual(set(self.settings.data["osc"]), {"enabled", "port", "allow"})   # nothing is written by itself
+        # nothing is written by itself but the mark of D83 (whether OSC was ever on here), which is no lock and changes nothing by itself
+        self.assertEqual(set(self.settings.data["osc"]), {"enabled", "port", "allow", "ever_on"})
 
     def test_a_prefix_is_dropped_while_the_key_layer_is_off(self):
         self.assertEqual(self.send(msg("/k/whatever/pvj/speed", 3.0)), 1)
@@ -595,7 +596,8 @@ class ApiTest(CareBase):
         for dev in (self.live_dev, self.view_dev):
             st, d = self.h("GET", "/api/osc", device=dev)
             self.assertEqual(st, 200)
-            self.assertEqual(set(d), {"enabled", "port", "allow", "listening", "error", "received", "only_on", "paired_on", "key_on"})
+            self.assertEqual(set(d), {"enabled", "port", "allow", "listening", "error", "received", "only_on", "paired_on", "key_on",
+                                      "open", "open_text", "paired_default"})
             self.assertNotIn(TABLET, json.dumps(d))
             self.assertEqual(self.h("GET", "/api/osc/messages", device=dev)[0], 403)
             self.assertEqual(self.h("POST", "/api/osc/key", {}, dev)[0], 403)
@@ -686,7 +688,8 @@ class BoxCareTest(CareBase):
         self.assertTrue(self.auth.paired_addresses(3600))
         st, out = self.h("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, self.full_dev)
         self.assertEqual(st, 200, out)
-        self.assertEqual(self.settings.data["osc"], {"enabled": False, "port": 9876, "allow": []})
+        self.assertEqual(self.settings.data["osc"], {"enabled": False, "port": 9876, "allow": [], "ever_on": False},
+                         "and OSC was never on again (D83): the next switch-on brings the paired lock")
         self.assertNotIn(osc.KEY_SECTION, self.settings.data)
         self.assertNotIn(KEY, read(self.settings.path))
         self.assertNotIn(KEY, read(self.settings.path + ".bak"))
