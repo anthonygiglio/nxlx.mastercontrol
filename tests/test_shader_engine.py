@@ -1066,7 +1066,7 @@ class SetsTest(Live):
         self.vibes.stop()
         # without Vibes: the neighbour in the active set, put on by the worker (the request does not wait for the GPU)
         self.engine.play("nxlx-silk.fs")
-        self.assertEqual(self.engine.step(1), {"ok": True, "id": "nxlx-ember.fs"})
+        self.assertEqual(self.engine.step(1), {"ok": True, "steps": 1})     # a move: which shader, the worker says when it comes to it
         self.assertEqual(self.engine.state()["playing"]["id"], "nxlx-silk.fs")
         self.pump()
         self.assertEqual(self.engine.state()["playing"]["id"], "nxlx-ember.fs")

@@ -176,7 +176,7 @@
       var all = g.id === 'all', title = all ? 'Everything' : g.name;
       var kids = [h('div', { class: 'row between' }, h('h2', { text: title }),
         h('span', { class: 'badge room-state state-' + g.state.replace(/ /g, '-'), text: cap(g.state) })),
-        h('div', { class: 'room-text', text: g.projectors.length ? g.text : (all ? 'No projectors added yet (System > Projectors).' : 'No projectors in this group.') })];
+        h('div', { class: 'room-text', text: g.projectors.length ? g.text : (all ? 'No projectors added yet (Setup > Projectors).' : 'No projectors in this group.') })];
       if (live && g.projectors.length) {
         var button = function (text, action, extra, cls) {
           var body = { group: g.id, action: action };
@@ -227,7 +227,7 @@
     function drawLive(d) {
       scenes.textContent = '';
       scenes.appendChild(h('h2', { text: 'Scenes' }));
-      if (!d.scenes.length) scenes.appendChild(h('div', { class: 'hint', id: 'roomnoscenes', text: full ? 'No scenes yet. Add one under "Set up the room" below.' : 'No scenes yet.' }));
+      if (!d.scenes.length) scenes.appendChild(h('div', { class: 'hint', id: 'roomnoscenes', text: full ? 'No scenes yet. Add one under Setup, Room ("Set up the room").' : 'No scenes yet.' }));
       else scenes.appendChild(h('div', { class: 'room-scenes' }, d.scenes.map(function (s) {
         var on = !!d.job && d.job.scene === s.id;
         return h('button', { class: 'btn big room-scene' + (on ? ' on' : ''), 'data-id': s.id, text: s.name, disabled: !live, 'aria-pressed': on ? 'true' : 'false',
@@ -289,7 +289,7 @@
               var got = m.data.learn.captured;
               if (got) {
                 return c.api('POST', '/api/midi/map', { add: { source: got.source, kind: got.kind, channel: 0, number: got.number, action: 'scene', scene: s.id } }).then(function (a) {
-                  c.say(a.ok ? 'That control now applies "' + s.name + '". It is listed under System > MIDI controllers.' : (a.data.error || 'Could not save the mapping'), !a.ok);
+                  c.say(a.ok ? 'That control now applies "' + s.name + '". It is listed under Setup > MIDI controller.' : (a.data.error || 'Could not save the mapping'), !a.ok);
                 });
               }
               if (m.data.learn.active && ++tries < 40) return wait();
@@ -426,7 +426,7 @@
           });
           if (b.action === 'file') { if (!b.file) return c.say('Upload a clip first.', true); out.box.file = b.file; out.box.loop = b.loop; }
           if (b.action === 'pad') out.box.pad = [b.bank, b.index];
-          if (b.action === 'stream') { if (!b.stream && streams && streams.length) b.stream = streams[0].id; if (!b.stream) return c.say('Save a stream under System > Streams first.', true); out.box.stream = b.stream; }
+          if (b.action === 'stream') { if (!b.stream && streams && streams.length) b.stream = streams[0].id; if (!b.stream) return c.say('Save a stream under Setup > Streams first.', true); out.box.stream = b.stream; }
           edit({ scene: out }, 'Scene saved', function () { draft.scene = blankScene(); });
         } }),
         draft.scene.id ? h('button', { class: 'btn small', id: 'roomscancel', text: 'Cancel', onclick: function () { keep(); draft.scene = blankScene(); drawSetup(last, true); } }) : null));

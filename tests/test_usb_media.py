@@ -243,7 +243,7 @@ class UsbDriveAndAutostartPadTest(UsbMediaTest):
         from pvj import autostart
         self.api.autostart = autostart.Autostart(self.api, self.settings, log=lambda *_: None)
         st, body, _ = self.call("POST", "/api/autostart", {"mode": "pad", "pad": [2, 11]}, token=self.token)
-        self.assertEqual((st, body["error"]), (400, "choose a pad that has a clip"))
+        self.assertEqual((st, body["error"]), (400, "choose a pad that has a clip or a shader"))
         self.call("POST", "/api/autostart", {"mode": "usb"}, token=self.token)
         self.assertTrue(self.call("GET", "/api/media", token=self.token)[1]["autostart_usb"])
 

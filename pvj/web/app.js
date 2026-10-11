@@ -6,10 +6,15 @@
   var RANK = { view: 1, live: 2, full: 3 };
   var ACCENTS = ['#f59e0b', '#c2410c', '#22d3ee', '#e879f9', '#a3e635', '#ffffff'];
   var S = {
-    tab: 'live', device: null, status: null, banks: [], bank: 0, media: [], modules: [], theme: null,
+    tab: 'play', device: null, status: null, banks: [], bank: 0, media: [], modules: [], theme: null,
     themes: [], devices: [], editing: false, sheet: null, msg: '', msgErr: false, token: null, failures: 0,
-    sys: null, sysData: {}, sysFresh: false,  // System: the page that is open (null: the index), what each row last answered
-    sysFrom: null                             // the tab a page was opened from, when not from the index ('live': the Shaders link)
+    sys: null, sysData: {}, sysFresh: false,  // Setup: the page that is open (null: the index), what each row last answered
+    sysFrom: null,                            // where a page was opened from, when Back should return there ('room': the Shaders link of the Room; 'index': the Setup index)
+    // The Workspace shell (D65, D72). S.tab is which build is on the page: play (Pads, Library and Shaders), shape
+    // (Effect, Picture and Sound), room (Scenes, Walls and Guests), each of them ONE build with a column per screen,
+    // or system (the Setup index, a page of it, and Shape > Mapping). S.part is the open column of each of the
+    // three; S.last is the screen each area was left on.
+    part: { play: 'pads', shape: 'effect', room: 'scenes' }, last: {}, menu: ''
   };
   var app = document.getElementById('app');
   var offlineBanner = document.getElementById('offline');
@@ -37,14 +42,14 @@
   function can(role) { return role === 'op' ? canOp() : !!S.device && RANK[S.device.role] >= RANK[role]; }
   // Who may do what (D80). The box says this device's reach in one word (GET /api/status, "reach": owner, operator,
   // presenter, guest or watch); before the first status it is taken from the role. can('op') is what an Operator
-  // gained with D80; a "presenter" (a support session below full, a device paired from a controller before D80)
-  // keeps what a presenter had. The box decides all of it again (pvj/policy.py): this only leaves out what it refuses.
+  // gained with D80; a "presenter" (a support session below full) keeps what a presenter had; a phone that was
+  // paired as a presenter from a controller's code before D80 is a Guest, and the box says so in its role. The box decides all of it again (pvj/policy.py): this only leaves out what it refuses.
   function reach() {
     if (S.status && S.status.reach) return S.status.reach;
     var d = S.device;
     if (!d) return 'watch';
     if (d.role === 'full') return 'owner';
-    if (d.role === 'live') return d.remote || d.via === 'controller' ? 'presenter' : 'operator';
+    if (d.role === 'live') return d.remote ? 'presenter' : 'operator';
     return 'watch';
   }
   function canOp() { var r = reach(); return r === 'owner' || r === 'operator'; }
@@ -126,7 +131,7 @@
         var left = document.getElementById('supportleft');
         if (left && now) left.textContent = (S.device && S.device.remote ? 'You are connected as remote support' : 'Remote support session is open') + ' · ' + mins(r.data.support.seconds_left) + ' left';
         patchLive();
-        if (window.pvjEffects) window.pvjEffects.patch(shaderCtx());       // the strip on Live and the card on Mix
+        if (window.pvjEffects) window.pvjEffects.patch(shaderCtx());       // the Effects card
         if (window.pvjRoom && window.pvjRoom.patch) window.pvjRoom.patch();
       }
     });
@@ -218,7 +223,7 @@
     });
     return h('div', { class: 'shell' }, h('div', { class: 'screen' },
       h('h1', { text: 'Remote support' }),
-      h('p', { text: 'You reached this box through its support tunnel. Ask the studio for the support code shown in their panel (System > Remote support) and type it here. It works only during their session.' }),
+      h('p', { text: 'You reached this box through its support tunnel. Ask the studio for the support code shown in their panel (Setup > Remote support) and type it here. It works only during their session.' }),
       h('label', { class: 'k', for: 'supportcode', text: 'Support code' }), code, go,
       h('div', { id: 'msg', class: 'msg', role: 'status' })));
   }
@@ -328,14 +333,48 @@
   }
 
   // ---- live -----------------------------------------------------------
+  // A pad that holds a generator shader instead of a clip (D73): `file` is empty, `shader` names the shader's file
+  // and `preset` may stand beside it. Everything the pads know of such a pad is in these three functions and in
+  // padKinds below; padButton, live and sheet only call them.
+  function padShader(pad) { return !pad.file && typeof pad.shader === 'string' && pad.shader ? pad.shader : ''; }
+  function padShaderName(pad) { return padShader(pad).replace(/\.fs$/, ''); }
+  function padShaderNice(id) { return window.pvjShaders && window.pvjShaders.nice ? window.pvjShaders.nice(id) : String(id || '').replace(/\.fs$/, ''); }
+  function padPlaying(pad, pl) {
+    // a shader pad is the one playing while its shader is on with the preset the pad starts it with (a pad without
+    // one starts the preset called default, or none), and not while Vibes shows that shader: that is nobody's pad
+    if (padShader(pad)) {
+      var got = String(pl.shader_preset || '').toLowerCase(), want = String(pad.preset || '').toLowerCase();
+      return typeof pl.shader === 'string' && pl.shader === padShaderName(pad) && !pl.vibes && (want ? got === want : got === '' || got === 'default');
+    }
+    return !!(pl.path && pad.file && base(pl.path) === pad.file);
+  }
+  // A shader pad whose shader the box's graphics chip refused (D73): said where the pads are, in one line under
+  // them, and marked on the pad. A controller's tap is answered before the chip has looked, so its refusal has no
+  // answer to ride on; the box's status carries the last refusal (player.shader_refused) until that shader shows.
+  function padRefusal(pads, pl) {
+    var r = pl.shader_refused, line = document.getElementById('padrefused');
+    var held = !!(r && (S.banks || []).some(function (b) { return (b.pads || []).some(function (p) { return padShader(p) === r.id; }); }));
+    ((S.banks[S.bank] || {}).pads || []).forEach(function (p, i) {
+      if (pads.children[i]) pads.children[i].classList.toggle('refused', held && padShader(p) === r.id);
+    });
+    if (!held) { if (line && line.parentNode) line.parentNode.removeChild(line); return; }
+    if (!line) {
+      line = h('div', { class: 'hint warn', id: 'padrefused', role: 'status' });
+      pads.parentNode.insertBefore(line, pads.nextSibling);
+    }
+    var text = 'A pad\'s shader was not shown. ' + String(r.message || '').replace(/^the player refused /, 'The box refused ');
+    if (line.textContent !== text) line.textContent = text;
+  }
   function padButton(bank, index, pad) {
-    var playing = S.status && S.status.player && S.status.player.path && pad.file && base(S.status.player.path) === pad.file;
-    var label = pad.label || (pad.file ? pad.file.replace(/\.[^.]+$/, '') : 'Empty');
-    var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file ? '' : ' empty'), 'aria-pressed': playing ? 'true' : 'false', 'data-pad': index },
-      h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }), h('span', { class: 't', text: label }));
+    var held = padShader(pad);
+    var playing = padPlaying(pad, (S.status && S.status.player) || {});
+    var label = pad.label || (pad.file ? pad.file.replace(/\.[^.]+$/, '') : held ? padShaderNice(held) : 'Empty');
+    var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file || held ? '' : ' empty') + (held ? ' shader' : ''), 'aria-pressed': playing ? 'true' : 'false', 'data-pad': index,
+      title: held ? 'Shader: ' + padShaderNice(held) + (pad.preset ? ', preset ' + pad.preset : '') : null },
+      h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }, held ? h('span', { class: 'padkind', text: 'Shader' }) : null), h('span', { class: 't', text: label }));
     b.addEventListener('click', function () {
       if (S.editing && canOp()) return openSheet(bank, index);
-      if (!pad.file) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip.' : 'Empty pad.', true);
+      if (!pad.file && !held) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip or a shader.' : 'Empty pad.', true);
       if (canGuest()) return guestSend('/api/play', { pad: [bank, index] }, '', b);
       if (!can('live')) return say(guestsLocked() ? LOCKED_TEXT : 'This device can watch only.', true);
       act('POST', '/api/play', { pad: [bank, index] }, function () { say(''); poll(); });
@@ -343,53 +382,134 @@
     return b;
   }
   function live() {
-    var st = S.status || {};
-    var pl = st.player || {};
     var bank = S.banks[S.bank];
     var pads = h('div', { class: 'pads', id: 'pads' });
     (bank ? bank.pads : []).forEach(function (p, i) { pads.appendChild(padButton(S.bank, i, p)); });
-    var canLive = can('live');
-    // On a laptop Live uses the width: the transport and the pads on the left, the playing shader's strip on the right
-    // (the strip is there only while a shader is on; on a phone it sits under the Vibes row).
-    return h('div', { class: 'screen' },
-      h('div', { class: 'top' }, h('h1', { text: 'nxlx.mastercontrol' }), h('div', { class: 'pill k', id: 'pill' })),
+    // Play > Pads (D65, D72): the pads with their banks, the big Vibes button above them as it was on Live, how one
+    // clip gives way to the next (transitionCard(), which was on Shape > Picture), and the snapshot. What Live also
+    // held is elsewhere: the transport is the strip at the foot of every screen (transport()); the strips of the
+    // playing shader and of the effect were copies of what the Shaders screen and the Effect screen hold, and are gone.
+    return h('div', { class: 'screen', id: 'padsscreen' },
+      guestNote('pads'),
       h('div', { class: 'livecols', id: 'livecols' },
-      h('div', { class: 'card' },
-        h('div', { class: 'k', text: 'Now playing' }),
-        h('div', { id: 'np', style: false, text: '' }),
-        seekBar(canLive),
-        h('div', { class: 'row between' }, h('div', { class: 'k', id: 'time' }), h('div', { class: 'k', id: 'plpos' })),
-        h('div', { class: 'row transport' },
-          h('button', { class: 'btn small grow', id: 'prev', text: '\u23ee Prev', 'aria-label': 'Previous clip', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'prev' }, poll); } }),
-          h('button', { class: 'btn small grow', id: 'back10', text: '\u2212 10 s', 'aria-label': 'Back 10 seconds', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'seek', value: -10 }, poll); } }),
-          h('button', { class: 'btn small grow', id: 'fwd10', text: '+ 10 s', 'aria-label': 'Forward 10 seconds', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'seek', value: 10 }, poll); } }),
-          h('button', { class: 'btn small grow', id: 'next', text: 'Next \u23ed', 'aria-label': 'Next clip', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'next' }, poll); } })),
-        h('div', { class: 'row transport' },
-          h('button', { class: 'btn small grow', id: 'fadein', text: 'Fade in', disabled: !canLive, onclick: function () { act('POST', '/api/fadein', { seconds: 2 }, poll); } }),
-          h('button', { class: 'btn small grow', id: 'testpattern', text: 'Test pattern', disabled: !canLive, onclick: function () {
-            var on = !(S.status && S.status.player && S.status.player.test_pattern);
-            act('POST', '/api/testpattern', { on: on }, poll);
-          } }))),
       window.pvjShaders ? window.pvjShaders.liveRow(shaderCtx()) : null,
-      window.pvjShaders ? window.pvjShaders.liveStrip(shaderCtx()) : null,
-      window.pvjEffects ? window.pvjEffects.liveStrip(shaderCtx()) : null,
-      previewBlock(),
       h('div', { class: 'banks' }, S.banks.map(function (b, i) {
         return h('button', { class: 'btn' + (i === S.bank ? ' on' : ''), text: b.name.replace('Bank ', 'Bank '), 'aria-pressed': i === S.bank ? 'true' : 'false',
-          onclick: function () { S.bank = i; render(); } });
+          onclick: function () { S.bank = i; redrawPart('pads'); } });
       })),
       pads,
-      canOp() ? h('button', { class: 'btn small', text: S.editing ? 'Done editing' : 'Edit pads', onclick: function () { S.editing = !S.editing; render(); } }) : null,
-      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg })),
-      h('div', { class: 'grow' }),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn big grow', id: 'fade', text: 'Fade out', disabled: !canLive, onclick: function () { act('POST', '/api/fadeout', { seconds: 2 }); } }),
-        h('button', { class: 'btn big grow', id: 'freeze', text: 'Freeze', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'pause' }, poll); } }),
-        h('button', { class: 'btn big grow', id: 'stop', text: 'Stop', disabled: !canLive, onclick: function () { act('POST', '/api/control', { action: 'stop' }, poll); } }),
-        h('button', { class: 'btn big grow', id: 'black', text: 'Blackout', disabled: !canLive, onclick: function () {
+      canOp() ? h('button', { class: 'btn small', text: S.editing ? 'Done editing' : 'Edit pads', onclick: function () { S.editing = !S.editing; redrawPart('pads'); } }) : null,
+      transitionCard(),
+      previewBlock()));
+  }
+  // A row of buttons of which one is chosen.
+  function choice(opts, current, onpick) {
+    return h('div', { class: 'row' }, opts.map(function (o) {
+      return h('button', { class: 'btn grow' + (o.value === current ? ' on' : ''), text: o.label, disabled: !can('live') || o.disabled,
+        onclick: function () { onpick(o.value); } });
+    }));
+  }
+  // How one clip gives way to the next, and how long that takes (D72: on Play > Pads, where the next clip is tapped;
+  // it was on Shape > Picture). The names of the transitions are this one list. A choice draws this card again, and
+  // nothing else of the page.
+  function transitionCard() {
+    var m = (S.status && S.status.mix) || {};
+    var setMix = function (patch) {
+      var next = { transition: m.transition, duration: m.duration };
+      Object.keys(patch).forEach(function (k) { next[k] = patch[k]; });
+      act('POST', '/api/mix', next, function () { poll(); setTimeout(function () { if (card.isConnected) card.parentNode.replaceChild(transitionCard(), card); }, 150); });
+    };
+    var card = h('div', { class: 'card', id: 'transitioncard' },
+      h('div', { class: 'k', text: 'Transition between clips' }),
+      choice([{ label: 'Cut', value: 'cut' }, { label: 'Dip to black', value: 'dip' }, { label: 'Crossfade', value: 'crossfade' }],
+        m.transition, function (v) { setMix({ transition: v }); }),
+      // two to a row: four of these names do not fit a phone's width (the width sweep, D64)
+      [[['Wipe from left', 'wipe-from-left'], ['Wipe from right', 'wipe-from-right']], [['Wipe from top', 'wipe-from-top'], ['Wipe from bottom', 'wipe-from-bottom']],
+        [['Slide off left', 'slide-left'], ['Slide off right', 'slide-right']], [['Slide off up', 'slide-up'], ['Slide off down', 'slide-down']]].map(function (pair) {
+        return choice(pair.map(function (o) { return { label: o[0], value: o[1] }; }), m.transition, function (v) { setMix({ transition: v }); });
+      }),
+      // The box gave up on this transition and dips to black instead (mix.fallback, D71): why, in the box's own
+      // words, and Try again, which does what choosing the transition again does. setMix replaces this card alone
+      // (a render() here would wipe the desk).
+      m.fallback ? h('div', { class: 'mixfallback', id: 'mixfallback', role: 'status' },
+        h('div', { class: 'hint warn', id: 'mixfallbackwhy', text: 'This box is not doing that transition now: ' + m.fallback + '.' }),
+        can('live') ? h('button', { class: 'btn small', id: 'mixretry', text: 'Try again', onclick: function () { setMix({}); } }) : null) : null,
+      h('div', { class: 'k', text: 'Duration' }),
+      choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); }));
+    return card;
+  }
+  // The box's word on the transition (mix.fallback, D71) changes without anybody pressing anything: it gives up
+  // after slow stills and tries again after five minutes. The card under the pads follows the poll, drawn again
+  // alone as setMix draws it (the old panel showed a change only on the next visit to the Mix screen).
+  function followFallback(m) {
+    var card = document.getElementById('transitioncard');
+    if (!card) return;
+    var shown = card.querySelector('#mixfallbackwhy');
+    var want = m.fallback ? 'This box is not doing that transition now: ' + m.fallback + '.' : '';
+    if ((shown ? shown.textContent : '') === want) return;
+    card.parentNode.replaceChild(transitionCard(), card);
+  }
+  // The one transport strip (D65, the owner's choice of D63; D72): what is playing, the place in it, Speed and Loop,
+  // and Previous, back 10 s, forward 10 s, Next, Fade in, Fade out, Freeze, Stop and Blackout, at the foot of every
+  // screen at every width. These are the controls Live had in its Now playing card and in its bottom row, and (D72)
+  // the Speed slider and the Loop button that were on Shape > Controls, with the ids they had; there is no second
+  // copy on any screen. Under 600 px the strip shows Previous, Next, Stop and Blackout, and More opens the rest in
+  // place. It is built once and kept across redraws (so a finger on a slider is not cut off by a card that draws
+  // itself again), and built anew only when the device or its role changes: what it shows is written into it by
+  // patchLive() with every answer of the box.
+  var dock = null;
+  function transport() {
+    // A guest while guest controls are open (D80) has Previous, Next, Stop and Blackout here, the four the box takes
+    // from him, sent as his own forms (guestSend); every other control of the strip stays disabled for him, so
+    // nothing he can press is refused. Locked, or a device that only watches: all disabled, as before.
+    var canLive = can('live'), guest = canGuest(), GUEST_STRIP = { prev: 1, next: 1, stop: 1, black: 1 };
+    var key = (S.device ? S.device.role : '') + '|' + canLive + '|' + guest;
+    if (dock && dock.key === key) return dock.el;
+    var b = function (id, text, label, cls, fn) { return h('button', { class: 'btn tpb ' + cls, id: id, text: text, 'aria-label': label || false, disabled: !canLive && !(guest && GUEST_STRIP[id]), onclick: fn }); };
+    var ctl = function (action, value) {
+      return function (e) {
+        if (guest) return guestSend('/api/control', { action: action }, '', e.currentTarget);
+        act('POST', '/api/control', value === undefined ? { action: action } : { action: action, value: value }, poll);
+      };
+    };
+    var more = h('button', { class: 'btn tpmore', id: 'wsmore', 'aria-expanded': 'false', 'aria-controls': 'wstp', text: 'More', onclick: function () {
+      var open = !el.classList.contains('open');
+      el.classList.toggle('open', open);
+      more.setAttribute('aria-expanded', open ? 'true' : 'false');
+      more.textContent = open ? 'Less' : 'More';
+      moreBelow();
+    } });
+    var el = h('div', { class: 'tp', id: 'wstp', role: 'group', 'aria-label': 'Transport' },
+      // (fold f-...: what leaves the one line of a wider panel for More, in the stylesheet's order: back and forward
+      // 10 s first, then the fades, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout (keep), which a
+      // phone's closed strip shows too, with More beside them. The place in the clip is never behind More: where it
+      // has no room on the line it is a slim bar along the strip's top edge, the same one control, placed there by
+      // the stylesheet.)
+      h('div', { class: 'tpinfo' }, h('div', { id: 'np', style: false, text: '' }), h('div', { class: 'tpmeta' }, h('div', { class: 'k', id: 'plpos' }), h('div', { class: 'k', id: 'time' })), more),
+      h('div', { class: 'tpscrub' }, seekBar(canLive)),
+      h('div', { class: 'tpgrp' }, speedBar(canLive),
+        h('button', { class: 'btn tpb tpx tploop fold f-loop', text: 'Loop: off', disabled: !canLive, onclick: function () {
+          act('POST', '/api/control', { action: 'loop', value: !looping() }, poll);
+        } })),
+      h('div', { class: 'tpgrp' },
+        b('prev', '⏮ Prev', 'Previous clip', 'tpx fold f-steps', ctl('prev')),
+        b('back10', '− 10 s', 'Back 10 seconds', 'tpx fold f-ten', ctl('seek', -10)),
+        b('fwd10', '+ 10 s', 'Forward 10 seconds', 'tpx fold f-ten', ctl('seek', 10)),
+        b('next', 'Next ⏭', 'Next clip', 'tpx fold f-steps', ctl('next'))),
+      h('div', { class: 'tpgrp' },
+        b('fadein', 'Fade in', null, 'tpx fold f-fades', function () { act('POST', '/api/fadein', { seconds: 2 }, poll); }),
+        b('fade', 'Fade out', null, 'tpx fold f-fades', function () { act('POST', '/api/fadeout', { seconds: 2 }); }),
+        b('freeze', 'Freeze', null, 'keep', ctl('pause'))),
+      h('div', { class: 'tpgrp' },
+        b('stop', 'Stop', null, 'keep', ctl('stop')),
+        b('black', 'Blackout', null, 'keep', function () {
           var on = !(S.status && S.status.mix && S.status.mix.blackout);
+          if (guest) return guestSend('/api/blackout', { on: on }, '', null);
           act('POST', '/api/blackout', { on: on }, poll);
-        } })));
+        })));
+    el.addEventListener('scroll', moreBelow);
+    dock = { key: key, el: el };
+    return el;
   }
   // ---- screen snapshot ----------------------------------------------------
   // One picture of what the box is showing, on request. Not a live view: on a Pi 4 each snapshot stalls playback
@@ -441,6 +561,28 @@
     bar.addEventListener('pointerup', function () { setTimeout(function () { seeking = false; }, 1500); });
     return bar;
   }
+  // In a low window the open strip is held to half the window and scrolls inside (the stylesheet): while a part of
+  // it is below what is shown, the strip says so, and its lower edge fades.
+  function moreBelow() {
+    if (dock) dock.el.classList.toggle('below', dock.el.scrollHeight - dock.el.scrollTop - dock.el.clientHeight > 4);
+  }
+  // Speed: the slider that was on Shape > Controls, with its id. Like the place in the clip, it is not moved by the
+  // once-a-second status update while a finger is on it.
+  var speeding = false;
+  function speedBar(canLive) {
+    var out = h('span', { class: 'k', id: 'mvout', text: '1.00x' });
+    var bar = h('input', { id: 'mv', type: 'range', min: 25, max: 200, step: 5, value: 100, disabled: !canLive });
+    var send = function (v) { act('POST', '/api/control', { action: 'speed', value: v / 100 }); };
+    var sendSoon = throttle(send, 80);
+    bar.addEventListener('pointerdown', function () { speeding = true; });
+    bar.addEventListener('input', function () { speeding = true; out.textContent = (bar.value / 100).toFixed(2) + 'x'; sendSoon(+bar.value); });
+    bar.addEventListener('change', function () { send(+bar.value); setTimeout(function () { speeding = false; }, 1500); });
+    return h('div', { class: 'tpspeed tpx fold f-speed' }, h('label', { for: 'mv' }, 'Speed', out), bar);
+  }
+  function looping() {
+    var pl = (S.status && S.status.player) || {};
+    return !!(pl.loop_file && pl.loop_file !== 'no' || pl.loop_playlist && pl.loop_playlist !== 'no');
+  }
   // Shaders and Vibes lives in shaders.js; it borrows these helpers.
   function shaderCtx() {
     return { h: h, api: api, act: act, can: ctxCan, owner: function () { return can('full'); }, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
@@ -457,11 +599,10 @@
         api('GET', '/api/modules').then(function (r) {
           if (!r.ok) return;
           S.modules = r.data.modules;
-          if (S.tab === 'system' && S.sys && pageSwitch.steps && pageOn(pageSwitch.steps) !== pageSwitch.on) redrawSystem();
+          if (pageId() && pageSwitch.steps && pageOn(pageSwitch.steps) !== pageSwitch.on) redrawSystem();
         });
       },
-      openShaders: function () { openSys('vibes', S.tab); },
-      openMix: function () { goTab('mix'); } };
+      openShaders: function () { openSys('vibes', S.tab); } };
   }
   function patchLive() {
     var st = S.status || {}, pl = st.player || {}, sys = st.system || {};
@@ -470,38 +611,108 @@
     np.textContent = pl.running && pl.path ? (pl.stream || base(pl.path)) : (pl.running ? 'Player idle' : 'Player not running');
     var seekEl = document.getElementById('seek');
     var frac = pl.duration > 0 && pl.position >= 0 ? Math.min(1, pl.position / pl.duration) : 0;
-    if (seekEl && !seeking) { seekEl.value = Math.round(frac * 1000); seekEl.disabled = !can('live') || !(pl.duration > 0); }
-    if (!seeking) document.getElementById('time').textContent = clock(pl.position) + ' / ' + clock(pl.duration);
+    if (seekEl && !seeking) {
+      seekEl.value = Math.round(frac * 1000); seekEl.disabled = !can('live') || !(pl.duration > 0); fillRanges();
+      // a screen reader hears the place as time, not as a number of thousandths (the review of #112)
+      seekEl.setAttribute('aria-valuetext', pl.duration > 0 ? clock(pl.position) + ' of ' + clock(pl.duration) : 'Nothing to seek in');
+    }
+    var timeEl = document.getElementById('time');
+    if (timeEl && !seeking) timeEl.textContent = clock(pl.position) + ' / ' + clock(pl.duration);
+    var speed = document.getElementById('mv');
+    if (speed && !speeding) {
+      var pct = String(Math.round((pl.speed || 1) * 100));
+      if (speed.value !== pct) { speed.value = pct; fillRanges(); }
+      document.getElementById('mvout').textContent = (speed.value / 100).toFixed(2) + 'x';
+    }
+    var loop = dock && dock.el.querySelector('.tploop');
+    if (loop) loop.textContent = 'Loop: ' + (looping() ? 'on' : 'off');
     var plpos = document.getElementById('plpos');
     if (plpos) plpos.textContent = pl.playlist_count > 1 && pl.playlist_pos >= 0 ? 'Clip ' + (pl.playlist_pos + 1) + ' of ' + pl.playlist_count : '';
-    ['prev', 'next'].forEach(function (id) { var el = document.getElementById(id); if (el) el.disabled = !can('live') || !(pl.playlist_count > 1); });
+    ['prev', 'next'].forEach(function (id) { var el = document.getElementById(id); if (el) el.disabled = !(can('live') || canGuest()) || !(pl.playlist_count > 1); });
     var tp = document.getElementById('testpattern');
-    if (tp) { tp.textContent = pl.test_pattern ? 'Test pattern off' : 'Test pattern'; tp.className = 'btn small grow' + (pl.test_pattern ? ' on' : ''); }
+    if (tp) { tp.textContent = pl.test_pattern ? 'Test pattern off' : 'Test pattern'; tp.classList.toggle('on', !!pl.test_pattern); }
     if (pl.test_pattern) np.textContent = 'Test pattern (colour bars)';
     if (pl.test_tone) np.textContent = 'Test tone (' + pl.test_tone + ')';
     if (pl.capture) np.textContent = 'Live input' + (pl.capture.device ? ' (' + pl.capture.device + ', ' + pl.capture.mode + ')' : '');
     if (window.pvjShaders) window.pvjShaders.patch(shaderCtx(), pl, np);
-    if (pl.effect && window.pvjEffects && pl.running && typeof pl.shader !== 'string') np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
+    // D74: the effect is named over a shader too (it stays on there), so no guard on pl.shader here.
+    if (pl.effect && window.pvjEffects && pl.running) np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
+    np.title = np.textContent;          // the line is cut with dots where it is long: the whole of it is here
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
-    document.getElementById('pill').textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
+    var pill = document.getElementById('pill');
+    if (pill) pill.textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
-    var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.className = 'btn big grow' + (on ? ' solid' : ''); b.textContent = on ? 'Show' : 'Blackout'; }
+    var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('solid', !!on); b.textContent = on ? 'Show' : 'Blackout'; }
     var pads = document.getElementById('pads');
     if (pads && S.banks[S.bank]) {
       S.banks[S.bank].pads.forEach(function (p, i) {
         var el = pads.children[i];
         if (!el) return;
-        var playing = pl.path && p.file && base(pl.path) === p.file;
+        var playing = padPlaying(p, pl);
         el.classList.toggle('on', !!playing);
         el.setAttribute('aria-pressed', playing ? 'true' : 'false');
       });
+      padRefusal(pads, pl);
+      followFallback(st.mix || {});
     }
   }
-  function openSheet(bank, index) { S.sheet = { bank: bank, index: index }; render(); }
+  function openSheet(bank, index) { S.sheet = { bank: bank, index: index }; app.appendChild(sheet()); }
   var ENDINGS = [['loop', 'Loop'], ['stop', 'Play once, then black'], ['hold', 'Play once, hold the last frame']];
+  // The pad editor's choice between a clip and a shader (D73), put into the sheet that `sheet` has built: two
+  // buttons under the heading, and a second list beside the clips'. The clip's own parts (the ending and the list)
+  // are found by what they are and hidden while the shaders show. A shader with presets asks which one next.
+  function padKinds(el, s, close) {
+    var box = el.querySelector('.sheet'), clips = [box.querySelector('label[for="padending"]'), box.querySelector('#padending'), box.querySelector('.list')];
+    var current = (S.banks[s.bank] && S.banks[s.bank].pads[s.index]) || {};
+    var list = h('div', { class: 'list', id: 'padshaders' });
+    var save = function (id, preset) {
+      var body = { bank: s.bank, index: s.index, label: padShaderNice(id).slice(0, 40), shader: id };
+      if (preset) body.preset = preset;
+      act('POST', '/api/pads', body, function (d) { S.banks = d.banks; close(); });
+    };
+    var row = function (text, title, go, on) { return h('button', { class: 'btn padpick' + (on ? ' on' : ''), title: title, onclick: go }, h('span', { class: 't', text: text })); };
+    var presets = function (sh) {
+      list.textContent = '';
+      list.appendChild(h('div', { class: 'k', id: 'padpresethead', text: padShaderNice(sh.id) + ': start with' }));
+      list.appendChild(row('Its own start', 'The preset called default if there is one, else the values of the file', function () { save(sh.id, ''); }, padShader(current) === sh.id && !current.preset));
+      sh.presets.forEach(function (name) { list.appendChild(row(name, name, function () { save(sh.id, name); }, padShader(current) === sh.id && current.preset === name)); });
+    };
+    var fill = function () {
+      list.textContent = '';
+      if (!moduleOn('shaders')) { list.appendChild(h('div', { class: 'k', id: 'padshadersoff', text: 'Shaders are off. Turn on the Shaders and Vibes module in Setup, then give the pad a shader.' })); return; }
+      list.appendChild(h('div', { class: 'k', text: 'Loading the shaders…' }));
+      api('GET', '/api/shaders').then(function (r) {
+        if (!list.isConnected) return;
+        list.textContent = '';
+        var all = r.ok && r.data.shaders ? r.data.shaders.filter(function (x) { return !x.error; }) : [];
+        if (!all.length) { list.appendChild(h('div', { class: 'k', text: r.ok ? 'No shaders on the box yet.' : (r.data.error || 'The shaders could not be read.') })); return; }
+        all.forEach(function (sh) {
+          list.appendChild(row(padShaderNice(sh.id), padShaderNice(sh.id), function () { if (sh.presets && sh.presets.length) presets(sh); else save(sh.id, ''); }, padShader(current) === sh.id));
+        });
+      });
+    };
+    var show = function (kind) {
+      s.kind = kind;        // kept on the open sheet: a redraw of the page while it is open must not flip it back
+      clips.forEach(function (c) { if (c) c.hidden = kind !== 'clip'; });
+      list.hidden = kind !== 'shader';
+      seg.children[0].classList.toggle('on', kind === 'clip');
+      seg.children[1].classList.toggle('on', kind === 'shader');
+      seg.children[0].setAttribute('aria-pressed', kind === 'clip' ? 'true' : 'false');
+      seg.children[1].setAttribute('aria-pressed', kind === 'shader' ? 'true' : 'false');
+      if (kind === 'shader') fill();
+    };
+    var seg = h('div', { class: 'seg', id: 'padkind', role: 'group', 'aria-label': 'What this pad plays' },
+      h('button', { class: 'btn segbtn', id: 'padkindclip', text: 'Clip', onclick: function () { show('clip'); } }),
+      h('button', { class: 'btn segbtn', id: 'padkindshader', text: 'Shader', onclick: function () { show('shader'); } }));
+    var head = box.querySelector('h2');
+    box.insertBefore(seg, head.nextSibling);
+    box.insertBefore(list, clips[2] ? clips[2].nextSibling : null);
+    show(s.kind || (padShader(current) ? 'shader' : 'clip'));
+    return el;
+  }
   function sheet() {
     var s = S.sheet;
-    var close = function () { S.sheet = null; render(); };
+    var close = function () { S.sheet = null; if (el.parentNode) el.parentNode.removeChild(el); redrawPart('pads'); };
     var current = (S.banks[s.bank] && S.banks[s.bank].pads[s.index]) || {};
     var ending = h('select', { class: 'text-input', id: 'padending', 'aria-label': 'When the clip ends' },
       ENDINGS.map(function (e) { return h('option', { value: e[0], text: e[1], selected: e[0] === (current.ending || 'loop') }); }));
@@ -509,7 +720,7 @@
       var label = file ? file.replace(/\.[^.]+$/, '').slice(0, 40) : '';
       act('POST', '/api/pads', { bank: s.bank, index: s.index, label: label, file: file, ending: ending.value }, function (d) { S.banks = d.banks; close(); });
     };
-    return h('div', { class: 'picker', onclick: function (e) { if (e.target.className === 'picker') close(); } },
+    var el = padKinds(h('div', { class: 'picker', onclick: function (e) { if (e.target.className === 'picker') close(); } },
       h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Choose a clip for this pad' },
         h('h2', { text: 'Pad ' + (s.index + 1) }),
         h('label', { class: 'k', for: 'padending', text: 'When the clip ends' }), ending,
@@ -517,7 +728,8 @@
           return h('button', { class: 'btn', text: f, onclick: function () { pick(f); } });
         }) : h('div', { class: 'k', text: 'No clips in the media folder yet.' })),
         h('button', { class: 'btn', text: 'Clear pad', onclick: function () { pick(''); } }),
-        h('button', { class: 'btn', text: 'Cancel', onclick: close })));
+        h('button', { class: 'btn', text: 'Cancel', onclick: close }))), s, close);
+    return el;
   }
 
   // ---- mix ------------------------------------------------------------
@@ -529,58 +741,59 @@
     input.addEventListener('change', function () { send(+input.value); });
     return h('div', { class: 'card slider' }, h('label', { for: id }, label, out), input);
   }
-  function mix() {
-    var m = (S.status && S.status.mix) || {}, pl = (S.status && S.status.player) || {};
+  // Shape (D65, D72): what the Mix tab held. Effect (the Effects card) and Picture are two columns of the area's one
+  // build, with Sound (soundCards(), under the Sound page's card); the mapping card is on Shape > Mapping, its one
+  // place. Speed and Loop are on the transport strip (transport()), the Transition on Play > Pads
+  // (transitionCard()), and Test pattern on Shape > Mapping (testPattern()).
+  function effectPart() {
+    return h('div', { class: 'screen', id: 'effectscreen' }, window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null);
+  }
+  function picturePart() {
+    var m = (S.status && S.status.mix) || {};
     var ctl = function (action) { return function (value) { act('POST', '/api/control', { action: action, value: value }); }; };
-    var choice = function (opts, current, onpick) {
-      return h('div', { class: 'row' }, opts.map(function (o) {
-        return h('button', { class: 'btn grow' + (o.value === current ? ' on' : ''), text: o.label, disabled: !can('live') || o.disabled,
-          onclick: function () { onpick(o.value); } });
-      }));
-    };
-    var setMix = function (patch) {
-      var next = { transition: m.transition, duration: m.duration };
-      Object.keys(patch).forEach(function (k) { next[k] = patch[k]; });
-      act('POST', '/api/mix', next, function () { poll(); setTimeout(render, 150); });
-    };
-    return h('div', { class: 'screen' },
-      h('div', { class: 'top' }, h('h1', { text: 'Mix' })),
+    var again = function () { poll(); setTimeout(function () { redrawPart('picture'); }, 200); };
+    return h('div', { class: 'screen', id: 'picturescreen' },
       h('div', { class: 'grid2' },
         slider('mo', 'Opacity', 0, 100, 1, m.opacity === undefined ? 100 : m.opacity, function (v) { return v + '%'; }, ctl('opacity')),
         slider('ms', 'Size', 1, 200, 1, m.size === undefined ? 100 : m.size, function (v) { return v + '%'; }, ctl('size')),
         slider('mp', 'Position X', -100, 100, 1, m.position === undefined ? 0 : m.position, function (v) { return String(v); }, ctl('position')),
-        slider('mpy', 'Position Y', -100, 100, 1, m.position_y === undefined ? 0 : m.position_y, function (v) { return String(v); }, ctl('position_y')),
-        slider('mv', 'Speed', 25, 200, 5, Math.round((pl.speed || 1) * 100), function (v) { return (v / 100).toFixed(2) + 'x'; },
-          function (v) { ctl('speed')(v / 100); }),
-        slider('mvol', 'Volume', 0, 130, 1, Math.round(pl.volume === undefined || pl.volume === null ? 100 : pl.volume), function (v) { return v + '%'; }, ctl('volume'))),
-      window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null,
-      h('div', { class: 'card' },
-        h('div', { class: 'k', text: 'Transition between clips' }),
-        choice([{ label: 'Cut', value: 'cut' }, { label: 'Dip to black', value: 'dip' }, { label: 'Crossfade (soon)', value: 'x', disabled: true }],
-          m.transition, function (v) { setMix({ transition: v }); }),
-        h('div', { class: 'k', text: 'Duration' }),
-        choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); })),
+        slider('mpy', 'Position Y', -100, 100, 1, m.position_y === undefined ? 0 : m.position_y, function (v) { return String(v); }, ctl('position_y'))),
       h('div', { class: 'card' },
         h('div', { class: 'k sent', text: 'Mirror (for rear projection or a mirror rig; costs the box some work)' }),
         h('div', { class: 'row' },
           h('button', { class: 'btn grow' + (m.flip_h ? ' on' : ''), id: 'fliph', text: 'Flip left-right', 'aria-pressed': m.flip_h ? 'true' : 'false', disabled: !can('live'),
-            onclick: function () { act('POST', '/api/control', { action: 'flip_h', value: !m.flip_h }, function () { poll(); setTimeout(render, 200); }); } }),
+            onclick: function () { act('POST', '/api/control', { action: 'flip_h', value: !m.flip_h }, again); } }),
           h('button', { class: 'btn grow' + (m.flip_v ? ' on' : ''), id: 'flipv', text: 'Flip upside down', 'aria-pressed': m.flip_v ? 'true' : 'false', disabled: !can('live'),
-            onclick: function () { act('POST', '/api/control', { action: 'flip_v', value: !m.flip_v }, function () { poll(); setTimeout(render, 200); }); } }))),
+            onclick: function () { act('POST', '/api/control', { action: 'flip_v', value: !m.flip_v }, again); } }))),
       overlayCard(),
-      mapperCard(),
       h('div', { class: 'card' },
         h('div', { class: 'k', text: 'Rotate' }),
         choice([0, 90, 180, 270].map(function (d) { return { label: d + '°', value: d }; }), m.rotate === undefined ? 0 : m.rotate,
-          function (v) { ctl('rotate')(v); setTimeout(function () { poll(); render(); }, 200); })),
+          function (v) { ctl('rotate')(v); setTimeout(function () { poll(); redrawPart('picture'); }, 200); })),
       h('div', { class: 'row' },
-        h('button', { class: 'btn grow', text: 'Loop: ' + (pl.loop_file && pl.loop_file !== 'no' || pl.loop_playlist && pl.loop_playlist !== 'no' ? 'on' : 'off'), disabled: !can('live'),
-          onclick: function () { var on = !(pl.loop_file && pl.loop_file !== 'no' || pl.loop_playlist && pl.loop_playlist !== 'no'); act('POST', '/api/control', { action: 'loop', value: on }, function () { poll(); setTimeout(render, 200); }); } }),
-        h('button', { class: 'btn grow', text: 'Audio: ' + (pl.muted ? 'mute' : 'on'), disabled: !can('live'),
-          onclick: function () { act('POST', '/api/control', { action: 'mute', value: !pl.muted }, function () { poll(); setTimeout(render, 200); }); } }),
+        // (Test pattern is on Shape > Mapping; a device that has no Mapping screen, its module being off, keeps it here)
+        hasScreen('shape/mapping') ? null : testPattern(),
         h('button', { class: 'btn grow', text: 'Reset mix', disabled: !can('live'),
-          onclick: function () { act('POST', '/api/control', { action: 'reset' }, function () { poll(); setTimeout(render, 200); }); } })),
-      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }));
+          onclick: function () { act('POST', '/api/control', { action: 'reset' }, again); } })));
+  }
+  // Test pattern: colour bars in place of what plays, to line a projector up by (D72: on Shape > Mapping; it was on
+  // Shape > Picture, and before the shell on Live).
+  function testPattern() {
+    return h('button', { class: 'btn small grow', id: 'testpattern', text: 'Test pattern', disabled: !can('live'), onclick: function () {
+      var on = !(S.status && S.status.player && S.status.player.test_pattern);
+      act('POST', '/api/testpattern', { on: on }, poll);
+    } });
+  }
+  // Shape > Sound: Volume and Audio, which were on Mix, above the Sound page's own card (where the sound comes out,
+  // the test tone). A guest, who has no Sound page, gets the two as they had them on Mix.
+  function soundCards() {
+    var pl = (S.status && S.status.player) || {};
+    return [
+      slider('mvol', 'Volume', 0, 130, 1, Math.round(pl.volume === undefined || pl.volume === null ? 100 : pl.volume), function (v) { return v + '%'; },
+        function (v) { act('POST', '/api/control', { action: 'volume', value: v }); }),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn grow', text: 'Audio: ' + (pl.muted ? 'mute' : 'on'), disabled: !can('live'),
+          onclick: function () { act('POST', '/api/control', { action: 'mute', value: !pl.muted }, function () { poll(); setTimeout(function () { redrawPart('sound'); }, 200); }); } }))];
   }
 
   // A picture over the video: a PNG from the media folder (logo, watermark, mask), fitted to the screen.
@@ -589,7 +802,7 @@
     var card = h('div', { class: 'card', id: 'overlaycard' }, h('div', { class: 'k sent', text: 'Overlay picture (logo or mask over the video)' }), body);
     function draw(d) {
       body.textContent = '';
-      if (!d.choices.length) { body.appendChild(h('div', { class: 'k', id: 'overlaynone', text: 'Upload a PNG (transparent where the video should show) on the Media screen to use it here.' })); return; }
+      if (!d.choices.length) { body.appendChild(h('div', { class: 'k', id: 'overlaynone', text: 'Upload a PNG (transparent where the video should show) in the Library (under Play) to use it here.' })); return; }
       var sel = h('select', { class: 'text-input', id: 'overlayfile', 'aria-label': 'Overlay picture', disabled: !can('live') },
         d.choices.map(function (n) { return h('option', { value: n, text: n, selected: n === d.file }); }));
       body.appendChild(sel);
@@ -621,12 +834,12 @@
     return out;
   }
   function mapperCard() {
-    var body = h('div', { class: 'list', id: 'mapbody' }, h('div', { class: 'hint', text: 'Loading...' }));
-    var card = h('div', { class: 'card', id: 'mapcard' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }), body);
+    var body = h('div', { class: 'mapbody', id: 'mapbody' }, h('div', { class: 'card' }, h('div', { class: 'hint', text: 'Loading...' })));
+    var card = h('div', { class: 'mapdesk', id: 'mapcard' }, body);
     var mod = S.modules.filter(function (m) { return m.id === 'mapper'; })[0];
     if (!mod || !mod.enabled) {
       body.textContent = '';
-      body.appendChild(h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under System, Projection mapping (beta).' }));
+      body.appendChild(h('div', { class: 'card' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }), h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under Setup, Projection mapping (beta).' })));
       return card;
     }
     var full = canOp(), d = null, canvas = null, drag = null, lastSend = 0, waiting = null;      // the mapping is the Operator's (D80)
@@ -743,28 +956,39 @@
     // Every answer rebuilds the card, and one can arrive while a name is being typed or the canvas is being moved
     // with the arrow keys: the control in use keeps the cursor, and a field what was typed into it.
     function draw(data) { keepCursor(body, function () { build(data); }); }
+    // The screen as a desk (the owner, 2026-10-10: room to design the layout, and a place for what each surface
+    // will get later). The display is drawn at its own aspect, as large as the room above the strip allows, with
+    // what acts on the whole display under it: Mapping on, Edit on the display, Screen or Picture corners, Test
+    // pattern. The tools stand in a column beside it from 900 px of room (under it on a phone), which scrolls by
+    // itself: the surfaces, then the chosen surface's own panel (#mapsurface: its corners, name and grid; a source,
+    // a mask or an effect per surface would be rows of this panel, pvj/MAPPER.md), then the saved mappings. Every
+    // control keeps the id and the words it had; the inventory holds them.
     function build(data) {
       d = data;
       body.textContent = '';
       var st = d.status, s = selected();
       var words = { off: 'Mapping is off', building: 'Preparing the mapped picture...', on: 'Mapping is on', editing: 'Editing on the display', error: 'Problem: ' + st.message };
-      body.appendChild(h('div', { class: 'hint', id: 'mapstatus', text: (words[st.state] || st.state) + ' · screen ' + d.screen[0] + 'x' + d.screen[1] + ' · ' + d.surfaces.length + ' surface' + (d.surfaces.length === 1 ? '' : 's') }));
-      if (!full) { watch(); return; }
-      body.appendChild(h('div', { class: 'row' },
+      var stage = h('div', { class: 'card mapstage', id: 'mapstage' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }));
+      body.appendChild(stage);
+      stage.appendChild(h('div', { class: 'hint', id: 'mapstatus', text: (words[st.state] || st.state) + ' · screen ' + d.screen[0] + 'x' + d.screen[1] + ' · ' + d.surfaces.length + ' surface' + (d.surfaces.length === 1 ? '' : 's') }));
+      var testRow = h('div', { class: 'row', id: 'maptest' }, testPattern(), h('span', { class: 'hint grow', text: 'Colour bars in place of what plays, to line the projector up' }));
+      if (!full) { stage.appendChild(testRow); watch(); return; }
+      canvas = h('canvas', { class: 'mapcanvas', id: 'mapcanvas', tabindex: '0', 'aria-label': 'Mapping editor: drag a corner, or use the arrows beside it' });
+      canvas.style.setProperty('--mapaspect', String(d.screen[0] / Math.max(1, d.screen[1])));
+      stage.appendChild(canvas);
+      stage.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn grow' + (d.on ? ' on' : ''), id: 'mapon', 'aria-pressed': d.on ? 'true' : 'false', text: d.on ? 'Mapping on' : 'Mapping off',
           onclick: function () { send({ action: 'on', on: !d.on }); } }),
         h('button', { class: 'btn grow' + (d.edit.on ? ' on' : ''), id: 'mapedit', 'aria-pressed': d.edit.on ? 'true' : 'false', text: d.edit.on ? 'Editing on the display' : 'Edit on the display',
           onclick: function () { send({ action: 'edit', on: !d.edit.on }); } })));
-      body.appendChild(h('div', { class: 'row' }, [['quad', '+ Quad'], ['triangle', '+ Triangle'], ['grid', '+ Grid']].map(function (t) {
-        return h('button', { class: 'btn small grow', id: 'mapadd-' + t[0], text: t[1], disabled: d.surfaces.length >= d.limits.surfaces,
-          onclick: function () { send({ action: 'add', type: t[0] }); } });
-      })));
-      body.appendChild(h('div', { class: 'row' }, [['screen', 'Screen corners'], ['picture', 'Picture corners']].map(function (t) {
+      stage.appendChild(h('div', { class: 'row' }, [['screen', 'Screen corners'], ['picture', 'Picture corners']].map(function (t) {
         return h('button', { class: 'btn small grow' + (d.edit.target === t[0] ? ' on' : ''), id: 'maptarget-' + t[0], text: t[1], 'aria-pressed': d.edit.target === t[0] ? 'true' : 'false',
           onclick: function () { send({ action: 'edit', target: t[0] }); } });
       })));
-      canvas = h('canvas', { class: 'mapcanvas', id: 'mapcanvas', tabindex: '0', 'aria-label': 'Mapping editor: drag a corner, or use the arrows below' });
-      body.appendChild(canvas);
+      stage.appendChild(testRow);
+      stage.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture on Shape > Picture (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
+      var tools = h('div', { class: 'card maptools', id: 'maptools' });
+      body.appendChild(tools);
       canvas.addEventListener('pointerdown', function (e) {
         var pt = toModel(e), hit = nearest(pt);
         if (hit) {
@@ -790,43 +1014,28 @@
         var k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
         if (k && selected()) { e.preventDefault(); nudge(k[0], k[1]); }
       });
+      // the canvas follows its room (a resize of the window, a column that comes or goes): drawn again at its new width
+      if (window.ResizeObserver) {
+        var painted = 0;
+        new ResizeObserver(function () {
+          if (!canvas.isConnected || canvas.clientWidth === painted) return;
+          painted = canvas.clientWidth; paint();
+        }).observe(canvas);
+      }
       function nudge(dx, dy) {
         var s1 = selected();
         if (!s1) return say('Add or choose a surface first.', true);
         send({ action: 'move', id: s1.id, target: d.edit.target, corner: mapUi.whole ? -1 : d.edit.corner, dx: dx * mapUi.step, dy: dy * mapUi.step });
       }
-      if (s) {
-        var n = corners(s, d.edit.target === 'picture').length;
-        body.appendChild(h('div', { class: 'hint', id: 'mapsel', text: 'Chosen: ' + s.name + (mapUi.whole ? ', the whole surface' : ', corner ' + (d.edit.corner + 1) + ' of ' + n) }));
-        body.appendChild(h('div', { class: 'row nudge' },
-          h('button', { class: 'btn small', id: 'mapleft', text: '←', 'aria-label': 'Move left', onclick: function () { nudge(-1, 0); } }),
-          h('button', { class: 'btn small', id: 'mapup', text: '↑', 'aria-label': 'Move up', onclick: function () { nudge(0, -1); } }),
-          h('button', { class: 'btn small', id: 'mapdown', text: '↓', 'aria-label': 'Move down', onclick: function () { nudge(0, 1); } }),
-          h('button', { class: 'btn small', id: 'mapright', text: '→', 'aria-label': 'Move right', onclick: function () { nudge(1, 0); } }),
-          h('select', { class: 'text-input', id: 'mapstep', 'aria-label': 'Step in pixels' }, [1, 10, 50].map(function (v) {
-            return h('option', { value: String(v), text: v + ' px', selected: v === mapUi.step });
-          }))));
-        body.lastChild.lastChild.addEventListener('change', function (e) { mapUi.step = +e.target.value; });
-        body.appendChild(h('div', { class: 'row' },
-          h('button', { class: 'btn small grow', id: 'mapnext', text: 'Next corner', disabled: mapUi.whole,
-            onclick: function () { send({ action: 'edit', corner: (d.edit.corner + 1) % n }); } }),
-          h('button', { class: 'btn small grow' + (mapUi.whole ? ' on' : ''), id: 'mapwhole', 'aria-pressed': mapUi.whole ? 'true' : 'false', text: 'Move the whole surface',
-            onclick: function () { mapUi.whole = !mapUi.whole; draw(d); } })));
-        var nm = h('input', { class: 'text-input', id: 'mapname', 'aria-label': 'Surface name', maxlength: 40, value: s.name });
-        body.appendChild(h('div', { class: 'row' }, nm, h('button', { class: 'btn small', id: 'maprename', text: 'Rename',
-          onclick: function () { send({ action: 'rename', id: s.id, name: nm.value.trim() }); } })));
-        if (s.type === 'grid') {
-          var sizes = [1, 2, 3, 4, 5, 6, 7, 8];
-          var cols = h('select', { class: 'text-input', id: 'mapcols', 'aria-label': 'Columns' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' columns', selected: v === s.cols }); }));
-          var rows = h('select', { class: 'text-input', id: 'maprows', 'aria-label': 'Rows' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' rows', selected: v === s.rows }); }));
-          body.appendChild(h('div', { class: 'row' }, cols, rows, h('button', { class: 'btn small', id: 'mapgrid', text: 'Set grid',
-            onclick: function () { send({ action: 'grid', id: s.id, cols: +cols.value, rows: +rows.value }); } })));
-          body.appendChild(h('div', { class: 'hint', text: 'Changing the grid size spreads the points evenly again.' }));
-        }
-      }
-      if (d.surfaces.length) body.appendChild(h('div', { class: 'hint', text: 'Surfaces (the first is on top)' }));
+      // the surfaces: add one, and the list (the first is on top)
+      tools.appendChild(h('div', { class: 'k', text: 'Surfaces' + (d.surfaces.length ? ' (the first is on top)' : '') }));
+      tools.appendChild(h('div', { class: 'row' }, [['quad', '+ Quad'], ['triangle', '+ Triangle'], ['grid', '+ Grid']].map(function (t) {
+        return h('button', { class: 'btn small grow', id: 'mapadd-' + t[0], text: t[1], disabled: d.surfaces.length >= d.limits.surfaces,
+          onclick: function () { send({ action: 'add', type: t[0] }); } });
+      })));
+      var list = h('div', { class: 'list', id: 'maplist' });
       d.surfaces.forEach(function (x, i) {
-        body.appendChild(h('div', { class: 'item map-entry' + (x.id === d.edit.selected ? ' on' : '') },
+        list.appendChild(h('div', { class: 'item map-entry' + (x.id === d.edit.selected ? ' on' : '') },
           h('button', { class: 'linkish', text: x.name + ' (' + x.type + (x.type === 'grid' ? ' ' + x.cols + 'x' + x.rows : '') + ')' + (x.on ? '' : ', hidden'), 'aria-label': 'Choose ' + x.name,
             onclick: function () { send({ action: 'edit', selected: x.id }); } }),
           h('span', { class: 'row' },
@@ -835,10 +1044,47 @@
             h('button', { class: 'btn small', text: x.on ? 'Hide' : 'Show', 'aria-label': (x.on ? 'Hide ' : 'Show ') + x.name, onclick: function () { send({ action: 'show', id: x.id, on: !x.on }); } }),
             h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + x.name, onclick: function () { send({ action: 'remove', id: x.id }); } }))));
       });
-      body.appendChild(h('div', { class: 'hint', text: 'Saved mappings (' + d.sets.length + ' of ' + d.limits.sets + ')' }));
+      if (!d.surfaces.length) list.appendChild(h('div', { class: 'hint', text: 'No surface yet. Add one, then drag its corners on the display above.' }));
+      tools.appendChild(list);
+      // the chosen surface's own panel
+      if (s) {
+        var n = corners(s, d.edit.target === 'picture').length;
+        var panel = h('div', { class: 'mapsurface', id: 'mapsurface' },
+          h('div', { class: 'k', text: 'Chosen surface' }),
+          h('div', { class: 'hint', id: 'mapsel', text: 'Chosen: ' + s.name + (mapUi.whole ? ', the whole surface' : ', corner ' + (d.edit.corner + 1) + ' of ' + n) }));
+        var step = h('select', { class: 'text-input', id: 'mapstep', 'aria-label': 'Step in pixels' }, [1, 10, 50].map(function (v) {
+          return h('option', { value: String(v), text: v + ' px', selected: v === mapUi.step });
+        }));
+        step.addEventListener('change', function (e) { mapUi.step = +e.target.value; });
+        panel.appendChild(h('div', { class: 'row nudge' },
+          h('button', { class: 'btn small', id: 'mapleft', text: '←', 'aria-label': 'Move left', onclick: function () { nudge(-1, 0); } }),
+          h('button', { class: 'btn small', id: 'mapup', text: '↑', 'aria-label': 'Move up', onclick: function () { nudge(0, -1); } }),
+          h('button', { class: 'btn small', id: 'mapdown', text: '↓', 'aria-label': 'Move down', onclick: function () { nudge(0, 1); } }),
+          h('button', { class: 'btn small', id: 'mapright', text: '→', 'aria-label': 'Move right', onclick: function () { nudge(1, 0); } }),
+          step));
+        panel.appendChild(h('div', { class: 'row' },
+          h('button', { class: 'btn small grow', id: 'mapnext', text: 'Next corner', disabled: mapUi.whole,
+            onclick: function () { send({ action: 'edit', corner: (d.edit.corner + 1) % n }); } }),
+          h('button', { class: 'btn small grow' + (mapUi.whole ? ' on' : ''), id: 'mapwhole', 'aria-pressed': mapUi.whole ? 'true' : 'false', text: 'Move the whole surface',
+            onclick: function () { mapUi.whole = !mapUi.whole; draw(d); } })));
+        var nm = h('input', { class: 'text-input', id: 'mapname', 'aria-label': 'Surface name', maxlength: 40, value: s.name });
+        panel.appendChild(h('div', { class: 'row' }, nm, h('button', { class: 'btn small', id: 'maprename', text: 'Rename',
+          onclick: function () { send({ action: 'rename', id: s.id, name: nm.value.trim() }); } })));
+        if (s.type === 'grid') {
+          var sizes = [1, 2, 3, 4, 5, 6, 7, 8];
+          var cols = h('select', { class: 'text-input', id: 'mapcols', 'aria-label': 'Columns' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' columns', selected: v === s.cols }); }));
+          var rows = h('select', { class: 'text-input', id: 'maprows', 'aria-label': 'Rows' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' rows', selected: v === s.rows }); }));
+          panel.appendChild(h('div', { class: 'row' }, cols, rows, h('button', { class: 'btn small', id: 'mapgrid', text: 'Set grid',
+            onclick: function () { send({ action: 'grid', id: s.id, cols: +cols.value, rows: +rows.value }); } })));
+          panel.appendChild(h('div', { class: 'hint', text: 'Changing the grid size spreads the points evenly again.' }));
+        }
+        tools.appendChild(panel);
+      }
+      // the saved mappings
+      tools.appendChild(h('div', { class: 'k', text: 'Saved mappings (' + d.sets.length + ' of ' + d.limits.sets + ')' }));
       if (d.sets.length) {
         var pick = h('select', { class: 'text-input', id: 'mapsets', 'aria-label': 'Saved mapping' }, d.sets.map(function (n) { return h('option', { value: n, text: n }); }));
-        body.appendChild(h('div', { class: 'row' }, pick,
+        tools.appendChild(h('div', { class: 'row' }, pick,
           h('button', { class: 'btn small', id: 'mapload', text: 'Load', onclick: function () { send({ action: 'load', name: pick.value }); } }),
           h('button', { class: 'btn small', id: 'mapdelete', text: 'Delete', onclick: function () { send({ action: 'delete', name: pick.value }); } })));
       }
@@ -848,16 +1094,15 @@
       // Safari) showed the saved name again while a second Save would have sent an empty one.
       var setName = h('input', { class: 'text-input', id: 'mapsetname', 'aria-label': 'Name for this mapping', placeholder: 'Name, e.g. Main stage', maxlength: 40, value: mapUi.name, 'data-kept': 'card' });
       setName.addEventListener('input', function () { mapUi.name = setName.value; });
-      body.appendChild(h('div', { class: 'row' }, setName, h('button', { class: 'btn small', id: 'mapsave', text: 'Save',
+      tools.appendChild(h('div', { class: 'row' }, setName, h('button', { class: 'btn small', id: 'mapsave', text: 'Save',
         onclick: function () { send({ action: 'save', name: mapUi.name.trim() }, function () { mapUi.name = ''; }); } })));
-      body.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture above (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
       if (body.isConnected) paint();     // at once, so the canvas has its height and nothing below it jumps for a frame under a finger
       requestAnimationFrame(paint);
       watch();
     }
     mapApi('GET').then(function (r) {
       if (!document.getElementById('mapcard') || r.stale) return;
-      if (r.ok) draw(r.data); else { body.textContent = ''; body.appendChild(h('div', { class: 'hint', text: r.data.error || 'Not available' })); }
+      if (r.ok) draw(r.data); else { body.textContent = ''; body.appendChild(h('div', { class: 'card' }, h('div', { class: 'hint', text: r.data.error || 'Not available' }))); }
     });
     return card;
   }
@@ -918,7 +1163,7 @@
     return api('GET', '/api/media').then(function (r) {
       if (!r.ok) return;
       S.media = r.data.files; S.mediaInfo = r.data;
-      if (!S.uploading) render();  // a redraw would wipe the progress bars of uploads still running
+      if (!S.uploading) redrawPart('library');  // a redraw would wipe the progress bars of uploads still running
     });
   }
   // Results are kept so the redraw after the last upload does not wipe an error message.
@@ -1037,10 +1282,10 @@
             say('Slideshow: ' + d.images + ' pictures'); poll();
           });
         } }),
-        h('div', { class: 'k', text: 'Prev and Next on the Live screen step through the pictures.' }));
+        h('div', { class: 'k', text: 'Prev and Next on the strip at the foot of the screen step through the pictures.' }));
     }
-    return h('div', { class: 'screen' },
-      h('div', { class: 'top' }, h('h1', { text: 'Media' }), h('button', { class: 'btn small', text: 'Refresh', onclick: refreshMedia })),
+    return h('div', { class: 'screen', id: 'libraryscreen' },
+      h('div', { class: 'row libhead' }, h('button', { class: 'btn small', text: 'Refresh', onclick: refreshMedia })),
       quick,
       liveInputCard(),
       slideshow,
@@ -1070,8 +1315,7 @@
                   } }) : null));
           }) : h('div', { class: 'k', text: 'No video or image files at the top of this drive.' })));
       }),
-      h('div', { class: 'k', id: 'importline', role: 'status' }),
-      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }));
+      h('div', { class: 'k', id: 'importline', role: 'status' }));
   }
 
   // ---- system ---------------------------------------------------------
@@ -1083,17 +1327,51 @@
   function mod(id) { return S.modules.filter(function (x) { return x.id === id; })[0]; }
   function plural(n, word, many) { return n + ' ' + (n === 1 ? word : (many || word + 's')); }
   function st(chip, text) { return { chip: chip, text: text }; }
-  function goTab(tab) {
-    if (history.state && history.state.sys) history.replaceState(null, '');   // the page left behind is not one to come back to
-    S.tab = tab; S.msg = ''; S.sys = null; S.sysFresh = false; S.sysFrom = null;
-    loadAll().then(render);
+  // The names the panel had for its five tabs before the Workspace shell (D65), and for the Controls screen that
+  // the shell had until D72, and the screen each now leads to: go() takes them too, so anything that still says
+  // "live", "mix" or "controls" lands where those controls are. (Controls held the effect's strip, the playing
+  // shader's strip, Speed and Loop: the effect is on Shape > Effect, and Speed and Loop are on the strip at the foot
+  // of every screen.)
+  var OLD_TABS = { live: 'play/pads', mix: 'shape/picture', media: 'play/library', system: 'setup/index', room: 'room/scenes',
+    controls: 'shape/effect', 'shape/controls': 'shape/effect' };
+  // The Room screen (room.js) builds all of its cards at once. Each belongs to one screen of the Room area, and the
+  // set-up card to Setup > Room: the cards are put into a column per screen (roomDesk()), or marked and the ones of
+  // another screen hidden, not left out (roomInPage()), so room.js finds every one of them as before.
+  var ROOM_PARTS = { roomambience: 'scenes', roomamboff: 'scenes', roomscenes: 'scenes', roomgroups: 'walls', guestlockcard: 'guests', roomletin: 'guests', roomsetup: 'setup' };
+  // The Room area: room.js's one build, its cards in the columns of the area's desk. The title is the shell's; a
+  // guest's "View only" stays, above the columns. The element keeps its id, which the stylesheet and room.js know.
+  function roomDesk(mine) {
+    var el = window.pvjRoom.screen(roomCtx());
+    var top = el.querySelector('.top'), msg = el.querySelector('#msg'), cols = {}, rest = [];
+    if (msg && msg.parentNode === el) el.removeChild(msg);
+    if (top && top.parentNode === el) {
+      var h1 = top.querySelector('h1');
+      if (h1) top.removeChild(h1);
+      if (top.children.length) top.className = 'row roomnote'; else el.removeChild(top);
+    }
+    mine.forEach(function (x) { cols[x.part] = column(x, h('div', { class: 'screen roompart' })); });
+    Array.prototype.slice.call(el.children).forEach(function (x) {
+      var part = ROOM_PARTS[x.id];
+      if (cols[part]) cols[part].lastChild.appendChild(x);
+      else if (part) { x.hidden = true; rest.push(x); }       // the set-up card (Setup > Room), and Guests for a device that has no such screen
+    });
+    // a guest's own card (D80), or the line that says the room is locked: first in Scenes
+    var note = guestNote('room');
+    if (note && cols.scenes) cols.scenes.lastChild.insertBefore(note, cols.scenes.lastChild.firstChild);
+    mine.forEach(function (x) { el.appendChild(cols[x.part]); });
+    rest.forEach(function (x) { el.appendChild(x); });       // (after the columns: what is first in the page is what is shown)
+    el.className = 'desk';
+    el.setAttribute('data-area', 'room');
+    el.setAttribute('data-cols', mine.length);
+    return el;
   }
-  // The Room screen's own cards, on the Room page under its switch: the page never sends anyone to another screen.
-  // The screen's title and message line are the page's, so the copies are taken out.
+  // Setup > Room: the module's switch and the card that sets the room up (groups and scenes). The title and message
+  // line are the page's, so the copies are taken out.
   function roomInPage() {
     var el = window.pvjRoom.screen(roomCtx());
     ['.top', '#msg'].forEach(function (sel) { var x = el.querySelector(sel); if (x && x.parentNode === el) el.removeChild(x); });
     el.className = 'roominpage';
+    Array.prototype.forEach.call(el.children, function (x) { if (ROOM_PARTS[x.id]) x.hidden = ROOM_PARTS[x.id] !== 'setup'; });
     return el;
   }
   function sysRows() {
@@ -1106,8 +1384,10 @@
         blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. Not yet tried on a real projector.',
         confirmOff: function (ask) { ask('The box stops checking the projectors. They stay as they are.'); },
         body: function () { return [projectorsCard(full)]; } },
-      { id: 'room', group: 'everyday', name: 'Room', role: 'live', module: 'room', url: '/api/room',
-        blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off. It needs Projectors to be on. Not yet tried on a real projector.',
+      // (what staff had on this page before D65 is the Room area's screens. The groups and the scenes are set up here,
+      // by the Owner and, since D80, by an Operator: room.js's set-up card, which the Room area leaves out.)
+      { id: 'room', group: 'everyday', name: 'Room', role: 'op', module: 'room', url: '/api/room',
+        blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off, on the Room screens. Here: the groups and the scenes. It needs Projectors to be on. Not yet tried on a real projector.',
         body: function () { return window.pvjRoom ? [roomInPage()] : []; } },
       { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'op', module: 'scheduler', url: '/api/schedule',
         blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
@@ -1127,8 +1407,9 @@
           'Let a guest in from their own phone, with a code that stops working by itself.',
         body: accessCards },
       { id: 'sound', group: 'everyday', name: 'Sound', role: 'live', url: '/api/audio',
-        blurb: 'Where the sound comes out, and a test tone to check left and right.',
-        body: function () { return [audioCard(op)]; } },
+        blurb: 'How loud it is, where the sound comes out, and a test tone to check left and right.',
+        plain: soundCards,
+        body: function () { return soundCards().concat([audioCard(op)]); } },
       { id: 'autostart', group: 'show', name: 'At power-up', role: 'op', url: '/api/autostart',
         blurb: 'What the box plays by itself when it is powered up, with nobody at the panel.',
         body: function () { return [autostartCard(op)]; } },
@@ -1138,6 +1419,7 @@
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'op', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
+        plain: function () { return [mapperCard()]; },         // a presenter had the card on Mix, without the page; Test pattern is in it
         body: function () { return [mapperCard()]; } },
       { id: 'sync', group: 'show', name: 'Boxes in step', role: 'live', module: 'wall', url: '/api/sync',
         blurb: 'Several boxes play together: one server leads and the clients follow its clip, position, pause and blackout. Each box can also show one tile of a video wall.',
@@ -1202,6 +1484,11 @@
     var m = mod(row.module);
     if (!m || m.status !== 'ready' || !m.supported) return false;
     return can('full') || m.enabled;        // nobody gets a row they cannot use
+  }
+  // The colour bars one puts up while lining a projector up, on the screen where that is done (D72).
+  function testCard() {
+    return h('div', { class: 'card', id: 'testcard' }, h('div', { class: 'k sent', text: 'Test pattern (colour bars in place of what plays, to line the projector up)' }),
+      h('div', { class: 'row' }, testPattern()));
   }
   function rowFetchable(row) { return !!row.url && can(row.urlRole || 'view') && (!row.module || moduleOn(row.module)); }
 
@@ -1377,6 +1664,10 @@
     else delete S.sysData[row.id];
   }
   // Asked once when the index opens and again on each return to it; an answer only repaints its own row.
+  // The index is also built beside an open page (D72), where a narrow panel does not show it: then nothing is asked,
+  // and it is looked at again with the next turn of its clock.
+  var indexTimer = null;
+  function indexShown() { var el = document.getElementById('nav-health'); return !!el && el.getClientRects().length > 0; }
   function loadSysStates() {
     var asked = {};
     sysRows().filter(rowShown).forEach(function (row) {
@@ -1385,23 +1676,26 @@
     });
   }
   function indexHealth() {        // Health keeps its own poll while the index is open
-    clearTimeout(healthTimer);
+    clearTimeout(indexTimer);
     if (!document.getElementById('nav-health')) return;
+    if (!indexShown()) { indexTimer = setTimeout(indexHealth, 5000); return; }
+    if (!S.sysFresh) { S.sysFresh = true; loadSysStates(); }
     api('GET', '/api/health').then(function (r) {
       if (!document.getElementById('nav-health')) return;
       var row = { id: 'health', url: '/api/health' };
       keepAnswer(row, r); patchRow(row);
-      clearTimeout(healthTimer);
-      healthTimer = setTimeout(indexHealth, 5000);
+      clearTimeout(indexTimer);
+      indexTimer = setTimeout(indexHealth, 5000);
     });
   }
   // The open page's own state line: read when the page is drawn and after each change made on it.
   function pageState() {
     var line = document.getElementById('sysstate');
-    var row = S.sys && sysRows().filter(function (r) { return r.id === S.sys; })[0];
+    var id = pageId(), row = id && sysRows().filter(function (r) { return r.id === id; })[0];
     if (!line || !row || !row.url) return;
     function show() {
       var state = sysState(row);
+      patchRow(row);                  // its row of the index, where that stands beside the page
       line.hidden = !state.chip || pageSwitch.on !== true;    // a page that is off already says Off
       showState(line.querySelector('.chip'), line.querySelector('.hint'), state, state.text.replace(/ inside$/, ' below'));
     }
@@ -1418,54 +1712,103 @@
     });
   }
   function pageStateSoon() {
-    if (S.tab !== 'system' || !S.sys) return;
+    if (!pageId() || !document.getElementById('sysstate')) return;
     clearTimeout(pageStateTimer);
     pageStateTimer = setTimeout(pageState, 500);
   }
 
   // -- moving between the index and a page --
-  function redrawSystem() {         // only the System screen is rebuilt: the tabs and the rest stay as they are
-    var old = app.querySelector('.shell > .screen');
-    var roomTab = !!app.querySelector('nav.tabs.many');       // the Room module was just switched: the tabs change too
-    if (!old || !S.device || S.tab !== 'system' || roomTab !== (!!window.pvjRoom && moduleOn('room'))) return render();
+  // The page that is on the screen: the open page of Setup, or the page that is a column of the area that is built
+  // (Shaders and Vibes in Play, Sound in Shape). There is never more than one in a build.
+  var PAGE_IN = { play: 'vibes', shape: 'sound' };
+  function pageId() { return S.tab === 'system' ? S.sys : (document.getElementById('syspage') && PAGE_IN[S.tab]) || null; }
+  function indexAt() { var el = app.querySelector('.deskcol.ix'); return el ? el.scrollTop : 0; }
+  function indexKeep(at) {         // the index beside a page scrolls by itself: it stays where it was, and the open page's row is brought into it
+    var el = app.querySelector('.deskcol.ix'), cur = el && el.querySelector('[aria-current="page"]');
+    if (!el) return;
+    el.scrollTop = at;
+    if (!cur || !el.clientHeight) return;
+    var top = cur.offsetTop - el.offsetTop, bottom = top + cur.offsetHeight;
+    if (top < el.scrollTop) el.scrollTop = Math.max(0, top - 8);
+    else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight + 8;
+  }
+  function redrawSystem() {         // only the screen is rebuilt, and the menus marked anew: the strip and the rest stay as they are
+    var old = app.querySelector('main.ws > .desk');
+    // a module was just switched: a screen comes into the menu or leaves it, so everything is drawn
+    if (!old || !S.device || S.tab !== 'system' || menuKey() !== S.menu) return render();
+    var focus = document.activeElement && document.activeElement.id, at = indexAt();
     markArea();
     stopTimers();
     keepNetForm();
     keepSyncForm();
     old.parentNode.replaceChild(system(), old);
+    indexKeep(at);
+    redrawChrome(focus);
   }
-  // from: the tab the page is opened from when that is not System (Back then returns there). replace: the page takes
-  // the place of the one that is open, so Back does not stop at it.
+  // from: where the page is opened from: 'index' (a row of the Setup index), or the build another area's link is on
+  // (Back then returns there). replace: the page takes the place of the one that is open, so Back does not stop at
+  // it; that is also how one page of Setup follows another from the index beside it.
   function openSys(id, from, replace) {
+    var home = HOMES[id] && screenList().filter(function (x) { return x.key === HOMES[id]; })[0];
+    if (home && home.part && home.tab === S.tab && from !== 'index') return go(home.key);     // a column of the build that is on the page
     var other = S.tab !== 'system';
-    if (other) { S.sysFrom = from || null; S.tab = 'system'; }
-    S.sys = id; S.msg = '';
+    if (from === 'index') { replace = replace || !!S.sys; S.sysFrom = HOMES[id] ? 'index' : null; }
+    else S.sysFrom = (other && from) || null;
+    S.tab = 'system'; S.sys = id; S.msg = '';
     if (replace && history.state && history.state.sys) history.replaceState({ sys: id }, '');
     else history.pushState({ sys: id }, '');
-    if (other) render(); else redrawSystem();     // from another tab the tab bar changes too
+    settle();
+    if (other || S.tab !== 'system') render(); else redrawSystem();     // from or to another area everything changes
     window.scrollTo(0, 0);
+    focusScreen();
   }
-  function leaveSysPage() {          // back at the index, or at the tab the page was opened from
-    S.sys = null; S.msg = ''; S.sysFresh = false;
-    if (S.sysFrom) { S.tab = S.sysFrom; S.sysFrom = null; }
+  // The row or the button that was pressed is gone with the screen it was on: the new screen takes the cursor, so
+  // the keyboard goes on from its top and not from the top of the document.
+  function focusScreen() {
+    var main = document.getElementById('wsmain');
+    if (main && (!document.activeElement || document.activeElement === document.body)) main.focus({ preventScroll: true });
+  }
+  function leaveSysPage() {          // back at the index, or at the area the page was opened from
+    if (S.sysFrom === 'index') S.tab = 'system'; else if (S.sysFrom) S.tab = S.sysFrom;
+    S.sys = null; S.msg = ''; S.sysFresh = false; S.sysFrom = null;
   }
   function sysBack() {
     if (history.state && history.state.sys) return history.back();     // the popstate listener draws what is behind
     leaveSysPage();
     render();
     window.scrollTo(0, 0);
+    focusScreen();
   }
+  // A screen that is a page for those who may use the page, and its cards alone for the others (Shape > Mapping for
+  // a presenter, Shape > Sound for a guest). part: the page is a column of an area's build (pagePart()).
+  function pageOf(row, part) {
+    if (row && rowShown(row)) return sysPage(row.id, row.name, row.blurb, row, part);
+    if (row && row.plain && (!row.module || moduleOn(row.module))) {
+      pageSwitch = { steps: null, on: true };
+      return h('div', { class: 'screen plainpage', id: 'plainpage', 'data-page': row.id }, h('div', { class: 'grid2' }, row.plain()));
+    }
+    return null;
+  }
+  function pagePart(id) { return pageOf(sysRows().filter(function (r) { return r.id === id; })[0], true) || h('div', { class: 'screen' }); }
+  // Setup (D72): the index, or a page; and beside a page of Setup its index, which the stylesheet shows as a column
+  // at the left where there is room (one press from page to page) and leaves out where there is not (Back leads to
+  // the index, as before). A page that is a screen of Shape (Mapping) has the whole width.
   function system() {
-    var row = S.sys && sysRows().filter(function (r) { return r.id === S.sys && rowShown(r); })[0];
-    if (row) return sysPage(row.id, row.name, row.blurb, row);
-    S.sys = null;
-    return sysIndex();
+    var row = S.sys && sysRows().filter(function (r) { return r.id === S.sys; })[0], page = pageOf(row);
+    if (!page) {
+      S.sys = null;
+      return h('div', { class: 'desk', id: 'wsdesk', 'data-area': 'setup', 'data-cols': 1 }, h('section', { class: 'deskcol cur', 'data-col': 'index', role: 'region', 'aria-label': 'Setup index', tabindex: -1 }, sysIndex()));
+    }
+    var beside = screenKey().split('/')[0] === 'setup';
+    return h('div', { class: 'desk' + (beside ? ' setupdesk' : ''), id: 'wsdesk', 'data-area': beside ? 'setup' : 'shape', 'data-cols': 1 },
+      beside ? h('nav', { class: 'deskcol ix', 'data-col': 'index', 'aria-label': 'Pages of Setup' }, sysIndex(true)) : null,
+      h('section', { class: 'deskcol cur', 'data-col': S.sys, role: 'region', 'aria-label': row.name, tabindex: -1 }, page));
   }
-  function sysIndex() {
+  function sysIndex(beside) {
     var rows = sysRows().filter(rowShown);
     function nav(row) {
-      var state = sysState(row);
-      return h('button', { class: 'navrow', id: 'nav-' + row.id, onclick: function () { openSys(row.id); } },
+      var state = sysState(row), open = !!beside && row.id === S.sys;
+      return h('button', { class: 'navrow' + (open ? ' on' : ''), id: 'nav-' + row.id, 'aria-current': open ? 'page' : false, onclick: function () { openSys(row.id, 'index'); } },
         h('span', { class: 'navname', text: row.name }),
         h('span', { class: 'chip' + (state.chip ? ' chip-' + state.chip : ''), hidden: !state.chip, text: state.chip ? CHIPS[state.chip] : '' }),
         h('span', { class: 'navstate', text: state.text }));
@@ -1481,11 +1824,10 @@
         }))) : null;
     }
     var optional = can('full') ? S.modules.filter(function (m) { return m.type !== 'core'; }) : [];
-    if (!S.sysFresh) { S.sysFresh = true; setTimeout(loadSysStates, 0); }
-    clearTimeout(healthTimer);
-    healthTimer = setTimeout(indexHealth, 5000);
-    return h('div', { class: 'screen', id: 'sysindex' }, h('div', { class: 'top' }, h('h1', { text: 'System' })),
-      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
+    setTimeout(function () { if (!S.sysFresh && indexShown()) { S.sysFresh = true; loadSysStates(); } }, 0);
+    clearTimeout(indexTimer);
+    indexTimer = setTimeout(indexHealth, 5000);
+    return h('div', { class: 'screen', id: 'sysindex' },
       group('top', ''),
       SYS_GROUPS.map(function (g) { return group(g[0], g[1]); }),
       fold('notbuilt', 'Not built yet', optional.filter(function (m) { return m.status === 'planned'; })),
@@ -1697,14 +2039,16 @@
       if (control.isConnected && !document.getElementById('confirmrow')) confirmRow(question, 'Switch off', 'Keep it on', go, control);
     });
   }
-  function sysPage(id, title, blurb, opts) {
+  // part: the page is a column of an area's build (Shaders in Play, Sound in Shape): the first heading is the title
+  // bar's then, and the page's own title is a second one.
+  function sysPage(id, title, blurb, opts, part) {
     opts = opts || {};
     var full = can('full');
     var steps = (opts.module ? [moduleStep(opts.module)] : []).concat(opts.steps || []);
     if (!steps.length) steps = null;
     var on = steps ? pageOn(steps) : true;
     pageSwitch = { steps: steps, on: on };
-    var head = h('div', { class: 'top syshead' }, h('h1', { text: title }));
+    var head = h('div', { class: 'top syshead' }, h(part ? 'h2' : 'h1', { text: title }));
     if (steps && full && on !== null) {
       var sw = h('button', { class: 'switch', id: 'sysswitch', role: 'switch', 'aria-checked': on ? 'true' : 'false', 'aria-label': title,
         onclick: function () { flipSwitch(opts, steps, !on, sw); } });
@@ -1716,10 +2060,13 @@
         full ? h('div', { class: 'row' }, h('button', { class: 'btn on pri big grow', id: 'sysswitchon', text: 'Switch on ' + title, onclick: function (e) { flipSwitch(opts, steps, true, e.target); } })) : null);
     setTimeout(pageState, 0);
     return h('div', { class: 'screen syspage', id: 'syspage', 'data-page': id },
-      h('div', { class: 'row' }, h('button', { class: 'btn back', id: 'sysback', text: S.sysFrom === 'live' ? '‹ Live' : '‹ System', onclick: sysBack })),
+      // Back: to the Setup index from a page of Setup, and to where the page was opened from. A page that is a
+      // screen of another area (Shaders, Mapping, Sound) and was opened from the menu has nowhere to go back to.
+      // (toindex: where the index stands beside the page, the stylesheet leaves this one out.)
+      HOMES[id] && hasScreen(HOMES[id]) && !S.sysFrom ? null : h('div', { class: 'row backrow' + (S.sysFrom && S.sysFrom !== 'index' ? '' : ' toindex') },
+        h('button', { class: 'btn back', id: 'sysback', text: '‹ ' + (BACK_NAMES[S.sysFrom] || 'Setup'), onclick: sysBack })),
       head,
       h('p', { class: 'hint', id: 'sysblurb', text: blurb || '' }),
-      h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }),
       h('div', { class: 'row', id: 'sysstate', hidden: true }, h('span', { class: 'chip' }), h('span', { class: 'hint' })),
       body);
   }
@@ -2325,7 +2672,7 @@
       ['pad', 'Play a pad'], ['usb', 'Play the USB stick (and any stick plugged in later)'], ['vibes', 'Start Vibes'], ['preset', 'Old start script']];
     function padName(p) {
       var b = (S.banks || [])[p[0]], pad = b && b.pads && b.pads[p[1]];
-      return 'Bank ' + (p[0] + 1) + ', pad ' + (p[1] + 1) + (pad && (pad.label || pad.file) ? ': ' + (pad.label || pad.file) : '');
+      return 'Bank ' + (p[0] + 1) + ', pad ' + (p[1] + 1) + (pad && (pad.label || pad.file || padShaderNice(padShader(pad))) ? ': ' + (pad.label || pad.file || padShaderNice(padShader(pad))) : '');
     }
     function draw(d) {
       body.textContent = '';
@@ -2346,10 +2693,10 @@
         S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === (c.file || S.media[0]) }); }) : [h('option', { value: '', text: 'No clips on the box yet' })]);
       var preset = h('input', { class: 'text-input mono', id: 'autopreset', placeholder: 'startlessonce05', value: c.preset, autocomplete: 'off' });
       var pads = [];
-      (S.banks || []).forEach(function (bk, bi) { (bk.pads || []).forEach(function (pd, pi) { if (pd.file) pads.push([bi, pi]); }); });
+      (S.banks || []).forEach(function (bk, bi) { (bk.pads || []).forEach(function (pd, pi) { if (pd.file || padShader(pd)) pads.push([bi, pi]); }); });
       var pad = h('select', { class: 'text-input', id: 'autopad' }, pads.length ? pads.map(function (p) {
         return h('option', { value: p.join(','), text: padName(p), selected: p[0] === c.pad[0] && p[1] === c.pad[1] });
-      }) : [h('option', { value: '', text: 'No pad has a clip yet' })]);
+      }) : [h('option', { value: '', text: 'No pad has a clip or a shader yet' })]);
       var seconds = h('input', { class: 'text-input mono', id: 'autoseconds', type: 'number', min: 1, max: 3600, value: c.seconds });
       var shuffle = h('select', { class: 'text-input', id: 'autoshuffle' },
         [[false, 'In name order'], [true, 'Shuffled']].map(function (o) { return h('option', { value: String(o[0]), text: o[1], selected: o[0] === c.shuffle }); }));
@@ -3390,7 +3737,7 @@
             if (!/^\d\d:\d\d/.test(f.time)) return sayAt(err, 'Choose a time.', true);
             var entry = { time: f.time.slice(0, 5), days: f.days.slice(), action: f.action, label: f.label };
             if (editing) entry.id = f.id;
-            if (f.action === 'play') { if (!f.file) return sayAt(err, 'There are no clips on the box yet. Upload one on the Media screen, or choose something else to happen.', true); entry.file = f.file; entry.loop = f.loop !== false; }
+            if (f.action === 'play') { if (!f.file) return sayAt(err, 'There are no clips on the box yet. Upload one in the Library (under Play), or choose something else to happen.', true); entry.file = f.file; entry.loop = f.loop !== false; }
             if (f.action === 'preset') { if (!f.preset) return sayAt(err, 'Type the start script name.', true); entry.preset = f.preset.trim(); }
             if (f.action === 'scene') { if (!f.scene) return sayAt(err, isOff('scene') ? 'Switch Room on first, with the button above.' : 'There is no scene yet. Make one on the Room screen, or choose something else to happen.', true); entry.scene = f.scene; }
             if (f.action === 'vibes' && f.set) entry.set = f.set;
@@ -3919,11 +4266,15 @@
     if (style) root.setAttribute('data-style', style); else root.removeAttribute('data-style');
   }
   // A style that draws a slider itself needs to know how full it is: --fill on each slider, from its value. Set
-  // through the script (the policy allows that, not a style attribute), on every input and four times a second,
-  // because most sliders here are also moved by the box (a poll, a controller). The default look does nothing.
+  // through the script (the policy allows that, not a style attribute) in the same turn as the value: on every
+  // input, where the poll writes the position in the clip (patchLive), and whenever a part of the page is drawn
+  // again (boot's observer), so that a slider is never painted with the fill of a moment ago. The cards that move
+  // a slider in place when the box says so (effects.js, shaders.js: apply and reset) write the number beside it in
+  // the same turn, and the observer sees that; a slider written in place with nothing else drawn must call this
+  // itself, as patchLive does. The clock four times a second is only a net under these. The default look does nothing.
   function fillRanges() {
-    if (!document.documentElement.hasAttribute('data-style')) return;
-    var rs = document.querySelectorAll('input[type=range]');
+    // (in the default look only the place in the clip, which is a bar of the stylesheet's own along the strip's edge)
+    var rs = document.querySelectorAll(document.documentElement.hasAttribute('data-style') ? 'input[type=range]' : '#seek');
     for (var i = 0; i < rs.length; i++) {
       var r = rs[i], min = r.min === '' ? 0 : parseFloat(r.min), max = r.max === '' ? 100 : parseFloat(r.max), v = parseFloat(r.value);
       var part = max > min && isFinite(v) ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -3931,8 +4282,16 @@
       if (r.getAttribute('data-fill') !== fill) { r.setAttribute('data-fill', fill); r.style.setProperty('--fill', fill); }
     }
   }
+  // Which of the five colours of a look the open screen wears (D54, D65): Play is "clips", Shape "mix", Room "room",
+  // Setup "system", and the Shaders screen keeps its own, "shaders". A theme knows these five names and no others.
+  var AREA_COLOUR = { play: 'clips', shape: 'mix', room: 'room', setup: 'system' };
   function markArea() {
-    var area = !S.device ? null : S.tab === 'room' ? 'room' : S.tab === 'mix' ? 'mix' : S.tab === 'system' ? (S.sys === 'vibes' ? 'shaders' : 'system') : 'clips';
+    var key = S.device ? screenKey() : null;
+    // (the Shaders screen wears its colour while it is the one screen on the page; as a column of Play's desk it
+    // wears it inside the column, by the stylesheet, and the area keeps Play's)
+    var desk = app.querySelector('main.ws > .desk');
+    var beside = !!desk && Array.prototype.filter.call(desk.children, colShown).length > 1;
+    var area = !key ? null : key === 'play/shaders' && !beside ? 'shaders' : AREA_COLOUR[key.split('/')[0]];
     if (area) document.documentElement.setAttribute('data-area', area); else document.documentElement.removeAttribute('data-area');
   }
   // A small picture of a look, drawn from its own tokens (the page, a surface, the colour of each part of the panel, a
@@ -4248,8 +4607,8 @@
         flip('owner', 'Let a controller show an owner code? Anyone who can hold a button on a controller plugged into the box can then pair a device with everything allowed.',
           'Allow owner codes', 'Owner codes from a controller are allowed.', 'Owner codes from a controller are off.'),
         'Pairs one device as ' + roleName('full') + ', like the PIN. Leave it off unless you need it. The MIDI action is "Show a one-time owner code".'));
-      if (c.enabled && !c.midi_on) body.appendChild(h('div', { class: 'hint', id: 'ctlcodemidi', text: 'MIDI controllers are switched off (System, MIDI controller), so no control can ask for a code yet.' }));
-      if (c.enabled) body.appendChild(h('div', { class: 'hint', id: 'ctlcodehow', text: 'Give a pad or button the action under System, MIDI controller: tap it on its controller\'s card, or use Learn. ' +
+      if (c.enabled && !c.midi_on) body.appendChild(h('div', { class: 'hint', id: 'ctlcodemidi', text: 'MIDI controllers are switched off (Setup, MIDI controller), so no control can ask for a code yet.' }));
+      if (c.enabled) body.appendChild(h('div', { class: 'hint', id: 'ctlcodehow', text: 'Give a pad or button the action under Setup, MIDI controller: tap it on its controller\'s card, or use Learn. ' +
         'On a Launchpad Mini the eighth pad of the top row shows a guest code already. A second press takes the code off the display. At most ' + c.status.per_hour + ' codes an hour.' }));
       var s = c.status;
       if (s.active) {
@@ -4390,7 +4749,7 @@
           });
         } })),
       h('div', { class: 'hint', text: 'One lock for every guest on every phone. It holds until someone opens it again, also after a restart.' }),
-      locked && can('full') ? h('div', { class: 'hint', id: 'guestlockjoin', text: 'While this is locked, a code shown from a MIDI controller still pairs a guest, who can only watch. If staff must get in at the box, set "A controller\'s join code pairs" to Operator under System > People and codes > A code from a controller.' }) : null);
+      locked && can('full') ? h('div', { class: 'hint', id: 'guestlockjoin', text: 'While this is locked, a code shown from a MIDI controller still pairs a guest, who can only watch. If staff must get in at the box, set "A controller\'s join code pairs" to Operator under Setup > People and codes > A code from a controller.' }) : null);
     return card;
   }
   // An Operator's part of the paired devices (D80): the guests, to remove, and a guest link. The box gives him the
@@ -4459,12 +4818,8 @@
     }
     function draw() {
       body.textContent = '';
-      body.appendChild(h('div', { class: 'hint', id: 'guesthint', text: 'You are a guest: you can choose what plays and switch the projectors. Whoever runs the room can lock this for a show.' }));
-      body.appendChild(h('div', { class: 'row wrap' }, btn('gprev', 'Previous', '/api/control', { action: 'prev' }), btn('gnext', 'Next', '/api/control', { action: 'next' }),
-        btn('gstop', 'Stop', '/api/control', { action: 'stop' }),
-        h('button', { class: 'btn grow', id: 'gblack', text: 'Blackout on or off', onclick: function (e) {
-          guestSend('/api/blackout', { on: !(S.status && S.status.mix && S.status.mix.blackout) }, '', e.currentTarget);
-        } })));
+      body.appendChild(h('div', { class: 'hint', id: 'guesthint', text: 'You are a guest: you can choose what plays and switch the projectors; Stop and Blackout are at the foot of the screen. Whoever runs the room can lock this for a show.' }));
+      // (Previous, Next, Stop and Blackout are the strip's, at the foot of every screen: transport())
       if (S.media.length) {
         var clip = h('select', { class: 'text-input', id: 'gclip', 'aria-label': 'Clip to play' }, S.media.map(function (n) { return h('option', { value: n, text: n }); }));
         body.appendChild(h('div', { class: 'row' }, clip, h('button', { class: 'btn', id: 'gplay', text: 'Play', onclick: function (e) { guestSend('/api/play', { file: clip.value }, 'Playing ' + clip.value, e.currentTarget); } })));
@@ -4503,9 +4858,12 @@
     }
     return card;
   }
-  function guestNote() {
+  // One place in the panel (no card is on the page twice, D72): the top of Room > Scenes, where a guest lands; on a
+  // box without the Room, the top of Play > Pads.
+  function guestNote(where) {
     var d = S.device;
-    if (!d || d.role !== 'view' || d.remote || (S.tab !== 'live' && S.tab !== 'room')) return null;
+    if (!d || d.role !== 'view' || d.remote) return null;
+    if ((where === 'pads') === hasScreen('room/scenes')) return null;
     if (canGuest()) return guestCard();
     return guestsLocked() ? h('div', { class: 'card', id: 'guestlocked', role: 'status' }, h('div', { text: LOCKED_TEXT })) : null;
   }
@@ -4543,36 +4901,326 @@
       openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
   }
   function stopTimers() {
-    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
+    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, indexTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
+  }
+  // ---- the Workspace shell (D65, D72) ----------------------------------
+  // Four areas: Play (Pads, Library, Shaders), Shape (Effect, Picture, Sound, and Mapping), Room (Scenes, Walls,
+  // Guests) and Setup (an index, and one page at a time). Under 600 px the areas are tabs at the foot, with the open
+  // area's screens in a row under the title. From 600 px a rail at the left has one button per area and nothing
+  // else, and the open area's screens are tabs across the top of the workspace. Where there is room (the
+  // stylesheet says from where) an area is a desk: its screens stand side by side as columns, all equally live,
+  // and only a tool that needs the whole width (Mapping) is a tab beside the desk; Setup keeps its index in view
+  // as a column beside the open page. The transport strip is at the foot of every screen.
+  // An area is ONE build with a column per screen, at every width: which columns are shown is the stylesheet's
+  // affair, so a tab or a change of the window's width draws nothing again, and no card is ever on the page twice.
+  // Every card is the one the panel had before, built by the function that built it.
+  var AREAS = [['play', 'Play'], ['shape', 'Shape'], ['room', 'Room'], ['setup', 'Setup']];
+  // what the title bar says where an area's screens share the page
+  var AREA_JOBS = { play: 'Start a pad, a clip or a shader.', shape: 'Put an effect on, set the picture and the sound.', room: 'Run the room: scenes, walls and guests.' };
+  // pages of the old System that are a screen of another area now (the Setup index still lists them, and opens them there)
+  var HOMES = { vibes: 'play/shaders', mapping: 'shape/mapping', sound: 'shape/sound' };
+  var BACK_NAMES = { play: 'Play', shape: 'Shape', room: 'Room', index: 'Setup' };
+  function hasScreen(key) { return screenList().some(function (x) { return x.key === key; }); }
+  function screenKey() {            // the open screen, from what is built: 'area/screen'
+    if (S.tab !== 'system') return S.tab + '/' + S.part[S.tab];
+    if (!S.sys) return 'setup/index';
+    return HOMES[S.sys] && hasScreen(HOMES[S.sys]) ? HOMES[S.sys] : 'setup/' + S.sys;      // (a page whose module is off is a page of Setup, with its switch)
+  }
+  // The screens this device has now, in the order of the tabs. A screen whose module is switched off is not among
+  // them (the owner switches it on from its row of the Setup index), nor is one that would be empty for this role.
+  // tab: the build it is in; part: its column of that build (a screen with none is drawn by itself: Mapping, and
+  // every page of Setup).
+  function screenList() {
+    var rows = sysRows(), remote = !!(S.device && S.device.remote);
+    function row(id) { return rows.filter(function (r) { return r.id === id; })[0]; }
+    function has(id) { var r = row(id); return !!r && (!r.module || moduleOn(r.module)) && (rowShown(r) || !!r.plain); }
+    function scr(area, id, name, job, tab, more) {
+      var o = { key: area + '/' + id, area: area, id: id, name: name, job: job, tab: tab, sys: null, part: null };
+      Object.keys(more || {}).forEach(function (k) { o[k] = more[k]; });
+      return o;
+    }
+    var list = [
+      scr('play', 'pads', 'Pads', 'Start what sits on a pad.', 'play', { part: 'pads' }),
+      scr('play', 'library', 'Library', 'Find a clip, a picture or a live input and play it; keep the files.', 'play', { part: 'library' })];
+    if (has('vibes')) list.push(scr('play', 'shaders', 'Shaders', 'Pick a shader, or let Vibes play a set.', 'play', { part: 'shaders' }));
+    if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put one effect over the picture and set how much.', 'shape', { part: 'effect' }));
+    list.push(scr('shape', 'picture', 'Picture', 'Set how the picture looks and where it sits.', 'shape', { part: 'picture' }));
+    if (has('sound')) list.push(scr('shape', 'sound', 'Sound', 'Set how loud it is and where the sound comes out.', 'shape', { part: 'sound' }));
+    if (has('mapping')) list.push(scr('shape', 'mapping', 'Mapping', 'Fit the picture to the wall.', 'system', { sys: 'mapping' }));
+    if (window.pvjRoom && moduleOn('room')) {
+      list.push(scr('room', 'scenes', 'Scenes', 'Set the whole room with one tap.', 'room', { part: 'scenes' }));
+      list.push(scr('room', 'walls', 'Walls', 'One wall at a time: power, source and mutes.', 'room', { part: 'walls' }));
+      if (can('live') && !remote) list.push(scr('room', 'guests', 'Guests', 'Let someone in, and end their code.', 'room', { part: 'guests' }));
+    }
+    list.push(scr('setup', 'index', 'Setup', 'Find a setting. Each row opens one page.', 'system'));
+    rows.forEach(function (r) {
+      if (HOMES[r.id] || !rowShown(r) || (r.module && !moduleOn(r.module))) return;
+      list.push(scr('setup', r.id, r.name, '', 'system', { sys: r.id }));
+    });
+    return list;
+  }
+  function menuKey() { return screenList().map(function (x) { return x.key; }).join(' '); }
+  function wsScrollTop() { window.scrollTo(0, 0); }
+  // What S says is made to fit what this device has: a page that is a column of an area's build is that column, and
+  // a column this device does not have (its module went off, the role has no such screen) is the area's first.
+  function settle() {
+    var list = screenList();
+    if (S.tab === 'room' && !list.some(function (x) { return x.tab === 'room'; })) S.tab = 'play';
+    if (S.tab === 'system') {
+      var home = S.sys && HOMES[S.sys] && list.filter(function (x) { return x.key === HOMES[S.sys]; })[0];
+      if (!home || !home.part) return;
+      S.tab = home.tab; S.part[home.tab] = home.part; S.sys = null;
+    }
+    var mine = list.filter(function (x) { return x.tab === S.tab && x.part; });
+    if (mine.some(function (x) { return x.part === S.part[S.tab]; })) return;
+    // The open column is gone. If it was a page whose module has just been switched off (Shaders and Vibes), the
+    // owner stays with that page: it is a page of Setup now, with its switch and nothing else.
+    var key = S.tab + '/' + S.part[S.tab], id = Object.keys(HOMES).filter(function (k) { return HOMES[k] === key; })[0];
+    var row = id && sysRows().filter(function (r) { return r.id === id; })[0];
+    S.part[S.tab] = mine[0].part;
+    if (row && rowShown(row)) { S.tab = 'system'; S.sys = id; S.sysFrom = 'index'; }
+  }
+  // ---- an area's one build ----
+  var PARTS = {
+    play: { pads: live, library: media, shaders: function () { return pagePart('vibes'); } },
+    shape: { effect: effectPart, picture: picturePart, sound: function () { return pagePart('sound'); } }
+  };
+  // One column: a named region with its screen in it. Its heading is shown where the columns stand side by side,
+  // the same small one for every column; a column that is a page (Shaders, Sound) shows its own title and sentence
+  // only where it stands alone, and keeps its switch beside the column's heading.
+  function column(x, screen) {
+    var col = h('section', { class: 'deskcol' + (x.part === S.part[x.tab] ? ' cur' : ''), 'data-col': x.part, role: 'region', 'aria-label': x.name, tabindex: -1 },
+      h('h2', { class: 'deskhead', text: x.name }), screen);
+    col.drawnFrom = stamp(x.part);
+    return col;
+  }
+  // What a column that does not follow the box by itself was drawn from (the others ask the box themselves).
+  function stamp(part) {
+    var st = S.status || {}, pl = st.player || {}, m = st.mix || {};
+    if (part === 'pads') return JSON.stringify([S.banks, m.transition, m.duration]);
+    if (part === 'library') return JSON.stringify([S.media, S.mediaInfo]);
+    if (part === 'picture') return JSON.stringify(m);
+    if (part === 'sound') return JSON.stringify([pl.volume, pl.muted]);
+    return '';
+  }
+  // Somebody is at work in this part of the page: a name is being typed, a list is open, a question waits for its
+  // answer, a file is on its way up.
+  function inUse(el) {
+    var a = document.activeElement;
+    var field = a && el.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' ||
+      (a.tagName === 'INPUT' && !/^(range|checkbox|radio|button|submit|reset|color|file)$/.test(a.type)));
+    return !!field || asking(el) || (!!S.uploading && !!el.querySelector('#uploads'));
+  }
+  // A tab of the build that is on the page was pressed. Nothing is drawn again for that, but the box's lists are
+  // read again, as a tap on a tab always read them, and a column whose own list or setting has changed meanwhile
+  // (from another phone, a controller, the schedule) is drawn again by itself, unless somebody is at work in it.
+  // The workspace says it is busy while the box is asked (aria-busy).
+  var freshening = 0;
+  function freshen() {
+    var main = document.getElementById('wsmain'), n = ++freshening;
+    if (main) main.setAttribute('aria-busy', 'true');
+    return loadAll().then(function () {
+      if (n !== freshening) return;
+      var now = document.getElementById('wsmain');
+      if (now) now.removeAttribute('aria-busy');
+      if (!S.device || !now || menuKey() !== S.menu) return render();
+      Array.prototype.forEach.call(now.querySelectorAll(':scope > .desk > .deskcol[data-col]'), function (col) {
+        var part = col.getAttribute('data-col');
+        if (PARTS[S.tab] && PARTS[S.tab][part] && stamp(part) !== col.drawnFrom && !inUse(col)) redrawPart(part);
+      });
+    });
+  }
+  function areaDesk() {
+    var mine = screenList().filter(function (x) { return x.tab === S.tab && x.part; });
+    if (S.tab === 'room') return roomDesk(mine);
+    return h('div', { class: 'desk', id: 'wsdesk', 'data-area': S.tab, 'data-cols': mine.length }, mine.map(function (x) { return column(x, PARTS[S.tab][x.part]()); }));
+  }
+  // One column of the area that is built is drawn again, and the others stay as they are: a bank of pads, a flip
+  // of the picture or the list of clips must not wipe a name that is being typed in the column beside it. Where
+  // that column is not on the page, everything is drawn.
+  function redrawPart(part) {
+    var col = S.device && PARTS[S.tab] && PARTS[S.tab][part] && app.querySelector('main.ws > .desk > .deskcol[data-col="' + part + '"]');
+    if (!col) return render();
+    keepCursor(col, function () { col.replaceChild(PARTS[S.tab][part](), col.lastChild); });
+    col.drawnFrom = stamp(part);
+    patchLive();
+  }
+  // The open column of the build that is on the page: marked, and the menus with it; nothing is drawn again.
+  function showPart(part) {
+    var desk = app.querySelector('main.ws > .desk');
+    S.part[S.tab] = part;
+    S.last[S.tab] = S.tab + '/' + part;
+    Array.prototype.forEach.call(desk.children, function (el) { if (el.hasAttribute('data-col')) el.classList.toggle('cur', el.getAttribute('data-col') === part); });
+    redrawChrome();
+    // a column that asks the box by itself (the Shaders page) waits while it is hidden, and is told when it is shown again
+    try { window.dispatchEvent(new CustomEvent('pvjshown', { detail: part })); } catch (e) { /* an old browser: the column's own timer looks within seconds */ }
+  }
+  function colShown(el) { return !!el && el.getClientRects().length > 0; }
+  // Open a screen by its key. Another column of the build that is on the page is shown without drawing anything
+  // again (where the columns stand side by side it is brought into view and given the cursor's place); anything
+  // else reads the box's state and draws, as a tap on a tab always did.
+  function go(key) {
+    key = OLD_TABS[key] || key;
+    var list = screenList(), sc = list.filter(function (x) { return x.key === key; })[0];
+    if (!sc && key === 'shape/effect') sc = list.filter(function (x) { return x.key === 'shape/picture'; })[0];      // (no effects on this box: the area's next screen)
+    if (!sc) return;
+    S.last[sc.area] = sc.key;
+    var desk = app.querySelector('main.ws > .desk'), col = sc.part && sc.tab === S.tab && desk && desk.querySelector(':scope > .deskcol[data-col="' + sc.part + '"]');
+    if (col) {
+      S.msg = ''; say('');
+      var beside = Array.prototype.filter.call(desk.children, colShown).length > 1;
+      showPart(sc.part);
+      if (!beside) wsScrollTop();
+      else {
+        col.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        if (!document.activeElement || document.activeElement === document.body) col.focus({ preventScroll: true });
+      }
+      return freshen();
+    }
+    // a page of Setup is one to come back from (the phone's back gesture returns to the index)
+    if (sc.sys && !HOMES[sc.sys]) { if (history.state && history.state.sys) history.replaceState({ sys: sc.sys }, ''); else history.pushState({ sys: sc.sys }, ''); }
+    else if (history.state && history.state.sys) history.replaceState(null, '');
+    if (sc.part) S.part[sc.tab] = sc.part;
+    S.tab = sc.tab; S.msg = ''; S.sys = sc.sys; S.sysFresh = false; S.sysFrom = null;
+    return loadAll().then(render).then(wsScrollTop);
+  }
+  function goArea(area) {           // the area's button: back to the screen it was left on (Setup: always its index)
+    var list = screenList().filter(function (x) { return x.area === area; });
+    var last = area !== 'setup' && area !== screenKey().split('/')[0] && list.filter(function (x) { return x.key === S.last[area]; })[0];
+    if (list.length) go((last || list[0]).key);
+  }
+  // The title bar, the tabs of the area's screens, the rail (from 600 px) and the area tabs (a phone). All four are
+  // in the page at every width; the stylesheet shows the ones for the panel's width (container "app").
+  // paged: the screen is a page of its own with its heading and sentence, so the bar's title is not a second heading.
+  function chrome(paged) {
+    var list = screenList(), key = screenKey(), area = key.split('/')[0];
+    var cur = list.filter(function (x) { return x.key === key; })[0];
+    var areas = AREAS.filter(function (a) { return list.some(function (x) { return x.area === a[0]; }); });
+    var areaName = AREAS.filter(function (a) { return a[0] === area; })[0][1];
+    var mine = list.filter(function (x) { return x.area === area; });
+    var desk = mine.filter(function (x) { return x.part; });      // the screens that share the page where there is room
+    if (desk.length < 2) desk = [];
+    var job = cur && cur.job && !paged ? (mine.length > 1 && area !== 'setup' ? cur.name + ': ' : '') + cur.job : '';
+    var item = function (x, cls, text) {
+      return h('button', { class: cls + (x.key === key ? ' on' : ''), id: 'sub-' + x.key.replace('/', '-'), 'data-go': x.key, 'aria-current': x.key === key ? 'page' : false, text: text || x.name,
+        onclick: function () { go(x.key); } });
+    };
+    // (two lines for what the screen is for: the open screen's own, and the area's for where its screens share the
+    // page, which the stylesheet shows in its place: no column of a desk is "the current one")
+    var head = h('header', { class: 'wshead', id: 'wshead' },
+      h('div', { class: 'wsheadmain' },
+        h(paged ? 'div' : 'h1', { class: 'wstitle', id: 'wstitle', text: areaName }),
+        h('p', { class: 'wsjob' + (cur && cur.part && desk.length ? ' one' : ''), id: 'wsjob', text: job, hidden: !job }),
+        cur && cur.part && desk.length ? h('p', { class: 'wsjob all', id: 'wsjoball', text: AREA_JOBS[area] }) : null),
+      h('span', { class: 'wsbrand', text: 'nxlx.mastercontrol' }),
+      h('div', { class: 'pill k', id: 'pill' }));
+    // The tabs. Where the area is a desk, its columns are one tab ("Effect · Picture · Sound") beside the tools
+    // that need the whole width; an area whose screens all share the page has no tabs there at all. Play's Shaders
+    // column is the exception (D72, changed 2026-10-10): up to 1699 px the desk is Pads and Library and Shaders is a
+    // tab beside it with the whole width (its own laptop form needs 900 px); from 1700 px the three share the page.
+    // Both are built; the stylesheet shows the one for the width (.m: a column's tab, gone from 1200 px; .m3: gone
+    // from 1700 px; .p3 on the bar: Play with the three).
+    var mid = area === 'play' ? desk.filter(function (x) { return x.part !== 'shaders'; }) : desk;
+    var onDesk = !!(cur && cur.part && mid.indexOf(cur) >= 0);
+    var joined = mid.length && mid.length < mine.length ? h('button', { class: 'btn segbtn dj' + (onDesk ? ' on' : ''), id: 'sub-' + area + '-desk', 'data-desk': area,
+      'aria-current': onDesk ? 'page' : false, text: mid.map(function (x) { return x.name; }).join(' · '),
+      onclick: function () { var last = mid.filter(function (x) { return x.key === S.last[area]; })[0]; go((last || mid[0]).key); } }) : null;
+    var sub = area !== 'setup' && mine.length > 1 ? h('nav', { class: 'wssub' + (desk.length === mine.length ? ' all' : '') + (mid.length < desk.length ? ' p3' : ''), id: 'wssub', 'aria-label': 'Screens of ' + areaName },
+      h('div', { class: 'seg' }, joined, mine.map(function (x) { return item(x, 'btn segbtn' + (x.part && desk.length ? (mid.indexOf(x) >= 0 ? ' m' : ' m3') : '')); }))) : h('div', { class: 'wssub', id: 'wssub', hidden: true });
+    var area1 = function (a, cls, prefix) {
+      return h('button', { class: cls + (a[0] === area ? ' on' : ''), id: prefix + a[0], 'data-ar': a[0], text: a[1], 'aria-current': a[0] === area ? 'page' : false,
+        onclick: function () { goArea(a[0]); } });
+    };
+    var side = h('nav', { class: 'wsside', id: 'wsside', 'aria-label': 'Areas' }, areas.map(function (a) { return area1(a, 'wsar', 'side-'); }));
+    var tabs = h('nav', { class: 'tabs wstabs', id: 'wstabs', 'aria-label': 'Areas' }, areas.map(function (a) { return area1(a, 'btn', 'tab-'); }));
+    return { head: head, sub: sub, side: side, tabs: tabs, key: key };
+  }
+  var NAV_ID = /^(side-|sub-|tab-|nav-)/;
+  // The menus are drawn again in place (another column of the build was chosen, or a page of Setup was opened): the
+  // item that was pressed is found again by its id and keeps the cursor; if it is not shown at this width any more,
+  // the screen itself takes it. focus: the id of what had the cursor, when the caller has already replaced it.
+  function redrawChrome(focus) {
+    focus = focus || (document.activeElement && document.activeElement.id);
+    var c = chrome(S.tab === 'system' && !!document.getElementById('syspage'));
+    ['wshead', 'wssub', 'wsside', 'wstabs'].forEach(function (id, i) {
+      var old = document.getElementById(id), now = [c.head, c.sub, c.side, c.tabs][i];
+      if (old) old.parentNode.replaceChild(now, old);
+    });
+    var main = document.getElementById('wsmain');
+    if (main) main.setAttribute('data-screen', c.key);
+    S.menu = menuKey();
+    markArea();
+    keepNavCursor(focus);
+    patchLive();
+  }
+  function keepNavCursor(focus) {
+    if (!focus || !NAV_ID.test(focus)) return;
+    var back = document.getElementById(focus), main = document.getElementById('wsmain');
+    if (back && back.offsetParent) back.focus({ preventScroll: true });
+    else if (main) main.focus({ preventScroll: true });
+  }
+  // The cursor when the layout changes with the panel's width. An item of a menu that had the cursor and is not
+  // shown any more (the area's tab at the foot when the rail comes, a screen's tab when its area becomes a desk)
+  // hands it to the item that stands for it, or to the screen; it is never left nowhere.
+  var navFocus = '';
+  function fixCursor() {
+    var a = document.activeElement;
+    if (!navFocus || (a && a !== document.body && a.getClientRects().length)) return;
+    var was = navFocus, m = /^(side|tab)-(\w+)$/.exec(was), key = screenKey().split('/'), el = null;
+    if (m) el = document.getElementById((m[1] === 'side' ? 'tab-' : 'side-') + m[2]);
+    else if (/^sub-\w+-desk$/.test(was)) el = document.getElementById('sub-' + key.join('-'));
+    else if (/^sub-/.test(was)) el = document.getElementById('sub-' + key[0] + '-desk');
+    if (!el || !el.getClientRects().length) el = document.getElementById(was);
+    if (!el || !el.getClientRects().length) el = document.getElementById('wsmain');
+    if (el) el.focus({ preventScroll: true });
+  }
+  var dockWatch = null, widthWatch = null;
+  function dockHeight() {           // how tall the strip and the tabs are: what floats above them (a message) clears them
+    var d = document.getElementById('wsdock');
+    if (d) document.documentElement.style.setProperty('--dock', d.offsetHeight + 'px');
+    moreBelow();
   }
   function render() {
     markArea();
     stopTimers();
     keepNetForm();
     keepSyncForm();
+    var a = document.activeElement, focus = a && a.id, at = indexAt();
+    var held = dock && a && dock.el.contains(a) ? a : null;      // a control of the strip, which is kept across the redraw
     app.textContent = '';
-    if (!S.device) { S.landing = true; app.appendChild(connect()); return; }
-    var screens = { live: live, mix: mix, media: media, system: system };
-    var names = [['live', 'Live'], ['mix', 'Mix'], ['media', 'Media'], ['system', 'System']];
-    // The Room screen (room.js): one more tab while its module is on. A presenter or a guest starts on it when the
-    // page is first loaded or the device has just been paired; nobody already on another screen is ever moved.
+    if (!S.device) { S.landing = true; dock = null; app.appendChild(connect()); return; }
+    // The Room area (room.js) is there while its module is on. A presenter or a guest starts on it when the page is
+    // first loaded or the device has just been paired; nobody already on another screen is ever moved.
     var landing = S.landing !== false;
     if (S.modules.length) S.landing = false;      // decided once the modules are known, not by a render that came before them
-    if (window.pvjRoom && moduleOn('room')) {
-      screens.room = function () { return window.pvjRoom.screen(roomCtx()); };
-      names.unshift(['room', 'Room']);
-      if (landing && !can('full')) S.tab = 'room';
-    } else if (S.tab === 'room') S.tab = 'live';
-    markArea();        // again: the tab may just have been decided
-    var tabs =h('nav', { class: 'tabs' + (names.length > 4 ? ' many' : ''), 'aria-label': 'Sections' }, names.map(function (t) {
-      return h('button', { class: 'btn' + (S.tab === t[0] ? ' on' : ''), text: t[1], 'aria-current': S.tab === t[0] ? 'page' : false,
-        onclick: function () { goTab(t[0]); } });
-    }));
-    var screen = screens[S.tab](), note = guestNote();
-    if (note) screen.insertBefore(note, screen.children[1] || null);       // under the page's title
-    app.appendChild(h('div', { class: 'shell' }, supportBanner(), screen, tabs));
+    if (window.pvjRoom && moduleOn('room') && landing && !can('full')) S.tab = 'room';
+    settle();
+    markArea();        // again: the screen may just have been decided
+    var desk = S.tab === 'system' ? system() : areaDesk();
+    if (S.tab !== 'system') S.last[S.tab] = screenKey();
+    var c = chrome(S.tab === 'system' && !!desk.querySelector('#syspage'));      // after the screen: a page that could not be opened has become the index by now
+    S.menu = menuKey();
+    markArea();
+    // (one message line for the whole build, above its columns: say() writes to the first it finds)
+    app.appendChild(h('div', { class: 'shell wsp', id: 'wsp' }, supportBanner(),
+      h('div', { class: 'frame' }, c.head, c.side, c.sub,
+        h('main', { class: 'ws', id: 'wsmain', 'data-screen': c.key, tabindex: -1 },
+          h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }), desk),
+        h('div', { class: 'wsdock', id: 'wsdock' }, transport(), c.tabs))));
     if (S.sheet) app.appendChild(sheet());
+    markArea();        // once more, now that the columns are on the page
     patchLive();
+    dockHeight();
+    indexKeep(at);
+    if (window.ResizeObserver) {
+      if (dockWatch) dockWatch.disconnect();
+      dockWatch = new ResizeObserver(dockHeight); dockWatch.observe(document.getElementById('wsdock'));
+      if (widthWatch) widthWatch.disconnect();
+      widthWatch = new ResizeObserver(function () { markArea(); fixCursor(); }); widthWatch.observe(document.getElementById('wsp'));
+    }
+    // the menu item or the strip's control that was pressed keeps the cursor across the redraw
+    if (held && held.offsetParent && !held.disabled) held.focus({ preventScroll: true });
+    else keepNavCursor(focus);
   }
   function start() { loadAll().then(function () { if (S.device) render(); else render(); }); }
 
@@ -4583,13 +5231,14 @@
     var scanned = /^#(code|pin)=([0-9]{4,6})$/.exec(location.hash);
     if (scanned) { S.scanned = { kind: scanned[1], value: scanned[2] }; history.replaceState(null, '', location.pathname); }
     if (history.state && history.state.sys) history.replaceState(null, '');   // a reload starts on Live, like every other reload
-    window.addEventListener('popstate', function (e) {     // the phone's back gesture: from a System page to the index
+    window.addEventListener('popstate', function (e) {     // the phone's back gesture: from a page of Setup to the index
       if (!S.device) return;
       var id = (e.state && e.state.sys) || null;
-      if (id) { S.tab = 'system'; S.sys = id; S.msg = ''; }
+      if (id) { S.tab = 'system'; S.sys = id; S.msg = ''; S.sysFrom = null; }       // (the ids are those of the old System pages; render() finds the page that is a column of an area)
       else leaveSysPage();
       render();
       window.scrollTo(0, 0);
+      focusScreen();
     });
     var m = /^#token=([A-Za-z0-9_-]+)$/.exec(location.hash);
     var first = m ? api('POST', '/api/session', { token: m[1] }).then(function () { history.replaceState(null, '', location.pathname); }) : Promise.resolve();
@@ -4599,6 +5248,9 @@
     });
     setInterval(poll, 1000);
     document.addEventListener('input', function (e) { if (e.target && e.target.type === 'range') fillRanges(); }, true);
+    // a slider that was just built, or put back, is filled before it is painted (the observer runs at the end of the
+    // turn that changed the page)
+    if (window.MutationObserver) new MutationObserver(fillRanges).observe(app, { childList: true, subtree: true });
     setInterval(fillRanges, 250);
     // A part of the page that was not delivered at first and has arrived now (load.js): draw with it. Only on a
     // paired page that has drawn (never under a PIN being typed), and not under somebody's hands: render() empties
@@ -4606,20 +5258,29 @@
     // a question waiting for its answer (confirmRow) or a slider being dragged would be gone. Then the drawing
     // waits: it looks again when the field is left, and a few times a second for the rest.
     var late = null, pressed = false;
-    function inUse() {
-      var a = document.activeElement;
-      var field = a && app.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' ||
-        (a.tagName === 'INPUT' && !/^(range|checkbox|radio|button|submit|reset|color|file)$/.test(a.type)));
-      return !!field || pressed || asking(app);
-    }
+    function busy() { return pressed || inUse(app); }
     function drawLate() {
       clearTimeout(late);
       late = null;
       if (!S.device || !app.firstChild) return;
-      if (inUse()) { late = setTimeout(drawLate, 400); return; }
+      if (busy()) { late = setTimeout(drawLate, 400); return; }
       render();
     }
     document.addEventListener('pvjfile', drawLate);
+    // Where an area's screens stand side by side none of them is "the open one" to the eye, but one of them is what
+    // a narrower panel would show alone: the column that was last used. So a window made narrower keeps the field
+    // that is being typed in on the page, with what was typed.
+    function used(e) {
+      var t = e.target, col = t && t.closest && t.closest('main.ws > .desk > .deskcol[data-col]');
+      if (e.type === 'focusin') navFocus = t && t.id && NAV_ID.test(t.id) ? t.id : '';
+      if (!col || S.tab === 'system' || !S.device) return;
+      var part = col.getAttribute('data-col');
+      if (part !== S.part[S.tab] && hasScreen(S.tab + '/' + part)) showPart(part);
+    }
+    document.addEventListener('focusin', used, true);
+    document.addEventListener('pointerdown', used, true);
+    // (an item of a menu that lost the cursor while it was still shown was left on purpose: nothing to hand on)
+    document.addEventListener('focusout', function (e) { if (e.target && e.target.id === navFocus && e.target.getClientRects && e.target.getClientRects().length) navFocus = ''; }, true);
     // (after the moment in which the cursor is nowhere: it may be on its way to the next field)
     document.addEventListener('focusout', function () { if (late) { clearTimeout(late); late = setTimeout(drawLate, 0); } }, true);
     document.addEventListener('pointerdown', function () { pressed = true; }, true);

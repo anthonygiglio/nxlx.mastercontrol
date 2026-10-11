@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import unittest
 
+import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(HERE, "..", "tools", "boxcert.py")
 spec = importlib.util.spec_from_file_location("boxcert", TOOL)

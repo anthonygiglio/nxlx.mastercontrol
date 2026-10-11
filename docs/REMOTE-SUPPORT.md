@@ -6,9 +6,9 @@ Help a studio from anywhere, without opening anything on their router and withou
 
 ## For the studio
 
-Remote support is **off** until someone with full access, at the studio, allows it with the switch at the top of System > Remote support. Even then nothing can reach the box until you start a session.
+Remote support is **off** until someone with full access, at the studio, allows it with the switch at the top of Setup > Remote support. Even then nothing can reach the box until you start a session.
 
-1. Support asks for a session. In System > Remote support, choose how long (1 hour unless you choose otherwise, 4 hours at most) and what support may do:
+1. Support asks for a session. In Setup > Remote support, choose how long (1 hour unless you choose otherwise, 4 hours at most) and what support may do:
    - **Full**: support can check and change settings (most useful when something is wrong). That includes everything a full-access device can do except the list below: for example the network settings (a wrong change reverts by itself unless confirmed), projectors and streams (the box then connects to addresses on your network), uploads, the schedule, restarting;
    - **Play and mix only**;
    - **Watch only**.
@@ -36,7 +36,7 @@ A small Linux server with a fixed public address (any cheap VPS; Debian or Ubunt
 
 1. Copy `tools/support-hub/` to it and run, as root, `./setup-hub.sh support.example.com 51820`. It installs WireGuard, makes the server's key, sets up the network `10.77.0.0/24` with a firewall (support laptops `10.77.0.2` to `.31` may reach boxes' panels on `.32` to `.254`; boxes cannot reach each other or the laptops) and prints the values every box needs. Open UDP 51820 in the provider's firewall.
 2. For each support laptop: `./add-peer.sh support anthony-laptop` prints a WireGuard configuration to import on that laptop.
-3. For each box: in its panel (System > Remote support), copy **This box's key**. On the server: `./add-peer.sh box studio-a <key>`; it tells you the box's address. In the box's panel, fill in the support server, the server key, the support network and that address, and save. Nothing connects until the studio starts a session.
+3. For each box: in its panel (Setup > Remote support), copy **This box's key**. On the server: `./add-peer.sh box studio-a <key>`; it tells you the box's address. In the box's panel, fill in the support server, the server key, the support network and that address, and save. Nothing connects until the studio starts a session.
 4. A lost or stolen box: `./add-peer.sh remove studio-a`.
 
 For a fleet, the server, its key and the network can be put in `/etc/pvj/support.json` on each box (`{"endpoint": "...", "server_key": "...", "network": "10.77.0.0/24"}`); the box's own address is still set per box. The file can never allow remote support by itself.

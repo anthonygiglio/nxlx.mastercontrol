@@ -20,6 +20,7 @@ from pvj import paths, server
 from pvj.netd import NetdClient, NetError
 from pvj.player import Player, PlayerError
 from pvj.update import Updater
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 JPEG = b"\xff\xd8\xff\xe0" + b"0" * 64

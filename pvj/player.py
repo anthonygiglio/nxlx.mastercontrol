@@ -17,7 +17,7 @@ import subprocess
 import threading
 import time
 
-from . import paths
+from . import locks, paths
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".ts", ".wmv")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
@@ -144,9 +144,12 @@ class Ipc:
 
 class Player:
     # Defaults for a Player made without __init__ (some tests do); __init__ gives every player its own lock.
-    _lock = threading.RLock()
+    _lock = locks.make("player", reentrant=True)
     _mapping_shaders, _mapping_mode, _source, _source_pid, _carrier, source_epoch = [], False, None, None, None, 0
-    _effect, _effect_pid, effect_serial, effect_ended, effect_8bit = None, None, 0, "", False
+    _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
+    cleared_by, _seen_pid, _new_expected = "", None, False
+    _pid_lock = locks.make("player.pid")
+    _pipe, _pipe_pid = False, None      # a live input's pipe is what was loaded last, and the mpv it was loaded into
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
         self.mpv_bin = mpv_bin
@@ -163,28 +166,57 @@ class Player:
         self._proc = None
         # The player's shader list has two layers: a shader source (a generator drawn in place of a clip, see
         # pvj/shaders.py) and the projection mapping. Both are kept here so neither wipes the other.
-        self._lock = threading.RLock()
+        self._lock = locks.make("player", reentrant=True)        # its place among the locks: pvj/locks.py
         self._mapping_shaders = []
         self._mapping_mode = False
         self._source = None         # the generator shader file, only while its carrier picture is playing
         self._source_pid = None     # the mpv it was given to; a restarted mpv has lost it
         self._carrier = None        # the blank picture the source is drawn over, while it plays
         self.source_epoch = 0       # goes up each time what is playing changes hands; a shader rotation checks it
-        # A third layer between the two: an effect, a filter shader over whatever plays (pvj/effects.py). It stays
-        # on when the clip changes and comes off on Stop, when a shader source takes the screen and with a restart.
+        # A third layer between the two: an effect, a filter shader over whatever plays (pvj/effects.py), a shader
+        # source included (D74: both hook the same stage, and the order of the list makes the effect filter what
+        # the source drew). It stays on when what plays changes and comes off when the screen is cleared (Stop, a
+        # source taken off) and with a restart.
         self._effect = None         # the filter shader file
         self._effect_pid = None     # the mpv it was given to
         self.effect_serial = 0      # goes up each time an effect goes on or comes off; the effect's worker checks it
-        self.effect_ended = ""      # why the last one came off: "off", "stop", "generator", "restart", "refused"
+        self.effect_ended = ""      # why the last one came off: "off", "stop", "cleared", "restart", "refused", "format"
         self.effect_8bit = False    # 8-bit GPU buffers while an effect is on (the effects engine says: see _apply_fbo)
+        # Goes up each time the screen is cleared (Stop, a shader taken off) and when the panel ends the player: the
+        # moments after which an effect that was asked for before must not arrive. A change of what plays does not
+        # move it, since an effect stays through that (D74); `effect_serial` does not do for it, since it moves on a
+        # clearing only when an effect was on.
+        self.clears = 0
+        self.cleared_by = ""        # what moved it last: "stop", "cleared" (a shader taken off), "restart"
+        self._seen_pid = None       # the mpv last heard from: another one is a new player, with nothing on its screen
+        self._new_expected = False  # the panel ended the player (quit): the next new one is that restart, already counted
+        self._pid_lock = locks.make("player.pid")       # a leaf: the look at the pid and the count are one step
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
         try:
-            self.ipc.request("get_property", "pid")
+            self._note_pid(self.ipc.request("get_property", "pid"))
             return True
         except PlayerError:
             return False
+
+    def _note_pid(self, pid):
+        """Another mpv than the one last heard from (it crashed and its service started a new one, or the panel
+        ended it): its screen began empty, which is a clearing for whatever was asked for before (see `clears`).
+        Every play and every status asks for the pid, so it is noticed by whoever comes first."""
+        with self._pid_lock:                # status polls come from several threads, unlocked: one restart is counted once
+            if self._seen_pid is not None and pid != self._seen_pid:
+                if self._new_expected:
+                    # The panel itself ended the old one (quit), which was counted then. A wish made since is for
+                    # the new player: it is not dropped for a restart it came after. (If that new player crashes
+                    # before anyone has heard of it, the one after it is taken for it: two restarts counted as
+                    # one. Harmless: nobody could have made a wish for a player that was never heard from.)
+                    self._new_expected = False
+                else:
+                    self.clears += 1
+                    self.cleared_by = "restart"
+            self._seen_pid = pid
+        return pid
 
     def mpv_command(self, audio_device=None, windowed=False):
         args = [self.mpv_bin, "--idle=yes", "--input-ipc-server=" + self.socket_path,
@@ -245,6 +277,7 @@ class Player:
         picture, so it must never stay over a clip."""
         with self._lock:
             self._end_source()
+            self._pipe = False
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
 
     def _play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
@@ -298,7 +331,9 @@ class Player:
         """Play raw YUYV frames from a pipe (a live input read by a separate helper; see pvj/capture.py)."""
         with self._lock:
             self._end_source()
-            return self._play_pipe(path, width, height, fps)
+            self._pipe = False
+            self._play_pipe(path, width, height, fps)       # raises if the pipe was not loaded: then it is not what plays
+            self._pipe, self._pipe_pid = True, self.ipc.request("get_property", "pid")
 
     def _play_pipe(self, path, width, height, fps):
         if not self.is_running():
@@ -362,6 +397,45 @@ class Player:
             except OSError:
                 pass
 
+    @property
+    def pipe_playing(self):
+        """True from a live input's pipe being loaded until anything else is loaded, the screen is cleared or the
+        player is another process (it was restarted, by the panel or by itself: the new one never had the pipe;
+        a player that does not answer has not said that, and the answer stays what it was).
+        Set and cleared under the lock with each load and clear, so it says what this side loaded last and does not
+        wait for mpv's own `path` to follow. Api._stop_capture stops the live input's helper by it."""
+        with self._lock:
+            if not self._pipe:
+                return False
+            try:
+                same = self.ipc.request("get_property", "pid") == self._pipe_pid
+            except PlayerError:
+                return True         # no answer is no news: one lost question must not make the pipe "not playing" for good
+            if not same:
+                self._pipe = False
+            return self._pipe
+
+    def quit(self):
+        """End the mpv process (the service's unit starts a new one). What was loaded goes with it."""
+        with self._lock:
+            self._pipe = False
+            if self._source is not None or self._carrier is not None:      # as _check_source does when it notices by itself
+                self._source = self._carrier = None
+            self.source_epoch += 1          # the screen has changed hands: a rotation's next change is not for this one
+            with self._pid_lock:
+                self.clears += 1            # and an effect that waits to go on is not for the next player
+                self.cleared_by = "restart"
+                self._new_expected = self._seen_pid is not None
+            try:
+                self.ipc.request("quit")
+            except PlayerError:
+                # The player did not take the quit (it does not answer): the same mpv may live on, and no new one
+                # is on its way by this call. Left armed, the next restart that nobody asked for would pass as
+                # this one, and a wish made before that crash would land after it.
+                with self._pid_lock:
+                    self._new_expected = False
+                raise
+
     def _pid(self):
         try:
             with open(self.pid_path) as f:
@@ -406,16 +480,20 @@ class Player:
     def volume(self, percent):
         self._set("volume", min(130.0, max(0.0, float(percent))))
 
-    def clear(self):
+    def clear(self, why="stop"):
         """Stop the current clip but keep the player service and window alive. The loop settings go back to off, so
         an idle player does not report the last clip's looping (the panel's Loop button read "on" with nothing
-        playing, seen on the Pi after the test pattern); every play sets them again."""
+        playing, seen on the Pi after the test pattern); every play sets them again. An effect comes off with the
+        picture it was over; `why` is what its record then says (see effect_ended)."""
         with self._lock:
+            self._pipe = False
+            self.clears += 1
+            self.cleared_by = why
             try:
                 self.ipc.request("stop")
             finally:
                 self._end_source()      # also when the player is down: the screen has changed hands either way
-                self._end_effect("stop")
+                self._end_effect(why)
             self.ipc.request("set_property", "loop-file", "no")
             self.ipc.request("set_property", "loop-playlist", "no")
 
@@ -426,6 +504,16 @@ class Player:
         self._set("screenshot-format", "jpg")
         self._set("screenshot-jpeg-quality", int(quality))
         self.ipc.request("screenshot-to-file", path, "window" if with_text else "video")
+
+    def still(self, path):
+        """Save the whole window as it is now (the picture with its effect, mapping and brightness, and what is
+        drawn over it) into `path` as a PNG whose rows are plain bytes: no compression and no row filter, so the
+        player does not spend time packing it and Python can read it with a few copies (pvj/transitions.py). The
+        file's ending says PNG to the player; `path` may be a file that exists, which is then written over."""
+        self._set("screenshot-high-bit-depth", False)
+        self._set("screenshot-png-compression", 0)
+        self._set("screenshot-png-filter", 0)
+        self.ipc.request("screenshot-to-file", path, "window")
 
     def osd_size(self):
         """(width, height) of the picture the player is drawing on, in pixels, or None if unknown."""
@@ -463,6 +551,13 @@ class Player:
     def overlay_file(self, oid, path, width, height):
         """Draw a ready raw BGRA file (width x height, at 0, 0) over the picture until overlay_remove(oid)."""
         self.ipc.request("overlay-add", oid, 0, 0, path, 0, "bgra", int(width), int(height), int(width) * 4)
+
+    def overlay_part(self, oid, path, x, y, offset, width, height, stride):
+        """Draw a part of a raw BGRA file at x, y until overlay_remove(oid): `width` x `height` pixels, the first of
+        them `offset` bytes into the file, each row `stride` bytes after the one before. With the stride of the
+        whole picture this draws any rectangle of it without writing it anew (a wipe, pvj/transitions.py). The
+        file must hold `offset` plus `height` times `stride` bytes: that much the player maps."""
+        self.ipc.request("overlay-add", oid, int(x), int(y), path, int(offset), "bgra", int(width), int(height), int(stride))
 
     def set_mapping_mode(self, on):
         """While a projection mapping is shown: stretch the picture to the whole screen (the mapping is in screen
@@ -507,7 +602,9 @@ class Player:
             self._drop_effect(why)
             try:
                 self._push_shaders()
-                if self.effect_8bit:
+                # Only where the effect was the one reason for the 8-bit buffers: under a mapping or a shader source
+                # they stay as they are, and setting the format again makes the player set its renderer up anew.
+                if self.effect_8bit and not (self._mapping_mode or self._source):
                     self._apply_fbo()
             except PlayerError:
                 pass
@@ -533,7 +630,10 @@ class Player:
 
     def _push_shaders(self):
         """The player's one shader list, in the order the picture passes them: the source (a generator, in place of
-        the picture), the effect (a filter of the picture), the projection mapping (the last stage)."""
+        the picture), the effect (a filter of the picture), the projection mapping (the last stage). The source and
+        the effect hook the same stage, and there the order of this list is the order they run in (seen on a real
+        mpv in CI, tests/test_pair_gpu.py: the other way round the generator draws over what the effect made). So
+        an effect over a source filters the source's picture."""
         self._check_source()
         self._check_effect()
         self.ipc.request("set_property", "glsl-shaders", ([self._source] if self._source else []) + ([self._effect] if self._effect else [])
@@ -550,23 +650,27 @@ class Player:
             self._check_effect()
             return self._effect
 
-    def put_effect(self, shader, serial=None, epoch=None):
-        """Put the filter shader file `shader` on over whatever plays, in place of the effect that is on. Returns
-        the new effect serial, or None, with nothing changed, when a shader source has the screen (a generator has
-        no picture to filter), or when `serial` or `epoch` are given and an effect went on or off, or something was
-        played or stopped, since they were handed out."""
+    def put_effect(self, shader, serial=None, epoch=None, clears=None):
+        """Put the filter shader file `shader` on over whatever plays (a clip, a live input, a shader source), in
+        place of the effect that is on. Returns the new effect serial, or None, with nothing changed, when `clears`
+        is given and the screen was cleared since it was handed out (what a wish that waited for the worker
+        carries: see `clears`), or when `serial` or `epoch` are given and an effect went on or off, or something
+        was played or stopped, since they were handed out (the stricter rule, which the effects no longer use)."""
         with self._lock:
             self._check_source()
             self._check_effect()
-            if self._source is not None or self._carrier is not None:
+            pid = self._note_pid(self.ipc.request("get_property", "pid"))      # before the look at `clears`: a new mpv moves it
+            if clears is not None and clears != self.clears:
                 return None
             if (serial is not None and serial != self.effect_serial) or (epoch is not None and epoch != self.source_epoch):
                 return None
-            previous, pid = self._effect, self.ipc.request("get_property", "pid")
+            previous = self._effect
             self._effect, self._effect_pid = shader, pid
             try:
                 self._push_shaders()
-                if self.effect_8bit and previous is None:       # the first text of an effect; a change of text leaves them
+                # the first text of an effect (a change of text leaves the buffers), and only where they are not
+                # 8-bit already for a mapping or a shader source
+                if self.effect_8bit and previous is None and not (self._mapping_mode or self._source):
                     self._apply_fbo()
             except PlayerError:
                 self._effect = previous
@@ -643,7 +747,7 @@ class Player:
         with self._lock:
             if epoch != self.source_epoch or self._carrier is None:
                 return False
-            self.clear()
+            self.clear("cleared")
             return True
 
     @property
@@ -654,27 +758,35 @@ class Player:
         """Draw the generator shader file `shader` in place of the picture, over `carrier` (a blank picture from the
         player itself that gives the shader frames to draw on). With `epoch`, only if nothing else has been played
         since that epoch was handed out; otherwise None is returned and nothing changes. Returns the new epoch.
-        If the carrier is already playing only the shader is exchanged, so the picture does not restart."""
+        If the carrier is already playing only the shader is exchanged, so the picture does not restart. An effect
+        that is on stays on, after the source in the list: it filters what the source draws (D74)."""
         with self._lock:
             if epoch is not None and epoch != self.source_epoch:
                 return None
+            self._pipe = False
             if not self.is_running():
                 if not spawn:
                     raise PlayerError("player service is not running (systemctl start pvj-player)")
                 self._spawn(None, False)
             self._undo_pipe_globals()
             previous = self._source
-            if self._effect is not None:            # a generator has no picture to filter: the effect comes off with
-                self._drop_effect("generator")      # the same push that puts the source on
             try:
-                self._source, self._source_pid = shader, self.ipc.request("get_property", "pid")
+                pid = self.ipc.request("get_property", "pid")
+                # The carrier is left alone only if this side loaded it last, into this mpv, and mpv says it plays.
+                # mpv's `path` alone is not enough: it lags a load (a live input's pipe is loaded without waiting
+                # for it, so `path` could still name the carrier of the generator before, and the pipe then stayed
+                # on screen with its helper stopped). The record alone is not enough either: a carrier mpv has
+                # dropped must be loaded again. When the two disagree it is loaded, which costs a restart of a
+                # blank picture and nothing else.
+                mine = self._carrier == carrier and self._source_pid == pid
+                self._source, self._source_pid = shader, pid
                 self._push_shaders()
                 self._apply_fbo()
                 try:
                     current = self.ipc.request("get_property", "path")
                 except PlayerError:
                     current = None
-                if current != carrier:
+                if not mine or current != carrier:
                     self.ipc.request("loadfile", carrier, "replace")
                     self._wait_for_path(carrier)
                     if self.ipc.request("get_property", "path") != carrier:

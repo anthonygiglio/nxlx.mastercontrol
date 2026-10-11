@@ -8,6 +8,7 @@ import unittest
 
 from pvj import settings
 from pvj.settings import Settings, SettingsError
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 class SettingsTest(unittest.TestCase):

@@ -224,6 +224,88 @@ L; ls /run/pvj
 
 Send back the output of `L` at every step, R0, and the output of R10. If any line differs from the table, stop and send it: do not "fix" an owner by hand.
 
+### Crossfade (D71)
+
+**Run on the test Pi 4 by a script on 2026-10-09, with nobody at the monitor** (the journal of that afternoon): what a script can see of X2, X3, X4, X10, X11, X12, X14 and X16 held at 2560 x 1440, and a play answered after 0.93 to 1.09 s. **Everything that needs eyes is open**, and so is every row not named. In CI it ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. Ten minutes; the numbers matter more than the look, so please send them.
+
+Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between clips set to **Crossfade**, duration 2s. After each play, `GET /api/status` holds `mix.fallback` once the box has given up, and the panel's journal (`journalctl -u pvj-web`) says "crossfade given up: ..." with the reason.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| X1 | Play A1, then A2 | A1 freezes, then melts into A2 over two seconds; A2 moves from its first frame | How long A1 stood still before the fade began (it should be well under a second), and whether the fade looked smooth or stepped |
+| X2 | The same again, three times, with `journalctl -u pvj-web -f` open | No line "crossfade given up" and no line "no crossfade, a cut instead" | The line, if one comes. "given up" names the still's time, the steps or the dropped frames. "a cut instead" with "error running command" or a permission in it means the player could not write the still into the panel's folder (`/run/pvj/web`, a file of group `pvj`); with "rows are not plain bytes" or "not an 8-bit picture" it means this mpv writes its PNG another way than CI's 0.37 did. Either would make every crossfade a cut, and only a box can show it |
+| X3 | During a fade press **Blackout** | Black at once, no picture left behind | Anything that stayed lit |
+| X4 | During a fade press **Stop** | The screen clears at once | |
+| X5 | With **Freeze** on, play A2 | The frozen picture melts into A2, which plays | |
+| X6 | Put on an effect and a mapping, play A1 then A2 | The outgoing picture keeps its shape and its effect while it fades; nothing is drawn twice or in another place | A photo if a surface jumps |
+| X7 | Play a stream (or a live input), then a clip, then the stream again | The old picture waits for the stream's first frame, then fades | How long it waited |
+| X8 | On the 2560 x 1440 screen: X1 again | Either a fade, or a dip to black from the second play on | Which, and the journal's line |
+| X9 | Restart the player during a fade (`sudo systemctl restart pvj-player`) | The new player starts clean; no old picture over it | |
+| X10 | After all of it: `ls /run/pvj/web` | No `transition-*.png` and no `overlay-63.bgra` | The listing, if there is one |
+| X11 | While A1 plays, play A2 and press **Stop** at once, within the freeze | The screen clears and stays clear; A2 does not start after it | If A2 started, or how long Stop took: this is whether mpv answers while it takes the screenshot, which no test here can show. **Press it DURING the screenshot itself, the first 0.6 s or so after the tap** (the script on 2026-10-09 pressed 0.7 s in and right after the play had answered, both after the screenshot): that number is the one nobody has |
+| X12 | The same with **Blackout**, from the panel and from a MIDI controller (a pad, then the Blackout button straight after) | Dark at once; A2 plays under the dark and is there when you show the picture again | How long the dark took to come from the controller, **and from the panel when pressed within the first half second after the tap, while the player is still taking the screenshot**: that is the unmeasured number (pressed later, it answered in 0.08 to 0.09 s on 2026-10-09) |
+| X13 | During a crossfade at 1920 x 1080, move a MIDI fader for volume and watch a sync client if there is one | The fader answers as always; the client does not drift | Whether the controller felt slow during the fade: every crossfade step scales 8 MB in the panel |
+| X14 | Set the transition to **Wipe from left**, then **Slide off up**; play A1, A2 | An edge that moves evenly; the old picture stands still (wipe) or moves off as one piece (slide) | Whether the edge moved smoothly or in jumps, and the journal's line if the box gave up. A wipe should ask less of the box than a crossfade; say if it did not look so |
+| X15 | X8 again with a wipe on the 2560 x 1440 screen | | Whether a wipe holds where a crossfade gave up |
+| X16 | Run a slow wipe (duration 5s) ten times, then `journalctl -u pvj-player -n 50` | The player never restarts during a wipe (the still's file is replaced and removed while mpv has had its bytes: mpv's manual says it copies them during the command, and CI's 0.37 did) | Any restart of the player, or a line with SIGBUS or "overlay" in it: that would mean this mpv does not copy |
+| X17 | If the box ever stalls for seconds during a transition (a heavy clip, a slow card): look at the screen ten seconds later | No still left over the picture. The panel gives up after two seconds without an answer and sends the removal once more five seconds on | A still that stayed, what was played, and `mix.fallback` from `GET /api/status`: a command that timed out and was run later is the one case nobody could test |
+| X18 | Start a live input, then play a clip, then Stop; after each: `pgrep -af "mpv.*--o=" ` on the box (the live input's helper is an mpv that writes into a pipe) | The helper runs while the live input is on the screen and never afterwards | A helper that is still there under a clip or after a Stop: the device would stay open. The panel decides this by what it loaded last, not by asking the player; whether the player's own `path` is empty right after a Stop was not looked at and is not relied on |
+| X19 | Start a live input (it takes a second or more) and press **Fade out** at once, before its picture is there | The picture stays faded out when the input arrives | If it came up lit: a wish for the level made while something loads must win |
+| X20 | Press **Blackout**, then restart the player (`sudo systemctl restart pvj-player`), wait five seconds, play a clip | The screen stays dark through the restart and under the clip; Show brings the clip up | If the clip came up lit: a new player starts at full brightness, and the panel must put the level back when it sees the new one |
+| X21 | With a rotation of Vibes running and a clip of 1920 x 1080 loading (tap a pad), press **Blackout** at once, ten times over | Dark at once every time, also while the clip is still loading; nothing hangs | How long the dark took when a load was in the way. In the tests a Blackout waits for one write of the level and no more (under half a second against a load of two); whether mpv answers that write while it loads is the player's matter |
+| X22 | Choose a generator (a shader from the Shaders page), start a live input, and choose another generator within a second of starting the input, before the camera's picture is there. Then once more, waiting for the camera's picture before the second generator. After each: `pgrep -af "mpv.*--o="` | The generator is on the screen, not the camera's picture and not a frozen frame of it; the helper is gone | What is on the screen, and whether the helper still runs. The seventh review found that a generator chosen just after a live input could leave the pipe on the screen with its helper stopped (the player went by its `path`, which follows a load a moment late). The tests show the repair against a stand-in for mpv; how late a real mpv's `path` is, is not known here |
+| X23 | With a live input on the screen, restart the player with the panel's **Restart player** button, and once more with `sudo systemctl restart pvj-player`; `pgrep -af "mpv.*--o="` five seconds after each. Then the same with **Blackout** on, and play a clip afterwards | After the panel's restart the helper is gone at once. After the restart from the shell it may run until the next thing is played (nothing tells the panel), and must be gone then. Under Blackout the screen is dark again within ten seconds of the restart and stays dark under the clip | A helper that stays after the panel's restart; a lit screen under Blackout more than ten seconds after a restart, and the journal's line "could not put the picture's level back on the restarted player" if there is one (the panel offers the level to the new player five times, two seconds apart) |
+
+### A shader pad with an effect on (D73 and D74 together): do these two first
+
+**Nothing of this has run on a board.** The two features were tested together only against a stand-in for the player and on CI's software GPU.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| PE1 | Screen at 2560 x 1440. A shader on pad A3, a clip on A1, Transition set to Crossfade, 2s. Tap A3, put the effect Wash on, then tap A1. Do it three times, then once more with Edge Glow | The filtered shader stands still, then melts into the clip, which has the effect on it | `mix.fallback` after each (does the box give up, and with which words: with an effect on it should say "frames were dropping during the change with the effect ... on; taking the effect off may help", not "the clip dropped"); what the Effects card and the line under the Mix picker say; `last.still_ms` |
+| PE2 | From a Launchpad, as fast as the fingers go: a shader pad, effect Next, another shader pad, effect Off, a clip pad. Three times, with `journalctl -u pvj-web -f` open | Each press does what it says, in order; the last thing pressed is on the screen | Anything that did not happen, and every journal line with "dropped", "was not shown" or "did not go on" |
+
+### Shaders on pads (D73)
+
+**Nothing of this has run on a board.** Before: the Shaders and Vibes module on, Live > Edit pads, pad 1 a clip, pad 2 a shader (Shader, then for example Aurora), pad 3 a shader that has a preset, with that preset.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| P1 | Tap pad 2, then pad 1, then pad 2, with the Mix transition on Cut and then on Crossfade | The shader comes at once each time (a cut, also with Crossfade); the clip after it blends from the shader's picture with Crossfade | Whether the pad lit up while its shader was on, and anything that flashed between the two |
+| P2 | Start Vibes, then tap pad 3 | Vibes stops, the shader starts with the preset's values (compare with the Shaders page: the preset is the one marked) | |
+| P3 | The same pads from a MIDI controller, and from OSC if there is a sender | The shader follows the press without a wait you can feel; the controller's light for the pad is on, and brighter or green while its shader plays | How long from the press to the picture for a shader the box had not shown since it started (the first time the GPU looks at it) |
+| P4 | Press a shader pad on the controller and a clip pad straight after it | The clip plays and stays: the shader does not come over it a moment later | If the shader came after the clip |
+| P5 | Delete the shader of pad 2 on the Shaders page (an uploaded one), then tap the pad | The panel says the pad's shader is not on the box any more; the screen keeps what it had | |
+| P7 | **With Vibes running, tap a shader pad on the controller, twenty times over an evening's worth of shaders: also right after the box started, when Vibes shows each shader for the first time and the GPU takes seconds over it** | The pad's shader comes every time; the screen is never black in between (Vibes' picture stays until the pad's is on); Vibes has stopped | Any black screen or a tap that showed nothing, with the time and `journalctl -u pvj-web` around it ("was not shown" is the line of a tap that was dropped). This is the case the fifth read found broken, and no test here runs a real GPU's seconds |
+| P6 | System > At power-up: Pad, pad 2; restart the box | The shader is on the screen after the start, at the level the mix says | The journal line of the autostart if it did not start |
+
+### An effect over a generator (D74)
+
+**Nothing of this has run on a board.** In CI the pair ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. The question for the board is what two shader stages cost. Twenty minutes. The numbers come from two requests while a pair is on: `GET /api/effects` (`on.load`, `on.drops_per_second`, `on.pass_ms`, `on.working`) and `GET /api/shaders` (`playing.pass_ms`, `playing.load`, `playing.drops_per_second`, `playing.effect`, `gpu.busy_percent`). Wait ten seconds after each change before reading: the guard does not count the first three and judges over six.
+
+Before: Shaders and Vibes on, nothing mapped, Effect detail on Automatic. Note the screen's size and rate.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| E1 | Picture detail 540 lines. Play the shader Silk. Put on the effect Wash | The shader with the wash over it, moving as before | Both requests' numbers; the same two numbers for Silk alone first (the effect Off) |
+| E2 | The same shader with Vignette, Kaleido, RGB Halftone and Edge Glow, one after the other | Each effect over the shader | The numbers for each pair; which lights the Effects card shows |
+| E3 | The same four effects over a medium shader (Aurora) and over a heavy one (Nebula) | | The numbers for each pair. This is where frames are expected to drop: say from which pair on |
+| E4 | Picture detail 720 lines, then E1 and E2 again | Softer under Edge Glow, Corner Color Tint and Edge Blowout (Automatic keeps those at 540 lines) | The numbers; whether the three look softer than the others |
+| E5 | Effect detail 540 lines with Picture detail 720, any light effect | The whole shader softer | The numbers beside E4's for the same pair |
+| E6 | Start Vibes on Ambient with Wash on, and let it run for five shaders | The effect stays through every change; the dip to black and back takes the wash with it; no flash of the unfiltered shader | Anything seen without the effect, and for how long; `GET /api/effects` `on.id` after each change |
+| E7 | During E6 with a pair that drops frames (from E3): leave it for a minute | The Effects card turns to "Too heavy with this shader"; Vibes does not leave the shader out and does not end with "the box is dropping frames"; the Shaders page says "An effect is on over it: Vibes does not judge the shader meanwhile". **After about 23 seconds of dropping 2 frames a second or more the box takes the effect off** and the card says "The last effect came off: the picture was dropping frames with it on over the shader for 20 seconds ..." (and adds "Frames are still dropping without it ..." if the shader alone goes on dropping them); the shader plays on and the rotation goes on. The two numbers (2 a second, 20 seconds) are guesses: say whether it came off too soon, too late, or for a pair that looked fine | `GET /api/shaders`: whether any shader's `heavy` is set now that was not before (none should be), and `vibes.last` |
+| E8 | Take the effect off during E7 and wait twenty seconds | Vibes judges the shader by itself again | Whether a shader was marked heavy now, and whether that seems right for the shader alone |
+| E9 | With a pair on: Blackout, Blackout off, Fade out, Fade in, Opacity 50 | Black is black; the pair comes back as it was | Anything lit under Blackout |
+| E10 | With a pair on and Transition set to Crossfade: play a clip | The filtered shader stands still, then melts into the clip, which has the effect on it | `mix.fallback`; how long the shader stood still |
+| E11 | With a pair on: Stop. Then play the shader again | The screen clears; the shader comes back with no effect | |
+| E12 | With an effect on over a clip: play a shader | The shader comes up with the effect on it from its first picture. (Expected and unverified: for a moment the effect runs with the text made for the clip, and the worker hands the GPU a new one at once. If the GPU ever refused that, the screen might be black for a moment before the effect comes off; never seen, and it cannot be made on purpose) | Any flash of black or of the plain shader |
+| E13 | With a pair on, restart the player (`sudo systemctl restart pvj-player`) | Nothing on the screen; the Effects card says the player was restarted | |
+| E14 | With a pair on, move a control of the effect and a control of the shader in turn | Each follows; neither resets the other | Any hitch, and which control made it |
+| E15 | With Vibes running and an effect on: press a controller's effect Next three times quickly, and once more just as Vibes changes its shader | The effect goes three on, then one more: no press is lost, also at the change | Which effect was on before and after each burst |
+| E16 | Press a controller's effect Next and at once Stop on the panel, then play a clip | Nothing goes on over the clip; the Effects card says the effect "did not go on" because the screen was cleared | |
+
+What cannot be made on purpose: a pair the GPU refuses. If the Effects card ever says "the player refused ... over the shader", send the whole sentence and the two names.
+
 ### OSC: who may send (D78)
 
 **Never run on a box or with a real TouchOSC.** Before: OSC is switched on (System > OSC), a tablet with TouchOSC is on the same network with the box's address and port 9876 as its target, a control in the layout sends `/pvj/stop`, a clip plays, and a paired full-access phone or laptop has System > OSC open. A second device that can send OSC (a laptop) helps for O3.

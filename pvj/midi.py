@@ -504,7 +504,21 @@ def light_state(action, snap, bank=0):
         except (IndexError, KeyError, TypeError):
             name = ""
         if not name:
-            return "off"
+            try:
+                held = snap["pad_shaders"][b][action["index"]]      # a pad that holds a shader (D73)
+            except (IndexError, KeyError, TypeError):
+                held = ""
+            if not held:
+                return "off"
+            # the one on now: its shader is on the screen, started with this pad's preset (a pad without one
+            # starts the preset called default, or none), and not by Vibes, whose shader is nobody's pad
+            try:
+                want = snap["pad_presets"][b][action["index"]]
+            except (IndexError, KeyError, TypeError):
+                want = ""
+            got = snap.get("preset") or ""
+            same = got.casefold() == want.casefold() if want else got.casefold() in ("", "default")
+            return "active" if snap["shader"] == held and same and not snap["vibes"] else "on"
         return "active" if snap["running"] and snap["playing"] == name else "on"
     if a.startswith("shader_preset_"):
         n = ACTIONS[a][1]
@@ -513,8 +527,8 @@ def light_state(action, snap, bank=0):
         return "active" if snap["preset"] is not None and snap["presets"][n - 1] == snap["preset"] else "on"
     if a.startswith("shader_control_"):
         return "on" if snap["shader"] else "off"
-    # Effects (a filter over what plays): the one button is lit while an effect could go on (something with a picture
-    # plays and no generator has the screen) and is "on now" while one is on; the two that step are lit then too; a
+    # Effects (a filter over what plays): the one button is lit while the player runs (whether something with a
+    # picture plays is not asked here; pvj/MIDI.md says so) and is "on now" while one is on; the two that step are lit then too; a
     # control of the effect is lit while an effect is on (not checked per input, as for a shader's).
     if a == "effect_toggle":
         return "active" if snap.get("effect") else ("on" if snap.get("effect_ready") and snap["running"] else "off")
@@ -1451,11 +1465,15 @@ class MidiHub:
         LIGHT_PLAYER_EVERY seconds for all lights together. Runs on the lights thread only, never under the hub's lock,
         and never takes the shader engine's lock. A part that cannot be read keeps its quiet default."""
         api = self.api
-        snap = {"pads": [], "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
+        snap = {"pads": [], "pad_shaders": [], "pad_presets": [], "shader_on": False, "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
                 "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
                 "scenes": [], "applying": None, "effect": None, "effect_ready": False}
         try:
             snap["pads"] = [[str(p.get("file") or "") for p in b["pads"]] for b in api.settings.data["pads"]["banks"]]
+            snap["pad_shaders"] = [[("" if p.get("file") else str(p.get("shader") or "")) for p in b["pads"]]
+                                   for b in api.settings.data["pads"]["banks"]]
+            snap["pad_presets"] = [[("" if p.get("file") else str(p.get("preset") or "")) for p in b["pads"]]
+                                   for b in api.settings.data["pads"]["banks"]]
         except Exception:
             pass
         if fresh or self._player_seen is None or now - self._player_seen[0] >= LIGHT_PLAYER_EVERY:
@@ -1484,13 +1502,20 @@ class MidiHub:
                 snap["sets"] = {e["name"]: e["id"] for e in rows}
                 snap["set"] = api.vibes.set_id or cfg.get("active") or rows[0]["id"]
                 on = api.shaders.playing
-                if on:
+                # What the engine showed last is remembered after a clip has taken the screen: a shader is "on"
+                # only while the screen is still its own. The player's count of what took the screen is compared, a
+                # plain number, so the player is not asked and no lock is taken. (Before, the preset lights and
+                # the shader pads went on showing a shader under a clip.)
+                epoch = getattr(api.player, "source_epoch", None)
+                if on and (epoch is None or epoch == on.get("epoch")):
+                    snap["shader_on"] = True
                     snap["shader"], snap["preset"] = on["id"], on.get("preset")
                     snap["presets"] = [p["name"] for p in cfg.get("presets", {}).get(on["id"], [])]
                 fx = getattr(api, "effects", None)          # from what the engine remembers: the player is not asked
                 if fx is not None:
                     seen = fx._seen()
-                    snap["effect"], snap["effect_ready"] = (seen["id"] if seen else None), fx._blocked() is None
+                    # "ready" was "no generator has the screen" until an effect could go on over one (D74)
+                    snap["effect"], snap["effect_ready"] = (seen["id"] if seen else None), True
         except Exception:
             pass
         try:
