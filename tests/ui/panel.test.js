@@ -3574,7 +3574,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await guestPad.locator('.padkind').textContent(), 'Operator');
       assert.strictEqual(await guestPad.locator('.t').textContent(), SRC.name.slice(0, 40), 'the label the operator gave; no address');
       assert.strictEqual(await guestPad.getAttribute('title'), 'This pad plays an NDI source. Ask an operator to start it.');
-      await guestPad.click();
+      await guestPad.click({ force: true });        // marked aria-disabled, which Playwright will not click by itself; a finger can
       await gp.waitForFunction(() => /This pad plays an NDI source\. Ask an operator to start it\./.test(document.getElementById('msg').textContent));
       assert.deepStrictEqual(asked, [], 'the guest\'s tap on an NDI pad is not sent');
       await guestCtx.close();
