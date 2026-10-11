@@ -3253,7 +3253,7 @@
         if (first) { drawAddresses(r.data); drawSound(r.data); }
         // the groups, the servers and the allowed sources: drawn again only when they changed, and never under an open form
         var scope = JSON.stringify([r.data.groups, r.data.groups_now, r.data.discovery, r.data.discovery_now, r.data.allowed, r.data.sources.map(function (x) { return x.id; }), r.data.helper, r.data.runtime.loaded]);
-        if (scope !== scoped && !addOpen.ndigroup && !addOpen.ndidisc && !moreOpen) { scoped = scope; drawScope(r.data); drawAllowed(r.data); }
+        if (first || (scope !== scoped && !addOpen.ndigroup && !addOpen.ndidisc && !moreOpen)) { scoped = scope; drawScope(r.data); drawAllowed(r.data); }      // always at first: a More left open on another page must not leave these cards empty (seen in CI's walk of the controls)
         else if (scopeNow.textContent !== scopeWords(r.data)) scopeNow.textContent = scopeWords(r.data);
         first = false;
       });
