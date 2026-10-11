@@ -938,7 +938,8 @@ const ADDED = {
     '#makerecovery': 'People and codes', '#recovery-usb': 'People and codes',      // D81 the Recovery card, an Owner's only (Cancel is there only once a set exists)
     '#guestlock': 'People and codes', '#ctlcode-join': 'People and codes', '#roomsnoguests': 'Setup index > Room',
     // D62 (2026-10-11): the NDI input's page under Setup > Show tools; its sound switch and address form are the Owner's
-    '#nav-ndi': 'setup/index', '#ndisound': 'NDI® input', '#ndiaddress': 'NDI® input', '#ndiaddradd': 'NDI® input' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
+    '#nav-ndi': 'setup/index', '#ndisound': 'NDI® input', '#ndiaddress': 'NDI® input', '#ndiaddradd': 'NDI® input',
+    '#ndigroupopen': 'NDI® input', '#ndidiscopen': 'NDI® input' }, TRANSITIONS),      // the groups and the discovery servers (2026-10-11), the Owner's      // (the key's Show and New are there only while the key lock is on)
   // D80, an Operator: the lock on guest controls and a guest link; the rows of Setup that are his now, the room's
   // set-up with a scene's mark, the mapping's own controls, a clip to upload
   presenter: Object.assign({ '#guestlock': 'People and codes', '#makeguestlink': 'People and codes', '#nav-schedule': 'setup/index', '#nav-autostart': 'setup/index',

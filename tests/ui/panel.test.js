@@ -1031,6 +1031,45 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#ndisound');
     await page.waitForFunction(() => /Sound is off: sources are shown without their sound/.test(document.getElementById('ndisoundline').textContent));
     assert.strictEqual((await get('/api/ndi')).sound, false, 'and off again, as it is on a new box');
+    // Which senders this box looks for (D62, 2026-10-11): groups and discovery servers, the Owner's, with the honest
+    // words beside them. WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    {
+      await page.waitForSelector('#ndiscopecard');
+      assert.strictEqual(await page.textContent('#ndiscopecard h2'), 'Which senders this box looks for');
+      assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this box.', 'not set up is said as that, not as "no senders in a group"');
+      assert(/They are not a password and they encrypt nothing/.test(await page.textContent('#ndiscopenote')), 'the honest words are beside the settings');
+      assert(/NDI documents no setting that stops that/.test(await page.textContent('#ndiscopenote')), 'and that the box goes on listening on the local network');
+      assert.strictEqual(await page.textContent('#ndigroupempty'), "No group set: the box looks in NDI's default group, Public.");
+      assert.strictEqual(await page.textContent('#ndidiscoveryempty'), 'No discovery server set.');
+      await page.click('#ndigroupopen');
+      await page.fill('#ndigroup', 'a,b');
+      await page.click('#ndigroupadd');
+      await page.waitForFunction(() => /no comma/.test(document.getElementById('ndigrouperr').textContent));
+      await page.fill('#ndigroup', 'Leyline Staff');
+      await page.click('#ndigroupadd');
+      await page.waitForSelector('.ndigroup-entry:has-text("Leyline Staff")');
+      assert.deepStrictEqual((await get('/api/ndi')).groups, ['Leyline Staff'], 'the group is saved exactly as typed');
+      await page.click('#ndidiscopen');
+      await page.fill('#ndidiscovery', '8.8.8.8');
+      await page.click('#ndidiscoveryadd');
+      await page.waitForFunction(() => /private network/.test(document.getElementById('ndidiscoveryerr').textContent));
+      await page.fill('#ndidiscovery', '192.168.1.5:5959');
+      await page.click('#ndidiscoveryadd');
+      await page.waitForSelector('.ndidisc-entry:has-text("192.168.1.5:5959")');
+      const scoped = await get('/api/ndi');
+      assert.deepStrictEqual([scoped.discovery, scoped.discovery_now], [['192.168.1.5:5959'], []], 'saved, and not said to be in force on a box that cannot hand it to NDI');
+      assert(/pvj-ndi-runtime refresh/.test(scoped.notice), 'the page is told what the box needs: ' + scoped.notice);
+      assert.strictEqual(await page.textContent('#ndiallowedempty'), 'No pad holds an NDI source yet.');
+      const before = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: before.height });
+      const scopeOut = await page.$$eval('#ndiscopecard *, #ndiallowedcard *', (els) => els.filter((e) => { const card = e.closest('.card').getBoundingClientRect(), r = e.getBoundingClientRect();
+        return r.width && (r.right > card.right + 1 || r.left < card.left - 1); }).map((e) => e.textContent.slice(0, 40)));
+      assert.deepStrictEqual(scopeOut, [], 'text sticks out of the NDI cards at 320 px: ' + JSON.stringify(scopeOut));
+      await fitsPhone('NDI input with a group and a discovery server');
+      await page.setViewportSize(before);
+      assert.strictEqual(await post('/api/ndi', { action: 'remove_group', group: 'Leyline Staff' }), 200);
+      assert.strictEqual(await post('/api/ndi', { action: 'remove_discovery', server: '192.168.1.5:5959' }), 200);
+    }
     await onPage(NDI);
     await sysIndex();
     await chip(NDI, 'Set up');

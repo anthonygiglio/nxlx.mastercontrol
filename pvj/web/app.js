@@ -3108,7 +3108,7 @@
         '). If yours is missing, add its computer\'s address below: senders at those addresses are always listed.' }));
       if (d.notice) srcBody.appendChild(h('div', { class: 'hint warn', id: 'ndinotice', text: ndiSentence(d.notice) }));
       if (d.ended) srcBody.appendChild(h('div', { class: 'hint warn problem', id: 'ndiproblem', text: d.ended.name + ' stopped: ' + ndiSentence(d.ended.message) }));
-      if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: 'No NDI sources found yet. Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this box. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
+      if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: (d.groups_now && d.groups_now.length ? 'No senders found in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') + ' yet. A sender must be put in that group in its own program to be found. ' : 'No NDI sources found yet. ') + 'Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this box. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
       d.sources.forEach(function (s) {
         var mine = playing && playing.id === s.id && playing.state !== 'refused' && playing.state !== 'stopped';
         srcBody.appendChild(listRow({ cls: 'ndi-entry', data: s.id, name: s.name, sub: s.from, key: 'ndi-' + s.id, redraw: function () { drawSources(d); },
@@ -3157,7 +3157,85 @@
           err);
       }, function () { drawAddresses(d); }));
     }
-    var first = true, drawn = '';
+    // Which senders this box looks for (D62, 2026-10-11): NDI's own groups and discovery servers, the Owner's to set.
+    // They decide what the box LOOKS for; they are not a password, and the page says so beside them.
+    var scopeNow = h('div', { class: 'hint', id: 'ndiscopenow', role: 'status' });
+    var groupBody = h('div', { class: 'list sp', id: 'ndigroupbody' }), discBody = h('div', { class: 'list sp', id: 'ndidiscbody' });
+    var scopeCard = h('div', { class: 'card', id: 'ndiscopecard' }, h('h2', { text: 'Which senders this box looks for' }), scopeNow,
+      h('div', { class: 'field', text: 'Groups to look in' }), groupBody,
+      h('div', { class: 'field', text: 'Discovery servers' }), discBody,
+      h('div', { class: 'hint', id: 'ndiscopenote', text: 'Groups and a discovery server decide what this box looks for, and keep the list short and the network in order. They are not a password and they encrypt nothing: a sender that puts itself in the same group, or registers with the same discovery server, is found. For a venue: a group of your own, a discovery server on a machine that is always on, or fixed addresses below. This box also goes on listening for senders that announce themselves on the local network: NDI documents no setting that stops that.' }));
+    function scopeWords(d) {
+      var g = d.groups_now && d.groups_now.length ? 'Looking in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') : 'Looking in NDI\'s default group (Public)';
+      var s = d.discovery_now && d.discovery_now.length ? 'asking the discovery ' + (d.discovery_now.length === 1 ? 'server ' : 'servers ') + d.discovery_now.join(', ') + ' and listening on the local network' : 'listening on the local network';
+      var wait = JSON.stringify(d.discovery || []) !== JSON.stringify(d.discovery_now || []) ? ' The discovery servers you set are not in force yet.' : '';
+      return (d.setup === false || !d.helper || !d.runtime.loaded) ? 'Not looking yet: ' + (d.setup === false ? 'NDI is not set up on this box.' : 'NDI is not running on this box.') : g + ', ' + s + '.' + wait;
+    }
+    // One list with its add form, for the groups and for the discovery servers: o = { body, items, max, cls, key,
+    // field, id, label, hint, placeholder, maxlength, add, remove, what, removed, empty }.
+    function drawScopeList(d, o) {
+      o.body.textContent = '';
+      o.items.forEach(function (a) {
+        o.body.appendChild(listRow({ cls: o.cls, data: a, name: a, key: o.key + '-' + a, redraw: function () { drawScope(d); },
+          more: full ? [h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + a, onclick: function (e) {
+            confirmRow('Remove ' + a + '? ' + o.removed, 'Remove', 'Keep it', function () {
+              var body = { action: o.remove }; body[o.field] = a;
+              act('POST', '/api/ndi', body, function (data) { moreOpen = null; drawScope(data); drawSources(data); say(a + ' is removed.'); });
+            }, e.currentTarget);
+          } })] : null }));
+      });
+      if (!o.items.length) o.body.appendChild(h('div', { class: 'empty', id: o.id + 'empty', text: o.empty }));
+      if (!full || o.items.length >= o.max) return;
+      o.body.appendChild(addBlock(o.key, o.what, false, function (cancel) {
+        var input = h('input', { class: 'text-input', id: o.id, placeholder: o.placeholder, maxlength: o.maxlength, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', value: ndiForm[o.field] || '' });
+        var err = h('div', { class: 'msg inmsg', id: o.id + 'err', role: 'alert' });
+        input.addEventListener('input', function () { ndiForm[o.field] = input.value; });
+        return h('div', { class: 'addform', id: o.id + 'form' }, labelled(o.label, input, o.hint),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn on pri grow', id: o.id + 'add', text: 'Add', onclick: function () {
+              var body = { action: o.add }; body[o.field] = o.field === 'group' ? (ndiForm[o.field] || '') : (ndiForm[o.field] || '').trim();
+              api('POST', '/api/ndi', body).then(function (r) {
+                if (!r.ok) return sayAt(err, ndiSentence(r.data.error || 'could not add it'), true);
+                ndiForm[o.field] = ''; addOpen[o.key] = false; drawScope(r.data); drawSources(r.data); say('Added.');
+              });
+            } }),
+            cancel ? h('button', { class: 'btn grow', id: o.id + 'cancel', text: 'Cancel', onclick: cancel }) : null),
+          err);
+      }, function () { drawScope(d); }));
+    }
+    function drawScope(d) {
+      scopeNow.textContent = scopeWords(d);
+      drawScopeList(d, { body: groupBody, items: d.groups || [], max: d.max_groups, cls: 'ndigroup-entry', key: 'ndigroup', field: 'group', id: 'ndigroup', what: 'a group',
+        label: 'Group', placeholder: 'Leyline', maxlength: 64, add: 'add_group', remove: 'remove_group', removed: 'The box stops looking in it.',
+        hint: 'The name exactly as the sending program has it, capitals included. Letters, digits, spaces, dashes, dots and underscores.',
+        empty: 'No group set: the box looks in NDI\'s default group, Public.' });
+      drawScopeList(d, { body: discBody, items: d.discovery || [], max: d.max_discovery, cls: 'ndidisc-entry', key: 'ndidisc', field: 'server', id: 'ndidiscovery', what: 'a discovery server',
+        label: 'Discovery server', placeholder: '192.168.1.5', maxlength: 21, add: 'add_discovery', remove: 'remove_discovery', removed: 'The box stops asking it.',
+        hint: 'The address of the machine that runs NDI\'s Discovery Server, on a private network. Add :port only if it is not ' + (d.discovery_port || 5959) + '. Changing this starts NDI on the box again: a source on the screen stops and is started again by hand.',
+        empty: 'No discovery server set.' });
+    }
+    // The sources pads may hold (D62): an Operator adds one by putting a source that is on the network on a pad; only
+    // the Owner takes one off. A pad that holds a removed source says so when pressed.
+    var allowedBody = h('div', { class: 'list sp', id: 'ndiallowedbody' });
+    var allowedCard = h('div', { class: 'card', id: 'ndiallowedcard' }, h('h2', { text: 'Sources that pads may hold' }),
+      h('div', { class: 'hint', id: 'ndiallowednote', text: 'A source comes onto this list when an operator puts it on a pad while it is on the network (Play, Pads, Edit pads). ' + NDI_PAD_NOTE }), allowedBody);
+    function drawAllowed(d) {
+      allowedBody.textContent = '';
+      var here = {};
+      (d.sources || []).forEach(function (x) { here[x.id] = true; });
+      (d.allowed || []).forEach(function (a) {
+        var given = (d.addresses || []).indexOf(padNdiHost(a.from)) >= 0;
+        allowedBody.appendChild(listRow({ cls: 'ndiallowed-entry', data: a.id, name: a.name, key: 'ndiallowed-' + a.id, redraw: function () { drawAllowed(d); },
+          sub: a.from + ' \u00b7 ' + (given ? 'an address you gave' : 'found by its announcement') + ' \u00b7 ' + (here[a.id] ? 'on the network now' : 'not on the network now'),
+          more: full ? [h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + a.name, onclick: function (e) {
+            confirmRow('Remove ' + a.name + '? Pads that hold it stop playing it until a source is chosen for them again.', 'Remove', 'Keep it', function () {
+              act('POST', '/api/ndi', { action: 'forget', id: a.id }, function (data) { moreOpen = null; drawAllowed(data); say(a.name + ' is removed.'); });
+            }, e.currentTarget);
+          } })] : null }));
+      });
+      if (!(d.allowed || []).length) allowedBody.appendChild(h('div', { class: 'empty', id: 'ndiallowedempty', text: 'No pad holds an NDI source yet.' }));
+    }
+    var first = true, drawn = '', scoped = '';
     function refresh() {
       clearTimeout(ndiTimer);
       api('GET', '/api/ndi').then(function (r) {
@@ -3173,11 +3251,15 @@
         if (now !== drawn && !ndiBusy) { drawn = now; drawSources(r.data); }
         soundLine.textContent = soundWords(r.data);
         if (first) { drawAddresses(r.data); drawSound(r.data); }
+        // the groups, the servers and the allowed sources: drawn again only when they changed, and never under an open form
+        var scope = JSON.stringify([r.data.groups, r.data.groups_now, r.data.discovery, r.data.discovery_now, r.data.allowed, r.data.sources.map(function (x) { return x.id; }), r.data.helper, r.data.runtime.loaded]);
+        if (scope !== scoped && !addOpen.ndigroup && !addOpen.ndidisc && !moreOpen) { scoped = scope; drawScope(r.data); drawAllowed(r.data); }
+        else if (scopeNow.textContent !== scopeWords(r.data)) scopeNow.textContent = scopeWords(r.data);
         first = false;
       });
     }
     refresh();
-    return [srcCard, soundCard, addrCard];
+    return [srcCard, allowedCard, soundCard, scopeCard, addrCard];
   }
   // ---- updates (signed bundles, installed by pvj-update as root; D33) ----
   var updateTimer = null;
