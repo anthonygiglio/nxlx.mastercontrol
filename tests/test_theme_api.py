@@ -161,24 +161,32 @@ class AddAndRemove(Base):
         st, out = self.add(mine(id="other"))
         self.assertEqual((st, out["error"]), (503, "this box has no folder for added themes"))
 
-    def test_not_through_the_remote_support_tunnel(self):
+    def test_through_the_remote_support_tunnel_only_with_the_owners_role(self):
+        """Until D84 no support session added or removed a theme. A theme is checked data, so a session of the
+        Owner's role may now; a session below it may not, and the handlers say so by themselves too."""
         self.ready()
+        self.assertEqual(self.add(mine())[0], 200)
+        for role in ("view", "live"):
+            code = self.start(role=role)[1]["code"]
+            low = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
+            for path, call, body in ((ADD, self.api.add_theme, {"file": json.dumps(mine(id="remote"))}), (REMOVE, self.api.remove_theme, {"id": "mine"})):
+                self.assertEqual(self.h("POST", path, body, low, TUNNEL)[0], 403, (role, path))
+                with self.assertRaises(ApiError) as e:
+                    call(body, low, TUNNEL)
+                self.assertEqual(e.exception.status, 403)
+            self.h("POST", "/api/support/stop", device=self.full_dev)
+        self.assertEqual(self.files(), ["mine.json"])
         code = self.start(role="full")[1]["code"]
         dev = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
         self.assertEqual((dev["role"], dev.get("remote")), ("full", True))
-        self.assertEqual(self.add(mine())[0], 200)
-        for path, body in ((ADD, {"file": json.dumps(mine(id="remote"))}), (REMOVE, {"id": "mine"})):
-            st, out = self.h("POST", path, body, dev, TUNNEL)
-            self.assertEqual(st, 403, path)
-            self.assertIn("remote support", out["error"])
-            self.assertIn(("POST", path), sp.REMOTE_DENY)
+        for path in (ADD, REMOVE):
+            self.assertNotIn(("POST", path), sp.REMOTE_DENY)
+            self.assertIn(("POST", path), sp.REMOTE_OWNER_OPENED)
+        self.assertEqual(self.h("POST", ADD, {"file": json.dumps(mine(id="remote"))}, dev, TUNNEL)[0], 200)
+        self.assertEqual(self.files(), ["mine.json", "remote.json"])
+        self.assertEqual(self.h("POST", REMOVE, {"id": "remote"}, dev, TUNNEL)[0], 200)
         self.assertEqual(self.files(), ["mine.json"])
-        # the handlers refuse by themselves too, should the table ever change
-        for call, body in ((self.api.add_theme, {"file": json.dumps(mine(id="remote"))}), (self.api.remove_theme, {"id": "mine"})):
-            with self.assertRaises(ApiError) as e:
-                call(body, dev, TUNNEL)
-            self.assertEqual(e.exception.status, 403)
-        self.assertEqual(self.files(), ["mine.json"])
+        self.assertEqual(self.h("POST", ADD, {"file": json.dumps(dict(mine(id="bad"), css="body{}"))}, dev, TUNNEL)[0], 422)
         # support may still choose a look and save one as a file: neither writes a file on the box
         self.assertEqual(self.h("POST", "/api/theme", {"name": "mine", "accent": None}, dev, TUNNEL)[0], 200)
         self.assertEqual(self.h("POST", EXPORT, {}, dev, TUNNEL)[0], 200)
@@ -602,15 +610,25 @@ class WithTheSettings(Base):
         self.assertIn("--bg:#121214", self.css())
         self.assertEqual(self.call("GET", "/")[0], 200)
 
-    def test_an_import_is_still_refused_through_the_tunnel_with_themes_in_it(self):
+    def test_an_import_through_the_tunnel_with_themes_in_it(self):
+        """D84: a session of the Owner's role imports a file, with its themes checked as any theme is; below it, refused."""
         self.ready()
-        code = self.start(role="full")[1]["code"]
-        dev = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
         raw = json.dumps(dict(self.export(), themes=[mine()])).encode()
+        code = self.start(role="live")[1]["code"]
+        low = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
         with self.assertRaises(ApiError) as e:
-            self.care.import_settings(raw, "import", dev, TUNNEL)
+            self.care.import_settings(raw, "import", low, TUNNEL)
         self.assertEqual(e.exception.status, 403)
         self.assertEqual(self.files(), [])
+        self.h("POST", "/api/support/stop", device=self.full_dev)
+        code = self.start(role="full")[1]["code"]
+        dev = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
+        bad = json.dumps(dict(self.export(), themes=[dict(mine(), css="body{}")])).encode()
+        with self.assertRaises(ApiError):
+            self.care.import_settings(bad, "import", dev, TUNNEL)
+        self.assertEqual(self.files(), [])
+        self.assertEqual(self.care.import_settings(raw, "import", dev, TUNNEL)["themes"], ["mine"])
+        self.assertEqual(self.files(), ["mine.json"])
 
     def test_a_factory_reset_removes_added_themes(self):
         self.assertEqual(self.add(mine())[0], 200)

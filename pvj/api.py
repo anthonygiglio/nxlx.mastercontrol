@@ -1868,16 +1868,24 @@ class Api:
         if self._care_busy:
             raise ApiError(409, "%s is running; try again when it has finished" % self._care_busy)
 
-    def _theme_local(self, client):
-        """Adding or removing a theme writes a file on the box: not through the remote-support tunnel (the route
-        table refuses it too; this holds even if that changes)."""
-        if self.support.is_remote(client):
-            raise ApiError(403, "a theme cannot be added or removed through remote support; ask someone at the studio")
+    def _remote_owner(self, device, client, what):
+        """D84. A request that came through the support tunnel passes here only as a support login of the Owner's
+        role. The gate has checked the role already; this holds even if a route's row changes, and it refuses a
+        request from the tunnel's address that is not a support login at all."""
+        tunnel = self.support.is_remote(client)             # true only while a session is open
+        login = isinstance(device, dict) and bool(device.get("remote"))
+        if tunnel or login:
+            # a support login counts only through the tunnel of a session that is open now: one that outlived its
+            # session, or is used from the studio's network, is no login at all
+            if not (tunnel and login and device.get("role") == "full"):
+                raise ApiError(403, "%s through remote support needs an open session with the owner's role" % what)
+            return True
+        return False
 
     def add_theme(self, body, device, client):
         """{"file": "<the text of a theme file>"}: check it and keep it as one of the owner's themes. The text is
         parsed here, strictly (the request's own JSON would let a key appear twice)."""
-        self._theme_local(client)
+        self._remote_owner(device, client, "adding a theme")
         text = body.get("file")
         if not isinstance(text, str):
             raise bad('send {"file": "<the text of the theme file>"}')
@@ -1894,13 +1902,14 @@ class Api:
             except ThemeError as e:
                 raise ApiError(getattr(e, "status", 500), str(e))
         print("pvj-web: theme %s %s by %s" % (theme["id"], "replaced" if replaced else "added", device["name"]), flush=True)
+        self.support.note(device, "%s the theme %s" % ("replaced" if replaced else "added", theme["id"]))
         return {"added": theme["id"], "name": theme["name"], "replaced": replaced, "warnings": themes_mod.warnings(theme),
                 "available": self._looks(), "skipped": [dict(k) for k in self.theme_store.skipped]}
 
     def remove_theme(self, body, device, client):
         """{"id": ...}: take one of the owner's themes off the box. If it is the look in use, the box goes back to
         the look it came with first, so no page is ever served with a theme that is gone."""
-        self._theme_local(client)
+        self._remote_owner(device, client, "removing a theme")
         tid = body.get("id")
         theme = self.themes.get(tid) if isinstance(tid, str) else None
         if theme is None:
@@ -1925,6 +1934,7 @@ class Api:
                 except OSError as e:
                     print("pvj-web: theme %s removed; the settings could not be saved: %s" % (tid, e.strerror or e), flush=True)
         print("pvj-web: theme %s removed by %s" % (tid, device["name"]), flush=True)
+        self.support.note(device, "removed the theme %s" % tid)
         return {"removed": tid, "theme": self.settings.data["theme"], "available": self._looks(),
                 "skipped": [dict(k) for k in self.theme_store.skipped]}
 
@@ -2041,20 +2051,29 @@ class Api:
         did = body.get("id")
         if not isinstance(did, str):
             raise ApiError(404, "no such device")
-        if not Auth.allows(device, "full"):
+        remote = self._remote_owner(device, client, "removing a device")
+        target = None
+        if remote or not Auth.allows(device, "full"):
+            # An Operator, and a support session of the Owner's role (D84): a Guest's or an Operator's device only.
+            # Only a device in the list can be named, so never a support login (his own or another), a controller
+            # or one of the box's own callers; and never an Owner's device, which would lock the owner out.
             target = next((d for d in self.auth.list_devices() if d["id"] == did), None)
             if target is None:
                 raise ApiError(404, "no such device")
             if target["role"] == "full":
-                raise ApiError(403, "an operator cannot remove an owner (owner access needed)")
+                raise ApiError(403, "an owner's device is never removed through remote support; ask someone at the studio" if remote
+                               else "an operator cannot remove an owner (owner access needed)")
             if did == device.get("id"):
                 raise ApiError(403, "an operator cannot remove himself here; use Log out, or ask the owner")
-            self.log("pvj-web: %s device %s removed by operator device %s (from %s)"
-                     % (policy.NAMES[target["role"]].lower(), did, device.get("id"), client))
+            if not remote:
+                self.log("pvj-web: %s device %s removed by operator device %s (from %s)"
+                         % (policy.NAMES[target["role"]].lower(), did, device.get("id"), client))
         if not self._still_paired(device):          # a reset or a removal ran while this was on its way: it removes nobody
             raise ApiError(401, "this device is no longer paired")
         if not self.auth.revoke(did):
             raise ApiError(404, "no such device")
+        if remote:
+            self.support.note(device, "removed the %s device %s (%s)" % (policy.NAMES[target["role"]].lower(), did, target.get("name", "")))
         return {"ok": True}
 
     def unlock_pairing(self, body, device, client):
@@ -2149,7 +2168,7 @@ class Api:
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
         full = Auth.allows(device, "full")
-        return self.osc.status(full=full, studio=full and not device.get("remote"))
+        return self.osc.status(full=full, studio=full)      # D84: a support session of the Owner's role reads the targets too
 
     def osc_messages(self, body, device, client):
         """Full access: the last messages (in memory only), newest first."""
@@ -2168,8 +2187,9 @@ class Api:
         fresh = body.get("new", False)
         if not isinstance(fresh, bool):
             raise bad("new must be true or false")
-        if device.get("remote"):
-            raise ApiError(403, "the OSC key is never shown through remote support")
+        # D84: a support session of the Owner's role may show and renew the key. He then knows it: the session's log
+        # says so, and the Remote support page tells the owner to make a new one once the session is over.
+        remote = self._remote_owner(device, client, "the OSC key")
         if not self._still_paired(device):
             raise ApiError(401, "this device is no longer paired")
         with self.osc.lock:
@@ -2191,6 +2211,8 @@ class Api:
                 except osc_mod.OscError as e:
                     raise ApiError(409, str(e))
         self.log("pvj-web: OSC key %s device %s (%s) from %s" % ("made new by" if made else "shown to", device["id"], device["name"], client))
+        if remote:
+            self.support.note(device, "made a new OSC key and knows it" if made else "was shown the OSC key", key=True)
         return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/pvj/stop"}
 
     def set_osc(self, body, device, client):
@@ -2198,8 +2220,7 @@ class Api:
             raise ApiError(404, "OSC is not available")
         with self.osc.lock:                   # one save at a time (OscManager.lock says why)
             out = self._set_osc(body)
-        if not device.get("remote"):
-            out["feedback"] = self.osc.feedback_status()
+        out["feedback"] = self.osc.feedback_status()
         return out
 
     def osc_feedback(self, body, device, client):
@@ -2210,8 +2231,7 @@ class Api:
         from . import oscfeedback
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
-        if device.get("remote"):
-            raise ApiError(403, "where the box sends its state is never changed through remote support")
+        remote = self._remote_owner(device, client, "where the box sends its state")      # D84
         if not self._still_paired(device):
             raise ApiError(401, "this device is no longer paired")
         if set(body) - {"on", "add", "remove"} or not body:
@@ -2266,6 +2286,8 @@ class Api:
             out = self.osc.feedback_status(fresh=True)
         self.log("pvj-web: OSC state feedback %s by device %s (%s) from %s; %d target(s), %s"
                  % (", ".join(said), device["id"], device["name"], client, len(targets), "on" if on else "off"))
+        if remote:
+            self.support.note(device, "OSC state sent back: %s; %d target(s), %s" % (", ".join(said), len(targets), "on" if on else "off"))
         return out
 
     def _set_osc(self, body):
@@ -3458,6 +3480,7 @@ class Api:
             raise ApiError(500, "could not save: %s" % (e.strerror or e))
         self.log("pvj-web: guest controls %s by device %s (%s, from %s)"
                  % ("locked" if locked else "opened", device.get("id"), device.get("role"), client))
+        self.support.note(device, "%s guest controls" % ("locked" if locked else "opened"))
         return {"guest_controls": out}
 
     def handle(self, method, path, body, device, client):

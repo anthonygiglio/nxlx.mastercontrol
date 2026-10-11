@@ -15,11 +15,15 @@ How it works for the people involved:
 * Every connected device shows a banner with the time left and a Stop button. The session ends by itself at the
   deadline (the helper enforces it), on Stop, on a restart or a reboot; support's logins end with it. They are never
   saved as devices.
-* Over the tunnel support cannot: change these settings, start, extend or restart a session, pair or invite devices,
-  make guest or presenter codes, change, read or unlock the PIN, import settings, reset the box to factory
-  settings, export settings with their passwords, or power the box off (a reboot is allowed; it ends the session).
+* Over the tunnel support cannot, whatever its role (D84: nothing that outlives the session or locks the owner out):
+  change these settings, start or extend a session, pair or invite devices, make codes or links, change, read or
+  unlock the PIN, touch recovery or the secure connection, remove an Owner's device, reset the box to factory
+  settings, export settings with their passwords, or power the box off (a restart is allowed; it ends the session).
+* With the Owner's role support can do the rest, including what was the studio's alone before D84: import a
+  settings file (without the parts above), add and remove a theme, show and renew the OSC key, change where the
+  box sends its state, lock and open guest controls, and remove a Guest's or an Operator's device.
 
-All of this is logged (the journal, and the last sessions in the panel).
+All of this is logged (the journal, and the last sessions in the panel with what support changed).
 """
 
 import hashlib
@@ -44,25 +48,53 @@ FAILS, FAIL_WINDOW, LOCKOUT = 5, 600, 300
 HANDSHAKE_FRESH = 180            # seconds: the support server answered recently = connected
 DEFAULTS_FILE = "/etc/pvj/support.json"
 
-# Never over the tunnel, whatever the role.
+# D84. The principle: a helper in a remote session with the Owner's role may do anything that ends when the session
+# ends, and nothing that outlives it or locks the owner out. (A remote Owner session can already upload a software
+# update, that is, run any code on the box. So what is refused below is not about limiting a trusted helper in the
+# moment; it is about a way in that would still be there after Stop, and about the owner's own way in.)
+#
+# Never over the tunnel, whatever the role: route -> why. A route that is not here and not under a prefix below is
+# answered to a remote session by its role like any other (a session below Owner is held to policy.LEGACY_LIVE, D80).
 REMOTE_DENY = {
-    ("POST", "/api/support/config"), ("POST", "/api/support/start"), ("POST", "/api/support/extend"),
-    ("POST", "/api/pair"), ("POST", "/api/session"), ("POST", "/api/devices/invite"), ("POST", "/api/devices/revoke"),
-    ("POST", "/api/pin/rotate"), ("POST", "/api/pin/unlock"), ("POST", "/api/pin/show"), ("POST", "/api/system/poweroff"), ("GET", "/api/qr.svg"),
-    # an import can switch on OSC, DMX or MIDI (new ways in); a reset removes every device (see boxcare.py)
-    ("POST", "/api/system/settings/import"), ("POST", "/api/system/factory-reset"),
-    # a theme is a file kept on the box: added and removed by someone at the studio (applying a look is not refused)
-    ("POST", "/api/theme/add"), ("POST", "/api/theme/remove"),
-    # the OSC key is a secret of the studio's own network (D78); the rest of the OSC page stays readable for support
-    ("POST", "/api/osc/key"),
-    # where the box sends its state over OSC (D82): a new way out of the box is opened by the Owner in the room
-    ("POST", "/api/osc/feedback"),
-    # the lock on guest controls (D80): who may play with the room is decided in the room, by an Operator or an Owner
-    # who stands in it; a support session, of whatever role, neither opens the room to guests nor shuts them out
-    ("POST", "/api/guests"),
+    # the session's own settings, start and length: a helper does not lengthen or widen his own access
+    ("POST", "/api/support/config"): "a helper does not change where the box dials out to, or whether it may",
+    ("POST", "/api/support/start"): "a session is started by someone at the studio",
+    ("POST", "/api/support/extend"): "a helper does not lengthen his own session",
+    # pairing and sessions: a device paired through the tunnel would still be paired after Stop
+    ("POST", "/api/pair"): "a device paired now would stay paired after the session",
+    ("POST", "/api/session"): "a panel session of a paired device is not made through the tunnel",
+    ("POST", "/api/devices/invite"): "an invitation is a way in that outlives the session",
+    # the PIN pairs an Owner: showing it, changing it or lifting its lockout is a way in, or a way to shut the owner out
+    ("POST", "/api/pin/rotate"): "a new PIN would shut out whoever knows the old one, and be known to the helper",
+    ("POST", "/api/pin/unlock"): "lifting the guessing lockout is done at the studio",
+    ("POST", "/api/pin/show"): "the PIN pairs an Owner's device",
+    ("GET", "/api/qr.svg"): "the QR code carries a way to pair",
+    # nobody remote can switch the box back on (a restart is allowed: it ends the session and the box comes back)
+    ("POST", "/api/system/poweroff"): "nobody remote can switch the box back on",
+    # a reset removes every paired device, the owner's too (see boxcare.py)
+    ("POST", "/api/system/factory-reset"): "a reset removes every device, the owner's too",
 }
-REMOTE_DENY_PREFIX = ("/api/access", "/api/https", "/api/recovery")   # /api/https: the box's key, certificate and the owner-only switch (D79); /api/recovery: the ways back in (D81)
+# Everything under these, whatever the role: path prefix -> why.
+REMOTE_DENY_PREFIX_WHY = {
+    "/api/access": "join codes, links and the choice of what a controller's code pairs are ways in",
+    "/api/https": "the box's key and certificate, and the switch that could shut the owner's devices out (D79)",
+    "/api/recovery": "the owner's ways back in (D81)",
+}
+REMOTE_DENY_PREFIX = tuple(REMOTE_DENY_PREFIX_WHY)
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
+# Opened to a remote session of the Owner's role by D84 (each was in REMOTE_DENY before): route -> the bound that
+# keeps it inside the principle. Not read by the guard (not being refused is what opens them); it is the record
+# the tests hold the handlers to, and every one of them writes what was done into the session's log (Support.note).
+REMOTE_OWNER_OPENED = {
+    ("POST", "/api/system/settings/import"): "what a file may not carry for a helper is left as the box has it (boxcare.REMOTE_KEPT)",
+    ("POST", "/api/theme/add"): "a theme is checked data, never code",
+    ("POST", "/api/theme/remove"): "only a theme that was added; the box's own look comes back",
+    ("POST", "/api/osc/key"): "the helper then knows the key: the owner is told to make a new one after the session",
+    ("POST", "/api/osc/feedback"): "a target is still only a device on the box's own network, never the tunnel",
+    ("POST", "/api/guests"): "the lock on guest controls: a switch the owner or an Operator sets back",
+    ("POST", "/api/devices/revoke"): "a Guest's or an Operator's device only: never an Owner's",
+}
+DID_KEEP, DID_TEXT = 40, 240      # what a session did, kept with its entry in the support log: lines, characters each
 
 
 class SupportApiError(Exception):
@@ -232,6 +264,32 @@ class SupportManager:
         return self._key
 
     # -- sessions ---------------------------------------------------------------------------------------------
+    def note(self, device, text, key=False):
+        """What a support login just changed, into the journal and into its session's entry of the support log (the
+        last DID_KEEP lines, each short): the owner reads on the Remote support page what was done. `key`: the
+        login saw or made the OSC key, so the page says to make a new one. Nothing for a device that is no support
+        login. Never a secret: the caller says what was done, not the value."""
+        if not (isinstance(device, dict) and device.get("remote")):
+            return
+        text = "".join(c for c in str(text) if c.isprintable())[:DID_TEXT]
+        self.log("pvj-web: remote support %s: %s" % (device.get("id"), text))
+        with self.lock:
+            s = self.session
+            if not s:
+                return
+            with self.settings.lock:
+                for entry in self.settings.data.get("support_log", []):
+                    if entry.get("id") == s["id"]:
+                        did = list(entry.get("did", []))
+                        did.append({"at": int(self._now()), "what": text})
+                        entry["did"] = did[-DID_KEEP:]
+                        if key:
+                            entry["osc_key"] = True
+                try:
+                    self.settings.save()
+                except OSError:
+                    pass
+
     def _log(self, entry):
         with self.settings.lock:
             log = list(self.settings.data.get("support_log", []))

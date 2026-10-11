@@ -104,7 +104,7 @@ ROWS = {
     ("POST", "/api/access/cancel"): STUDIO("live"),
     ("POST", "/api/access/screen"): STUDIO("live"),
     ("GET", "/api/qr.svg"): STUDIO("live"),
-    ("POST", "/api/guests"): STUDIO("op"),
+    ("POST", "/api/guests"): KINDS["op"],          # D84: a support session of the Owner's role too
     ("POST", "/api/media/upload"): KINDS["op"],
     ("POST", "/api/media/import"): KINDS["op"],
     ("POST", "/api/media/import/cancel"): KINDS["op"],
@@ -126,13 +126,13 @@ ROWS = {
     ("POST", "/api/player/restart"): KINDS["op"],
     ("GET", "/api/devices"): KINDS["op"],
     ("POST", "/api/devices/invite"): STUDIO("op"),
-    ("POST", "/api/devices/revoke"): STUDIO("op"),
-    ("POST", "/api/theme/add"): STUDIO("owner"),
-    ("POST", "/api/theme/remove"): STUDIO("owner"),
+    ("POST", "/api/devices/revoke"): KINDS["op"],          # D84: a support session of the Owner's role too
+    ("POST", "/api/theme/add"): KINDS["owner"],          # D84: a support session of the Owner's role too
+    ("POST", "/api/theme/remove"): KINDS["owner"],          # D84: a support session of the Owner's role too
     ("POST", "/api/osc"): KINDS["owner"],
     ("GET", "/api/osc/messages"): KINDS["owner"],
-    ("POST", "/api/osc/key"): STUDIO("owner"),
-    ("POST", "/api/osc/feedback"): STUDIO("owner"),
+    ("POST", "/api/osc/key"): KINDS["owner"],          # D84: a support session of the Owner's role too
+    ("POST", "/api/osc/feedback"): KINDS["owner"],          # D84: a support session of the Owner's role too
     ("GET", "/api/dmx"): KINDS["owner"],
     ("POST", "/api/dmx"): KINDS["owner"],
     ("POST", "/api/midi"): KINDS["op"],
@@ -168,7 +168,7 @@ ROWS = {
     ("POST", "/api/support/start"): STUDIO("owner"),
     ("POST", "/api/support/extend"): STUDIO("owner"),
     ("POST", "/api/system/settings/export"): KINDS["owner"],
-    ("POST", "/api/system/settings/import"): STUDIO("owner"),
+    ("POST", "/api/system/settings/import"): KINDS["owner"],          # D84: a support session of the Owner's role too
     ("GET", "/api/system/diagnostics"): KINDS["owner"],
     ("POST", "/api/system/factory-reset"): STUDIO("owner"),
     # D75 (#115), met in a merge. The one fade button: an Operator's, a presenter's before, so the controllers keep it;
@@ -1288,14 +1288,17 @@ class ReviewTest(RolesBase):
         self.assertEqual(self.h("POST", "/api/play", {"file": "missing.mp4"}, self.guest)[0], 404)
         self.assertEqual(self.h("POST", "/api/blackout", {"on": False}, self.guest)[0], 200)
 
-    def test_the_lock_is_never_changed_through_the_support_tunnel(self):
-        self.assertIn(("POST", "/api/guests"), sp.REMOTE_DENY)
+    def test_the_lock_through_the_support_tunnel_is_for_the_owners_role_only(self):
+        """Until D84 no support session changed the lock. Now a session of the Owner's role may (it is a switch the
+        owner sets back, and it is in the session's log); a session below it still may not."""
+        self.assertNotIn(("POST", "/api/guests"), sp.REMOTE_DENY)
+        self.assertIn(("POST", "/api/guests"), sp.REMOTE_OWNER_OPENED)
         self.ready()
-        for role in ("live", "full"):
+        for role, status in (("view", 403), ("live", 403), ("full", 200)):
             code = self.start(role=role)[1]["code"]
             dev = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
             for locked in (True, False):
-                self.assertEqual(self.h("POST", "/api/guests", {"locked": locked}, dev, TUNNEL)[0], 403, role)
+                self.assertEqual(self.h("POST", "/api/guests", {"locked": locked}, dev, TUNNEL)[0], status, role)
             self.h("POST", "/api/support/stop", device=self.owner)
         self.assertFalse(self.api.guests.locked())
         self.assertEqual(self.h("POST", "/api/guests", {"locked": True}, self.owner)[0], 200)      # at the studio, as before

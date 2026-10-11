@@ -32,7 +32,7 @@ whole under "themes", beside the settings, and an import checks each one with th
 through the panel (pvj/themes.py) and keeps it, so the look a settings file names is there to be used. A file from a
 box with no added themes has no such part, and is the file earlier versions wrote. A factory reset removes them.
 
-Import and factory reset are refused through the remote-support tunnel: an import can switch on OSC, DMX or MIDI
+(Before D84 an import was refused through the remote-support tunnel; a reset still is.) An import can switch on OSC, DMX or MIDI
 (new ways to control the box) and a reset removes every paired device.
 """
 
@@ -483,6 +483,15 @@ SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_th
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
             ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
             ("room", check_room), ("recovery", check_recovery))
+# D84. An import through a support session of the Owner's role takes every section but these, which are set by
+# routes no support session may use (support.REMOTE_DENY_PREFIX): the file's part is dropped, the box's own stays.
+# REMOTE_SETS says, for every section, the route that sets it at the panel: a test holds each one that is not in
+# REMOTE_KEPT to be a route a support session of the Owner's role may use, so a new section needs a row and a thought.
+REMOTE_KEPT = ("recovery",)
+REMOTE_SETS = {"pads": "/api/pads", "modules": "/api/modules/*", "theme": "/api/theme", "mix": "/api/mix", "osc": "/api/osc",
+               "schedule": "/api/schedule", "streams": "/api/streams", "control": "/api/midi", "autostart": "/api/autostart",
+               "audio": "/api/audio", "overlay": "/api/overlay", "projectors": "/api/projectors", "mapper": "/api/mapper",
+               "sync": "/api/sync", "shaders": "/api/shaders", "room": "/api/room", "recovery": "/api/recovery/usb"}
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
                 projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError)
@@ -625,9 +634,9 @@ class BoxCare:
                 out[name] = data[name]
         if isinstance(out.get("osc"), dict):
             out["osc"].pop("key", None)          # the key has its own section, never exported (D78); this is for a file not yet moved
-            if (isinstance(device, dict) and device.get("remote")) or self.api.support.is_remote(client):
-                for key in FEEDBACK_KEYS:        # a support session never reads where the box sends its state (D82); an
-                    out["osc"].pop(key, None)    # import of such a file leaves the box's own (_osc_layers)
+            # (D82 took the feedback switch and its targets out of an export asked for by a support session. Since D84
+            # a session that reaches this route has the Owner's role and reads and changes them on their own route, so
+            # the export holds them for it as for the Owner. A diagnostics file still never does: it leaves the box.)
         if "recovery" in out:
             out["recovery"] = {"usb": self.api.auth.usb_enabled()}      # the switch only: the code hashes stay on the box (D81)
         out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
@@ -847,14 +856,27 @@ class BoxCare:
     def import_settings(self, raw, confirm, device, client):
         """Check an exported file and make it the box's settings. The PIN, devices and remote support stay as they
         are. Nothing is changed unless the whole file passes."""
-        self._local(client, "an import")
+        remote = self.api._remote_owner(device, client, "an import")       # D84: a support session of the Owner's role
         if confirm != CONFIRM_IMPORT:
             raise bad("send confirm=%s" % CONFIRM_IMPORT)
         with self._busy("an import"):
-            return self._import(raw, device)
+            out = self._import(raw, device, remote)
+        if remote:
+            self.api.support.note(device, "imported a settings file%s; taken: %s" % (
+                "; left as the box has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else "", ", ".join(out["imported"])))
+        return out
 
-    def _import(self, raw, device):
+    def _import(self, raw, device, remote=False):
         clean, notes, passwords = self.check_file(raw)
+        kept_for_support = []
+        if remote:
+            # What stays refused to every support session cannot come in by a file either: those sections of the
+            # file are dropped, and the box's own stay. (The PIN, devices, codes, remote support itself and the
+            # secure connection are no part of any settings file: check_file refuses a file that names them.)
+            for name in REMOTE_KEPT:
+                if clean.pop(name, None) is not None:
+                    kept_for_support.append(name)
+                    notes.append("%s: not taken from a file through remote support; left as this box has it" % name)
         incoming = dict(self.incoming_themes)
         with self.settings.lock:
             current = self.settings.data
@@ -895,7 +917,7 @@ class BoxCare:
         problems += self._apply()
         print("pvj-web: settings imported by %s" % device["name"], flush=True)
         return {"imported": sorted(clean), "notes": notes, "problems": problems, "backup": backup,
-                "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes}
+                "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes, "kept_for_support": kept_for_support}
 
     # ---- diagnostics -------------------------------------------------------------------------------------------
     def _secrets(self, data):

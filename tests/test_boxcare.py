@@ -789,18 +789,27 @@ class ImportTest(Base):
         self.assertEqual(self.h("POST", "/api/system/settings/import", {}, self.full_dev)[0], 400)      # not as an ordinary request
         self.assertEqual(self.on_disk(), before)
 
-    def test_no_import_through_the_support_tunnel(self):
+    def test_an_import_through_the_support_tunnel_needs_the_owners_role(self):
+        """D84 (before it: never through the tunnel). tests/test_support_reach.py has what a file may carry for a helper."""
         file = self.export()
-        dev, code = self.remote_login()
+        self.ready()
+        code = self.start(role="live")[1]["code"]
+        low = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
         before = self.on_disk()
-        self.assertEqual(self.h("POST", "/api/system/settings/import", {}, dev, TUNNEL)[0], 403)
-        with self.assertRaises(ApiError) as c:                   # and the function itself refuses, whatever the route table says
-            self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
+        with self.assertRaises(ApiError) as c:                   # the function itself refuses, whatever the route table says
+            self.care.import_settings(json.dumps(file).encode(), "import", low, TUNNEL)
         self.assertEqual(c.exception.status, 403)
+        with self.assertRaises(ApiError) as c:                   # and a studio device's token through the tunnel is no login
+            self.care.import_settings(json.dumps(file).encode(), "import", self.full_dev, TUNNEL)
+        self.assertEqual(c.exception.status, 403)
+        self.assertEqual(self.on_disk(), before)
+        self.h("POST", "/api/support/stop", device=self.full_dev)
+        dev, code = self.remote_login()
         self.api.support.is_remote = lambda client: True         # over HTTP, pretending 127.0.0.1 is in the tunnel
         token = self.call("POST", "/api/support/login", {"code": code})[1]["token"]
-        self.assertEqual(self.send(file, token=token)[0], 403)
-        self.assertEqual(self.on_disk(), before)
+        st, out = self.send(file, token=token)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["kept_for_support"], [n for n in ("recovery",) if n in file["settings"]])
 
     def test_not_while_an_update_runs(self):
         result = os.path.join(tempfile.mkdtemp(), "result.json")
