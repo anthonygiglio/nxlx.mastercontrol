@@ -165,6 +165,13 @@ ROWS = {
     ("POST", "/api/system/settings/import"): STUDIO("owner"),
     ("GET", "/api/system/diagnostics"): KINDS["owner"],
     ("POST", "/api/system/factory-reset"): STUDIO("owner"),
+    # D75 (#115), met in a merge. The one fade button: an Operator's, a presenter's before, so the controllers keep it;
+    # never a guest's (D80: no fades for a guest). Mapping mode from a controller: the gate lets pass who could reach
+    # it before, and its handler answers only MIDI and OSC (OwnerAnswersTest holds a phone of any role to 403). The
+    # switch that allows it is the Owner's.
+    ("POST", "/api/fade"): KINDS["live"],
+    ("POST", "/api/mapper/nudge"): KINDS["live"],
+    ("POST", "/api/mapper/remote"): KINDS["owner"],
     # the secure connection (D79, #119): the Owner's, and never through the support tunnel (support.REMOTE_DENY_PREFIX)
     ("GET", "/api/https"): STUDIO("owner"),
     ("GET", "/api/https/request.csr"): STUDIO("owner"),
@@ -1061,6 +1068,33 @@ class OwnerAnswersTest(RolesBase):
         for key in (("POST", "/api/midi/map"), ("POST", "/api/midi"), ("POST", "/api/guests"), ("POST", "/api/pads"), ("POST", "/api/access/controller")):
             self.assertNotIn(key, policy.LEGACY_LIVE)
             self.assertEqual(self.h(key[0], key[1], {}, midi.MIDI_DEVICE, "midi")[0], 403)
+
+
+    def test_d75_met_d80_the_fade_the_mapping_mode_and_its_switch(self):
+        """D75 came into master while D80 was a draft. The one fade button is an Operator's and never a guest's;
+        mapping mode from a controller answers only MIDI and OSC, whatever role a phone has; the switch that allows
+        it is the Owner's; and the controllers' list is what master's route table gave a presenter, no more."""
+        with self.settings.lock:
+            self.settings.data["modules"]["enabled"]["mapper"] = True
+        for body in ({}, {"seconds": 2}):
+            self.assertEqual(self.h("POST", "/api/fade", body, self.guest)[0], 403)
+        self.assertNotIn(("POST", "/api/fade"), policy.GUEST)
+        self.assertEqual(self.h("POST", "/api/fade", {"seconds": 0.1}, self.operator)[0], 200)
+        self.assertEqual(self.h("POST", "/api/fade", {"seconds": 0.1}, self.operator)[0], 200)        # and in again
+        for who in (self.guest, self.operator, self.owner):
+            self.assertEqual(self.h("POST", "/api/mapper/nudge", {"mode": True}, who)[0], 403)
+        self.assertEqual(self.h("POST", "/api/mapper/remote", {"allow": True}, self.guest)[0], 403)
+        self.assertEqual(self.h("POST", "/api/mapper/remote", {"allow": True}, self.operator)[0], 403)
+        for name in ("midi", "osc", "dmx", "room"):                                 # no controller flips the Owner's switch
+            self.assertEqual(self.h("POST", "/api/mapper/remote", {"allow": True}, CONTROLLER_DEVICES[name], name)[0], 403)
+        self.assertEqual(self.h("POST", "/api/mapper/nudge", {"mode": True}, midi.MIDI_DEVICE, "midi")[0], 409)      # the switch is off
+        self.assertEqual(self.h("POST", "/api/mapper/remote", {"allow": True}, self.owner)[0], 200)
+        self.assertEqual(self.h("POST", "/api/mapper/nudge", {"mode": True}, midi.MIDI_DEVICE, "midi")[0], 200)
+        for who in (self.guest, self.operator, self.owner):                         # still no phone, with the switch on
+            self.assertEqual(self.h("POST", "/api/mapper/nudge", {"mode": False}, who)[0], 403)
+        self.assertIn(("POST", "/api/fade"), policy.LEGACY_LIVE)
+        self.assertIn(("POST", "/api/mapper/nudge"), policy.LEGACY_LIVE)
+        self.assertNotIn(("POST", "/api/mapper/remote"), policy.LEGACY_LIVE)
 
 
 class AttackTest(RolesBase):

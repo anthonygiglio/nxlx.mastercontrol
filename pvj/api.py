@@ -110,6 +110,8 @@ class Fader:
         # token inside it, so a step that was on its way cannot land after a level that was set since; whoever sets
         # a level waits for at most the one step that is in the player. Taken before `_lock`, never inside it.
         self.stepping = locks.make("fader.stepping")
+        self.at = None          # the level the running or the last ramp wrote last (percent), under `stepping`; read with the label
+        self._was = None        # (label, at) as `take` found them, until a ramp or another wish replaces them
         self.label = None       # "out" from a fade out until something else sets the picture, "in" while a fade in runs (read by the controller lights)
 
     def cancel(self):
@@ -117,7 +119,29 @@ class Fader:
         with self._lock:
             self._token += 1
             self.label = None
+            self._was = None
             return self._token
+
+    def take(self):
+        """Take the fader for the one fade button: a ramp that runs stops within a step, as after `cancel`, but
+        what the fader was doing is KEPT (its label and the level it had reached) until a ramp or another wish for
+        a level replaces it. The button decides from that inside the lock a level is written under (`was`). So of
+        two presses that meet while the screen is black, the second does not find a fader that looks idle and
+        take the picture for lit: it finds what the first found."""
+        with self._lock:
+            if self.label is not None:
+                self._was = (self.label, self.at)
+            self._token += 1
+            self.label = None
+            return self._token
+
+    def was(self):
+        """(label, level) of the ramp that runs, else what `take` kept, else (None, None). The level is the one
+        the ramp wrote last, in percent."""
+        with self._lock:
+            if self.label is not None:
+                return self.label, self.at
+            return self._was or (None, None)
 
     def mark(self):
         """The token as it is now, to ask `current` with later: has anybody taken the fader since? Every wish for a
@@ -139,6 +163,7 @@ class Fader:
             self._token += 1
             token = self._token
             self.label = label
+            self.at, self._was = start, None
         steps = max(1, int(seconds * 20))
         began = self._clock()
 
@@ -149,6 +174,9 @@ class Fader:
                         live = token == self._token
                     if live:
                         self._apply(start + (end - start) * i / steps)
+                        with self._lock:
+                            if token == self._token:
+                                self.at = start + (end - start) * i / steps
                 if not live:
                     return cancelled() if cancelled else None
                 wait = began + seconds * i / steps - self._clock()      # what is left of this step, if anything
@@ -455,7 +483,9 @@ class Api:
             refused = None
         if isinstance(refused, dict) and refused.get("id") and refused.get("epoch") == getattr(self.player, "source_epoch", None):
             player["shader_refused"] = {"id": refused["id"], "message": refused.get("message", ""), "at": refused.get("at", "")}
-        return {"player": player, "mix": dict(self.mix, **self._mix_settings()),
+        # "fade": "out" while the operator's Fade out runs and while the screen is black from it, "in" while a fade
+        # in runs, else null: the one fade button flashes by it (D75). The fader's own label, read from memory.
+        return {"player": player, "mix": dict(self.mix, fade=getattr(self.fader, "label", None), **self._mix_settings()),
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner(), "guest_controls": self.guests.state(),
@@ -1348,24 +1378,29 @@ class Api:
             self.mix["position_y"] = number(body, "value", -100, 100)
             self._player_call(p.position, self.mix["position"] * 10, self.mix["position_y"] * 10)
         elif action in ("flip_h", "flip_v"):
-            if not isinstance(body.get("value"), bool):
+            # "toggle" (a controller's button, D75): the other state, from the mix in memory
+            value = (not self.mix[action]) if body.get("value") == "toggle" else body.get("value")
+            if not isinstance(value, bool):
                 raise bad("value must be true or false")
-            self.mix[action] = body["value"]
-            self._player_call(p.flip, action == "flip_h", body["value"])
+            self.mix[action] = value
+            self._player_call(p.flip, action == "flip_h", value)
         elif action == "rotate":
+            if body.get("value") == "toggle":       # the next quarter turn, round and round
+                body = dict(body, value=(self.mix["rotate"] + 90) % 360)
             degrees = number(body, "value", 0, 270, integer=True)
             if degrees not in (0, 90, 180, 270):
                 raise bad("rotation must be 0, 90, 180 or 270")
             self.mix["rotate"] = degrees
             self._player_call(p.rotate, degrees)
-        elif action == "loop":
-            if not isinstance(body.get("value"), bool):
+        elif action in ("loop", "mute"):
+            value = body.get("value")
+            if value == "toggle":                   # the other state: the player is asked what it has (one question)
+                st = self._player_call(p.status)
+                value = (not st.get("muted")) if action == "mute" else \
+                    not ((st.get("loop_file") or "no") != "no" or (st.get("loop_playlist") or "no") != "no")
+            if not isinstance(value, bool):
                 raise bad("value must be true or false")
-            self._player_call(p.loop, body["value"])
-        elif action == "mute":
-            if not isinstance(body.get("value"), bool):
-                raise bad("value must be true or false")
-            self._player_call(p.mute, body["value"])
+            self._player_call(p.loop if action == "loop" else p.mute, value)
         elif action == "stop":
             self._stop_screen()
             self._stop_capture()
@@ -1446,6 +1481,47 @@ class Api:
             self._apply_opacity(0)
             self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
         return {"ok": True}
+
+    def shader_play(self, body, device, client):
+        """Show one shader by its id, as the Shaders screen's Play does. From a controller (OSC's /pvj/shader, D75)
+        it goes the way a pad's shader goes from a controller (D73, _play_shader_pad): what can be said at once is
+        said, and the tap is queued for the engine's worker, so the thread that reads the controller never waits
+        while the GPU looks at a shader. From the panel it is the engine's own call, as before."""
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            sid = body.get("id")
+            if not isinstance(sid, str) or set(body) - {"id", "preset"}:
+                raise bad("a controller names a shader by its id, with a preset or without")
+            return self._play_shader_pad((sid, body.get("preset")), device)
+        return self.shaders.api_play(body, device, client)
+
+    def fade(self, body, device, client):
+        """The one fade button (D75): fades out, and at the next press in. Which of the two is decided here, from what
+        the screen is doing, not from a count of presses, so it stays right when a fade was started somewhere else
+        (the old two calls, a controller, OSC, a Room scene), when Blackout was used and when a play brought the
+        picture back. The picture is DOWN when the operator's Fade out is on (its ramp runs, or the screen is black
+        from it: the fader's label is "out") or when Blackout is on; then this fades in, which also ends the
+        Blackout, as Fade in always did. Otherwise it fades out. Answers which it did.
+        The fader is taken first (a ramp that runs stops), which keeps what it was doing; the decision is made inside
+        the lock a level is written under, from that (Fader.was), so presses that meet are judged one after another.
+        A press in the middle of a ramp turns round FROM WHERE THE PICTURE IS: the new ramp starts at the level the
+        old one had reached, not at black and not at full."""
+        seconds = number(body, "seconds", 0.1, 30) if "seconds" in body else 2.0
+        self._player_call(self.player.status)
+        self.transitions.end()
+        self.fader.take()                       # before the lock, as the other wishes for a level do
+        with self._levels():
+            was, at = self.fader.was()
+            down = was == "out" or self.mix["blackout"]
+            if down:
+                start = at if was == "out" and at is not None and not self.mix["blackout"] else 0
+                self.mix["blackout"] = False
+                if start == 0:
+                    self._apply_opacity(0)
+                self.fader.ramp(min(start, self.mix["opacity"]), self.mix["opacity"], seconds, label="in")
+            else:
+                start = at if was == "in" and at is not None else self.mix["opacity"]
+                self.fader.ramp(min(start, self.mix["opacity"]), 0, seconds, label="out")
+        return {"ok": True, "fade": "in" if down else "out"}
 
     def test_tone(self, body, device, client):
         """5 seconds of a 440 Hz tone on the left, the right or both speakers, through the chosen sound output."""
@@ -1674,6 +1750,8 @@ class Api:
     def test_pattern(self, body, device, client):
         """Show colour bars (for lining up a projector), or stop them. They come from the player itself, no file."""
         on = body.get("on")
+        if on == "toggle":                          # a controller's button (D75): off if the bars are on, else on
+            on = self._player_call(self.player.status).get("path") != self.player.TEST_PATTERN
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         if not on:
@@ -1687,7 +1765,11 @@ class Api:
         return {"test_pattern": True}
 
     def set_mix(self, body, device, client):
-        mode, duration = body.get("transition"), body.get("duration")
+        # one of the two may be left out (OSC sets them one at a time, D75): the other stays as it is
+        if "transition" not in body and "duration" not in body:
+            raise bad("send transition, duration or both")
+        now = self._mix_settings()
+        mode, duration = body.get("transition", now["transition"]), body.get("duration", now["duration"])
         if mode not in transitions_mod.NAMES:
             raise bad("transition must be one of " + ", ".join(transitions_mod.NAMES))
         if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
@@ -2130,6 +2212,8 @@ class Api:
             if f != "" and (not valid_name(f) or not f.lower().endswith(".png")):
                 raise bad("choose a PNG picture from the media folder")
             cfg["file"] = f
+        if body.get("toggle") is True and "on" not in body:     # a controller's button (D75): the other state
+            body = dict(body, on=not cfg["on"])
         if "on" in body:
             if not isinstance(body["on"], bool):
                 raise bad("on must be true or false")
@@ -2223,6 +2307,32 @@ class Api:
             return self.mapper.handle(body)
         except mapper_mod.MapperError as e:
             raise bad(str(e))
+
+    def mapper_controllers(self, body, device, client):
+        """{"allow": true | false}: the owner's switch "Controllers may adjust the mapping" (full access)."""
+        from . import mapper as mapper_mod
+        if not self.registry.enabled("mapper"):
+            raise ApiError(409, "turn on the Projection mapper module in System first")
+        if set(body) != {"allow"}:
+            raise bad("send allow: true or false")
+        try:
+            return self.mapper.set_remote_allowed(body["allow"])
+        except mapper_mod.MapperError as e:
+            raise bad(str(e))
+
+    def mapper_nudge(self, body, device, client):
+        """Mapping mode from a controller (D75, pvj/mapper.py "from a controller"). Only a MIDI controller or OSC may
+        call it: the route is for presenters, and a presenter's phone must not get a way round the full access
+        that the Mapping screen asks for. It does nothing unless the owner's switch is on."""
+        from . import mapper as mapper_mod
+        if not (isinstance(device, dict) and device.get("id") in ("midi", "osc")):
+            raise ApiError(403, "only a controller uses this; the Mapping screen is for a full-access device")
+        if not self.registry.enabled("mapper"):
+            raise ApiError(409, "turn on the Projection mapper module in System first")
+        try:
+            return self.mapper.remote(body)
+        except mapper_mod.MapperError as e:
+            raise ApiError(409, str(e))
 
     def apply_mapper(self):
         """Put the mapping back on a player that restarted (it lost its shaders)."""
@@ -3033,6 +3143,7 @@ class Api:
             ("POST", "/api/blackout"): ("live", self.blackout),
             ("POST", "/api/fadeout"): ("live", self.fadeout),
             ("POST", "/api/fadein"): ("live", self.fadein),
+            ("POST", "/api/fade"): ("live", self.fade),
             ("POST", "/api/testpattern"): ("live", self.test_pattern),
             ("POST", "/api/testtone"): ("live", self.test_tone),
             ("POST", "/api/media/info"): ("view", self.media_info),
@@ -3066,9 +3177,11 @@ class Api:
             ("POST", "/api/sync"): ("full", self.set_sync),
             ("GET", "/api/mapper"): ("view", self.get_mapper),
             ("POST", "/api/mapper"): ("live", self.set_mapper),
+            ("POST", "/api/mapper/remote"): ("full", self.mapper_controllers),
+            ("POST", "/api/mapper/nudge"): ("live", self.mapper_nudge),
             ("GET", "/api/shaders"): ("view", self.shaders.api_get),
             ("POST", "/api/shaders"): ("live", self.shaders.api_set),
-            ("POST", "/api/shaders/play"): ("live", self.shaders.api_play),
+            ("POST", "/api/shaders/play"): ("live", self.shader_play),
             ("POST", "/api/shaders/values"): ("live", self.shaders.api_values),
             ("POST", "/api/shaders/step"): ("live", self.shaders.api_step),
             ("POST", "/api/shaders/preset"): ("live", self.shaders.api_preset),

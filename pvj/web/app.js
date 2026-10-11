@@ -381,6 +381,24 @@
     });
     return b;
   }
+  // The one fade button (D75): a press fades out, the next fades in; the box decides which from what the screen is
+  // doing (POST /api/fade), so the button is right whoever started the fade. fadeShow() gives it its words and, while
+  // the picture goes down and while it is black from a fade, the class "flash" (the style flashes it, or holds it
+  // steady and inverted for someone who asked for less motion). Every place that draws a fade button draws this one.
+  function fadeButton(cls, enabled) {
+    var b = h('button', { class: cls, id: 'fade', 'data-cls': cls, text: 'Fade out', disabled: !enabled, onclick: function () { act('POST', '/api/fade', { seconds: 2 }, poll); } });
+    fadeShow(b, S.status && S.status.mix);
+    return b;
+  }
+  function fadeShow(b, mix) {
+    if (!b) return;
+    var fade = mix && mix.fade, down = fade === 'out' || !!(mix && mix.blackout);
+    var cls = b.getAttribute('data-cls') + (fade === 'out' ? ' flash' : fade === 'in' ? ' on' : '');
+    if (b.className !== cls) b.className = cls;
+    var text = down || fade === 'in' ? 'Fade in' : 'Fade out';
+    if (b.textContent !== text) b.textContent = text;
+    b.setAttribute('aria-label', fade === 'out' ? 'Fade in (the picture is faded out)' : fade === 'in' ? 'Fade in (fading in now)' : text);
+  }
   function live() {
     var bank = S.banks[S.bank];
     var pads = h('div', { class: 'pads', id: 'pads' });
@@ -450,7 +468,7 @@
     card.parentNode.replaceChild(transitionCard(), card);
   }
   // The one transport strip (D65, the owner's choice of D63; D72): what is playing, the place in it, Speed and Loop,
-  // and Previous, back 10 s, forward 10 s, Next, Fade in, Fade out, Freeze, Stop and Blackout, at the foot of every
+  // and Previous, back 10 s, forward 10 s, Next, Fade (one button, D75), Freeze, Stop and Blackout, at the foot of every
   // screen at every width. These are the controls Live had in its Now playing card and in its bottom row, and (D72)
   // the Speed slider and the Loop button that were on Shape > Controls, with the ids they had; there is no second
   // copy on any screen. Under 600 px the strip shows Previous, Next, Stop and Blackout, and More opens the rest in
@@ -481,7 +499,7 @@
     } });
     var el = h('div', { class: 'tp', id: 'wstp', role: 'group', 'aria-label': 'Transport' },
       // (fold f-...: what leaves the one line of a wider panel for More, in the stylesheet's order: back and forward
-      // 10 s first, then the fades, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout (keep), which a
+      // 10 s first, then Fade, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout (keep), which a
       // phone's closed strip shows too, with More beside them. The place in the clip is never behind More: where it
       // has no room on the line it is a slim bar along the strip's top edge, the same one control, placed there by
       // the stylesheet.)
@@ -497,8 +515,8 @@
         b('fwd10', '+ 10 s', 'Forward 10 seconds', 'tpx fold f-ten', ctl('seek', 10)),
         b('next', 'Next ⏭', 'Next clip', 'tpx fold f-steps', ctl('next'))),
       h('div', { class: 'tpgrp' },
-        b('fadein', 'Fade in', null, 'tpx fold f-fades', function () { act('POST', '/api/fadein', { seconds: 2 }, poll); }),
-        b('fade', 'Fade out', null, 'tpx fold f-fades', function () { act('POST', '/api/fadeout', { seconds: 2 }); }),
+        // the one fade button (D75): out, then in, decided by the box; fadeShow() in patchLive() keeps its words and its flash
+        fadeButton('btn tpb tpx fold f-fades', canLive),
         b('freeze', 'Freeze', null, 'keep', ctl('pause'))),
       h('div', { class: 'tpgrp' },
         b('stop', 'Stop', null, 'keep', ctl('stop')),
@@ -642,7 +660,8 @@
     var pill = document.getElementById('pill');
     if (pill) pill.textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
-    var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('solid', !!on); b.textContent = on ? 'Show' : 'Blackout'; }
+    fadeShow(document.getElementById('fade'), st.mix);
+    var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('flash', !!on); b.textContent = on ? 'Show' : 'Blackout'; }      // flashing for as long as it is on, as the fade button is (D75)
     var pads = document.getElementById('pads');
     if (pads && S.banks[S.bank]) {
       S.banks[S.bank].pads.forEach(function (p, i) {
@@ -971,11 +990,19 @@
       var stage = h('div', { class: 'card mapstage', id: 'mapstage' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }));
       body.appendChild(stage);
       stage.appendChild(h('div', { class: 'hint', id: 'mapstatus', text: (words[st.state] || st.state) + ' · screen ' + d.screen[0] + 'x' + d.screen[1] + ' · ' + d.surfaces.length + ' surface' + (d.surfaces.length === 1 ? '' : 's') }));
+      // Mapping mode from a controller (D75): everyone who looks at the stage sees that it is on, directly under the
+      // display (above it, its three lines pushed the display under the strip); full access holds the switch that
+      // allows it, further down the stage with what acts on the whole mapping.
+      var rc = d.controllers || {};
+      var remote = rc.mode ? h('div', { class: 'msg', id: 'mapremoteon', role: 'status', text: 'A controller is adjusting the mapping (mapping mode): it chooses a surface and a corner and nudges it, ' +
+        rc.step + ' px a step. It uses "Edit on the display" and the surface and corner chosen here, so those move while it lasts; ' +
+        'afterwards they are as you had them. It ends by itself ' + Math.ceil(rc.seconds_left / 60) + ' min after the last nudge.' }) : null;
       var testRow = h('div', { class: 'row', id: 'maptest' }, testPattern(), h('span', { class: 'hint grow', text: 'Colour bars in place of what plays, to line the projector up' }));
-      if (!full) { stage.appendChild(testRow); watch(); return; }
+      if (!full) { if (remote) stage.appendChild(remote); stage.appendChild(testRow); watch(); return; }
       canvas = h('canvas', { class: 'mapcanvas', id: 'mapcanvas', tabindex: '0', 'aria-label': 'Mapping editor: drag a corner, or use the arrows beside it' });
       canvas.style.setProperty('--mapaspect', String(d.screen[0] / Math.max(1, d.screen[1])));
       stage.appendChild(canvas);
+      if (remote) stage.appendChild(remote);
       stage.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn grow' + (d.on ? ' on' : ''), id: 'mapon', 'aria-pressed': d.on ? 'true' : 'false', text: d.on ? 'Mapping on' : 'Mapping off',
           onclick: function () { send({ action: 'on', on: !d.on }); } }),
@@ -987,6 +1014,17 @@
       })));
       stage.appendChild(testRow);
       stage.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture on Shape > Picture (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
+      // the owner's switch for mapping mode (D75): in the stage, with the other controls that act on the whole mapping.
+      // The mapping is an Operator's since D80; this switch stays the Owner's (the box refuses it to anyone else), so
+      // an Operator reads how it stands and has nothing to press
+      if (!can('full')) stage.appendChild(h('div', { class: 'hint', id: 'mapremotestate', text: 'Controllers may adjust the mapping: ' + (rc.allow ? 'on' : 'off') + '. The owner switches it.' }));
+      else stage.appendChild(toggle('mapremote', 'Controllers may adjust the mapping', !!rc.allow, function (v) {
+        api('POST', '/api/mapper/remote', { allow: v }).then(function (r) {
+          if (!document.getElementById('mapcard')) return;
+          if (!r.ok) { say(r.data.error || 'Could not change that', true); if (d) draw(d); return; }
+          say(v ? 'A MIDI controller or OSC can now enter mapping mode.' : 'Controllers cannot change the mapping.'); draw(r.data);
+        });
+      }, 'Off unless you switch it on. With it on, whoever is at a MIDI controller (or sends OSC) can enter mapping mode and move the corners of this mapping; nothing moves outside that mode.'));
       var tools = h('div', { class: 'card maptools', id: 'maptools' });
       body.appendChild(tools);
       canvas.addEventListener('pointerdown', function (e) {
@@ -2282,7 +2320,16 @@
     return [card, table];
   }
   var MIDI_ACTIONS = [['pad', 'Play a pad'], ['stop', 'Stop'], ['pause', 'Pause / resume'], ['blackout', 'Blackout on / off'], ['fadeout', 'Fade out'],
-    ['reset', 'Reset mix'], ['opacity', 'Opacity (fader)'], ['size', 'Size (fader)'], ['position', 'Position X (fader)'], ['speed', 'Speed (fader)'],
+    ['fade', 'Fade out, then in (one button)'],
+    ['reset', 'Reset mix'], ['opacity', 'Opacity (fader)'], ['size', 'Zoom: the size (fader)'], ['position', 'Position X (fader)'], ['position_y', 'Position Y (fader)'],
+    ['rotate', 'Rotate a quarter turn'], ['flip_h', 'Mirror left to right on / off'], ['flip_v', 'Mirror top to bottom on / off'], ['overlay', 'Overlay picture on / off'],
+    ['seek_back', 'Back 10 seconds'], ['seek_forward', 'Forward 10 seconds'], ['loop', 'Loop on / off'], ['mute', 'Sound off / on'], ['test_pattern', 'Test pattern on / off'],
+    ['mapping_mode', 'Mapping mode on / off (needs the switch on the Mapping page)'], ['map_surface_next', 'Mapping mode: next surface'], ['map_surface_prev', 'Mapping mode: the surface before'],
+    ['map_corner_next', 'Mapping mode: next corner'], ['map_corner_prev', 'Mapping mode: the corner before'], ['map_left', 'Mapping mode: nudge left'], ['map_right', 'Mapping mode: nudge right'],
+    ['map_up', 'Mapping mode: nudge up'], ['map_down', 'Mapping mode: nudge down'], ['map_step', 'Mapping mode: step size (1, 10, 50)'], ['map_undo', 'Mapping mode: undo the last nudge'],
+    ['map_x', 'Mapping mode: nudge left and right by turning (fader)'], ['map_y', 'Mapping mode: nudge up and down by turning (fader)'],
+    ['layer_geometry', 'Geometry on / off: the controls marked "geometry" set zoom and position'],
+    ['speed', 'Speed (fader)'],
     ['volume', 'Volume (fader)'], ['blackout_hold', 'Blackout while held up (fader)'],
     ['vibes', 'Vibes on / off'], ['vibes_next', 'Vibes: next shader'], ['vibes_dwell', 'Vibes: time each shader stays (fader)'],
     ['shader_speed', 'Shader: speed (fader)'], ['shader_prev', 'Shader: the one before'], ['shader_next', 'Shader: the next one']]
@@ -2299,12 +2346,21 @@
     .concat([['code_join', 'Show a one-time guest code on the display (hold 3 seconds, let go)'],
       ['code_owner', 'Show a one-time owner code on the display (hold 3 seconds, let go)']]);
   // the actions that follow a fader or knob; a shader control does both (a knob sets it, a button steps or toggles it)
-  var MIDI_LEVELS = ['opacity', 'size', 'position', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
+  var MIDI_LEVELS = ['map_x', 'map_y', 'opacity', 'size', 'position', 'position_y', 'speed', 'volume', 'blackout_hold', 'vibes_dwell', 'shader_speed', 'shader_hue', 'shader_brightness', 'effect_amount'];
   // What an action is called on the drawn layout of a controller: short, since a control is a small box.
   var MIDI_SHORT = { shader_speed: 'Shader speed', shader_prev: 'Previous shader', shader_next: 'Next shader', shader_hue: 'Shader colour turn',
     shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
     effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
-    code_join: 'Guest code (hold)', code_owner: 'Owner code (hold)' };
+    code_join: 'Guest code (hold)', code_owner: 'Owner code (hold)',
+    fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror left to right', flip_v: 'Mirror top to bottom', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
+    loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume', mapping_mode: 'Mapping mode', layer_geometry: 'Geometry',
+    map_surface_next: 'Map: next surface', map_surface_prev: 'Map: surface before', map_corner_next: 'Map: next corner', map_corner_prev: 'Map: corner before',
+    map_left: 'Map: left', map_right: 'Map: right', map_up: 'Map: up', map_down: 'Map: down', map_step: 'Map: step size', map_undo: 'Map: undo',
+    map_x: 'Map: nudge X', map_y: 'Map: nudge Y' };
+  // The parts of a controller that belong together (a control's "zone" in its profile): tinted alike in the drawing
+  // and named once under it. The words are fixed here; a profile only picks among them.
+  var MIDI_ZONES = [['pads', 'Pads'], ['clips', 'The clip'], ['screen', 'The screen: fade, freeze, stop, black'], ['picture', 'The picture: zoom, place, turn'], ['sound', 'Sound'],
+    ['shaders', 'Shaders and Vibes'], ['effects', 'Effects'], ['room', 'Room'], ['access', 'Access']];
   function midiWhat(a) {
     if (!a) return 'Spare';
     if (a.action === 'none') return 'Nothing';
@@ -2335,7 +2391,7 @@
     var sig = null;
     function signature(d) {
       return JSON.stringify([d.enabled, d.bank, (d.controllers || []).map(function (c) {
-        return [c.name, c.connected, c.standard, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin, x.guard]; }),
+        return [c.name, c.connected, c.standard, c.layer, c.profile && c.profile.id, c.controls.map(function (x) { return [x.action, x.origin, x.guard]; }),
           c.lights && [c.lights.on, c.lights.state, c.lights.brightness, c.lights.testing]];
       })]);
     }
@@ -2368,6 +2424,7 @@
         (x.unverified ? ' (from a list that the maker\'s document does not confirm)' : '') + '.' +
         (x.guard ? ' Press it twice within a second; one press does nothing.' : '') +
         (x.pickup ? ' It picks up: nothing changes until it reaches the value the box has, so nothing jumps.' : '') +
+        (x.action && ['size', 'position', 'position_y', 'speed', 'shader_speed', 'shader_hue', 'shader_brightness'].indexOf(x.action.action) >= 0 ? ' The middle of the control is exactly the normal value.' : '') +
         (x.waiting ? ' It has not reached that value yet.' : '') }));
       if (!midiMay(x.action) || !midiMay(x.standard)) {
         if (canOp()) box.appendChild(h('p', { class: 'hint', id: 'ctlowners', text: 'This control shows an access code. Only the owner changes it.' }));
@@ -2472,6 +2529,10 @@
           }
           card.appendChild(h('p', { class: 'hint ctllightnote', text: L.note }));
         }
+        // a layer that is on (D75): said in words, as its button's light says it on the controller
+        if (c.layer) card.appendChild(h('p', { class: 'msg ctllayer', role: 'status', text: c.layer === 'mapping' ?
+          'Mapping mode is on: the controls marked "mapping mode" choose and nudge the mapping\'s corners. Everything else works as always.' :
+          'Geometry is on: the controls marked "geometry" set zoom and position; the other knobs rest. Press the flashing button to go back; it also ends by itself after two minutes without a touch.' }));
         var grid = h('div', { class: 'ctlgrid', role: 'group', 'aria-label': 'The controls of ' + c.profile.name });
         grid.style.gridTemplateColumns = 'repeat(' + c.profile.cols + ', minmax(58px, 1fr))';
         grid.style.setProperty('--cols', String(c.profile.cols));       // for a style that gives the cells another width (D54)
@@ -2479,15 +2540,24 @@
         c.controls.forEach(function (x) {
           var chosen = !!midiSel && midiSel.ctl === c.name && midiSel.id === x.id;
           if (chosen) open = x;
-          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' || x.origin === 'any' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : '') + (x.light ? ' haslight' : ''), type: 'button',
+          var b = h('button', { class: 'ctl ctl-' + x.kind + (x.origin === 'yours' || x.origin === 'any' ? ' mine' : '') + (x.action ? '' : ' spare') + (chosen ? ' sel' : '') + (x.light ? ' haslight' : '') + (x.zone ? ' z-' + x.zone : ''), type: 'button',
             'data-id': x.id, 'aria-pressed': chosen ? 'true' : 'false', 'aria-label': x.name + ': ' + midiWhat(x.action),
             onclick: function () { midiSel = chosen ? null : { ctl: c.name, id: x.id }; draw(d); } },
-            h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }), h('span', { class: 'ctlval' }));
+            h('span', { class: 'ctlname', text: x.name }), h('span', { class: 'ctlwhat', text: midiWhat(x.action) + (x.guard ? ' 2x' : '') }),
+            // its other self in a layer: named under what it does, and in its place while that layer is on
+            Object.keys(x.layers || {}).map(function (name) {
+              return h('span', { class: 'ctlalt' + (c.layer === name ? ' now' : ''), 'data-layer': name,
+                text: (name === 'mapping' ? 'mapping mode: ' : 'geometry: ') + (x.layers[name] ? midiWhat(x.layers[name]).replace('Map: ', '') : 'nothing') });
+            }), h('span', { class: 'ctlval' }));
           b.style.gridRow = String(x.row + 1);
           b.style.gridColumn = String(x.col + 1);
           grid.appendChild(b);
         });
         card.appendChild(h('div', { class: 'ctlscroll' }, grid));
+        // the zones that are on this controller, each with its tint: why a thing is where it is, said once
+        var zones = MIDI_ZONES.filter(function (z) { return c.controls.some(function (x) { return x.zone === z[0]; }); });
+        if (zones.length) card.appendChild(h('div', { class: 'ctlzones', role: 'list', 'aria-label': 'The parts of ' + c.profile.name },
+          zones.map(function (z) { return h('span', { class: 'ctlzone z-' + z[0], role: 'listitem', text: z[1] }); })));
         if (open) card.appendChild(detail(c, open));
         card.appendChild(h('p', { class: 'hint', text: 'Move a control and it lights up here. Tap one to see' + (canOp() ? ' or change' : '') + ' what it does.' +
           (c.lights ? ' A small ring marks a control that has a light; it is filled while the box has that light on.' : '') +

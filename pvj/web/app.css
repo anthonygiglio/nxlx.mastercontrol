@@ -32,6 +32,16 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn.on, .pad.on { background: var(--ac); border-color: var(--ac); color: var(--on); }
 .btn.solid { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+/* The one fade button while the picture goes down and while it is black from a fade (D75): it flashes, twice a
+   second, by its colours only, so nothing moves and the words stay readable in both halves. For someone who asked for
+   less motion it does not flash: it stands inverted with a dashed edge, which no other button has. */
+.btn.flash { background: var(--fg); color: var(--bg); border-color: var(--fg); border-style: dashed; }
+@media (prefers-reduced-motion: no-preference) {
+  .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
+  @keyframes fadeflash { 0%, 100% { background: var(--fg); color: var(--bg); } 50% { background: var(--cd); color: var(--fg); } }
+  /* (Blackout's flash in the Signal look, which keeps it in its problem colour; the rule that uses it is at the end of that look's block) */
+  @keyframes blackflash { 0%, 100% { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); } 50% { background: var(--flash-rest, transparent); color: var(--fg); } }
+}
 .btn.big { min-height: 56px; }
 .btn.small { min-height: 34px; padding: 0 10px; font-size: 14px; }
 
@@ -151,6 +161,8 @@ canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2
 .ctlgrid .ctl .ctlname { color: var(--mu); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ctlgrid .ctl .ctlwhat { font-weight: 600; overflow-wrap: anywhere; }
 .ctlgrid .ctl .ctlval { color: var(--mu); font-size: 10px; }
+.ctlgrid .ctl .ctlalt { color: var(--mu); font-size: 10px; overflow-wrap: anywhere; }
+.ctlgrid .ctl .ctlalt.now { color: inherit; font-weight: 600; text-decoration: underline; }      /* what the control does instead in mapping mode (D75) */
 .ctlgrid .ctl.spare .ctlwhat { font-weight: 400; color: var(--mu); }
 .ctlgrid .ctl.mine { border-style: dashed; border-color: var(--ac); }
 .ctlgrid .ctl.wait { border-style: dotted; border-color: var(--ac); }
@@ -159,6 +171,17 @@ canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2
 .ctlgrid .ctl.lit .ctlname, .ctlgrid .ctl.lit .ctlwhat, .ctlgrid .ctl.lit .ctlval { color: var(--on); }
 .ctlgrid .ctl:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 /* a control with a light on the controller itself: a small ring, filled while the box has that light on */
+/* Zones (D75): the controls of a controller that belong together carry one bar of colour along their foot, and the
+   same bar marks the zone's name under the drawing. A bar, not a fill: the cell's own colours (lit, waiting, changed
+   by you) stay what they were, and the words keep their contrast in every look. */
+.ctlgrid .ctl[class*=" z-"], .ctlzone { box-shadow: inset 0 -4px 0 var(--zone, transparent); }
+.ctlgrid .ctl.sel[class*=" z-"] { box-shadow: inset 0 0 0 2px var(--ac), inset 0 -4px 0 var(--zone, transparent); }
+.z-pads { --zone: #d9a400; } .z-clips { --zone: #8a8f98; } .z-screen { --zone: #d93025; } .z-picture { --zone: #1a73e8; } .z-sound { --zone: #00897b; }
+.z-shaders { --zone: #8e44ad; } .z-effects { --zone: #e67e22; } .z-room { --zone: #2e9e4f; } .z-access { --zone: #6d4c41; }
+.ctlzones { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; color: var(--mu); }
+.ctlzone { padding: 0 0 6px; overflow-wrap: anywhere; min-width: 0; }
+.ctlgrid .ctl.haslight[data-lit="flash"]::after { background: var(--ac); border-color: var(--ac); }
+@media (prefers-reduced-motion: no-preference) { .ctlgrid .ctl.haslight[data-lit="flash"]::after { animation: ctlflash .5s steps(1, end) infinite; } @keyframes ctlflash { 50% { background: transparent; } } }
 .ctlgrid .ctl.haslight { position: relative; }
 .ctlgrid .ctl.haslight::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--mu); box-sizing: border-box; }
 .ctlgrid .ctl.haslight[data-lit="on"]::after { background: var(--mu); }
@@ -603,10 +626,10 @@ main.ws:focus, .deskcol:focus { outline: none; }
 /* The transport strip. A phone: what is playing on a line of its own, the clip count and the time under it, then
    the row the thumb finds: Freeze, Stop, Blackout and More (the three that are never behind More at any width,
    and the way to the rest). More opens the rest in place, UNDER that row, which stays where it was: Previous,
-   Next, Fade in, Fade out; back and forward 10 s and Loop; then Speed on a row of its own, so the slider is as wide
+   Next, back and forward 10 s; Fade and Loop, each two wide; then Speed on a row of its own, so the slider is as wide
    as the strip. Closed, the strip and the tabs are what they were; open, in a 568 px phone the last row is reached
    by scrolling inside the strip, whose lower edge then says so. (On a phone the rows are placed by `order`, so the
-   cursor's order there is the laptop's: Previous, back, forward, Next, the fades, Freeze, Stop, Blackout.) */
+   cursor's order there is Previous, Next, back, forward, Fade, Loop, Speed, Freeze, Stop, Blackout.) */
 .tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 16px; border-top: 1.5px solid var(--ln); }
 .tpinfo { display: contents; }     /* (a phone: its three parts are cells of the strip's own grid; from 600 px a box of its own, below) */
 /* What plays has a line, cut with dots where it is long (whole in its title, app.js), and under it the clip count
@@ -652,6 +675,10 @@ main.ws:focus, .deskcol:focus { outline: none; }
    as wide as a button, and Speed is the last row that More opens, as wide as the strip, with its value over the
    slider's name. */
 .tp .tploop { order: 4; grid-column: span 2; }
+/* (one fade button since D75: on a phone it is on the row of Loop, each two wide, Fade first, under Previous, Next,
+   back and forward 10 s; with four cells a row the seven controls left a hole beside Loop. Under 600 px only: from there the
+   fold's own order places it, and an id would outweigh the fold's classes.) */
+@container app (max-width: 599px) { .tp #fade { order: 3; grid-column: span 2; } }
 .tp .tpspeed { order: 5; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tp:not(.open) .tpspeed { display: none; }
 .tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }
@@ -693,8 +720,8 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .tp.open .tpspeed { display: flex; }
 }
 /* What is on the line from which width (D72). The owner's order of who has the room first: Blackout, Stop and
-   Freeze (always); Previous and Next; Loop; Speed; Fade in and Fade out; back and forward 10 s; the place in the
-   clip, which needs 160 px. Each width is where the line still holds in a typeface a fifth wider than the
+   Freeze (always); Previous and Next; Loop; Speed; Fade (one button since D75); back and forward 10 s; the place
+   in the clip, which needs 160 px. Each width is where the line still holds in a typeface a fifth wider than the
    panel's own, with a long clip name and an hour's time on it (measured; the widths are in D72). */
 @container app (min-width: 800px) { .tp .fold.f-steps { order: 0; } .tp:not(.open) .fold.f-steps { display: inline-block; } }
 @container app (min-width: 940px) { .tp .fold.f-loop { order: 0; } .tp:not(.open) .fold.f-loop { display: inline-block; } }
@@ -835,6 +862,7 @@ html[data-style="signal"] {
   --display: var(--tk-f-title, "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
   --mono: var(--tk-f-number, "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   --ink: var(--fg); --err: var(--st-error, var(--fg)); --rule: var(--tk-rule, 3px);
+  --flash-rest: var(--tk-plain, transparent);   /* what Blackout's flash rests on between beats (the keyframes stand above this block) */
 }
 html[data-style="signal"][data-area="room"] { --ac: var(--ar-room, #ffd60a); --on: var(--ar-room-on, #0b0b0d); --ink: var(--ar-room-ink, var(--fg)); }
 html[data-style="signal"][data-area="shaders"] { --ac: var(--ar-shaders, #ff4fa3); --on: var(--ar-shaders-on, #0b0b0d); --ink: var(--ar-shaders-ink, var(--fg)); }
@@ -1048,7 +1076,7 @@ html[data-style="signal"] .ctlgrid .ctl-fader { min-height: 104px; }
 html[data-style="signal"] .ctlgrid .ctl-knob { border-radius: 28px; }
 html[data-style="signal"] .ctlgrid .ctl .ctlname { font: 500 13px var(--mono); color: var(--mu); text-transform: uppercase; }
 html[data-style="signal"] .ctlgrid .ctl .ctlwhat { font-weight: 700; line-height: 1.15; overflow-wrap: break-word; }      /* sentence case: capitals would need a cell half as wide again */
-html[data-style="signal"] .ctlgrid .ctl .ctlval { font: 500 13px var(--mono); color: var(--mu); }
+html[data-style="signal"] .ctlgrid .ctl .ctlval, html[data-style="signal"] .ctlgrid .ctl .ctlalt { font: 500 13px var(--mono); color: var(--mu); }
 html[data-style="signal"] .ctlgrid .ctl.spare { border-color: var(--mu); }
 html[data-style="signal"] .ctlgrid .ctl.spare .ctlwhat { font-weight: 600; color: var(--mu); }
 html[data-style="signal"] .ctlgrid .ctl.mine { border-style: dashed; border-color: var(--ink); }
@@ -1380,3 +1408,13 @@ html[data-style="signal"] .navrow.on .navname { color: var(--fg); text-decoratio
 html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
 html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
 html[data-style="signal"] .tp .tpmore { min-width: max-content; }      /* (this look takes a button's least width away; More is a column of the line that says what plays, and is never narrower than its word: at 1200 px, where the line is fullest, it was 3 px short) */
+/* The flashing buttons (D75) in this look. The block above gives every button its outline and its background by a
+   heavier selector, so the flash is said again here, after it: the fade button flashes in the ink, Blackout in
+   the problem colour its border has while it is steady. Less motion: steady, inverted, with the dashed edge, as
+   in the default look. */
+html[data-style="signal"] .btn.flash { background: var(--fg); color: var(--bg); border-color: var(--fg); border-style: dashed; }
+html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+@media (prefers-reduced-motion: no-preference) {
+  html[data-style="signal"] .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
+  html[data-style="signal"] .tp #black.flash { animation: blackflash .5s steps(1, end) infinite; }      /* (its keyframes are with fadeflash's, above the style blocks: a keyframes rule has no style of its own) */
+}

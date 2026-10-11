@@ -3289,12 +3289,12 @@ class MidiTest(Base):
         self.assertEqual(len(self.mpv.commands), before)                               # the player was not asked anything
 
     def test_the_three_shipped_layouts_have_effect_controls_on_what_was_spare(self):
-        """Only controls that had no action got one (the profiles' own tests pin every other control): the amount on
-        a spare fader, the effect's inputs on a spare row of knobs or pads, on/off and the steps on spare buttons."""
+        """Where the effect actions sit since the layouts were drawn afresh in zones (D75): the amount on fader 7 of
+        the two fader boxes, the effect's inputs on the MIDI Mix's bottom row of knobs, and one button (or one row of
+        three on the Launchpad) for on/off and the steps."""
         want = {"korg-nanokontrol2": {"fader7": "effect_amount", "r5": "effect_toggle"},
-                "akai-midimix": dict({"knob_c%d" % n: "effect_control_%d" % n for n in range(1, 9)}, fader7="effect_amount"),
-                "novation-launchpad-mini": dict({"pad17": "effect_toggle", "pad27": "effect_prev", "pad28": "effect_next"},
-                                                **{"pad%d%d" % (3 + (n - 1) // 2, 7 + (n - 1) % 2): "effect_control_%d" % n for n in range(1, 9)})}
+                "akai-midimix": dict({"knob_c%d" % n: "effect_control_%d" % n for n in range(1, 9)}, fader7="effect_amount", solo4="effect_toggle"),
+                "novation-launchpad-mini": {"pad75": "effect_toggle", "pad76": "effect_prev", "pad77": "effect_next"}}
         profiles = M.load_profiles(log=lambda *_: None)
         self.assertEqual(sorted(p["id"] for p in profiles), sorted(want))
         for p in profiles:
@@ -3304,8 +3304,8 @@ class MidiTest(Base):
                 if c["id"] in got:
                     kind = M.ACTIONS[got[c["id"]]][0]
                     self.assertTrue(kind != "trigger" if c["kind"] in ("fader", "knob") else kind != "level", (p["id"], c["id"]))
-            if p["id"] == "novation-launchpad-mini":                                   # its last spare pad shows a pairing code (D61)
-                self.assertEqual([c["id"] for c in p["controls"] if c["action"] and c["action"]["action"] == "code_join"], ["pad18"])
+            if p["id"] == "novation-launchpad-mini":                                   # the third round button along the top shows a pairing code (D61, moved off pad 6.8)
+                self.assertEqual([c["id"] for c in p["controls"] if c["action"] and c["action"]["action"] == "code_join"], ["top3"])
             else:
                 self.assertTrue(any(c["action"] is None for c in p["controls"]), p["id"])  # and something is still spare
 

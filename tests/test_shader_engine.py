@@ -1435,7 +1435,7 @@ class ControllerTest(Live):
         self.cc(8, 127)
         self.assertEqual(self.values()["controls"]["speed"], 4.0)
         self.cc(8, 32)
-        self.assertEqual(self.values()["controls"]["speed"], 1.01)
+        self.assertEqual(self.values()["controls"]["speed"], 0.53)    # the middle of the control is the shader's own pace (D75); 32 is 28 of 60 steps under it
         self.assertTrue(all(path.startswith("/api/shaders/") for path, _, _ in self.calls))
 
     def test_a_pad_toggles_steps_fires_or_resets(self):

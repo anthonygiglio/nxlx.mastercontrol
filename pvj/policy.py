@@ -49,7 +49,11 @@ OUTSIDE = {
 # secure connection, so a page over plain http can find out if its device trusts the box. Nothing else belongs here.
 NO_GATE = frozenset([("GET", "/api/https/probe")])
 
-# Every route a presenter (or less) could use on master before D80, 2026-10-10. Frozen: do not add to it.
+# Every route a presenter (or less) could use on master before D80, 2026-10-10. Frozen: do not add to it. It is worked
+# out from master's route table (every route whose minimum there is none, view or live, and the two paths the server
+# answered itself), not written by judgment; the last time was at master a549c89, which had gained D75's two:
+# the one fade button (/api/fade) and mapping mode from a controller (/api/mapper/nudge, which does nothing unless
+# the Owner's switch is on and answers only MIDI and OSC).
 LEGACY_LIVE = frozenset(
     [("GET", p) for p in (
         "/api/hello", "/api/status", "/api/media", "/api/pads", "/api/modules", "/api/theme", "/api/osc",
@@ -59,7 +63,7 @@ LEGACY_LIVE = frozenset(
         "/api/qr.svg")]
     + [("POST", p) for p in (
         "/api/pair", "/api/session", "/api/logout", "/api/support/login", "/api/play", "/api/control",
-        "/api/blackout", "/api/fadeout", "/api/fadein", "/api/testpattern", "/api/testtone", "/api/media/info",
+        "/api/blackout", "/api/fadeout", "/api/fadein", "/api/fade", "/api/mapper/nudge", "/api/testpattern", "/api/testtone", "/api/media/info",
         "/api/mix", "/api/access/code", "/api/access/cancel", "/api/access/screen", "/api/overlay",
         "/api/support/stop", "/api/shaders/play", "/api/shaders/values", "/api/shaders/step", "/api/shaders/preset",
         "/api/vibes", "/api/effects", "/api/effects/values", "/api/effects/step", "/api/effects/preset",

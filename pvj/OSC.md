@@ -54,6 +54,8 @@ Not tried with a real TouchOSC or on a box yet; the receiver was tested with pac
 
 Numbers use natural units, so set your controller's fader range to match (for example 0 to 100 for opacity). Pads and banks are **1-based** like TouchOSC's multipush grids.
 
+Every address in this table, the ones added with D75 and `/pvj/mapping/...` among them, sits behind the three locks of "Who may send" whenever those are on (see "Behind the three locks" under the table).
+
 | Address | Arguments | Effect |
 | --- | --- | --- |
 | `/pvj/pad/<bank>/<pad>` | value (press) | Play that pad. Bank 1 to 3, pad 1 to 12 |
@@ -67,10 +69,40 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/stop` | value (press) | Stop the clip (the player stays running) |
 | `/pvj/pause` | none, or 0/1 | No argument toggles; 1 pauses, 0 resumes |
 | `/pvj/blackout` | none, or 0/1 | No argument toggles |
-| `/pvj/fadeout` | seconds (default 2) | Fade to black |
+| `/pvj/fadeout` | none, or a button's 1 and 0 | Fade to black in 2 seconds. A 0 is a button's release and does nothing; exactly 1 is its press. Any other number is still read as the seconds, as before |
+| `/pvj/fadeout/seconds`, `/pvj/fadein/seconds` | 0.1 to 30 | The same two fades over that many seconds (also exactly 1) |
 | `/pvj/opacity` | 0 to 100 | Percent |
 | `/pvj/size` | 1 to 200 | Percent |
-| `/pvj/position` | -100 to 100 | Horizontal shift |
+| `/pvj/position`, `/pvj/position/x` | -100 to 100 | Horizontal shift (two names for the same thing) |
+| `/pvj/position/y` | -100 to 100 | Vertical shift |
+| `/pvj/flip/h`, `/pvj/flip/v` | 0/1 | Mirror left to right, top to bottom: set (an argument is required; the old `/fliph` and `/flipv` still switch over at each press) |
+| `/pvj/fade` | value (press) | The one fade button: fades out in 2 seconds, and at the next press in. The box decides which from what the screen is doing, so it is right whoever started the fade; it also brings the picture up out of a Blackout. A button's release (0) does nothing |
+| `/pvj/fadein` | none, or a button's 1 and 0 | Fade in from black in 2 seconds; also ends a blackout. Press and release as for `/pvj/fadeout` |
+| `/pvj/clip/next`, `/pvj/clip/prev` | value (press) | The next or the previous clip of the playlist that is playing |
+| `/pvj/transition` | name (string) | How one clip changes to the next: `cut`, `dip`, `crossfade`, `wipe-from-left`, `wipe-from-right`, `wipe-from-top`, `wipe-from-bottom`, `slide-left`, `slide-right`, `slide-up`, `slide-down` (the Mix screen's choice; it is saved) |
+| `/pvj/transition/duration` | 0.1 to 10 | Seconds a transition takes (saved) |
+| `/pvj/overlay` | none, or 0/1 | The overlay picture: no argument switches it over; refused while no picture is chosen |
+| `/pvj/overlay/file` | name (string) | Choose the overlay picture: a PNG in the media folder, checked as the panel checks it |
+| `/pvj/effect` | none, or 0/1 | The effect over the picture: 1 puts the one that was on last back (the first of the list if there was none), 0 takes it off, no argument is the one button (needs the Shaders and Vibes module, as every effect and shader address does) |
+| `/pvj/effect/next`, `/pvj/effect/prev` | value (press) | The neighbour in the list of effects |
+| `/pvj/effect/amount` | 0 to 100 | Percent of the effect in the picture |
+| `/pvj/effect/control/<n>` | 0 to 1 | The n-th input (1 to 8) of the effect that is on, spread over its own range as a controller's knob does: a number over its MIN to MAX, a switch on from 0.5 up, a choice by position |
+| `/pvj/shader` | name (string) | Show that shader, as the Shaders screen's Play does (`silk` or `silk.fs`). The box answers at once and the shader follows when the graphics chip has taken it; a refusal is shown on the Shaders screen |
+| `/pvj/shader/next`, `/pvj/shader/prev` | value (press) | The neighbour in the active set (steps Vibes while it runs) |
+| `/pvj/shader/speed` | 0 to 4 | Times the shader's own pace; 0 freezes it |
+| `/pvj/shader/hue` | -180 to 180 | Degrees the colours are turned |
+| `/pvj/shader/brightness` | 0 to 2 | 1 leaves it alone |
+| `/pvj/shader/control/<n>` | 0 to 1 | The n-th input (1 to 8) of the shader on screen, as for an effect |
+| `/pvj/shader/preset/<n>` | value (press) | The n-th preset (1 to 8) of the shader on screen |
+| `/pvj/vibes/dwell` | 15 to 3600 | Seconds each shader of the rotation stays (saved) |
+| `/pvj/mapping/mode` | none, or a button's 1 and 0 | Mapping mode ([MIDI.md](MIDI.md), "Layers"): exactly as the fade addresses read a button, 1 (the press) enters it and **a 0 is the button's release and does nothing**; no argument switches over. Until 2026-10-10 a 0 left the mode, so a momentary button entered it and left it again as the finger came up. **Every `/pvj/mapping/` address does nothing unless a full-access device switched "Controllers may adjust the mapping" on (the Mapping card), and all but the `mode` addresses only in the mode. Like every address in this table they are behind the three locks of "Who may send" when those are on** |
+| `/pvj/mapping/mode/off`, `/pvj/mapping/mode/on` | value (press) | Leave the mode, enter it, said outright (off twice is off). **This is how the mode is switched off over OSC**: a toggle button in a layout sends 1 to `/pvj/mapping/mode` and, for its other state, 1 to `/pvj/mapping/mode/off` |
+| `/pvj/mapping/mode/toggle` | value (press) | One momentary button for both: each press switches over, each release does nothing |
+| `/pvj/mapping/surface/next`, `/prev`; `/pvj/mapping/corner/next`, `/prev` | value (press) | Choose the surface and the corner, round and round; the box's display marks them |
+| `/pvj/mapping/left`, `/right`, `/up`, `/down` | value (press) | Nudge the chosen corner by the step |
+| `/pvj/mapping/nudge` | two whole numbers | So many steps to the right and so many down (negative: left, up), -127 to 127 each; one message moves a corner 200 pixels at most. Every step is taken at once; a flood of them is drawn at most 25 times a second and saved at most twice a second, with a last picture and a last save when it stops ([MAPPER.md](MAPPER.md)) |
+| `/pvj/mapping/step` | 1, 10 or 50 | Pixels a step |
+| `/pvj/mapping/undo` | value (press) | Take the last run of nudges back: the nudges of one corner that followed each other within a second (a fader's sweep, an arrow tapped quickly) are one step. One step back, no further |
 | `/pvj/speed` | 0.1 to 4 | Playback speed |
 | `/pvj/volume` | 0 to 130 | Percent |
 | `/pvj/seek` | -3600 to 3600 | Seconds, relative |
@@ -82,6 +114,16 @@ Numbers use natural units, so set your controller's fader range to match (for ex
 | `/pvj/group/<n>/on`, `/pvj/group/<n>/off` | value (press) | Switch the projectors of the n-th group on or off; `all` in place of the number is every projector |
 | `/pvj/group/<n>/mute`, `/mute_picture`, `/mute_sound` | 0/1 | Mute (1) or unmute (0) picture and sound, the picture, or the sound of that group (an argument is required) |
 | `/pvj/group/<n>/input` | input code (`31`, as a string or a number) | Switch that group's projectors to that input; the codes are listed in Setup > Projectors |
+
+**Real units, and no centre that sits.** A MIDI knob sends 0 to 127, so the box gives its zoom and position a middle that holds and a curve ([MIDI.md](MIDI.md), "How a level follows a knob"). OSC sends the real value, so `/pvj/size 100` is 100 percent and `/pvj/position/y 0.5` is half a step off centre: nothing is rounded to a centre and nothing waits for pickup. Set the fader's range in the sender.
+
+**Freeze** on the panel is pause: `/pvj/pause`. There is no `/pvj/freeze`.
+
+**Behind the three locks.** The locks of "Who may send" (the list of devices, the paired device, the key in the address) are about who sends, never about which address: a packet passes every lock that is on before anything in it is read, so the addresses added with D75 (the fade button, position, the shader's and the effect's steps and controls, the overlay, the transition) and all of `/pvj/mapping/` are behind them exactly as `/pvj/stop` is. With the key on they are sent as `/k/<key>/pvj/fade` and `/k/<key>/pvj/mapping/nudge`: the prefix is taken off before the address is looked at. No lock lets a sender through for some addresses only; the list of single addresses is a list of devices (their network addresses), not of OSC addresses. Mapping mode still needs the owner's own switch as well.
+
+**One table with MIDI.** The addresses above that are a press or a level (the fade, the clip's and the shader's and the effect's steps, the presets, position, the shader's speed, hue and brightness, the effect's amount) make their calls from the same table as a MIDI controller's actions (`pvj/actions.py`), so what a controller can do and what OSC can do do not drift apart.
+
+**No replies, still.** The box sends nothing back, so a TouchOSC layout cannot show the box's state (which pad plays, whether the screen is black). That is the safety property above and it was kept. Feedback is a later step and the owner's decision (D75): off unless switched on, sent only to addresses on the allow-list, and limited in rate.
 
 **Buttons fire on press only.** TouchOSC sends `1.0` when a button is pressed and `0.0` when it is released; a command marked "press" acts on a non-zero value (or no argument) and ignores the release, so a pad does not fire twice.
 
@@ -98,4 +140,4 @@ Not carried over:
 
 ## Tested
 
-The parser is tested on every type and padding length, on malformed packets, bundle nesting bombs and 4000 random or corrupted packets; the receiver on the allow-list, rate limit, a real UDP socket on loopback (and that it never replies), and through the settings API. The three locks: each alone and all together, the list replacing the private ranges, the paired-device rule against removing a device, forgetting, expiry and two devices behind one address, the key (missing, wrong, right, an old key after a new one, the constant-time comparison, a flood of wrong keys that does not hold the right one up), that nothing of a refused packet is applied or kept, what an operator and a guest are sent, a real UDP socket on loopback with all three on, and in a browser the page at 320 px wide with IPv6 addresses. Not tested with a real TouchOSC layout or hardware controller, and never on a box.
+The parser is tested on every type and padding length, on malformed packets, bundle nesting bombs and 4000 random or corrupted packets; the receiver on the allow-list, rate limit, a real UDP socket on loopback (and that it never replies), and through the settings API. The three locks: each alone and all together, the list replacing the private ranges, the paired-device rule against removing a device, forgetting, expiry and two devices behind one address, the key (missing, wrong, right, an old key after a new one, the constant-time comparison, a flood of wrong keys that does not hold the right one up), that nothing of a refused packet is applied or kept, what an operator and a guest are sent, a real UDP socket on loopback with all three on, and in a browser the page at 320 px wide with IPv6 addresses. The addresses added with D75 (2026-10-10) are tested through the parser, through the API with a fake player and a real shader engine with a fake graphics chip, and over a real UDP socket on loopback (`tests/test_osc_reach.py`); each of the three locks, and all three together, against one of those addresses and against mapping mode's, with the key's prefix in front (`BehindTheLocksTest` there). Not tested with a real TouchOSC layout or hardware controller, and never on a box.
