@@ -1592,7 +1592,7 @@ class DetailTest(Base):
         view = self.call("POST", "/api/devices/invite", {"name": "guest", "role": "view"}, token=full)[1]["token"]
         live = self.call("POST", "/api/devices/invite", {"name": "presenter", "role": "live"}, token=full)[1]["token"]
         self.assertEqual(self.call("POST", "/api/effects/config", {"detail": 540})[0], 401)
-        for token in (view, live):
+        for token in (view,):                       # the Operator's since D80
             self.assertEqual(self.call("POST", "/api/effects/config", {"detail": 540}, token=token)[0], 403)
         self.assertEqual(self.call("POST", "/api/effects/config", {"detail": 540}, token=full, csrf=False)[0], 403)
         self.assertEqual(self.call("GET", "/api/effects", token=view)[1]["detail"]["value"], "auto")         # everyone may see it
@@ -3151,6 +3151,7 @@ class RolesTest(Base):
         posts = (("/api/effects", {"id": "fx-wash.fs"}), ("/api/effects/values", {"controls": {"amount": 0.5}}), ("/api/effects/step", {"dir": 1}),
                  ("/api/effects/preset", {"index": 1}), ("/api/effects/presets", {"action": "save", "name": "x"}), ("/api/effects/library", upload),
                  ("/api/effects/config", {"detail": 540}))
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         for path, body in posts:
             self.assertEqual(self.call("POST", path, body)[0], 401, path)
             self.assertEqual(self.call("POST", path, body, token=view)[0], 403, path)
@@ -3162,8 +3163,8 @@ class RolesTest(Base):
         self.assertEqual(self.call("POST", "/api/effects/step", {"dir": 1}, token=live)[0], 200)
         self.pump()                                                                    # the worker carries the step out (a preset asked for while
         #                                                                                one waits is meant for the effect that is coming)
-        self.assertEqual(self.call("POST", "/api/effects/presets", {"action": "save", "name": "x"}, token=live)[0], 403)
-        self.assertEqual(self.call("POST", "/api/effects/library", upload, token=live)[0], 403)
+        self.assertEqual(self.call("POST", "/api/effects/presets", {"action": "save", "name": "x"}, token=view)[0], 403)    # the Operator's since D80
+        self.assertEqual(self.call("POST", "/api/effects/library", upload, token=view)[0], 403)
         self.assertEqual(self.call("POST", "/api/effects/presets", {"action": "save", "name": "x"}, token=full)[0], 200)
         self.assertEqual(self.call("POST", "/api/effects/preset", {"name": "x"}, token=live)[1]["preset"], "x")
         st, body, _ = self.call("POST", "/api/effects", {"off": True}, token=live)

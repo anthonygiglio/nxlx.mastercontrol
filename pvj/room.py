@@ -190,8 +190,14 @@ def validate(value):
         clean = [_row(r) for r in rows]
         if len({r["group"] for r in clean}) != len(clean):
             raise RoomError("a scene names each group once")
-        out["scenes"].append({"id": _id(s.get("id"), ids), "name": _name(s.get("name"), "scene", names),
-                              "groups": clean, "box": validate_box(s.get("box"))})
+        scene = {"id": _id(s.get("id"), ids), "name": _name(s.get("name"), "scene", names),
+                 "groups": clean, "box": validate_box(s.get("box"))}
+        if "no_guests" in s:                # "Not for guests" (D80). Kept only when set, so every scene made before it
+            if not isinstance(s["no_guests"], bool):        # is as it was, and an older release reads the scene as before
+                raise RoomError("no_guests must be true or false")
+            if s["no_guests"]:
+                scene["no_guests"] = True
+        out["scenes"].append(scene)
     return out
 
 
@@ -759,6 +765,9 @@ class Room:
         """Everything the Room screen shows; nothing is asked of a projector here. No address, no password."""
         enabled = self.enabled()
         cfg = self.config()
+        from . import policy
+        if policy.is_guest(device):         # a scene marked "Not for guests" is not offered to one (and refused: policy._scene)
+            cfg["scenes"] = [s for s in cfg["scenes"] if s.get("no_guests") is not True]
         out = {"enabled": enabled, "scenes": cfg["scenes"], "groups": [], "all": None, "job": None,
                "limits": {"groups": MAX_GROUPS, "scenes": MAX_SCENES, "name": NAME_MAX}, "box": list(BOX)}
         entries = {p["id"]: p for p in self._projectors()}

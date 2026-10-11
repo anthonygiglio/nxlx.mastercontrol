@@ -72,7 +72,7 @@ class AuthTest(unittest.TestCase):
         code = self.digits()
         self.assertTrue(re.fullmatch(r"[0-9]{6}", code))
         _, dev = self.a.pair(code, "phone", "c1")
-        self.assertEqual(dev["role"], "live")
+        self.assertEqual(dev["role"], "view")                                  # a guest since D80
         self.assertEqual(self.settings.data["devices"][-1]["via"], "controller")
         with self.assertRaises(AuthError):                                    # once only
             self.a.pair(code, "second", "c2")
@@ -400,12 +400,12 @@ class BoxTest(BoxBase):
         self.hold()
         code = self.digits()
         text = self.text()
-        self.assertIn("One-time presenter code  " + code, text)
+        self.assertIn("One-time guest code  " + code, text)
         self.assertIn("http://box.local/", text)
         self.assertIn("Works once", text)
         self.assertTrue(self.screen.controller_up())
         st, out, _ = self.call("POST", "/api/pair", {"pin": code, "name": "new phone"})
-        self.assertEqual((st, out["device"]["role"]), (200, "live"))
+        self.assertEqual((st, out["device"]["role"]), (200, "view"))
         self.assertFalse(self.screen.controller_up())
         self.assertEqual(self.player.ipc.shown[-1], ("show-text", "", 1))     # off the display at use, not at the next tick
         self.assertEqual(self.call("POST", "/api/pair", {"pin": code, "name": "again"})[0], 403)
@@ -641,7 +641,7 @@ class BoxTest(BoxBase):
         self.screen.show(["view"], 600)
         self.assertIn("Guest, watch only, code", self.text())
         self.hold()
-        self.assertIn("One-time presenter code", self.text())
+        self.assertIn("One-time guest code", self.text())
         self.assertNotIn("Guest, watch only, code", self.text())
         self.tap()
         self.assertIn("Guest, watch only, code", self.text())                 # what the owner put up is back, for the time it was given

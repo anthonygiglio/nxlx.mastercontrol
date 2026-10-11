@@ -419,8 +419,9 @@ class MidiApiTest(ServerBase):
     def test_roles(self):
         self.post("/api/modules/control-midi", {"enabled": True})
         live = self.post("/api/devices/invite", {"name": "g", "role": "live"})[1]["token"]
+        view = self.post("/api/devices/invite", {"name": "v", "role": "view"})[1]["token"]
         for path, body in (("/api/midi", {"enabled": False}), ("/api/midi/learn", {"start": True}), ("/api/midi/map", {"clear": True})):
-            self.assertEqual(self.post(path, body, token=live)[0], 403, path)
+            self.assertEqual(self.post(path, body, token=view)[0], 403, path)     # the Operator's since D80 (tests/test_roles.py), never a guest's
         self.assertEqual(self.call("GET", "/api/midi", token=live)[0], 200)               # a presenter may look (the drawn layout); see test_controllers.py
         self.assertEqual(self.call("GET", "/api/midi")[0], 401)
 

@@ -102,6 +102,21 @@ class RecoveryCodesTest(ServerBase):
         self.assertEqual(body["codes"]["left"], 7)
         self.assertEqual((body["log"][-1]["kind"], body["log"][-1]["name"], body["log"][-1]["left"]), ("code", "Anna's phone", 7))
 
+    def test_a_code_paired_owner_is_a_full_owner_under_d80_and_a_guest_or_operator_device_may_redeem(self):
+        from pvj import policy
+        codes = self.make()
+        st, body, _ = self.redeem(codes[0], "from nothing")                       # an unpaired device
+        self.assertEqual(st, 200, body)
+        dev = [d for d in self.settings.data["devices"] if d["id"] == body["device"]["id"]][0]
+        self.assertEqual((dev["role"], dev["via"], auth_mod.Auth.role_of(dev)), ("full", "recovery", "full"))
+        self.assertFalse(policy.is_controller(dev) or policy.held_to_legacy(dev))
+        self.assertTrue(policy.is_operator(dev))
+        for token, who in ((self.view, "a guest's phone"), (self.live, "an operator's phone")):
+            st, body, _ = self.call("POST", "/api/pair", {"pin": codes[1 if token == self.view else 2], "name": who}, token=token)
+            self.assertEqual(st, 200, (who, body))                                # it becomes an Owner: intended
+            self.assertEqual((body["device"]["role"], body["device"]["via"]), ("full", "recovery"))
+            self.assertEqual(self.call("GET", "/api/recovery", token=body["token"])[0], 200)
+
     def test_typed_from_paper_lower_case_spaces_and_dashes(self):
         codes = self.make()
         bare = codes[0].replace("-", "")
@@ -358,6 +373,10 @@ class StickTest(ServerBase):
         self.assertNotIn(pin, text)
         devices = self.call("GET", "/api/devices", token=body["token"])[1]["devices"]
         self.assertEqual([d.get("via") for d in devices if d["name"] == "found phone"], ["stick"])
+        from pvj import policy
+        dev = [d for d in self.settings.data["devices"] if d["id"] == body["device"]["id"]][0]
+        self.assertEqual(auth_mod.Auth.role_of(dev), "full")                     # a stick-paired device is a full Owner under D80
+        self.assertFalse(policy.is_controller(dev) or policy.held_to_legacy(dev))
         self.assertTrue(any("used by device" in x and "found phone" in x and "stick" in x for x in self.lines), self.lines[-3:])
         self.clock.t += recovery_mod.STICK_NOTICE_SECONDS + 1
         self.screen.tick()

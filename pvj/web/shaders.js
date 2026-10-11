@@ -360,6 +360,7 @@
   function liveRow(c) {
     if (!c.moduleOn('shaders')) return null;
     var pl = player(c), on = typeof pl.shader === 'string', can = c.can('live');
+    var guest = !can && !!c.guestOpen && c.guestOpen() && !!c.guestSend;      // D80: starting and stopping Vibes is a guest's while guest controls are open
     function step(dir) {
       return function () { c.act('POST', '/api/shaders/step', { dir: dir }, function () { c.say(''); L.at = 0; setTimeout(c.poll, 900); }); };
     }
@@ -370,8 +371,9 @@
     });
     L.shader = null; L.at = 0;
     return c.h('div', { class: 'vibesrow', id: 'vibesrow' },
-      c.h('button', { class: 'btn big vibesbig' + (pl.vibes ? ' on' : ''), id: 'vibes', 'aria-pressed': pl.vibes ? 'true' : 'false', disabled: !can,
-        onclick: function () {
+      c.h('button', { class: 'btn big vibesbig' + (pl.vibes ? ' on' : ''), id: 'vibes', 'aria-pressed': pl.vibes ? 'true' : 'false', disabled: !can && !guest,
+        onclick: function (e) {
+          if (guest) return c.guestSend('/api/vibes', vibesBody(L.data, !player(c).vibes), '', e.currentTarget).then(function () { setTimeout(c.poll, 1200); });
           c.act('POST', '/api/vibes', vibesBody(L.data, !player(c).vibes), function () { c.say(''); setTimeout(c.poll, 1200); });
         } },
         c.h('span', { id: 'vibeswords', text: words(pl) }), c.h('span', { class: 'vibessub', id: 'vibessub', text: sub(pl) })),
@@ -714,7 +716,7 @@
       card.appendChild(h('div', { class: 'msg inmsg', id: 'shadernowmsg', role: 'status' }));
       if (!n) {
         card.appendChild(h('div', { class: 'hint', id: 'norotation', text: (many ? 'The set ' + chosen.name + ' has no shader in it. ' : 'Nothing is in Vibes. ') +
-          (full ? 'Switch at least one shader in, in the list.' : 'Someone with full access chooses which shaders are in it.') }));
+          (full ? 'Switch at least one shader in, in the list.' : 'An operator or the owner chooses which shaders are in it.') }));
       }
       // Previous and Next go through the Vibes set, with Vibes running or not; their controller buttons sit under them
       card.appendChild(h('div', { class: 'row wrap midirow' },
@@ -804,7 +806,7 @@
             'aria-label': 'Preset ' + name + (on ? ' (in use)' : was ? ' (changed since)' : ''), onclick: function () { applyPreset(name); } },
             n < 8 ? h('span', { class: 'slot', text: String(n + 1) }) : null, h('span', { text: name }));
         })));
-      } else card.appendChild(h('div', { class: 'hint', id: 'nopresets', text: full ? 'None yet. Set the controls as you like them, then save.' : 'None yet. Someone with full access saves them.' }));
+      } else card.appendChild(h('div', { class: 'hint', id: 'nopresets', text: full ? 'None yet. Set the controls as you like them, then save.' : 'None yet. An operator or the owner saves them.' }));
       card.appendChild(h('div', { class: 'msg inmsg', id: 'presetmsg', role: 'status' }));
       if (!full) return card;
       var name = h('input', { class: 'text-input', id: 'presetname', type: 'text', maxlength: String(d.limits.name || 40), placeholder: 'A name, for example Bright', 'aria-label': 'Name of the new preset', autocomplete: 'off' });

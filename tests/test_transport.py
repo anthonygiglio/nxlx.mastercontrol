@@ -89,6 +89,7 @@ class TransportApiTest(ServerBase):
 
     def test_roles(self):
         view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         for path, body in (("/api/fadein", {"seconds": 1}), ("/api/testpattern", {"on": True}), ("/api/control", {"action": "next"}),
                            ("/api/control", {"action": "seek_to", "value": 1})):
             self.assertEqual(self.post(path, body, token=view)[0], 403, path)

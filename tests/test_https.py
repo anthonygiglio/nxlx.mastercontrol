@@ -663,7 +663,36 @@ class HttpsTest(HttpsBase):
         self.assertTrue(body["load_error"])
         self.assertEqual(self.call("GET", "/api/status", token=self.full)[0], 200)
 
-    def test_support_logins_cannot_touch_it(self):
+    def test_the_routes_are_the_owners_and_pass_the_same_gate_as_every_other(self):
+        """D80 met D79 in a merge: each route here has its row in policy.OUTSIDE and asks Api.gate, so an Operator
+        (who gained much of what was the Owner's) and a Guest with guest controls open gain nothing here."""
+        from pvj import policy
+        operator = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=self.full)[1]["token"]
+        routes = sorted(k for k in policy.OUTSIDE if k[1].startswith("/api/https"))
+        self.assertEqual(len(routes), 9)
+        for method, path in routes:
+            body = {} if method == "POST" else None
+            self.assertEqual(self.call(method, path, body)[0], 401, path)
+            self.assertEqual(self.call(method, path, body, token=self.view)[0], 403, path)
+            self.assertEqual(self.call(method, path, body, token=operator)[0], 403, path)
+            st, out = self.call(method, path, body, token=self.full)[:2]
+            if path in ("/api/https/root", "/api/https/owner-only"):        # the Owner's too, over the secure connection only
+                self.assertIn(st, (400, 403), path)
+                self.assertNotIn("access needed", out.get("error", ""), path)
+            else:
+                self.assertNotIn(st, (401, 403, 500), path)
+        # a path that is not one of them, and a route asked the wrong way: an Owner is told so, nobody else learns it
+        self.assertEqual(self.call("GET", "/api/https/nothing", token=self.full)[0], 404)
+        self.assertEqual(self.call("POST", "/api/https/nothing", {}, token=self.full)[0], 404)
+        self.assertEqual(self.call("GET", "/api/https/undo", token=self.full)[0], 405)
+        for token in (self.view, operator):
+            self.assertEqual(self.call("GET", "/api/https/nothing", token=token)[0], 403)
+            self.assertEqual(self.call("POST", "/api/https/nothing", {}, token=token)[0], 403)
+        self.assertEqual(self.call("GET", "/api/https/nothing")[0], 401)
+        # the probe asks nobody who they are and says one thing
+        self.assertEqual(sorted(policy.NO_GATE), [("GET", "/api/https/probe")])
+        self.assertEqual(tuple(self.call("GET", "/api/https/probe")[:2]), (200, {"https": False}))
+
         from pvj import support as support_mod
         self.assertTrue(any(p == "/api/https" for p in support_mod.REMOTE_DENY_PREFIX))
 

@@ -61,7 +61,7 @@ MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved map
 MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
 # never exported, never imported. "controller_code" (D61) is a way to hand out access, so a file cannot switch it on
-NEVER = ("auth", "devices", "support", "support_log", "controller_code")
+NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls")
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
