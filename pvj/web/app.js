@@ -445,7 +445,7 @@
     return { h: h, api: api, act: act, can: ctxCan, owner: function () { return can('full'); }, say: say, poll: poll, moduleOn: moduleOn, state: S, confirmRow: confirmRow,
       rowShown: function (id) { return sysRows().some(function (r) { return r.id === id && rowShown(r); }); },
       // a feature's one switch, used where its controls are shown on another page (MIDI and DMX on the Shaders page)
-      switchFeature: !can('full') ? null : function (id, on) {
+      switchFeature: !can('full') ? function () { return Promise.resolve({ ok: false, data: { error: 'Switching a feature on or off is the owner\'s.' } }); } : function (id, on) {
         var row = sysRows().filter(function (r) { return r.id === id; })[0];
         S.sysFresh = false;
         return runSwitch([moduleStep(row.module)].concat(row.steps || []), on, row.offInner, null);
@@ -1142,7 +1142,7 @@
         blurb: 'Several boxes play together: one server leads and the clients follow its clip, position, pause and blackout. Each box can also show one tile of a video wall.',
         confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other boxes stop following.' : null); }); },
         body: function () { return [syncCard()]; } },
-      { id: 'midi', group: 'show', name: 'MIDI controller', role: 'full', module: 'control-midi', url: '/api/midi', urlRole: 'full',
+      { id: 'midi', group: 'show', name: 'MIDI controller', role: 'op', module: 'control-midi', url: '/api/midi', urlRole: 'op',
         blurb: 'Play pads, fade and mix from a USB pad controller, keyboard or fader box. A controller the box knows works as soon as it is plugged in. The box only listens; it sends nothing back.',
         steps: [flagStep('midi', '/api/midi', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
         body: function () { return [midiControllers(), midiCard()]; } },
@@ -1973,6 +1973,11 @@
   var midiDrawCard = null;       // redraws the mappings card after a change made on a controller's card
   // One card per connected controller. A recognised one gets its layout drawn from its profile: every control shows
   // what it does now, lights up while it is moved, and a tap opens its chooser. Everything is textContent.
+  // MIDI is the Operator's since D80, except a control that shows an access code: the box refuses an Operator who
+  // sets, changes or removes one, so the page shows those to him and offers nothing for them.
+  function midiOwners(name) { return name === 'code_join' || name === 'code_owner'; }
+  function midiMay(action) { return can('full') || (canOp() && !(action && midiOwners(action.action))); }
+  function midiChoices() { return can('full') ? MIDI_ACTIONS : MIDI_ACTIONS.filter(function (a) { return !midiOwners(a[0]); }); }
   function midiControllers() {
     var wrap = h('div', { class: 'ctlwrap', id: 'midictls', hidden: true });
     var sig = null;
@@ -2012,9 +2017,12 @@
         (x.guard ? ' Press it twice within a second; one press does nothing.' : '') +
         (x.pickup ? ' It picks up: nothing changes until it reaches the value the box has, so nothing jumps.' : '') +
         (x.waiting ? ' It has not reached that value yet.' : '') }));
-      if (!can('full')) return box;
+      if (!midiMay(x.action) || !midiMay(x.standard)) {
+        if (canOp()) box.appendChild(h('p', { class: 'hint', id: 'ctlowners', text: 'This control shows an access code. Only the owner changes it.' }));
+        return box;
+      }
       var level = x.kind === 'fader' || x.kind === 'knob';
-      var choices = [['none', 'Nothing (switch this control off)']].concat(MIDI_ACTIONS.filter(function (a) {
+      var choices = [['none', 'Nothing (switch this control off)']].concat(midiChoices().filter(function (a) {
         return a[0].indexOf('shader_control_') === 0 || a[0].indexOf('effect_control_') === 0 || (MIDI_LEVELS.indexOf(a[0]) >= 0) === level;
       }));
       var now = x.action ? x.action.action : (x.standard ? x.standard.action : choices[1][0]);
@@ -2083,7 +2091,7 @@
         // a controller that has sent nothing may be in another mode: say so before anyone thinks the layout is wrong
         card.appendChild(h('p', { class: 'hint ctlquiet', hidden: c.messages > 0, text: 'Nothing received yet. Move a control.' +
           (c.profile.id === 'korg-nanokontrol2' ? ' If this is a nanoKONTROL2, hold SET MARKER and CYCLE while plugging it in (it starts in the mode it was last used in).' : '') }));
-        if (can('full')) {
+        if (can('full') || (canOp() && c.controls.every(function (x) { return midiMay(x.standard) && midiMay(x.action); }))) {
           var sw = h('button', { class: 'switch ctlstd', role: 'switch', 'aria-checked': c.standard ? 'true' : 'false', 'aria-label': 'Standard layout of ' + c.profile.name,
             onclick: function () { act('POST', '/api/midi', { controller: c.name, standard: !c.standard }, changed); } });
           card.appendChild(h('div', { class: 'row' }, h('span', { class: 'grow', text: 'Standard layout' }), h('span', { class: 'switchlabel', text: c.standard ? 'On' : 'Off' }), sw));
@@ -2093,7 +2101,7 @@
         if (c.lights) {
           var L = c.lights;
           card.appendChild(h('p', { class: 'hint ctllightline', role: 'status', text: L.line + (L.testing ? ' Testing: each light comes on in turn.' : '') }));
-          if (can('full')) {
+          if (canOp()) {
             var lsw = h('button', { class: 'switch ctllights', role: 'switch', 'aria-checked': L.on ? 'true' : 'false', 'aria-label': 'Lights of ' + c.profile.name,
               onclick: function () { act('POST', '/api/midi', { controller: c.name, lights: !L.on }, changed); } });
             card.appendChild(h('div', { class: 'row' }, h('span', { class: 'grow', text: 'Lights' }), h('span', { class: 'switchlabel', text: L.on ? 'On' : 'Off' }), lsw));
@@ -2129,12 +2137,12 @@
         });
         card.appendChild(h('div', { class: 'ctlscroll' }, grid));
         if (open) card.appendChild(detail(c, open));
-        card.appendChild(h('p', { class: 'hint', text: 'Move a control and it lights up here. Tap one to see' + (can('full') ? ' or change' : '') + ' what it does.' +
+        card.appendChild(h('p', { class: 'hint', text: 'Move a control and it lights up here. Tap one to see' + (canOp() ? ' or change' : '') + ' what it does.' +
           (c.lights ? ' A small ring marks a control that has a light; it is filled while the box has that light on.' : '') +
           (c.controls.some(function (x) { return x.guard; }) ? ' 2x: press twice within a second.' : '') +
           (c.controls.some(function (x) { return x.action && x.action.action === 'bank_pad'; }) ? ' The pad buttons play bank ' + 'ABC'[d.bank || 0] + ' now.' : '') }));
         card.appendChild(h('p', { class: 'hint ctlnote', text: c.profile.note || c.profile.description }));
-        if (mine && can('full')) card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small ctlreset', text: 'Back to the standard for the whole controller', onclick: function (ev) {
+        if (mine && canOp()) card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small ctlreset', text: 'Back to the standard for the whole controller', onclick: function (ev) {
           confirmRow('Put the ' + plural(mine, 'control') + ' you changed on ' + c.profile.name + ' back to the standard?', 'Back to the standard', 'Keep mine', function () {
             act('POST', '/api/midi/map', { reset: { controller: c.name } }, function (data) { say(c.profile.name + ' is back to the standard'); changed(data); });
           }, ev.currentTarget);
@@ -2202,8 +2210,8 @@
       var maplist = h('div', { class: 'list sp', id: 'midimaplist' });
       if (d.map.length) body.appendChild(maplist);
       d.map.forEach(function (e) {
-        maplist.appendChild(listRow({ cls: 'midi-entry', name: describe(e),
-          primary: h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + describe(e), onclick: function (ev) {
+        maplist.appendChild(listRow({ cls: 'midi-entry', name: describe(e), note: midiMay(e) ? '' : 'The owner\'s: it shows an access code.',
+          primary: !midiMay(e) ? null : h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + describe(e), onclick: function (ev) {
             confirmRow('Remove this mapping? The control goes back to what it did before.', 'Remove', 'Keep it', function () {
               act('POST', '/api/midi/map', { remove: e.id }, function (data) { draw(data); say('Mapping removed.'); });
             }, ev.currentTarget);
@@ -2216,7 +2224,7 @@
       } })));
       if (!d.enabled) return;
       var action = h('select', { class: 'text-input', id: 'midiaction' },
-        MIDI_ACTIONS.map(function (a) { return h('option', { value: a[0], text: a[1], selected: a[0] === midiForm.action }); }));
+        midiChoices().map(function (a) { return h('option', { value: a[0], text: a[1], selected: a[0] === midiForm.action }); }));
       var bank = h('select', { class: 'text-input', id: 'midibank' },
         ['A', 'B', 'C'].map(function (n, i) { return h('option', { value: i, text: 'Bank ' + n, selected: i === midiForm.bank }); }));
       var index = h('select', { class: 'text-input', id: 'midiindex' },
@@ -3975,7 +3983,7 @@
   function controllerCodeCard() {
     var card = h('div', { class: 'card', id: 'ctlcodecard' }, h('h2', { text: 'A code from a controller' }));
     var body = h('div', { class: 'list', id: 'ctlcodebody' });
-    var KIND = { join: 'guest', owner: 'owner' };
+    var KIND = { join: 'join', owner: 'owner' };       // the join kind pairs a guest or an operator: the owner's choice below
     var HOW = { used: 'used', expired: 'ran out unused', 'pressed again': 'hidden at the controller', cancelled: 'ended from the panel',
       replaced: 'replaced by a newer one', 'switched off': 'ended when the switch went off', 'not shown': 'the display could not show it' };
     function send(change, said, sw) {
@@ -4002,7 +4010,21 @@
       body.appendChild(toggle('ctlcode-on', 'Guest codes from a controller', c.enabled,
         flip('enabled', 'Let a controller show a guest code? Anyone who can hold a button on a controller plugged into the box can then pair a device as a guest.',
           'Switch it on', 'Codes from a controller are on.', 'Codes from a controller are off.'),
-        'Pairs one device as ' + roleName('view') + '. It goes by itself after a week unused. The MIDI action is "Show a one-time guest code".'));
+        'Pairs one device as ' + roleName(c.join === 'live' ? 'live' : 'view') + '. It goes by itself after a week unused. The MIDI action is "Show a one-time guest code".'));
+      if (c.enabled) {
+        // what the join kind pairs (D80): a Guest unless the owner chooses an Operator here; never changed by the box itself
+        var pairs = h('select', { class: 'text-input', id: 'ctlcode-join' },
+          [['view', 'Guest'], ['live', 'Operator']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: c.join === o[0] }); }));
+        pairs.addEventListener('change', function () {
+          var to = pairs.value;
+          if (to !== 'live') return send({ join: 'view' }, 'A controller\'s join code pairs a guest.');
+          confirmRow('Let a controller\'s join code pair an operator? Anyone who can hold a button on a controller plugged into the box can then become an operator and run the room.',
+            'Pair operators', 'Keep guests', function () { send({ join: 'live' }, 'A controller\'s join code pairs an operator.'); }, pairs, function () { pairs.value = 'view'; });
+        });
+        body.appendChild(labelled('A controller\'s join code pairs', pairs, c.join === 'live' ?
+          'Anyone at the controller can become an operator now. Phones paired while this said Guest stay guests.' :
+          'A guest watches, and plays around while guest controls are open. Choose Operator when staff must be able to get in at the box with no owner there, for example while guest controls are locked.'));
+      }
       if (c.enabled) body.appendChild(toggle('ctlcode-owner', 'Owner codes too', c.owner,
         flip('owner', 'Let a controller show an owner code? Anyone who can hold a button on a controller plugged into the box can then pair a device with everything allowed.',
           'Allow owner codes', 'Owner codes from a controller are allowed.', 'Owner codes from a controller are off.'),
@@ -4148,7 +4170,8 @@
             if (card.parentNode) card.parentNode.replaceChild(guestLockCard(), card);
           });
         } })),
-      h('div', { class: 'hint', text: 'One lock for every guest on every phone. It holds until someone opens it again, also after a restart.' }));
+      h('div', { class: 'hint', text: 'One lock for every guest on every phone. It holds until someone opens it again, also after a restart.' }),
+      locked && can('full') ? h('div', { class: 'hint', id: 'guestlockjoin', text: 'While this is locked, a code shown from a MIDI controller still pairs a guest, who can only watch. If staff must get in at the box, set "A controller\'s join code pairs" to Operator under System > People and codes > A code from a controller.' }) : null);
     return card;
   }
   // An Operator's part of the paired devices (D80): the guests, to remove, and a guest link. The box gives him the
@@ -4156,14 +4179,15 @@
   function guestDevicesCard() {
     var list = h('div', { class: 'list sp', id: 'guestlist' });
     var link = h('input', { class: 'text-input mono', id: 'guestlinkout', readonly: true, 'aria-label': 'Guest link', hidden: true });
-    var card = h('div', { class: 'card', id: 'guestdevices' }, h('h2', { text: 'Guests' }), list);
+    var card = h('div', { class: 'card', id: 'guestdevices' }, h('h2', { text: 'Guests and operators' }), list);
     function draw() {
       list.textContent = '';
-      var guests = S.devices.filter(function (d) { return d.role === 'view'; });
+      var guests = S.devices.filter(function (d) { return d.role !== 'full'; });
       if (!guests.length) list.appendChild(h('div', { class: 'hint', id: 'noguests', text: 'No guest is paired.' }));
       guests.forEach(function (d) {
-        list.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role),
-          primary: h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function (e) {
+        var me = !!S.device && d.id === S.device.id;         // an operator removes guests and other operators, never himself
+        list.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role) + (me ? ' · this device' : ''),
+          primary: me ? null : h('button', { class: 'btn plain', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function (e) {
             confirmRow('Remove ' + d.name + '? It needs a code or a link to get back in.', 'Remove', 'Keep it', function () {
               act('POST', '/api/devices/revoke', { id: d.id }, function () {
                 S.devices = S.devices.filter(function (x) { return x.id !== d.id; });
@@ -4181,7 +4205,7 @@
         load();
       });
     } })));
-    card.appendChild(h('div', { class: 'hint', text: 'A guest link does not expire: it works until you remove its device here. The devices of operators and owners are the owner\'s to remove.' }));
+    card.appendChild(h('div', { class: 'hint', text: 'A guest link does not expire: it works until you remove its device here. You can remove guests and other operators; an owner\'s device is the owner\'s to remove, and you leave with Log out on About and power.' }));
     card.appendChild(link);
     draw();
     setTimeout(load, 0);

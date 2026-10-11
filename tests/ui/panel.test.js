@@ -1603,6 +1603,8 @@ function startServer() {
     await page.click('#confirmyes');
     await page.waitForSelector('#ctlcode-owner');
     assert.deepStrictEqual(await get('/api/access').then((a) => [a.controller.enabled, a.controller.owner, a.controller.status.active]), [true, false, false], 'on, without the full access kind');
+    await page.waitForSelector('#ctlcode-join');
+    assert.strictEqual(await page.inputValue('#ctlcode-join'), 'view', 'a controller\'s join code pairs a guest unless the owner chooses an operator');
     assert(/No code has been shown from a controller/.test(await page.textContent('#ctlcodelast')), 'the card says nothing was shown yet');
     await page.click('#ctlcode-owner');
     await page.waitForSelector('#ctlcodecard #confirmrow');
@@ -2481,8 +2483,7 @@ function startServer() {
     // An Operator (D80; "presenter" in the names below is the same live-role device): the settings of the page are his,
     // the module's switch and the links to MIDI and DMX stay the Owner's
     assert((await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id))).includes('shadercard'), 'an operator gets the shader list');
-    assert.strictEqual(await presenter.locator('#sysswitch, #shadermidi, #shaderdmx').count(), 0, 'no module switch and no MIDI or DMX for an operator');
-    assert.strictEqual(await presenter.locator('#shaderpage [data-midi]').count(), 0, 'no MIDI teaching for an operator');
+    assert.strictEqual(await presenter.locator('#sysswitch, #shaderdmx').count(), 0, 'no module switch and no DMX for an operator (MIDI teaching is his since the owner\'s answer of 2026-10-10)');
     assert.strictEqual(await presenter.locator('#shadercard button[aria-label^="Play "]').count(), (await get('/api/shaders')).shaders.length, 'a presenter can play each shader');
     await presenter.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play Tide"]');
     await presenter.waitForFunction(() => (document.getElementById('shaderplaying') || {}).textContent === 'Tide');
@@ -2522,7 +2523,7 @@ function startServer() {
       for (const name of ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'At power-up', 'Streams', 'Boxes in step', 'About and power']) {
         assert(rows.includes(name), 'an operator sees ' + name + ': ' + rows.join(', '));
       }
-      for (const name of ['Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'MIDI controller', 'DMX lighting desk', 'OSC']) {
+      for (const name of ['Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'DMX lighting desk', 'OSC']) {
         assert(!rows.includes(name), 'an operator does not see ' + name + ': ' + rows.join(', '));
       }
     }

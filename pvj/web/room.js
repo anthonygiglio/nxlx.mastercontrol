@@ -19,7 +19,7 @@
   var draft = { group: blankGroup(), scene: blankScene() };     // what is being typed; survives redraws
 
   function blankGroup() { return { id: '', name: '', projectors: [] }; }
-  function blankScene() { return { id: '', name: '', rows: {}, box: { action: 'leave', file: '', loop: true, bank: 0, index: 0, stream: '' } }; }
+  function blankScene() { return { id: '', name: '', noGuests: false, rows: {}, box: { action: 'leave', file: '', loop: true, bank: 0, index: 0, stream: '' } }; }
   function row(gid) {
     if (!draft.scene.rows[gid]) draft.scene.rows[gid] = { power: 'leave', input: '', picture: 'leave', sound: 'leave' };
     return draft.scene.rows[gid];
@@ -349,7 +349,7 @@
       setup.appendChild(h('div', { class: 'field', text: 'Scenes' }));
       var slist = h('div', { class: 'list', id: 'roomslist' });
       d.scenes.forEach(function (s) {
-        slist.appendChild(h('div', { class: 'item room-sitem' }, h('span', {}, s.name, h('br'), h('span', { class: 'addr', text: describe(s, d) })),
+        slist.appendChild(h('div', { class: 'item room-sitem' }, h('span', {}, s.name, h('br'), h('span', { class: 'addr', text: describe(s, d) + (s.no_guests === true ? ' · Not for guests' : '') })),
           h('div', { class: 'row' },
             c.moduleOn('control-midi') && c.owner() ? h('button', { class: 'btn small', text: 'MIDI', 'aria-label': 'Learn a MIDI control for ' + s.name, onclick: function () { learn(s); } }) : null,
             h('button', { class: 'btn small', text: 'Edit', 'aria-label': 'Edit scene ' + s.name, onclick: function () {
@@ -357,7 +357,7 @@
               var rows = {};
               s.groups.forEach(function (r) { rows[r.group] = { power: r.power, input: r.input, picture: r.picture, sound: r.sound }; });
               var b = s.box;
-              draft.scene = { id: s.id, name: s.name, rows: rows, box: { action: b.action, file: b.file || '', loop: b.loop !== false,
+              draft.scene = { id: s.id, name: s.name, noGuests: s.no_guests === true, rows: rows, box: { action: b.action, file: b.file || '', loop: b.loop !== false,
                 bank: b.pad ? b.pad[0] : 0, index: b.pad ? b.pad[1] : 0, stream: b.stream || '' } };
               drawSetup(last, true);
             } }),
@@ -408,11 +408,17 @@
       }, 'roomsbox');
       params();
       setup.appendChild(kind); setup.appendChild(file); setup.appendChild(loop); setup.appendChild(bank); setup.appendChild(index); setup.appendChild(stream);
+      // "Not for guests" (D80): guests may apply every scene while guest controls are open, except one marked here
+      var noGuests = h('input', { type: 'checkbox', id: 'roomsnoguests', checked: draft.scene.noGuests });
+      noGuests.addEventListener('change', function () { draft.scene.noGuests = noGuests.checked; });
+      setup.appendChild(h('label', { class: 'row', id: 'roomsnoguestsrow' }, noGuests, h('span', { text: 'Not for guests' })));
+      setup.appendChild(h('div', { class: 'hint', text: 'While guest controls are open a guest can apply every scene, with what it switches and mutes. Tick this for a scene only staff should start. A scene that plays a stream is never a guest\'s.' }));
       setup.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn on pri small', id: 'roomssave', text: draft.scene.id ? 'Save scene' : 'Add scene', onclick: function () {
           keep();
           var out = { name: draft.scene.name, groups: [], box: { action: b.action } };
           if (draft.scene.id) out.id = draft.scene.id;
+          if (draft.scene.noGuests) out.no_guests = true;
           targets.forEach(function (g) {
             var r = row(g.id);
             if (r.power === 'leave' && !r.input && r.picture === 'leave' && r.sound === 'leave') return;
