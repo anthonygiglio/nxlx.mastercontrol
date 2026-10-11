@@ -234,9 +234,13 @@ class OwnerOnlyTest(Base):
         _t, operator = self.device("live", "192.168.1.31", "op")
         _t, guest = self.device("view", "192.168.1.32", "guest")
         for who in (operator, guest, dict(self.owner, remote=True), osc.OSC_DEVICE):
-            st, out = self.api.handle("GET", "/api/osc", {}, who, LAN)
+            out = self.api.get_osc({}, who, LAN)            # the handler itself: a support session of the Owner's role too
+            self.assertIn("enabled", out)
             self.assertNotIn("feedback", out, who)
             self.assertNotIn(TABLET, json.dumps(out))
+        out = self.api.set_osc({"port": self.settings.data["osc"]["port"]}, dict(self.owner, remote=True), TUNNEL)
+        self.assertIn("senders", out)
+        self.assertNotIn(TABLET, json.dumps(out), "the answer to a save of the page through support names no target")
         st, out = self.api.handle("GET", "/api/osc", {}, self.owner, LAN)
         self.assertEqual(out["feedback"]["targets"][0]["address"], TABLET)
 
