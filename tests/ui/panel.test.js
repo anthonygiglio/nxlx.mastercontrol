@@ -687,8 +687,16 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.locator('#osckeybox, #osconlylist, #oscpairednow').count(), 0, 'all three locks are off again');
     await onPage('OSC');
     await sysIndex();
-    await chip('OSC', 'Ready');
+    await chip('OSC', 'Check');                              // D83: on with every lock off is said on its row
+    assert.strictEqual(await post('/api/osc', { paired_on: true }), 200);
     await sys('OSC');
+    await page.waitForSelector('#oscpairednow');
+    assert.strictEqual(await page.locator('#oscopen, #oscpaireddefault').count(), 0, 'a lock the owner switched on: no warning, and no note about a default');
+    await sysIndex();
+    await chip('OSC', 'Ready');
+    assert.strictEqual(await post('/api/osc', { paired_on: false }), 200);
+    await sys('OSC');
+    await page.waitForSelector('#oscopen');
     await switchOff('OSC');
     assert.strictEqual((await get('/api/osc')).enabled, false, 'the page switch turned OSC off');
     await onPage('OSC');
