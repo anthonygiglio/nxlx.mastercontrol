@@ -284,7 +284,7 @@ class InstallTest(unittest.TestCase):
 
     # ---- the NDI input is opt-in per box (D62, the owner's answer of 2026-10-08) ----
     NDI_FILES = ("etc/systemd/system/pvj-ndi.service", "etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf",
-                 "etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf")
+                 "etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf", "etc/tmpfiles.d/pvj-ndi.conf")
 
     def ndi_names(self):
         """Every name under the staged root that has to do with NDI, apart from the program's own files."""

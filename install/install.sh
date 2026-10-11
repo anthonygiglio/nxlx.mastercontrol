@@ -88,12 +88,13 @@ WEB_UNIT="$ROOT/etc/systemd/system/pvj-web.service"
 NET_UNIT="$ROOT/etc/systemd/system/pvj-netd.service"
 SYS_UNIT="$ROOT/etc/systemd/system/pvj-sysd.service"
 SUP_UNIT="$ROOT/etc/systemd/system/pvj-supportd.service"
-# The NDI input is opt-in per box (D62): none of these three files exists unless root ran "pvj-ndi-runtime install"
+# The NDI input is opt-in per box (D62): none of these four files exists unless root ran "pvj-ndi-runtime install"
 # at the box (pvj/ndisetup.py). The panel's drop-in is the mark of that; this installer never writes it.
 NDI_UNIT="$ROOT/etc/systemd/system/pvj-ndi.service"
 NDI_MARK="$ROOT/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf"
 NDI_PLAYER_DROPIN="$ROOT/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf"
 NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi.service"      # the link "systemctl enable" makes
+NDI_TMPFILES="$ROOT/etc/tmpfiles.d/pvj-ndi.conf"                                  # root's pipe folder and pipe (M3, 2026-10-11)
 JOURNAL_CONF="$ROOT/etc/systemd/journald.conf.d/50-pvj-persistent-log.conf"
 UPD_USB_UNIT="$ROOT/etc/systemd/system/pvj-update-usb@.service"
 UPD_INBOX_UNIT="$ROOT/etc/systemd/system/pvj-update-inbox@.service"
@@ -114,7 +115,7 @@ uninstall() {
 		systemctl disable --now pvj-ndi.service 2>/dev/null || true
 	fi
 	# A box that was set up for NDI: the mark first, then the rest; the two folders only if nothing else is in them.
-	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
+	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
 	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
 	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
@@ -405,7 +406,7 @@ if ndi_mark; then
 	log "this box has NDI set up: writing the NDI helper's unit again"
 	# --root is empty on a real box and the staged folder with --stage (where no account is touched).
 	run python3 -B "$RELEASE/bin/pvj-ndi-runtime" refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the NDI helper's unit again; it stays as it was. To repair: sudo pvj-ndi-runtime install <the NDI SDK folder>"
-elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ]; then
+elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ] || [ -e "$NDI_TMPFILES" ] || [ -L "$NDI_TMPFILES" ]; then
 	# Something of the helper without the mark: a setup that was cut short, or a box that ran this branch while it
 	# still put the helper on every box. Nobody opted this box in, so it goes (the account pvj-ndi, if any, stays).
 	log "removing an NDI helper that nobody set up on this box (to set NDI up: sudo pvj-ndi-runtime install <the NDI SDK folder>)"
@@ -421,7 +422,7 @@ elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || 
 		fi
 	else
 		# Never the end of an install: a folder in the place of one of these makes rm fail, and that is said.
-		run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN" "$NDI_WANTS" || log "WARNING: could not remove everything of that NDI helper ($NDI_UNIT, $NDI_PLAYER_DROPIN); look at what is there and remove it by hand"
+		run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_WANTS" || log "WARNING: could not remove everything of that NDI helper ($NDI_UNIT, $NDI_PLAYER_DROPIN, $NDI_TMPFILES); look at what is there and remove it by hand"
 		if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
 	fi
 fi
