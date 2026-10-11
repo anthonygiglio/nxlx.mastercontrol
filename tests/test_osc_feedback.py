@@ -669,6 +669,50 @@ class CapTest(Base):
                           fb.ALL_PACKETS + fb.ALL_PACKET_BURST, fb.ALL_BYTES + fb.ALL_BYTE_BURST, fb.MAX_DATAGRAM, fb.MAX_TARGETS),
                          (20, 12000, 60, 36000, 1200, 4), "the numbers D82 and OSC.md state")
 
+    def test_every_target_gets_a_full_state_while_many_values_keep_changing(self):
+        """The review of #124: with 40 values changing at every look, four targets and the longest names, the changed
+        values took the budget first and the shared cap followed the list's order: the fourth target had no full
+        state after 20 seconds. Now what a target was never sent goes before what it has an older value of, and
+        the target that goes first changes with every look. No cap is raised."""
+        targets = [T1, T2, dict(T1, port=9002, name="c"), dict(T2, port=9003, name="d")]
+        n = [0]
+        still = [(fb.PREFIX + "still/%d" % i, float(i)) for i in range(60)]
+        names = [(fb.PREFIX + "name/%d" % i, "\U0001f39b" * fb.MAX_NAME) for i in range(32)]
+
+        def state(now):
+            n[0] += 1
+            return [(fb.PREFIX + "hot/%d" % i, float(n[0] * 100 + i)) for i in range(40)] + still + names
+        f = self.feedback(targets, state=state)
+        every = {a for a, _v in state(0)}
+        got = {(t["address"], t["port"]): set() for t in targets}
+        done = {}
+        start = self.now[0]
+        while self.now[0] - start < 20 and len(done) < len(targets):
+            before = len(self.sock.sent)
+            f.tick()
+            for a, _args, where in decode(self.sock.sent[before:]):
+                got[where].add(a)
+            for where, seen in got.items():
+                if where not in done and every <= seen:
+                    done[where] = round(self.now[0] - start, 1)
+            self.now[0] += fb.TICK
+        self.assertEqual(sorted(done), sorted(got), "every target has every address: %r" % ({w: len(s) for w, s in got.items()},))
+        self.assertLessEqual(max(done.values()), 5.0, done)
+        packets, size = self.windows(self.sock.sent)
+        self.assertLessEqual(packets, fb.ALL_PACKETS + fb.ALL_PACKET_BURST)
+        self.assertLessEqual(size, fb.ALL_BYTES + fb.ALL_BYTE_BURST)
+        for t in targets:
+            packets, size = self.windows(self.sock.sent, (t["address"], t["port"]))
+            self.assertLessEqual(packets, fb.TARGET_PACKETS + fb.TARGET_PACKET_BURST)
+            self.assertLessEqual(size, fb.TARGET_BYTES + fb.TARGET_BYTE_BURST)
+        # and the changing values still arrive at every target afterwards, the newest only
+        del self.sock.sent[:]
+        self.run_for(f, 3, fb.TICK)
+        hot = {where: 0 for where in got}
+        for a, _args, where in decode(self.sock.sent):
+            hot[where] += "/hot/" in a
+        self.assertGreater(min(hot.values()), 40, hot)
+
     def test_a_flood_of_requests_is_one_full_state_every_two_seconds(self):
         f = self.feedback()
         self.rules()
