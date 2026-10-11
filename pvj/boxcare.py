@@ -287,6 +287,9 @@ def check_osc(v, care):
     # The three layers (D78), each checked like a request. The key is never read from a file: the box keeps its own
     # (BoxCare._osc_layers), and an export never carries one.
     out.update(osc_mod.validate_layers(v, osc_mod.parse_networks(out["allow"])))
+    # "Send state back" (D82): the switch and the targets, their form only. Whether a target is on one of this box's
+    # own networks is decided again at every send, so a file from another building sends nothing here.
+    out.update(osc_mod.oscfeedback.validate(v))
     return out
 
 
@@ -736,7 +739,7 @@ class BoxCare:
         cannot switch a lock off; the key is never the file's. It is this box's own, in its own section, and one is
         made if the file switches the lock on and the box has none."""
         mine, out = current.get("osc") or {}, dict(new["osc"])
-        for k in ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on"):
+        for k in ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on", "feedback_on", "feedback"):
             if k not in out and k in mine:
                 out[k] = copy.deepcopy(mine[k])
         out.pop("key", None)

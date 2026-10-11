@@ -2148,7 +2148,8 @@ class Api:
         of devices that may send and the senders seen lately. The key is in neither (osc_key)."""
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
-        return self.osc.status(full=Auth.allows(device, "full"))
+        full = Auth.allows(device, "full")
+        return self.osc.status(full=full, studio=full and not device.get("remote"))
 
     def osc_messages(self, body, device, client):
         """Full access: the last messages (in memory only), newest first."""
@@ -2196,7 +2197,64 @@ class Api:
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
         with self.osc.lock:                   # one save at a time (OscManager.lock says why)
-            return self._set_osc(body)
+            out = self._set_osc(body)
+        if not device.get("remote"):
+            out["feedback"] = self.osc.feedback_status()
+        return out
+
+    def osc_feedback(self, body, device, client):
+        """"Send state back" (D82): the Owner's, at the studio, never through the support tunnel. {"on": bool}
+        switches it; {"add": {"name", "address", "port"}} names a target; {"remove": {"address", "port"}} takes one
+        away. A target is checked against the box's own networks as they are now. Nothing but this route changes
+        the switch or the list (POST /api/osc carries its keys over untouched), and no packet ever does."""
+        from . import oscfeedback
+        if self.osc is None:
+            raise ApiError(404, "OSC is not available")
+        if device.get("remote"):
+            raise ApiError(403, "where the box sends its state is never changed through remote support")
+        if not self._still_paired(device):
+            raise ApiError(401, "this device is no longer paired")
+        if set(body) - {"on", "add", "remove"} or not body:
+            raise bad("send on, add or remove")
+        with self.osc.lock:
+            cfg = self.settings.data["osc"]
+            on, targets = oscfeedback.stored(cfg)
+            said = []
+            if "on" in body:
+                if not isinstance(body["on"], bool):
+                    raise bad("on must be true or false")
+                on = body["on"]
+                said.append("switched %s" % ("on" if on else "off"))
+            try:
+                if "remove" in body:
+                    gone = body["remove"] if isinstance(body["remove"], dict) else {}
+                    left = [t for t in targets if (t["address"], t["port"]) != (gone.get("address"), gone.get("port"))]
+                    if len(left) == len(targets):
+                        raise ApiError(404, "that device is not in the list")
+                    targets = left
+                    said.append("removed a target")
+                if "add" in body:
+                    if len(targets) >= oscfeedback.MAX_TARGETS:
+                        raise bad("at most %d devices can be sent the state; remove one first" % oscfeedback.MAX_TARGETS)
+                    nets = self.osc.local_nets()
+                    if not nets:
+                        raise ApiError(409, "the box's own network addresses could not be read; try again in a moment")
+                    targets = oscfeedback.validate_targets(targets[:] + [body["add"]], nets)
+                    said.append("added a target")
+            except oscfeedback.FeedbackError as e:
+                raise bad(str(e))
+            new = dict(cfg, feedback_on=on, feedback=targets)
+            with self.settings.lock:
+                self.settings.data["osc"] = new
+            try:
+                self.osc.apply()
+            except osc_mod.OscError as e:
+                raise ApiError(409, str(e))
+            self.settings.save()
+            out = self.osc.feedback_status()
+        self.log("pvj-web: OSC state feedback %s by device %s (%s) from %s; %d target(s), %s"
+                 % (", ".join(said), device["id"], device["name"], client, len(targets), "on" if on else "off"))
+        return out
 
     def _set_osc(self, body):
         cfg = self.settings.data["osc"]
@@ -3221,6 +3279,7 @@ class Api:
             ("POST", "/api/osc"): ("full", self.set_osc),
             ("GET", "/api/osc/messages"): ("full", self.osc_messages),
             ("POST", "/api/osc/key"): ("full", self.osc_key),
+            ("POST", "/api/osc/feedback"): ("full", self.osc_feedback),
             ("POST", "/api/play"): ("live", self.play),
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),

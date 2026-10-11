@@ -11,7 +11,8 @@ Deliberate limits:
 * Only private networks may send (loopback, RFC 1918, link-local, unique-local)
   plus any ranges you add; UDP source addresses can be forged, so this stops
   the internet, not a hostile device on your own network.
-* No replies are ever sent (no amplification, nothing to spoof).
+* Nothing is sent unless the Owner switched "Send state back" on and named the target (D82, pvj/oscfeedback.py);
+  never an answer to a stranger, never an error reply, and nothing at all from this module's own socket.
 * Nothing that shuts down, reboots, resets or reconfigures the box is reachable
   over OSC. The old /shutdown, /reboot and /shutdownall are refused.
 * Per-sender rate limit; strict, bounded packet parsing.
@@ -31,6 +32,8 @@ import socket
 import struct
 import threading
 import time
+
+from . import oscfeedback
 
 MAX_PACKET = 8192
 MAX_ARGS = 16
@@ -66,6 +69,7 @@ WHY_UNSET = "the key is switched on but none is set"
 DID_NOTHING = "nothing to do (an unknown address, or a button release)"
 NOT_OVER_OSC = "not available over OSC"
 VALUE_REFUSED = "the value was refused"
+NO_STATE = "state is not sent to this address"
 
 PRIVATE_NETS = [ipaddress.ip_network(n) for n in (
     "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
@@ -692,6 +696,7 @@ class OscServer:
         self.rules = layers(rules or {}, key)
         self.paired = paired or (lambda roles, hours: set())   # (roles, hours) -> the addresses that count now
         self.watch = watch or Watch(clock)
+        self.feedback = None    # oscfeedback.Feedback while the Owner's "Send state back" is on (D82), else None
         self._clock = clock
         self._sock = None
         self._thread = None
@@ -764,6 +769,14 @@ class OscServer:
         done = 0
         for address, args in messages:
             seen = shown(address, rules["key"])      # for the page and the journal: never with the key in it
+            if (address.rstrip("/") or "/") == oscfeedback.REQUEST:
+                # "Send me everything" (D82). It sets a flag for the target at this address and nothing else: the
+                # state leaves on the feedback thread, under its caps, to the Owner's target only. From any other
+                # address, or with feedback off, nothing is sent to anybody.
+                feedback = self.feedback
+                asked = feedback is not None and feedback.request(plain)
+                self.watch.note(source_ip, asked, "" if asked else NO_STATE, seen)
+                continue
             if address in REFUSED:
                 self.watch.note(source_ip, False, NOT_OVER_OSC, seen)
                 self._note("refused:" + address, "%s is not available over OSC" % address)
@@ -780,6 +793,8 @@ class OscServer:
             else:
                 self.watch.note(source_ip, False, VALUE_REFUSED, seen)
                 self._note("err:" + seen, "%s -> %s %s" % (seen, status, payload.get("error", "")))
+        if done and self.feedback is not None:
+            self.feedback.wake()         # something changed: look at the box now instead of at the next tick
         return done
 
     # --- socket ---------------------------------------------------------
@@ -833,6 +848,7 @@ class OscManager:
         self.server = None
         self.error = None
         self.watch = Watch()        # outlives a save of the page (apply makes a new receiver each time)
+        self.feedback = None        # the sender of "Send state back" (D82): there only while it is on and OSC listens
         # One change at a time: two saves at once (two taps on the page, two devices) would each stop the receiver
         # and open the port again, and the slower one would find it "in use" and take the other's change back.
         self.lock = threading.RLock()
@@ -847,6 +863,39 @@ class OscManager:
 
     def key(self):
         return stored_key(self.settings.data)
+
+    # -- "Send state back" (D82) --
+    def _may_be_sent(self, address):
+        """Would the address locks that are on let this address send right now? A target must pass them too: with
+        the list on it is in the list, with the paired-device lock on a paired device asked the panel from it."""
+        rules = layers(self.settings.data["osc"], "")
+        if rules["only_on"] and address not in rules["only"]:
+            return False
+        if rules["paired_on"] and address not in self._paired(rules["paired_roles"], rules["paired_hours"]):
+            return False
+        return True
+
+    def local_nets(self):
+        """The box's own IPv4 networks now, for what may be a target."""
+        ip_json = getattr(self.api, "_ip_json", None)
+        return oscfeedback.local_nets(ip_json()) if ip_json else []
+
+    def _apply_feedback(self):
+        """Make the sender match the settings: it runs only while OSC listens, the switch is on and there is a
+        target. Called with self.lock held."""
+        on, targets = oscfeedback.stored(self.settings.data["osc"])
+        want = bool(on and targets and self.server and self.server.listening)
+        if not want:
+            if self.feedback is not None:
+                self.feedback.stop()
+                self.feedback = None
+        elif self.feedback is None:
+            self.feedback = oscfeedback.Feedback(self.api, targets, allowed=self._may_be_sent, nets=self.local_nets, log=self.log)
+            self.feedback.start()
+        else:
+            self.feedback.configure(targets)
+        if self.server:
+            self.server.feedback = self.feedback
 
     def make_key(self):
         """A new key, in its own section (the caller saves and applies). The old one stops working at once."""
@@ -879,12 +928,14 @@ class OscManager:
                 self.server.extra = parse_networks(cfg["allow"])
                 self.server.rules = layers(cfg, self.key())
                 self.error = None
+                self._apply_feedback()
                 return
             if self.server:
                 self.server.stop()
                 self.server = None
             self.error = None
             if not cfg["enabled"]:
+                self._apply_feedback()
                 return
             server = OscServer(self.api, cfg["port"], parse_networks(cfg["allow"]), host=self.host, log=self.log,
                                rules=cfg, paired=self._paired, watch=self.watch, key=self.key())
@@ -892,11 +943,23 @@ class OscManager:
                 server.start()
             except OscError as e:
                 self.error = str(e)
+                self._apply_feedback()
                 raise
             self.server = server
+            self._apply_feedback()
 
-    def status(self, full=False):
-        """What every paired device may read; with `full` also the lists (never the key: see Api.osc_key)."""
+    def feedback_status(self):
+        """For the Owner at the studio: the switch, the targets with the age of the last packet to each, and the
+        last sender that passed every lock (for "Use the device that is sending now": it fills the form, no more)."""
+        on, targets = oscfeedback.stored(self.settings.data["osc"])
+        feedback = self.feedback
+        rows = feedback.status() if feedback is not None else [dict(t, last_sent=None, why="") for t in targets]
+        now = next((s["address"] for s in self.watch.senders() if s["accepted"] and ":" not in s["address"]), "")
+        return {"on": on, "targets": rows, "max": oscfeedback.MAX_TARGETS, "sending": feedback is not None, "sender": now}
+
+    def status(self, full=False, studio=False):
+        """What every paired device may read; with `full` also the lists (never the key: see Api.osc_key); with
+        `studio` (an Owner who is not a support session) also "Send state back" and its targets."""
         cfg = self.settings.data["osc"]
         rules = layers(cfg, self.key())
         out = {"enabled": cfg["enabled"], "port": cfg["port"], "allow": list(cfg["allow"]),
@@ -913,9 +976,14 @@ class OscManager:
             out.update(only=rules["only"], paired_roles=rules["paired_roles"], paired_hours=rules["paired_hours"],
                        key_set=bool(rules["key"]), refused=self.watch.refused, senders=senders,
                        paired_now=sorted(counting - set(v6)), paired_v6=v6)
+        if full and studio:
+            out["feedback"] = self.feedback_status()
         return out
 
     def stop(self):
+        if self.feedback is not None:
+            self.feedback.stop()
+            self.feedback = None
         if self.server:
             self.server.stop()
             self.server = None

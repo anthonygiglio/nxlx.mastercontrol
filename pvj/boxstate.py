@@ -27,9 +27,10 @@ def snapshot(api, now, fresh=False, holder=None, every=PLAYER_EVERY):
     except Exception:
         pass
     if fresh or holder._player_seen is None or now - holder._player_seen[0] >= every:
-        seen = {"running": False, "paused": False, "playing": None, "playlist": False}
+        seen, raw = {"running": False, "paused": False, "playing": None, "playlist": False}, {}
         try:
             st = api.player.status()
+            raw = dict(st)
             path = st.get("path")
             seen = {"running": bool(st.get("running")) and isinstance(path, str) and bool(path), "paused": bool(st.get("paused")),
                     "playing": os.path.basename(path) if isinstance(path, str) else None,
@@ -37,6 +38,7 @@ def snapshot(api, now, fresh=False, holder=None, every=PLAYER_EVERY):
         except Exception:
             pass
         holder._player_seen = (now, seen)
+        holder._player_raw = raw
     snap.update(holder._player_seen[1])
     try:
         snap["blackout"] = bool(api.mix.get("blackout"))

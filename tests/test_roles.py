@@ -132,6 +132,7 @@ ROWS = {
     ("POST", "/api/osc"): KINDS["owner"],
     ("GET", "/api/osc/messages"): KINDS["owner"],
     ("POST", "/api/osc/key"): STUDIO("owner"),
+    ("POST", "/api/osc/feedback"): STUDIO("owner"),
     ("GET", "/api/dmx"): KINDS["owner"],
     ("POST", "/api/dmx"): KINDS["owner"],
     ("POST", "/api/midi"): KINDS["op"],
@@ -845,7 +846,7 @@ class PeopleTest(RolesBase):
                 ("POST", "/api/system/settings/export", {}), ("GET", "/api/system/diagnostics", {}),
                 ("POST", "/api/system/factory-reset", {"confirm": "reset"}), ("POST", "/api/support/start", {"confirm": "start"}),
                 ("POST", "/api/modules/midi", {"enabled": True}), ("POST", "/api/access/controller", {"join": "live"}), ("POST", "/api/osc", {"enabled": True}),
-                ("POST", "/api/osc/key", {}), ("POST", "/api/streams", {}), ("POST", "/api/projectors", {}),
+                ("POST", "/api/osc/key", {}), ("POST", "/api/osc/feedback", {"on": True}), ("POST", "/api/streams", {}), ("POST", "/api/projectors", {}),
                 ("GET", "/api/recovery", {}), ("POST", "/api/recovery/codes", {}), ("POST", "/api/recovery/cancel", {}), ("POST", "/api/recovery/usb", {"on": False})):
             st, out = self.h(method, path, body, op)
             self.assertEqual(st, 403, "%s %s" % (path, out))
