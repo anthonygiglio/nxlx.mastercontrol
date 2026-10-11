@@ -302,6 +302,14 @@ Three locks on System > OSC, each off by default so an updated box behaves as be
 - **Rules to keep:** never refuse a sender by its address alone for something it sent (the address can be forged; the review of #118 removed such a limit); the key lives in `settings["osc_secret"]`, not under `osc`, and is never in `GET /api/osc`, an export, a log line or the lists; a refused packet leaves only its sender, a count and the reason; the settings keys are optional and read through `osc.layers` (no schema change); an older release keeps the keys but does not enforce them.
 - **Open:** a real TouchOSC and a real box (rows O1 to O12 in `tools/DEVICE-TESTING.md`); the receiver is IPv4 only, so an IPv6 address in the list matches nothing and a device that reached the panel over IPv6 does not count (the page says so). PR #115 (`midi-layouts`) adds OSC addresses through `pvj/actions.py` and a few lines at the top of `translate`: the two branches meet in `pvj/osc.py` and `pvj/OSC.md`.
 
+## OSC: state sent back (D82, pull request #123, a draft)
+
+The box can tell TouchOSC what is really playing. Off by default; the Owner's switch and list of at most 4 targets on Setup > OSC ("Send state back"); `pvj/OSC.md` has the rule, the table of `/pvj/state/...` addresses and the TouchOSC set-up.
+
+- **Where it lives:** `pvj/oscfeedback.py` (`validate_targets`, `not_local`, `stored`, `build`, `pack`, `Feedback.tick` and `_send`), `pvj/boxstate.py` (the one picture of the box, for the MIDI lights and for this), `pvj/osc.py` (`handle_packet`'s `/pvj/state` branch, `OscManager._apply_feedback`, `_may_be_sent`, `feedback_status`), `Api.osc_feedback` (`POST /api/osc/feedback`), `oscStateCard` and its helpers in `pvj/web/app.js`, `tests/test_osc_feedback.py`.
+- **Rules to keep:** no packet ever decides where anything is sent, and no byte of a received packet goes into a sent one; a target is checked at every send, not only when saved; the receive loop only sets a flag; nothing under `/pvj/state/` may ever become a command, and the box never sends `/pvj/state` itself; the key is never in an outgoing address; a new state address goes into `build`, the table in `pvj/OSC.md` (a test compares the two) and holds no secret; the switch and the list change only through `POST /api/osc/feedback`, which stays in `support.REMOTE_DENY`; raise a cap only with D82 amended.
+- **Open:** a real TouchOSC and a real box (rows F1 to F9 in `tools/DEVICE-TESTING.md`); whether TouchOSC takes bundles; a fader under a finger that is sent its own value; the owner's layout (`touchosc/`) has no receiving messages yet; the security review on another model before any merge.
+
 ## The redesign workspace
 
 - The Figma file with the four style directions (A Stage, B Desk, C Gallery, D Signal): https://www.figma.com/design/Cu6AGouBnUBMeBCIPPx02o. The owner picked D, Signal, to try.
