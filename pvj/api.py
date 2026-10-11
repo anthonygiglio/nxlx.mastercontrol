@@ -2031,6 +2031,8 @@ class Api:
                 raise ApiError(403, "an operator cannot remove himself here; use Log out, or ask the owner")
             self.log("pvj-web: %s device %s removed by operator device %s (from %s)"
                      % (policy.NAMES[target["role"]].lower(), did, device.get("id"), client))
+        if not self._still_paired(device):          # a reset or a removal ran while this was on its way: it removes nobody
+            raise ApiError(401, "this device is no longer paired")
         if not self.auth.revoke(did):
             raise ApiError(404, "no such device")
         return {"ok": True}
@@ -2899,7 +2901,23 @@ class Api:
         return bool(spec) and spec[0] == "hold"
 
     def _owner_control(self, ctl):
-        return bool(ctl.get("action")) and self._owner_action(ctl["action"].get("action"))
+        """A control of a standard layout that is the Owner's: what it does, or what it does in a layer."""
+        does = [ctl.get("action")] + list((ctl.get("layers") or {}).values())
+        return any(isinstance(a, dict) and self._owner_action(a.get("action")) for a in does)
+
+    def _owner_numbers(self, current, source):
+        """The (kind, number) pairs a mapping for `source` must stay off for anyone but the Owner: where one of his
+        mappings sits (for any controller, on any channel) and where a standard layout has a control that shows an
+        access code (of that controller, or of every controller that is known for a mapping for any). A mapping for
+        one controller or one channel is matched before a general one, so a mapping there would switch his off
+        without touching it (the re-check of #120)."""
+        taken = {(e.get("kind"), e.get("number")) for e in current if self._owner_action(e.get("action"))}
+        for name in (sorted(self.midi.known_sources()) if source == "*" else [source]):
+            profile = self.midi.profile_of(name) if isinstance(name, str) else None
+            for ctl in (profile or {}).get("controls", []):
+                if self._owner_control(ctl):
+                    taken.add((ctl["send"]["type"], ctl["send"]["number"]))
+        return taken
 
     OWNER_MAPPING = "a control that shows an access code is the owner's to set, change or remove (owner access needed)"
 
@@ -2985,6 +3003,10 @@ class Api:
                 raise bad(str(e))
             if not owner and owners(changed) != owners(current):
                 raise ApiError(403, self.OWNER_MAPPING)
+            if not owner:                   # nor a mapping of his own in front of one of the Owner's
+                for e in changed:
+                    if e not in current and (e.get("kind"), e.get("number")) in self._owner_numbers(current, e.get("source")):
+                        raise ApiError(403, self.OWNER_MAPPING)
             self.settings.data["control"]["midi"]["map"] = changed
             try:
                 self.settings.save()

@@ -1382,6 +1382,7 @@ class SecondReviewTest(RolesBase):
             self.settings.data["devices"].append({"id": "0c0c0c0c", "name": "old", "role": "live", "created": 1, "via": "controller", "token_hash": "x"})
             self.settings.data["devices"].append({"id": "0d0d0d0d", "name": "chosen", "role": "live", "created": 1, "via": "controller", "join": "live", "token_hash": "y"})
         now = self.auth._clock()
+        self.auth._addresses.clear()               # (the phones of setUp asked from this machine)
         self.auth._addresses["0c0c0c0c"] = ("10.0.0.7", now)
         self.auth._addresses["0d0d0d0d"] = ("10.0.0.8", now)
         self.assertEqual(self.auth.paired_addresses(3600, ("full", "live")), {"10.0.0.8"})

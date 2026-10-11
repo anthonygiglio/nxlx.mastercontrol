@@ -540,7 +540,7 @@ class Auth:
         for d in list(self.settings.data["devices"]):
             live.add(d["id"])
             seen = self._addresses.get(d["id"])
-            if seen and d.get("role") in roles and t - seen[1] <= seconds:
+            if seen and self.role_of(d) in roles and t - seen[1] <= seconds:       # (role_of: a presenter paired from a controller is a Guest, D80)
                 out.add(seen[0])
         for gone in [k for k in list(self._addresses) if k not in live]:
             self._addresses.pop(gone, None)
