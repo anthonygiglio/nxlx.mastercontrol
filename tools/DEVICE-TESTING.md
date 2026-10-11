@@ -439,7 +439,8 @@ What cannot be made on purpose: a pair the GPU refuses. If the Effects card ever
 | F5 | A second tablet, added as a second device: act on one | Two rows, both "Last sent" | The other stays in step |
 | F6 | Drag the opacity fader on the tablet slowly | | **Write down whether the fader jumps or stutters under the finger** (its own value comes back) |
 | F7 | Take the tablet off the network (Wi-Fi off) for a minute, play and stop clips from the panel, then back | The row still says "Last sent" (the box cannot know); nothing else on the page changes | The panel and the screen stay as quick as before; back on the network the layout is right within 30 seconds, or at once after a control that sends `/pvj/state` |
-| F8 | Switch "Only these devices may send" on without the tablet in it; then remove the tablet's row | "Not sent: not let in by the locks that are on"; after Remove the list is empty | The alive light goes out (after 6 seconds with the script) |
+| F8 | Switch "Only these devices may send" on without the tablet in it; then remove the tablet's row | "Not let in by the locks that are on, nothing is sent to it"; after Remove the list is empty | The alive light goes out (after 6 seconds with the script) |
+| F8b | Move the box to another network (or change its address range) with the tablet still in the list; add the tablet's new address | The old row says "Not on this network now, nothing is sent to it" and has Remove; the new one is added beside it | The layout follows again at the new address |
 | F9 | On an Operator's device and through a remote support session, open Setup > OSC | No card "Send state back" | |
 
 ### Owner, Operator, Guest and the lock on guest controls (D80)
