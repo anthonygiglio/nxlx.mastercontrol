@@ -50,7 +50,7 @@ class BuiltinMapTest(unittest.TestCase):
             self.t[0] += 1
             self.m.message("any", ("cc", 0, cc, v))
         self.assertEqual(self.rec.calls, [
-            ("/api/control", {"action": "opacity", "value": 100.0}), ("/api/control", {"action": "size", "value": 1.0}),
+            ("/api/control", {"action": "opacity", "value": 100.0}), ("/api/control", {"action": "size", "value": 25.0}),    # the bottom of a size control is 25 percent (D75)
             ("/api/control", {"action": "position", "value": 100.0}), ("/api/control", {"action": "speed", "value": 2.0}),
             ("/api/control", {"action": "volume", "value": 0.0}), ("/api/blackout", {"on": True})])
 

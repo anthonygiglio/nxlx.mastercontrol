@@ -173,13 +173,32 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(previewRequests, 1, 'a snapshot is taken once per tap, never repeated by itself (' + previewRequests + ' requests)');
     await page.click('#black');
     await page.waitForFunction(() => document.getElementById('black').textContent === 'Show');
+    assert.strictEqual(await page.locator('#black').evaluate((el) => el.classList.contains('flash') && getComputedStyle(el).animationName), 'fadeflash', 'Blackout flashes for as long as it is on');
+    assert.strictEqual(await page.locator('#fade').evaluate((el) => el.classList.contains('flash')), false, 'under Blackout the fade button is steady: each shows its own state');
     await page.click('#black');
     await page.waitForFunction(() => document.getElementById('black').textContent === 'Blackout');
+    // One fade button (D75): a press fades out and the button flashes while the picture is down, the next press fades
+    // in. For someone who asked for less motion it does not flash: it stands inverted with a dashed edge.
+    assert.strictEqual(await page.locator('#fadein').count(), 0, 'the two fade buttons are one');
+    assert.strictEqual(await page.textContent('#fade'), 'Fade out');
+    const fadeBox = await page.locator('#fade').boundingBox();
+    await page.click('#fade');
+    await page.waitForFunction(() => { const b = document.getElementById('fade'); return b.classList.contains('flash') && b.textContent === 'Fade in'; }, null, { timeout: 8000 });
+    assert.strictEqual(await page.locator('#fade').evaluate((el) => getComputedStyle(el).animationName), 'fadeflash');
+    assert.deepStrictEqual(await page.locator('#fade').boundingBox(), fadeBox, 'the flashing button moved or changed size');
+    assert.strictEqual((await page.evaluate(() => fetch('/api/status').then((r) => r.json()))).mix.fade, 'out');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.deepStrictEqual(await page.locator('#fade').evaluate((el) => [getComputedStyle(el).animationName, getComputedStyle(el).borderTopStyle]), ['none', 'dashed'],
+      'with less motion asked for the button is steady and marked another way');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.click('#fade');
+    await page.waitForFunction(() => { const b = document.getElementById('fade'); return !b.classList.contains('flash') && b.textContent === 'Fade out'; }, null, { timeout: 12000 });
+    assert.strictEqual((await page.evaluate(() => fetch('/api/status').then((r) => r.json()))).mix.fade, null);
     // Transport: the position slider is on the strip (under More on a phone); the test pattern switches on and off
     // (it is on Shape > Mapping; on this new box the mapper is off, there is no Mapping screen, and it is on
     // Shape > Picture, where it was)
     await page.waitForSelector('#seek');
-    assert(await page.isVisible('#fade') && await page.isVisible('#freeze') && await page.isVisible('#back10') && await page.isVisible('#fwd10') && await page.isVisible('#fadein'), 'More opens the rest of the strip in place');
+    assert(await page.isVisible('#fade') && await page.isVisible('#freeze') && await page.isVisible('#back10') && await page.isVisible('#fwd10'), 'More opens the rest of the strip in place');
     await go(page, 'shape/picture');
     assert(await page.isVisible('#seek') && await page.isVisible('#stop'), 'the strip is on every screen, and stays open');
     await page.click('#testpattern');
@@ -751,7 +770,21 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.locator(nano + ' .ctl').count(), 51, 'every control of the nanoKONTROL2 is drawn');
     assert.strictEqual(await page.locator('.ctlcard[data-ctl="keys"] .ctl').count(), 0, 'an unknown controller has no drawn layout');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader1"] .ctlwhat'), 'Opacity');
-    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob3"] .ctlwhat'), 'Shader control 3');
+    // all eight knobs are the shader's (the owner, 2026-10-10); zoom and the two positions are their other selves in the geometry layer
+    assert.deepStrictEqual(await page.locator(nano + ' .ctl[data-id^="knob"] .ctlwhat').allTextContents(),
+      [1, 2, 3, 4, 5, 6, 7, 8].map((n) => 'Shader control ' + n));
+    assert.deepStrictEqual(await page.locator(nano + ' .ctl[data-id^="knob"] .ctlalt[data-layer="geometry"]').allTextContents(),
+      ['geometry: Zoom', 'geometry: Position X', 'geometry: Position Y', 'geometry: nothing', 'geometry: nothing', 'geometry: nothing', 'geometry: nothing', 'geometry: nothing']);
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="m6"] .ctlwhat'), 'Geometry');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="m8"] .ctlwhat'), 'Mapping mode 2x');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r7"] .ctlwhat'), 'Fade out / in');
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="m7"] .ctlwhat'), 'Rotate');      // over Fade, not beside it
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r6"] .ctlwhat'), 'Spare');
+    // the parts of the controller are tinted and named once under the drawing
+    assert.strictEqual(await page.locator(nano + ' .ctl.z-picture').count(), 4, 'the opacity, Geometry, the quarter turn and mapping mode are one zone');
+    assert.deepStrictEqual(await page.locator(nano + ' .ctlzone').allTextContents(),
+      ['Pads', 'The clip', 'The screen: fade, freeze, stop, black', 'The picture: zoom, place, turn', 'Sound', 'Shaders and Vibes', 'Effects', 'Room']);
+    assert.notStrictEqual(await page.locator(nano + ' .ctl[data-id="knob1"]').evaluate((el) => getComputedStyle(el).boxShadow), 'none', 'a zone is drawn');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="r8"] .ctlwhat'), 'Blackout on / off 2x');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader8"] .ctlwhat'), 'Spare');
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="fader7"] .ctlwhat'), 'Effect amount');
@@ -762,6 +795,16 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob1"] .ctlval'), '64');
     assert.strictEqual(await page.locator(nano + ' .ctlquiet').isHidden(), true, 'the "nothing received" line goes with the first message');
     await page.waitForSelector(nano + ' .ctl[data-id="knob1"]:not(.lit)', { timeout: 8000 });      // and goes dark again
+    // the geometry layer: one press of M 6 (CC 53) and the card says so and shows the knobs' other selves; a press again and it is over
+    fs.appendFileSync(midiIn, 'B0 35 7F\nB0 35 00\n');
+    await page.waitForSelector(nano + ' .ctllayer:has-text("Geometry is on")', { timeout: 8000 });
+    assert.deepStrictEqual((await page.locator(nano + ' .ctl[data-id^="knob"] .ctlwhat').allTextContents()).slice(0, 4), ['Zoom', 'Position X', 'Position Y', 'Spare']);
+    assert.strictEqual(await page.locator(nano + ' .ctlalt.now').count(), 8);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), 'the layer made the page scroll sideways');
+    await page.waitForTimeout(400);
+    fs.appendFileSync(midiIn, 'B0 35 7F\nB0 35 00\n');
+    await page.waitForFunction((sel) => !document.querySelector(sel + ' .ctllayer'), nano, { timeout: 8000 });
+    assert.strictEqual(await page.textContent(nano + ' .ctl[data-id="knob1"] .ctlwhat'), 'Shader control 1');
     fs.appendFileSync(midiIn, 'B0 00 05\n');                                    // fader 1, far below the box's 100 percent: it waits (pickup)
     await page.waitForSelector(nano + ' .ctl[data-id="fader1"].wait');
     assert.strictEqual((await get('/api/midi')).controllers[0].controls.filter((x) => x.id === 'fader1')[0].pickup, true);

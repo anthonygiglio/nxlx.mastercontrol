@@ -70,7 +70,92 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | Schedule | Check the box clock (System > Schedule shows it), add an entry two minutes ahead, turn the schedule on | It fires once at that minute and shows "Last run"; reboot and confirm nothing fires for old times |
 | Network | **Last, with a monitor and keyboard on the Pi**, never over SSH on the only connection. Try a change, confirm, then one you do not confirm | A change you do not confirm reverts by itself. Never test this remotely on the only link |
 
+### The layouts, the levels and the fade button (D75): do these first
+
+**None of this has been on a controller.** The three layouts were drawn afresh on 2026-10-10 after the owner's first report; the numbers each control sends are still from documents. `pvj/MIDI.md` has each layout as a drawing. Before: MIDI on, a clip on pad A1, B1 and C1, something playing, Shaders and Vibes on. Say what you see for each row, also "fine".
+
+| # | Do | See |
+| --- | --- | --- |
+| K1 | For each of the three controllers: open Setup > MIDI controller and press or move **every control once** | Its box on the card lights up while you do. Note each one that does not, and each one that lights another box: that is a wrong number |
+| K2 | Look at each card | The controls that belong together carry one bar of colour, and the zones are named under the drawing. Does the arrangement make sense now? Say which control you looked for in another place |
+| K3 | nanoKONTROL2, knob 1 (zoom), with the picture at 100 percent and the knob anywhere | Nothing happens until the knob passes its middle; from there the picture follows. **Does it jump at any point?** |
+| K4 | Turn knob 1 slowly through its middle | The picture stays at exactly 100 percent for a short way around the middle (the Mix screen's Size reads 100). Is that rest too wide, too narrow, right? |
+| K5 | Turn knob 1 to both ends | 25 percent at the left, 200 at the right. Is the way near the middle fine enough to set a size, and the ends not too abrupt? |
+| K6 | The same with knob 2 (position X) and knob 3 (position Y) | Centred at the middle of each knob, to the edge of the screen and beyond at the ends. Do left, right, up and down go the way you expect? (If Y feels upside down, say so: it can be turned round) |
+| K7 | MIDI Mix: the same with the middle row's first three knobs | As K3 to K6 |
+| K8 | Move the zoom on the nanoKONTROL2, then touch the MIDI Mix's zoom knob | The MIDI Mix's knob does nothing until it meets the picture's size; then it has it, and the nanoKONTROL2's knob waits in its turn |
+| K9 | Panel, Live: tap **Fade out** | The picture fades out in 2 seconds; the button reads **Fade in** and flashes about twice a second, without moving anything around it. Readable in both halves of the flash? |
+| K10 | Tap it again | The picture fades in; the button is steady while it comes up and reads Fade out afterwards |
+| K10a | Tap it, and tap again half way down; then again half way up | Each time the picture turns round from where it is: no jump to black and none to full |
+| K11 | Launchpad Mini: press the round button **E** (right side, fifth from the top) | The same fade. While the picture is down E **flashes red** by itself and every other light stays steady. **If other lights flash too, or the pads look wrong after plugging in, say so at once and switch Lights off**: that is the flash mode misbehaving |
+| K12 | nanoKONTROL2 with lights on (LED Mode External, L10 below): press **R 7** | The same fade; R 7 flashes while the picture is down, lit while it comes up, dark afterwards |
+| K13 | MIDI Mix: hold Solo and press **Mute 5** | The same fade. No light (this row has none); the panel's button flashes |
+| K14 | Fade out with a controller, then press Blackout twice, then twice again | After the Blackout is off the picture is back and the fade button is steady; its next press fades out |
+| K15 | Launchpad Mini with clips on A1, B1 and C1 | Three colours down the left edge: row 1 amber, row 3 yellow-green, row 5 orange (each bank is two rows of six). Can you tell them apart at Low, Medium and High? The pad that plays is bright green |
+| K16 | Launchpad Mini: the two bottom rows and the strip beside the banks | Row 7: Vibes, previous shader, next shader, then effect on / off, previous, next. Row 8: previous clip, back 10 s, forward 10 s, next clip, then shader controls 1 to 4. Beside the banks, two wide: presets 1 to 8. Do the rows read right now? |
+| K17 | The quarter turn: M 7 (nanoKONTROL2, over Fade), Rec Arm 8 (MIDI Mix), the fifth round button along the top (Launchpad) | The picture turns a quarter each press, back to upright after four |
+
+### Layers: Geometry on the nanoKONTROL2, and mapping mode (D75)
+
+**Never on a controller or a projector.**
+
+| # | Do | See |
+| --- | --- | --- |
+| G1 | nanoKONTROL2, a shader on screen: turn knobs 1 to 8 | Each moves one of the shader's first eight controls |
+| G2 | Press **M 6** once (lights on, LED Mode External) | M 6 flashes; the card says "Geometry is on" and knobs 1 to 3 read Zoom, Position X, Position Y. Turn knob 1: nothing until it passes the picture's size, then the zoom follows. Knobs 4 to 8 do nothing |
+| G3 | Set zoom and position, press M 6 again | M 6 stops flashing. Turn knob 1: the shader's control does NOT jump; it follows again once the knob is back where it stood before G2. Does that wait feel right, or does the knob feel dead? |
+| G4 | Press M 6 and leave it for two minutes | It stops flashing by itself and the knobs are the shader's again |
+| P1 | Without the switch: press the mapping mode button twice (M 8 on the nanoKONTROL2, the last round button along the top of the Launchpad) | Nothing. The log says controllers may not adjust the mapping |
+| P2 | Mix > Projection mapping: switch **Controllers may adjust the mapping** on (full access), add two surfaces, press the button twice | The display shows the outlines, one surface yellow, one corner a pink dot; the button flashes; the card says a controller is in mapping mode |
+| P3 | nanoKONTROL2: turn knob 2 and knob 3. Launchpad: the arrow pads on rows 7 and 8 | The pink corner moves a pixel a step. Too fine, too coarse? Press the step (Cycle; the fourth pad of row 8) for 10 and 50 |
+| P4 | Next corner, next surface (Marker and Track buttons; the first four pads of row 7). Turn knob 2 a quarter turn in one go, then undo | The marks on the display follow; undo takes the whole turn back, not its last click. Does a second between runs feel right? |
+| P5 | Press Blackout twice, Stop, a pad | Each does what it always does and the mode stays on |
+| P6 | Press the mode button twice; and once more, enter it and wait three minutes | The outlines leave the display, the mapped picture comes back, the light stops flashing |
+| P7 | nanoKONTROL2, a shader on screen, knob 2 low. Enter the mode, turn knob 2 far up (it nudges), leave the mode, touch knob 2 | The shader's second control does NOT jump; it follows again once the knob is back where it stood before the mode. The same when the mode ends by itself, and when it is ended from OSC or by the owner's switch while the hand is on the knob |
+| P8 | In the mode, spin knob 2 back and forth for ten seconds with `journalctl -u pvj-web -f` open | The corner follows the knob without a wait you can feel and ends where the knob ended; nothing in the log. Pull the power a second after the last turn: after the start the corner is where it ended |
+| P9 | On a full-access phone: Edit on the display on, choose the second surface and its third corner. Enter the mode from the controller, choose another surface, nudge, leave | The card says a controller is adjusting the mapping; afterwards Edit on the display is still on and the second surface and its third corner are chosen again |
+| P10 | TouchOSC: a momentary button on `/pvj/mapping/mode`, another on `/pvj/mapping/mode/off`, a third on `/pvj/mapping/mode/toggle` | The first enters on the press and the mode stays on when the finger comes up; the second leaves; the third does both, one press each |
+| P11 | Launchpad: with "Presenter codes from a controller" on, hold the third round button along the top for 4 seconds; then hold pad 12 of bank C and the two pads right of it | The code comes from the round button only; the pads right of bank C do nothing |
+| P12 | nanoKONTROL2, a shader on screen. Enter the mode, nudge a corner with knob 2, leave. Turn knob 2 a long way as the shader's knob. Enter the mode again and touch knob 2 lightly | The corner does NOT leap by what the knob was turned in between: the first touch moves nothing, then it moves a step for a step. The same the third time |
+
+### TouchOSC: what the owner's layout can now be wired to (D75)
+
+The layout open in the owner's TouchOSC editor (`touchosc/mastercontrol_tOSC-layout_0001.tosc`: pages Room, Live, Mix, Shaders and Vibes, Tools, and a strip) was built on the addresses the box had. Its controls were read on 2026-10-10 (read only, nothing in it was changed); each control is named after the address it sends. **Nothing here was sent from TouchOSC, and the box still sends nothing back**, so no control can show the box's state.
+
+**Controls that are there and can be wired to something better:**
+
+| Where | Control in the layout | Now | Can be |
+| --- | --- | --- | --- |
+| Strip | `pvj/fadeout` | fades out only; there is no way back from the layout | `/pvj/fade`, sending 1 on press: out, then in at the next press, and up out of a Blackout |
+| Mix | `fliph`, `flipv` | the old names: each press switches the mirror over, so the layout cannot know which way it is | `/pvj/flip/h`, `/pvj/flip/v` as two switches sending 1 and 0 |
+| Tools | `overlay`, `stopoverlay` | two buttons, the old names | one switch on `/pvj/overlay` sending 1 and 0 (the two old ones keep working) |
+
+**Controls the layout does not have yet and the box now takes:**
+
+| Page | Add | Address | Send |
+| --- | --- | --- | --- |
+| Mix | a sixth fader under `pvj/position` | `/pvj/position/y` | -100 to 100 (`pvj/position` stays X) |
+| Mix | Transition (a radio or a row of buttons) | `/pvj/transition` | the name as a string: `cut`, `dip`, `crossfade`, `wipe-from-left` ... |
+| Mix | Duration fader | `/pvj/transition/duration` | 0.1 to 10 |
+| Mix | Effect on / off, previous, next | `/pvj/effect`, `/pvj/effect/prev`, `/pvj/effect/next` | 1 and 0; 1 on press |
+| Mix | Effect amount fader, effect knobs 1 to 8 | `/pvj/effect/amount`, `/pvj/effect/control/1` ... `/8` | 0 to 100; 0 to 1 |
+| Strip or Live | Prev and Next clip (beside the two `pvj/seek` buttons) | `/pvj/clip/prev`, `/pvj/clip/next` | 1 on press |
+| Strip | Fade in, if wanted as its own button | `/pvj/fadein` | no argument, or the seconds |
+| Shaders and Vibes | Previous, next shader (the page has `pvj/vibes/previous` and `/next`, which only step Vibes) | `/pvj/shader/prev`, `/pvj/shader/next` | 1 on press |
+| Shaders and Vibes | Speed, colour turn, brightness | `/pvj/shader/speed`, `/hue`, `/brightness` | 0 to 4, -180 to 180, 0 to 2 |
+| Shaders and Vibes | Shader knobs 1 to 8, presets 1 to 8 | `/pvj/shader/control/<n>`, `/pvj/shader/preset/<n>` | 0 to 1; 1 on press |
+| Shaders and Vibes | A button per shader | `/pvj/shader` | the shader's name as a string (`silk`) |
+| Shaders and Vibes | How long each stays | `/pvj/vibes/dwell` | 15 to 3600 seconds |
+
+Left as they are: the Room page (`pvj/scene/1` to `8`, `pvj/group/...`), Live's pads and banks, `pvj/vibes`, `pvj/vibes/set`, the Mix faders `pvj/opacity`, `pvj/size`, `pvj/position`, `pvj/speed`, `pvj/volume`, `pvj/rotate`, `pvj/loop`, `pvj/mute`, `pvj/mix/reset`, the Tools page's test screen and tones, and the strip's `pvj/seek`, `pvj/pause` (Freeze is pause), `pvj/stop` and `pvj/blackout`.
+
+**The layout's `pvj/fadeout` button as it is:** a plain TouchOSC button sends 1 on press and 0 on release. The box used to read those as seconds (a fade of one second, then a refused 0 in its log); now the 1 is a press with the panel's 2 seconds and the 0 does nothing. For another time use `/pvj/fadeout/seconds` and `/pvj/fadein/seconds`.
+
+To try: O1, send each new address from the layout with a clip playing and look at the screen and the panel; O2, the fade button twice (out, in), then Blackout from the panel and the fade button once (the picture comes up); O3, `/pvj/shader` with a name while Vibes runs (Vibes ends, that shader shows); O4, `journalctl -u pvj-web | grep osc` for a refused value.
+
 ### Controller lights (D53)
+
+**The rows L1, L4 and L5 below describe the Launchpad's first layout.** With D75: after plugging in, pad 1 is amber if A1 holds a clip, E (the fade button) and H (Blackout) are dim red, G (Stop) lights once something plays; Vibes is the first pad of row 7, and Freeze is F on the right.
 
 **Nothing of this has been seen on a real controller.** The messages come from Novation's document for the Launchpad S (that the Mini takes the same ones is not confirmed by Novation), from Korg's guide (nanoKONTROL2: External LED mode, and only with the factory On and Off values and channel) and from a secondary source alone (MIDI Mix). Five minutes; please say what you see at each step, also when it is right.
 
@@ -99,9 +184,9 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 
 | # | Do | See on the box's display | See on the paired phone (System > People and codes) |
 | --- | --- | --- | --- |
-| C1 | With "A code from a controller" off: hold the eighth pad of the top row for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
-| C2 | Switch "Presenter codes from a controller" on (answer the question). Tap the pad | Nothing | The second switch appears |
-| C3 | Hold the pad for 4 seconds, let go | The address, "One-time presenter code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time presenter code is on the box's display now", and End this code. No digits |
+| C1 | With "A code from a controller" off: hold the third round button along the top (Top 3) for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
+| C2 | Switch "Presenter codes from a controller" on (answer the question). Tap the button | Nothing | The second switch appears |
+| C3 | Hold the button for 4 seconds, let go | The address, "One-time presenter code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time presenter code is on the box's display now", and End this code. No digits |
 | C4 | On the second phone open the address, type the code | The code leaves the display within a second or two | "The last one: a presenter code, just now, used by the device ..." and the phone is in Paired devices as Presenter |
 | C5 | Hold again, then press the pad once | The code appears, then goes at the press | "hidden at the controller" |
 | C6 | Hold again, wait 2 minutes | The code goes by itself | "ran out unused" |

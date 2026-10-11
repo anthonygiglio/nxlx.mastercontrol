@@ -467,6 +467,106 @@ def _room(a, args):
     return "/api/room/group", body
 
 
+# --- the reach the controllers got with D75, from the table MIDI shares (pvj/actions.py) --------------------------
+_NOT_MINE = object()
+_PRESSES = {"/pvj/fade": "fade", "/pvj/clip/next": "clip_next", "/pvj/clip/prev": "clip_prev",
+            "/pvj/effect/next": "effect_next", "/pvj/effect/prev": "effect_prev",
+            "/pvj/shader/next": "shader_next", "/pvj/shader/prev": "shader_prev"}
+# address -> (the level's name in the shared table, what the number is multiplied by)
+_LEVELS = {"/pvj/position/x": ("position", 1.0), "/pvj/position/y": ("position_y", 1.0), "/pvj/effect/amount": ("effect_amount", 0.01),
+           "/pvj/shader/speed": ("shader_speed", 1.0), "/pvj/shader/hue": ("shader_hue", 1.0), "/pvj/shader/brightness": ("shader_brightness", 1.0)}
+_SLOT = re.compile(r"/pvj/(shader|effect)/(control|preset)/([1-8])")
+_SHADER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}")
+
+
+def _fade(path, args):
+    """/pvj/fadeout and /pvj/fadein. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and
+    these two used to read that as seconds: a fade of one second, then a refused 0 in the log. Now a 0 is a release
+    (nothing, and nothing logged), exactly 1 is a press (the 2 seconds of the panel's button), no argument is a
+    press too, and any other number is still the seconds, as it always was. For a real time of 1 second, or to be
+    plain about it, there are /pvj/fadein/seconds and /pvj/fadeout/seconds."""
+    if not args:
+        return path, {"seconds": 2.0}
+    v = args[0]
+    if v is True:
+        return path, {"seconds": 2.0}
+    if not _number(v) or v == 0:
+        return None
+    return path, {"seconds": 2.0 if v == 1 else v}
+
+
+def _reach(a, args):
+    """(path, body) for one of the addresses added with D75, None for one of them with an argument that means
+    nothing, _NOT_MINE for any other address. Numbers are in real units and go to the API as they are: no curve
+    and no dead zone (those are for a knob that sends 0 to 127; see MIDI.md)."""
+    from . import actions
+    v = args[0] if args else None
+    number = v if _number(v) else None
+    flag = v if isinstance(v, bool) else ((v > 0.5) if number is not None else None)
+    if a in _PRESSES:
+        return actions.press(_PRESSES[a]) if pressed(args) else None
+    if a in _LEVELS:
+        name, scale = _LEVELS[a]
+        return actions.level(name, number * scale) if number is not None else None
+    m = _SLOT.fullmatch(a)
+    if m:
+        kind, what, n = m.group(1), m.group(2), int(m.group(3))
+        if what == "preset":                            # only a shader's presets have a place in the list
+            return actions.press("shader_preset_%d" % n) if kind == "shader" and pressed(args) else None
+        if number is None or not 0 <= number <= 1:      # 0 to 1, spread as a controller's knob is
+            return None
+        return actions.control(kind, n, int(round(number * 127)))
+    if a == "/pvj/fadein":
+        return _fade("/api/fadein", args)
+    if a == "/pvj/fadein/seconds":
+        return ("/api/fadein", {"seconds": number}) if number is not None else None
+    if a in ("/pvj/flip/h", "/pvj/flip/v"):
+        return ("/api/control", {"action": "flip_" + a[-1], "value": flag}) if flag is not None else None
+    if a == "/pvj/effect":
+        if not args:
+            return actions.press("effect_toggle")
+        return ("/api/effects", {"on": flag}) if flag is not None else None
+    if a == "/pvj/overlay":
+        if not args:
+            return actions.press("overlay")
+        return ("/api/overlay", {"on": flag}) if flag is not None else None
+    if a == "/pvj/overlay/file":
+        return ("/api/overlay", {"file": v}) if isinstance(v, str) else None
+    if a == "/pvj/transition":
+        return ("/api/mix", {"transition": v}) if isinstance(v, str) else None
+    if a == "/pvj/transition/duration":
+        return ("/api/mix", {"duration": number}) if number is not None else None
+    if a == "/pvj/vibes/dwell":
+        return ("/api/vibes", {"dwell": number}) if number is not None else None
+    if a.startswith("/pvj/mapping/"):                   # mapping mode (pvj/mapper.py): the box refuses all of it unless the owner's switch is on
+        what = a[len("/pvj/mapping/"):]
+        names = {"surface/next": "map_surface_next", "surface/prev": "map_surface_prev", "corner/next": "map_corner_next",
+                 "corner/prev": "map_corner_prev", "left": "map_left", "right": "map_right", "up": "map_up", "down": "map_down", "undo": "map_undo"}
+        if what in names:
+            return actions.press(names[what]) if pressed(args) else None
+        # Entering and leaving. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and the 0 used
+        # to be "leave": the mode was over as the finger came up (the trap /pvj/fadein had, see _fade). Now a 0 on
+        # /pvj/mapping/mode is a release and does nothing; 1 enters; no argument switches over. Leaving is said
+        # outright with /pvj/mapping/mode/off, and one momentary button does both with /pvj/mapping/mode/toggle.
+        if what == "mode":
+            if not args:
+                return actions.NUDGE, {"mode": "toggle"}
+            return (actions.NUDGE, {"mode": True}) if flag else None
+        if what in ("mode/on", "mode/off", "mode/toggle"):
+            return (actions.NUDGE, {"mode": {"on": True, "off": False, "toggle": "toggle"}[what[5:]]}) if pressed(args) else None
+        whole = [int(x) for x in args[:2] if _number(x) and x == int(x)]
+        if what == "step":
+            return (actions.NUDGE, {"step": whole[0]}) if len(whole) >= 1 else None
+        if what == "nudge":                             # two whole numbers: steps to the right and steps down
+            return (actions.NUDGE, {"steps": whole}) if len(whole) == 2 and len(args) >= 2 else None
+        return None
+    if a == "/pvj/shader":                              # a shader by its name, with ".fs" or without
+        if not isinstance(v, str) or not _SHADER_NAME.fullmatch(v):
+            return None
+        return "/api/shaders/play", {"id": v if v.endswith(".fs") else v + ".fs"}
+    return _NOT_MINE
+
+
 # Old names that start with /start but are not playback presets: sync and sound output need full access
 # (System > Sync and video wall, Sound output), the audio player and the PDF presenter are not built.
 NOT_HERE = {"/startslave", "/startaudio", "/startaudioslave", "/startaudiousb", "/startpdf", "/startpdfusb"}
@@ -496,6 +596,9 @@ def translate(address, args, mix=None):
     # -- stable names --------------------------------------------------------
     if a.startswith(("/pvj/scene", "/pvj/group/")):
         return _room(a, args)
+    more = _reach(a, args)
+    if more is not _NOT_MINE:
+        return more
     if a.startswith("/pvj/pad/"):
         parts = a.split("/")[3:]
         if len(parts) == 2 and all(p.isdigit() for p in parts) and pressed(args):
@@ -527,9 +630,10 @@ def translate(address, args, mix=None):
         if v is None:
             v = not (mix or {}).get("blackout", False) if not args else None
         return ("/api/blackout", {"on": v}) if v is not None else None
-    if a == "/pvj/fadeout":
-        seconds = num() if args else 2.0
-        return ("/api/fadeout", {"seconds": seconds}) if seconds is not None and pressed([]) else None
+    if a == "/pvj/fadeout":                             # a button's 1 and 0 are a press and a release, not seconds (_fade)
+        return _fade("/api/fadeout", args)
+    if a == "/pvj/fadeout/seconds":
+        return ("/api/fadeout", {"seconds": num()}) if num() is not None else None
     if a == "/pvj/mix/reset":
         return control("reset") if pressed(args) else None
     if a in ("/pvj/loop", "/pvj/mute"):

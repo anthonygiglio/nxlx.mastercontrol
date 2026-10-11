@@ -81,7 +81,7 @@ async function go(pg, key, how) {
   if ((await at(pg)) !== key) await press(how === 'keys' ? col : col + ' > .deskhead, ' + col + ' .syshead h2', key, true);
 }
 // The strip shows four of its buttons on a phone: More opens the rest (the place in the clip, back and forward 10
-// seconds, Fade in, Fade out, Freeze, Loop and Speed). It stays open across screens, so a step that needs them opens it once.
+// seconds, Fade, Freeze, Loop and Speed). It stays open across screens, so a step that needs them opens it once.
 async function stripOpen(pg) {
   if (await pg.isVisible('#wsmore') && (await pg.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded'))) !== 'true') await pg.click('#wsmore');
 }

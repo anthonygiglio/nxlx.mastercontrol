@@ -1907,6 +1907,15 @@ class Effects(S.Engine):
         self._queue(sid)
         return {"ok": True, "on": True, "id": sid}
 
+    def switch(self, on, ask=False):
+        """On, or off, said outright (OSC's /pvj/effect 1 and 0, D75): nothing if that is what was last asked for,
+        else the one button. So "on" twice is on, where two presses of the button are on and off."""
+        self._need()
+        now = self._intent if self._intent is not None else (self._seen() is not None)
+        if bool(now) == bool(on):
+            return {"ok": True, "on": bool(on)}
+        return self.toggle(ask)
+
     # -- uploads --
     def delete(self, sid):
         path, source = self._path(sid)
@@ -1993,6 +2002,10 @@ class Effects(S.Engine):
         for word in ("off", "toggle"):
             if word in body and body[word] is not True:
                 raise ApiError(400, "%s must be true" % word)
+        if "on" in body:                                # {"on": true or false}: said outright, by a controller
+            if not isinstance(body["on"], bool):
+                raise ApiError(400, "on must be true or false")
+            return self.switch(body["on"], ask=self._panel(device))
         if body.get("off") is True:
             self.off()
         elif body.get("toggle") is True:
