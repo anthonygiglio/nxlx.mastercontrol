@@ -1787,10 +1787,11 @@ function startServer(env) {          // env: more for the harness's environment 
     for (let i = 0; i < 4; i++) await pins[i].fill(info.pin[i]);
     await onHttp.click('#pairbtn');
     await onHttp.waitForSelector('.pads');
-    await go(onHttp, 'setup/about');
-    await onHttp.waitForSelector('#forgetdevice');
-    await onHttp.click('#forgetdevice');
-    await onHttp.waitForSelector('#confirmrow');
+    await go(onHttp, 'setup/index');                                 // an owner logs out under People and codes (a guest's Log out is on About and power)
+    await onHttp.click(rowOf('People and codes'));
+    await onHttp.waitForSelector('#logoutbtn');
+    await onHttp.click('#logoutbtn');
+    await onHttp.waitForSelector('#devicescard #confirmrow');
     await onHttp.click('#confirmyes');
     await onHttp.waitForSelector('#pairbtn');
     await onHttp.click('#recoverylink');
