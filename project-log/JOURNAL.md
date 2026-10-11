@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-11, pads hold NDI sources; groups and discovery servers (`ndi-input`, #94, D62 amended; a draft, not merged)
+
+Built on the branch after the hand-over below, by one session. Nothing of it has run on a Pi, with a real sender, with mpv or in a browser on the dev Mac: the Python tests ran here, the browser steps were written and syntax-checked and run in CI only.
+
+- **Pads.** A third kind in the pad editor. The pad stores the id; the allowed list is `ndi.sources`; an Operator allows a source by picking one that is on the network now, the Owner removes. The press checks the live list first and then calls `Api.play_ndi`. The rules, who does what and the trap are in D62 and in pvj/NDI.md ("Pads that hold an NDI source").
+- **What the hand-over had wrong.** It said the id follows a name. `ndi.source_id` binds it to the announcing machine too, so the rule built is "a name on a machine", and a same-named sender elsewhere is refused by name. Two senders under one id could not be seen (the helper folded them); `clean_sources` now marks the row (`twins`).
+- **Groups and discovery** (asked by the owner during the session). Groups through the finder's `p_groups`. Discovery servers through NDI's own configuration file, written by the panel into a new root-made folder, `/run/pvj-ndi-config`; the helper's unit, the tmpfiles lines and the panel's drop-in changed, so the real-install job in CI is the first real look at them. No mDNS switch was built: NDI documents none (LESSONS).
+- **The SDK was read** (the owner's copy, 6.3.2, read only, nothing copied into the repository): every structure, signature and constant the helper uses matches. Two notes are in NDI.md.
+- **Tests.** `tests/test_ndi_pads.py` (22) and `tests/test_ndi_groups.py` (17); each was committed before its code and seen to fail without it. The rollback tests run master's own `pvj` from git.
+- **Open for the owner.** Should a pad follow a sender to a new address when exactly one sender carries the name (now: no)? Should the box run a discovery server itself (now: no; its licence forbids bundling)? Is an Operator allowing sources right, or should it be the Owner's alone?
+- **Slips.** The first test commit held one test that did not pass yet (the schedule step; fixed in the next commit). The full suite was started while files were still being edited, so its first run proves nothing and it was run again.
+
 ## 2026-10-11, the NDI input brought up to master (`ndi-input`, #94, D62 amended)
 
 Master had moved 335 commits since the branch was last merged (the area desks of D72, crossfades, shader pads, effects over shaders, controller layouts, the owner PIN, the OSC locks, HTTPS, the roles of D80, owner recovery). Merged with a merge commit; fourteen files conflicted.

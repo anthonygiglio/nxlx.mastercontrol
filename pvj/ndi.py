@@ -1452,7 +1452,7 @@ class Service:
                     and self.config_dir and config_discovery(self.config_dir) == discovery):
                 # The discovery servers changed, and the file says what the panel asks. The library reads its file
                 # once, when it starts: so this process ends (after this answer) and a new one loads the library
-                # with the new file. A source on the screen ends with it and is shown again by the panel's watch.
+                # with the new file. A source on the screen ends with it, and somebody starts it again by hand.
                 # Where the file does not say what is asked (a box whose NDI set-up was not refreshed), nothing is
                 # restarted and the status says which servers are really in force.
                 self._close_receiver()

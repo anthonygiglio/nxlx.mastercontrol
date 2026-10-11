@@ -162,11 +162,16 @@ If the library is taken away by hand on a box that is set up, the page says "The
 
 | Route | Role | What |
 | --- | --- | --- |
-| `GET /api/ndi` | view | Whether the box is set up for NDI (`setup`, with the command when it is not), the runtime (present, version, a problem in words), the helper, the sources found, the saved addresses, what plays and its counts |
+| `GET /api/ndi` | live (an Operator; a Guest has no NDI page, D80) | Whether the box is set up for NDI (`setup`, with the command when it is not), the runtime (present, version, a problem in words), the helper, the sources found, the saved addresses, what plays and its counts |
 | `POST /api/ndi` `{"action": "add_address", "address": "192.168.1.20"}` | full | Also look for senders at this address |
 | `POST /api/ndi` `{"action": "remove_address", "address": "..."}` | full | Forget it |
 | `POST /api/ndi` `{"action": "sound", "on": true}` | full | Play a source's sound with its picture, or not |
 | `POST /api/play` `{"ndi": "<id>"}` | live | Show a source. The id comes from `GET /api/ndi`; a name is never taken |
+| `POST /api/pads` `{"bank", "index", "label"?, "ndi": "<id>"}` | live | Put a source on a pad: one that is allowed already, or one on the list now, which this makes allowed |
+| `POST /api/play` `{"pad": [bank, index]}` on such a pad | live; a Guest is refused (403) | Show the pad's source, after the checks under "Pads" |
+| `POST /api/ndi` `{"action": "forget", "id": "<id>"}` | full | Take a source off the allowed list |
+| `POST /api/ndi` `{"action": "add_group" or "remove_group", "group": "Leyline"}` | full | Which NDI groups the box looks in |
+| `POST /api/ndi` `{"action": "add_discovery" or "remove_discovery", "server": "192.168.1.5:5959"}` | full | Which NDI Discovery Servers the box asks |
 
 Settings: `"ndi": {"addresses": []}` and, once someone has used the switch, `"sound": true` or `false` (no schema change since 2026-10-11: the key is read with defaults everywhere, as `room` is, so a file from this branch loads on master and a master file loads here; the branch had bumped to 15 before, and the test Pi keeps one such file as a backup; sound needed no new key either, a file without it means off). The switch is the module `inputs-ndi` (off by default, D43).
 
@@ -246,6 +251,47 @@ The owner downloaded the Linux SDK and the agreement its installer shows was rea
 - **Governing law:** Sweden.
 - **Which processor builds the SDK ships** was not looked at (the installer was not run). The nixpkgs package for NDI 6 (a secondary source) takes `x86_64-linux-gnu`, `aarch64-rpi4-linux-gnueabi` and `arm-rpi2-linux-gnueabihf` from the SDK's `lib/` folder and lists i686 as well. `pvj-ndi-runtime` looks for the folder that matches the box and checks the file's own header, so a wrong guess here is caught on the box.
 
+## Pads that hold an NDI source (2026-10-11; never run on a box)
+
+The owner's words: "i want pads to hold NDI sources." A pad has a third kind beside Clip and Shader.
+
+- **What a pad stores.** `{"label", "file": "", "ndi": "<id>"}`: the source's id and nothing else of it. No name, no address, nothing typed. No schema change. A pad with a clip is a clip pad and one with a shader is a shader pad whatever else a hand-edited file put beside them.
+- **The allowed list.** `"ndi": {"sources": [{"id", "name", "from"}]}`, beside `addresses`, at most 32, read with defaults. Each row must agree with itself: the id is the one its name and machine give. A pad's id is looked up there at every press.
+- **Who may allow a source.** An Operator, by putting a source that the helper lists NOW on a pad. Reason: he may already play that source by hand, and he edits pads (D80); what the list adds is that the choice lasts. A source that is away cannot be allowed, and no route takes a name or an address for it. Only the Owner removes one (the NDI page, "Sources that pads may hold", or `forget`), and only the Owner manages the addresses, the groups and the discovery servers. A pad whose source was removed keeps its id and says, when pressed, that the source is not allowed any more.
+- **What a pad follows: a name on a machine, not a sender.** The id is `ndi.source_id(name, host)`: the name the sender announces and the address it is announced from, without the port. So a sender of the same name on ANOTHER machine is another source: the pad refuses it and says where the name is announced from now. That is stricter than "follows a name", and it has a price: a sender whose address changes (DHCP) has to be chosen for the pad again. It is still not proof of who is sending. Names are announced over mDNS with no authentication, and an address on a LAN can change hands or be taken (a new lease, ARP spoofing). Whoever holds that address and announces that name is what the pad plays. On a network you do not control, give the sender's address under "Addresses to ask" (the box then asks that machine directly and the page marks the source as "an address the owner gave") and keep that machine's address fixed; that removes the announcement from the path, not the question of who holds the address.
+- **At a press**, before anything is opened or claimed: the module on, the source allowed, the helper running with its library, the source on the list now with the same name and machine as the allowed row (the id is only 48 bits of a hash, so both are compared as well). Then the one road an NDI source has, `Api.play_ndi`. A source that is away answers at once ("NDI source 'X' is not on the network now"), where opening it would have waited up to 14 seconds. **Two senders under one id** (one name twice on one machine, on two ports) are refused: "the box does not pick one"; the helper marks such a row (`twins`) and such a source cannot be put on a pad.
+- **Roles.** A Guest is refused an NDI pad as he is refused a stream: in the gate (`policy._play`), in a Room scene whose box step is such a pad (`policy._scene`), and in the handler itself; the pads' answer gives a Guest no names and addresses, and his panel shows the pad as not available and never sends the tap. An Operator and the Owner play and edit.
+- **Controllers.** MIDI, OSC (`/pvj/pad/<bank>/<n>`) and DMX press the pad as they press any pad (`policy.LEGACY_LIVE` is unchanged). Their press is answered at once ("pending") and the source connects on a thread of its own, through `play_ndi`; a refusal is kept for the pads (`player.ndi_refused` in the status, the line under the pads) as a shader pad's is. A Room scene and the schedule (which runs scenes) wait for the source and report it in the scene's own report. A remote support session: view is refused, live plays it as a controller would, full is the Owner. Autostart does not take an NDI pad (a sender may not be up when the box starts).
+- **Lights.** The playing pad is lit by the source's id (`player.ndi_id`), on the panel, on a MIDI controller and in the state sent over OSC (`boxstate.snapshot`: `pad_ndi`, `ndi`).
+- **Sound** follows the page's one switch. A pad has no sound setting.
+- **An older release** (master) loads the file: the pad's `file` is empty, so it is an empty pad there ("pad is empty"), and the `ndi` key and the allowed list are kept through a load and a save. `tests/test_ndi_pads.py` runs master's own code from git for this.
+
+## Groups and discovery servers (2026-10-11; never run on a box)
+
+The owner's words: "make sure to incorporate the NDI group and discovery policies. i can lock the NDI network with a group policy."
+
+**What they are.** NDI's own ways of scoping who finds whom. A sender is in one or more groups (the default is "Public"); a finder looks only in the groups it is told. A Discovery Server is a program on one machine that senders register with and finders ask.
+
+**What they are not.** They decide what this box LOOKS for, and keep the list short and the network in order. They are not a password and they encrypt nothing: a sender that puts itself in the same group, or registers with the same discovery server, is found. So a group policy locks the network as an agreement among machines that cooperate. The pad rule about names and addresses above holds with them as without.
+
+**What is built.**
+
+- `"ndi": {"groups": ["Leyline"]}`: at most 8 names of 1 to 64 letters, digits, spaces, dashes, dots and underscores (no comma: the library takes them joined by commas). Kept exactly as typed: the SDK's documentation does not say whether names fold case, so this box never changes one, and the page says to type the name as the sending program has it. They go straight into the finder: `NDIlib_find_create_t.p_groups` (NULL when the list is empty, which the SDK says means the default groups). A change opens the finder again; a source on the screen plays on, since a receiver is connected by address.
+- `"ndi": {"discovery": ["192.168.1.5:5959"]}`: at most 4 private or link-local IPv4 addresses, each with `:port` only when typed (the server's default is 5959). The finder's structure has no field for these. NDI reads them from its configuration file, `ndi-config.v1.json`, key `ndi.networks.discovery` (one text, comma separated), in the folder `NDI_CONFIG_DIR` names. So: root makes `/run/pvj-ndi-config` (0750 pvj-web:pvj-ndi, one more tmpfiles line), the panel writes that one file there with that one key, and the helper's unit points `NDI_CONFIG_DIR` at it. The helper can read the folder and cannot write it. The library reads the file once, when it starts, so a change makes the helper end and start again: a source on the screen stops then and is started again by hand.
+- A box set up for NDI before this needs its set-up written again (an update does it; `sudo pvj-ndi-runtime refresh`; then a restart, which makes the folder). Until then the page says so and shows that the servers asked for are not in force.
+- The page shows what is in force now (the groups the helper says it looks in, the servers the library was started with) beside what was asked, and says "No senders found in the group X" as a different thing from "NDI is not set up".
+- A pad's source is looked for in the same list as every other source, so only within the groups and discovery in force.
+
+**Not built, and why.**
+
+- **A switch for mDNS.** Asked for ("mDNS on or off"). The SDK documentation (6.3.2) names no setting that stops a finder using mDNS: the `multicast`, `tcp`, `unicast` and `rudp` keys of the configuration file choose how pictures travel, not how senders are found. It also says a finder with a discovery server uses BOTH the server and mDNS; it is the SENDERS that stop announcing by mDNS once they have a discovery server. So the narrowing a venue can really have is on the sending side: give every sender the discovery server (and a group), and they are no longer announced on the local network at all. `ndi.mdns` is accepted in a settings file and read by nothing. To confirm on the Pi: step N24.
+- **The group of a found source.** `NDIlib_source_t` has a name and an address and nothing else, so an allowed source does not remember a group. (The SDK's Sender Listener reports groups, and needs a discovery server; not used.)
+- **Whether the file's values add to or replace what the finder is given** is not stated in the documentation. This box gives the groups and the extra addresses only through the finder and the discovery servers only through the file, so the question does not arise for them.
+
+**Where a discovery server runs.** On a machine on the venue's network that is always on and has a fixed address: a small computer in the rack, not a laptop that leaves. NDI's Discovery Server is its own download with its own licence (one copy, no redistribution), so this box does not bundle it. Its documentation gives it a `-bind` address (all addresses by default), a `-port` (5959), and a configuration file; whether the box itself should run one is a separate, later job.
+
+**Checked against the SDK (6.3.2, the owner's copy, read only; nothing of it is in this repository).** `NDIlib_find_create_t` is `show_local_sources`, `p_groups`, `p_extra_ips`, in that order, as `_FindCreate` has it. `NDIlib_source_t`, `NDIlib_recv_create_v3_t`, `NDIlib_video_frame_v2_t`, `NDIlib_audio_frame_v3_t` and the performance structure match the ctypes definitions field for field; the twelve function signatures in `_declare` match; the constants match (UYVY, UYVA, FLTP, the undefined timestamp, colour format "fastest" 100, bandwidth "highest" 100, the frame types and the field types). Nothing was wrong. Noted, not changed: the picture is read with `NDIlib_recv_capture_v2` and the sound with `_v3` on one receiver from two threads (the header allows calls at the same time and does not say whether mixing the two versions is covered); the finder's strings are kept on the library object (safe while the old finder is closed before a new one is opened, as it is).
+
 ## Discovery and the network
 
 - The library finds senders by mDNS through `avahi-daemon` (it talks to the daemon over the system D-Bus socket; the sandbox allows Unix sockets for that). mDNS is UDP port 5353, multicast, and does not cross routers or many Wi-Fi access points.
@@ -255,6 +301,8 @@ The owner downloaded the Linux SDK and the agreement its installer shows was rea
 - **A box that did not opt in shows nothing of NDI on the network**: there is no helper to ask for senders or to receive from one, and the installer adds no avahi for it. (This replaces the earlier design, in which the helper was installed idle on every box and the installer added `avahi-daemon` where it was missing.) Raspberry Pi OS has `avahi-daemon` anyway, and a box with it answers to its name by mDNS; that is the same with and without this project. On a box that is set up, the helper is idle (no library loaded, nothing sent) until the module is switched on. Device step N17 checks both on the wire.
 
 ## Not verified
+
+- **Pads, groups and discovery servers, on any box.** Written and tested against the faked library on a Mac. Never run with a real sender: steps N22 to N26.
 
 - **The real command succeeding, anywhere.** `pvj-ndi-runtime install` has only ever been run to the end with stand-ins: it needs NDI's library. CI runs it with a file it refuses, and calls the setup it would go on to directly.
 - **The opt-in on a device.** `pvj-ndi-runtime install` with a real SDK on a Pi: that `apt-get`, the account, the unit and the drop-ins come out as written, that the panel and the player come back with the extra group, that an update keeps it and `remove` takes it off (steps N2, N17 and N18). `tests/test_ndi_setup.py` drives it with a fake root folder and fake commands; `tests/real_install_test.sh` runs its root part under the CI runner's systemd without a library. Neither is a Pi.

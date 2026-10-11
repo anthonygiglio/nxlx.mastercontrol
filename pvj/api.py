@@ -3073,7 +3073,7 @@ class Api:
             raise bad("action must be add_address, remove_address, sound, forget, add_group, remove_group, add_discovery or remove_discovery")
         if action in ("add_discovery", "remove_discovery"):
             # NDI Discovery Servers this box asks (the Owner's). The library reads them from its own file when it
-            # starts, so the helper starts again; a source on the screen is shown again by the watch.
+            # starts, so the helper starts again; a source on the screen ends and is started again by hand.
             with self.settings.lock:
                 servers = ndi_mod.saved_discovery(self.settings.data.get("ndi"))
                 try:
