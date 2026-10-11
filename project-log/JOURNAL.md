@@ -16,6 +16,8 @@ The owner asked what an Owner may do from a remote support session, suggested "e
 - **After the advisor's review, the same session.** The page said "everything support changes is listed" and only the seven opened routes were: now every POST a session is answered is in the list by its route. The list kept the newest 40 lines, so forty harmless taps would have pushed an import out of sight: it now counts repeats and keeps the first lines. The word about the OSC key looked only at the last session. And two more attempts to shut the owner out: the clock (nothing) and the network, where a helper's own confirm could leave the studio unable to reach the box: `POST /api/network/confirm` is refused through the tunnel now, which the brief did not list (the owner is asked).
 - **Slips.** The first `_remote_owner` let a login through whose session had ended. The import's log line was cut before its point. A test used an address the fixture already had. And test runs wrapped in `timeout`, which this Mac does not have, printed nothing and were taken for passes for a while (on the other branch too); every run since was read for its "Ran N tests" line.
 
+One more slip, found by the full run on the Mac: the two CSS rules for the lists were put at the end of `app.css`, inside the Signal style's block, where a test allows only rules under that style; they sit before the block now. CI's unit step has twenty-five minutes instead of twenty (the same change as on `osc-defaults`: the suite takes about seventeen on master and a run there was cut off).
+
 Not done and not known: nothing ran through a real tunnel or on a box; the browser step was not run here.
 
 ## 2026-10-11, the box sends its state back over OSC (`osc-replies`, #123, D82; a draft, not merged)

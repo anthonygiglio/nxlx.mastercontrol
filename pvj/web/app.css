@@ -851,6 +851,9 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .list .item.oscmsg { flex-direction: column; align-items: flex-start; gap: 2px; }
 .list .item.oscmsg > span:first-child { flex: none; }   /* a column here: the row rule's 10rem would be its height */
 
+/* D84: the two lists of what support can and cannot do, and what a past session changed */
+#supportreach ul, ul.supportdid { padding-left: 20px; margin: 0; } #supportreach li, ul.supportdid li { margin: 2px 0; overflow-wrap: anywhere; }
+
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
    element carries data-style="signal", which the server writes for a theme that names that style. The look above is
@@ -1426,6 +1429,3 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
   html[data-style="signal"] .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
   html[data-style="signal"] .tp #black.flash { animation: blackflash .5s steps(1, end) infinite; }      /* (its keyframes are with fadeflash's, above the style blocks: a keyframes rule has no style of its own) */
 }
-
-/* D84: the two lists of what support can and cannot do, and what a past session changed */
-#supportreach ul, ul.supportdid { padding-left: 20px; margin: 0; } #supportreach li, ul.supportdid li { margin: 2px 0; overflow-wrap: anywhere; }
