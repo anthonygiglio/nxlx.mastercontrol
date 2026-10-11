@@ -14,6 +14,7 @@ Master had moved 335 commits since the branch was last merged (the area desks of
 - **Roles.** `GET /api/ndi` Operator, `POST /api/ndi` Owner (and a full support session, as Streams), `{"ndi": id}` refused to a Guest; rows in `tests/test_roles.py`, nothing added to `policy.LEGACY_LIVE`.
 - **The panel.** The Mix picture screen on master has no Speed slider (it is on the strip), so the "held at 1.00x" hint is on the strip's Speed now; the NDI page is a Setup row beside Streams with role `op`; `tests/ui/shell.js` lists its screen for the owner and the operator and its controls in ADDED; `signal-pages.js` and `panel.test.js` carry the row.
 - **Docs.** HANDOFF, `pvj/NDI.md`, `docs/UI.md`, `docs/MANUAL.md`, `pvj/README.md`, N0 in `tools/DEVICE-TESTING.md`.
+- **CI's first run of the merge** (`0d36ef1`): `panel-ui`, `effects-gpu`, `real-install` and `shellcheck` green; the unit test job was cut at its own twenty-minute budget (`timeout -s ABRT 1200`), with no deadlock in the dump: master alone took 1027 s that morning, and the NDI modules add a few minutes of real pipes and measured waits. The budget is thirty minutes now (the job's limit of 45 stands). The slowest test in the run is master's own (`test_roles`, 94 s).
 
 Nothing of this ran on hardware. What the Pi has seen is what the entries of 2026-10-08 below say: the opt-in, discovery, a moving source for a minute and a still source over SSH, nobody at the monitor; the sound never heard anywhere. The helper service `pvj-ndi.service` from that trial is still enabled on the test Pi.
 

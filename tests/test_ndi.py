@@ -1206,7 +1206,7 @@ class SavedSettingsTest(unittest.TestCase):
             self.assertEqual(w(), (True, []), bad)
             self.assertEqual(w.problem, "the saved NDI addresses could not be read and are not used")
         self.assertEqual(len(logged), 1)                                 # said once, not at every poll
-        del data["ndi"]                                                  # a file from before schema 15, mid-migration
+        del data["ndi"]                                                  # a file without the key (an older release wrote it; no migration adds it)
         self.assertEqual((w(), w.problem), ((True, []), ""))
         w = ndi.Wanted(lambda: 1 / 0, lambda: data, log=logged.append)
         self.assertEqual(w(), (False, []))

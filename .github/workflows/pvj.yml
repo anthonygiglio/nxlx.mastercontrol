@@ -38,8 +38,10 @@ jobs:
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
       - name: Unit tests (real mpv, headless)
-        # About nine minutes. After twenty, SIGABRT: faulthandler prints every thread's stack and the step fails.
-        run: timeout -s ABRT 1200 python -X faulthandler -m unittest discover -s tests -t . -v
+        # Master took about seventeen minutes on 2026-10-11 (2345 tests in 1027 s); the NDI input's tests (real pipes,
+        # measured waits) took it past twenty. After thirty, SIGABRT: faulthandler prints every thread's stack and the
+        # step fails (the job's own limit above is 45).
+        run: timeout -s ABRT 1800 python -X faulthandler -m unittest discover -s tests -t . -v
       - name: Shaders on a real mpv with a software GPU (xvfb, Mesa; a skip here is a failure)
         run: |
           tools/ci-apt.sh xvfb xauth libegl1 libgles2 libgl1-mesa-dri
