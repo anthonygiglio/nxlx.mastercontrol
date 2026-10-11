@@ -668,7 +668,11 @@ class CommandTest(Base):
             setup.calls.append("library")
             if isinstance(library, Exception):
                 raise library
-            return "/opt/pvj-ndi/libndi.so.6"
+            placed = self.p("/opt/pvj-ndi/libndi.so.6")        # a placed file, so the command can hash what it put there
+            os.makedirs(os.path.dirname(placed), exist_ok=True)
+            with open(placed, "wb") as f:
+                f.write(b"not really a library\n")
+            return placed
         with mock.patch.object(ndi.os, "geteuid", lambda: 0), mock.patch.object(ndi, "install_runtime", install), \
                 mock.patch.object(ndi, "LIB_DIR", self.p("/opt/pvj-ndi")):
             code = ndi.runtime_main(argv, out, setup=setup)
@@ -678,7 +682,10 @@ class CommandTest(Base):
         s = FakeSetup()
         code, said = self.main(["install", "/sdk"], s)
         self.assertEqual((code, s.calls), (0, ["check", "library", "enable"]))
-        self.assertIn("installed /opt/pvj-ndi/libndi.so.6", said)
+        self.assertIn("installed " + self.p("/opt/pvj-ndi/libndi.so.6"), said)
+        # the owner can compare what was placed with the SDK's own copy (review of b46410c, low 5)
+        import hashlib
+        self.assertIn("sha256 " + hashlib.sha256(b"not really a library\n").hexdigest(), said)
 
     def test_a_setup_that_would_be_refused_does_not_even_copy_the_library(self):
         s = FakeSetup(refuse="the account pvj-ndi is also in pvj and must be in no other group; nothing was set up")

@@ -1882,7 +1882,15 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
         try:
             setup.check()                  # whatever can refuse the setup, before anything on the box is changed
             # then the library: a file that is refused leaves the box as it was
-            print("installed %s" % install_runtime(argv[1]), file=out)
+            placed = install_runtime(argv[1])
+            print("installed %s" % placed, file=out)
+            # The owner can compare what the box holds with the SDK's own copy (sha256sum on any computer).
+            try:
+                with open(placed, "rb") as f:
+                    digest = hashlib.sha256(f.read()).hexdigest()
+                print("sha256 %s  (compare with: sha256sum <the SDK's libndi.so.6>)" % digest, file=out)
+            except OSError as e:
+                print("pvj-ndi-runtime: could not read the placed library back to hash it: %s" % e, file=out)
             return 1 if setup.enable(say=say) is False else 0      # False: set up, and the helper did not stay up
         except (NdiError, setup.SetupError, OSError) as e:
             print("pvj-ndi-runtime: %s" % e, file=out)
