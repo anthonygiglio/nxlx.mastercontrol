@@ -1390,5 +1390,14 @@ Nothing here has met a real tablet, a real TouchOSC or the box as of 2026-10-11;
 - **Nothing secret.** A control's name comes from a shader file on the box; like a clip's name, anyone on the network can read it.
 - **One cache of parsed inputs per engine.** A shader and an effect can be on together (D74); one shared cache would have read and parsed two files five times a second.
 
+**After the independent review of #124 at 8f8fb8a (2026-10-11): safe to merge and deploy after these; each fixed with a test seen to fail first.**
+
+- *M1: a save that failed at the first start stopped the receiver.* The mark is written when the receiver is set up; on a full or read-only disk the `OSError` escaped `apply()` and nothing listened, where master writes nothing there. The save is now tried and, if it fails, said once and tried again the next time the receiver is set up; the receiver always starts.
+- *M2: an import lost the first switch-on lock.* A new box, the port changed, its own export imported, then switched on: the import read the traces again (`used_before`) and marked the box "was on", so no lock came. It asks `never_on` now (only the mark counts once it is written) and always writes the mark, so nothing the file brings is ever read as a trace. That was the one place besides the first start that read the traces.
+- *L1: a Guest was told after all.* `GET /api/osc` gave every paired device `open` and the words. Below Operator they are left out. (The three switches a Guest could read before are as they were, D78.)
+- *L2: a full state could starve under heavy change.* With 40 values changing at every look, four targets and the longest names, changed values took the budget first and the shared cap followed the list's order: the fourth target had no full state after 9 seconds in the test (20 in the review). What a target was never sent now goes before what it has an older value of, and the target that goes first changes with every look. In the test every target is complete within 5 seconds and the changing values still arrive; no cap was raised.
+- *L3:* CI's unit step prints its 25 slowest tests (on Python 3.12, which has `--durations`); the limit stays at twenty-five minutes.
+- *L4: the health summary said ok beside a row that said Check.* Decided: **an open OSC is a "check", not a failure.** `overall` is `warn` when OSC is open unless something is really wrong (`bad` stays `bad`); a Guest's summary, like his page, does not change.
+
 **Not done, not known.** Nothing here has run on the box or a tablet. Whether TouchOSC shows a string that arrives in a bundle in a label is unknown (D82's open question about bundles). The browser test was written without being run on the development Mac (no Playwright there); CI runs it. No new control was added to the panel (the warning is words), so the inventory of controls has no new entry.
 
