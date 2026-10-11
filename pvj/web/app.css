@@ -39,6 +39,8 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 @media (prefers-reduced-motion: no-preference) {
   .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
   @keyframes fadeflash { 0%, 100% { background: var(--fg); color: var(--bg); } 50% { background: var(--cd); color: var(--fg); } }
+  /* (Blackout's flash in the Signal look, which keeps it in its problem colour; the rule that uses it is at the end of that look's block) */
+  @keyframes blackflash { 0%, 100% { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); } 50% { background: var(--tk-plain, transparent); color: var(--fg); } }
 }
 .btn.big { min-height: 56px; }
 .btn.small { min-height: 34px; padding: 0 10px; font-size: 14px; }
@@ -1411,6 +1413,5 @@ html[data-style="signal"] .btn.flash { background: var(--fg); color: var(--bg); 
 html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
 @media (prefers-reduced-motion: no-preference) {
   html[data-style="signal"] .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
-  html[data-style="signal"] .tp #black.flash { animation: blackflash .5s steps(1, end) infinite; }
-  @keyframes blackflash { 0%, 100% { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); } 50% { background: var(--tk-plain, transparent); color: var(--fg); } }
+  html[data-style="signal"] .tp #black.flash { animation: blackflash .5s steps(1, end) infinite; }      /* (its keyframes are with fadeflash's, above the style blocks: a keyframes rule has no style of its own) */
 }
