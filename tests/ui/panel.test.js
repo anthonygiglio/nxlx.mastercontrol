@@ -1710,6 +1710,132 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.setViewportSize({ width: 390, height: 844 });
     assert((await get('/api/status')).device, 'Stay logs nothing out');
     await page.waitForSelector('#showpin');
+    // Recovery (D81): the card with no set yet; a set made and shown once, in the form for paper, and gone from the
+    // card after Done; the count; the stick switch on by default; all of it at 320 px. Then a fresh page (a found
+    // phone) pairs as an owner with one code through "I have a recovery code", the same code fails a second time,
+    // and the owner's card shows the notice with the device's name.
+    await page.waitForSelector('#recoverycard #makerecovery');
+    assert(/No recovery codes yet/.test(await page.textContent('#recoverycard')), 'no set on a new box');
+    assert.strictEqual(await page.getAttribute('#recovery-usb', 'aria-checked'), 'true', 'the stick way is on by default');
+    await page.click('#makerecovery');
+    await page.waitForSelector('#recoverycodes');
+    const codes = await page.$$eval('#recoverycodes li', (ls) => ls.map((l) => l.textContent));
+    assert.strictEqual(codes.length, 8, 'eight codes');
+    codes.forEach((c) => assert(/^[A-HJ-KM-NP-Z2-9]{4}-[A-HJ-KM-NP-Z2-9]{4}-[A-HJ-KM-NP-Z2-9]{4}$/.test(c), 'a code for paper: ' + c));
+    await page.setViewportSize({ width: 320, height: 844 });
+    await fitsOn(page, 'the recovery codes at 320');
+    await page.click('#recoverydone');
+    await page.waitForFunction(() => /8 of 8 codes left/.test(document.getElementById('recoverycard').textContent));
+    await fitsOn(page, 'the Recovery card at 320');
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(!(await page.textContent('#recoverycard')).includes(codes[0]), 'the codes are gone from the card');
+    assert(!JSON.stringify(await get('/api/recovery')).includes(codes[0].replace(/-/g, '')), 'and the box never gives them again');
+    // a new set in the place of the old (a question first); the codes leave the screen by themselves when the page
+    // is hidden for more than a moment (review of #122, L4). The new set is the one the found phone uses below.
+    await page.click('#makerecovery');
+    await page.waitForSelector('#recoverycard #confirmrow');
+    await page.click('#confirmyes');
+    await page.waitForSelector('#recoverycodes');
+    assert(/not while this screen is shared or projected/.test(await page.textContent('#recoverycard')), 'the words about a shared screen');
+    const codes2 = await page.$$eval('#recoverycodes li', (ls) => ls.map((l) => l.textContent));
+    assert.strictEqual(codes2.length, 8, 'a new set of eight');
+    assert(!codes2.includes(codes[0]), 'a new set, not the old one');
+    await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForFunction(() => !document.getElementById('recoverycodes'), null, { timeout: 8000 });
+    await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    assert(/8 of 8 codes left/.test(await page.textContent('#recoverycard')), 'the card is back to its count after the page was hidden');
+    const lostCtx = await browser.newContext({ viewport: { width: 320, height: 844 } });
+    const lost = await lostCtx.newPage();
+    await lost.goto(base);
+    await lost.waitForSelector('#recoverylink');
+    assert(await lost.isHidden('#recoverycode'), 'the code field is folded until asked for');
+    assert(/Locked out\?/.test(await lost.textContent('.screen')), 'the pairing screen has the Locked out help');
+    await lost.click('#lockedout summary');
+    assert(/pvj-recover/.test(await lost.textContent('#lockedout')) && /factory reset/.test(await lost.textContent('#lockedout')), 'the help names the stick and the reset');
+    await lost.click('#recoverylink');
+    await lost.fill('#recoverycode', 'ABCD-EFGH-JKL0');
+    await lost.click('#recoverybtn');
+    await lost.waitForFunction(() => /never have 0, O, 1, I or L/.test(document.getElementById('msg').textContent));
+    await lost.fill('#recoverycode', codes2[2].toLowerCase());
+    assert.strictEqual(await lost.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the pairing screen fits at 320 with the code and the help open');
+    await lost.click('#recoverybtn');
+    await lost.waitForSelector('.pads');
+    const lostDev = (await lost.evaluate(() => fetch('/api/status').then((r) => r.json()))).device;
+    assert.strictEqual(lostDev.role, 'full', 'a recovery code pairs an owner');
+    assert.strictEqual((await lost.evaluate(() => fetch('/api/recovery').then((r) => r.json()))).codes.left, 7, 'one code is burnt');
+    const againCtx = await browser.newContext({ viewport: { width: 320, height: 844 } });   // its own context: no cookie from the phone that just paired
+    const again = await againCtx.newPage();
+    await again.goto(base);
+    await again.click('#recoverylink');
+    await again.fill('#recoverycode', codes2[2]);
+    await again.click('#recoverybtn');
+    await again.waitForFunction(() => /wrong or was used/.test(document.getElementById('msg').textContent));
+    await again.close();
+    await againCtx.close();
+    // over plain http while the owner-only switch is on, the code is not asked for at all (review of #122, M2): the
+    // page learns it from hello (stubbed here: this box has no certificate) and offers the https address instead
+    const httpsCtx = await browser.newContext({ viewport: { width: 320, height: 844 } });
+    const onHttp = await httpsCtx.newPage();
+    await onHttp.route('**/api/hello', (route) => route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ name: 'nxlx.mastercontrol', paired: false, board: 'x86', remote: false, owner_https_only: true, https: 'https://nxlx-mastercontrol.local/' }) }));
+    await onHttp.goto(base);
+    await onHttp.click('#recoverylink');
+    await onHttp.waitForSelector('#recoveryhttps');
+    assert.strictEqual(await onHttp.locator('#recoverycode').count(), 0, 'no code field over http while the switch is on');
+    assert.strictEqual(await onHttp.getAttribute('#recoveryhttpslink', 'href'), 'https://nxlx-mastercontrol.local/', 'the link to the secure address');
+    assert(/in the clear/.test(await onHttp.textContent('#recoveryhttps')), 'one sentence why');
+    assert.strictEqual(await onHttp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the https hint fits at 320');
+    // the same after Log out (review of #122, second read): the pairing screen reached from inside the panel asks the
+    // box afresh, so the field is withheld there too (hello stubbed on this context as above)
+    const pins = await onHttp.$$('input.pin');
+    for (let i = 0; i < 4; i++) await pins[i].fill(info.pin[i]);
+    await onHttp.click('#pairbtn');
+    await onHttp.waitForSelector('.pads');
+    await go(onHttp, 'setup/index');                                 // an owner logs out under People and codes (a guest's Log out is on About and power)
+    await onHttp.click(rowOf('People and codes'));
+    await onHttp.waitForSelector('#logoutbtn');
+    await onHttp.click('#logoutbtn');
+    await onHttp.waitForSelector('#devicescard #confirmrow');
+    await onHttp.click('#confirmyes');
+    await onHttp.waitForSelector('#pairbtn');
+    await onHttp.click('#recoverylink');
+    await onHttp.waitForSelector('#recoveryhttps');
+    assert.strictEqual(await onHttp.locator('#recoverycode').count(), 0, 'no code field after Log out either');
+    await onHttp.close();
+    await httpsCtx.close();
+    await lost.close();
+    await lostCtx.close();
+    await sysIndex();
+    await sys('People and codes');
+    await page.waitForFunction(() => /A recovery code was used by "My phone"/.test((document.getElementById('recoverycard') || {}).textContent || ''));
+    assert(/7 of 8 codes left/.test(await page.textContent('#recoverycard')), 'the owner sees seven left');
+    assert(/My phone.*came in with a recovery code/.test(await page.textContent('#devicelist')), 'the device list says which owner came by a code');
+    assert.strictEqual(await page.locator('#recoveryfew').count(), 0, 'no nudge at seven left');
+    // five more spent, each from its own cookie jar: two left, and the card says to make a new set (review of #122)
+    for (let i = 3; i < 8; i++) {
+      const jar = await browser.newContext();
+      const r = await jar.request.post(base + '/api/pair', { data: { pin: codes2[i], name: 'spent ' + i }, headers: { 'X-PVJ-Request': '1' } });
+      assert.strictEqual(r.status(), 200, 'code ' + i + ' pairs');
+      await jar.close();
+    }
+    await sysIndex();
+    await sys('People and codes');
+    await page.waitForSelector('#recoveryfew');
+    assert(/Only 2 codes left/.test(await page.textContent('#recoveryfew')), 'the nudge: ' + await page.textContent('#recoveryfew'));
+    await fitsOn(page, 'the Recovery card with the nudge');
+    // the stick switch: off applies on the box and says what remains; on again. Cancel: a question in place, then no set
+    await page.click('#recovery-usb');
+    await page.waitForFunction(() => /shows nothing now/.test(document.getElementById('msg').textContent));
+    await page.waitForSelector('#recovery-usb[aria-checked="false"]');
+    assert.strictEqual((await get('/api/recovery')).usb, false, 'the stick way is off on the box');
+    await page.click('#recovery-usb');
+    await page.waitForSelector('#recovery-usb[aria-checked="true"]');
+    await page.click('#cancelrecovery');
+    await page.waitForSelector('#recoverycard #confirmrow');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => /No recovery codes yet/.test(document.getElementById('recoverycard').textContent));
+    assert.strictEqual((await get('/api/recovery')).codes, null, 'the set is gone from the box');
+    await page.waitForSelector('#showpin');
     // A code from a controller (D61): off on a new box; a question in place before it goes on; the full access kind is
     // a second switch that is only there once the first is on; off applies at once and takes the second with it. The
     // card never holds a code: only a hold on a controller makes one, and this test has no controller on this page.

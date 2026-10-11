@@ -138,6 +138,13 @@
   }
 
   // ---- connect --------------------------------------------------------
+  // Every path to the pairing screen (boot, a 401, Log out, a factory reset) comes through render() and here: the
+  // screen asks the box afresh each time it is drawn whether owner codes are https-only, and "I have a recovery
+  // code" withholds its field until the answer is in (review of #122, M2).
+  function askHello(then) {
+    S.hello = null;
+    api('GET', '/api/hello').then(function (r) { S.hello = r.ok ? r.data : {}; S.remote = !!(r.ok && r.data.remote); then(S.hello); });
+  }
   function connect() {
     if (S.remote) return supportConnect();
     var pins = [0, 1, 2, 3].map(function (i) {
@@ -163,13 +170,16 @@
       'aria-label': 'Guest or operator code (6 digits)', placeholder: '6 digit code', value: sc && sc.kind === 'code' ? sc.value : '' });
     code.addEventListener('input', function () { code.value = code.value.replace(/\D/g, '').slice(0, 6); });
     var name = h('input', { class: 'text-input', value: sc && sc.kind === 'code' ? 'Phone' : 'My phone', 'aria-label': 'Name for this device', maxlength: 40 });
-    function join(secret, button) {
+    var WRONG = { code: 'That code is wrong or has expired. Ask for a new one.', pin: 'Wrong PIN.', recovery: 'That recovery code is wrong or was used already.' };
+    function join(secret, button, kind) {
       button.disabled = true;
       api('POST', '/api/pair', { pin: secret, name: name.value || 'device' }).then(function (r) {
         button.disabled = false;
         if (!r.ok) {
           var wait = r.data.retry_after ? ' Try again in ' + r.data.retry_after + ' seconds.' : '';
-          var why = r.status === 403 ? (secret.length === 6 ? 'That code is wrong or has expired. Ask for a new one.' : 'Wrong PIN.') : (r.data.error || 'Could not connect.');
+          // a 403 with an https address: the box takes owner codes over the secure connection only (D79, D81)
+          var why = r.status === 403 && !r.data.https ? WRONG[kind || (secret.length === 6 ? 'code' : 'pin')] : (r.data.error || 'Could not connect.');
+          if (r.status === 403 && r.data.https && kind === 'recovery') why = 'This box takes owner codes over https:// only. Open ' + r.data.https + ' and type the code there; accept the browser\'s warning if this phone has not got the box\'s root certificate.';
           return say(why + wait, true);
         }
         S.scanned = null;
@@ -202,9 +212,51 @@
         h('div', { class: 'k', text: 'Owner: PIN' }),
         h('div', { class: 'pin-row' }, pins),
         pinButton,
+        recoveryEntry(join),
         h('div', { id: 'msg', class: 'msg', role: 'status' }),
         h('div', { class: 'grow' }),
         h('div', { class: 'k', text: 'Connection lost? The box keeps playing. Reconnect any time.' })));
+  }
+  // "I have a recovery code" (D81), folded under the PIN, and the "Locked out?" help that names every way in.
+  function recoveryEntry(join) {
+    var code = h('input', { class: 'text-input mono', id: 'recoverycode', autocomplete: 'one-time-code', autocapitalize: 'characters', spellcheck: 'false', maxlength: 20,
+      'aria-label': 'Recovery code', placeholder: 'XXXX-XXXX-XXXX' });
+    code.addEventListener('input', function () { code.value = code.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20); });
+    var go = h('button', { class: 'btn big', id: 'recoverybtn', text: 'Pair with recovery code' });
+    go.addEventListener('click', function () {
+      var bare = code.value.replace(/-/g, '');
+      if (bare.length !== 12) return say('Type the 12 character code from your paper, like XXXX-XXXX-XXXX.', true);
+      // the alphabet has no 0, O, 1, I or L: a code with one was misread, and the box would count it as a wrong guess
+      if (/[01OIL]/.test(bare)) return say('Recovery codes never have 0, O, 1, I or L in them. Read the paper again.', true);
+      join(code.value, go, 'recovery');
+    });
+    // While "Owner access only over the secure connection" is on, a code typed here over http:// would cross the
+    // network in the clear before the box refused it: the page learns that from hello and offers the link instead.
+    var waiting = h('div', { class: 'hint', id: 'recoverywait', text: 'One moment: asking the box how it takes owner codes.' });
+    var entry = h('div', { id: 'recoveryentry', hidden: true }, h('div', { class: 'k', text: 'Owner: recovery code' }), waiting);
+    var httpsOnly = false;
+    askHello(function (hello) {
+      if (!entry.isConnected && !entry.parentNode) return;
+      httpsOnly = !!(hello.owner_https_only && hello.https && location.protocol === 'http:');
+      entry.removeChild(waiting);
+      if (httpsOnly) {
+        entry.appendChild(h('div', { class: 'hint', id: 'recoveryhttps' },
+          'This box takes owner codes over https:// only, so the code is not typed here: over http:// it would cross the network in the clear. ',
+          h('a', { id: 'recoveryhttpslink', href: hello.https, text: 'Open ' + hello.https }),
+          ' and type it there; accept the browser\'s warning if this phone has not got the box\'s root certificate.'));
+      } else {
+        entry.appendChild(code); entry.appendChild(go);
+        if (!entry.hidden) code.focus();
+      }
+    });
+    var open = h('button', { class: 'btn plain small', id: 'recoverylink', text: 'I have a recovery code', 'aria-expanded': 'false', onclick: function () {
+      entry.hidden = !entry.hidden; open.setAttribute('aria-expanded', entry.hidden ? 'false' : 'true'); if (!entry.hidden && code.parentNode) code.focus();
+    } });
+    var help = h('details', { class: 'fold', id: 'lockedout' }, h('summary', { class: 'k', text: 'Locked out?' }),
+      h('div', { class: 'hint', text: 'If every owner phone is lost: a recovery code from the sheet the owner printed (above). ' +
+        'Or, at the box, a USB stick with an empty file named pvj-recover at its top: the box shows a fresh PIN on its own screen for 2 minutes, which works once (unless the owner switched that off). ' +
+        'Or sudo pvj-pin at a keyboard on the box. As the last resort a factory reset from the box\'s console removes every device and makes a new PIN (the clips can be kept).' }));
+    return h('div', { class: 'recovery' }, open, entry, help);
   }
   // ---- remote support --------------------------------------------------
   // Support arriving through the support tunnel sees only this: the code the studio reads to them.
@@ -4755,11 +4807,13 @@
         });
       });
     }
+    // how an owner came in, when it was not the PIN typed by hand (D81): read with the recovery card's notices
+    function viaWords(v) { return v === 'recovery' ? ' · came in with a recovery code' : v === 'stick' ? ' · came in with the PIN from a recovery stick' : ''; }
     function drawDevices() {
       devices.textContent = '';
       S.devices.forEach(function (d) {
         var me = !!S.device && d.id === S.device.id;
-        devices.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role) + (me ? ' · this device' : ''),
+        devices.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role) + viaWords(d.via) + (me ? ' · this device' : ''),
           primary: me ? h('button', { class: 'btn plain', id: 'logoutbtn', text: 'Log out', 'aria-label': 'Log out this device', onclick: function (e) {
             var control = e.currentTarget;
             ownQuestion(function (question) { if (control.isConnected) logOutHere(control, question); });
@@ -4805,7 +4859,7 @@
     } })));
     card.appendChild(h('div', { class: 'hint', text: 'After too many wrong PINs or codes the box stops taking them for a while. Unblock joining opens it again at once.' }));
     card.appendChild(pinOut);
-    return [first, controllerCodeCard(), card, guestLockCard()];
+    return [first, controllerCodeCard(), card, guestLockCard(), recoveryCard()];      // the Recovery card: an Owner's only (D81)
   }
   // The lock on guest controls (D80): one state for the box, open unless an Operator or an Owner locks it. On People
   // and codes and on the Room screen.
@@ -4932,6 +4986,97 @@
     if (canGuest()) return guestCard(where);
     return guestsLocked() ? h('div', { class: 'card', id: 'guestlocked', role: 'status' }, h('div', { text: LOCKED_TEXT })) : null;
   }
+  // Recovery (D81): the ways back in when every owner device is lost. A set of one-time codes for paper, shown once
+  // when made (the box keeps only hashes), and the switch for the USB stick at the box. Owners only; the box refuses
+  // everyone else and remote support, not only the page.
+  function recoveryCard() {
+    var card = h('div', { class: 'card', id: 'recoverycard' }, h('h2', { text: 'If every owner device is lost' }));
+    var body = h('div', { class: 'list', id: 'recoverybody' });
+    function load() { api('GET', '/api/recovery').then(function (r) { if (card.isConnected && r.ok) draw(r.data); }); }
+    function when(t) { return t ? new Date(t * 1000).toLocaleString() : '?'; }
+    function eventWords(e) {
+      if (e.kind === 'code') return 'A recovery code was used by "' + (e.name || 'a device') + '" at ' + when(e.t) + '; ' + plural(e.left, 'code') + ' left.';
+      if (e.kind === 'stick-used') return 'The PIN shown for a recovery stick was used by "' + (e.name || 'a device') + '" at ' + when(e.t) + '.';
+      return 'The PIN was shown on the box\'s screen at ' + when(e.t) + ' because a recovery stick was put in.';
+    }
+    function draw(d) {
+      if (asking(card)) return;
+      body.textContent = '';
+      body.appendChild(h('div', { class: 'hint', id: 'recoveryhint', text: 'Two ways in that need no paired phone and no keyboard at the box. ' +
+        'Recovery codes: one-time codes you print and keep where you keep the box\'s keys, never with the box; at the pairing screen "I have a recovery code" pairs a phone as ' + roleName('full') + '. ' +
+        'A USB stick: a stick with an empty file named pvj-recover at its top makes the box draw a fresh owner PIN on its own screen for 2 minutes.' }));
+      var c = d.codes;
+      body.appendChild(h('div', { class: 'field', id: 'recoverystate', text: c ? c.left + ' of ' + c.count + ' codes left · made ' + when(c.made) + ' by ' + (c.by || 'an owner') : 'No recovery codes yet.' }));
+      if (c && c.left <= 2) body.appendChild(h('div', { class: 'hint warn', id: 'recoveryfew', text: (c.left ? 'Only ' + plural(c.left, 'code') + ' left.' : 'No codes left.') + ' Make a new set soon and keep the new sheet; the old sheet is then waste paper.' }));
+      body.appendChild(h('div', { class: 'row wrap' },
+        h('button', { class: 'btn grow', id: 'makerecovery', text: c ? 'Make a new set' : 'Make recovery codes', onclick: function (e) {
+          var go = function () { act('POST', '/api/recovery/codes', {}, function (r) { showCodes(r.codes); }); };
+          if (!c) return go();
+          confirmRow('Make a new set? The ' + plural(c.left, 'code') + ' you kept stop working.', 'Make a new set', 'Keep the old ones', go, e.currentTarget);
+        } }),
+        c ? h('button', { class: 'btn grow', id: 'cancelrecovery', text: 'Cancel all codes', onclick: function (e) {
+          confirmRow('Cancel the ' + plural(c.left, 'code') + '? Nobody can pair with them any more.', 'Cancel them', 'Keep them', function () {
+            act('POST', '/api/recovery/cancel', {}, function () { say('The recovery codes are cancelled.'); load(); });
+          }, e.currentTarget);
+        } }) : null));
+      body.appendChild(toggle('recovery-usb', 'A USB stick at the box shows the PIN', d.usb, function (v, sw) {
+        api('POST', '/api/recovery/usb', { on: v }).then(function (r) {
+          if (!card.isConnected) return;
+          if (!r.ok) { say(r.data.error || 'Something went wrong', true); sw.setAttribute('aria-checked', v ? 'false' : 'true'); return; }
+          say(v ? 'A recovery stick shows the PIN again.' : 'A recovery stick shows nothing now. The ways in are the codes, sudo pvj-pin at the box, or a factory reset.');
+          load();
+        });
+      }, 'The screen is the room\'s projector: everyone there sees the PIN for 2 minutes. It is a new PIN each time, it works once, and it dies when the stick comes out. Switch this off where strangers can reach the box.'));
+      var st = d.stick;
+      if (st && st.active) body.appendChild(h('div', { class: 'codeshown', id: 'stickshown', role: 'status', text: 'The PIN is on the box\'s screen now for a recovery stick, ' + st.seconds_left + ' s more. Take the stick out to end it.' }));
+      var log = (d.log || []).slice().reverse().slice(0, 5);
+      if (log.length) body.appendChild(h('div', { class: 'list', id: 'recoverylog' }, log.map(function (e) { return h('div', { class: 'hint warn', text: eventWords(e) }); })));
+    }
+    // The codes, once. Print uses the browser's print dialog, which a phone may not have: Copy puts them on the
+    // clipboard (or selects them to copy by hand on plain http), and the hint says to keep the paper, not the phone.
+    function showCodes(codes) {
+      body.textContent = '';
+      // They stay only while this screen is looked at: hidden for more than a moment (another app, the phone locked)
+      // or ten minutes on, they go and the card is back to its count (review of #122, L4).
+      var hiddenTimer = null, tenMinutes = null;
+      function away() { clearTimeout(hiddenTimer); clearTimeout(tenMinutes); document.removeEventListener('visibilitychange', onVis); }
+      function gone() { away(); if (card.isConnected) load(); }
+      function onVis() { if (document.visibilityState === 'hidden') hiddenTimer = setTimeout(gone, 1500); else clearTimeout(hiddenTimer); }
+      document.addEventListener('visibilitychange', onVis);
+      tenMinutes = setTimeout(gone, 600000);
+      body.appendChild(h('div', { class: 'hint warn', text: 'These codes are on this screen now and never again, not while this screen is shared or projected. Print them or write them down, then keep the paper where you keep the box\'s keys. Each works once and pairs a phone as ' + roleName('full') + '. They leave this screen by themselves when you switch away or after ten minutes.' }));
+      var list = h('ol', { class: 'codes', id: 'recoverycodes' }, codes.map(function (c) { return h('li', { class: 'mono', text: c }); }));
+      body.appendChild(list);
+      var area = h('textarea', { class: 'text-input mono', id: 'recoverytext', readonly: true, rows: 8, 'aria-label': 'The recovery codes, to copy', hidden: true });
+      area.value = codes.join('\n');
+      body.appendChild(area);
+      body.appendChild(h('div', { class: 'row wrap' },
+        h('button', { class: 'btn grow', id: 'printrecovery', text: 'Print', onclick: function () { printCodes(codes); } }),
+        h('button', { class: 'btn grow', id: 'copyrecovery', text: 'Copy', onclick: function () { copyCodes(area, codes); } }),
+        h('button', { class: 'btn grow', id: 'recoverydone', text: 'Done, I kept them', onclick: gone })));
+    }
+    function copyCodes(area, codes) {
+      area.hidden = false;
+      area.focus();
+      area.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      if (ok) { area.hidden = true; return say('The codes are copied. Paste them somewhere safe, then clear the clipboard.'); }
+      (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(codes.join('\n')) : Promise.reject()).then(function () { area.hidden = true; say('The codes are copied.'); },
+        function () { say('Select the codes and copy them.'); });
+    }
+    function printCodes(codes) {
+      if (typeof window.print !== 'function') return say('This browser cannot print. Use Copy, or write the codes down.', true);
+      printPage(h('div', { id: 'printsheet' },
+        h('h1', { text: 'nxlx.mastercontrol recovery codes' }),
+        h('p', { text: 'Box: ' + location.host + ', made ' + new Date().toLocaleString() + '. Each code works once and pairs a phone with everything allowed. Keep this sheet where you keep the keys, never with the box.' }),
+        h('ol', { class: 'codes' }, codes.map(function (c) { return h('li', { text: c }); })),
+        h('p', { text: 'To use one: open the panel, tap "I have a recovery code" and type it. Cross it off. Then make a new set under Setup, People and codes.' })));
+    }
+    card.appendChild(body);
+    load();
+    return card;
+  }
   // A page to print and pin up in a studio: the panel address as a QR code (no access in it), plus the current guest
   // and presenter codes if any. Printed from the browser; nothing leaves the box.
   function printSheet(d) {
@@ -4945,6 +5090,11 @@
           h('figcaption', { text: roleName(c.role) + ': ' + c.code + ' (expires)' }));
       })) : null,
       h('p', { class: 'k', text: 'Codes shown here expire. The panel address above does not.' }));
+    printPage(sheet);
+  }
+  // A sheet (#printsheet) printed by itself: on the page only while the print dialog is up, gone again after it,
+  // and only once its images have loaded. Shared by the access sheet and the recovery codes.
+  function printPage(sheet) {
     document.body.appendChild(sheet);
     document.body.classList.add('printing');
     var done = function () { document.body.classList.remove('printing'); if (sheet.parentNode) sheet.parentNode.removeChild(sheet); window.removeEventListener('afterprint', done); };
@@ -5309,7 +5459,7 @@
     var first = m ? api('POST', '/api/session', { token: m[1] }).then(function () { history.replaceState(null, '', location.pathname); }) : Promise.resolve();
     first.then(function () { return api('GET', '/api/status'); }).then(function (r) {
       if (r.ok) { S.device = r.data.device; S.status = r.data; return loadAll().then(render); }
-      return api('GET', '/api/hello').then(function (h2) { S.remote = !!(h2.ok && h2.data.remote); render(); });
+      return api('GET', '/api/hello').then(function (h2) { S.hello = h2.ok ? h2.data : {}; S.remote = !!(h2.ok && h2.data.remote); render(); });
     });
     setInterval(poll, 1000);
     document.addEventListener('input', function (e) { if (e.target && e.target.type === 'range') fillRanges(); }, true);

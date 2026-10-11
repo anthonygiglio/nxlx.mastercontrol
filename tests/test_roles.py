@@ -158,6 +158,11 @@ ROWS = {
     ("POST", "/api/pin/rotate"): STUDIO("owner"),
     ("POST", "/api/pin/unlock"): STUDIO("owner"),
     ("POST", "/api/pin/show"): STUDIO("owner"),
+    # owner recovery (D81): the Owner's, never through support (support.REMOTE_DENY_PREFIX); a code is redeemed at /api/pair
+    ("GET", "/api/recovery"): STUDIO("owner"),
+    ("POST", "/api/recovery/codes"): STUDIO("owner"),
+    ("POST", "/api/recovery/cancel"): STUDIO("owner"),
+    ("POST", "/api/recovery/usb"): STUDIO("owner"),
     ("POST", "/api/support/config"): STUDIO("owner"),
     ("POST", "/api/support/start"): STUDIO("owner"),
     ("POST", "/api/support/extend"): STUDIO("owner"),
@@ -760,7 +765,7 @@ class HeldBackTest(RolesBase):
         self.assertEqual(auth_mod.Auth.role_of({"role": "full", "via": "controller"}), "full")
         self.assertTrue(auth_mod.Auth._expires(stored))
         self.assertFalse(policy.held_to_legacy(self.auth.authenticate(token)))
-        self.assertEqual(sorted(k for k in dev), ["created", "id", "name", "role"])              # nothing else is handed out
+        self.assertEqual(sorted(k for k in dev), ["created", "id", "name", "role", "via"])       # nothing else is handed out (via: how it came in, D81's L3)
 
     def test_the_panel_is_told_the_reach_in_one_word(self):
         def reach(dev, client=LAN):
@@ -840,7 +845,8 @@ class PeopleTest(RolesBase):
                 ("POST", "/api/system/settings/export", {}), ("GET", "/api/system/diagnostics", {}),
                 ("POST", "/api/system/factory-reset", {"confirm": "reset"}), ("POST", "/api/support/start", {"confirm": "start"}),
                 ("POST", "/api/modules/midi", {"enabled": True}), ("POST", "/api/access/controller", {"join": "live"}), ("POST", "/api/osc", {"enabled": True}),
-                ("POST", "/api/osc/key", {}), ("POST", "/api/streams", {}), ("POST", "/api/projectors", {})):
+                ("POST", "/api/osc/key", {}), ("POST", "/api/streams", {}), ("POST", "/api/projectors", {}),
+                ("GET", "/api/recovery", {}), ("POST", "/api/recovery/codes", {}), ("POST", "/api/recovery/cancel", {}), ("POST", "/api/recovery/usb", {"on": False})):
             st, out = self.h(method, path, body, op)
             self.assertEqual(st, 403, "%s %s" % (path, out))
             self.assertNotIn(self.pin, json.dumps(out))

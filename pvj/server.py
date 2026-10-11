@@ -680,6 +680,9 @@ def build(env=None, player=None):
     api.scheduler = scheduler_mod.Scheduler(api, settings, registry)
     api.autostart = autostart_mod.Autostart(api, settings)
     api.pinscreen = pinscreen_mod.PinScreen(api, auth)
+    from . import recovery as recovery_mod
+    api.recovery = recovery_mod.Recovery(api, auth, log=lambda line: print(line, flush=True))    # the stick way in (D81)
+    api.recovery.start()                                                                           # its scan thread: no disk IO under the PIN screen's lock
     api.dmx = dmx_mod.DmxManager(api, settings)
     api.midi = midi_mod.MidiHub(api, settings)
     write_pin_file(rundir, auth.current_pin)

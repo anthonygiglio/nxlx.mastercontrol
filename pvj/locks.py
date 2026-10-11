@@ -50,7 +50,7 @@ waiters. Whoever makes one of those takings wait must give the lock a place here
 import threading
 
 ORDER = ("room.order", "vibes.work", "shaders.engine", "effects.engine", "mapper.apply", "capture", "transitions.holding",
-         "player", "transitions.io", "transitions.mark", "fader.stepping", "fader.lock", "shaderlive.cfg", "pinscreen",
+         "player", "transitions.io", "transitions.mark", "fader.stepping", "fader.lock", "shaderlive.cfg", "pinscreen", "recovery",
          "vibes.state", "shaderlive.queue", "mapper.state", "player.pid")
 LEAVES = ("vibes.state", "shaderlive.queue", "mapper.state", "player.pid")       # share the last place: none is held with another
 

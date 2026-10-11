@@ -59,7 +59,7 @@ REMOTE_DENY = {
     # who stands in it; a support session, of whatever role, neither opens the room to guests nor shuts them out
     ("POST", "/api/guests"),
 }
-REMOTE_DENY_PREFIX = ("/api/access", "/api/https")      # /api/https: the box's key, certificate and the owner-only switch (D79)
+REMOTE_DENY_PREFIX = ("/api/access", "/api/https", "/api/recovery")   # /api/https: the box's key, certificate and the owner-only switch (D79); /api/recovery: the ways back in (D81)
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
 
 

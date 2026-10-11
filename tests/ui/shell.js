@@ -919,7 +919,7 @@ const MOVED = {
 // What stands for each of them: the list fails if a control that replaced a removed copy is not there.
 const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn', '#fade', 'button: End the Operator (runs the room) code'].concat(LAYOUT_NOW), presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#fade'], guest: ['button: Crossfade', '#fade'] };
 // Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D78 the OSC locks, D79 the Secure
-// connection page, D75 the controllers' new presses and the mapping mode switch): each must be found, and on the screen named here. What shows only while something plays, in
+// connection page, D75 the controllers' new presses and the mapping mode switch, D81 the Recovery card): each must be found, and on the screen named here. What shows only while something plays, in
 // the pad editor's sheet (Clip or Shader, D73) or after the box gave up a transition (the reason and Try again, D71)
 // is held by the steps of panel.test.js, not by the list, which is taken with nothing playing.
 const TRANSITIONS = {};
@@ -927,12 +927,13 @@ const TRANSITIONS = {};
 const ADDED = {
   owner: Object.assign({ '#showpin': 'People and codes', '#copypin': 'People and codes', '#pinvalue': 'People and codes', '#logoutbtn': 'People and codes',
     '#nav-https': 'setup/index', '#httpsrequest': 'Secure connection', '#httpsprobe': 'Secure connection', '#httpsowneronly': 'Secure connection',
-    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC',
+    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC',      // (the key's Show and New are there only while the key lock is on)
     // D75: the layers' buttons and the new presses on the standard layouts, and the owner's switch for mapping mode on the Mapping desk
     'button: M #: Geometry': 'MIDI controller', 'button: M #: Mapping mode': 'MIDI controller', 'button: M #: Rotate': 'MIDI controller', 'button: Top #: Mapping mode': 'MIDI controller',
     'button: Top #: Rotate': 'MIDI controller', 'button: Top #: Overlay': 'MIDI controller', 'button: Top #: Sound off / on': 'MIDI controller',
     'button: Pad #.#: Back # s': 'MIDI controller', 'button: Pad #.#: Forward # s': 'MIDI controller', '#mapremote': 'Mapping',
     // D80: the lock, what a controller's join code pairs, a scene's mark "Not for guests"
+    '#makerecovery': 'People and codes', '#recovery-usb': 'People and codes',      // D81 the Recovery card, an Owner's only (Cancel is there only once a set exists)
     '#guestlock': 'People and codes', '#ctlcode-join': 'People and codes', '#roomsnoguests': 'Setup index > Room' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
   // D80, an Operator: the lock on guest controls and a guest link; the rows of Setup that are his now, the room's
   // set-up with a scene's mark, the mapping's own controls, a clip to upload
