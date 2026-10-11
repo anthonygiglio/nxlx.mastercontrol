@@ -4,6 +4,19 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-11, what a remote support session may do (`support-reach`, #125, D84; a draft, security review before any merge)
+
+The owner asked what an Owner may do from a remote support session, suggested "everything since it is a 'phone for help' solution", was advised "nearly everything", and said "proceed with ... your recommendations for the remote sessions". The principle is D84's first line: anything that ends when the session ends, nothing that outlives it or locks the owner out.
+
+- **Opened to a session of the Owner's role:** settings import (the recovery stick switch is left as the box has it), theme add and remove, the OSC key, the OSC state targets (and with them his view of the targets and his export), the guest lock, removing a Guest's or an Operator's device.
+- **Kept refused for every session, each with its reason in `support.REMOTE_DENY`:** pairing, sessions, invitations, `/api/access`, the PIN and the QR, `/api/recovery`, `/api/https`, the session's own settings, start and extend, power-off, factory reset. Sessions below the Owner's role are as they were.
+- **The log.** What a session changes is written into its entry of the support log (`did`) and shown under Recent sessions; a session that saw the OSC key makes the page tell the owner to make a new one.
+- **Tests.** `tests/test_support_reach.py` (18): the two lists as data held against the table of every route in `tests/test_roles.py`, every refused and every opened route asked with its real handler for each role, the import's kept part and the sections no file may name, revoke by role, the log lines, and what I tried as an attacker. Seven rows of the table and six older tests that held the old refusals were changed to hold the new rule.
+- **Found and left open** (D84 has them; the owner is asked): a remote Owner session can widen the networks OSC accepts from, as before D84; it can map a MIDI control that shows an access code, as before.
+- **Slips.** The first `_remote_owner` let a login through whose session had ended. The import's log line was cut before its point. A test used an address the fixture already had. And test runs wrapped in `timeout`, which this Mac does not have, printed nothing and were taken for passes for a while (on the other branch too); every run since was read for its "Ran N tests" line.
+
+Not done and not known: nothing ran through a real tunnel or on a box; the browser step was not run here.
+
 ## 2026-10-11, the box sends its state back over OSC (`osc-replies`, #123, D82; a draft, not merged)
 
 The owner's answer to "Should the box send its state back to TouchOSC, so the layout shows what is really playing?" was "Yes, build it" (2026-10-10). Built as D82 says, with the threat model written and pushed before the code: off by default; at most 4 targets that the Owner adds at the studio (a private IPv4 address on a subnet the box is connected to, a port from 1024 up), checked again at every send; state under `/pvj/state/...` as floats and strings; on change 5 times a second, a heartbeat every 2 seconds, everything every 30 seconds and on `/pvj/state` from a listed target; at most 20 datagrams and 12,000 bytes a second to one target and 60 and 36,000 to all; the key never in a packet; one thread, a socket that never waits, time to live 1. The state is the controller lights' own (`pvj/boxstate.py`). The panel has the card "Send state back" on Setup > OSC for the Owner. `pvj/OSC.md` has the true rule in place of "no replies", the state table and "Setting up TouchOSC to listen".

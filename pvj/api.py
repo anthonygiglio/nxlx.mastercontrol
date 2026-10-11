@@ -2213,6 +2213,8 @@ class Api:
         self.log("pvj-web: OSC key %s device %s (%s) from %s" % ("made new by" if made else "shown to", device["id"], device["name"], client))
         if remote:
             self.support.note(device, "made a new OSC key and knows it" if made else "was shown the OSC key", key=True)
+        elif made:
+            self.support.key_renewed()
         return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/pvj/stop"}
 
     def set_osc(self, body, device, client):

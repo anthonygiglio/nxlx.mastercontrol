@@ -290,6 +290,19 @@ class SupportManager:
                 except OSError:
                     pass
 
+    def key_renewed(self):
+        """A new OSC key was made at the studio: no past session knows the key any more, so the page stops saying so."""
+        with self.settings.lock:
+            changed = False
+            for entry in self.settings.data.get("support_log", []):
+                if entry.pop("osc_key", None):
+                    changed = True
+            if changed:
+                try:
+                    self.settings.save()
+                except OSError:
+                    pass
+
     def _log(self, entry):
         with self.settings.lock:
             log = list(self.settings.data.get("support_log", []))

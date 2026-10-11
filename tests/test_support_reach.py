@@ -365,6 +365,13 @@ class AttackTest(Base):
         entry = self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0]
         self.assertEqual((entry["osc_key"], bool(entry["ended"])), (True, True))
         self.assertEqual(self.api.osc.key(), out["key"], "the key he made still works: only a new one ends what he knows")
+        # the owner makes a new key at the studio: now nobody outside knows it, and the page stops saying so
+        self.assertEqual(self.h("POST", "/api/osc/key", {}, self.full_dev)[0], 200)             # only looking at it changes nothing
+        self.assertTrue(self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0]["osc_key"])
+        st, new = self.h("POST", "/api/osc/key", {"new": True}, self.full_dev)
+        self.assertEqual(st, 200, new)
+        self.assertNotEqual(new["key"], out["key"])
+        self.assertNotIn("osc_key", self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0])
         # he is held to the same few shows as a device at the studio
         dev = self.session("full")
         got = [self.remote("POST", "/api/osc/key", {}, dev)[0] for _ in range(12)]

@@ -1359,3 +1359,48 @@ Nothing here has run on the box or met a real USB stick as of 2026-10-11; the Ma
 - The effect's amount and a running Vibes are in a test now.
 
 Nothing here has met a real tablet, a real TouchOSC or the box as of 2026-10-11; the tests on a Mac and CI are the proof so far. Rows in `tools/DEVICE-TESTING.md` say what to try.
+
+## D84. Remote support: a helper with the Owner's role may do anything that ends with the session, and nothing that outlives it or locks the owner out
+
+2026-10-11. The owner asked what an Owner may do from a remote support session and suggested "everything since it is a 'phone for help' solution". He was advised "nearly everything", and said: "proceed with ... your recommendations for the remote sessions". (D83 is taken by the branch `osc-defaults`, open at the same time.)
+
+**The principle.** A helper in a remote session with the Owner's role may do anything that ends when the session ends, and nothing that outlives it or locks the owner out.
+
+**The fact that frames it.** A remote session of the Owner's role can already upload a software update, that is, run any code on the box. So the refusals that remain are not about limiting a trusted helper in the moment. They are about persistence (a way in that is still there after Stop) and lock-out (the owner's own way in), they stop an honest helper from leaving something behind by accident, and with the log they make a session auditable. They are not a wall against a dishonest helper who was given "Everything"; the docs say so.
+
+**Opened to a remote session of the Owner's role** (taken out of `support.REMOTE_DENY`; each has its row in `tests/test_roles.py` and is asked with its real handler in `tests/test_support_reach.py`):
+
+- **Settings import** (`POST /api/system/settings/import`), without what stays refused below. What a file can carry was read section by section: pads, modules, theme (and added themes), mix, OSC, schedule, streams, control (DMX and MIDI), autostart, audio, overlay, projectors, mapper, sync, shaders, room, recovery. Every one but the last is set by a route a remote Owner session may use anyway. **Recovery** (the stick switch, D81) is set under `/api/recovery`, refused to every session: for a helper that part of the file is dropped and the box's own stays (`boxcare.REMOTE_KEPT`; the answer and the log say so). **Devices, the PIN, join codes, the controller code choice, the guest lock, remote support's own settings and log, the secure connection and the OSC key are no section of any settings file**: a file that names one is refused whole, for everybody (tested with each). A test holds every section to a row (`boxcare.REMOTE_SETS`), so a new section cannot slip in unthought.
+- **Theme add and remove** (`/api/theme/add`, `/api/theme/remove`). A theme is checked data: unknown keys, anything that is not a colour or a listed value, a name with markup, a path in the id are refused by the same check as at the studio. Only an added theme can be removed; the box's own look comes back.
+- **The OSC key** (`/api/osc/key`): show and renew, under the same limit of shows as a device at the studio. **A helper who saw or made the key knows it.** The session's log says so, and after the session the Remote support page and its row in Setup tell the owner to make a new key; the word goes away when a new key is made at the studio (`SupportManager.key_renewed`).
+- **The OSC state targets** (`/api/osc/feedback`). A target is still only a private address on a subnet of the box's own real ports, checked when added and at every send: the tunnel's network never counts (D82), so a helper cannot aim the box's state at himself or out of the building.
+- **Consistent with that, the stripping of D82 is undone for him only where he can read the same thing anyway:** `GET /api/osc` shows a remote Owner session the targets, and its settings export holds them (a session that reaches the export has the Owner's role). **Not undone:** the diagnostics file holds no targets for anybody, because that file leaves the box; an export with passwords stays refused through the tunnel; the key is in no export for anybody.
+- **The guest lock** (`/api/guests`): a switch an Operator or the owner sets back.
+- **Removing a device** (`/api/devices/revoke`): a Guest's or an Operator's only. Never an Owner's device (403), which would lock the owner out. Only a device in the list of paired devices can be named, so never his own session, another support login, a controller or one of the box's own callers (404). The role is read from the list at that moment, not from the request.
+
+**Kept refused for every remote session, whatever its role** (`support.REMOTE_DENY` and `REMOTE_DENY_PREFIX_WHY`, each with its reason beside it; `REFUSED` in the test is the same list written by hand):
+
+- pairing and panel sessions (`/api/pair`, `/api/session`) and invitations (`/api/devices/invite`): a device paired now stays paired after Stop;
+- everything under `/api/access`: codes, links, what the display shows, the controller code choice;
+- the PIN (show, rotate, unlock) and the QR code;
+- everything under `/api/recovery` and `/api/https`: the owner's ways back in, and the switch that could shut his devices out;
+- the support session's own settings, start and extend (`/api/support/config`, `/start`, `/extend`): a helper does not lengthen or widen his own access;
+- power-off: nobody remote can switch the box back on (a restart stays allowed; it ends the session);
+- factory reset: it removes every device, the owner's too.
+
+**Remote sessions of roles below Owner are unchanged**: held to the old presenter list (`policy.LEGACY_LIVE`, D80). The table test holds that for every route.
+
+**Everything a remote session changes through an opened route is in the support log with what was done.** `SupportManager.note` writes a line to the journal and to the session's own entry of `support_log` (`did`: at most 40 lines of at most 240 characters, the time and what was done, never a value: no key, no address, no file content). The owner reads it under Advanced, Recent sessions. Checked for each opened route; the import, the theme routes and the key had a journal line before and no line in the support log.
+
+**The handlers hold by themselves.** Each opened handler asks `Api._remote_owner`: a request from the tunnel, or one that carries a support login, passes only as a support login of the Owner's role through the tunnel of a session that is open now. A login that outlived its session, a login used from the studio's network, and a studio device's token used through the tunnel are refused there too, whatever the route table says.
+
+**What I tried as an attacker** (each a test in `tests/test_support_reach.py`):
+
+- *A way in left behind.* A file that adds a device, a PIN hash, a join code, the controller code choice, support settings or a longer session limit, the guest lock, an HTTPS switch or an OSC key: refused whole, in the settings part and beside it. A file that switches the recovery stick: dropped for him. A theme that is more than a theme (an extra `css` or `script` key, `url(...)`, `</style><script>`, `expression(...)`, `@import`, markup in the name, a path in the id, a 2 MB file): refused. State targets pointed at the tunnel, at his own address outside, at the box itself, at a broadcast address, at a port below 1024: refused. Extending, restarting or widening his own session, inviting or pairing a device, a code, the PIN, recovery, the secure connection: refused for a session of each role. After Stop: his login is dead on every opened route and in the handlers themselves, no device and no code was added, and his token is nowhere in the settings.
+- *Locking the owner out.* Removing an Owner's device (403, also the second Owner's, also a device whose role was raised in the list meanwhile); removing himself or a system identity (404); power-off and factory reset (403); an import leaves the PIN, every device, the support settings and the running session as they were.
+- **Found and left open, said plainly.** (1) *The networks OSC accepts from.* A remote Owner session can add a network outside the building to "Also accept from these networks" through `POST /api/osc`. That was so before D84 and is not one of the routes this decision is about; an import can now carry it too. With OSC on and the box reachable from that network, it is a way to play, stop and black out (never to change settings) that outlasts the session. It is not closed here; a test holds the fact still, and the owner is asked. (2) *A MIDI control that shows an access code.* A remote Owner session can map one (`/api/midi/map`, as before, and by a file). The code only appears on the box's display, after a hold on the controller in the room, and only while the owner's switch under `/api/access/controller` is on, which no session can touch. (3) *The key he saw.* Nothing takes the knowledge back; only a new key ends it, and the panel says so. (4) *Backups.* Each import keeps a copy of the settings before it and only the last three are kept, so three imports by a helper push the owner's older copies out.
+
+**In the panel.** Before the owner starts a session, the Remote support page says in two short lists what a helper can and cannot do (`supportReach`). After a session it says how many things support changed, lists them under Recent sessions, and, if support saw the key, says to make a new one.
+
+**Not done, not known.** Nothing here ran through a real tunnel or on a box. The browser step was written without being run on the development Mac (no Playwright there); CI runs it. An independent security review comes before any merge.
+

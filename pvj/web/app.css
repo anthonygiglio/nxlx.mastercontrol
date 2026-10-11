@@ -1426,3 +1426,6 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
   html[data-style="signal"] .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
   html[data-style="signal"] .tp #black.flash { animation: blackflash .5s steps(1, end) infinite; }      /* (its keyframes are with fadeflash's, above the style blocks: a keyframes rule has no style of its own) */
 }
+
+/* D84: the two lists of what support can and cannot do, and what a past session changed */
+#supportreach ul, ul.supportdid { padding-left: 20px; margin: 0; } #supportreach li, ul.supportdid li { margin: 2px 0; overflow-wrap: anywhere; }
