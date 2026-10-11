@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from pvj import update
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPT = os.path.join(REPO, "tools", "make-release.sh")

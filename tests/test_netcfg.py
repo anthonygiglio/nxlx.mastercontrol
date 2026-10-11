@@ -7,6 +7,7 @@ import unittest
 
 from pvj import netcfg
 from pvj.netcfg import NetError
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 WIRED = {"name": "eth0", "kind": "wired", "state": "up", "carrier": True, "mac": "aa", "speed_mbps": 1000}
 WIFI = {"name": "wlan0", "kind": "wifi", "state": "up", "carrier": True, "mac": "bb", "speed_mbps": None}

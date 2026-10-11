@@ -13,6 +13,7 @@ import unittest
 from pvj import netcfg
 from pvj.netcfg import NetError
 from pvj.netd import NetdClient, NetServer, NetService
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 UUID_OLD = "0b3c2f57-7d0a-4a5e-9d6a-1f2e3d4c5b6a"

@@ -4,6 +4,7 @@ import json
 import unittest
 
 from pvj import sync
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 def play(file="show.mp4", pos=10.0, speed=1.0, paused=False, loop=True, duration=120.0, black=False, seq=1):

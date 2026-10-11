@@ -49,6 +49,18 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .pad.on .n { color: var(--on); }
 .pad.empty { border-style: dashed; color: var(--mu); }
 .pad span.t { overflow-wrap: anywhere; }
+/* A pad that holds a shader (D73): the word beside its number, and a name of any length kept to two lines (the whole
+   name is in the title). The pad editor's rows keep a long name to one line. */
+.pad .padkind { margin-left: 6px; text-transform: uppercase; letter-spacing: .04em; }
+.pad.refused { border-color: #b00020; border-style: dashed; }
+#padrefused { margin: 8px 0 0; }
+.pad.shader span.t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; }
+#padshaders { min-width: 0; max-width: 100%; }
+.padpick { min-width: 0; width: 100%; box-sizing: border-box; overflow: hidden; }
+.padpick .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
+/* Why the box dips instead of the chosen transition, under the picker (D71): its words wrap at any width. */
+.mixfallback { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; margin: 4px 0; }
+.mixfallback .hint { overflow-wrap: anywhere; min-width: 0; max-width: 100%; }
 
 .slider { display: flex; flex-direction: column; gap: 6px; }
 .slider label { display: flex; justify-content: space-between; font-weight: 600; font-size: 14px; }
@@ -61,7 +73,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .pin-row input { width: 56px; height: 64px; border: 1.5px solid var(--ln); background: var(--cd); border-radius: 6px; font: 500 28px ui-monospace, Menlo, monospace; text-align: center; color: var(--fg); }
 .text-input { border: 1.5px solid var(--ln); background: var(--cd); border-radius: 6px; min-height: 44px; padding: 0 10px; width: 100%; }
 .msg { min-height: 1.4em; font-size: 14px; }
-.msg.err { color: var(--ac); font-weight: 600; }
+.msg.err { color: var(--ac); font-weight: 600; overflow-wrap: anywhere; }
 .list { display: flex; flex-direction: column; }
 .list .item { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--ln); padding: 8px 0; font-size: 14px; }
 .list .item:first-child { border-top: 0; }
@@ -73,7 +85,8 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .picker { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: flex-end; justify-content: center; z-index: 20; }
 .picker .sheet { background: var(--bg); border: 1.5px solid var(--ln); border-radius: 12px 12px 0 0; width: 100%; max-width: 600px; max-height: 80dvh; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 
-@media (min-width: 900px) {
+@media (min-width: 900px) { .shell:not(.wsp) > .screen { padding: 24px 28px; } }      /* before pairing */
+@container ws (min-width: 900px) {
   .screen { padding: 24px 28px; }
   .pads { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
@@ -125,7 +138,10 @@ input.seek { width: 100%; margin: 10px 0 4px; accent-color: var(--ac); height: 2
 .row.transport .btn { min-height: 44px; }
 
 /* Projection mapping editor: the display drawn small; touch drags a corner, never scrolls the page */
-canvas.mapcanvas { display: block; width: 100%; margin: 8px 0; border: 1px solid var(--ln); border-radius: 8px; touch-action: none; background: #111; }
+/* The display at its own aspect (--mapaspect, set by the script from the box's screen size), as wide as its card and
+   no taller than the room above the strip less the rows under it, so the whole display is in view while a corner is
+   dragged; narrower than the card it is centred. */
+canvas.mapcanvas { display: block; width: min(100%, calc((100dvh - var(--dock, 120px) - var(--mapallow, 340px)) * var(--mapaspect, 1.7778))); max-width: 100%; margin: 8px auto; border: 1px solid var(--ln); border-radius: 8px; touch-action: none; background: #111; }
 canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 .row.nudge .btn { min-width: 44px; min-height: 44px; font-size: 18px; }
 .list .item.map-entry.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 8px; }
@@ -170,7 +186,7 @@ button.linkish { background: none; border: 0; padding: 4px 0; color: inherit; fo
 .hint { font-size: 13px; line-height: 1.4; color: var(--mu); margin: 0; overflow-wrap: anywhere; }
 .navgroup { padding: 4px 12px; gap: 0; }
 .syspage .grid2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
-@media (min-width: 900px) { .syspage .grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container ws (min-width: 900px) { .syspage .grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .card .navhead { font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); padding: 10px 0 6px; }
 .navrow {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; align-items: center; align-content: center;
@@ -192,7 +208,7 @@ details.fold { display: block; }
 .fold summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600; font-size: 14px; color: var(--mu); }
 .btn.back { align-self: flex-start; }
 .syshead { flex-wrap: wrap; }
-.syshead h1 { font-size: 22px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.syshead h1, .syshead h2 { margin: 0; font-size: 22px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }      /* (h2: a page that is a column of an area, D72) */
 .switchwrap { flex: none; }
 .switchlabel { font-weight: 600; font-size: 14px; }
 /* The switch: a 52 by 32 track inside a 44 px tall button, so a thumb finds it */
@@ -219,17 +235,12 @@ details.fold { display: block; }
 /* The Room screen's ambience control: the same big button as Live; Next one and the set chooser share the row under it */
 #roomambnext, #roomambset { flex: 1 1 0; min-width: 0; min-height: 56px; }
 .room-amb .row .btn { min-height: 44px; }
-.liveside h2 { font-size: 20px; overflow-wrap: anywhere; min-width: 0; }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   .vibesbig { flex: 1 1 0; }
   #shaderslink, #vibesskip, #liveprev { flex: none; }
   #liveset { flex: 0 1 14rem; }
   #roomambnext { flex: none; }
   #roomambset { flex: 0 1 14rem; }
-  .shell:has(.livecols.has-side) { max-width: 1500px; }
-  .livecols.has-side { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
-  .livecols.has-side > * { grid-column: 1; }
-  .livecols.has-side > .liveside { grid-column: 2; grid-row: 1 / span 12; position: sticky; top: 12px; }
 }
 /* The Shaders page: an instrument. Three groups of cards: the stage (now, controls, presets), the library, and the
    side (Vibes and its sets, controllers). A phone stacks them in that order. */
@@ -238,7 +249,7 @@ details.fold { display: block; }
 .shaderslot { min-width: 0; }
 .stageline { font-size: 16px; font-weight: 600; }
 .shaderstage .shadername { font-size: 26px; }
-.shaderfind { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.shaderfind { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: 8px; }      /* (two choosers side by side where each has room for its words, else each on a row of its own: a narrow column of a desk cut "From anywhere") */
 .shaderfind > input { grid-column: 1 / -1; }
 .slidervalue { font: 600 14px ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre; }
 .dmxzones { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -322,8 +333,7 @@ div.ctl.compact { padding: 4px 0; }
 /* A laptop: the library is a column of its own that scrolls by itself, so what is playing and its controls stay in
    view. Two columns from 900 px (the library, and the stage with the side under it), three from 1200 px; the page may
    use the whole window. */
-@media (min-width: 900px) {
-  .shell:has(#shaderpage) { max-width: 1600px; }
+@container ws (min-width: 900px) {
   .syspage .shaderpage { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
   .col-lib { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 12px; }
   .col-stage { grid-column: 2; grid-row: 1; }
@@ -331,29 +341,28 @@ div.ctl.compact { padding: 4px 0; }
   .shaderlist { max-height: calc(100dvh - 330px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
   .keyshint { display: block; }
   .detailrow { grid-template-columns: minmax(0, 1fr) minmax(0, 14rem); align-items: center; }
-  .pickrow { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .pickrow { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr)); }      /* (side by side where each has room for its words; a chooser that has not goes to a row of its own) */
   /* a laptop keeps the controls in view: the page's own description and state line give way (the Now card says both) */
   .syspage[data-page="vibes"] #sysblurb, .syspage[data-page="vibes"] #sysstate { display: none !important; }
   .midirow .keyshint { flex: 1 1 12rem; }
 }
-@media (min-width: 1200px) {
+@container ws (min-width: 1100px) {
   .syspage .shaderpage { grid-template-columns: minmax(0, 4fr) minmax(0, 5fr) minmax(0, 4fr); }
   .col-lib { grid-row: 1; }
   .col-side { grid-column: 3; grid-row: 1; }
 }
 /* A presenter and a guest have no third column: the stage takes its room */
-@media (min-width: 1200px) {
+@container ws (min-width: 1100px) {
   .syspage .shaderpage:not(:has(.col-side > .shaderslot:not([hidden]))) { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); }
 }
 .msg.inmsg:empty { min-height: 0; }
 .shadername { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
-/* Effects: the strip on Live and the card on Mix (effects.js). On a laptop the card is two columns: what is on and its
+/* Effects: the card on Shape > Effect (effects.js). On a laptop the card is two columns: what is on and its
    controls beside the list of effects, which scrolls by itself so the controls stay in view. */
 .fxname { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
 .fxtitle { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 8rem; }
 .fxbuttons { flex-wrap: wrap; }
 .fxbuttons > .btn { flex: 1 1 0; min-width: 0; padding: 0 8px; }
-.fxstrip .fxbuttons > .btn { min-height: 56px; }
 .fxteachrow { margin-top: -2px; }
 .fxteachcell { display: flex; justify-content: center; flex: 1 1 0; min-width: 0; }
 .fxgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
@@ -372,7 +381,7 @@ div.ctl.compact { padding: 4px 0; }
 .fxrow .chip { margin-left: 8px; }
 .fxrow .fxdesc, .fxrow .msg { display: block; }
 .fxrow .btn { min-width: 5.5rem; }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   .fxgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
   .fxlib .list { max-height: 70vh; overflow-y: auto; padding-right: 6px; }
 }
@@ -406,7 +415,7 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .room-result.err { color: var(--ac); font-weight: 600; }
 .room-state.state-on { background: var(--ac); border-color: var(--ac); color: var(--on); }
 .room-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   .room-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
   .room-scenes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
@@ -458,7 +467,7 @@ table.chan .lvl { width: 36%; }
 .split { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .split > * { min-width: 0; }
 .proj-below { padding-top: 4px; }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   .split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 28px; align-items: start; }
   .split.alone { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
   .split > .splitlist { max-height: calc(100dvh - 300px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
@@ -467,8 +476,8 @@ table.chan .lvl { width: 36%; }
 }
 .sched-entry.editing { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
 .split.even { }
-@media (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) { .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@container ws (min-width: 900px) {
   #devicelist, #midimaplist { max-height: calc(100dvh - 420px); min-height: 180px; overflow-y: auto; padding-right: 8px; }
   /* People and codes on a laptop, in every look: "Let someone in" and under it "A code from a controller" in the
      left column, the paired devices alone in the right one beside both. Without this the page's two-column grid
@@ -494,7 +503,7 @@ table.chan .lvl { width: 36%; }
 .lt-name { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 14px; font-weight: 600; }
 .lt-label { overflow-wrap: anywhere; min-width: 0; }
 .lt-mine, .lt-inuse { font-size: 13px; font-weight: 400; color: var(--mu); }
-@media (min-width: 900px) { #lookthemes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
+@container ws (min-width: 900px) { #lookthemes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
 
 /* ---- The resizing study, step 1 (D64): repairs to today's layout where the width sweep of the browser test
    (tests/ui/sweep.js) found it broken, at 320 px, in a short window and from 600 to 899 px. The smallest rule that
@@ -508,39 +517,301 @@ table.chan .lvl { width: 36%; }
    the row goes to a second line, where a word used to be cut in two ("Exponential" at 320 to 390 px and again in
    the laptop's narrow columns at 900 and 932; "Diagonals" at 1200, where the Shaders page has three columns). No
    fault was measured from 1366 px up, so nothing changes there. */
-@media (max-width: 1365px) { .seg .segbtn { flex: 1 1 auto; } }
-@media (max-width: 599px) {
+.seg .segbtn { flex: 1 1 auto; }      /* (at every width since the Workspace shell, D65: a column is narrower beside the rail, and narrower still in a desk) */
+@container ws (max-width: 599px) {
   /* Previous, the one in the middle, Next: three even columns, so "Previous" stays one word (it was cut at 390) */
   .transport3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .transport3 .btn { padding: 0 2px; }
-  /* The title and the pill beside it (the board, what plays): the pill goes under the title, and breaks, before it
-     pushes the page wider than the window */
   .top { flex-wrap: wrap; }
-  .top .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 }
-@media (max-width: 379px) {
-  /* Live, the four big buttons at the foot: two and two, where Blackout used to leave the window (at 320 and 360;
-     at 390 the four fit in a line, as before) */
-  .row:has(> #fade) { flex-wrap: wrap; }
-  .row:has(> #fade) > .btn { flex: 1 1 40%; }
+@container ws (max-width: 379px) {
   .transport3 { gap: 6px; }
   .transport3 .btn, .fxbuttons > .btn { padding: 0 2px; font-size: 14px; }
-  /* Five tabs (with Room): each as wide as its word plus an even share of what is left, never under 44 px, so
-     "System" is whole */
-  .tabs.many { padding-left: 4px; padding-right: 4px; }
-  .tabs.many .btn { flex: 1 1 auto; min-width: 44px; }
 }
-@media (min-width: 900px) and (max-width: 1365px) {
-  /* Live on a laptop with a shader on: the Vibes button keeps room for its words; the buttons beside it go to a
-     second line (it was squeezed to 40 to 63 px at 900 to 1200, its words outside it). No fault was measured from
-     1366 px up, so nothing changes there. */
-  .livecols.has-side .vibesbig { min-width: 10rem; }
+/* (Three repairs of D64 are gone with what they mended: Live's bottom row of four buttons and the tab bar with five
+   tabs are the transport strip and the area tabs of the Workspace shell now, and the playing shader's strip no
+   longer stands beside the pads. Their sizes are held by the same sweep.) */
+
+/* ---- The Workspace shell (D65, D72): four areas (Play, Shape, Room, Setup). A title bar; under 600 px the open
+   area's screens in a row under it and the areas as tabs at the foot; from 600 px a RAIL at the left with one
+   button per area and nothing else, and the open area's screens as tabs across the top of the workspace; from
+   1200 px an area is a DESK, its screens side by side as columns (and Setup keeps its index beside the open
+   page); and ONE transport strip at the foot of every screen at every width. The size classes of the resizing
+   study are asked of the panel itself, not of the window: the shell is the container "app" (compact under 600,
+   medium 600 to 899, expanded 900 to 1199, large 1200 to 1599, extra large from 1600), and every column of a
+   desk is a container "ws", which the cards ask how much room they have: a card in a column of 380 px takes
+   the form it has on a phone, whatever the window. A
+   window under 480 px high is short; that one is asked of the window, because a panel that scrolls with the page
+   has no height of its own. A browser that knows no container queries gets the phone's layout at every width.
+   Control heights are the tokens (44 and 56), never scaled. The page scrolls, as it always did; the strip and the
+   tabs stay at the foot, the rail at the left. Measured in headless Chromium and Edge only. ---- */
+.shell.wsp { display: block; max-width: none; margin: 0; min-height: 0; container: app / inline-size; }
+.frame { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; grid-template-areas: "head" "sub" "main" "dock"; min-height: 100dvh; }
+.wshead { grid-area: head; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 12px 16px 6px; min-width: 0; }
+.wsheadmain { flex: 1 1 12rem; min-width: 0; }
+.wstitle { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.15; }
+.wsjob { margin: 2px 0 0; font-size: 14px; line-height: 1.35; color: var(--mu); overflow-wrap: anywhere; }
+.wsbrand { display: none; font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--mu); white-space: nowrap; }
+.wshead .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.wsjob.all { display: none; }
+.wssub { grid-area: sub; padding: 6px 16px 0; min-width: 0; }
+/* (a screen's name is never cut: five of them go to a second line on a narrow phone) */
+.wssub .seg { flex-wrap: wrap; row-gap: 4px; }
+.wssub .segbtn { flex: 1 1 auto; min-width: min-content; padding: 0 10px; overflow-wrap: normal; }
+.wssub .dj { display: none; }
+.wsside { display: none; }
+main.ws { grid-area: main; min-width: 0; }
+main.ws:focus, .deskcol:focus { outline: none; }
+/* An area is one build with a column per screen. Each column is the container "ws" of the cards in it. Under the
+   desk's width one column is shown, the open one; from it, all of them (below). The one message line of the build
+   is above the columns and stays at the top of the window, so that it is seen from any of them. */
+.desk { min-width: 0; }
+.deskcol { min-width: 0; container: ws / inline-size; }
+.deskcol:not(.cur) { display: none; }
+.deskhead { display: none; margin: 0; padding: 14px 16px 0; font-size: 17px; font-weight: 700; }
+/* (:where: these weigh no more than "#msg", so a style that floats the message, as Signal does, places it itself) */
+:where(.ws) > #msg { position: sticky; top: 0; z-index: 5; padding: 0 16px; }
+:where(.ws) > #msg:empty { min-height: 0; }
+:where(.ws) > #msg:not(:empty) { padding-top: 6px; padding-bottom: 6px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
+.navrow.on .navname { color: var(--ac); }
+/* (the link from the pads to the Shaders screen: that screen is a tab right above the pads, or the column beside
+   them, wherever the pads are shown, so the link is not) */
+#shaderslink { display: none; }
+.deskcol > .screen { max-width: 1100px; width: 100%; margin: 0 auto; padding-bottom: 24px; }
+.deskcol > .screen:has(#shaderpage) { max-width: 1600px; }
+/* The Mapping screen is a desk of its own (the owner, 2026-10-10): the whole width, the display's stage at the left and
+   the tools in a column of 360 px that scrolls by itself from 900 px of room; under that the tools follow the stage. */
+.deskcol > .screen[data-page="mapping"] { max-width: none; }
+.screen[data-page="mapping"] > .grid2 { grid-template-columns: minmax(0, 1fr); }
+.mapbody { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.mapbody > .card { min-width: 0; }
+.maptools .k:not(:first-child) { margin-top: 10px; }
+.maptools .list { gap: 6px; }
+.mapsurface { display: flex; flex-direction: column; gap: 8px; padding: 10px 0 0; border-top: 1px solid var(--ln); margin-top: 10px; }
+#maptest .hint.grow { flex: 1 1 160px; align-self: center; }
+@container ws (min-width: 900px) {
+  .mapbody { grid-template-columns: minmax(0, 1fr) 360px; }
+  .maptools { position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px) - 12px); overflow-y: auto; overscroll-behavior: contain; }
 }
-@media (min-width: 900px) and (max-height: 479px) {
-  /* ...and in a short window (a large phone held sideways) the playing shader's strip scrolls with the page: held in
-     place, the part of it below the window's edge could not be reached */
-  .livecols.has-side > .liveside { position: static; }
+.libhead { justify-content: flex-end; }
+.wsdock { grid-area: dock; position: sticky; bottom: 0; z-index: 12; background: var(--bg); min-width: 0; }
+.wsdock .tabs { position: static; }
+/* The four area tabs share the width in equal columns that may shrink, whatever the typeface: a button's own
+   least width is its word plus its padding, and four of those were 330 px in a 320 px window in the faces of CI's
+   Linux ("Setup" reached 330), while the Mac's narrower face fitted. So: no least width, next to no side padding,
+   and under 380 px a smaller word and less air round the row. The longest word, "Shape", then has 74 px. */
+.wstabs .btn { min-width: 0; padding: 0 2px; overflow-wrap: normal; }
+@container app (max-width: 379px) {
+  .wstabs { gap: 2px; padding-left: 8px; padding-right: 8px; }
+  .wstabs .btn { font-size: 14px; }
 }
+/* The transport strip. A phone: what is playing on a line of its own, the clip count and the time under it, then
+   the row the thumb finds: Freeze, Stop, Blackout and More (the three that are never behind More at any width,
+   and the way to the rest). More opens the rest in place, UNDER that row, which stays where it was: Previous,
+   Next, Fade in, Fade out; back and forward 10 s and Loop; then Speed on a row of its own, so the slider is as wide
+   as the strip. Closed, the strip and the tabs are what they were; open, in a 568 px phone the last row is reached
+   by scrolling inside the strip, whose lower edge then says so. (On a phone the rows are placed by `order`, so the
+   cursor's order there is the laptop's: Previous, back, forward, Next, the fades, Freeze, Stop, Blackout.) */
+.tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 16px; border-top: 1.5px solid var(--ln); }
+.tpinfo { display: contents; }     /* (a phone: its three parts are cells of the strip's own grid; from 600 px a box of its own, below) */
+/* What plays has a line, cut with dots where it is long (whole in its title, app.js), and under it the clip count
+   and the time. Neither the count nor the time is ever broken: each is one piece with figures of one width, and
+   where the two have no room side by side the time stands under the count, whole. */
+.tpinfo #np { grid-column: 1 / -1; order: -2; width: 0; min-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpmeta { grid-column: 1 / -1; order: -1; display: flex; flex-wrap: wrap; column-gap: 10px; min-width: 0; }
+.tpmeta #time, .tpmeta #plpos { white-space: nowrap; overflow-wrap: normal; font-variant-numeric: tabular-nums; }
+.tpmeta #plpos:empty { display: none; }
+.tpinfo .tpmore { order: 1; min-height: 56px; white-space: nowrap; }      /* ("Less" is one word in any look) */
+/* The place in the clip. Where it has no room on the strip's line (under 1640 px, a phone too) it is a slim bar
+   along the strip's top edge, as a media player has it: the whole width, 4 px of track that shows how far the
+   clip is, in a target 24 px high for a finger or the pointer; it grows to 8 px with its handle under the
+   pointer and with the cursor. It is the same one control at every width, placed by this sheet: never behind
+   More, never a second copy. It is placed on the dock, outside the strip's own flow, so it cannot send a button
+   to a second line, and nothing moves when it grows. With nothing to seek in (a shader, a live input, nothing
+   playing) it is an empty line. */
+.tpscrub { display: flex; flex: 3 1 160px; min-width: 160px; }
+.tpscrub input.seek { margin: 0; height: 44px; }
+@container app (max-width: 1639px) {
+  .wsdock .tpscrub { position: absolute; left: 0; right: 0; top: -12px; height: 24px; z-index: 1; display: block; }
+  .wsdock .tpscrub input.seek { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; accent-color: auto; }
+  /* (the fill is --ink where a look defines it: the colour that reads as a thin line; Signal light's accent is 1.2:1 on its page, the review of #112) */
+  .wsdock .tpscrub input.seek::-webkit-slider-runnable-track { height: 4px; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ink, var(--ac)) var(--fill, 0%), var(--ln) var(--fill, 0%)); }
+  .wsdock .tpscrub input.seek::-moz-range-track { height: 4px; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ink, var(--ac)) var(--fill, 0%), var(--ln) var(--fill, 0%)); }
+  .wsdock .tpscrub input.seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5px; border: 0; border-radius: 50%; background: var(--ac); box-shadow: none; opacity: 0; }
+  .wsdock .tpscrub input.seek::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--ac); opacity: 0; }
+  .wsdock .tpscrub input.seek:not(:disabled):hover::-webkit-slider-runnable-track, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-webkit-slider-runnable-track, .wsdock .tpscrub input.seek:not(:disabled):active::-webkit-slider-runnable-track { height: 8px; }
+  .wsdock .tpscrub input.seek:not(:disabled):hover::-moz-range-track, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-moz-range-track { height: 8px; }
+  .wsdock .tpscrub input.seek:not(:disabled):hover::-webkit-slider-thumb, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-webkit-slider-thumb, .wsdock .tpscrub input.seek:not(:disabled):active::-webkit-slider-thumb { opacity: 1; margin-top: -3px; }
+  .wsdock .tpscrub input.seek:not(:disabled):hover::-moz-range-thumb, .wsdock .tpscrub input.seek:not(:disabled):focus-visible::-moz-range-thumb { opacity: 1; }
+  .wsdock .tpscrub input.seek:disabled { cursor: default; opacity: 1; }
+  .wsdock > .tp.tp { padding-top: 12px; }
+}
+.tp .tpx { order: 2; }
+.tp .f-ten { order: 3; }
+.tp button.tpx { min-height: 44px; }
+.tpgrp { display: contents; }
+.tp .tpb { min-width: 0; min-height: 56px; padding: 0; font-size: 14px; }
+.tp .tpmore { flex: none; min-width: max-content; padding: 0 12px; }      /* (never narrower than its word: in a wider face "More" was 46 px in a button of 64 where the line is fullest) */
+.tp:not(.open) .tpx { display: none; }
+/* Speed and Loop (D72: they were on Shape > Controls). On a phone Loop is on the row of back and forward 10 s, twice
+   as wide as a button, and Speed is the last row that More opens, as wide as the strip, with its value over the
+   slider's name. */
+.tp .tploop { order: 4; grid-column: span 2; }
+.tp .tpspeed { order: 5; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tp:not(.open) .tpspeed { display: none; }
+.tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }
+.tpspeed input { flex: 1 1 0; min-width: 0; margin: 0; height: 44px; }
+/* (a 320 px phone: "Blackout" needs 69 px in the widest of the faces this look is drawn in, and gets 75) */
+@container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } .tp .tpb { font-size: 13px; } }      /* (13 px: room to spare in a wider face than the one it was measured in) */
+@container app (min-width: 600px) {
+  .frame { grid-template-columns: 96px minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; grid-template-areas: "head head" "side sub" "side main" "dock dock"; }
+  .wsdock .wstabs { display: none; }
+  .wsbrand { display: block; }
+  .wshead { padding: 8px 16px; border-bottom: 1.5px solid var(--ln); }
+  .wsheadmain { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; }
+  .wsjob { margin: 0; }
+  /* the rail: one button per area, and nothing else */
+  .wsside { grid-area: side; display: flex; flex-direction: column; gap: 8px; align-self: start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; padding: 10px 8px 16px; }
+  .wsside .wsar { display: block; width: 100%; min-height: 56px; padding: 4px 2px; border: 1.5px solid var(--ln); border-radius: 8px; background: none; color: var(--fg); font-weight: 700; text-align: center; cursor: pointer; overflow-wrap: anywhere; }
+  .wsside .wsar.on { background: var(--ac); border-color: var(--ac); color: var(--on); }
+  main.ws, .wssub { border-left: 1.5px solid var(--ln); }
+  /* the open area's screens: tabs across the top of the workspace, which stay there while the screen scrolls */
+  .wssub { position: sticky; top: 0; z-index: 11; padding: 8px 16px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
+  .wssub .segbtn { flex: 0 1 auto; min-width: 6.5rem; }
+  /* The strip: ONE line at every width from here. What plays has at least 180 px for its name and is never
+     squeezed under that; Freeze, Stop and Blackout are always at the right end. Everything else is on the line
+     only from the width where it fits (below), and behind More under that; More opens what is folded in a second
+     line under the first, in place. */
+  .tp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .tpgrp { display: contents; }
+  .tpinfo { display: grid; flex: 1 1 0; min-width: min-content; grid-template-columns: minmax(11.25rem, 1fr) auto; align-items: center; }
+  .tpinfo #np { grid-column: 1; grid-row: 1; }
+  .tpmeta { grid-column: 1; grid-row: 2; }
+  .tpinfo .tpmore { grid-column: 2; grid-row: 1 / span 2; margin-left: 10px; min-height: 44px; }      /* (beside the name, as tall as its two lines) */
+  .tp .tpmore { display: block; }
+  .tp .tpb { min-height: 44px; padding: 0 10px; font-size: inherit; }
+  .tp .tpb.keep { min-height: 56px; }
+  .tp .fold { order: 2; }
+  .tp:not(.open) .fold { display: none; }
+  .tp.open::before { content: ""; order: 1; flex: 0 0 100%; height: 0; margin-top: -6px; }
+  .tp .tpspeed { flex: 0 1 150px; min-width: 110px; }
+  .tp.open .tpspeed { display: flex; }
+}
+/* What is on the line from which width (D72). The owner's order of who has the room first: Blackout, Stop and
+   Freeze (always); Previous and Next; Loop; Speed; Fade in and Fade out; back and forward 10 s; the place in the
+   clip, which needs 160 px. Each width is where the line still holds in a typeface a fifth wider than the
+   panel's own, with a long clip name and an hour's time on it (measured; the widths are in D72). */
+@container app (min-width: 800px) { .tp .fold.f-steps { order: 0; } .tp:not(.open) .fold.f-steps { display: inline-block; } }
+@container app (min-width: 940px) { .tp .fold.f-loop { order: 0; } .tp:not(.open) .fold.f-loop { display: inline-block; } }
+@container app (min-width: 1080px) { .tp .fold.f-speed { order: 0; } .tp:not(.open) .fold.f-speed { display: flex; } }
+@container app (min-width: 1280px) { .tp .fold.f-fades { order: 0; } .tp:not(.open) .fold.f-fades { display: inline-block; } }
+@container app (min-width: 1440px) { .tp .fold.f-ten { order: 0; } .tp:not(.open) .fold.f-ten { display: inline-block; } }
+/* (from 1440 px the line is at its fullest until the place in the clip joins it: it gives a little everywhere) */
+@container app (min-width: 1440px) and (max-width: 1639px) { .tp { column-gap: 6px; } .tp .tpb { padding: 0 8px; } }
+/* (from 1440 px every button is on the line and nothing is left for More; from 1640 px the place in the clip is on
+   the line as well, a slider like the others) */
+@container app (min-width: 1440px) { .tp .tpmore { display: none; } }
+/* A desk, from 1200 px of panel (D72): the columns of the area that is built stand side by side, all of them
+   equally live, each under its name. 1200 px is where the narrowest column is no narrower than a phone: beside the
+   96 px rail the workspace has 1104 px, and its columns come to 344, 345 and 414 px in Play, 453, 325 and 325 px
+   in Shape and 368 px each in Room, while every card is held at 320 px by the width sweep. The tabs of the
+   screens that share the page are one tab; an area whose screens all share it has no tabs. Setup keeps its index
+   as a column at the left of the open page, which scrolls by itself as the rail does, and the page's own Back to
+   the index is not shown. */
+@container app (min-width: 1200px) and (max-width: 1699px) {
+  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="shaders"]:not(.cur) { display: none; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) > .deskcol:not([data-col="shaders"]) { display: none; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) > .deskcol[data-col="shaders"] { border-left: 0; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) .deskhead { display: none; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) .syspage .syshead { position: static; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) .syspage .syshead h2 { display: block; }
+  .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) .syspage #sysblurb { display: block; }
+}
+@container app (min-width: 1700px) {
+  nav.wssub.all.p3 { display: none; }      /* (nav: this block stands before the 1200 px block that shows the bar, so it must weigh more) */
+  .wssub .segbtn.m3 { display: none; }
+}
+/* (from 1700 px the Shaders column of Play has the room its own laptop form was written for, the library of
+   shaders beside what plays, 900 px, and from 1900 px its three columns, 1100 px: the pads and the library keep
+   330 and 370 px and the rest is the shaders') */
+@container app (min-width: 1700px) {
+  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="pads"] { flex: 0 0 330px; }
+  .desk[data-area="play"][data-cols="3"] > .deskcol[data-col="library"] { flex: 0 0 370px; }
+}
+@container app (min-width: 1200px) {
+  .desk:not([data-cols="1"]) { display: flex; align-items: stretch; }
+  .desk:not([data-cols="1"]) > .deskcol { display: block; flex: 1 1 0; }
+  .desk:not([data-cols="1"]) > .deskcol + .deskcol { border-left: 1.5px solid var(--ln); }
+  .desk:not([data-cols="1"]) .deskhead { display: block; }
+  .desk > .deskcol[data-col="effect"] { flex-grow: 1.4; }
+  .desk > .deskcol[data-col="shaders"] { flex-grow: 1.2; }
+  .desk > .roomnote { display: none; }
+  .wssub .m { display: none; }
+  .wssub .dj { display: block; }
+  .wssub.all { display: none; }
+  /* Play up to 1699 px (D72, changed 2026-10-10): Pads and Library are the desk and Shaders is a tab beside them
+     with the whole width, where its own laptop form (the library of shaders beside what plays, 900 px) fits;
+     the bar of tabs stays (Pads · Library, Shaders), the Shaders column is shown alone with its own title and
+     sentence while it is the open one, and hidden while the desk is. From 1700 px the three share the page. */
+  .wssub.all.p3 { display: block; }
+  /* Room (D72, changed 2026-10-10): two columns, Guests under Scenes (a guest's column was one fold in a third). */
+  .desk[data-area="room"][data-cols="3"] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 1fr; grid-template-areas: "scenes walls" "guests walls"; align-items: start; }
+  .desk[data-area="room"][data-cols="3"] > .deskcol[data-col="scenes"] { grid-area: scenes; }
+  .desk[data-area="room"][data-cols="3"] > .deskcol[data-col="walls"] { grid-area: walls; }
+  .desk[data-area="room"][data-cols="3"] > .deskcol[data-col="guests"] { grid-area: guests; border-left: 0; border-top: 1.5px solid var(--ln); }
+  .desk[data-area="room"][data-cols="3"] > .roomnote { grid-column: 1 / -1; }
+  .wsjob.one { display: none; }
+  .wsjob.all { display: block; }
+  /* every column has the same small heading: a column that is a page (Shaders, Sound) leaves its own title and
+     sentence out here and keeps its switch, at the right of the heading; the Scenes card of Room is not named a
+     second time under the column's name */
+  .desk:not([data-cols="1"]) > .deskcol { position: relative; }
+  .desk:not([data-cols="1"]) .syspage .syshead h2, .desk:not([data-cols="1"]) .syspage #sysblurb { display: none; }
+  .desk:not([data-cols="1"]) .syspage .syshead { position: absolute; top: 6px; right: 16px; margin: 0; }
+  .desk:not([data-cols="1"]) #roomscenes > h2 { display: none; }
+  .setupdesk { display: flex; align-items: stretch; }
+  .setupdesk > .deskcol.ix { display: block; flex: 0 0 272px; align-self: flex-start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; }
+  .setupdesk > .deskcol.cur { flex: 1 1 0; border-left: 1.5px solid var(--ln); }
+  .setupdesk .backrow.toindex { display: none; }
+}
+/* A low window (a small phone, a phone on its side): with Speed and Loop the open strip is a row taller, and with
+   the tabs it would take more than half of such a window. There it is no taller than half the window (less the
+   tabs under it), and what More opened scrolls inside it. */
+@media (max-height: 599px) {
+  .tp.open { max-height: calc(50dvh - 70px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+  @container app (min-width: 600px) { .tp.open { max-height: 44dvh; } }      /* (under half: a control brought to the middle of the window is then clear of the strip) */
+  /* while a part of it is below what is shown (app.js says so): its lower edge fades into a line in the accent */
+  .tp.open.below::after { content: ""; order: 99; grid-column: 1 / -1; flex: 0 0 100%; position: sticky; bottom: -4px; height: 28px; margin-top: -34px; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--bg) 75%); border-bottom: 3px solid var(--ac); }
+}
+/* short: the title bar gives way, the controls keep their height */
+@media (max-height: 479px) {
+  .wshead { padding-top: 4px; padding-bottom: 4px; }
+  .tp { padding-top: 4px; padding-bottom: 4px; }
+}
+
+/* ---- Narrow widths: text that overran (2026-10-09; measured from 320 to 768 px and 740 by 360, with long names
+   and with the text a quarter larger). Under 900 px of panel:
+   - The title bar. The line that says the screen's job stood in one box with the area's name, and the status
+     beside that box squeezed it to a column of three lines. Now the name and the status share the first line (the
+     status goes under the name when there is no room, the name is never narrowed) and the job has a line of its
+     own, as wide as the bar.
+   - A page's title is cut between words, never inside one: the switch goes under it first.
+   - A name with no space in it (a preset, a projector, a USB drive, a group) is cut where the box ends.
+   The strip's own line at every width is with its rules, above. ---- */
+@container app (max-width: 899px) {
+  .wsheadmain { display: contents; }
+  .wstitle { flex: 1 1 auto; }
+  .wsjob { order: 3; flex: 1 1 100%; }
+}
+.syshead h1, .syshead h2 { overflow-wrap: break-word; }
+.k, .field { overflow-wrap: break-word; }
+/* (the buttons that carry a name someone typed: a preset of an effect, a projector of a group. Not every button of a row
+   that wraps: one that may be cut anywhere has no least width, and a row of sources then squeezed "Console" where it had wrapped) */
+#fxpresets > .btn, #roomgmembers > .btn { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+/* (a phone: a row of choices that share the width, "Cut", "Dip to black", "Crossfade (soon)", goes to a second line in larger text; it ran out of its card) */
+@container app (max-width: 599px) { .row:has(> .btn.grow) { flex-wrap: wrap; } }
+.preset > span { min-width: 0; }
 
 /* The OSC page's "Who may send" (D78): long addresses (IPv6) and the key wrap, they never push the page wider. */
 .oscwho { min-width: 0; border-top: 1px solid var(--ln); padding-top: 10px; }
@@ -599,19 +870,10 @@ html[data-style="signal"] button:focus-visible, html[data-style="signal"] input:
 
 /* -- the title block: the area's colour, full width, the screen's name in very large capitals -- */
 html[data-style="signal"] .screen { gap: 16px; }
-html[data-style="signal"] .screen > .top:first-child { margin: -16px -16px 0; padding: 20px 16px 16px; background: var(--ac); color: var(--on); flex-wrap: wrap; align-items: flex-end; }
-html[data-style="signal"] .screen > .top:first-child h1 { font-size: 44px; line-height: 1.05; min-width: 0; }
-/* the line under the title says whose panel this is. Live's heading is that name itself, so there the area's name
-   is put before it and the heading's own words become the small line. */
-html[data-style="signal"] .screen > .top:first-child h1::after { content: "nxlx.mastercontrol"; display: block; margin-top: 4px; font: 600 15px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
-html[data-style="signal"] .screen > .top:first-child:has(#pill) h1 { font: 600 15px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
-html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::before { content: "Live"; display: block; margin-bottom: 4px; font: var(--tk-tw, 900) 44px/1.05 var(--display); text-transform: var(--tk-case, uppercase); }
-html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::after { content: none; }
 html[data-style="signal"] .screen > h1 { font-size: 30px; margin: 0; }
-html[data-style="signal"] .top .pill { border: 0; border-radius: var(--tk-r, 0); padding: 4px 8px; background: var(--on); color: var(--ac); font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
-html[data-style="signal"] .screen > .top:first-child .btn { border-color: var(--on); color: var(--on); background: transparent; }
+html[data-style="signal"] .wshead .pill, html[data-style="signal"] .roomnote .pill { border: 0; border-radius: var(--tk-r, 0); padding: 4px 8px; background: var(--on); color: var(--ac); font: 900 13px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
 html[data-style="signal"] .syshead { align-items: stretch; gap: 10px; }
-html[data-style="signal"] .syshead h1 { font-size: 30px; line-height: 1.15; padding: 6px 14px; background: var(--ac); color: var(--on); flex: 1 1 12rem; }
+html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { font-size: 30px; line-height: 1.15; padding: 6px 14px; background: var(--ac); color: var(--on); flex: 1 1 12rem; }
 html[data-style="signal"] .switchwrap { align-self: center; }
 html[data-style="signal"] .switchwrap .switchlabel { display: none; }      /* the switch says Off and On itself */
 
@@ -667,8 +929,6 @@ html[data-style="signal"] .vibesbig { border-width: var(--rule); border-color: v
 html[data-style="signal"] .vibesbig.on { border-color: var(--ac); }
 html[data-style="signal"] .vibessub { font-weight: 600; text-transform: none; letter-spacing: 0; }
 html[data-style="signal"] .transport3 .btn { padding: 4px 4px; font-size: 14px; letter-spacing: 0; overflow-wrap: break-word; }
-/* Fade out, Freeze, Stop and Blackout: two by two on a phone, so no word is cut in capitals */
-html[data-style="signal"] .row:has(> #fade) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 html[data-style="signal"] #shaderslink, html[data-style="signal"] #vibesskip, html[data-style="signal"] #liveprev { padding: 4px 6px; }
 /* staff press these: 56 px at least */
 html[data-style="signal"] #roomscreen .btn, html[data-style="signal"] .room-amb .row .btn { min-height: var(--tk-chl, 56px); }
@@ -707,7 +967,7 @@ html[data-style="signal"] .load-heavy .loadmeter i { background: var(--st-proble
 /* -- rows: a 3 px rule above each, the name in capitals, one quiet line under it -- */
 html[data-style="signal"] .navrow { border-top: var(--rule) solid var(--fg); padding: calc(12px * var(--tk-density, 1)) 0; min-height: 56px; }
 html[data-style="signal"] .navgroup > .navrow:first-child { border-top: var(--rule) solid var(--fg); }
-html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .room-group h2, html[data-style="signal"] .liveside h2 { font: 900 20px/1.2 var(--sans); text-transform: uppercase; letter-spacing: 0; overflow-wrap: anywhere; }
+html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .room-group h2 { font: 900 20px/1.2 var(--sans); text-transform: uppercase; letter-spacing: 0; overflow-wrap: anywhere; }
 html[data-style="signal"] .list .item, html[data-style="signal"] .list .item:first-child { border-top: var(--rule) solid var(--fg); padding: calc(12px * var(--tk-density, 1)) 0; font-size: 16px; }
 html[data-style="signal"] .list.sp > .item { padding: 12px 0 4px; }
 html[data-style="signal"] .setrow, html[data-style="signal"] .setrow:first-child { border-top: var(--rule) solid var(--fg); padding: calc(12px * var(--tk-density, 1)) 0; }
@@ -736,6 +996,7 @@ html[data-style="signal"] .swatch.cur { outline: 3px solid var(--ink); outline-o
 html[data-style="signal"] .progress { height: 16px; border: var(--rule) solid var(--fg); border-radius: var(--tk-r, 0); background: transparent; }
 html[data-style="signal"] #preview, html[data-style="signal"] img.qr, html[data-style="signal"] canvas.mapcanvas, html[data-style="signal"] .xypad { border-radius: var(--tk-rp, 0); }
 html[data-style="signal"] canvas.mapcanvas, html[data-style="signal"] .xypad { border: var(--rule) solid var(--fg); }
+html[data-style="signal"] canvas.mapcanvas { --mapallow: 440px; }      /* (Signal's title bar, tabs and heading stand taller above the canvas) */
 html[data-style="signal"] .xydot { border-radius: 0; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: var(--rule) solid var(--fg); }
 
 /* -- sliders: a ruled bar 28 px high inside a 44 px touch target, filled with the area's colour up to the value.
@@ -808,22 +1069,13 @@ html[data-style="signal"] .ctlgrid .ctl.lit.haslight::after { border-color: var(
 html[data-style="signal"] .ctlgrid .ctl.lit .ctlname, html[data-style="signal"] .ctlgrid .ctl.lit .ctlwhat, html[data-style="signal"] .ctlgrid .ctl.lit .ctlval { color: var(--on); }
 
 /* -- a laptop: panels with a 3 px rule round them, the title block as a label at the top left -- */
-@media (min-width: 900px) {
-  html[data-style="signal"] .screen > .top:first-child { margin: 0; padding: 0; background: none; color: var(--fg); align-items: center; }
-  html[data-style="signal"] .screen > .top:first-child h1 { font-size: 30px; line-height: 1.35; padding: 4px 14px; background: var(--ac); color: var(--on); }
-  html[data-style="signal"] .screen > .top:first-child:has(#pill) h1 { display: flex; align-items: baseline; gap: 12px; padding: 4px 14px; background: var(--ac); color: var(--on); }
-  html[data-style="signal"] .screen > .top:first-child:has(#pill) h1::before { margin: 0; font-size: 30px; line-height: 1.35; }
-  html[data-style="signal"] .screen > .top:first-child h1::after { display: inline; margin: 0 0 0 12px; }
-  html[data-style="signal"] .screen > .top:first-child .btn { border-color: var(--fg); color: var(--fg); }
-  html[data-style="signal"] .top .pill { background: var(--ac); color: var(--on); }
-  html[data-style="signal"] .syshead h1 { flex: 0 1 auto; padding: 4px 14px; line-height: 1.35; }
+@container ws (min-width: 900px) {
+  html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { flex: 0 1 auto; padding: 4px 14px; line-height: 1.35; }
   html[data-style="signal"] .card { border: var(--rule) solid var(--fg); padding: calc(16px * var(--tk-density, 1)); gap: calc(12px * var(--tk-density, 1)); }
   html[data-style="signal"] .navgroup { padding: calc(16px * var(--tk-density, 1)); }
   html[data-style="signal"] .card .card { border: 0; padding: 0; }
   html[data-style="signal"] .shaderstage .shadername { font-size: 48px; }
-  html[data-style="signal"] .liveside h2 { font-size: 30px; }
-  html[data-style="signal"] .shell:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
-  html[data-style="signal"] .row:has(> #fade) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  html[data-style="signal"] .deskcol > .screen:has(.ctlgrid) { max-width: 1500px; }      /* a drawn controller is 13 cells wide: it gets the window, as the Shaders page does */
 }
 
 /* ---- Signal everywhere (D57): every screen, page and state, looked at one by one in the pictures of
@@ -867,7 +1119,7 @@ html[data-style="signal"] .fxbuttons > .btn, html[data-style="signal"] .fxbutton
 
 /* -- a page under System on a phone: the title a little smaller than on a laptop, so "Projectors" and its switch
    share a line; a title is never cut inside a word (the switch goes under it first) -- */
-html[data-style="signal"] .syshead h1 { font-size: 28px; min-width: min-content; }
+html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { font-size: 28px; min-width: min-content; }
 html[data-style="signal"] .switchwrap { margin-left: auto; }
 
 /* -- before pairing: the same title block, and labels as labels -- */
@@ -937,10 +1189,8 @@ html[data-style="signal"] #roomsetup .room-row { gap: 8px; }
 html[data-style="signal"] #roomsetup .item .addr { font-size: 13px; }
 
 /* -- a laptop and a wall tablet: columns -- */
-@media (min-width: 900px) {
-  html[data-style="signal"] .syshead h1 { font-size: 30px; }
-  html[data-style="signal"] .screen > h1:first-child { margin: 0; padding: 4px 14px; align-self: flex-start; font-size: 30px; line-height: 1.35; }
-  html[data-style="signal"] .shell:has(.pin-row) .screen, html[data-style="signal"] .shell:has(#supportcode) .screen { max-width: 560px; width: 100%; margin: 0 auto; }
+@container ws (min-width: 900px) {
+  html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { font-size: 30px; }
   html[data-style="signal"] .moreacts, html[data-style="signal"] #lookthemes, html[data-style="signal"] #roomgmembers { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
   html[data-style="signal"] #netmodes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
   html[data-style="signal"] details.card.fold { border: 0; padding: 0; }
@@ -954,20 +1204,19 @@ html[data-style="signal"] #roomsetup .item .addr { font-size: 13px; }
   html[data-style="signal"] #roomscreen:not(:has(> .room-amb)) .room-scenes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   html[data-style="signal"] #roomscreen .room-group { padding: calc(16px * var(--tk-density, 1)); }
 }
-@media (min-width: 1200px) {
+@container ws (min-width: 1100px) {
   html[data-style="signal"] #roomscreen .room-groups:has(> .room-group:nth-child(3)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   html[data-style="signal"] #roomscreen .vibesbig { flex: 1 1 100%; }
 }
-@media (min-width: 900px) {
+@container ws (min-width: 900px) {
   /* a list beside its form: rows are taller here, so the page scrolls, not a short window inside the card */
   html[data-style="signal"] .split > .splitlist, html[data-style="signal"] #devicelist, html[data-style="signal"] #midimaplist { max-height: none; min-height: 0; overflow: visible; padding-right: 0; }
 }
 
 /* -- Live: what staff press is 56 px high at least, like Room -- */
 html[data-style="signal"] .livecols .btn, html[data-style="signal"] .livecols .btn.small, html[data-style="signal"] .livecols select, html[data-style="signal"] .banks .btn { min-height: var(--tk-chl, 56px); }
-html[data-style="signal"] .livecols .row.transport .btn { font-size: 14px; }
 
 /* -- the MIDI controller page: a switch says Off and On itself; a controller's name keeps its letters; the long
    note about a layout is a quiet paragraph, not a wall of bold -- */
@@ -997,7 +1246,7 @@ html[data-style="signal"] .room-group h2, html[data-style="signal"] .shaderstage
 html[data-style="signal"] label.field, html[data-style="signal"] label.k, html[data-style="signal"] .room-group .field, html[data-style="signal"] .detailbox > label, html[data-style="signal"] .screen:has(> h1:first-child) > .k, html[data-style="signal"] .screen:has(> h1:first-child) > label.k { font: 600 14px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] .screen:has(> h1:first-child) > .k:last-child { font-weight: var(--tk-xw, 400); }
 html[data-style="signal"] div.field { font: 700 16px/1.3 var(--sans); }
-html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .liveside h2, html[data-style="signal"] .shader-entry > span:first-child > b, html[data-style="signal"] #np { font: 700 18px/1.25 var(--sans); letter-spacing: 0; text-transform: none; }
+html[data-style="signal"] .navname, html[data-style="signal"] .lname, html[data-style="signal"] .shadername, html[data-style="signal"] .shader-entry > span:first-child > b, html[data-style="signal"] #np { font: 700 18px/1.25 var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] .slider label, html[data-style="signal"] .ctlhead, html[data-style="signal"] .ctllabel { font: 600 16px/1.35 var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] table.chan th { font: 600 13px var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] .pad { font-weight: 700; }
@@ -1013,21 +1262,25 @@ html[data-style="signal"] .seg .segbtn.on, html[data-style="signal"] .banks .btn
 html[data-style="signal"] .fxlib .seg { gap: 3px; }
 
 /* -- what an action did: a toast above the tab bar, where the thumb is; it goes by itself (an error stays longer) -- */
-html[data-style="signal"] #msg { position: fixed; left: 16px; right: 16px; bottom: calc(var(--tk-chl, 56px) + 16px + env(safe-area-inset-bottom)); z-index: 15; min-height: 0; padding: 12px 14px; background: var(--fg); color: var(--bg); font: 600 15px/1.35 var(--sans); animation: signal-toast 8s forwards; }
+html[data-style="signal"] #msg { position: fixed; left: 16px; right: 16px; bottom: calc(var(--dock, 180px) + 12px); z-index: 15; min-height: 0; padding: 12px 14px; background: var(--fg); color: var(--bg); font: 600 15px/1.35 var(--sans); animation: signal-toast 8s forwards; }
 html[data-style="signal"] #msg:empty { display: none; }
+html[data-style="signal"] .ws > #msg { top: auto; border-bottom: 0; }      /* (the one message line of a build: the default look holds it at the top of the workspace, this look floats it) */
 html[data-style="signal"] #msg.err { background: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); animation-duration: 20s; }
 html[data-style="signal"] .screen:has(> h1:first-child) #msg { bottom: 16px; }
 @keyframes signal-toast { 0%, 94% { opacity: 1; visibility: visible; } 100% { opacity: 0; visibility: hidden; } }
 
 /* -- a phone: every section starts under a rule (a laptop has its panels) -- */
-@media (max-width: 899px) {
+@container ws (max-width: 899px) {
   html[data-style="signal"] .card { border-top: var(--rule) solid var(--fg); padding-top: 14px; }
   html[data-style="signal"] .card .card, html[data-style="signal"] .navgroup, html[data-style="signal"] .card.slider, html[data-style="signal"] details.card.fold, html[data-style="signal"] #sysoff { border-top: 0; padding-top: 0; }
   html[data-style="signal"] .card.slider:first-of-type { border-top: var(--rule) solid var(--fg); padding-top: 14px; }
 }
 @media (min-width: 900px) {
-  html[data-style="signal"] #msg { left: auto; right: 28px; bottom: calc(var(--tk-chl, 56px) + 28px); max-width: 420px; }
+  html[data-style="signal"] #msg { left: auto; right: 28px; bottom: calc(var(--dock, 120px) + 16px); max-width: 420px; }
   html[data-style="signal"] .screen:has(> h1:first-child) #msg { right: 28px; bottom: 28px; }
+  /* before pairing (the connect screen is not in the workspace, so it asks the window) */
+  html[data-style="signal"] .screen > h1:first-child { margin: 0; padding: 4px 14px; align-self: flex-start; font-size: 30px; line-height: 1.35; }
+  html[data-style="signal"] .shell:has(.pin-row) .screen, html[data-style="signal"] .shell:has(#supportcode) .screen { max-width: 560px; width: 100%; margin: 0 auto; }
 }
 html[data-style="signal"] #roomscreen .room-group .btn[data-action$="mute_picture"], html[data-style="signal"] #roomscreen .room-group .btn[data-action$="mute_sound"] { font: 600 15px/1.2 var(--sans); letter-spacing: 0; text-transform: none; }
 html[data-style="signal"] .seg .segbtn { flex: 1 1 auto; min-width: min-content; }
@@ -1049,7 +1302,7 @@ html[data-style="signal"] .livecols .switch, html[data-style="signal"] .livecols
    The rules below give a radius to the blocks that had none to set (each is 0 without the token). ---- */
 html[data-style="signal"] .switch::before { border-radius: var(--tk-r, 0) 0 0 var(--tk-r, 0); }
 html[data-style="signal"] .switch::after { border-radius: 0 var(--tk-r, 0) var(--tk-r, 0) 0; }
-html[data-style="signal"] #msg, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .syshead h1, html[data-style="signal"] .screen > .top:first-child h1,
+html[data-style="signal"] #msg, html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary, html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2, html[data-style="signal"] .screen > .top:first-child h1,
 html[data-style="signal"] .slider label .k, html[data-style="signal"] .ctlhead .slidervalue, html[data-style="signal"] .seg, html[data-style="signal"] .banks, html[data-style="signal"] #netmodes, html[data-style="signal"] .daychips,
 html[data-style="signal"] #roomscreen .room-amb > h2, html[data-style="signal"] #roomscreen #roomscenes > h2, html[data-style="signal"] .proj-entry .lname::after, html[data-style="signal"] .danger-h, html[data-style="signal"] #roomscreen .room-result { border-radius: var(--tk-r, 0); }
 
@@ -1060,7 +1313,7 @@ html[data-style="signal"] .looktile.on { border-color: var(--ink); box-shadow: i
 html[data-style="signal"] .lt-name { font: 700 16px/1.25 var(--sans); }
 html[data-style="signal"] .lt-mine, html[data-style="signal"] .lt-inuse { font: 600 13px/1.35 var(--sans); color: var(--mu); }
 html[data-style="signal"] #themelist .lname { text-transform: none; }
-@media (min-width: 900px) { html[data-style="signal"] #lookthemes { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
+@container ws (min-width: 900px) { html[data-style="signal"] #lookthemes { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
 
 /* ---- The resizing study, step 1 (D64), in Signal: what the width sweep found in this look. The repairs both
    looks share are above the marker of this block. ---- */
@@ -1069,3 +1322,66 @@ html[data-style="signal"] #roomscreen .room-scene { font-size: clamp(16px, 5.2vw
 /* A choice with one figure on it (how many petals: 3, 4, 5, 6, 8) was 40 px wide at 320, where the row is full and
    no button grows. This look had taken the floor of 44 px away from a row of choices; it is back. */
 html[data-style="signal"] .seg .segbtn { min-width: 44px; }
+
+/* ---- The Workspace shell in Signal (D65, D72). The title bar is the block of the area's colour that each screen's own
+   title used to be (the area's name in the display face, the screen's job under it); the open tab, the chosen
+   screen in the row of tabs and the open area's button of the rail are that colour too. The strip's buttons are 56 px on a phone (staff
+   press them), and from 600 px the four that are always there are 56 and the rest 44. ---- */
+html[data-style="signal"] .wshead { padding: 20px 16px 14px; background: var(--ac); color: var(--on); align-items: flex-end; }
+html[data-style="signal"] .wstitle { font: var(--tk-tw, 900) clamp(34px, 11cqw, 44px)/1.05 var(--display); text-transform: var(--tk-case, uppercase); overflow-wrap: anywhere; }
+html[data-style="signal"] .wsjob { margin-top: 4px; font: 600 15px/1.35 var(--sans); color: var(--on); }
+html[data-style="signal"] .wsbrand { font: 500 13px/1.35 var(--mono); color: var(--on); }
+html[data-style="signal"] .wssub { padding: 12px 16px 0; }
+html[data-style="signal"] .wssub .segbtn { min-height: var(--tk-ch, 44px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
+html[data-style="signal"] .deskcol > .screen > .syshead:first-child, html[data-style="signal"] .deskcol > .screen > .row:first-child { margin-top: 0; }
+html[data-style="signal"] .wsdock { border-top: var(--rule) solid var(--fg); }
+html[data-style="signal"] .tp { border-top: 0; padding: 8px 12px; }
+html[data-style="signal"] .tp .tpb { min-height: var(--tk-chl, 56px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
+html[data-style="signal"] .tp button.tpx { min-height: var(--tk-ch, 44px); }
+html[data-style="signal"] .tp .tpmore { min-height: var(--tk-ch, 44px); font-size: 14px; }
+@container app (max-width: 599px) { html[data-style="signal"] .tp .tpmore { min-height: var(--tk-chl, 56px); } }      /* (a phone: More is on the row of Freeze, Stop and Blackout, as tall as they are) */
+html[data-style="signal"] .tpinfo #np { font: 600 16px/1.2 var(--sans); text-transform: none; }
+html[data-style="signal"] .tpinfo #time, html[data-style="signal"] .tpinfo #plpos { font-size: 14px; }
+html[data-style="signal"] .tp #black { border-color: var(--st-problem, var(--fg)); }
+html[data-style="signal"] .tp #black.solid { background: var(--st-problem, var(--fg)); border-color: var(--st-problem, var(--fg)); color: var(--st-problem-on, var(--bg)); }
+html[data-style="signal"] .tp #freeze.solid { background: var(--ac); border-color: var(--ac); color: var(--on); }
+/* (a 320 px phone: the strip's words keep room to spare, also in a theme that asks for the device's own typeface) */
+@container app (max-width: 379px) {
+  html[data-style="signal"] .tp { padding-left: 4px; padding-right: 4px; gap: 4px; }
+  html[data-style="signal"] .tp .tpb { padding: 4px 0; font-size: 13px; }
+}
+@container app (min-width: 600px) {
+  html[data-style="signal"] .wshead { padding: 8px 16px; align-items: center; border-bottom: 0; }
+  html[data-style="signal"] .wstitle { font-size: 26px; line-height: 1.15; }
+  html[data-style="signal"] .wsjob { margin-top: 0; }
+  html[data-style="signal"] .wsside { gap: calc(10px * var(--tk-density, 1)); }
+  html[data-style="signal"] .wsside .wsar { border: var(--rule) solid var(--fg); border-radius: var(--tk-r, 0); min-height: var(--tk-chl, 56px); font: 900 14px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+  html[data-style="signal"] .wsside .wsar.on { background: var(--ac); border-color: var(--ac); color: var(--on); }
+  html[data-style="signal"] main.ws, html[data-style="signal"] .wssub { border-left: var(--rule) solid var(--fg); }
+  html[data-style="signal"] .wssub { padding: 10px 16px; border-bottom: var(--rule) solid var(--fg); }
+  html[data-style="signal"] .tp { padding: 8px 16px; }
+  html[data-style="signal"] .tp .tpb { min-height: var(--tk-ch, 44px); padding: 4px 10px; }
+  html[data-style="signal"] .tp .tpb.keep { min-height: var(--tk-chl, 56px); }
+}
+/* A desk in this look: a column's name is a label in the area's colour, as a card's is; the Shaders column wears
+   its own colour beside the pads and the library, which wear Play's. */
+html[data-style="signal"] .deskhead { margin: 16px 16px 0; padding: 4px 8px; width: fit-content; background: var(--ac); color: var(--on); font: 900 15px/1.35 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+html[data-style="signal"] .deskcol[data-col="shaders"] { --ac: var(--ar-shaders, #ff4fa3); --on: var(--ar-shaders-on, #0b0b0d); --ink: var(--ar-shaders-ink, var(--fg)); }
+html[data-style="signal"] .navrow.on .navname { color: var(--fg); text-decoration: underline; text-decoration-thickness: var(--rule); text-underline-offset: 4px; }
+@container app (min-width: 1200px) {
+  html[data-style="signal"] .desk:not([data-cols="1"]) > .deskcol + .deskcol, html[data-style="signal"] .setupdesk > .deskcol.cur { border-left: var(--rule) solid var(--fg); }
+  html[data-style="signal"] .desk[data-area="room"][data-cols="3"] > .deskcol[data-col="guests"] { border-left: 0; border-top: var(--rule) solid var(--fg); }
+  html[data-style="signal"] .desk[data-area="play"][data-cols="3"]:has(> .deskcol[data-col="shaders"].cur) > .deskcol[data-col="shaders"] { border-left: 0; }
+}
+@media (max-height: 479px) {
+  html[data-style="signal"] .wshead { padding-top: 4px; padding-bottom: 4px; }
+  html[data-style="signal"] .wstitle { font-size: 20px; }
+  html[data-style="signal"] .tp { padding-top: 4px; padding-bottom: 4px; }
+}
+/* Narrow widths, text that overran (2026-10-09). A page's title: this look had asked for it to be cut anywhere, which
+   also made its least width one letter, so "Projectors" beside its switch became "PROJECTOR" and "S". It is cut
+   between words; a title that does not fit beside the switch has the line, and the switch goes under it. The
+   area's name in the bar likewise. */
+html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
+html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
+html[data-style="signal"] .tp .tpmore { min-width: max-content; }      /* (this look takes a button's least width away; More is a column of the line that says what plays, and is never narrower than its word: at 1200 px, where the line is fullest, it was 3 px short) */

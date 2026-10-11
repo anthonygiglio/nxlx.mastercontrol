@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import unittest
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 spec = importlib.util.spec_from_file_location("isf_survey", os.path.join(REPO, "tools", "isf-survey.py"))
