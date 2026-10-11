@@ -114,11 +114,16 @@ class Stored(PadBase):
             self.assertIsNone(Api.pad_shader(odd), odd)
         self.assertEqual(Api.pad_shader({"file": "", "shader": ONE, "preset": 9}), (ONE, None))
 
-    def test_only_a_full_access_device_gives_a_pad_a_shader(self):
+    def test_an_operator_and_an_owner_give_a_pad_a_shader_and_a_guest_never(self):
+        """Editing pads is the Operator's since D80 (it was the owner's when this was written); a guest edits none,
+        guest controls open or locked."""
         full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
         live = self.call("POST", "/api/devices/invite", {"name": "p", "role": "live"}, token=full)[1]["token"]
+        view = self.call("POST", "/api/devices/invite", {"name": "g", "role": "view"}, token=full)[1]["token"]
         body = {"bank": 0, "index": 0, "shader": ONE}
-        self.assertEqual(self.call("POST", "/api/pads", body, token=live)[0], 403)
+        self.assertEqual(self.call("POST", "/api/pads", body)[0], 401)
+        self.assertEqual(self.call("POST", "/api/pads", body, token=view)[0], 403)
+        self.assertEqual(self.call("POST", "/api/pads", body, token=live)[0], 200)
         self.assertEqual(self.call("POST", "/api/pads", body, token=full)[0], 200)
 
     # -- the settings file through export and import --
@@ -359,12 +364,26 @@ class Tapped(PadBase):
         self.assertIn("The shader before it is back on", c.exception.message)
         self.assertEqual((self.on(), self.player.source_shader), (ONE, had))
 
-    def test_a_guest_may_not_tap_it_and_a_presenter_may(self):
+    def test_a_guest_taps_it_only_while_guest_controls_are_open_and_an_operator_may(self):
+        """D80 met D73 in a merge. A guest may play a pad and may show a shader by its id or a saved preset, and a pad
+        holds no more than that (an id and a preset's name), so a shader's pad is a guest's while guest controls are
+        open, saves nothing, and is refused while they are locked."""
         self.give()
         full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
         tokens = {role: self.call("POST", "/api/devices/invite", {"name": role, "role": role}, token=full)[1]["token"] for role in ("view", "live")}
+        self.assertEqual(self.call("POST", "/api/guests", {"locked": True}, token=tokens["live"])[0], 200)
         self.assertEqual(self.call("POST", "/api/play", {"pad": [0, 0]}, token=tokens["view"])[0], 403)
         self.assertIsNone(self.on())
+        self.assertEqual(self.call("POST", "/api/guests", {"locked": False}, token=tokens["live"])[0], 200)
+        saves, real = [], self.settings.save
+        self.settings.save = lambda *a, **kw: (saves.append(1), real(*a, **kw))[1]
+        try:
+            st, body, _ = self.call("POST", "/api/play", {"pad": [0, 0]}, token=tokens["view"])
+        finally:
+            self.settings.save = real
+        self.assertEqual((st, body), (200, {"playing": ONE, "shader": ONE}))
+        self.assertEqual((self.on(), saves), (ONE, []))
+        self.assertEqual(self.call("POST", "/api/play", {"pad": [0, 0], "values": {"speed": 9}}, token=tokens["view"])[0], 403)   # never live values
         st, body, _ = self.call("POST", "/api/play", {"pad": [0, 0]}, token=tokens["live"])
         self.assertEqual((st, body), (200, {"playing": ONE, "shader": ONE}))
         self.assertEqual(self.on(), ONE)

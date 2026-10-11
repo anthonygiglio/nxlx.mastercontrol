@@ -1890,7 +1890,11 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await scanner.inputValue('#joincode'), joinCode, 'the scanned code is filled in');
     await scanner.click('#joinbtn');
     await scanner.waitForSelector('.pads');
-    assert(await scanner.isDisabled('#black'), 'a guest code gives view-only access');
+    // a guest code gives a guest's access (D80): his own card, Stop and Blackout while guest controls are open, and
+    // nothing of the Operator's
+    await scanner.waitForSelector('#guestcard #guesthint');
+    assert(await scanner.isDisabled('#freeze') && await scanner.isDisabled('#fade') && await scanner.isDisabled('#seek'), 'a guest code gives a guest\'s access: no Freeze, no fade, no place in the clip');
+    assert(!(await scanner.isDisabled('#black')) && !(await scanner.isVisible('text=Edit pads')), 'a guest has Blackout while guest controls are open, and never Edit pads');
     await scanCtx.close();
 
     // Shaders and Vibes: one page holds everything about shaders. Switch the module on there, start the rotation with
