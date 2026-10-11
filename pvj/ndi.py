@@ -43,7 +43,7 @@ import threading
 import time
 import unicodedata
 
-from . import paths
+from . import locks, paths
 
 LIB_DIR = "/opt/pvj-ndi"                  # the application's own folder, root's: NDI asks that the library stay off the system path
 LIB_NAME = "libndi.so.6"
@@ -1581,15 +1581,15 @@ class Input:
         self.setup = setup
         self._pipe_owner = pipe_owner      # the uid the helper's pipe must belong to (server.py: the pvj-ndi account)
         self.current = None                # {"id", "name"} while the player reads the pipe
-        self.lock = threading.RLock()      # open, load in the player and note, as one step (like the capture input)
+        self.lock = locks.make("ndi", reentrant=True)      # open, load in the player and note, as one step (like the capture input); its place: pvj/locks.py
         self._retry_at, self._retry_wait, self._retry_said = 0.0, self.RETRY_SECONDS, ""
         self.ended = None                  # {"name", "message"}: why the last source ended by itself, for the page
         self._ticket = 0
-        # Held by whoever is deciding what the screen shows next, for as long as the deciding and the loading take:
-        # the NDI play holds it from "is my ticket still good" to the end of loading the pipe, and everything else
-        # that loads or clears the player goes through cancel() first, which waits for it. So the two can only
-        # happen one after the other, and the later one is the one that stays on the screen.
-        self.screen = threading.RLock()
+        # The ticket's own lock, a leaf: never held over a call. Whoever decides what the screen shows next does so
+        # under the player's lock (Api._as_newest, D71): the NDI play looks at its ticket and loads the pipe as one
+        # step under it, and everything else that loads or clears the player cancels under it too (Api._player_call).
+        # So the two can only happen one after the other, and the later one is the one that stays on the screen.
+        self.screen = locks.make("ndi.ticket")
 
     def ticket(self):
         """Taken before a source is opened (which can take seconds). `still(ticket)` afterwards says whether

@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Effects: the panel's part. An effect is a filter over whatever plays (a clip, a stream, a live input); see
 // pvj/effects.py. Loaded after shaders.js, whose controls it draws with (window.pvjShaders.kit), and before app.js,
-// which hands over its helpers each time it draws. Two things are drawn here: a compact strip on Live (the
-// effect's name, Amount, Off, Previous and Next) and the Effects card on Mix (the list of filters, the controls of
-// the one that is on with Amount first, presets, and the MIDI teach buttons beside what they drive).
+// which hands over its helpers each time it draws. One thing is drawn here, the Effects card on Shape > Effect: the
+// effect that is on with Previous, On or Off and Next, the list of filters, the controls of the one that is on with
+// Amount first, presets, and the MIDI teach buttons beside what they drive. (Until D72 a compact strip with the
+// name, Previous, On or Off, Next and Amount stood on Live, then on Shape > Controls: a second copy of what the
+// card's head and its Amount are, and gone as that.)
 (function () {
   'use strict';
 
   // Survives redraws, never saved: the list's filters, the MIDI action being taught, what the last upload said.
   var ui = { filter: '', weight: 'all', open: '', teach: '', taught: '', upload: null, more: false };
-  var X = { data: null, at: 0, busy: false, key: '' };          // the box's last answer, shared by the strip and the card
-  var strip = { shape: '', amount: null };
+  var X = { data: null, at: 0, busy: false, key: '' };          // the box's last answer
   var card = { head: '', det: '', ctl: '', pre: '', list: '', add: '', ctls: [] };
   var midi = { data: null, asked: false };
   var teachers = [], learnTimer = null, soonTimer = null;
@@ -30,11 +31,12 @@
   var LOAD = { ok: 'Running smoothly', tight: 'Close to the limit', heavy: 'Too heavy with this clip' };
   var DETAIL = { auto: 'Automatic', full: 'Full', 540: '540 lines', 720: '720 lines' };
   // What to do about an effect that is too heavy: a lower Effect detail while there is one that would make the
-  // filter's picture smaller, else another effect or a smaller clip.
+  // filter's picture smaller, else another effect or a smaller clip. Over a generator shader the picture is the
+  // shader's, and what makes it smaller is the Picture detail of Shaders and Vibes.
   function heavyWords(on) {
-    var w = on.working;
-    if (w && w.lower) return 'Too heavy with this clip: lower Effect detail to ' + w.lower + ' lines, or try another effect';
-    return 'Too heavy with this clip, also at the lowest Effect detail: try another effect or a smaller clip';
+    var w = on.working, shader = w && w.under === 'shader', lead = 'Too heavy with this ' + (shader ? 'shader' : 'clip');
+    if (w && w.lower) return lead + ': lower Effect detail to ' + w.lower + ' lines, or try another effect';
+    return lead + ', also at the lowest Effect detail: try another effect or a ' + (shader ? 'lower Picture detail' : 'smaller clip');
   }
   // One plain line: the size the effect works at for the clip that plays, or what the setting would do.
   function workingWords(d) {
@@ -47,9 +49,10 @@
         (det.auto.other < det.auto.lines ? ' (' + det.auto.other + ' for the heaviest effects and for ones you add)' : '') + '. A smaller clip is left as it is.';
     }
     var lead = w.auto ? 'Automatic: working at ' : 'Working at ';
-    if (!w.clip) return lead + (w.lines ? w.lines + ' lines at most.' : 'the clip\'s full size.');
-    if (w.scaled) return lead + Math.min(w.width, w.height) + ' lines for this ' + w.clip.lines + 'p clip.';
-    return lead + 'full size for this ' + w.clip.lines + 'p clip' + (w.lines ? ' (it is within ' + w.lines + ' lines).' : '.');
+    var shader = w.under === 'shader', what = w.clip ? (shader ? w.clip.lines + ' line shader' : w.clip.lines + 'p clip') : '';
+    if (!w.clip) return lead + (w.lines ? w.lines + ' lines at most.' : (shader ? 'the shader\'s full size.' : 'the clip\'s full size.'));
+    if (w.scaled) return lead + Math.min(w.width, w.height) + ' lines for this ' + what + '.';
+    return lead + 'full size for this ' + what + (w.lines ? ' (it is within ' + w.lines + ' lines).' : '.');
   }
   var WHERE = { path: '/api/effects/values', gone: 'Not sent: that effect is not on any more.' };
 
@@ -73,8 +76,7 @@
   // ---- asking the box -------------------------------------------------------------------------------------------
   function drawAll(c) {
     if (!X.data) return;
-    var s = document.getElementById('livefx'), m = document.getElementById('fxcard');
-    if (s) drawStrip(c, X.data, s);
+    var m = document.getElementById('fxcard');
     if (m) drawCard(c, X.data, m);
   }
   function load(c) {
@@ -103,7 +105,7 @@
   // Called with every status poll. The state is asked for again when what plays has changed hands, every few
   // seconds while an effect is on (its values may be moved from a controller), and now and then otherwise.
   function patch(c) {
-    if (!document.getElementById('livefx') && !document.getElementById('fxcard')) return;
+    if (!document.getElementById('fxcard')) return;
     if (!c.moduleOn('shaders')) return;
     var pl = player(c);
     var key = [pl.effect || '', typeof pl.shader === 'string', !!pl.path, !!pl.running, !!pl.capture, !!pl.test_pattern].join('|');
@@ -130,42 +132,6 @@
   }
   function rigFor(c) {
     return kit().makeRig(c, function () { return X.data && X.data.on ? X.data.on.id : null; }, function () { X.at = Date.now() - 3000; }, WHERE);
-  }
-
-  // ---- Live: the strip ----------------------------------------------------------------------------------------------
-  function liveStrip(c) {
-    if (!c.moduleOn('shaders') || !kit()) return null;
-    strip.shape = '';
-    var box = c.h('div', { class: 'card fxstrip', id: 'livefx' });
-    if (X.data) drawStrip(c, X.data, box);
-    else box.appendChild(c.h('div', { class: 'k', text: 'Effect' }));
-    return box;
-  }
-  function drawStrip(c, d, box) {
-    var h = c.h, can = c.can('live'), on = d.on;
-    var shape = JSON.stringify([d.enabled, d.available, d.unavailable, on && on.id, can]);
-    if (shape === strip.shape) {
-      if (on && strip.amount && strip.amount.ch.free() && !on.pending) strip.amount.apply(on.controls.amount);
-      return;
-    }
-    strip.shape = shape; strip.amount = null;
-    box.textContent = '';
-    box.appendChild(h('div', { class: 'row between wrap' },
-      h('div', { class: 'fxtitle' }, h('span', { class: 'k', text: 'Effect' }), h('span', { class: 'fxname', id: 'livefxname', text: on ? nice(on.name) : 'None' })),
-      h('button', { class: 'btn', id: 'livefxmore', text: 'Effects ›', 'aria-label': 'Effects: the list, all controls and presets', onclick: c.openMix })));
-    if (!on && !d.available) box.appendChild(h('div', { class: 'hint', id: 'livefxwhy', text: d.unavailable || 'Not available now.' }));
-    if (!can) return;
-    var off = !on && !d.available;
-    function step(dir) { return function () { send(c, '/api/effects/step', { dir: dir }); }; }
-    box.appendChild(h('div', { class: 'row fxbuttons' },
-      h('button', { class: 'btn grow', id: 'livefxprev', text: '‹ Previous', 'aria-label': 'The effect before', disabled: off, onclick: step(-1) }),
-      on ? h('button', { class: 'btn grow', id: 'livefxoff', text: 'Off', 'aria-label': 'Take the effect off', onclick: function () { send(c, '/api/effects', { off: true }); } })
-        : h('button', { class: 'btn grow', id: 'livefxon', text: 'On', 'aria-label': 'Put the last effect back on', disabled: off, onclick: function () { send(c, '/api/effects', { toggle: true }); } }),
-      h('button', { class: 'btn grow', id: 'livefxnext', text: 'Next ›', 'aria-label': 'The next effect', disabled: off, onclick: step(1) })));
-    if (on) {
-      strip.amount = numberControl(c, rigFor(c), { key: 'amount', id: 'live-fx-amount', label: 'Amount', min: 0, max: 1, value: on.controls.amount, reset: 1, text: percent, compact: true });
-      box.appendChild(h('div', { class: 'ctls' }, strip.amount.el));
-    }
   }
 
   // ---- MIDI teach buttons (full access, with the MIDI row in view) -----------------------------------------------
@@ -261,7 +227,7 @@
     card.head = card.det = card.ctl = card.pre = card.list = card.add = '';
     card.ctls = []; teachers = [];
     if (!c.moduleOn('shaders') || !kit()) {
-      box.appendChild(h('div', { class: 'hint', id: 'fxmsg', text: 'Off. Switch it on under System, Shaders and Vibes (beta).' }));
+      box.appendChild(h('div', { class: 'hint', id: 'fxmsg', text: 'Off. Switch it on under Setup, Shaders and Vibes (beta).' }));
       return box;
     }
     var stage = h('div', { class: 'fxstage' }, h('div', { id: 'fxhead' }), h('div', { id: 'fxdetail' }), h('div', { id: 'fxctl' }), h('div', { id: 'fxpre' }));
@@ -312,7 +278,7 @@
       if (on) el.appendChild(h('div', { class: 'loadbox', id: 'fxload' }, h('span', { class: 'loadmeter', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), h('span', { id: 'fxloadwords', role: 'status' })));
       if (!d.available) el.appendChild(h('div', { class: 'msg', id: 'fxwhy', role: 'status', text: d.unavailable || 'Not available now.' }));
       if (!on && d.last) el.appendChild(h('div', { class: 'hint', id: 'fxlast', text: 'The last effect came off: ' + d.last + '.' }));
-      if (d.error) el.appendChild(h('div', { class: 'msg err', id: 'fxerror', text: 'The GPU refused ' + nice(d.error.id) + ': ' + d.error.message }));
+      if (d.error) el.appendChild(h('div', { class: 'msg err', id: 'fxerror', text: (d.error.kind === 'wish' ? (d.error.id ? nice(d.error.id) : 'The effect') + ' did not go on. ' : 'The GPU refused ' + nice(d.error.id) + ': ') + d.error.message }));
       if (live) {
         var blocked = !on && !d.available;
         var prev = teacher(c, 'effect_prev', 'The effect before', 'a pad or a button'), tog = teacher(c, 'effect_toggle', 'Effect on / off', 'a pad or a button'),
@@ -327,7 +293,7 @@
           [prev, tog, next].forEach(function (t) { el.appendChild(t.box); });
         }
       }
-      el.appendChild(h('div', { class: 'hint', id: 'fxrule', text: 'One effect at a time. It stays on when the clip changes; Stop, a generator shader and Vibes take it off.' }));
+      el.appendChild(h('div', { class: 'hint', id: 'fxrule', text: 'One effect at a time. It stays on when the clip changes, and over a shader and Vibes; Stop takes it off.' }));
     }
     if (on) {
       var lb = document.getElementById('fxload'), w = document.getElementById('fxloadwords'), p = document.getElementById('fxpending');
@@ -450,7 +416,7 @@
     var h = c.h, el = document.getElementById('fxlist'), live = c.can('live'), full = c.can('full');
     if (!el) return;
     var rows = shownRows(d), onId = d.on && d.on.id;
-    var shape = JSON.stringify([rows.map(function (s) { return [s.id, s.weight, s.refused, s.error]; }), onId, d.available, live, full]);
+    var shape = JSON.stringify([rows.map(function (s) { return [s.id, s.weight, s.refused, s.refused_pair, s.error]; }), onId, d.available, live, full]);
     if (shape === card.list || busyIn(el)) return;
     card.list = shape;
     el.textContent = '';
@@ -464,7 +430,8 @@
           h('span', { class: 'hint', text: facts }),
           s.description ? h('span', { class: 'hint fxdesc', text: s.description }) : null,
           s.error ? h('span', { class: 'msg err', text: 'This file cannot be used: ' + s.error }) : null,
-          s.refused ? h('span', { class: 'msg err', text: 'The GPU of this box refused it: ' + s.refused }) : null),
+          s.refused ? h('span', { class: 'msg err', text: 'The GPU of this box refused it: ' + s.refused })
+            : (s.refused_pair ? h('span', { class: 'msg err', text: 'The GPU of this box refused it over this shader: ' + s.refused_pair }) : null)),
         h('div', { class: 'row' },
           live && !s.error ? (isOn ? h('button', { class: 'btn', 'data-off': s.id, text: 'Off', 'aria-label': 'Take ' + name + ' off', onclick: function () { send(c, '/api/effects', { off: true }); } })
             : h('button', { class: 'btn', 'data-put': s.id, text: 'Put on', 'aria-label': 'Put ' + name + ' on', disabled: !d.available, onclick: function (ev) {
@@ -507,5 +474,5 @@
     el.appendChild(h('div', { class: 'msg' + (ui.upload && ui.upload.err ? ' err' : ''), id: 'fxuploadmsg', role: 'status', text: ui.upload ? ui.upload.text : '' }));
   }
 
-  window.pvjEffects = { liveStrip: liveStrip, mixCard: mixCard, patch: patch, nice: nice };
+  window.pvjEffects = { mixCard: mixCard, patch: patch, nice: nice };
 })();

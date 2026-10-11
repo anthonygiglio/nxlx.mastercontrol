@@ -22,7 +22,7 @@ import subprocess
 import threading
 import time
 
-from . import paths
+from . import locks, paths
 
 MODES = {"720p30": (1280, 720, 30), "1080p30": (1920, 1080, 30)}
 DEVICE = re.compile(r"video([0-9]{1,3})")
@@ -67,7 +67,7 @@ class Capture:
         self.fifo = paths.capture_fifo(rundir)
         self.proc = None
         self.current = None           # {"device", "mode"}
-        self._lock = threading.RLock()
+        self._lock = locks.make("capture", reentrant=True)       # its place among the locks: pvj/locks.py
 
     def helper_args(self, device, mode):
         """The helper always writes exactly W x H YUYV, whatever the device sends (a webcam may give MJPEG at 1080p or

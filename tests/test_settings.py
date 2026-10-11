@@ -8,6 +8,7 @@ import unittest
 
 from pvj import settings
 from pvj.settings import Settings, SettingsError
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 class SettingsTest(unittest.TestCase):
@@ -83,30 +84,21 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(data["theme"]["name"], "light")
         self.assertEqual(self.read(self.path + ".bak-v2")["schema"], 2)
 
-    def test_real_migration_from_schema_13_goes_through_14_to_15_and_adds_the_ndi_input_last(self):
-        with open(self.path, "w") as f:
-            json.dump({"schema": 13, "streams": [], "modules": {"enabled": {"inputs-srt": True}}}, f)
-        data = settings.Settings(self.path).load()
-        self.assertEqual((data["schema"], data["ndi"]), (15, {"addresses": []}))
-        self.assertEqual(data["controller_code"], settings.default_controller_code())      # 14, the controller code, ran first
-        self.assertEqual(data["modules"]["enabled"], {"inputs-srt": True})         # the NDI module itself stays off
-        self.assertEqual(self.read(self.path + ".bak-v13")["schema"], 13)
-        self.assertEqual(settings.default_settings()["ndi"], {"addresses": []})
-        applied = settings.migrate({"schema": 13})
-        self.assertEqual(applied, [13, 14])                                        # 13 to 14, then 14 to 15, in that order
-        self.assertIn("NDI", settings.MIGRATIONS[14].__doc__)
-        self.assertIn("controller", settings.MIGRATIONS[13].__doc__)
-
-    def test_real_migration_from_schema_14_adds_the_ndi_input_and_leaves_the_controller_code_alone(self):
+    def test_the_ndi_input_needs_no_schema_change(self):
+        """The NDI section is one key an older release ignores and this one reads with defaults (ndi.saved_addresses):
+        a schema 14 file without it loads here and is left at 14, so it still loads on a release that has no NDI."""
         code = dict(settings.default_controller_code())
-        marker = sorted(code)[0]
         with open(self.path, "w") as f:
-            json.dump({"schema": 14, "controller_code": dict(code, **{marker: code[marker]}), "streams": []}, f)
+            json.dump({"schema": 14, "controller_code": code, "streams": []}, f)
         data = settings.Settings(self.path).load()
-        self.assertEqual((data["schema"], data["ndi"], data["controller_code"]), (15, {"addresses": []}, code))
-        self.assertEqual(self.read(self.path + ".bak-v14")["schema"], 14)
-        self.assertEqual(settings.migrate({"schema": 14}), [14])
-        self.assertEqual(settings.SCHEMA, 15)
+        self.assertEqual(data["schema"], 14)
+        self.assertNotIn("ndi", data)                                              # nothing is written for it until someone uses it
+        self.assertEqual(data["controller_code"], code)
+        self.assertFalse(os.path.exists(self.path + ".bak-v14"))                    # no migration ran
+        self.assertEqual(settings.migrate({"schema": 14}), [])
+        self.assertEqual(settings.SCHEMA, 14)
+        self.assertEqual(max(settings.MIGRATIONS), 13)
+        self.assertEqual(settings.default_settings()["ndi"], {"addresses": []})
 
     def test_real_migration_from_schema_3_adds_empty_streams(self):
         with open(self.path, "w") as f:

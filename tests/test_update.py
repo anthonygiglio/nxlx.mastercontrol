@@ -6,15 +6,29 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 from pvj import update
 from pvj.update import UpdateError, Updater
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 HAVE_SSH = bool(shutil.which("ssh-keygen"))
+
+
+def root_for_main():
+    """A patch under which update.main() believes it runs as root (it refuses anybody else) while everything it
+    calls still sees who we are. The lock compares the owner of its folder and its file with the effective user,
+    so saying "root" to everybody would make every file here somebody else's."""
+    real = os.geteuid
+
+    def geteuid():
+        return 0 if sys._getframe(1).f_code.co_name == "main" else real()
+    return mock.patch("os.geteuid", geteuid)
 
 
 def make_tree(version, schema=None):
@@ -40,6 +54,7 @@ def make_bundle(version, schema=None, top=True):
             tar.add(os.path.join(tree, sub), arcname=("pvj-%s/%s" % (version, sub)) if top else sub)
     with open(out + ".sha256", "w") as f:
         f.write(update.sha256_file(out) + "  " + os.path.basename(out) + "\n")
+    shutil.rmtree(tree, True)           # the copy of the source is in the bundle now: 3 MB a call (D69)
     return out
 
 
@@ -132,6 +147,7 @@ class HelperTest(unittest.TestCase):
 
     def test_inspect_bundle(self):
         tree = make_tree("2.3.4")
+        self.addCleanup(shutil.rmtree, tree, True)
         info = update.inspect_bundle(tree)
         self.assertEqual(info["version"], "2.3.4")
         self.assertGreaterEqual(info["schema"], 1)

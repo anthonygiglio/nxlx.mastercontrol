@@ -12,9 +12,11 @@
 // What is held, at every size: the page does not scroll sideways; no control is wider than the window or sticks
 // out of it or of its card; a control is 44 px tall and wide where its token says 44 (in Signal every control; 56
 // px for what staff press on Room and Live); no words are clipped inside a button, a chip or a pad, run out of it,
-// or are broken in the middle of a word on a button; the tab bar is whole and inside the window; and the transport
-// buttons and the tabs can be brought into view and pressed. In a short window (under 480 px) that last rule is
-// held for every control, and the bars that stay put leave at least half of the window's height to the page.
+// or are broken in the middle of a word on a button; there is a way to the other screens that is shown, whole and
+// inside the window (the area tabs under 600 px, the rail of the areas from 600 px: the Workspace shell, D65 and D72); and the
+// transport strip's buttons and every item of the menus can be brought into view and pressed. In a short window
+// (under 480 px) that last rule is held for every control, and the bars that stay put leave at least half of the
+// window's height to the page. A screen on which no control at all was measured is a fault of the sweep itself.
 //
 // Measured in headless Chromium only. Nothing here says how the panel looks on a real phone.
 'use strict';
@@ -54,6 +56,7 @@ function measure(o) {
 
   // 2. no control is wider than the window, or sticks out of it or of its card
   const controls = Array.prototype.filter.call(shell.querySelectorAll('button, select, summary, input, textarea, a[href], canvas, .xypad'), (el) => shown(el));
+  if (!controls.length) add('no control was measured', null, 'the screen is empty, or the sweep does not see into it');
   controls.concat(Array.prototype.filter.call(shell.querySelectorAll('.card'), shown)).forEach((el) => {
     if (scrolls(el)) return;
     const r = el.getBoundingClientRect();
@@ -69,8 +72,10 @@ function measure(o) {
     const r = el.getBoundingClientRect();
     const token = parseFloat(getComputedStyle(el).minHeight) || 0;
     if (o.signal || token >= 44) {
-      if (r.height < 43.5 || r.width < 43.5) add('small', el, px(r.width) + 'x' + px(r.height));
-      else if (o.signal && el.tagName === 'BUTTON' && el.closest('#roomscreen, .livecols, .banks, .row:has(> #fade)') && r.height < 55.5) add('under 56 px where staff press', el, px(r.height) + ' px');
+      // (the place in the clip as a bar along the strip's edge, D72: its target is 24 px high, on purpose, and as wide as the strip)
+      if (el.id === 'seek' && getComputedStyle(el.parentElement).position === 'absolute') { if (r.height < 23.5) add('the bar of the place in the clip is under 24 px high', el, px(r.height)); }
+      else if (r.height < 43.5 || r.width < 43.5) add('small', el, px(r.width) + 'x' + px(r.height));
+      else if (o.signal && el.tagName === 'BUTTON' && el.closest('#roomscreen, .livecols, .banks, .tp .keep') && r.height < 55.5) add('under 56 px where staff press', el, px(r.height) + ' px');
     }
   });
 
@@ -115,16 +120,26 @@ function measure(o) {
     }
   });
 
-  // 5. the tab bar is whole and in the window; the transport and the tabs can be brought into view and pressed
-  //    (in a short window: every control), and the bars that stay put leave half the window to the page
-  const tabs = document.querySelector('nav.tabs');
+  // 5. the way to the other screens is shown: the tab bar under 600 px, whole and in the window, or the rail;
+  //    the transport and the menus can be brought into view and pressed (in a short window: every control), and
+  //    the bars that stay put leave half the window to the page
+  const tabs = document.querySelector('nav.tabs'), side = document.getElementById('wsside');
   const was = [window.scrollX, window.scrollY];
+  const paired = !!document.getElementById('wstp');
+  if (paired && !(tabs && shown(tabs)) && !(side && shown(side))) add('there is no way to another screen', null, 'neither the tabs nor the rail is shown');
+  if (paired && tabs && shown(tabs) && side && shown(side)) add('the tabs and the rail are both shown', null, vw + ' px');
+  if (paired && (vw < 600) !== !!(tabs && shown(tabs))) add(vw < 600 ? 'under 600 px there are no tabs' : 'from 600 px the tabs are still there', null, vw + ' px');
+  if (side && shown(side)) { const r = side.getBoundingClientRect(); if (r.right > vw / 2 || r.left < -1) add('the rail is cut off or takes half the window', null, px(r.left) + ' to ' + px(r.right)); }
   if (tabs && shown(tabs)) {
     const r = tabs.getBoundingClientRect();
     if (r.bottom > vh + 1 || r.top < -1 || r.right > vw + 1 || r.left < -1) add('the tab bar is cut off', null, px(r.top) + ' to ' + px(r.bottom) + ' in a window ' + vh + ' px high');
     let pinned = 0;
     shell.querySelectorAll('*').forEach((el) => { if (/fixed|sticky/.test(getComputedStyle(el).position) && shown(el) && !el.parentElement.closest('.picker')) { const b = el.getBoundingClientRect(); if (b.width > vw / 2 && b.bottom > 0 && b.top < vh) pinned += Math.min(b.bottom, vh) - Math.max(b.top, 0); } });
     if (pinned > vh / 2) add('the bars that stay put take most of the window', null, px(pinned) + ' px of ' + vh);
+  }
+  if (paired && !(tabs && shown(tabs))) {        // from 600 px: the strip alone stays put
+    const d = document.getElementById('wsdock'), b = d ? d.getBoundingClientRect() : null;
+    if (b && Math.min(b.bottom, vh) - Math.max(b.top, 0) > vh / 2) add('the bars that stay put take most of the window', null, px(b.height) + ' px of ' + vh);
   }
   const reach = (el) => {
     if (scrolls(el) || getComputedStyle(el).pointerEvents === 'none') return;
@@ -136,7 +151,7 @@ function measure(o) {
     // (the message line of Signal lies over the page for some seconds and goes by itself: it is not a cover)
     if (hit && !(el.contains(hit) || hit.contains(el) || hit.closest('#msg') || (hit.closest('label') && hit.closest('label').contains(el)))) add('covered, cannot be pressed', el, 'by ' + name(hit));
   };
-  const must = short ? controls : controls.filter((el) => el.closest('nav.tabs, .row.transport'));
+  const must = short ? controls : controls.filter((el) => el.closest('nav, .tp'));
   if (!document.querySelector('.picker')) must.forEach(reach);
   window.scrollTo(was[0], was[1]);
   return out;

@@ -1134,7 +1134,10 @@ class TunnelSameAsStreamsTest(SupportBase):
             self.assertEqual(streams in sp.REMOTE_DENY, ndi_route in sp.REMOTE_DENY, ndi_route)
             self.assertEqual(streams[1].startswith(sp.REMOTE_DENY_PREFIX), ndi_route[1].startswith(sp.REMOTE_DENY_PREFIX), ndi_route)
             self.assertEqual(streams in sp.REMOTE_OPEN, ndi_route in sp.REMOTE_OPEN, ndi_route)
-            self.assertEqual(routes[streams][0], routes[ndi_route][0], ndi_route)
+            if streams[0] == "POST":
+                self.assertEqual(routes[streams][0], routes[ndi_route][0], ndi_route)
+            else:       # D80: the list of senders is the Operator's; a Guest has no page for it (Streams kept its old "view")
+                self.assertEqual((routes[streams][0], routes[ndi_route][0]), ("view", "live"))
         from pvj.api import Api
         for words in ("is_remote", "need_local", "remote"):                    # neither handler has a rule of its own for the tunnel
             self.assertEqual(words in inspect.getsource(Api.set_streams), words in inspect.getsource(Api.set_ndi), words)
@@ -1168,7 +1171,8 @@ class TunnelSameAsStreamsTest(SupportBase):
         # a support session of a lower role is held to that role, for both alike
         low = dict(dev, role="live")
         self.assertEqual((self.h("POST", "/api/streams", add_stream, low, TUNNEL)[0], self.h("POST", "/api/ndi", add_address, low, TUNNEL)[0]), (403, 403))
-        self.assertEqual((self.h("GET", "/api/streams", None, low, TUNNEL)[0], self.h("GET", "/api/ndi", None, low, TUNNEL)[0]), (200, 200))
+        # a support session below full keeps what it had (GET /api/streams) and gains nothing new (GET /api/ndi): D80
+        self.assertEqual((self.h("GET", "/api/streams", None, low, TUNNEL)[0], self.h("GET", "/api/ndi", None, low, TUNNEL)[0]), (200, 403))
 
 
 if __name__ == "__main__":

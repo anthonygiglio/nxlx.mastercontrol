@@ -22,7 +22,9 @@ import unicodedata
 
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
-from . import paths
+from . import locks, paths
+from . import policy
+from . import transitions as transitions_mod
 from .auth import Auth, AuthError
 from .modules import ModuleError
 from .player import AUDIO_EXTENSIONS, ENDINGS, IMAGE_EXTENSIONS, PlayerError, VIDEO_EXTENSIONS
@@ -36,6 +38,11 @@ _USB_LABEL = re.compile(r"[A-Za-z0-9._-]{1,64}")
 USB_SCAN_LIMIT = 2000          # directory entries looked at per drive; a hostile drive can hold millions
 USB_CACHE_SECONDS = 2.0
 PRESET_MAX_FILES = 200         # files a preset will queue in the player
+# The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
+# dmx.DMX_DEVICE, room.ROOM_DEVICE). Each runs its calls one after the other on the thread that reads the controller,
+# so a call of theirs must not wait for the player longer than a question takes. A paired device's id is eight hex
+# digits, so none of these can be one.
+CONTROLLERS = ("midi", "osc", "dmx", "room")
 
 
 def _usb_label_ok(label):
@@ -79,6 +86,7 @@ def number(body, key, lo, hi, integer=False):
 # say what is known: the snapshot failed, the screen is not in doubt.
 NDI_NO_SNAPSHOT = ("no snapshot of this NDI source could be made (the player could not copy its picture, which happens "
                    "with a still source); the picture on the screen is not affected")
+OVERTAKEN = object()          # what Api._as_newest returns when its `ready` check said the wish was overtaken
 PREVIEW_MIN_INTERVAL = 3.0    # seconds: a snapshot stalls playback for about a quarter second on a Pi 4, so viewers share one frame
 PREVIEW_MAX_BYTES = 8 * 1024 * 1024
 MAX_UPLOAD_BYTES = int(os.environ.get("PVJ_MAX_UPLOAD_MB", "8192")) * 1024 * 1024
@@ -99,39 +107,97 @@ class Fader:
         self._apply = apply
         self._clock, self._sleep = clock, sleep
         self._token = 0
-        self._lock = threading.Lock()
+        # `_lock` guards the token and the label, and nothing else is ever done while it is held: no callback, no
+        # call to the player, no other lock. (A callback that ran under it once made every Blackout, opacity change
+        # and Stop wait for a clip's load, and could deadlock against the start of a live input.)
+        self._lock = locks.make("fader.lock")
+        # `stepping` is held over one write of the picture's level: a step of a ramp, or a level somebody sets by
+        # hand (Api takes it for Blackout, the Opacity slider, a Reset and a play's own level). A step looks at the
+        # token inside it, so a step that was on its way cannot land after a level that was set since; whoever sets
+        # a level waits for at most the one step that is in the player. Taken before `_lock`, never inside it.
+        self.stepping = locks.make("fader.stepping")
+        self.at = None          # the level the running or the last ramp wrote last (percent), under `stepping`; read with the label
+        self._was = None        # (label, at) as `take` found them, until a ramp or another wish replaces them
         self.label = None       # "out" from a fade out until something else sets the picture, "in" while a fade in runs (read by the controller lights)
 
     def cancel(self):
+        """Take the fader: a ramp that runs stops within a step. Returns the token of this taking (see `current`)."""
         with self._lock:
             self._token += 1
             self.label = None
+            self._was = None
+            return self._token
 
-    def ramp(self, start, end, seconds, then=None, label=None):
+    def take(self):
+        """Take the fader for the one fade button: a ramp that runs stops within a step, as after `cancel`, but
+        what the fader was doing is KEPT (its label and the level it had reached) until a ramp or another wish for
+        a level replaces it. The button decides from that inside the lock a level is written under (`was`). So of
+        two presses that meet while the screen is black, the second does not find a fader that looks idle and
+        take the picture for lit: it finds what the first found."""
+        with self._lock:
+            if self.label is not None:
+                self._was = (self.label, self.at)
+            self._token += 1
+            self.label = None
+            return self._token
+
+    def was(self):
+        """(label, level) of the ramp that runs, else what `take` kept, else (None, None). The level is the one
+        the ramp wrote last, in percent."""
+        with self._lock:
+            if self.label is not None:
+                return self.label, self.at
+            return self._was or (None, None)
+
+    def mark(self):
+        """The token as it is now, to ask `current` with later: has anybody taken the fader since? Every wish for a
+        level takes it (Blackout, the Opacity slider, a Reset, a Fade in, a Fade out, a ramp), so this is how
+        something that loads for a while learns that a newer wish for the level came meanwhile."""
+        with self._lock:
+            return self._token
+
+    def current(self, token):
+        """True while nobody has taken the fader since `token` (from `ramp`, `cancel` or `mark`)."""
+        with self._lock:
+            return token is not None and token == self._token
+
+    def ramp(self, start, end, seconds, then=None, label=None, cancelled=None):
+        """`then` is called when the ramp has run to its end, `cancelled` when something else took the fader first
+        (within a step). A play that dips hangs its clip on both: the clip must load either way (D71). Both are
+        called with no lock held. Returns the ramp's token (see `current`)."""
         with self._lock:
             self._token += 1
             token = self._token
             self.label = label
+            self.at, self._was = start, None
         steps = max(1, int(seconds * 20))
         began = self._clock()
 
         def run():
             for i in range(1, steps + 1):
-                with self._lock:
-                    if token != self._token:
-                        return
-                self._apply(start + (end - start) * i / steps)
+                with self.stepping:
+                    with self._lock:
+                        live = token == self._token
+                    if live:
+                        self._apply(start + (end - start) * i / steps)
+                        with self._lock:
+                            if token == self._token:
+                                self.at = start + (end - start) * i / steps
+                if not live:
+                    return cancelled() if cancelled else None
                 wait = began + seconds * i / steps - self._clock()      # what is left of this step, if anything
                 if wait > 0:
                     self._sleep(wait)
             with self._lock:
-                if token != self._token:
-                    return
-                if self.label == "in":
+                over = token != self._token
+                if not over and self.label == "in":
                     self.label = None
+            if over:
+                return cancelled() if cancelled else None
             if then:
                 then()
         threading.Thread(target=run, daemon=True).start()
+        return token
 
 
 class Api:
@@ -154,10 +220,12 @@ class Api:
         self.spawn = spawn        # True only for development: start mpv ourselves
         self.on_pin = on_pin      # called with the new PIN so the box can show it
         self.osc = osc            # OscManager or None
+        self._osc_key_shows, self.osc_clock = {}, None     # device id -> when the OSC key was shown to it (D78)
         self._free_space = free_space or self._statvfs_free
         self.net = net            # NetdClient or None
         self._sysfs = net_sysfs
         self._ip_json = ip_json or self._run_ip
+        self.guests = policy.GuestControls(self)     # the lock on guest controls, their limits and confirms (D80)
         self._upload_lock = threading.Lock()  # one upload at a time: protects the SD card and the threads
         self._media_lock = threading.Lock()   # rename, delete and publishing an upload never interleave
         self.mix = {"opacity": 100, "blackout": False, "size": 100, "position": 0, "position_y": 0, "rotate": 0,
@@ -166,9 +234,10 @@ class Api:
         # whatever the Mix speed is, and the Mix speed (levels["speed"]) comes back with the next clip.
         self._speed_held = False
         self._speed_held_at = 0.0
-        self._speed_lock = threading.RLock()       # looking at the hold and setting the player's speed are one step
+        self._speed_lock = locks.make("speed.hold", reentrant=True)      # looking at the hold and setting the player's speed are one step; its place: pvj/locks.py
         self.levels = {"volume": 100.0, "speed": 1.0}    # what was last set here (mpv's own start values until then); a
         self.fader = Fader(self._apply_opacity)          # MIDI fader reads them for pickup without asking the player
+        self.transitions = transitions_mod.Transitions(self, log=lambda line: self.log(line))   # the crossfade (D71)
         self._preview_lock = threading.Lock()
         self._control_lock = threading.RLock()
         self._usb_cache = (0.0, [])
@@ -176,9 +245,11 @@ class Api:
         self.scheduler = None     # Scheduler or None
         self.autostart = None     # Autostart or None
         self.pinscreen = None     # PinScreen or None
+        self.recovery = None      # recovery.Recovery or None: the stick way in (D81)
         from . import controllercode as controllercode_mod
         self.controller_codes = controllercode_mod.ControllerCodes(self, log=lambda line: self.log(line))   # a code on the display from a MIDI controller (D61)
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
+        self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
         self._ndi_loading = threading.local()     # .on while this thread loads the NDI pipe itself
@@ -209,11 +280,119 @@ class Api:
         self.boxcare = boxcare_mod.BoxCare(self)                   # settings export and import, diagnostics, factory reset
 
     # --- helpers -------------------------------------------------------
+    # The picture's level: one rule for everything that loads something (a clip by a cut, a dip or a blend, a list, a
+    # stream, a live input, the test pattern, a generator). It notes the fader's mark when it is asked for
+    # (`_level_mark`) and, when its load is done, sets the level to what the mix says only if nobody has taken the
+    # fader since (`_show_level(mark)`): every wish for a level takes the fader, so A WISH FOR THE LEVEL THAT WAS MADE
+    # AFTER THE TAP WINS, however long the load took, and the label and the level never disagree. A fade that was
+    # already running at the tap is older than the tap and is ended by it, when the load is done and not before.
+    def _player_lock(self):
+        """The player's own lock (Player._lock), or a stand-in for a player that has none (tests)."""
+        return getattr(self.player, "_lock", None) or locks.make("player")
+
+    def _level_mark(self):
+        mark = getattr(self.fader, "mark", None)
+        return mark() if mark else None
+
+    def _as_newest(self, why, fn, *args, ready=None):
+        """Another way of playing, a Stop, a Next: this is the newest wish from now on, and its own change of what
+        plays is ONE STEP with that under the player's lock. A clip that is still on its way (its still is being
+        taken, it waits its turn, its dip goes down) loads nothing after it, and a play that is asked for after it
+        comes after it: an older wish's change can never land on a newer wish's picture. The still of a transition
+        goes too (the player's brightness does not reach it). Returns what `fn` returned.
+        `ready`, if given, is asked under the same lock before anything is ended: False means this wish was
+        overtaken while it was being prepared (an NDI source that took seconds to connect), nothing is done, and
+        OVERTAKEN is returned."""
+        with self._player_lock():
+            if ready is not None and not ready():
+                return OVERTAKEN
+            self.transitions.end(why, newer=True)
+            return self._player_call(fn, *args)
+
+    def _level_back(self, mark=None):
+        """After a Stop, or for a dip whose clip did not load: the picture must not stay at the dark a way down had
+        reached (the mix says 100 and the next shader would come up black). The fader is taken and the level put
+        back to what the mix says. Not after the operator's own Fade out, which Stop never undid, looked at inside
+        the lock a level is written under; and, with `mark`, not if anybody has taken the fader since it."""
+        with self._levels():
+            if getattr(self.fader, "label", None) == "out" or (mark is not None and not self.fader.current(mark)):
+                return False
+            self.fader.cancel()
+            self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+            return True
+
+    def _stop_screen(self, clear=None):
+        """Stop: the newest wish and the clearing of the screen as one step (see _as_newest), with the fader taken
+        between the two, unless the operator's Fade out is on (Stop never undid that). Taken after the generation
+        has moved, so a clip whose way down this cuts short finds itself overtaken, and before the screen is cleared,
+        so that clip's own putting-back of the level cannot show the old picture at full for a moment. The level
+        goes back to what the mix says after the screen is cleared, and only if nobody has taken the fader since
+        (a Fade out that comes at this moment is newer than the Stop)."""
+        mark = None
+        try:
+            with self._player_lock():
+                self.transitions.end("Stop", newer=True)
+                with self._levels():
+                    if getattr(self.fader, "label", None) != "out":
+                        mark = self.fader.cancel()
+                self._player_call(clear or self.player.clear)
+        finally:
+            if mark is not None:
+                self._level_back(mark)
+
+    def restore_level(self):
+        """A player that has just started (the panel restarted it, or it came back by itself) shows its picture at
+        its own full brightness, whatever the mix says: under a Blackout the next clip would be lit. The watcher
+        that puts the overlay and the mapping back on a new player calls this: the level is written as the mix
+        has it, dark under Blackout and after the operator's Fade out. The fader is not taken: a ramp that runs
+        goes on from its next step, and this is nobody's wish for a level. (Found by the stress test: a load that
+        leaves the level to a newer wish, as it must, left it at the new process's own.) Returns False if the
+        player did not take the level (it was not up yet): the watcher then tries again on its next rounds."""
+        with self._levels():
+            dark = self.mix["blackout"] or getattr(self.fader, "label", None) == "out"
+            return self._apply_opacity(0 if dark else self.mix["opacity"])
+
+    def _levels(self):
+        """The lock one write of the picture's level is made under (Fader.stepping): a ramp's step that was on its
+        way cannot land after a level set under it."""
+        return getattr(self.fader, "stepping", None) or locks.make("fader.stepping")
+
+    def _show_level(self, mark=None, rise=False):
+        """Set the picture's level to what the mix says now (dark under Blackout, the mix opacity otherwise) and
+        take the fader, unless somebody has taken it since `mark` (see the rule above): then nothing is touched and
+        False is returned. Without a mark it is always done. The look, the taking and the write are one step, and
+        the mix is read inside it, so of two that meet the later one has the last word and reads the newer state.
+        With `rise` (a shader chosen by hand or by a pad), a screen the operator had faded out comes up from black
+        over half the Mix's duration, as a clip does after a Fade out, and does not jump to full."""
+        with self._levels():
+            current = getattr(self.fader, "current", None)
+            if mark is not None and current is not None and not current(mark):
+                return False
+            faded_out = getattr(self.fader, "label", None) == "out"
+            if rise and faded_out and not self.mix["blackout"] and getattr(self.fader, "ramp", None) is not None:
+                self._apply_opacity(0)
+                self.fader.ramp(0, self.mix["opacity"], self.settings.data["mix"]["duration"] / 2)
+                return True
+            self.fader.cancel()
+            self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+            return True
+
+    def _mix_settings(self):
+        """The Mix settings as the API gives them: the transition by its name (see pvj/transitions.py for how it is
+        kept), the duration, and `fallback` with the reason while the box dips instead of a crossfade."""
+        mix = self.settings.data["mix"]
+        out = {"transition": transitions_mod.named(mix), "duration": mix["duration"]}
+        why = self.transitions.fallback() if out["transition"] in transitions_mod.STYLES else ""      # asks the player nothing
+        if why:
+            out["fallback"] = why
+        return out
+
     def _apply_opacity(self, percent):
         try:
             self.player.opacity(round(min(100, max(0, percent)) * 2.55))
+            return True
         except PlayerError:
-            pass
+            return False
 
     def resolve_media(self, name):
         """A media file by name, guaranteed to live inside the media folder."""
@@ -298,8 +477,16 @@ class Api:
 
     # --- handlers ------------------------------------------------------
     def hello(self, body, device, client):
-        return {"name": "nxlx.mastercontrol", "paired": bool(device), "board": self.board["kind"],
-                "remote": self.support.is_remote(client)}
+        """What an unpaired stranger may learn: the name, whether this caller is paired, the board, whether it came
+        through the support tunnel; and, while "Owner access only over the secure connection" bites, that fact and
+        the https address, so the pairing page does not send an owner code over plain http (D81; review of #122, M2)."""
+        out = {"name": "nxlx.mastercontrol", "paired": bool(device), "board": self.board["kind"],
+               "remote": self.support.is_remote(client)}
+        box = getattr(self, "https", None)
+        if box is not None and box.effective():
+            out["owner_https_only"] = True
+            out["https"] = box.https_address()
+        return out
 
     def pair(self, body, device, client):
         try:
@@ -309,7 +496,17 @@ class Api:
         except AuthError as e:
             raise ApiError(429 if e.retry_after else 403, str(e), e.retry_after)
         self.controller_codes.used()       # if it was the code shown from a controller, it leaves the display now
+        self._recovery_used(dev, client)
         return {"device": dev, "token": token}
+
+    def _recovery_used(self, dev, client):
+        """After a pairing (D81): a recovery code was burnt (one journal line, never the code), or the PIN shown for a
+        stick had its one use and leaves the display."""
+        left = getattr(self.auth, "recovery_uses", {}).pop(dev["id"], None)
+        if left is not None:
+            self.log("pvj-web: a recovery code was used by device %s (%s) from %s; %d left" % (dev["id"], dev["name"], client, left))
+        if self.recovery is not None:
+            self.recovery.used(dev)
 
     def session(self, body, device, client):
         """Start a session from a token (a guest link): the server sets the cookie."""
@@ -320,10 +517,23 @@ class Api:
 
     def status(self, body, device, client):
         temps = hardware.temperatures()
-        return {"player": self._public_player_status(), "mix": dict(self.mix, **self.settings.data["mix"]),
+        player = self._public_player_status()
+        # What the GPU last refused, for the Live page, where the pads are: a controller's tap of a shader pad
+        # answers before the GPU has looked, so its refusal has no answer to ride on (D73). From the engine's own
+        # record: the player is asked nothing more.
+        try:
+            refused = self.shaders.error if self.registry.enabled("shaders") else None
+        except Exception:
+            refused = None
+        if isinstance(refused, dict) and refused.get("id") and refused.get("epoch") == getattr(self.player, "source_epoch", None):
+            player["shader_refused"] = {"id": refused["id"], "message": refused.get("message", ""), "at": refused.get("at", "")}
+        # "fade": "out" while the operator's Fade out runs and while the screen is black from it, "in" while a fade
+        # in runs, else null: the one fade button flashes by it (D75). The fader's own label, read from memory.
+        return {"player": player, "mix": dict(self.mix, fade=getattr(self.fader, "label", None), **self._mix_settings()),
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
-                "device": device, "support": self.support.banner()}
+                "device": device, "support": self.support.banner(), "guest_controls": self.guests.state(),
+                "reach": policy.reach(device, self.guests.locked())}
 
     def access_on_screen(self):
         """True while the PIN or join codes are drawn on the display (on request, or the first-run screen)."""
@@ -332,7 +542,8 @@ class Api:
             return False
         try:
             shown = getattr(ps, "controller_up", None)        # a code asked for from a MIDI controller (D61)
-            return bool(ps.status()["showing"]) or bool(shown and shown()) or ps.auto_wanted()
+            stick = self.recovery.active() is not None if self.recovery is not None else False     # the PIN for a stick (D81)
+            return bool(ps.status()["showing"]) or bool(shown and shown()) or stick or ps.auto_wanted()
         except Exception:
             return True                           # when unsure, treat it as shown: a snapshot then leaves the text out
 
@@ -473,6 +684,10 @@ class Api:
         if self.shaders.is_carrier(path):                 # a shader source: the blank picture under it is not a clip
             showing = self.shaders.on_screen()
             status["path"], status["shader"], status["vibes"] = None, (showing["id"][:-3] if showing else ""), self.vibes.running
+            status["shader_preset"] = (showing.get("preset") if showing else None) or ""        # for the pad that started it (D73)
+            effect = self.effects.current()               # an effect over the shader (D74)
+            if effect is not None:
+                status["effect"] = effect["id"][:-3]
             return status
         effect = self.effects.current()                   # an effect over the picture: its name, for the Live screen
         if effect is not None:
@@ -747,7 +962,33 @@ class Api:
     def get_pads(self, body, device, client):
         return {"banks": self.settings.data["pads"]["banks"]}
 
+    @staticmethod
+    def pad_shader(pad):
+        """(shader id, preset name or None) of a pad that holds a generator shader, else None (D73). Such a pad keeps
+        `file` empty and names the shader under `shader`, with `preset` beside it if one was chosen: no new schema,
+        and a release that does not know the keys sees an empty pad. A pad with a clip is a clip pad whatever else
+        it carries."""
+        if not isinstance(pad, dict) or pad.get("file"):
+            return None
+        sid = pad.get("shader")
+        if not isinstance(sid, str) or not sid:
+            return None
+        preset = pad.get("preset")
+        return sid, (preset if isinstance(preset, str) and preset else None)
+
+    def _shader_preset(self, sid, preset):
+        """The preset of `sid` that is called `preset`, by its stored name, or 404."""
+        from . import shaderlive
+        if isinstance(preset, str) and shaderlive.name_ok(preset):
+            want = shaderlive.name_key(preset)
+            for row in self.shaders.config().get("presets", {}).get(sid, []):
+                if shaderlive.name_key(row["name"]) == want:
+                    return row["name"]
+        raise ApiError(404, "%s has no preset of that name" % sid)
+
     def set_pad(self, body, device, client):
+        """{"bank", "index", "label"?, "file"?, "ending"?} for a clip, or {"bank", "index", "label"?, "shader",
+        "preset"?} for a generator shader (D73). A shader pad stores no ending: a shader has no end."""
         bank = number(body, "bank", 0, len(self.settings.data["pads"]["banks"]) - 1, integer=True)
         index = number(body, "index", 0, 11, integer=True)
         label, file = body.get("label", ""), body.get("file", "")
@@ -759,10 +1000,81 @@ class Api:
         if file != "":
             if not valid_name(file) or not file.lower().endswith(MEDIA_EXTENSIONS):
                 raise bad("invalid file name")
+        pad = {"label": label, "file": file, "ending": ending}
+        shader = body.get("shader", "")
+        if shader != "":
+            if file != "":
+                raise bad("a pad holds a clip or a shader, not both")
+            path, _ = self.shaders._path(shader)            # 400 for a name that is none, 404 for one that is not here
+            try:
+                self.shaders._parsed(path)
+            except ValueError as e:
+                raise ApiError(422, "%s cannot be shown: %s" % (shader, e))
+            pad = {"label": label, "file": "", "shader": shader}
+            if body.get("preset") not in (None, ""):
+                pad["preset"] = self._shader_preset(shader, body["preset"])
+        elif body.get("preset") not in (None, ""):
+            raise bad("a preset belongs to a shader: name the shader too")
         with self.settings.lock:
-            self.settings.data["pads"]["banks"][bank]["pads"][index] = {"label": label, "file": file, "ending": ending}
+            self.settings.data["pads"]["banks"][bank]["pads"][index] = pad
             self.settings.save()
         return {"banks": self.settings.data["pads"]["banks"]}
+
+    def pads_follow_preset(self, sid, was, to):
+        """A preset of `sid` was renamed: the pads that start the shader with it follow, as a clip's pads follow the
+        clip's new name. The caller holds the settings' lock and saves (LiveEngine.preset_rename: one write for the
+        preset's new name and the pads)."""
+        from . import shaderlive
+        for bank in self.settings.data["pads"]["banks"]:
+            for pad in bank["pads"]:
+                held = self.pad_shader(pad)
+                if held and held[0] == sid and held[1] is not None and shaderlive.name_key(held[1]) == shaderlive.name_key(was):
+                    pad["preset"] = to
+
+    def _play_shader_pad(self, held, device):
+        """A pad that holds a generator shader (D73): the shader is shown exactly as choosing it by hand on the
+        Shaders screen shows it, through the one path a generator has (LiveEngine.play, which ends the rotation,
+        takes the screen under the player's lock as the newest wish and sets the level by the level's rule). It is
+        called before this play has claimed anything: the engine's lock stands before the player's (pvj/locks.py),
+        and a ticket taken here would be a second newest wish.
+
+        From the panel, the autostart and anything else that waits for its answer, the answer says whether the GPU
+        took the shader. A controller (MIDI, OSC, DMX, a Room scene) must not wait while the GPU looks at a shader
+        it has not seen: its tap is queued for the engine's worker, as its own shader actions are (apply_preset),
+        and a refusal is kept where the Shaders screen shows it. What can be said at once is said at once either
+        way: the module off, the shader gone, the preset gone."""
+        sid, preset = held
+        engine = self.shaders
+        engine._need()
+        try:
+            path, _ = engine._path(sid)
+        except ApiError as e:
+            if e.status != 404:
+                raise
+            raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+        said = {}
+        if preset is not None:
+            try:
+                preset = self._shader_preset(sid, preset)
+            except ApiError:
+                # The pad's preset was deleted (a rename carries the pads): the shader is there, so it is shown
+                # with its own start, as Vibes does for a set that names a preset that is gone, and the answer and
+                # the journal say so. (It used to refuse the tap.)
+                said["note"] = "this pad's preset, %s, is gone: the shader starts as it does by itself. Choose a preset for the pad again" % preset
+                log = getattr(self, "log", None)
+                if log is not None:
+                    log("pvj-web: a pad's preset of %s is gone (%s); shown with the shader's own start" % (sid, preset))
+                preset = None
+        try:
+            engine._parsed(path)                    # before Vibes is ended: a file that no longer reads shows nothing
+        except ValueError as e:
+            raise ApiError(422, "this pad's shader, %s, cannot be shown: %s" % (sid, e))
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            self.vibes.yield_screen()               # now, at the tap: the worker never ends a rotation
+            engine.queue_show(sid, preset)          # with the epoch and the level's mark of this moment
+            return dict({"playing": sid, "shader": sid, "pending": True}, **said)
+        engine.play(sid, None, None, preset)
+        return dict({"playing": sid, "shader": sid}, **said)
 
     @staticmethod
     def _ending(body, default):
@@ -789,9 +1101,9 @@ class Api:
             import random
             paths = list(paths)
             random.SystemRandom().shuffle(paths)
-        self.fader.cancel()
-        self._player_call(self.player.play, paths, ending == "loop", None, False, self.spawn, ending, image_seconds)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        mark = self._level_mark()
+        self._as_newest("another play", self.player.play, paths, ending == "loop", None, False, self.spawn, ending, image_seconds)
+        self._show_level(mark)
         self._started_playing()
         return paths
 
@@ -892,6 +1204,9 @@ class Api:
             banks = self.settings.data["pads"]["banks"]
             if not (0 <= pad[0] < len(banks) and 0 <= pad[1] < 12):
                 raise bad("no such pad")
+            held = self.pad_shader(banks[pad[0]]["pads"][pad[1]])
+            if held:                    # before anything is claimed: see _play_shader_pad
+                return self._play_shader_pad(held, device)
             name = banks[pad[0]]["pads"][pad[1]]["file"]
             if not name:
                 raise bad("pad is empty")
@@ -908,28 +1223,149 @@ class Api:
         loop = ending == "loop"
         transition = self.settings.data["mix"]
         playing = self._player_call(self.player.status).get("running")
+        # This play is the newest wish from here on, and whatever is asked for after it (another play of any kind,
+        # a Stop) is newer. Two things are one step under the player's own lock: the screen is claimed, so that a
+        # shader rotation or a generator's queued change, which hold the epoch from before, are refused by the
+        # player from now on (with a dip or a still the clip loads later); and the ticket is taken. A generator that
+        # got the lock first has had its turn and this play is newer than it; one that comes after is refused and
+        # never becomes a newer wish. So a rotation never beats a tap. The ticket is taken here, in the caller,
+        # before any thread is started and before any wait for another play's still.
+        player_lock = self._player_lock()
         claim = getattr(self.player, "claim_screen", None)
-        if claim:            # with a dip the clip loads later; a shader rotation must know now that the screen is taken
-            claim()
-        self.fader.cancel()  # a fade still running from an earlier action must not darken the new clip
+        with player_lock:
+            if claim:
+                claim()
+            ticket = self.transitions.claim()
+        tapped = self._level_mark()         # a wish for the level that comes after this is newer than the tap (see _show_level)
+        faded_out = getattr(self.fader, "label", None) == "out"     # the operator's Fade out: the screen is dark or going dark
+        # A fade still running from an earlier action must not darken the new clip: the fader is taken when the clip
+        # loads (in `start`), not here at the tap. A clip that is overtaken before it loads (its still was being
+        # taken, a Next came) would otherwise have stopped a Fade in half way with nobody to finish it (found by
+        # the stress test).
 
-        dip = transition["transition"] == "dip" and not self.mix["blackout"]
+        kind = transitions_mod.named(transition)
+        # A crossfade, a wipe or a slide lays a still of the screen over the new clip (pvj/transitions.py). A screen
+        # that is dark (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there.
+        # Where the box cannot do one it dips; where the still itself fails, time has passed already and the clip
+        # is cut to. Whether anything is loaded in the player is the still's own first question.
+        blend = False
+        if kind in transitions_mod.STYLES:
+            if playing and not self.mix["blackout"] and self.mix["opacity"] > 0 and not faded_out:
+                if self.transitions.look() or self.access_on_screen():
+                    kind = "dip"
+                else:
+                    blend = True
+        if not blend:
+            self.transitions.end()
+        dip = kind == "dip" and not self.mix["blackout"]
+        # After the operator's Fade out there is no picture to blend from: a crossfade, a wipe or a slide then
+        # brings the new clip up from black as the dip does (it used to snap to full brightness at once).
+        rise = dip or (kind in transitions_mod.STYLES and faded_out and not self.mix["blackout"])
+        if self.pinscreen is not None:
+            self.pinscreen.clear()          # an on-screen pairing PIN goes at the tap, as it always did
 
-        def start():
-            self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
-            if self.mix["blackout"]:
-                return
-            if dip:
-                self._apply_opacity(0)
-                self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
-            else:
-                self._apply_opacity(self.mix["opacity"])
+        def start(token=0, mark=tapped):
+            """Load the clip, if this play is still the newest wish. True if it was loaded. The picture's level is
+            then set, unless somebody has taken the fader since `mark` (the tap; for a dip, its own way down): a
+            Blackout, a fade or an opacity change that came meanwhile is the newer wish for the level."""
+            try:
+                # Newest wins. The look and the load are one step under the player's own lock, which every way of
+                # playing and Stop take for their own change: whoever became the newest wish before this look is
+                # seen here and nothing is loaded, and whoever becomes it after waits for this lock and comes after
+                # this clip. No window is left between the look and the load.
+                with player_lock:
+                    if not self.transitions.newest(ticket):
+                        self.transitions.abandon(token)
+                        return False
+                    self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
+                # This clip plays now, so a live input that was on the screen is not shown any more and its helper
+                # goes (see _stop_capture for how it is decided; not by "is this still the newest wish": a Next a
+                # moment later is newer, and the helper would have stayed with the device open).
+                self._stop_capture()
+                self._stop_ndi()                # the same for the NDI helper (_stop_ndi decides by the same rule)
+                self._hold_speed(False)         # a clip, not a live source: the Mix speed is the player's again
+                # The level, by the one rule (see _show_level): only if nobody has taken the fader since the mark.
+                # The look and the write are one step under the lock a level is written under, so a Blackout that
+                # comes at this moment either was seen or comes after and has the last word.
+                current = getattr(self.fader, "current", None)
+                with self._levels():
+                    if mark is None or current is None or current(mark):
+                        if rise and not self.mix["blackout"]:
+                            self._apply_opacity(0)
+                            self.fader.ramp(0, self.mix["opacity"], transition["duration"] / 2)
+                        else:
+                            self.fader.cancel()
+                            self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+            except BaseException:
+                # Whatever it was: no still stays over a clip that did not start, and the old clip, which the still
+                # froze, plays on.
+                self.transitions.abandon(token)
+                raise
+            self.transitions.run(token, transition["duration"])
+            return True
 
-        if playing and dip:
-            self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=start)
+        def lit():
+            """Asked by the still just before it is laid down: is the screen still one to blend from?"""
+            return not self.mix["blackout"] and self.mix["opacity"] > 0 and getattr(self.fader, "label", None) != "out"
+
+        def blended():
+            """The still, then the clip under it. The still takes time and nothing waits for it, so the ticket says
+            what came meanwhile: after a newer wish (a Stop, any other play) nothing is loaded; after an end() the
+            clip loads without the blend."""
+            return start(self.transitions.hold(kind, ticket, lit, transition["duration"]))
+
+        loaded = True
+        if blend and isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            # A controller's actions come one after the other on one thread (MIDI, OSC, DMX, a Room scene): a pad
+            # that waited here for its still would hold the same controller's Blackout or Stop behind it. So the
+            # still and the clip are another thread's, as the clip after a dip's way down already is.
+            def later():
+                try:
+                    blended()
+                except Exception as e:
+                    self.log("pvj-web: a clip played from a controller did not start: %s" % e)
+            threading.Thread(target=later, name="transition-play", daemon=True).start()
+            return {"playing": name, "pending": True}       # asked for, not loaded yet: see the manual
+        elif blend:
+            loaded = blended()
+        elif playing and dip and not faded_out:
+            # The clip hangs on the ramp's end and on its being cut short alike. Before, it hung on the end only:
+            # a Blackout, a fade, a Reset or an opacity change during the way down (a MIDI fader that moves) took
+            # the fader, and the tapped clip was silently never loaded. Now it loads then as a cut, at the level
+            # that action set; only a newer play or a Stop drops it, by the ticket.
+            # (After the operator's Fade out there is no way down to go: the screen is dark. The clip comes up
+            # from black by the branch below. The way down used to begin at the mix's level: a flash.)
+            way_down = []
+
+            def dipped(cut_short=False):
+                """The dip's clip, on the fader's thread. If it does not load (a newer wish overtook it, or the
+                load failed) and nobody has taken the fader since the way down, the picture is still at the dark
+                the dip left it at with nobody to bring it back: the level goes back to what the mix says. That
+                covers every newer wish, also one that does not touch the fader (Next, Previous) and any added
+                later."""
+                try:
+                    done = start(mark=way_down[0])
+                except Exception as e:
+                    done = False
+                    self.log("pvj-web: a clip did not start after its dip to black: %s" % e)
+                if not done:
+                    self._level_back(way_down[0])
+            current = getattr(self.fader, "current", None)
+            with self._levels():        # the ramp's first step waits for this: its token is noted before any callback can run
+                # only if nobody has taken the fader since the tap: a Fade out that came between the two is the
+                # newer wish for the level, and the way down must not take its place
+                if tapped is None or current is None or current(tapped):
+                    way_down.append(self.fader.ramp(self.mix["opacity"], 0, transition["duration"] / 2, then=dipped, cancelled=lambda: dipped(True)))
+            if not way_down:
+                loaded = start()        # no dip: the clip loads now, and the level stays as that wish set it
+                return {"playing": name} if loaded else {"playing": None, "superseded": name}
+            return {"playing": name, "pending": True}       # asked for, not loaded yet, as a controller's blend
         else:
-            start()
-        self._started_playing()
+            loaded = start()
+        if not loaded:
+            # Something newer was asked for while this clip's still was taken (or between its claim and its load):
+            # this clip is not what plays. What plays is not asked of the player here; the status says.
+            return {"playing": None, "superseded": name}
         return {"playing": name}
 
     def _need_streams(self):
@@ -942,9 +1378,9 @@ class Api:
         match = [s for s in self.settings.data["streams"] if s["id"] == sid]
         if not match:
             raise ApiError(404, "no such stream")
-        self.fader.cancel()
-        self._player_call(self.player.play, [match[0]["url"]], False, None, False, self.spawn)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        mark = self._level_mark()
+        self._as_newest("another play", self.player.play, [match[0]["url"]], False, None, False, self.spawn)
+        self._show_level(mark)
         self._started_playing(live=True)
         return {"playing": match[0]["name"]}
 
@@ -1001,10 +1437,17 @@ class Api:
             self._player_call(p.volume, number(body, "value", 0, 130))
             self.levels["volume"] = float(body["value"])
         elif action == "opacity":
-            self.mix["opacity"] = number(body, "value", 0, 100)
-            if not self.mix["blackout"]:
-                self.fader.cancel()
-                self._player_call(p.opacity, round(self.mix["opacity"] * 2.55))
+            value = number(body, "value", 0, 100)
+            self.transitions.end()
+            # Taken once before the lock: a ramp whose steps wait for a player that does not answer holds the lock
+            # for a whole answer time at each step, and must stop taking it now, not when this gets its turn (locks
+            # are not handed over in order). Then the value, the fader and the level as one step (Fader.stepping).
+            self.fader.cancel()
+            with self._levels():
+                self.mix["opacity"] = value
+                if not self.mix["blackout"]:
+                    self.fader.cancel()
+                    self._player_call(p.opacity, round(self.mix["opacity"] * 2.55))
         elif action == "size":
             self.mix["size"] = number(body, "value", 1, 200)
             self._player_call(p.size, self.mix["size"])
@@ -1015,26 +1458,31 @@ class Api:
             self.mix["position_y"] = number(body, "value", -100, 100)
             self._player_call(p.position, self.mix["position"] * 10, self.mix["position_y"] * 10)
         elif action in ("flip_h", "flip_v"):
-            if not isinstance(body.get("value"), bool):
+            # "toggle" (a controller's button, D75): the other state, from the mix in memory
+            value = (not self.mix[action]) if body.get("value") == "toggle" else body.get("value")
+            if not isinstance(value, bool):
                 raise bad("value must be true or false")
-            self.mix[action] = body["value"]
-            self._player_call(p.flip, action == "flip_h", body["value"])
+            self.mix[action] = value
+            self._player_call(p.flip, action == "flip_h", value)
         elif action == "rotate":
+            if body.get("value") == "toggle":       # the next quarter turn, round and round
+                body = dict(body, value=(self.mix["rotate"] + 90) % 360)
             degrees = number(body, "value", 0, 270, integer=True)
             if degrees not in (0, 90, 180, 270):
                 raise bad("rotation must be 0, 90, 180 or 270")
             self.mix["rotate"] = degrees
             self._player_call(p.rotate, degrees)
-        elif action == "loop":
-            if not isinstance(body.get("value"), bool):
+        elif action in ("loop", "mute"):
+            value = body.get("value")
+            if value == "toggle":                   # the other state: the player is asked what it has (one question)
+                st = self._player_call(p.status)
+                value = (not st.get("muted")) if action == "mute" else \
+                    not ((st.get("loop_file") or "no") != "no" or (st.get("loop_playlist") or "no") != "no")
+            if not isinstance(value, bool):
                 raise bad("value must be true or false")
-            self._player_call(p.loop, body["value"])
-        elif action == "mute":
-            if not isinstance(body.get("value"), bool):
-                raise bad("value must be true or false")
-            self._player_call(p.mute, body["value"])
+            self._player_call(p.loop if action == "loop" else p.mute, value)
         elif action == "stop":
-            self._player_call(p.clear)
+            self._stop_screen()
             self._stop_capture()
             self._stop_ndi()
             self._hold_speed(False)         # nothing live plays any more: the Mix speed is the player's again
@@ -1046,20 +1494,25 @@ class Api:
         elif action == "shuffle":
             self._player_call(p.shuffle)
         elif action in ("next", "prev"):
-            if not self._player_call(p.playlist_step, action == "next"):
+            # the operator asked for another clip: a blend ends, and a clip on its way is the older wish
+            if not self._as_newest("another clip", p.playlist_step, action == "next"):
                 raise ApiError(409, "no %s clip in the playlist" % ("next" if action == "next" else "previous"))
         elif action == "volume_step":
             self._player_call(p.volume_step, number(body, "value", -50, 50))
             self.levels["volume"] = min(130.0, max(0.0, self.levels["volume"] + float(body["value"])))
         elif action == "reset":
             flipped = [k for k in ("flip_h", "flip_v") if self.mix[k]]
-            self.mix.update(opacity=100, size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)
+            self.mix.update(size=100, position=0, position_y=0, rotate=0, flip_h=False, flip_v=False)     # the opacity: below, in its lock
             for k in flipped:
                 self._player_call(p.flip, k == "flip_h", False)
-            self.fader.cancel()
+            self.transitions.end()
             # During a blackout the screen must stay dark: reset changes the stored mix, not the picture.
-            shown = 0 if self.mix["blackout"] else 255
-            for fn, arg in ((p.opacity, shown), (p.size, 100), (p.position, 0), (p.speed, 1), (p.rotate, 0)):
+            self.fader.cancel()                 # once before the lock, as for the Opacity slider
+            with self._levels():
+                self.mix["opacity"] = 100
+                self.fader.cancel()
+                self._player_call(p.opacity, 0 if self.mix["blackout"] else 255)
+            for fn, arg in ((p.size, 100), (p.position, 0), (p.speed, 1), (p.rotate, 0)):
                 self._player_call(fn, arg)
             self.levels["speed"] = 1.0
         else:
@@ -1070,15 +1523,32 @@ class Api:
         on = body.get("on")
         if not isinstance(on, bool):
             raise bad("on must be true or false")
-        self.fader.cancel()
-        self.mix["blackout"] = on
-        self._player_call(self.player.opacity, 0 if on else round(self.mix["opacity"] * 2.55))
+        try:
+            self.fader.cancel()                 # once before the lock, as for the Opacity slider: the dark must not wait
+            # The switch, the fader and the level are one step (see Fader.stepping): a Fade in that meets a Blackout
+            # either comes first and is ended by it, or comes after and ends it. (Found by the stress test: with the
+            # switch outside, a Fade in's ramp could go up under a Blackout that the mix said was on.)
+            with self._levels():
+                self.mix["blackout"] = on
+                self.fader.cancel()
+                self._player_call(self.player.opacity, 0 if self.mix["blackout"] else round(self.mix["opacity"] * 2.55))
+        finally:
+            # After the picture went dark, not before: ending a transition can wait for a still that is being
+            # taken, and the dark must not wait with it. (A still taken meanwhile is not laid down: it sees the end.)
+            self.transitions.end()
         return {"blackout": on}
 
     def fadeout(self, body, device, client):
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
-        self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
+        self.transitions.end()
+        self.fader.cancel()                     # once before the lock, as the other four wishes for a level do
+        with self._levels():
+            # Under Blackout the screen is dark already and there is nothing to fade: a ramp would begin at the
+            # mix's level and show the picture during a Blackout (older than the transitions; found by the stress
+            # test). One step with the look, so a Blackout that comes now ends the ramp or is seen by it.
+            if not self.mix["blackout"]:
+                self.fader.ramp(self.mix["opacity"], 0, seconds, label="out")
         return {"ok": True}
 
     def fadein(self, body, device, client):
@@ -1086,11 +1556,54 @@ class Api:
         a fade in; until now the only way back from black here was an instant Show."""
         seconds = number(body, "seconds", 0.1, 30)
         self._player_call(self.player.status)
-        self.fader.cancel()
-        self.mix["blackout"] = False
-        self._apply_opacity(0)
-        self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
+        self.transitions.end()
+        self.fader.cancel()                     # once before the lock, as for the Opacity slider
+        with self._levels():                    # the switch, the level and the ramp as one step, as in blackout()
+            self.mix["blackout"] = False
+            self._apply_opacity(0)
+            self.fader.ramp(0, self.mix["opacity"], seconds, label="in")
         return {"ok": True}
+
+    def shader_play(self, body, device, client):
+        """Show one shader by its id, as the Shaders screen's Play does. From a controller (OSC's /pvj/shader, D75)
+        it goes the way a pad's shader goes from a controller (D73, _play_shader_pad): what can be said at once is
+        said, and the tap is queued for the engine's worker, so the thread that reads the controller never waits
+        while the GPU looks at a shader. From the panel it is the engine's own call, as before."""
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS:
+            sid = body.get("id")
+            if not isinstance(sid, str) or set(body) - {"id", "preset"}:
+                raise bad("a controller names a shader by its id, with a preset or without")
+            return self._play_shader_pad((sid, body.get("preset")), device)
+        return self.shaders.api_play(body, device, client)
+
+    def fade(self, body, device, client):
+        """The one fade button (D75): fades out, and at the next press in. Which of the two is decided here, from what
+        the screen is doing, not from a count of presses, so it stays right when a fade was started somewhere else
+        (the old two calls, a controller, OSC, a Room scene), when Blackout was used and when a play brought the
+        picture back. The picture is DOWN when the operator's Fade out is on (its ramp runs, or the screen is black
+        from it: the fader's label is "out") or when Blackout is on; then this fades in, which also ends the
+        Blackout, as Fade in always did. Otherwise it fades out. Answers which it did.
+        The fader is taken first (a ramp that runs stops), which keeps what it was doing; the decision is made inside
+        the lock a level is written under, from that (Fader.was), so presses that meet are judged one after another.
+        A press in the middle of a ramp turns round FROM WHERE THE PICTURE IS: the new ramp starts at the level the
+        old one had reached, not at black and not at full."""
+        seconds = number(body, "seconds", 0.1, 30) if "seconds" in body else 2.0
+        self._player_call(self.player.status)
+        self.transitions.end()
+        self.fader.take()                       # before the lock, as the other wishes for a level do
+        with self._levels():
+            was, at = self.fader.was()
+            down = was == "out" or self.mix["blackout"]
+            if down:
+                start = at if was == "out" and at is not None and not self.mix["blackout"] else 0
+                self.mix["blackout"] = False
+                if start == 0:
+                    self._apply_opacity(0)
+                self.fader.ramp(min(start, self.mix["opacity"]), self.mix["opacity"], seconds, label="in")
+            else:
+                start = at if was == "in" and at is not None else self.mix["opacity"]
+                self.fader.ramp(min(start, self.mix["opacity"]), 0, seconds, label="out")
+        return {"ok": True, "fade": "in" if down else "out"}
 
     def test_tone(self, body, device, client):
         """5 seconds of a 440 Hz tone on the left, the right or both speakers, through the chosen sound output."""
@@ -1098,8 +1611,7 @@ class Api:
         tones = getattr(self.player, "TEST_TONES", {})
         if channel not in tones:
             raise bad("channel must be left, right or both")
-        self.fader.cancel()
-        self._player_call(self.player.play, [tones[channel]], False, None, False, self.spawn, "stop")
+        self._as_newest("another play", self.player.play, [tones[channel]], False, None, False, self.spawn, "stop")
         self._started_playing()
         return {"test_tone": channel}
 
@@ -1320,35 +1832,47 @@ class Api:
     def test_pattern(self, body, device, client):
         """Show colour bars (for lining up a projector), or stop them. They come from the player itself, no file."""
         on = body.get("on")
+        if on == "toggle":                          # a controller's button (D75): off if the bars are on, else on
+            on = self._player_call(self.player.status).get("path") != self.player.TEST_PATTERN
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         if not on:
-            self._player_call(self.player.clear)
+            self._stop_screen()
             self._stop_capture()
             self._stop_ndi()
             return {"test_pattern": False}
-        self.fader.cancel()
-        self._player_call(self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        mark = self._level_mark()
+        self._as_newest("another play", self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
+        self._show_level(mark)
         self._started_playing()
         return {"test_pattern": True}
 
     def set_mix(self, body, device, client):
-        mode, duration = body.get("transition"), body.get("duration")
-        if mode not in ("cut", "dip"):
-            raise bad("transition must be cut or dip (crossfade is not built yet)")
+        # one of the two may be left out (OSC sets them one at a time, D75): the other stays as it is
+        if "transition" not in body and "duration" not in body:
+            raise bad("send transition, duration or both")
+        now = self._mix_settings()
+        mode, duration = body.get("transition", now["transition"]), body.get("duration", now["duration"])
+        if mode not in transitions_mod.NAMES:
+            raise bad("transition must be one of " + ", ".join(transitions_mod.NAMES))
         if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
             raise bad("duration must be 0.1 to 10 seconds")
         with self.settings.lock:
-            self.settings.data["mix"] = {"transition": mode, "duration": float(duration)}
+            self.settings.data["mix"] = transitions_mod.stored(mode, duration)
             self.settings.save()
-        return self.settings.data["mix"]
+        self.transitions.chosen_again()         # a box that gave up on crossfades tries again when somebody chooses
+        return self._mix_settings()
 
     def stop_player(self, body, device, client):
         # The systemd unit (Restart=always) brings the player straight back.
-        self._player_call(self.player.ipc.request, "quit")
-        self._stop_capture()
-        self._stop_ndi()
+        quit_player = getattr(self.player, "quit", None)        # Player.quit: what was loaded goes with the process
+        try:
+            self._as_newest("the player's restart", quit_player or (lambda: self.player.ipc.request("quit")))
+        finally:
+            # also when the player did not answer (it may have gone all the same, and Player.quit has put the pipe
+            # down as not playing before it asked): a helper must never be left writing into a pipe nobody reads
+            self._stop_capture()
+            self._stop_ndi()
         return {"ok": True}
 
     def get_modules(self, body, device, client):
@@ -1402,7 +1926,7 @@ class Api:
         that could not be used, an accent that was dropped) goes to full access only."""
         t = self.settings.data["theme"]
         looks = self._looks()
-        if not Auth.allows(device, "full"):
+        if not policy.is_operator(device):          # an Operator chooses the look (D80), so he gets the Look page's details
             for look in looks:
                 del look["look"]
             return {"theme": t, "available": looks}
@@ -1547,7 +2071,10 @@ class Api:
         return themes_mod.css(theme, accent)
 
     def devices(self, body, device, client):
-        return {"devices": self.auth.list_devices()}
+        devices = self.auth.list_devices()
+        if not Auth.allows(device, "full"):         # an Operator sees the guests and the operators, whom he may remove; never an owner
+            devices = [d for d in devices if d["role"] != "full"]
+        return {"devices": devices}
 
     def _still_paired(self, device):
         """False when the device this request came from is gone: a factory reset (or a revoke) ran while the request
@@ -1559,6 +2086,9 @@ class Api:
         return any(d["id"] == device.get("id") for d in self.settings.data["devices"])
 
     def invite(self, body, device, client):
+        """A link for a new device. An Owner: a guest or an Operator. An Operator: a guest only (D80)."""
+        if not Auth.allows(device, "full") and body.get("role") != "view":
+            raise ApiError(403, "an operator can make a guest link only (owner access needed)")
         try:
             token, dev = self.auth.invite(str(body.get("name", "guest"))[:40], body.get("role"))
         except auth_mod.TooManyDevices as e:
@@ -1576,8 +2106,25 @@ class Api:
         return out
 
     def revoke(self, body, device, client):
+        """Remove a paired device. An Operator: a guest or another Operator, never himself and never an Owner (D80,
+        the owner on 2026-10-10: "Operators can remove other operators just not themselves or owners"). Only a device
+        in the list can be named: a controller, a support session and the box's own callers are not in it."""
         did = body.get("id")
-        if not isinstance(did, str) or not self.auth.revoke(did):
+        if not isinstance(did, str):
+            raise ApiError(404, "no such device")
+        if not Auth.allows(device, "full"):
+            target = next((d for d in self.auth.list_devices() if d["id"] == did), None)
+            if target is None:
+                raise ApiError(404, "no such device")
+            if target["role"] == "full":
+                raise ApiError(403, "an operator cannot remove an owner (owner access needed)")
+            if did == device.get("id"):
+                raise ApiError(403, "an operator cannot remove himself here; use Log out, or ask the owner")
+            self.log("pvj-web: %s device %s removed by operator device %s (from %s)"
+                     % (policy.NAMES[target["role"]].lower(), did, device.get("id"), client))
+        if not self._still_paired(device):          # a reset or a removal ran while this was on its way: it removes nobody
+            raise ApiError(401, "this device is no longer paired")
+        if not self.auth.revoke(did):
             raise ApiError(404, "no such device")
         return {"ok": True}
 
@@ -1592,14 +2139,137 @@ class Api:
             self.on_pin(pin)
         return {"ok": True, "pin": pin}
 
+    def show_pin(self, body, device, client):
+        """The owner PIN for the full-access device that asks (D77). A POST, so it needs the request header like
+        every change and is never cached or in an address. Never for a support login, whatever its role (also in
+        support.REMOTE_DENY), never for a device removed meanwhile, at most auth.PIN_SHOWS times in a while, and
+        each answer leaves one journal line naming the device and never the PIN. {"known": false} when this run of
+        the panel has only the PIN's hash (it was started without making a new one); New PIN then makes one."""
+        if device.get("remote"):
+            raise ApiError(403, "the PIN is never shown through remote support")
+        if not self._still_paired(device):
+            raise ApiError(401, "this device is no longer paired")
+        try:
+            pin = self.auth.show_pin(device["id"])
+        except AuthError as e:
+            raise ApiError(429, str(e), e.retry_after)
+        self.log("pvj-web: owner PIN %s device %s (%s) from %s"
+                 % ("shown to" if pin else "asked for by", device["id"], device["name"], client)
+                 + ("" if pin else "; not known to this run of the panel"))
+        return {"known": pin is not None, "pin": pin}
+
+    # --- recovery codes and the stick (D81): full access, never through remote support (REMOTE_DENY_PREFIX) ----
+    def _owner_here(self, device):
+        if device.get("remote"):
+            raise ApiError(403, "recovery is never handled through remote support")
+        if not self._still_paired(device):
+            raise ApiError(401, "this device is no longer paired")
+
+    def get_recovery(self, body, device, client):
+        """How many codes are left, when the set was made, the stick switch, the stick's state and the last events.
+        Never a code, a hash or the PIN."""
+        self._owner_here(device)
+        out = self.auth.recovery_status()
+        out["stick"] = self.recovery.status() if self.recovery is not None else None
+        return out
+
+    def make_recovery(self, body, device, client):
+        """A new set of codes, in the place of any old one; the codes in clear in this answer and nowhere else."""
+        self._owner_here(device)
+        codes = self.auth.make_recovery_codes(by=device["name"])
+        self.log("pvj-web: %d recovery codes made by device %s (%s) from %s" % (len(codes), device["id"], device["name"], client))
+        return {"codes": codes, "made": self.auth.recovery_status()["codes"]}
+
+    def cancel_recovery(self, body, device, client):
+        self._owner_here(device)
+        had = self.auth.cancel_recovery_codes()
+        if had:
+            self.log("pvj-web: recovery codes cancelled by device %s (%s) from %s" % (device["id"], device["name"], client))
+        return {"ok": True, "had": had}
+
+    def set_recovery_usb(self, body, device, client):
+        """{"on": true | false}: the stick way. Off ends a PIN that is on the screen for a stick at the next tick."""
+        self._owner_here(device)
+        on = body.get("on")
+        if not isinstance(on, bool):
+            raise bad("on must be true or false")
+        self.auth.set_usb(on)
+        self.log("pvj-web: the recovery stick way was switched %s by device %s (%s) from %s" % ("on" if on else "off", device["id"], device["name"], client))
+        if not on and self.recovery is not None:
+            self.recovery.poll()
+        return {"usb": on}
+
+    def logout(self, body, device, client):
+        """Log this device out (D77): its token is removed from the box, and the server clears the cookie (server.py
+        does that for every 200 from here). Any role; a token that is already dead (removed by the owner, a second
+        press) gets the same answer, so the client ends up logged out either way. A support login forgets its own
+        token only (support.logout). The last full-access device may log out: the PIN screen then returns on the
+        box's display when nothing plays (pinscreen.auto_wanted), and sudo pvj-pin prints the PIN."""
+        if device is None:
+            return {"ok": True, "ended": False}
+        if device.get("remote"):
+            self.support.logout(device)
+        else:
+            self.auth.revoke(device["id"])
+            self.log("pvj-web: device %s (%s, %s) logged out from %s" % (device["id"], device["name"], device["role"], client))
+        return {"ok": True, "ended": True}
+
     def get_osc(self, body, device, client):
+        """Every paired device: whether OSC listens, and which layers are on. A full-access device also gets the list
+        of devices that may send and the senders seen lately. The key is in neither (osc_key)."""
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
-        return self.osc.status()
+        return self.osc.status(full=Auth.allows(device, "full"))
+
+    def osc_messages(self, body, device, client):
+        """Full access: the last messages (in memory only), newest first."""
+        if self.osc is None:
+            raise ApiError(404, "OSC is not available")
+        return {"messages": self.osc.watch.messages()}
+
+    def osc_key(self, body, device, client):
+        """Full access, never through the support tunnel: {} shows the key, {"new": true} makes a new one (the old
+        one stops working at once). It has its own route so that it is never part of what the page asks for by itself.
+        Like the owner PIN (show_pin, D77): never for a support login or a device removed meanwhile, at most
+        auth.PIN_SHOWS times in a while per device, and one journal line each time that names the device and never
+        the key."""
+        if self.osc is None:
+            raise ApiError(404, "OSC is not available")
+        fresh = body.get("new", False)
+        if not isinstance(fresh, bool):
+            raise bad("new must be true or false")
+        if device.get("remote"):
+            raise ApiError(403, "the OSC key is never shown through remote support")
+        if not self._still_paired(device):
+            raise ApiError(401, "this device is no longer paired")
+        with self.osc.lock:
+            t = time.monotonic() if self.osc_clock is None else self.osc_clock()
+            shows = [x for x in self._osc_key_shows.get(device["id"], []) if t - x < auth_mod.PIN_SHOW_WINDOW]
+            if len(shows) >= auth_mod.PIN_SHOWS:
+                raise ApiError(429, "the key was shown %d times in the last %d minutes; wait a little"
+                               % (auth_mod.PIN_SHOWS, int(auth_mod.PIN_SHOW_WINDOW // 60)),
+                               int(auth_mod.PIN_SHOW_WINDOW - (t - shows[0])) + 1)
+            self._osc_key_shows = {k: v for k, v in self._osc_key_shows.items() if self._still_paired({"id": k})}
+            self._osc_key_shows[device["id"]] = shows + [t]
+            key = self.osc.key()
+            made = fresh or not key
+            if made:
+                key = self.osc.make_key()
+                self.settings.save()
+                try:
+                    self.osc.apply()
+                except osc_mod.OscError as e:
+                    raise ApiError(409, str(e))
+        self.log("pvj-web: OSC key %s device %s (%s) from %s" % ("made new by" if made else "shown to", device["id"], device["name"], client))
+        return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/pvj/stop"}
 
     def set_osc(self, body, device, client):
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
+        with self.osc.lock:                   # one save at a time (OscManager.lock says why)
+            return self._set_osc(body)
+
+    def _set_osc(self, body):
         cfg = self.settings.data["osc"]
         new = dict(cfg)
         if "enabled" in body:
@@ -1613,6 +2283,13 @@ class Api:
                 new["allow"] = osc_mod.validate_allow(body["allow"])
             except osc_mod.OscError as e:
                 raise bad(str(e))
+        try:                                  # the three layers (D78); the key itself is only ever made by the box
+            new.update(osc_mod.validate_layers(body, osc_mod.parse_networks(new["allow"])))
+        except osc_mod.OscError as e:
+            raise bad(str(e))
+        new.pop("key", None)                   # the key lives in its own section (OscManager.make_key)
+        if new.get("key_on") and not self.osc.key():
+            self.osc.make_key()
         with self.settings.lock:
             self.settings.data["osc"] = new
         try:
@@ -1626,7 +2303,7 @@ class Api:
                 pass
             raise ApiError(409, str(e))
         self.settings.save()
-        return self.osc.status()
+        return self.osc.status(full=True)
 
     # --- a picture over the video ---------------------------------------------------
     def apply_overlay(self):
@@ -1669,6 +2346,8 @@ class Api:
             if f != "" and (not valid_name(f) or not f.lower().endswith(".png")):
                 raise bad("choose a PNG picture from the media folder")
             cfg["file"] = f
+        if body.get("toggle") is True and "on" not in body:     # a controller's button (D75): the other state
+            body = dict(body, on=not cfg["on"])
         if "on" in body:
             if not isinstance(body["on"], bool):
                 raise bad("on must be true or false")
@@ -1762,6 +2441,32 @@ class Api:
             return self.mapper.handle(body)
         except mapper_mod.MapperError as e:
             raise bad(str(e))
+
+    def mapper_controllers(self, body, device, client):
+        """{"allow": true | false}: the owner's switch "Controllers may adjust the mapping" (full access)."""
+        from . import mapper as mapper_mod
+        if not self.registry.enabled("mapper"):
+            raise ApiError(409, "turn on the Projection mapper module in System first")
+        if set(body) != {"allow"}:
+            raise bad("send allow: true or false")
+        try:
+            return self.mapper.set_remote_allowed(body["allow"])
+        except mapper_mod.MapperError as e:
+            raise bad(str(e))
+
+    def mapper_nudge(self, body, device, client):
+        """Mapping mode from a controller (D75, pvj/mapper.py "from a controller"). Only a MIDI controller or OSC may
+        call it: the route is for presenters, and a presenter's phone must not get a way round the full access
+        that the Mapping screen asks for. It does nothing unless the owner's switch is on."""
+        from . import mapper as mapper_mod
+        if not (isinstance(device, dict) and device.get("id") in ("midi", "osc")):
+            raise ApiError(403, "only a controller uses this; the Mapping screen is for a full-access device")
+        if not self.registry.enabled("mapper"):
+            raise ApiError(409, "turn on the Projection mapper module in System first")
+        try:
+            return self.mapper.remote(body)
+        except mapper_mod.MapperError as e:
+            raise ApiError(409, str(e))
 
     def apply_mapper(self):
         """Put the mapping back on a player that restarted (it lost its shaders)."""
@@ -2027,58 +2732,83 @@ class Api:
             raise ApiError(409, "turn on the NDI input in System first")
 
     def _stop_ndi(self):
-        return self.ndi.stop() if self.ndi is not None else False
+        """Have the NDI helper let go of its source, unless its pipe is what the player plays: decided as
+        _stop_capture decides, by what this side last loaded. Not under the NDI input's lock, which its play holds
+        for the seconds the helper takes to connect (a clip must not wait for that): every caller has just loaded
+        or cleared the player, which made any ticket older (_player_call) and any wish older (D71), so a play of a
+        source that is half way finds itself overtaken at its own `ready` and lets go of the source itself."""
+        if self.ndi is None or self._pipe_plays(self.ndi.fifo):
+            return False
+        return self.ndi.stop()
 
     def play_ndi(self, body, again=None):
         """{"ndi": "<id>"}: a source the helper found, by the id the helper gave it; never a name or an address.
         `again` is the entry being shown when the helper asks for it to be loaded again (a sender changed size):
-        it is dropped if something else was played meanwhile."""
+        it is dropped if something else was played meanwhile.
+
+        A live source is cut to: no crossfade brings it in (as with the capture input and a stream, the player
+        is told to read the pipe and any transition on its way is ended by _as_newest). A clip that follows it
+        may crossfade from it: the still is taken of whatever is on the screen (pvj/transitions.py), and where the
+        player cannot copy the picture (seen on a Pi 4 with a still NDI source: NDI_NO_SNAPSHOT) the clip is cut to."""
         from . import ndi as ndi_mod
         self._need_ndi()
         sid = body.get("ndi")
+        mark = self._level_mark()
         with self.ndi.lock:                # open, load and note as one step: a double tap cannot cross two sources
             if again is not None and self.ndi.current is not again:
                 return {"playing": None}
             ticket = self.ndi.ticket()
+            # The tap: the newest wish from now on, as a clip's tap is (D71, transitions.claim). A clip tapped after
+            # this, whose load may come later still (after its dip), is newer than this source: the source then
+            # gives way at `ready` and is never loaded over the clip's way down.
+            with self._player_lock():
+                claim = getattr(self.player, "claim_screen", None)
+                if claim:
+                    claim()
+                wish = self.transitions.claim()
             try:
                 p = self.ndi.open(sid)
             except ndi_mod.NdiError as e:
                 raise ApiError(409, str(e))
             # Connecting takes seconds. If anything was played, cleared or stopped meanwhile (_player_call and
-            # stop() both cancel), that later choice stands: the source is let go and the screen is not touched.
-            # The check and the loading are one step under ndi.screen, so nothing can come between them.
-            failed = None
-            with self.ndi.screen:
-                good = self.ndi.still(ticket) and (again is None or self.ndi.current is again)
-                if good:
-                    try:
-                        self.ndi.check_pipe()
-                    except ndi_mod.NdiError as e:
-                        good, failed = None, ApiError(409, str(e))
-                if good:
-                    self.fader.cancel()
-                    self.ndi.current = {"id": p["id"], "name": p["name"]}
-                    self._ndi_loading.on = True
-                    try:
-                        # Matroska only when the owner wants sound AND the helper says the pipe carries it: what
-                        # the helper answers never widens, by itself, what the player will parse.
-                        with_sound = p.get("container") == "matroska" and self.ndi.sound_wanted()
-                        self._player_call(self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"],
-                                          "matroska" if with_sound else "uyvy422")
-                    except ApiError as e:
-                        failed = e
-                    finally:
-                        self._ndi_loading.on = False
-            if failed is not None:
+            # stop() both cancel the ticket; a clip's tap and _as_newest make a newer wish), that later choice
+            # stands: the source is let go and the screen is not touched. The look at both and the loading are one
+            # step under the player's lock (`ready` in _as_newest), the lock every change of what plays takes.
+            failed = [None]
+            # Matroska only when the owner wants sound AND the helper says the pipe carries it: what the helper
+            # answers never widens, by itself, what the player will parse.
+            with_sound = p.get("container") == "matroska" and self.ndi.sound_wanted()
+
+            def ready():
+                if not (self.ndi.still(ticket) and self.transitions.newest(wish) and (again is None or self.ndi.current is again)):
+                    return False
+                try:
+                    self.ndi.check_pipe()
+                except ndi_mod.NdiError as e:
+                    failed[0] = ApiError(409, str(e))
+                    return False
+                self.ndi.current = {"id": p["id"], "name": p["name"]}
+                self._ndi_loading.on = True      # this load must not cancel its own ticket (_player_call)
+                return True
+
+            try:
+                loaded = self._as_newest("another play", self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"],
+                                         "matroska" if with_sound else "uyvy422", ready=ready) is not OVERTAKEN
+            except ApiError as e:
+                failed[0] = e
+                loaded = False
+            finally:
+                self._ndi_loading.on = False
+            if failed[0] is not None:
                 self.ndi.stop()
                 self.ndi.client_close()
-                raise failed
-            if not good:
+                raise failed[0]
+            if not loaded:
                 self.ndi.client_close()
                 if again is not None:
                     return {"playing": None}
                 raise ApiError(409, "something else was played while the source was connecting")
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._show_level(mark)              # connecting took seconds: a Fade out made meanwhile stands
         self._started_playing(ndi=True)
         return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"],
                 "sound": bool(with_sound)}
@@ -2145,14 +2875,14 @@ class Api:
         if not isinstance(spec, dict):
             raise bad("capture must be an object")
         mode = spec.get("mode", "720p30")
+        mark = self._level_mark()
         with self.capture.lock:            # prepare, load and start as one step: a double tap cannot leak a helper
             try:
                 w, h, fps = self.capture.prepare(spec.get("device"), mode)
             except capture_mod.CaptureError as e:
                 raise bad(str(e))
-            self.fader.cancel()
             try:
-                self._player_call(self.player.play_pipe, self.capture.fifo, w, h, fps)
+                self._as_newest("another play", self.player.play_pipe, self.capture.fifo, w, h, fps)
             except ApiError:
                 self.capture.stop()
                 raise
@@ -2160,14 +2890,34 @@ class Api:
                 self.capture.start(spec["device"], mode)
             except capture_mod.CaptureError as e:
                 raise ApiError(409, str(e))
-        self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
+        self._show_level(mark)              # the helper's start takes a second or more: a Fade out made meanwhile stands
         self._started_playing(capture=True)
         return {"playing": "capture", "device": spec["device"], "mode": mode}
 
     def _stop_capture(self):
+        """Stop the live input's helper, unless the live input is what the player plays. Whoever has just put
+        something else on the screen (a clip, a list, a generator, a Stop) calls this afterwards. It is decided by
+        what plays now, under the lock a live input is started under from its first step to its helper's start: so
+        a live input that somebody started in the same moment is either not begun (and what plays is not its pipe)
+        or complete (and its helper is left alone), never half. Before, the helper was stopped whatever played: a
+        Stop or a clip that met the start of a live input could leave the pipe playing with nothing writing into it
+        (older than the transitions; found by the stress test)."""
         if self.capture is not None:
             with self.capture.lock:
-                self.capture.stop()
+                # What plays is what this side last loaded (Player.pipe_playing, set and cleared under the player's
+                # lock with each load), not what the player says its path is: that changes a moment after a load,
+                # and the wait for it gives up after three seconds without a word.
+                if not self._pipe_plays(self.capture.fifo):
+                    self.capture.stop()
+
+    def _pipe_plays(self, fifo):
+        """Whether `fifo` is the pipe the player last loaded (Player.pipe_is; a player without it: whether any pipe
+        is). The capture input and the NDI input each have their own, so the one's helper is not left running
+        because the other's pipe is what plays."""
+        pipe_is = getattr(self.player, "pipe_is", None)
+        if pipe_is is not None:
+            return bool(pipe_is(fifo))
+        return bool(getattr(self.player, "pipe_playing", False))
 
     def get_inputs(self, body, device, client):
         if self.capture is None:
@@ -2227,11 +2977,11 @@ class Api:
                 new = autostart_mod.validate(body, self.settings.data["autostart"])
             except autostart_mod.AutostartError as e:
                 raise bad(str(e))
-            if new["mode"] == "pad":           # a pad that exists and has a clip, or it would fail at every start
+            if new["mode"] == "pad":           # a pad that exists and has a clip or a shader, or it would fail at every start
                 banks = self.settings.data["pads"]["banks"]
                 b, i = new["pad"]
-                if not (b < len(banks) and i < 12 and banks[b]["pads"][i].get("file")):
-                    raise bad("choose a pad that has a clip")
+                if not (b < len(banks) and i < 12 and (banks[b]["pads"][i].get("file") or self.pad_shader(banks[b]["pads"][i]))):
+                    raise bad("choose a pad that has a clip or a shader")
             self.settings.data["autostart"] = new
             self.settings.save()
         return self.autostart.status()
@@ -2276,8 +3026,8 @@ class Api:
                 raise ApiError(409, "no code from a controller is on the display")   # not 404: a page that asks a moment late is not looking for a missing thing
             self.log("pvj-web: controller code: ended by device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
-        if not body or any(k not in ("enabled", "owner") for k in body):
-            raise bad("send enabled and/or owner (true or false), or cancel: true")
+        if not body or any(k not in ("enabled", "owner", "join") for k in body):
+            raise bad("send enabled and/or owner (true or false), join (view or live), or cancel: true")
         with self.settings.lock:
             current = self.settings.data.get("controller_code")
             current = dict(current) if isinstance(current, dict) else {}
@@ -2294,8 +3044,9 @@ class Api:
                 self.settings.data["controller_code"] = current      # memory and disk must not disagree
                 raise ApiError(500, "could not save: %s" % (e.strerror or e))
         self.controller_codes.switched()         # outside the settings lock: a code the new setting does not allow goes
-        self.log("pvj-web: controller code: set to %s%s by device %s (from %s)"
-                 % ("on" if new["enabled"] else "off", ", full access codes allowed" if new["owner"] else "", device.get("id"), client))
+        self.log("pvj-web: controller code: set to %s%s, the join code pairs %s, by device %s (from %s)"
+                 % ("on" if new["enabled"] else "off", ", full access codes allowed" if new["owner"] else "",
+                    "an operator" if new.get("join") == "live" else "a guest", device.get("id"), client))
         return self._access_state(device)
 
     def get_access(self, body, device, client):
@@ -2309,7 +3060,7 @@ class Api:
         role, minutes, uses = body.get("role"), body.get("minutes", auth_mod.JOIN_DEFAULT_MINUTES), body.get("uses", auth_mod.JOIN_DEFAULT_USES)
         if not full:
             if role != "view":
-                raise ApiError(403, "a presenter can make a guest code only (full access needed)")
+                raise ApiError(403, "an operator can make a guest code only (owner access needed)")
             if type(minutes) is not int or minutes not in auth_mod.PRESENTER_JOIN_MINUTES:      # the type first: 15.0 == 15
                 raise bad("minutes must be one of %s" % ", ".join(str(m) for m in auth_mod.PRESENTER_JOIN_MINUTES))
             if type(uses) is not int or not 1 <= uses <= auth_mod.PRESENTER_JOIN_MAX_USES:
@@ -2330,7 +3081,7 @@ class Api:
             self.auth.cancel_join(code)
             raise ApiError(401, "this device is no longer paired")
         if not full:
-            self.log("pvj-web: guest code made by presenter device %s (from %s), %d minutes, %d uses%s"
+            self.log("pvj-web: guest code made by operator device %s (from %s), %d minutes, %d uses%s"
                      % (device.get("id"), client, minutes, uses,
                         ", in the place of the one the %s made" % old["by"] if old else ""))
         return self._access_state(device)
@@ -2340,12 +3091,12 @@ class Api:
         cannot name a code by its digits, so it cannot use this to test guesses at the presenter code."""
         if not Auth.allows(device, "full"):
             if body.get("role") != "view" or "code" in body or "all" in body:
-                raise ApiError(403, "a presenter can end the guest code only (full access needed)")
+                raise ApiError(403, "an operator can end the guest code only (owner access needed)")
             if not self.auth.cancel_join_role("view"):
                 raise ApiError(404, "no such code")
             if self.pinscreen is not None:
                 self.pinscreen.hide(only=self.PRESENTER_ITEMS)      # a code that is gone is not left on the room screen
-            self.log("pvj-web: guest code ended by presenter device %s (from %s)" % (device.get("id"), client))
+            self.log("pvj-web: guest code ended by operator device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
         if body.get("all") is True:
             self.auth.cancel_join(None)
@@ -2371,7 +3122,7 @@ class Api:
         elif target in ("view", "live"):
             codes = {j["role"]: j["code"] for j in self.auth.list_joins()}
             if target not in codes:
-                raise ApiError(404, "make a %s code first" % ("guest" if target == "view" else "presenter"))
+                raise ApiError(404, "make a %s code first" % ("guest" if target == "view" else "operator"))
             text = "%s#code=%s" % (base, codes[target])
         else:
             raise bad("unknown QR code")
@@ -2395,7 +3146,7 @@ class Api:
         if not show:
             self.pinscreen.hide(only=only)
             if not full:
-                self.log("pvj-web: guest code taken off the room screen by presenter device %s (from %s)" % (device.get("id"), client))
+                self.log("pvj-web: guest code taken off the room screen by operator device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
         made = []           # the codes this very call made, to take back if the device turns out to be gone
         try:
@@ -2417,7 +3168,7 @@ class Api:
             self.pinscreen.hide(only=only)
             raise ApiError(401, "this device is no longer paired")
         if not full:
-            self.log("pvj-web: guest code put on the room screen for %d s by presenter device %s (from %s)%s"
+            self.log("pvj-web: guest code put on the room screen for %d s by operator device %s (from %s)%s"
                      % (body.get("seconds", 60), device.get("id"), client, "; a guest code was made for it" if made else ""))
         return self._access_state(device)
 
@@ -2461,8 +3212,43 @@ class Api:
         self._need_control("control-midi", self.midi)
         return self.midi.status()
 
+    @staticmethod
+    def _owner_action(name):
+        """A MIDI action only an Owner may put on a control, take off one or change (D80): one that does what an
+        Operator cannot do himself. Today: the two that draw an access code on the display (the "hold" actions)."""
+        spec = midi_mod.ACTIONS.get(name) if isinstance(name, str) else None
+        return bool(spec) and spec[0] == "hold"
+
+    def _owner_control(self, ctl):
+        """A control of a standard layout that is the Owner's: what it does, or what it does in a layer."""
+        does = [ctl.get("action")] + list((ctl.get("layers") or {}).values())
+        return any(isinstance(a, dict) and self._owner_action(a.get("action")) for a in does)
+
+    def _owner_numbers(self, current, source):
+        """The (kind, number) pairs a mapping for `source` must stay off for anyone but the Owner: where one of his
+        mappings sits (for any controller, on any channel) and where a standard layout has a control that shows an
+        access code (of that controller, or of every controller that is known for a mapping for any). A mapping for
+        one controller or one channel is matched before a general one, so a mapping there would switch his off
+        without touching it (the re-check of #120)."""
+        taken = {(e.get("kind"), e.get("number")) for e in current if self._owner_action(e.get("action"))}
+        for name in (sorted(self.midi.known_sources()) if source == "*" else [source]):
+            profile = self.midi.profile_of(name) if isinstance(name, str) else None
+            for ctl in (profile or {}).get("controls", []):
+                if self._owner_control(ctl):
+                    taken.add((ctl["send"]["type"], ctl["send"]["number"]))
+        return taken
+
+    OWNER_MAPPING = "a control that shows an access code is the owner's to set, change or remove (owner access needed)"
+
     def set_midi(self, body, device, client):
         self._need_control("control-midi", self.midi)
+        if not Auth.allows(device, "full") and ("standard" in body or ("controller" in body and "lights" not in body and "brightness" not in body)):
+            # an Operator edits the layout (D80), never a control that shows an access code: switching the standard
+            # layout of a controller on or off would add or remove such a control if its layout has one
+            profile = self.midi.profile_of(body.get("controller")) if isinstance(body.get("controller"), str) else None
+            if profile is None or any(self._owner_control(c) for c in profile["controls"]):
+                raise ApiError(403, "the standard layout of this controller has a control that shows an access code, "
+                                    "or the controller is not plugged in: switching it is the owner's (owner access needed)")
         known = self.midi.known_sources()
 
         def check(new, current):
@@ -2501,6 +3287,10 @@ class Api:
         drawn layout do something else, and {"reset": {"controller", "control"?}} goes back to the standard for one
         control or for the whole controller. Both only add or remove the person's own mappings."""
         self._need_control("control-midi", self.midi)
+        owner = Auth.allows(device, "full")
+
+        def owners(entries):            # the mappings an Operator leaves exactly as they are
+            return [e for e in entries if self._owner_action(e.get("action"))]
         with self.settings.lock:
             current = list(self.settings.data["control"]["midi"]["map"])
             try:
@@ -2512,6 +3302,8 @@ class Api:
                     profile = self.midi.profile_of(name)        # the layout the hub matched for the connected controller
                     if profile is None:
                         raise ApiError(404, "that controller is not plugged in, or has no built-in layout")
+                    if "set" in body and not owner and any(c["id"] == ask.get("control") and self._owner_control(c) for c in profile["controls"]):
+                        raise ApiError(403, self.OWNER_MAPPING)
                     if "set" in body:
                         changed = midi_mod.set_override(current, profile, name, ask.get("control"), ask.get("action"))
                     else:
@@ -2523,11 +3315,17 @@ class Api:
                         raise ApiError(404, "no such mapping")
                     changed = [e for e in current if e["id"] != body["remove"]]
                 elif body.get("clear") is True:
-                    changed = []
+                    changed = [] if owner else owners(current)       # an Operator's "clear" leaves the owner's
                 else:
                     raise bad("send add, remove or clear")
             except midi_mod.MidiError as e:
                 raise bad(str(e))
+            if not owner and owners(changed) != owners(current):
+                raise ApiError(403, self.OWNER_MAPPING)
+            if not owner:                   # nor a mapping of his own in front of one of the Owner's
+                for e in changed:
+                    if e not in current and (e.get("kind"), e.get("number")) in self._owner_numbers(current, e.get("source")):
+                        raise ApiError(403, self.OWNER_MAPPING)
             self.settings.data["control"]["midi"]["map"] = changed
             try:
                 self.settings.save()
@@ -2665,7 +3463,9 @@ class Api:
         return out
 
     def _routes(self):
-        # (method, path) -> (minimum role or None, handler)
+        # (method, path) -> (minimum role or None, handler). view: Guest, live: Operator, full: Owner (D80). The role
+        # is not the whole rule: Api.gate also holds controllers and support to policy.LEGACY_LIVE and lets a Guest
+        # use the forms in policy.GUEST while guest controls are open. A new route needs a row in tests/test_roles.py.
         return {
             ("GET", "/api/hello"): (None, self.hello),
             ("POST", "/api/pair"): (None, self.pair),
@@ -2677,17 +3477,20 @@ class Api:
             ("GET", "/api/theme"): ("view", self.get_theme),
             ("GET", "/api/osc"): ("view", self.get_osc),
             ("POST", "/api/osc"): ("full", self.set_osc),
+            ("GET", "/api/osc/messages"): ("full", self.osc_messages),
+            ("POST", "/api/osc/key"): ("full", self.osc_key),
             ("POST", "/api/play"): ("live", self.play),
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),
             ("POST", "/api/fadeout"): ("live", self.fadeout),
             ("POST", "/api/fadein"): ("live", self.fadein),
+            ("POST", "/api/fade"): ("live", self.fade),
             ("POST", "/api/testpattern"): ("live", self.test_pattern),
             ("POST", "/api/testtone"): ("live", self.test_tone),
             ("POST", "/api/media/info"): ("view", self.media_info),
-            ("POST", "/api/media/import"): ("full", self.import_usb),
+            ("POST", "/api/media/import"): ("live", self.import_usb),
             ("GET", "/api/media/import"): ("view", self.import_status),
-            ("POST", "/api/media/import/cancel"): ("full", self.import_cancel),
+            ("POST", "/api/media/import/cancel"): ("live", self.import_cancel),
             ("GET", "/api/system"): ("view", self.system_info),
             ("POST", "/api/system/reboot"): ("full", self.reboot),
             ("POST", "/api/system/poweroff"): ("full", self.poweroff),
@@ -2714,67 +3517,79 @@ class Api:
             ("GET", "/api/sync"): ("view", self.get_sync),
             ("POST", "/api/sync"): ("full", self.set_sync),
             ("GET", "/api/mapper"): ("view", self.get_mapper),
-            ("POST", "/api/mapper"): ("full", self.set_mapper),
+            ("POST", "/api/mapper"): ("live", self.set_mapper),
+            ("POST", "/api/mapper/remote"): ("full", self.mapper_controllers),
+            ("POST", "/api/mapper/nudge"): ("live", self.mapper_nudge),
             ("GET", "/api/shaders"): ("view", self.shaders.api_get),
-            ("POST", "/api/shaders"): ("full", self.shaders.api_set),
-            ("POST", "/api/shaders/play"): ("live", self.shaders.api_play),
+            ("POST", "/api/shaders"): ("live", self.shaders.api_set),
+            ("POST", "/api/shaders/play"): ("live", self.shader_play),
             ("POST", "/api/shaders/values"): ("live", self.shaders.api_values),
             ("POST", "/api/shaders/step"): ("live", self.shaders.api_step),
             ("POST", "/api/shaders/preset"): ("live", self.shaders.api_preset),
-            ("POST", "/api/shaders/presets"): ("full", self.shaders.api_presets),
+            ("POST", "/api/shaders/presets"): ("live", self.shaders.api_presets),
             ("POST", "/api/vibes"): ("live", self.vibes.api_vibes),
             ("GET", "/api/effects"): ("view", self.effects.api_get),
             ("POST", "/api/effects"): ("live", self.effects.api_put),
             ("POST", "/api/effects/values"): ("live", self.effects.api_values),
             ("POST", "/api/effects/step"): ("live", self.effects.api_step),
             ("POST", "/api/effects/preset"): ("live", self.effects.api_preset),
-            ("POST", "/api/effects/presets"): ("full", self.effects.api_presets),
-            ("POST", "/api/effects/library"): ("full", self.effects.api_library),
-            ("POST", "/api/effects/config"): ("full", self.effects.api_config),
+            ("POST", "/api/effects/presets"): ("live", self.effects.api_presets),
+            ("POST", "/api/effects/library"): ("live", self.effects.api_library),
+            ("POST", "/api/effects/config"): ("live", self.effects.api_config),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),
             ("GET", "/api/room"): ("view", self.room.api_get),
-            ("POST", "/api/room"): ("full", self.room.api_set),
+            ("POST", "/api/room"): ("live", self.room.api_set),
             ("POST", "/api/room/scene"): ("live", self.room.api_scene),
             ("POST", "/api/room/group"): ("live", self.room.api_group),
             ("GET", "/api/audio"): ("view", self.get_audio),
-            ("POST", "/api/audio"): ("full", self.set_audio),
+            ("POST", "/api/audio"): ("live", self.set_audio),
             ("GET", "/api/autostart"): ("view", self.get_autostart),
-            ("POST", "/api/autostart"): ("full", self.set_autostart),
+            ("POST", "/api/autostart"): ("live", self.set_autostart),
             ("POST", "/api/autostart/test"): ("live", self.test_autostart),
             ("GET", "/api/dmx"): ("full", self.get_dmx),
             ("POST", "/api/dmx"): ("full", self.set_dmx),
             ("GET", "/api/midi"): ("live", self.get_midi),          # a presenter may look at the layout; changing it is full
-            ("POST", "/api/midi"): ("full", self.set_midi),
-            ("POST", "/api/midi/learn"): ("full", self.midi_learn),
-            ("POST", "/api/midi/map"): ("full", self.midi_map),
-            ("POST", "/api/midi/lights"): ("full", self.midi_lights),
-            ("GET", "/api/ndi"): ("view", self.get_ndi),
+            ("POST", "/api/midi"): ("live", self.set_midi),               # the Operator's since D80 (the owner, 2026-10-10); a control
+            ("POST", "/api/midi/learn"): ("live", self.midi_learn),       # that shows an access code stays the Owner's, checked in
+            ("POST", "/api/midi/map"): ("live", self.midi_map),           # the handlers; the module's switch is the Owner's
+            ("POST", "/api/midi/lights"): ("live", self.midi_lights),
+            # NDI (D62, under D80): choosing a source the owner has allowed is running the room, the Operator's, through
+            # /api/play; the list is his too (a Guest has no page for it). Adding addresses the box asks on the
+            # network and the sound switch are system matters, the Owner's (and a support session's, as Streams: D63).
+            ("GET", "/api/ndi"): ("live", self.get_ndi),
             ("POST", "/api/ndi"): ("full", self.set_ndi),
             ("GET", "/api/streams"): ("view", self.get_streams),
             ("POST", "/api/streams"): ("full", self.set_streams),
             ("GET", "/api/schedule"): ("view", self.get_schedule),
-            ("POST", "/api/schedule"): ("full", self.set_schedule),
+            ("POST", "/api/schedule"): ("live", self.set_schedule),
             ("GET", "/api/network"): ("full", self.get_network),
             ("POST", "/api/network/plan"): ("full", self.plan_network),
             ("POST", "/api/network/apply"): ("full", self.apply_network),
             ("POST", "/api/network/confirm"): ("full", self.confirm_network),
             ("POST", "/api/network/revert"): ("full", self.revert_network),
             ("POST", "/api/network/scan"): ("full", self.scan_wifi),
-            ("POST", "/api/media/delete"): ("full", self.delete_media),
-            ("POST", "/api/media/rename"): ("full", self.rename_media),
-            ("POST", "/api/pads"): ("full", self.set_pad),
-            ("POST", "/api/theme"): ("full", self.set_theme),
+            ("POST", "/api/media/delete"): ("live", self.delete_media),
+            ("POST", "/api/media/rename"): ("live", self.rename_media),
+            ("POST", "/api/pads"): ("live", self.set_pad),
+            ("POST", "/api/theme"): ("live", self.set_theme),
             ("POST", "/api/theme/add"): ("full", self.add_theme),
             ("POST", "/api/theme/remove"): ("full", self.remove_theme),
-            ("POST", "/api/theme/export"): ("full", self.export_theme),
-            ("GET", "/api/devices"): ("full", self.devices),
-            ("POST", "/api/devices/invite"): ("full", self.invite),
-            ("POST", "/api/devices/revoke"): ("full", self.revoke),
+            ("POST", "/api/theme/export"): ("live", self.export_theme),
+            ("GET", "/api/devices"): ("live", self.devices),
+            ("POST", "/api/devices/invite"): ("live", self.invite),
+            ("POST", "/api/devices/revoke"): ("live", self.revoke),
             ("POST", "/api/pin/rotate"): ("full", self.rotate_pin),
             ("POST", "/api/pin/unlock"): ("full", self.unlock_pairing),
-            ("POST", "/api/player/restart"): ("full", self.stop_player),
+            ("POST", "/api/pin/show"): ("full", self.show_pin),           # the owner PIN, to the owner only (D77)
+            ("GET", "/api/recovery"): ("full", self.get_recovery),        # recovery codes and the stick (D81)
+            ("POST", "/api/recovery/codes"): ("full", self.make_recovery),
+            ("POST", "/api/recovery/cancel"): ("full", self.cancel_recovery),
+            ("POST", "/api/recovery/usb"): ("full", self.set_recovery_usb),
+            ("POST", "/api/logout"): (None, self.logout),                 # any role; None: a dead token is logged out already
+            ("POST", "/api/player/restart"): ("live", self.stop_player),
+            ("POST", "/api/guests"): ("live", self.set_guests),            # the lock on guest controls (D80)
         }
 
     @staticmethod
@@ -2783,6 +3598,59 @@ class Api:
             raise ApiError(401, "pair this device first")
         if not Auth.allows(device, role):
             raise ApiError(403, "this device may not do that (%s access needed)" % role)
+
+    MODULE_ROUTE = "/api/modules/*"          # how POST /api/modules/<id> is named in the policy lists
+
+    def gate(self, method, path, body, device, client, need=False, after=None):
+        """The one check every request passes (D80), also the paths the server answers outside the route table
+        (policy.OUTSIDE). Raises ApiError; returns the body the handler gets. In order: the support tunnel's rules;
+        the box's own callers and a support session below full stay inside policy.LEGACY_LIVE; the route's minimum
+        role; and for a Guest above his role, the guest controls (the lock, the forms, the limits, the confirm)."""
+        from . import support as support_mod
+        key = (method, path)
+        if need is False:
+            need = policy.OUTSIDE[key]
+        try:                      # requests through the support tunnel: only support's login, never some things
+            self.support.guard(method, path, device, client)
+        except support_mod.SupportApiError as e:
+            raise ApiError(e.status, e.message)
+        if need is None:
+            return body
+        if device is None:
+            raise ApiError(401, "pair this device first")
+        if method == "POST" and re.match(r"^/api/modules/([^/]+)$", path):
+            key = (method, self.MODULE_ROUTE)
+        if policy.held_to_legacy(device) and key not in policy.LEGACY_LIVE:
+            raise ApiError(403, "this cannot be done from a controller or a support session of this kind")
+        if Auth.allows(device, need):
+            return body
+        if policy.is_guest(device) and need == "live" and key in policy.GUEST:
+            try:
+                body, finish = self.guests.admit(method, path, body, device, client)
+                if after is None:                   # nobody will say how it went (no path outside the route table is a guest's)
+                    finish(False)
+                    raise ApiError(403, "a guest may not do that (operator access needed)")
+                after.append(finish)
+                return body
+            except policy.Refused as e:
+                err = ApiError(e.status, e.message, e.retry_after)
+                err.extra = e.extra
+                raise err
+        raise ApiError(403, "this device may not do that (%s access needed)" % policy.NAMES[need].lower())
+
+    def set_guests(self, body, device, client):
+        """{"locked": true | false}: an Operator or an Owner locks or opens guest controls for the whole box. Kept in
+        the settings; a guest's next request sees it."""
+        locked = body.get("locked")
+        if not isinstance(locked, bool) or len(body) != 1:
+            raise bad("send locked: true or false")
+        try:
+            out = self.guests.set_locked(locked)
+        except OSError as e:
+            raise ApiError(500, "could not save: %s" % (e.strerror or e))
+        self.log("pvj-web: guest controls %s by device %s (%s, from %s)"
+                 % ("locked" if locked else "opened", device.get("id"), device.get("role"), client))
+        return {"guest_controls": out}
 
     def handle(self, method, path, body, device, client):
         try:
@@ -2795,19 +3663,18 @@ class Api:
                     known = any(p == path for (_, p) in self.routes()) or bool(m)
                     raise ApiError(405 if known else 404, "method not allowed" if known else "not found")
                 need, handler = route
-            from . import support as support_mod
-            try:                      # requests through the support tunnel: only support's login, never some things
-                self.support.guard(method, path, device, client)
-            except support_mod.SupportApiError as e:
-                raise ApiError(e.status, e.message)
-            if need is not None:
-                if device is None:
-                    raise ApiError(401, "pair this device first")
-                if not Auth.allows(device, need):
-                    raise ApiError(403, "this device may not do that (%s access needed)" % need)
-            return 200, handler(body if isinstance(body, dict) else {}, device, client)
+            after = []                # for a guest's action: what to do once it is known whether it happened (policy.admit)
+            body = self.gate(method, path, body if isinstance(body, dict) else {}, device, client, need, after)
+            done = False
+            try:
+                out = handler(body, device, client)
+                done = True
+            finally:
+                for finish in after:
+                    finish(done)
+            return 200, out
         except ApiError as e:
-            payload = {"error": e.message}
+            payload = dict(getattr(e, "extra", None) or {}, error=e.message)
             if e.retry_after:
                 payload["retry_after"] = e.retry_after
             return e.status, payload

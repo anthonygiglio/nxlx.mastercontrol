@@ -876,7 +876,8 @@ class NdiApiTest(ServerBase):
 
     def test_the_page_gets_sources_the_runtime_and_how_to_get_it(self):
         self.enable()
-        st, body, _ = self.call("GET", "/api/ndi", token=self.invite("view"))
+        self.assertEqual(self.call("GET", "/api/ndi", token=self.invite("view"))[0], 403)     # a Guest has no page for it (D80)
+        st, body, _ = self.call("GET", "/api/ndi", token=self.invite("live"))
         self.assertEqual(st, 200)
         self.assertEqual([s["name"] for s in body["sources"]], ["MAD (Out)", "RESOLUME (Output)"])
         self.assertEqual((body["helper"], body["runtime"]["loaded"], body["playing"], body["addresses"]), (True, True, None, []))
@@ -1562,6 +1563,60 @@ class LaterChoiceWinsTest(NdiApiTest):
         t = self.api.ndi.ticket()
         self.api.ndi.stop()                                              # and so does a stop, with nothing playing
         self.assertFalse(self.api.ndi.still(t))
+
+    def test_the_capture_helper_is_stopped_when_an_ndi_source_plays_and_the_other_way_round(self):
+        """Player.pipe_is (2026-10-11): each live input has a pipe of its own. "A pipe plays" alone (pipe_playing) left
+        the capture helper writing into its pipe while the NDI pipe was what played, and the other way round."""
+        from pvj import locks as locks_mod
+        self.enable()
+
+        class Capture:
+            lock = locks_mod.make("capture", reentrant=True)
+            fifo = os.path.join(tempfile.gettempdir(), "capture-never-made.fifo")
+            stopped = 0
+
+            def stop(self):
+                Capture.stopped += 1
+
+            def status(self, devices=True):
+                return {"current": None}
+        cap = self.api.capture = Capture()
+        self.player.pipe_playing = True
+        self.player.pipe_is = lambda path: path == self.service.fifo        # what the real player says once the NDI pipe is loaded
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.assertEqual(cap.stopped, 1, "the capture helper was left alone because 'a pipe plays'")
+        self.assertEqual(self.api.ndi.current["id"], self.rid)
+        self.assertFalse(self.api._stop_ndi())                               # its own pipe is what plays: left alone
+        self.assertEqual(self.api.ndi.current["id"], self.rid)
+        self.player.pipe_is = lambda path: path == cap.fifo                  # now the capture input's pipe was loaded
+        self.api._stop_capture()
+        self.assertEqual(cap.stopped, 1, "the capture helper is what plays and was stopped all the same")
+        self.assertTrue(self.api._stop_ndi())                                # and the NDI source is let go
+        self.assertIsNone(self.api.ndi.current)
+
+    def test_a_live_source_is_cut_to_a_transition_on_its_way_is_ended_and_the_load_is_under_the_players_lock(self):
+        """D71 with D62: an NDI source is never crossfaded in. The play goes through _as_newest, which ends a transition
+        on its way and loads under the player's lock; the ticket is looked at under the same lock (`ready`)."""
+        self.enable()
+        ended, under = [], []
+        real = self.api.transitions.end
+
+        def end(why="ended", newer=False):
+            ended.append((why, newer))
+            return real(why, newer)
+        self.api.transitions.end = end
+        lock = self.player._lock
+
+        def play_pipe(*args):
+            under.append(lock._is_owned() if hasattr(lock, "_is_owned") else True)
+            self.player.calls.append(("play_pipe",) + args)
+        self.player.play_pipe = play_pipe
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.assertIn(("another play", True), ended)
+        self.assertEqual(under, [True], "the pipe was loaded outside the player's lock")
+        self.assertEqual(self.api.ndi.current["id"], self.rid)
 
 
 for _name in [n for n in dir(NdiApiTest) if n.startswith("test_") and n not in LaterChoiceWinsTest.__dict__]:

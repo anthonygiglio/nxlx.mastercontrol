@@ -177,6 +177,6 @@ class ScheduleApiTest(ServerBase):
         self.call("POST", "/api/modules/scheduler", {"enabled": True}, token=self.full)
         live, view = self.pair("live"), self.pair("view")
         self.assertEqual(self.call("GET", "/api/schedule", token=view)[0], 200)
-        for token in (live, view):
-            self.assertEqual(self.call("POST", "/api/schedule", {"enabled": True, "entries": []}, token=token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/schedule", {"enabled": True, "entries": []}, token=view)[0], 403)
+        self.assertEqual(self.call("POST", "/api/schedule", {"enabled": True, "entries": []}, token=live)[0], 200)     # the Operator's since D80
         self.assertEqual(self.call("GET", "/api/schedule")[0], 401)

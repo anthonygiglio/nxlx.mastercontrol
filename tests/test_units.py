@@ -6,6 +6,7 @@ import glob
 import os
 import re
 import unittest
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 

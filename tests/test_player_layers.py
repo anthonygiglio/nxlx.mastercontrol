@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from pvj.player import Player, PlayerError
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 CARRIER = "av://lavfi:color=c=black:size=64x36:rate=30,format=rgb0"
 

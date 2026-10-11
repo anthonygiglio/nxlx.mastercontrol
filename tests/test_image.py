@@ -4,6 +4,7 @@
 import os
 import subprocess
 import unittest
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 IMAGE = os.path.join(os.path.dirname(__file__), "..", "image")
 

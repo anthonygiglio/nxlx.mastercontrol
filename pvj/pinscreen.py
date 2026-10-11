@@ -27,7 +27,7 @@ import re
 import socket
 import threading
 
-from . import qr
+from . import locks, qr
 from .player import PlayerError
 
 SAFE = re.compile(r"[^A-Za-z0-9 .:/_\-]")
@@ -52,8 +52,8 @@ QR_REFRESH = 15.0
 QR_MAX_SCALE = 16                                # pixels per module; bounds the bitmap whatever size the player reports                                # a player that restarted has lost its overlays: draw them again after this long
 MANUAL_ITEMS = ("pin", "view", "live", "address")    # "address": only where to open the panel
 MANUAL_MIN_SECONDS, MANUAL_MAX_SECONDS, MANUAL_DEFAULT_SECONDS = 10, 3600, 60
-LABELS = {"pin": "Full access PIN", "view": "Guest, watch only, code", "live": "Presenter, play and mix, code"}
-CONTROLLER_LABELS = {"join": "One-time presenter code", "owner": "One-time full access code"}
+LABELS = {"pin": "Full access PIN", "view": "Guest, watch only, code", "live": "Operator, runs the room, code"}
+CONTROLLER_LABELS = {"join": "One-time guest code", "owner": "One-time full access code"}
 NOTICE_SECONDS = 8            # a line that says why no code came (too many this hour) stays this long
 NOTICES = {"limit": "No more codes from a controller for now. Try again in %d minutes.",
            "owner off": "Full access codes from a controller are switched off on this box.",
@@ -74,7 +74,7 @@ class PinScreen:
         self.manual = None       # {"until": t, "items": [...]} while shown on request
         self._controller_up = False     # a controller code (or a notice about one) was drawn at the last tick
         self._notice = None      # (until, text): why a hold on a controller gave no code, for a few seconds
-        self._lock = threading.RLock()
+        self._lock = locks.make("pinscreen", reentrant=True)
         self._qr_sig = None      # what the QR overlays currently show (so they are only redrawn when it changes)
         self._qr_stale = False   # a QR code could not be taken off (the player did not answer): tried again each tick
         self._qr_at = 0.0
@@ -178,9 +178,9 @@ class PinScreen:
             out.append("%s  %s" % (LABELS[item], value))
         qrs = [r for r in ("view", "live") if r in m["items"]]
         if len(qrs) == 2:
-            out.append("Scan: guest QR on the left, presenter QR on the right")
+            out.append("Scan: guest QR on the left, operator QR on the right")
         elif qrs:
-            out.append("Scan the QR code to join as %s" % ("a guest" if qrs[0] == "view" else "a presenter"))
+            out.append("Scan the QR code to join as %s" % ("a guest" if qrs[0] == "view" else "an operator"))
         out.append("Hides in %d s" % max(0, int(m["until"] - self._clock())))
         return out
 
@@ -207,16 +207,54 @@ class PinScreen:
             self._notice = (self._clock() + NOTICE_SECONDS, text % minutes if "%d" in text else text)
             self.tick()
 
+    def _controller_label(self, kind):
+        pairs = getattr(self.auth, "controller_pairs", None)
+        if kind == "join" and pairs and pairs() == "live":      # the owner chose that the join kind pairs an Operator (D80)
+            return "One-time operator code"
+        return CONTROLLER_LABELS[kind]
+
     def controller_lines(self, c):
         kind, digits, left = c
         addr = ["http://%s.local/" % clean(self.hostname)] if self.hostname else []
         addr += ["http://%s/" % clean(a) for a in self.addresses()[:1]]
         out = ["nxlx.mastercontrol", "Open " + "  or  ".join(addr) if addr else "Open the panel in a browser",
-               "%s  %s" % (CONTROLLER_LABELS[kind], clean(digits)),
+               "%s  %s" % (self._controller_label(kind), clean(digits)),
                "Scan the QR code or type it in the 6 digit code field" if kind == "join" else "Type it in the 6 digit code field",
                "Works once. Hides in %d s. Press the control again to hide it now" % left]
         locked = getattr(self.auth, "pairing_locked", lambda: 0)()
         if locked:                                  # wrong guesses locked pairing: the code will be refused until then
+            out.append(LOCKED_LINE % -(-locked // 60))
+        return out
+
+    # --- the PIN for a recovery stick (D81) ----------------------------------------------------------------
+    def _recovery(self):
+        """{"pin", "seconds_left", ...} while the PIN is on the screen for a stick, else None. The poll that notices
+        a stick runs here too, as often as the display is drawn; the disk is read by the stick's own thread
+        (recovery.Recovery.start), never under this lock."""
+        r = getattr(self.api, "recovery", None)
+        if r is None:
+            return None
+        try:
+            r.poll()
+        except Exception as e:                      # a drive that vanished mid-scan must not stop the display
+            self.log("pvj-web: recovery stick check: %s" % e)
+        return r.active()
+
+    def recovery_notice(self, name):
+        """The PIN for a stick had its use: off the display now, and "The PIN was used by <name>" in its place for
+        STICK_NOTICE_SECONDS, so the owner at the box sees who took it (D81; review of #122, M1)."""
+        from . import recovery as recovery_mod
+        with self._lock:
+            # quoted and short, so a device named like a PIN cannot make this line read like one (review of #122)
+            self._notice = (self._clock() + recovery_mod.STICK_NOTICE_SECONDS, 'The PIN was used by "%s"' % clean(str(name or "a device"))[:24])
+            return self.tick()
+
+    def recovery_lines(self, active):
+        addr = ["http://%s.local/" % clean(self.hostname)] if self.hostname else []
+        addr += ["http://%s/" % clean(a) for a in self.addresses()[:1]]
+        out = [clean(line) for line in self.api.recovery.lines(active, addr)]
+        locked = getattr(self.auth, "pairing_locked", lambda: 0)()
+        if locked:
             out.append(LOCKED_LINE % -(-locked // 60))
         return out
 
@@ -315,6 +353,16 @@ class PinScreen:
             if self.manual is not None and m is None:        # a request just ran out: take it off the screen
                 self.manual = None
                 self.clear()
+            rec = self._recovery()
+            if rec:                                          # the PIN for a recovery stick: before anything else (D81)
+                self.draw_qr([])
+                self._controller_up = True                   # so that it is cleared the moment it ends, like a controller code
+                try:
+                    self.api.player.ipc.request("show-text", "\n".join(self.recovery_lines(rec)), SHOW_MS)
+                except PlayerError:
+                    return False
+                self.shown += 1
+                return True
             c = self._controller()
             notice = self._notice[1] if self._notice and self._clock() < self._notice[0] else None
             if c or notice:                                  # a code from a controller, before anything else

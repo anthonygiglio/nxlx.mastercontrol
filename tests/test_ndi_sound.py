@@ -895,7 +895,7 @@ class SettingsSoundTest(unittest.TestCase):
 
     def test_no_new_schema_was_needed(self):
         from pvj import settings
-        self.assertEqual(settings.SCHEMA, 15)
+        self.assertEqual(settings.SCHEMA, 14)                                # and since 2026-10-11 the NDI key itself needs none either
         self.assertEqual(settings.default_settings()["ndi"], {"addresses": []})
 
 
@@ -1139,7 +1139,7 @@ class PlayerSoundTest(unittest.TestCase):
         p, sent = self.player(refuse=("old",))
         p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
         self.assertEqual(set(p._pipe_globals), set(Player.MKV_ONLY) | {"demuxer", "cache", "demuxer-readahead-secs", "demuxer-max-bytes"})
-        self.assertEqual(sent[-2], ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace"))
+        self.assertEqual([a for a in sent if a[0] == "loadfile"][-1], ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace"))   # then pause off, then the pid the pipe was loaded into (pipe_is)
 
     def test_the_players_queue_is_sized_from_the_picture_and_the_longest_block_of_sound(self):
         """M4. mpv's limit is one total for picture and sound; the sound trails the picture by a block's length."""

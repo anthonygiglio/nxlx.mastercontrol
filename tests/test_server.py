@@ -4,26 +4,33 @@ import http.client
 import json
 import os
 import struct
+import shutil
 import tempfile
 import threading
 import time
 import unittest
 from http.server import ThreadingHTTPServer
 
-from pvj import server, themes as themes_mod
+from pvj import locks, server, themes as themes_mod
 from pvj.api import Api
 from pvj.auth import Auth
 from pvj.modules import Registry
 from pvj.osc import OscManager
 from pvj.settings import Settings
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 class FakePlayer:
+    # the calls for which pvj.player.Player takes its own lock: the fake takes one of the same place in the order
+    # of the locks (pvj/locks.py), so that what is tested against it keeps to the order as against the real one
+    LOCKED = ("set_shaders", "set_mapping_mode", "play_pipe", "clear")
+
     def __init__(self, rundir):
         self.rundir = rundir
         self.calls = []
         self.plays = []
         self.running = False
+        self._lock = locks.make("player", reentrant=True)
 
     TEST_PATTERN = "av://lavfi:smptehdbars=size=1920x1080:rate=25"
 
@@ -36,13 +43,18 @@ class FakePlayer:
         return {"running": self.running, "path": None}
 
     def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
-        self.calls.append(("play", paths, loop, spawn))
-        self.plays.append({"paths": paths, "loop": loop, "ending": ending or ("loop" if loop else "stop"), "image_seconds": image_seconds})
-        self.running = True
+        with self._lock:
+            self.calls.append(("play", paths, loop, spawn))
+            self.plays.append({"paths": paths, "loop": loop, "ending": ending or ("loop" if loop else "stop"), "image_seconds": image_seconds})
+            self.running = True
 
     def __getattr__(self, name):
         if name in ("set_shaders", "set_mapping_mode", "pause", "seek", "seek_to", "playlist_step", "shuffle", "flip", "overlay_remove", "overlay_file", "play_pipe", "speed", "volume", "opacity", "size", "position", "rotate", "loop", "mute", "clear", "volume_step"):
             def call(*args):
+                if name in self.LOCKED:
+                    with self._lock:
+                        self.calls.append((name,) + args)
+                    return None
                 self.calls.append((name,) + args)
                 return True if name in ("pause", "playlist_step") else None
             return call
@@ -57,6 +69,7 @@ class FakePlayer:
 class ServerBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)      # last of the cleanups, so after the server stopped (D69)
         self.media = os.path.join(self.tmp, "video")
         os.makedirs(self.media)
         for n in ("a.mp4", "b.mov", ".hidden.mp4", "notes.txt"):
@@ -199,13 +212,17 @@ class ServerTest(ServerBase):
         st, body, _ = self.call("POST", "/api/devices/invite", {"name": "tech", "role": "live"}, token=full)
         live = body["token"]
         self.assertEqual(self.call("GET", "/api/status", token=view)[0], 200)
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=view)[0], 403)
         self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=live)[0], 200)
         for path, body in (("/api/pads", {"bank": 0, "index": 0, "label": "x", "file": "a.mp4"}),
                            ("/api/theme", {"name": "light"}), ("/api/modules/mapper", {"enabled": False}),
                            ("/api/devices/invite", {"name": "x", "role": "view"}), ("/api/pin/rotate", {})):
-            self.assertEqual(self.call("POST", path, body, token=live)[0], 403, path)
-        self.assertEqual(self.call("GET", "/api/devices", token=live)[0], 403)
+            self.assertEqual(self.call("POST", path, body, token=view)[0], 403, path)
+            # the Operator (D80): everything here but the two that are system critical
+            self.assertEqual(self.call("POST", path, body, token=live)[0], 403 if path in ("/api/modules/mapper", "/api/pin/rotate") else 200, path)
+        self.assertEqual(self.call("GET", "/api/devices", token=view)[0], 403)
+        self.assertEqual([d["role"] for d in self.call("GET", "/api/devices", token=live)[1]["devices"]], ["view", "live", "view"])
         self.assertEqual(self.call("POST", "/api/devices/invite", {"name": "x", "role": "full"}, token=full)[0], 400)
 
     def test_guest_link_session_and_revoke(self):
@@ -250,7 +267,9 @@ class ServerTest(ServerBase):
     def test_stop_volume_step_and_legacy_presets(self):
         token, _ = self.pair()
         self.assertEqual(self.call("POST", "/api/control", {"action": "stop"}, token=token)[0], 200)
-        self.assertEqual(self.player.calls[-1], ("clear",))
+        # the screen is cleared, and then the picture's level is put back to what the mix says (D71: a clip that was
+        # on its way down a dip must not leave the next thing dark)
+        self.assertEqual(self.player.calls[-2:], [("clear",), ("opacity", 255)])
         self.assertEqual(self.call("POST", "/api/control", {"action": "volume_step", "value": -10}, token=token)[0], 200)
         self.assertEqual(self.player.calls[-1], ("volume_step", -10.0))
         self.assertEqual(self.call("POST", "/api/control", {"action": "volume_step", "value": 99}, token=token)[0], 400)
@@ -661,8 +680,9 @@ class MediaTest(MediaBase):
         self.assertEqual(sorted(os.listdir(self.media)), sorted([".hidden.mp4", "a.mp4", "b.mov", "link.mp4", "notes.txt"]))
 
     def test_only_full_devices_with_the_header_may_upload(self):
+        """An Operator uploads too since D80 (tests/test_roles.py); here `live` is a guest, who never does."""
         full, _ = self.pair()
-        _, body, _ = self.call("POST", "/api/devices/invite", {"name": "tech", "role": "live"}, token=full)
+        _, body, _ = self.call("POST", "/api/devices/invite", {"name": "guest", "role": "view"}, token=full)
         live = body["token"]
         self.assertEqual(self.upload("x.mp4", b"data", live)[0], 403)
         self.assertEqual(self.upload("x.mp4", b"data", None)[0], 401)
@@ -728,7 +748,7 @@ class MediaTest(MediaBase):
             st, _, _ = self.call("POST", "/api/media/delete", {"name": name}, token=token)
             self.assertIn(st, (400, 404), repr(name))
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "secret.mp4")))  # the symlink target is safe
-        _, body, _ = self.call("POST", "/api/devices/invite", {"name": "tech", "role": "live"}, token=token)
+        _, body, _ = self.call("POST", "/api/devices/invite", {"name": "guest", "role": "view"}, token=token)     # an Operator deletes since D80
         self.assertEqual(self.call("POST", "/api/media/delete", {"name": "b.mov"}, token=body["token"])[0], 403)
 
 
@@ -1018,3 +1038,182 @@ class HostileClientTest(ServerBase):
             c.settimeout(2)
             self.assertEqual(c.recv(1024), b"")
         self.assertEqual(self.call("GET", "/api/hello")[0], 200)  # capacity is back
+
+
+class ManyAtOnceTest(ServerBase):
+    """Several browsers opening the panel in the same second: every file arrives (D68). A browser opens six
+    connections at once and every request is its own connection, so three browsers ask for eighteen while the
+    kernel, asked for socketserver's queue of five, kept about five waiting: macOS reset the rest; Linux, as
+    documented, drops their handshake and they ask again about a second later.
+
+    What each test proves, measured with the queue put back to 5 (2026-10-08). On the dev Mac all four failed (the
+    one about the cap in two runs of three). On CI's Linux (Ubuntu 24.04, Python 3.12 and 3.9; a throwaway branch,
+    the test of the two numbers skipped) one of the three that test behaviour failed, on both: the forty waiting
+    connections, 34 and 33 of which had not connected after half a second. The six browsers passed there, in 7.3 s
+    and 8.8 s where the same test takes 1.3 s with the queue at 128, which fits handshakes dropped and sent again but proves nothing by itself; the
+    test of the cap passed, as it must, since it is about the cap and not the queue. So on Linux the queue is held
+    by the forty connections alone, and on the Pi by nothing: none of this was run there."""
+
+    PATHS = ("/", "/app.js", "/api/hello")
+
+    def serve(self, start=True, **kw):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.httpd = server.PvjServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, self.web, max_lifetime=5.0), **kw)
+        self.port = self.httpd.server_address[1]
+        self.addCleanup(self.httpd.server_close)
+        if start:
+            self.start()
+
+    def start(self):
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.shutdown)
+
+    def connect(self, timeout=5.0):
+        import socket
+        c = socket.socket()
+        c.settimeout(timeout)
+        try:
+            c.connect(("127.0.0.1", self.port))
+        except OSError as e:
+            c.close()
+            return None, "no connection (%s)" % type(e).__name__
+        return c, None
+
+    def answer(self, c, path):
+        """What came back on an open connection: the status, or a few words on what went wrong."""
+        try:
+            c.sendall(("GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % (path, self.port)).encode())
+            data = b""
+            while True:
+                chunk = c.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+        except OSError as e:
+            return "cut off (%s)" % type(e).__name__
+        finally:
+            c.close()
+        return data.split(b" ", 2)[1].decode() if data.startswith(b"HTTP/") else "no answer"
+
+    def get(self, path):
+        c, bad = self.connect()
+        return bad or self.answer(c, path)
+
+    def test_the_queue_is_longer_than_a_room_of_browsers_and_the_cap_is_as_it_was(self):
+        # Two numbers held so that changing either is a deliberate act. This proves no behaviour: what a short queue
+        # does is in the three tests below.
+        import inspect
+        self.assertEqual(server.PvjServer.request_queue_size, 128)
+        self.assertEqual(inspect.signature(server.PvjServer.__init__).parameters["max_connections"].default, 64)
+
+    def test_six_browsers_at_once_all_get_every_file(self):
+        # Tells a queue of 5 from 128 on macOS, where the connection that does not fit is reset (measured: 196 of
+        # 810 answered). On CI's Linux it passed at 5 as well, only slower (7.3 s and 8.8 s against 1.3 s): a
+        # dropped handshake is sent again within the 5 s each connection is given here. It is not made stricter by
+        # a limit on time, which a slow runner would trip; on Linux the next test is the one that tells.
+        self.serve()
+        got, lock = {}, threading.Lock()
+
+        def browser():
+            for _ in range(15):
+                todo = list(self.PATHS) * 3
+
+                def worker():
+                    while True:
+                        with lock:
+                            if not todo:
+                                return
+                            path = todo.pop()
+                        out = self.get(path)
+                        with lock:
+                            got[out] = got.get(out, 0) + 1
+                six = [threading.Thread(target=worker) for _ in range(6)]
+                [t.start() for t in six]
+                [t.join() for t in six]
+        browsers = [threading.Thread(target=browser) for _ in range(6)]
+        [t.start() for t in browsers]
+        [t.join() for t in browsers]
+        self.assertEqual(got, {"200": 6 * 15 * 9})
+
+    def test_forty_connections_wait_their_turn_while_the_server_is_busy(self):
+        # The server is not taking connections yet (as when its loop is busy with the one before): forty arrive.
+        # With a queue of five a Linux kernel finishes six handshakes and drops the rest, to be sent again after
+        # about a second (as documented), which the half second here does not wait for. Measured on CI's Linux
+        # with the queue at 5 (Ubuntu 24.04, 2026-10-08): this test failed on Python 3.12 and on 3.9, with 34 and 33
+        # of the 40 "no connection" (a timeout); on the Mac five to twelve of the forty were reset. Not measured on
+        # the Pi. Then the server starts, and each of them is answered.
+        self.serve(start=False)
+        conns = [None] * 40
+
+        def arrive(i):
+            conns[i] = self.connect(timeout=0.5)
+        ts = [threading.Thread(target=arrive, args=(i,)) for i in range(40)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.addCleanup(lambda: [c.close() for c, _ in conns if c])
+        self.assertEqual([bad for _, bad in conns if bad], [])
+        self.start()
+        got = {}
+        for c, _ in conns:
+            c.settimeout(5.0)
+            out = self.answer(c, "/api/hello")
+            got[out] = got.get(out, 0) + 1
+        self.assertEqual(got, {"200": 40})
+
+    def test_a_longer_queue_lets_nobody_past_the_cap(self):
+        # Three connections that say nothing hold the three places; thirty more arrive at once. None of them is
+        # served and none is left waiting: each is refused at once (a 503, or the connection is closed on it).
+        # This is about the cap, which the longer queue must not loosen. It does not tell a queue of 5 from 128 on
+        # Linux (it passed there at 5), and on the Mac it failed at 5 in two runs of three.
+        self.serve(max_connections=3)
+        idle = [self.connect()[0] for _ in range(3)]
+        self.addCleanup(lambda: [c.close() for c in idle])
+        time.sleep(0.2)
+        got, lock = {}, threading.Lock()
+
+        def one():
+            t = time.monotonic()
+            out = self.get("/api/hello")
+            with lock:
+                got[out] = got.get(out, 0) + 1
+                got["slow"] = got.get("slow", 0) + (time.monotonic() - t > 2.0)
+        ts = [threading.Thread(target=one) for _ in range(30)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(got.get("200", 0), 0, got)
+        self.assertEqual(got["slow"], 0, got)
+        self.assertEqual(sum(n for out, n in got.items() if out == "503" or out.startswith(("cut off", "no answer"))), 30, got)
+
+    def test_a_thread_that_cannot_start_gives_its_place_back(self):
+        # Older than D68, found by its review: the place at the cap is taken before the thread is started and was
+        # given back only by the thread. If the system has no thread to give (RuntimeError from Thread.start), the
+        # place was gone for good. With one place: the connection whose thread fails is closed unanswered, and the
+        # next one is served, where it used to get the cap's 503 for as long as the service ran.
+        from unittest import mock
+        self.serve(max_connections=1)
+        self.httpd.handle_error = lambda request, client_address: None      # socketserver would print the traceback
+        real, failed = threading.Thread, []
+
+        class NoThread(real):
+            def start(self):
+                if getattr(getattr(self, "_target", None), "__name__", "") == "process_request_thread" and not failed:
+                    failed.append(self)
+                    raise RuntimeError("can't start new thread")
+                return super().start()
+        with mock.patch.object(threading, "Thread", NoThread):
+            first = self.get("/api/hello")
+        self.assertEqual(len(failed), 1)
+        self.assertIn(first.split(" (")[0], ("cut off", "no answer"))
+        # A place is given back by the thread after it has closed the connection, so the client has its answer a
+        # moment before the place is free. With one place, a request sent straight after an answered one can meet
+        # the cap's 503 (seen in CI on both Pythons in one run, after three runs that passed). So each request may ask again for two
+        # seconds; a place that was gone for good, the fault this test is about, answers 503 for ever and still fails.
+        def served():
+            end = time.monotonic() + 2.0
+            while True:
+                out = self.get("/api/hello")
+                if out != "503" or time.monotonic() > end:
+                    return out
+                time.sleep(0.02)
+        self.assertEqual([served() for _ in range(3)], ["200", "200", "200"])

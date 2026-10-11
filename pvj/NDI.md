@@ -168,7 +168,7 @@ If the library is taken away by hand on a box that is set up, the page says "The
 | `POST /api/ndi` `{"action": "sound", "on": true}` | full | Play a source's sound with its picture, or not |
 | `POST /api/play` `{"ndi": "<id>"}` | live | Show a source. The id comes from `GET /api/ndi`; a name is never taken |
 
-Settings: `"ndi": {"addresses": []}` and, once someone has used the switch, `"sound": true` or `false` (schema 15; 14 is the controller code's; sound needed no new schema, a file without the key means on). The switch is the module `inputs-ndi` (off by default, D43).
+Settings: `"ndi": {"addresses": []}` and, once someone has used the switch, `"sound": true` or `false` (no schema change since 2026-10-11: the key is read with defaults everywhere, as `room` is, so a file from this branch loads on master and a master file loads here; the branch had bumped to 15 before, and the test Pi keeps one such file as a backup; sound needed no new key either, a file without it means on). The switch is the module `inputs-ndi` (off by default, D43).
 
 **On a box that is not set up** the routes answer cleanly and at once: `GET /api/ndi` gives `"setup": false`, `"helper": false`, no sources and the command; the addresses can be added and removed (they are plain settings, kept for when the box is set up); `POST /api/play` with an NDI source answers 409, "NDI is not set up on this box", with the command. The helper's socket is never tried there.
 

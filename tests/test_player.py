@@ -10,6 +10,7 @@ import unittest
 
 from pvj import player
 from pvj.player import Player, PlayerError, expand_media
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 HEADLESS = ["--vo=null", "--ao=null"]
 SRC = "av://lavfi:testsrc=size=160x120:rate=25"

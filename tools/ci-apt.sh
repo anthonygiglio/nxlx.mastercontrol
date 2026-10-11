@@ -16,6 +16,19 @@ set -u
 ATTEMPTS=${CI_APT_ATTEMPTS:-3}
 EACH=${CI_APT_SECONDS:-90}
 OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=60"
+# After a failed attempt, ask Ubuntu's own archive instead of the runner's cloud mirror. On 2026-10-08 one runner
+# failed all three attempts on azure.archive.ubuntu.com (the lists came at once, the packages at a crawl), so
+# trying the same mirror again was no cure. What an attempt had already downloaded stays in apt's cache, so the
+# next attempt carries on from there. Only the files apt reads its mirrors from are touched, and only on a runner.
+other_mirror() {
+    for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+        [ -f "$f" ] || continue
+        if grep -q 'azure\.archive\.ubuntu\.com' "$f"; then
+            echo "ci-apt: $f: azure.archive.ubuntu.com replaced by archive.ubuntu.com"
+            sudo sed -i 's|//azure\.archive\.ubuntu\.com/|//archive.ubuntu.com/|g' "$f"
+        fi
+    done
+}
 n=1
 while :; do
     echo "ci-apt: attempt $n of $ATTEMPTS: $*"
@@ -27,5 +40,6 @@ while :; do
     fi
     [ "$n" -lt "$ATTEMPTS" ] || { echo "ci-apt: gave up after $ATTEMPTS attempts" >&2; exit 1; }
     n=$((n + 1))
+    other_mirror
     sleep 5
 done

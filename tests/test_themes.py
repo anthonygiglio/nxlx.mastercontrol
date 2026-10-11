@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 from pvj import themes
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 SIGNAL = themes.load_themes()["signal"]
 SAMPLE = os.path.join(os.path.dirname(__file__), "..", "tools", "theme-samples", "soft-room.json")

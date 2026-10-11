@@ -24,6 +24,7 @@ from .player import PlayerError
 MODES = ("off", "file", "all", "slideshow", "pad", "usb", "preset", "vibes")
 USB_DEBOUNCE = 10.0         # seconds: a drive must be gone this long to count as plugged in again
 AUDIO_CHECK_EVERY = 5      # ticks (2 s each): the sound output is re-checked about every 10 seconds
+LEVEL_TRIES = 5            # ticks: how often the picture's level is offered to a restarted player before it is given up
 MAX_DELAY = 120
 
 
@@ -98,6 +99,7 @@ class Autostart:
         self.interval = interval
         self.seen_pid = None
         self._ticks = 0
+        self._level_owed = 0        # tries left to put the picture's level back on the player that was seen last
         self._usb_seen = None       # USB drives with clips at the last look (mode usb)
         self._usb_gone = {}         # label -> when it was last seen to disappear
         self._usb_last_seen = {}
@@ -114,6 +116,26 @@ class Autostart:
 
     def status(self):
         return {"config": dict(self.settings.data["autostart"]), "last": self.last, "player_pid": self.seen_pid}
+
+    def _restore_level(self):
+        """A new player shows at its own full brightness: Blackout and the opacity go back on. A player that has
+        only just come up may not take it; it is offered again on the next rounds (LEVEL_TRIES in all), and the
+        last failure is logged, since a lit screen under a Blackout is the worst a restart can leave."""
+        restore, why = getattr(self.api, "restore_level", None), "the player did not take it"
+        if not restore:
+            self._level_owed = 0
+            return
+        try:
+            landed = restore() is not False
+        except Exception as e:
+            landed, why = False, str(e)
+        if landed:
+            self._level_owed = 0
+            return
+        self._level_owed -= 1
+        if self._level_owed <= 0:
+            self._level_owed = 0
+            self.log("pvj-web: could not put the picture's level back on the restarted player: %s" % why)
 
     def run_now(self, drive=None):
         """Do what the settings say (in usb mode, `drive` is the drive just plugged in). Returns the message; errors
@@ -195,6 +217,8 @@ class Autostart:
             ensure = getattr(self.api, "ensure_audio", None)
             if ensure:
                 ensure()        # a screen switched on late, or a sound device plugged in later
+        if self._level_owed and pid is not None and pid == self.seen_pid:
+            self._restore_level()           # it did not land when the player was first seen
         if self.settings.data["autostart"].get("mode") != "usb":
             self._usb_seen = None           # switching back to usb mode later must not count every stick as new
         elif pid is not None and pid == self.seen_pid:
@@ -209,6 +233,8 @@ class Autostart:
                 apply_audio()
             except Exception as e:
                 self.log("pvj-web: could not set the sound output: %s" % e)
+        self._level_owed = LEVEL_TRIES
+        self._restore_level()
         apply_overlay = getattr(self.api, "apply_overlay", None)
         if apply_overlay and self.settings.data.get("overlay", {}).get("on"):   # a restarted player lost the picture
             try:

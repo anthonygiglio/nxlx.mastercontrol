@@ -6,6 +6,7 @@ The ownership itself (systemd handing a folder to the unit that starts) cannot b
 in tests/test_units.py and the real box with the checklist in tools/DEVICE-TESTING.md."""
 import errno
 import os
+import shutil
 import socket
 import stat
 import subprocess
@@ -19,6 +20,7 @@ from pvj import paths, server
 from pvj.netd import NetdClient, NetError
 from pvj.player import Player, PlayerError
 from pvj.update import Updater
+import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 JPEG = b"\xff\xd8\xff\xe0" + b"0" * 64
@@ -253,6 +255,7 @@ class OlderCodeUnderTheNewUnitsTest(unittest.TestCase):
 
     def test_through_the_links_an_older_panel_reaches_a_socket_in_the_peers_folder(self):
         base = tempfile.mkdtemp(dir="/tmp")          # a short path: a unix socket name is limited to about 100 bytes
+        self.addCleanup(shutil.rmtree, base, True)   # outside the run's own temp folder, so nothing else removes it (D69)
         env = box(base)
         os.mkdir(env["PVJ_PLAYER_DIR"], 0o750)
         real = os.path.join(env["PVJ_PLAYER_DIR"], "player.sock")

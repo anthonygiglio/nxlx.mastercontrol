@@ -20,8 +20,17 @@
   digits, and at most CONTROLLER_PER_HOUR are made in an hour. Its "join" kind pairs a presenter, its "owner" kind
   a full-access device. Both need the box setting `controller_code` (off unless a full-access device switched it
   on; the owner kind has its own switch), which is read again when the code is used.
+* RECOVERY CODES (D81): a set of RECOVERY_COUNT one-time codes an owner prints and keeps, for the day every owner
+  device is lost. Each is RECOVERY_LENGTH symbols from RECOVERY_ALPHABET (no look-alikes; typed case-blind, spaces
+  and dashes ignored), about 59 bits. They are kept in `settings["recovery"]["codes"]` as one salt per set and one
+  scrypt hash per code, shown once when made, and never again. A code is redeemed through pair(), in the `pin`
+  field: one lock, one throttle; one scrypt per attempt whether a set exists or not, and the same answer for a wrong
+  code as for no set. Burning the code and adding the device is one save, so two devices racing one code get one
+  winner. `recovery` is a key an older release keeps and ignores (no schema change).
 * The PIN is stored as a salted scrypt hash. Because it is short, guessing is
-  throttled per client and globally, and comparisons are constant-time.
+  throttled per client and globally, and comparisons are constant-time. The PIN in clear is known to the run that
+  made it (`current_pin`), and a paired full-access device may read it back (`show_pin`, D77; rate limited, and
+  the API writes a journal line each time). A run that started without making a new PIN does not know it.
 """
 
 import hashlib
@@ -29,6 +38,7 @@ import hmac
 import secrets
 import threading
 import time
+import unicodedata
 
 ROLES = {"view": 1, "live": 2, "full": 3}
 PIN_LENGTH = 4
@@ -45,12 +55,18 @@ MAX_DEVICES = 200                               # paired devices in all
 FULL_RESERVED = 20                              # of those, places only a full-access device can take
 GUEST_IDLE_DAYS = 7                             # a device that joined with a guest code goes when unused this long
 SEEN_EVERY = 86400                              # its last use is saved at most this often (seconds)
-CONTROLLER_KINDS = {"join": "live", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs
+CONTROLLER_KINDS = {"join": "view", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs. "join" is a
+                                                        # GUEST since D80: the Operator is close to an owner, and nobody has to be there for this code
 CONTROLLER_SECONDS = 120                        # it works for this long
 CONTROLLER_PER_HOUR = 6                         # and this many are made in any hour, of both kinds together
 PER_CLIENT_FAILS, PER_CLIENT_WINDOW = 5, 60.0
 GLOBAL_FAILS, GLOBAL_WINDOW = 20, 600.0
 LOCKOUT_SECONDS = 60.0
+PIN_SHOWS, PIN_SHOW_WINDOW = 10, 300.0          # a full-access device may ask for the PIN this often (D77)
+RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no 0 and O, no 1, I and L: what is on paper cannot be misread
+RECOVERY_LENGTH, RECOVERY_GROUP, RECOVERY_COUNT = 12, 4, 8    # 12 symbols of 31 is about 59 bits; 8 codes per set (D81)
+RECOVERY_LOG = 20                               # events kept for the owners (a code used, the PIN shown for a stick)
+_NO_SET_SALT = b"nxlx-no-recovery-set"          # scrypt runs against this when no set exists, so timing says nothing
 
 
 class AuthError(Exception):
@@ -86,7 +102,10 @@ def controller_setting(section):
     the first switch is turned on."""
     c = section if isinstance(section, dict) else {}
     on = c.get("enabled") is True
-    return {"enabled": on, "owner": on and c.get("owner") is True}
+    out = {"enabled": on, "owner": on and c.get("owner") is True}
+    if c.get("join") == "live":          # the join kind pairs an Operator: the owner's choice (D80). Absent: a Guest. An
+        out["join"] = "live"             # older release drops the key and pairs what it always paired
+    return out
 
 
 def generate_pin():
@@ -95,6 +114,34 @@ def generate_pin():
 
 def _scrypt(secret, salt):
     return hashlib.scrypt(secret.encode(), salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
+
+
+def generate_recovery_code():
+    return "".join(secrets.choice(RECOVERY_ALPHABET) for _ in range(RECOVERY_LENGTH))
+
+
+def format_recovery_code(code):
+    """XXXX-XXXX-XXXX, for paper."""
+    return "-".join(code[i:i + RECOVERY_GROUP] for i in range(0, len(code), RECOVERY_GROUP))
+
+
+def normalise_recovery(text):
+    """What a person typed as the symbols of a recovery code (upper case, spaces and dashes dropped), or None when it
+    is not the shape of one: then pair() treats the text as a PIN. Only the shape is decided here, never whether
+    the code is right."""
+    if not isinstance(text, str) or len(text) > 4 * RECOVERY_LENGTH:
+        return None
+    bare = "".join(c for c in text.upper() if c not in " -\t")
+    if len(bare) != RECOVERY_LENGTH or any(c not in RECOVERY_ALPHABET for c in bare):
+        return None
+    return bare
+
+
+def clean_name(name):
+    """A device's name as it is kept: no control or format characters (Unicode Cc and Cf: a bell, a zero-width space,
+    a direction override), at most 40, never empty. Where a device is added; an older record is read as it is."""
+    text = "".join(c for c in str(name or "") if unicodedata.category(c) not in ("Cc", "Cf")).strip()
+    return text[:40] or "device"
 
 
 def _token_hash(token):
@@ -110,12 +157,16 @@ class Auth:
         self._global_fails = []
         self._locked_until = {}  # client or "*" -> time
         self.last_seen = {}
+        self._addresses = {}    # device id -> (client address, monotonic): where it last asked from. Memory only (D78)
         self._pair_lock = threading.Lock()  # one PIN attempt at a time, so the counters are exact
         self._joins = {}        # code -> {"role", "expires" (monotonic), "uses"}
         self._presenter_made = []   # when (monotonic) presenters made guest codes, within the last hour
         self._controller = None     # the code shown from a controller: {"code", "kind", "expires" (monotonic), "shown" (wall)}
         self._controller_made = []  # when (monotonic) such codes were made, within the last hour
         self.controller_last = None  # the one before: {"kind", "shown", "ended" (wall), "how", "device"?}, for the panel
+        self.current_pin = None     # the PIN in clear, known only to this run and only once made here (_new_pin); never saved
+        self._pin_shows = {}        # device id -> when (monotonic) it was given the PIN, within PIN_SHOW_WINDOW
+        self.recovery_uses = {}         # device id -> codes left, for each recovery code redeemed and not yet journaled (D81)
         self._prune_idle()
         with settings.lock:                 # at load: the section is written as what it means (controller_setting)
             if "controller_code" in settings.data and settings.data["controller_code"] != controller_setting(settings.data["controller_code"]):
@@ -153,6 +204,20 @@ class Auth:
             self._global_fails = []
             self._locked_until.clear()
             return self._new_pin()
+
+    def show_pin(self, device_id):
+        """The PIN in clear for a paired full-access device (the API checks the role), or None when this run does
+        not know it: a panel that started without making a new one has only the hash (D77). Counted per device
+        whether it is known or not, so asking says nothing by its timing: after PIN_SHOWS in PIN_SHOW_WINDOW it
+        raises AuthError with `retry_after`. The caller writes the journal line; this never logs the PIN."""
+        with self._pair_lock:
+            t = self._clock()
+            shows = [x for x in self._pin_shows.get(device_id, []) if t - x < PIN_SHOW_WINDOW]
+            if len(shows) >= PIN_SHOWS:
+                raise AuthError("the PIN was shown %d times in the last %d minutes; wait a little"
+                                % (PIN_SHOWS, int(PIN_SHOW_WINDOW // 60)), retry_after=int(PIN_SHOW_WINDOW - (t - shows[0])) + 1)
+            self._pin_shows[device_id] = shows + [t]
+            return self.current_pin
 
     def _check_pin(self, pin):
         auth = self.settings.data["auth"]
@@ -196,7 +261,7 @@ class Auth:
                     # The device first, the code second: if the device cannot be added (the list filled up this
                     # instant, the settings could not be saved) the code is still good and still on the display.
                     # Two requests with the same code cannot both get here: this runs under `_pair_lock`.
-                    token, device = self._add_device(name, role, via="controller")
+                    token, device = self._add_device(name, role, via="controller", chosen=role == "live")
                     self._end_controller("used")
                     self.controller_last["device"] = device["name"]
                     return token, device
@@ -205,11 +270,140 @@ class Auth:
                     return self._add_device(name, role, via="code")
                 self._record_fail(client)
                 raise AuthError("wrong or expired code")
+            code = normalise_recovery(given)
+            if code is not None:              # a recovery code (D81): burnt and the device added in one save
+                result = self._use_recovery(code, name, client)
+                if result is None:            # a wrong or used code, or no set at all: the same words, the same cost
+                    self._record_fail(client)
+                    raise AuthError("wrong or used recovery code")
+                return result
             if not self._check_pin(pin):
                 self._record_fail(client)
                 raise AuthError("wrong PIN")
             self._fails.pop(client, None)
             return self._add_device(name, "full")
+
+    # --- recovery codes and the stick (D81) ------------------------------
+    def _recovery(self):
+        """The `recovery` section as a dict (a missing or damaged one counts as empty). Read under settings.lock."""
+        r = self.settings.data.get("recovery")
+        return r if isinstance(r, dict) else {}
+
+    def _codes(self):
+        """The set in the settings as (salt bytes, [hash bytes]) or None; anything malformed counts as no set."""
+        c = self._recovery().get("codes")
+        try:
+            if not isinstance(c, dict) or not isinstance(c.get("hashes"), list):
+                return None
+            return bytes.fromhex(c["salt"]), [bytes.fromhex(h) for h in c["hashes"]]
+        except (TypeError, ValueError, KeyError):
+            return None
+
+    def make_recovery_codes(self, by="owner"):
+        """A new set in the place of any old one. Returns the codes in clear, once; nothing else ever does."""
+        codes = [generate_recovery_code() for _ in range(RECOVERY_COUNT)]
+        salt = secrets.token_bytes(16)
+        with self._pair_lock, self.settings.lock:
+            r = dict(self._recovery())
+            r["codes"] = {"salt": salt.hex(), "hashes": [_scrypt(c, salt).hex() for c in codes],
+                          "made": int(self._now()), "by": str(by or "owner")[:40], "count": RECOVERY_COUNT}
+            self.settings.data["recovery"] = r
+            self.settings.save()
+        return [format_recovery_code(c) for c in codes]
+
+    def cancel_recovery_codes(self):
+        """Remove the set. True when there was one."""
+        with self._pair_lock, self.settings.lock:
+            r = dict(self._recovery())
+            had = r.pop("codes", None) is not None
+            if had:
+                self.settings.data["recovery"] = r
+                self.settings.save()
+            return had
+
+    def recovery_status(self):
+        """What an owner may know: how many codes are left, when and by whom the set was made, the stick switch and
+        the last events. Never a hash, never a salt."""
+        with self.settings.lock:
+            r = self._recovery()
+            c = r.get("codes") if isinstance(r.get("codes"), dict) else None
+            codes = ({"left": len(c.get("hashes") or []), "count": c.get("count", RECOVERY_COUNT),
+                      "made": c.get("made"), "by": c.get("by")} if c else None)
+            log = r.get("log") if isinstance(r.get("log"), list) else []        # a file a person edited
+            return {"codes": codes, "usb": self.usb_enabled(), "log": [e for e in log if isinstance(e, dict)][-RECOVERY_LOG:]}
+
+    def usb_enabled(self):
+        """The stick way: on unless the switch is exactly false (a missing key is on, as the owner asked)."""
+        return self._recovery().get("usb") is not False
+
+    def set_usb(self, on):
+        with self.settings.lock:
+            r = dict(self._recovery())
+            r["usb"] = bool(on)
+            self.settings.data["recovery"] = r
+            self.settings.save()
+
+    def recovery_event(self, kind, name=None, **extra):
+        """Keep an event for the owners (no secret in it): the last RECOVERY_LOG. Saves."""
+        with self.settings.lock:
+            r = dict(self._recovery())
+            event = dict({"t": int(self._now()), "kind": kind}, **extra)
+            if name is not None:
+                event["name"] = str(name)[:40]
+            log = r.get("log") if isinstance(r.get("log"), list) else []
+            r["log"] = (log + [event])[-RECOVERY_LOG:]
+            self.settings.data["recovery"] = r
+            self.settings.save()
+            return event
+
+    def mark_via(self, device_id, via):
+        """Write down, after the fact, how a device came in: "stick" for one paired with the PIN shown for a recovery
+        stick (D81), which pair() cannot know. True when the device was found."""
+        with self.settings.lock:
+            for d in self.settings.data["devices"]:
+                if d["id"] == device_id:
+                    d["via"] = via
+                    self.settings.save()
+                    return True
+        return False
+
+    def last_recovery_event(self, kind):
+        """The newest event of `kind` in the recovery log, or None."""
+        with self.settings.lock:
+            log = self._recovery().get("log")
+            events = [e for e in (log if isinstance(log, list) else []) if isinstance(e, dict) and e.get("kind") == kind]
+            return dict(events[-1]) if events else None
+
+    def _use_recovery(self, code, name, client):
+        """(token, device) when `code` is one of the set, burning it, else None. Call with `_pair_lock` held.
+        One scrypt whether a set exists or not; every hash compared. The hash goes and the device comes in one save
+        (inside _add_device); if the device cannot be added the hash is put back and the code is still good."""
+        found = self._codes()
+        salt, hashes = found if found else (_NO_SET_SALT, [])
+        given = _scrypt(code, salt)
+        hit = None
+        for i, h in enumerate(hashes):
+            if hmac.compare_digest(h, given):
+                hit = i
+        if hit is None:
+            return None
+        self._prune_idle()
+        with self.settings.lock:
+            r = self.settings.data["recovery"]
+            burnt = r["codes"]["hashes"].pop(hit)
+            left = len(r["codes"]["hashes"])
+            log = r.get("log") if isinstance(r.get("log"), list) else []
+            r["log"] = (log + [{"t": int(self._now()), "kind": "code", "name": str(name or "device")[:40], "left": left,
+                                "client": str(client)}])[-RECOVERY_LOG:]
+            try:
+                token, device = self._add_device(name, "full", via="recovery")     # the one save
+            except Exception:
+                r["codes"]["hashes"].insert(hit, burnt)
+                r["log"] = log
+                raise
+        self.recovery_uses[device["id"]] = left    # for the API's journal line (never the code); per device, so two at once both get theirs
+        self._fails.pop(client, None)
+        return token, device
 
     # --- join codes ----------------------------------------------------
     def _prune_joins(self):
@@ -260,7 +454,7 @@ class Auth:
                 self._presenter_made = [x for x in self._presenter_made if t - x < 3600.0]
                 if len(self._presenter_made) >= PRESENTER_CODES_PER_HOUR:
                     wait = int(3600.0 - (t - self._presenter_made[0])) + 1
-                    raise JoinLimit("%d guest codes were made in the last hour, which is the most a presenter may; "
+                    raise JoinLimit("%d guest codes were made in the last hour, which is the most an operator may; "
                                     "use the code that is active, wait %d minutes, or ask the owner"
                                     % (PRESENTER_CODES_PER_HOUR, -(-wait // 60)), retry_after=wait)
             for c in same:                      # one live code per role: a new one replaces the old
@@ -308,6 +502,13 @@ class Auth:
         c = controller_setting(self.settings.data.get("controller_code"))
         return c["enabled"], c["owner"]
 
+    def controller_role(self, kind):
+        """The role a controller code of this kind pairs now: the owner kind an Owner; the join kind a Guest, or an
+        Operator when the owner chose so (`controller_code.join`, D80)."""
+        if kind == "join":
+            return controller_setting(self.settings.data.get("controller_code")).get("join", "view")
+        return CONTROLLER_KINDS[kind]
+
     def _end_controller(self, how):
         """Forget the active code and keep what became of it. Call with `_pair_lock` held."""
         c, self._controller = self._controller, None
@@ -325,6 +526,8 @@ class Auth:
             self._end_controller("expired")
         elif not on or (c["kind"] == "owner" and not owner):
             self._end_controller("switched off")
+        elif c.get("role", CONTROLLER_KINDS[c["kind"]]) != self.controller_role(c["kind"]):
+            self._end_controller("switched off")           # the owner changed what the join kind pairs: the code that says the other is over
 
     def _match_controller(self, given):
         """The role of the controller code if `given` is it, else None. It is NOT used up here: pair() ends it once
@@ -334,7 +537,7 @@ class Auth:
         c = self._controller
         if not hmac.compare_digest(c["code"] if c else "x" * JOIN_LENGTH, given) or c is None:
             return None
-        role = CONTROLLER_KINDS[c["kind"]]
+        role = c["role"]
         self._prune_idle()
         if not self._room_for(role, "controller"):
             raise TooManyDevices(self.FULL_TEXT)
@@ -364,14 +567,15 @@ class Auth:
             if len(self._controller_made) >= CONTROLLER_PER_HOUR:
                 raise JoinLimit("too many codes were shown from a controller in the last hour",
                                 retry_after=int(3600.0 - (t - self._controller_made[0])) + 1)
-            if not self._room_for(CONTROLLER_KINDS[kind], "controller"):
+            role = self.controller_role(kind)
+            if not self._room_for(role, "controller"):
                 raise TooManyDevices(self.FULL_TEXT)
             self._end_controller("replaced")
             while True:
                 code = "%0*d" % (JOIN_LENGTH, secrets.randbelow(10 ** JOIN_LENGTH))
                 if code not in self._joins:
                     break
-            self._controller = {"code": code, "kind": kind, "expires": t + CONTROLLER_SECONDS, "shown": int(self._now())}
+            self._controller = {"code": code, "kind": kind, "role": role, "expires": t + CONTROLLER_SECONDS, "shown": int(self._now())}
             self._controller_made.append(t)
 
     def controller_digits(self):
@@ -381,6 +585,11 @@ class Auth:
             self._prune_controller()
             c = self._controller
             return (c["kind"], c["code"], max(0, int(c["expires"] - self._clock()))) if c else None
+
+    def controller_pairs(self):
+        """The role the code on the display pairs, for the display's own words; None when there is none."""
+        with self._pair_lock:
+            return self._controller["role"] if self._controller else None
 
     def controller_status(self):
         """What a full-access device may know: whether a code is on the display, its kind, when it was shown and
@@ -408,7 +617,7 @@ class Auth:
             raise AuthError("invites are for view or live access")
         return self._add_device(name, role)
 
-    FULL_TEXT = ("too many devices are paired with this box; the owner removes some under System, People and codes, "
+    FULL_TEXT = ("too many devices are paired with this box; the owner removes some under Setup, People and codes, "
                  "and then this works")
 
     def _room_for(self, role, via=None):
@@ -432,7 +641,7 @@ class Auth:
         presenter that joined with a code shown from a controller (anyone at the controller can make those, so
         they must not pile up). A presenter from a join code or a link, and every full-access device, stays."""
         return ((device.get("via") == "code" and device["role"] == "view")
-                or (device.get("via") == "controller" and device["role"] == "live"))
+                or (device.get("via") == "controller" and device["role"] != "full"))
 
     def _idle(self, device, now):
         return self._expires(device) and now - device.get("seen", device["created"]) > GUEST_IDLE_DAYS * 86400
@@ -447,14 +656,17 @@ class Auth:
                 self.settings.data["devices"] = keep
                 self.settings.save()
 
-    def _add_device(self, name, role, via=None):
+    def _add_device(self, name, role, via=None, chosen=False):
         """`via`: "code" for a device that joined with a join code (kept in its record; a guest that joined so is
-        the only kind that expires)."""
+        the only kind that expires). `chosen`: an Operator from a controller's code, paired while the owner's
+        setting said that code pairs an Operator (see role_of)."""
         token = secrets.token_urlsafe(24)
-        device = {"id": secrets.token_hex(4), "name": str(name or "device")[:40], "role": role,
+        device = {"id": secrets.token_hex(4), "name": clean_name(name), "role": role,
                   "token_hash": _token_hash(token), "created": int(self._now())}
         if via:
             device["via"] = via
+        if chosen:
+            device["join"] = "live"
         with self.settings.lock:
             if not self._room_for(role, via):
                 raise TooManyDevices(self.FULL_TEXT)
@@ -466,7 +678,9 @@ class Auth:
                 raise
         return token, self._public(device)
 
-    def authenticate(self, token):
+    def authenticate(self, token, client=None):
+        """The paired device of this token, or None. With `client` (the connection's own address) the device's last
+        address is remembered, in memory only, for the OSC rule "a sender must be a paired device" (D78)."""
         if not isinstance(token, str) or not token:
             return None
         h = _token_hash(token)
@@ -480,6 +694,8 @@ class Auth:
                 self.revoke(found["id"])
                 return None
             self.last_seen[found["id"]] = now
+            if client is not None:
+                self._addresses[found["id"]] = (str(client), self._clock())
             if self._expires(found) and now - found.get("seen", found["created"]) >= SEEN_EVERY:
                 with self.settings.lock:               # written down once a day at most, so its idle time survives a restart
                     found["seen"] = now
@@ -487,7 +703,28 @@ class Auth:
             return self._public(found)
         return None
 
+    def paired_addresses(self, seconds, roles=("full",)):
+        """The addresses from which a device that is paired NOW, with one of `roles` NOW, asked within `seconds`.
+        A revoked, reset or expired device is not in the list of devices, so its address stops counting at once."""
+        t, out, live = self._clock(), set(), set()
+        for d in list(self.settings.data["devices"]):
+            live.add(d["id"])
+            seen = self._addresses.get(d["id"])
+            if seen and self.role_of(d) in roles and t - seen[1] <= seconds:       # (role_of: a presenter paired from a controller is a Guest, D80)
+                out.add(seen[0])
+        for gone in [k for k in list(self._addresses) if k not in live]:
+            self._addresses.pop(gone, None)
+        return out
+
+    def forget_address(self, device_id=None):
+        """Forget where one device (or every device) last asked from: it must open the panel again to count."""
+        if device_id is None:
+            self._addresses.clear()
+        else:
+            self._addresses.pop(device_id, None)
+
     def revoke(self, device_id):
+        self._addresses.pop(device_id, None)
         with self.settings.lock:
             before = len(self.settings.data["devices"])
             self.settings.data["devices"] = [d for d in self.settings.data["devices"] if d["id"] != device_id]
@@ -505,8 +742,23 @@ class Auth:
         return [dict(self._public(d), last_seen=self.last_seen.get(d["id"])) for d in self.settings.data["devices"]]
 
     @staticmethod
+    def role_of(device):
+        """The role a stored device has. One rule beside the record (D80, the owner on 2026-10-10: "Old presenters are
+        moved up to Guests"): a `live` device paired with a controller's code is a Guest, unless it was paired while
+        the owner's setting said that code pairs an Operator (the record then has "join": "live"). Before D80 anyone
+        at the controller could make such a presenter with no owner there. The record is not rewritten: an older
+        release reads the same file and gives the device what it had."""
+        if device["role"] == "live" and device.get("via") == "controller" and device.get("join") != "live":
+            return "view"
+        return device["role"]
+
+    @staticmethod
     def _public(device):
-        return {k: device[k] for k in ("id", "name", "role", "created")}
+        out = {k: device[k] for k in ("id", "name", "role", "created")}
+        out["role"] = Auth.role_of(device)
+        if device.get("via"):               # how it came in ("code", "controller", "recovery", "stick"): owners read it on People and codes
+            out["via"] = device["via"]
+        return out
 
     @staticmethod
     def allows(device, needed):

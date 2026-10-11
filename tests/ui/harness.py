@@ -31,7 +31,10 @@ for name in ("intro.mkv", "tunnel.mkv"):
 rundir = os.path.join(tmp, "run")
 os.makedirs(rundir, mode=0o700)
 os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
-player = Player(extra_args=["--vo=null", "--ao=null"], rundir=rundir)
+# PVJ_HARNESS_NO_PLAYER=1: a box whose player is not there (the panel says "Player not running"). The control
+# inventory (tests/ui/inventory.js) is taken that way, as its fixture was made on a machine without mpv.
+_mpv = os.path.join(tmp, "no-such-mpv") if os.environ.get("PVJ_HARNESS_NO_PLAYER") else "mpv"
+player = Player(mpv_bin=_mpv, extra_args=["--vo=null", "--ao=null"], rundir=rundir)
 api, auth, _ = server.build(os.environ, player=player)
 from tests.test_netd import FakeNm, make_sysfs  # noqa: E402
 from pvj.netd import NetService  # noqa: E402
@@ -135,8 +138,51 @@ api.midi = midi_mod.MidiHub(api, api.settings, open_fn=_midi_open, namer=lambda 
 api.midi.apply()
 threading.Thread(target=_midi_feed, daemon=True).start()
 
-httpd = server.PvjServer(("127.0.0.1", 0), server.make_handler(api, auth))
-print(json.dumps({"port": httpd.server_address[1], "pin": auth.current_pin, "projector_ports": [f.port for f in _fakes], "midi_dir": _midi_dir}), flush=True)
+# A file of the page that does not arrive, for the checks of pvj/web/load.js (tests/ui/delivery.js). Each line of the
+# file <delivery_file> is "<path> <how>", and the next request for that path uses the line up: "drop" closes the
+# connection with no answer (what a full queue or a lost connection is to a browser), "busy" answers 503 as the box
+# does at its cap of connections, "broken" delivers a script that cannot run. This is in the harness only: the
+# box's own server (pvj/server.py) has no such switch, and nothing on a box runs this file.
+from urllib.parse import urlsplit  # noqa: E402
+
+_delivery = os.path.join(tmp, "delivery")
+_delivery_lock = threading.Lock()
+
+
+def _undelivered(path):
+    with _delivery_lock:
+        try:
+            with open(_delivery) as f:
+                lines = [line.split() for line in f.read().split("\n") if line.strip()]
+        except OSError:
+            return None
+        for i, line in enumerate(lines):
+            if len(line) == 2 and line[0] == path:
+                del lines[i]
+                with open(_delivery, "w") as f:
+                    f.write("".join("%s %s\n" % (a, b) for a, b in lines))
+                return line[1]
+    return None
+
+
+class _TestHandler(server.make_handler(api, auth)):
+    def do_GET(self):
+        how = _undelivered(urlsplit(self.path).path)
+        if how == "drop":
+            self.close_connection = True
+            return None
+        if how == "busy":           # the very bytes of PvjServer.process_request at the cap
+            self.close_connection = True
+            self.wfile.write(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            return None
+        if how == "broken":
+            return self._send(200, b"(", server.TYPES[".js"])
+        return super().do_GET()
+
+
+httpd = server.PvjServer(("127.0.0.1", 0), _TestHandler)
+print(json.dumps({"port": httpd.server_address[1], "pin": auth.current_pin, "projector_ports": [f.port for f in _fakes], "midi_dir": _midi_dir,
+                  "delivery_file": _delivery}), flush=True)
 try:
     httpd.serve_forever()
 finally:

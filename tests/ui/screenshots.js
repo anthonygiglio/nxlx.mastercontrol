@@ -8,6 +8,8 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+// Moving about in the Workspace shell (D65, D72): go(page, 'area/screen'), and stripOpen(page) for the transport strip's More.
+const { go, stripOpen, sys: sysOf, sysIndex: sysIndexOf } = require('./signal-pages');
 
 const out = process.env.SHOTS || path.join(__dirname, '..', '..', 'docs', 'images', 'ui');
 const pyBin = process.env.PYTHON || 'python3';
@@ -43,20 +45,20 @@ function startServer() {
       const r = await fetch(u, { method: m, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: m === 'POST' ? JSON.stringify(b || {}) : undefined });
       return r.json().catch(() => ({}));
     }, [method, url, body]);
-    const card = (title) => page.locator('.card', { has: page.locator('h2', { hasText: new RegExp('^' + title) }) }).first();
+    const card = (title) => page.locator('.card:visible', { has: page.locator('h2', { hasText: new RegExp('^' + title) }) }).first();      // (shown: the Setup index is in the page beside an open page, D72, and its groups have headings too)
     const shell = () => page.locator('.shell').first();
-    // A screen taller than the phone: the fixed tab bar would land in the middle of the picture, so for the shot
-    // it sits in the page flow, at the bottom of the screen.
+    // A screen taller than the phone: the strip and the tabs, which stay at the foot of the window, would land in the
+    // middle of the picture, so for the shot they sit in the page flow, at the bottom of the screen.
     async function whole(f) {
-      await page.evaluate(() => { const t = document.querySelector('.tabs'); if (t) t.style.setProperty('position', 'static', 'important'); });
+      await page.evaluate(() => { const t = (document.getElementById('wsdock') || document.querySelector('.tabs')); if (t) t.style.setProperty('position', 'static', 'important'); });
       try { await shell().screenshot({ path: f }); } finally {
-        await page.evaluate(() => { const t = document.querySelector('.tabs'); if (t) t.style.removeProperty('position'); });
+        await page.evaluate(() => { const t = (document.getElementById('wsdock') || document.querySelector('.tabs')); if (t) t.style.removeProperty('position'); });
       }
     }
     const byId = (id) => page.locator('#' + id).first();
     const holding = (sel) => page.locator('.card', { has: page.locator(sel) }).first();   // the card around an element
-    const tabs = (show) => page.evaluate((on) => {   // the fixed tab bar would cover the bottom of tall cards
-      const t = document.querySelector('.tabs');
+    const tabs = (show) => page.evaluate((on) => {   // the strip and the tabs at the foot would cover the bottom of tall cards
+      const t = (document.getElementById('wsdock') || document.querySelector('.tabs'));
       if (t) { if (on) t.style.removeProperty('display'); else t.style.setProperty('display', 'none', 'important'); }
     }, show);
     // Several cards in one picture: from the top of the first to the bottom of the last, full width.
@@ -78,6 +80,7 @@ function startServer() {
     await page.fill('#devname', 'Anthony\'s phone');
     await page.click('#pairbtn');
     await page.waitForSelector('.pads');
+    await stripOpen(page);               // a phone: the whole transport is in the pictures of Pads
 
     // (ONLY=signal... goes straight to the Signal pictures, which set the box up themselves)
     theDefaultLook: {
@@ -97,11 +100,12 @@ function startServer() {
     await api('POST', '/api/play', { pad: [0, 0] });
     await page.reload();
     await page.waitForSelector('.pad.on', { timeout: 10000 }).catch(() => {});
+    await stripOpen(page);
     await page.waitForTimeout(1200);
     await shot('live', whole);
 
-    // The transport (seek bar, prev and next, fade in, test pattern) and the snapshot card under it. The snapshot
-    // is taken when it works; a headless player may have no picture to give, and then the card is shown untouched.
+    // The snapshot card on Pads with the transport strip under it (the place in the clip, Prev and Next, the fades,
+    // Freeze, Stop, Blackout; open, as More shows it on a phone). The snapshot is taken when it works; a headless player may have no picture to give, and then the card is shown untouched.
     await shot('live-transport', async (f) => {
       await page.waitForFunction(() => /\d/.test(document.getElementById('time').textContent));
       await page.click('#previewbtn');
@@ -110,12 +114,14 @@ function startServer() {
         await page.reload();
         await page.waitForSelector('#previewbtn');
         await page.waitForTimeout(1200);
+        await stripOpen(page);
       }
-      await tabs(false);
-      try { await span(f, '.livecols > .card', '#previewcard'); } finally { await tabs(true); }
+      // the strip in the flow under the card, without the area tabs
+      await page.evaluate(() => { const d = document.getElementById('wsdock'), t = document.getElementById('wstabs'); if (d) d.style.setProperty('position', 'static', 'important'); if (t) t.style.setProperty('display', 'none', 'important'); });
+      try { await span(f, '#previewcard', '#wstp'); } finally { await page.evaluate(() => { const d = document.getElementById('wsdock'), t = document.getElementById('wstabs'); if (d) d.style.removeProperty('position'); if (t) t.style.removeProperty('display'); }); }
     });
 
-    await page.click('nav >> text=Mix');
+    await go(page, 'shape/picture');        // what Mix held: the picture's sliders, transition, mirror, overlay, rotate
     await page.waitForSelector('#mo');
     await shot('mix', whole);
 
@@ -136,13 +142,17 @@ function startServer() {
     } catch (e) {
       failures.push('mapper setup: ' + e.message.split('\n')[0]);
     }
-    await page.click('nav >> text=Media');   // leave and come back, so Mix is drawn with the module on
+    await go(page, 'play/library');   // leave and come back, so Shape is drawn with the module on
     await page.waitForSelector('#uploadbtn');
-    await page.click('nav >> text=Mix');
-    await page.waitForSelector('#mapbody');
+    await go(page, 'shape/picture');
+    await page.waitForSelector('#fliph');
     await tabs(false);
     await shot('mix-mirror', async (f) => { await page.waitForSelector('#fliph'); await holding('#fliph').screenshot({ path: f }); });
     await shot('mix-overlay', async (f) => { await page.waitForSelector('#overlayfile'); await byId('overlaycard').screenshot({ path: f }); });
+    await tabs(true);
+    await go(page, 'shape/mapping');        // the mapping card is on Shape > Mapping (the Projection mapping page)
+    await page.waitForSelector('#mapbody');
+    await tabs(false);
     await shot('mapper', async (f) => {
       await page.waitForSelector('#mapcanvas');
       await page.waitForSelector('.map-entry:has-text("Side panel")');
@@ -151,7 +161,7 @@ function startServer() {
     });
     await tabs(true);
 
-    await page.click('nav >> text=Media');
+    await go(page, 'play/library');
     await page.waitForSelector('#uploadbtn');
     await page.waitForTimeout(800);
     // Crop to the content: the list is short and the screen is tall.
@@ -192,25 +202,17 @@ function startServer() {
       { label: 'Lamps off', time: '23:45', days: [0, 1, 2, 3, 4, 5, 6], action: 'projector_off' }] });
     await api('POST', '/api/streams', { action: 'add', name: 'Stage camera', url: 'rtsp://admin:secret@192.168.0.40/live' });
     await api('POST', '/api/streams', { action: 'add', name: 'Laptop (SRT)', url: 'srt://192.168.0.20:9000' });
-    // System is an index of rows and one page per row: each card is photographed on its own page.
+    // Setup is an index of rows and one page per row: each card is photographed on its own page.
     // A wait that runs out must not stop the other shots (the picture then shows what is there).
     const soft = (what, p) => p.catch(() => failures.push('wait: ' + what));
-    async function sysIndex() {
-      if (await page.locator('#sysback').count()) await page.click('#sysback');
-      else if (!(await page.locator('#sysindex').count())) await page.click('nav >> text=System');
-      await page.waitForSelector('#sysindex');
-    }
-    async function sys(name) {
-      await sysIndex();
-      await page.click(`.navrow:has(.navname:text-is("${name}"))`);
-      await page.waitForSelector(`#syspage h1:text-is("${name}")`);
-    }
+    const sysIndex = () => sysIndexOf(page);
+    const sys = (name) => sysOf(page, name);
     async function pageShot(name, row, title, ready) {
       await shot(name, async (f) => {
         await sys(row);
         if (ready) await soft(name, ready());
         await page.waitForTimeout(600);
-        await tabs(false);             // the fixed tab bar would cover the bottom of tall cards
+        await tabs(false);             // the strip and the tabs would cover the bottom of tall cards
         try { await card(title).screenshot({ path: f }); } finally { await tabs(true); }
       });
     }
@@ -264,19 +266,18 @@ function startServer() {
       await page.setViewportSize({ width: 390, height: 844 });
     }
     await pageShot('access', 'People and codes', 'Let someone in', () => page.waitForFunction(() => { const q = document.querySelectorAll('#accesscard .join-code img.qr'); return q.length >= 2 && Array.prototype.every.call(q, (i) => i.complete && i.naturalWidth > 0); }));
-    // Shaders and Vibes: the page with Vibes playing (opened from Live, as staff do), and Live with the big button.
+    // Shaders and Vibes: the page with Vibes playing (the Shaders tab of Play), and Pads with the big button.
     await api('POST', '/api/modules/shaders', { enabled: true });
     await api('POST', '/api/vibes', { on: true });
     await shot('shaders-page', async (f) => {
-      await page.click('nav >> text=Live');
-      await page.waitForSelector('#shaderslink');
-      await page.click('#shaderslink');
+      await go(page, 'play/pads');
+      await go(page, 'play/shaders');
       await soft('shaders page', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
       await page.waitForTimeout(600);
       await whole(f);
     });
     await shot('live-vibes', async (f) => {
-      await page.click('nav >> text=Live');
+      await go(page, 'play/pads');
       await soft('vibes button', page.waitForFunction(() => /^Vibes is playing: /.test((document.getElementById('vibeswords') || {}).textContent), null, { timeout: 15000 }));
       await page.waitForTimeout(600);
       await whole(f);
@@ -287,7 +288,7 @@ function startServer() {
       try {
         await page.reload();
         await page.waitForSelector('.pads');
-        await page.click('nav >> text=Room');
+        await go(page, 'room/scenes');
         await soft('ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
         await page.waitForTimeout(600);
         await whole(f);
@@ -299,32 +300,36 @@ function startServer() {
     });
     await shot('shaders-page-laptop', async (f) => {
       await page.setViewportSize({ width: 1366, height: 768 });
-      try {
-        await page.click('#shaderslink');
+      try {                                                   // (at this width Play is a desk: the Shaders screen is the column beside the pads and the library)
+        await go(page, 'play/shaders');
         await soft('shaders page on a laptop', page.waitForSelector('#shadercontrols', { timeout: 15000 }));
         await page.waitForTimeout(800);
         await page.screenshot({ path: f, fullPage: true });
       } finally {
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.click('nav >> text=Live');
+        await go(page, 'play/pads');
       }
     });
     // The instrument: one shader chosen by hand (a switch, a choice, two colours and numbers), with a preset saved;
-    // the page on a phone, and Live on a laptop with the shader's strip beside the pads.
+    // the page on a phone, and Play on a wide panel (1700 px, where the three screens share the page: D72 as changed
+    // on 2026-10-10; under that Shaders is a tab beside the desk), where the shader's controls stand beside the pads
+    // and the library (the picture keeps its name: until D72 it was of a strip of five of those controls, on Live
+    // and then on Shape > Controls).
     await api('POST', '/api/vibes', { on: false });
     await api('POST', '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
     await api('POST', '/api/shaders/presets', { action: 'save', name: 'Warm' });
     await shot('shaders-instrument', async (f) => {
-      await page.click('#shaderslink');
+      await go(page, 'play/shaders');
       await soft('the instrument', page.waitForSelector('#shaderpresets [data-preset="Warm"]', { timeout: 15000 }));
       await page.waitForTimeout(600);
       await whole(f);
-      await page.click('nav >> text=Live');
+      await go(page, 'play/pads');
     });
     await shot('live-shader-laptop', async (f) => {
-      await page.setViewportSize({ width: 1366, height: 768 });
+      await page.setViewportSize({ width: 1700, height: 900 });
       try {
-        await soft('the strip on Live', page.waitForSelector('#liveshader:visible', { timeout: 15000 }));
+        await go(page, 'play/pads');
+        await soft('the shader\'s controls beside the pads', page.waitForSelector('#shadercontrols:visible', { timeout: 15000 }));
         await page.waitForTimeout(600);
         await page.screenshot({ path: f, fullPage: true });
       } finally {
@@ -347,18 +352,18 @@ function startServer() {
     // One editable export (SVG, layered PSD, PNG) of the page that is open: <MOCKUPS>/<device>/<name>.*
     async function mock(device, name) {
       if (!process.env.MOCKUPS) return;
-      await page.evaluate(() => { window.scrollTo(0, 0); const t = document.querySelector('.tabs'); if (t) t.style.setProperty('position', 'static', 'important'); });
+      await page.evaluate(() => { window.scrollTo(0, 0); const t = (document.getElementById('wsdock') || document.querySelector('.tabs')); if (t) t.style.setProperty('position', 'static', 'important'); });
       try {
         const r = await require('./mockups').exportScreen(page, process.env.MOCKUPS, device, name);
         console.log('mock-up ' + device + ' ' + name + ': ' + r.sections + ' sections, ' + r.controls + ' controls');
       } catch (e) {
         failures.push('mock-up ' + device + ' ' + name + ': ' + e.message.split('\n')[0]);
       }
-      await page.evaluate(() => { const t = document.querySelector('.tabs'); if (t) t.style.removeProperty('position'); });
+      await page.evaluate(() => { const t = (document.getElementById('wsdock') || document.querySelector('.tabs')); if (t) t.style.removeProperty('position'); });
     }
     // Every System page (the row's name, the file's name, what shows that the page has its data), the Room screen,
     // a page whose module is off, and Live with a shader playing. File names are fixed: layouts refer to them.
-    const SYS_PAGES = [['Health', 'system-health', '#healthpower'], ['Projectors', 'system-projectors', '.proj-status'], ['Room', 'system-room', '#roomscenes'],
+    const SYS_PAGES = [['Health', 'system-health', '#healthpower'], ['Projectors', 'system-projectors', '.proj-status'], ['Room', 'system-room', '#roomsetup'],
       ['Schedule', 'system-schedule', '.sched-entry'], ['Shaders and Vibes', 'system-shaders-and-vibes', '#shadercard'], ['People and codes', 'system-people-and-codes', '#devicelist'],
       ['Sound', 'system-sound', '#audioline'], ['At power-up', 'system-at-power-up', '#autosave'], ['Streams', 'system-streams', '.stream-entry'],
       ['Projection mapping', 'system-projection-mapping', '#sysbody .card'], ['Boxes in step', 'system-boxes-in-step', '#syncline'],
@@ -379,7 +384,7 @@ function startServer() {
         await api('POST', '/api/modules/inputs-srt', { enabled: false });
         await page.reload();                                  // the panel reads which modules are on when it loads
         await page.waitForSelector('.pads');
-        await page.click('nav.tabs button:text-is("System")');
+        await go(page, 'setup/index');
         await page.waitForSelector('#sysindex');
         await page.click('#nav-streams');
         await page.waitForSelector('#sysswitchon', { timeout: 8000 });
@@ -388,16 +393,16 @@ function startServer() {
       await api('POST', '/api/modules/inputs-srt', { enabled: true });
       await page.reload();
       await page.waitForSelector('.pads');
-      try {                                                   // the Room screen, as staff see it
-        await page.click('nav >> text=Room');
+      try {                                                   // the Room area, as staff land on it (Scenes)
+        await go(page, 'room/scenes');
         await page.waitForSelector('#roomscenes', { timeout: 8000 });
         await page.waitForTimeout(900);
         await mock(device, 'room');
       } catch (e) { failures.push('mock-up ' + device + ' room: ' + e.message.split('\n')[0]); }
-      try {                                                   // Live while a shader plays: the Vibes row and the shader's strip
+      try {                                                   // Play > Shaders while a shader plays: its controls (the file keeps the name of the strip that was on Live)
         await api('POST', '/api/shaders/play', { id: 'isf-linear-gradient.fs' });
-        await page.click('nav >> text=Live');
-        await page.waitForSelector('#liveshader', { timeout: 15000 }).catch(() => failures.push('mock-up ' + device + ' live-shader: no shader strip'));
+        await go(page, 'play/shaders');
+        await page.waitForSelector('#shadercontrols', { timeout: 15000 }).catch(() => failures.push('mock-up ' + device + ' live-shader: no controls of the shader'));
         await page.waitForTimeout(900);
         await mock(device, 'live-shader');
       } catch (e) { failures.push('mock-up ' + device + ' live-shader: ' + e.message.split('\n')[0]); }
@@ -405,12 +410,14 @@ function startServer() {
       await api('POST', '/api/play', { pad: [0, 0] });
     }
     async function screens(prefix) {
-      for (const tab of ['Live', 'Mix', 'Media', 'System']) {
-        await page.click('nav >> text=' + tab);
+      // (the files keep the names of the tabs the panel had: live is Play > Pads, mix is Shape > Picture, media is
+      // Play > Library, system is the Setup index)
+      for (const [tab, key] of [['Live', 'play/pads'], ['Mix', 'shape/picture'], ['Media', 'play/library'], ['System', 'setup/index']]) {
+        await go(page, key);
         await page.waitForTimeout(1500);                      // cards that load their own data
-        // The tab bar is fixed to the bottom of the window; in a whole-page picture it would stop half-way down,
-        // over a card. Let it sit at the end of the page while the picture is taken.
-        await page.evaluate(() => { const t = document.querySelector('.tabs'); if (t) t.style.setProperty('position', 'static', 'important'); });
+        // The strip and the tabs stay at the foot of the window; in a whole-page picture they would stop half-way down,
+        // over a card. Let them sit at the end of the page while the picture is taken.
+        await page.evaluate(() => { const t = (document.getElementById('wsdock') || document.querySelector('.tabs')); if (t) t.style.setProperty('position', 'static', 'important'); });
         await shot(prefix + '-' + tab.toLowerCase(), (f) => page.screenshot({ path: f, fullPage: true }));
         if (process.env.MOCKUPS) {                            // editable copies: SVG and layered PSD (tests/ui/mockups.js)
           try {
@@ -420,7 +427,7 @@ function startServer() {
             failures.push('mock-up ' + prefix + ' ' + tab + ': ' + e.message.split('\n')[0]);
           }
         }
-        await page.evaluate(() => { const t = document.querySelector('.tabs'); if (t) t.style.removeProperty('position'); });
+        await page.evaluate(() => { const t = (document.getElementById('wsdock') || document.querySelector('.tabs')); if (t) t.style.removeProperty('position'); });
       }
     }
     await screens('screen-phone');
@@ -436,7 +443,7 @@ function startServer() {
 
     // Another theme, and the wide layout.
     await api('POST', '/api/theme', { name: 'night-red', accent: null });
-    await page.click('nav >> text=Live');
+    await go(page, 'play/pads');
     await page.waitForSelector('.pads');
     await page.reload();
     await page.waitForSelector('.pad.on', { timeout: 10000 }).catch(() => {});
@@ -459,18 +466,18 @@ function startServer() {
     const t = { page, browser, base, info, width: 390, scale: 2, notes: [], contexts: [] };
     const fontsIn = (pg) => (pg.evaluate(() => Promise.all([document.fonts.load('900 44px Archivo'), document.fonts.load('400 16px Archivo'), document.fonts.load('500 16px "JetBrains Mono"')])
       .then((r) => { if (r.some((x) => !x.length)) throw new Error('a typeface did not load'); return document.fonts.ready.then(() => true); })).catch((e) => t.notes.push('the fonts: ' + e.message.split('\n')[0])));
-    // The whole screen with the tab bar at its foot (fixed, it would lie across the middle of a tall page)
+    // The whole screen with the strip and the tabs at its foot (held at the foot of the window, they would lie across the middle of a tall page)
     const wholeOf = async (pg, f) => {
-      // (the same for the message line, which Signal shows as a toast fixed above the tab bar)
+      // (the same for the message line, which Signal shows as a toast fixed above the strip)
       // (and from the top of the page: Live's strip for a playing shader is held in place beside the pads on a laptop,
       // so in a picture of the whole screen it sat wherever the last step had left the scroll)
       await pg.evaluate(() => window.scrollTo(0, 0));
-      await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.setProperty('position', 'static', 'important'); b.style.setProperty('animation', 'none', 'important'); } }); });
+      await pg.evaluate(() => { ['#wsdock', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.setProperty('position', 'static', 'important'); b.style.setProperty('animation', 'none', 'important'); } }); });
       try { await pg.locator('.shell').first().screenshot({ path: f }); } finally {
         // (and from the top of the page: Live's strip for a playing shader is held in place beside the pads on a laptop,
       // so in a picture of the whole screen it sat wherever the last step had left the scroll)
       await pg.evaluate(() => window.scrollTo(0, 0));
-      await pg.evaluate(() => { ['.tabs', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.removeProperty('position'); b.style.removeProperty('animation'); } }); }).catch(() => {});
+      await pg.evaluate(() => { ['#wsdock', '#msg'].forEach((q) => { const b = document.querySelector(q); if (b) { b.style.removeProperty('position'); b.style.removeProperty('animation'); } }); }).catch(() => {});
       }
     };
     const signalRound = async (suffix, pick) => {
@@ -489,7 +496,7 @@ function startServer() {
       await api('POST', '/api/theme', { name: 'signal', accent: null });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();
-      await page.waitForSelector('html[data-style="signal"] nav.tabs');
+      await page.waitForSelector('html[data-style="signal"] main.ws');
       await signal.setUp(t);
       await signalRound('-phone', () => true);
       t.width = 1366;
@@ -499,7 +506,7 @@ function startServer() {
       await page.setViewportSize({ width: 390, height: 844 });
       await api('POST', '/api/theme', { name: 'signal-light', accent: null });
       await page.reload();
-      await page.waitForSelector('html[data-style="signal"] nav.tabs');
+      await page.waitForSelector('html[data-style="signal"] main.ws');
       await signalRound('-phone-light', (p) => p.light);
     } finally {
       await signal.closeOthers(t);

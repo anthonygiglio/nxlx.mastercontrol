@@ -4,7 +4,7 @@
 
 Put pieces of the picture onto the surfaces of a set, a building or a curved screen. This replaces the old Mapping tab (ofxPiMapper, steered by a USB mouse and a fake keyboard): there is no mouse on the box and no separate program; the player's own GPU draws the mapping, and you set it up from a phone or laptop.
 
-Switch it on under System > Projection mapping (beta, off by default). The card is on the **Mix** screen; the System page has a button that takes you there. Full-access devices edit; everyone else sees the state.
+Switch it on under Setup > Projection mapping (beta, off by default). The card is on the screen Shape > Mapping, which is that page: for a full-access device with its switch at the top, for a presenter the card alone. Full-access devices edit; everyone else sees the state.
 
 ## Surfaces
 
@@ -20,7 +20,7 @@ Each surface shows a part of the picture: its **picture corners** (0 to 1 across
 
 ## Lining up
 
-1. Play something to line up with: Live > Test pattern is ideal.
+1. Play something to line up with: **Test pattern**, on the same screen under the mapping card, is ideal.
 2. Press **Edit on the display**: the projector shows every surface's outline (the chosen one yellow, the chosen corner as a pink dot).
 3. Drag a corner on the small screen in the card, or choose it and use the arrows (1, 10 or 50 pixels a press; the arrow keys work too when the drawing has focus). **Next corner** steps through them; **Move the whole surface** moves all corners together.
 4. Switch between **Screen corners** (where it lands) and **Picture corners** (what it shows).
@@ -32,6 +32,16 @@ Save a finished set-up under a name (up to 8). A saved mapping keeps its place i
 **The picture** is the whole frame of the clip, stretched to the screen while a mapping is shown (so a 4:3 clip fills the width too; choose picture corners to keep its shape). This is needed because the mapping is in screen pixels: with the usual letterboxing, every surface moved into the clip's own area (seen on the Pi with a 720x576 clip). The Mix sliders for size and position still move the picture under the mapping.
 
 **Masks**: use the overlay picture on the same screen (a PNG, black where no light should fall, transparent elsewhere). It is drawn over the mapped picture, in screen space.
+
+## From a controller: mapping mode
+
+Off unless you switch it on: **Controllers may adjust the mapping**, on this card, for a full-access device only. With it on, a MIDI controller or OSC can enter **mapping mode** and, only in that mode, choose a surface and a corner and nudge it by 1, 10 or 50 pixels, with one step of undo. The display shows the outlines with the chosen surface and corner marked, the card says a controller is adjusting the mapping, and the mode ends by the controller's own button or by itself three minutes after the last nudge. Every nudge goes through the same check as a move on this card. A knob that nudges is followed by how far it is turned, not by where it stands, and its first touch moves nothing, each time the mode comes on: where it was turned meanwhile as something else's knob is forgotten (the layers of [MIDI.md](MIDI.md)). The switch is not taken from an imported settings file, and a factory reset switches it off. Which buttons and knobs: [MIDI.md](MIDI.md), "Layers"; the OSC addresses: [OSC.md](OSC.md). Not tried on a controller or a projector.
+
+- **What is saved, and when.** A knob gives 20 nudges a second and OSC lets 200 through. Each one is checked and taken into the mapping at once, in memory. The settings file is written at most twice a second while they come (every write is two files forced to the card), the display's picture is made again at most 25 times a second, and both are done once more when the nudges stop, so what is saved and shown is always where the corner ended. Leaving the mode, by any road, saves at once. **If the service stops or the power goes within half a second of a nudge, the nudges since the last save are lost** (at most that half second of them) and nothing else: the file is whole, and the corner is where it was at the last save. Any other save of the settings in that moment takes them along.
+- **One step of undo is one run of nudges.** A knob's turn arrives as many messages, so taking back the last message would take back a pixel or two. The nudges of one corner that follow each other with less than a second between them are one run, and undo puts the corner back where it was before the run, in one checked move (the card's own "place", so it is exact). A run also ends when another surface, another corner or another step size is chosen. There is one step: after an undo, or after choosing another surface or corner, there is nothing to undo until the next nudge.
+- **The panel's own editor is borrowed.** The mode shows its outlines through "Edit on the display" and chooses through the card's own selection, so while a controller is adjusting, the surface and corner marked on a full-access person's card move with it; the card says so. When the mode ends the editor is as it was when the mode began: off if it was off, and if it was on, still on with the surface and corner that were chosen then (or, if that surface was removed meanwhile, on what there is).
+
+API: `POST /api/mapper/remote` (full) `{"allow": true|false}`; `POST /api/mapper/nudge` (a MIDI controller or OSC only) with one of `{"mode": true|false|"toggle"}`, `{"surface": 1|-1}`, `{"corner": 1|-1}`, `{"steps": [x, y]}`, `{"step": 1|10|50|"next"}`, `{"undo": true}` (the last run of nudges); `GET /api/mapper` has `controllers: {allow, mode, step, undo, seconds_left}`.
 
 ## How it works, and what it costs
 

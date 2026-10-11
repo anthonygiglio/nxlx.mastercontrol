@@ -70,7 +70,92 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | Schedule | Check the box clock (System > Schedule shows it), add an entry two minutes ahead, turn the schedule on | It fires once at that minute and shows "Last run"; reboot and confirm nothing fires for old times |
 | Network | **Last, with a monitor and keyboard on the Pi**, never over SSH on the only connection. Try a change, confirm, then one you do not confirm | A change you do not confirm reverts by itself. Never test this remotely on the only link |
 
+### The layouts, the levels and the fade button (D75): do these first
+
+**None of this has been on a controller.** The three layouts were drawn afresh on 2026-10-10 after the owner's first report; the numbers each control sends are still from documents. `pvj/MIDI.md` has each layout as a drawing. Before: MIDI on, a clip on pad A1, B1 and C1, something playing, Shaders and Vibes on. Say what you see for each row, also "fine".
+
+| # | Do | See |
+| --- | --- | --- |
+| K1 | For each of the three controllers: open Setup > MIDI controller and press or move **every control once** | Its box on the card lights up while you do. Note each one that does not, and each one that lights another box: that is a wrong number |
+| K2 | Look at each card | The controls that belong together carry one bar of colour, and the zones are named under the drawing. Does the arrangement make sense now? Say which control you looked for in another place |
+| K3 | nanoKONTROL2, knob 1 (zoom), with the picture at 100 percent and the knob anywhere | Nothing happens until the knob passes its middle; from there the picture follows. **Does it jump at any point?** |
+| K4 | Turn knob 1 slowly through its middle | The picture stays at exactly 100 percent for a short way around the middle (the Mix screen's Size reads 100). Is that rest too wide, too narrow, right? |
+| K5 | Turn knob 1 to both ends | 25 percent at the left, 200 at the right. Is the way near the middle fine enough to set a size, and the ends not too abrupt? |
+| K6 | The same with knob 2 (position X) and knob 3 (position Y) | Centred at the middle of each knob, to the edge of the screen and beyond at the ends. Do left, right, up and down go the way you expect? (If Y feels upside down, say so: it can be turned round) |
+| K7 | MIDI Mix: the same with the middle row's first three knobs | As K3 to K6 |
+| K8 | Move the zoom on the nanoKONTROL2, then touch the MIDI Mix's zoom knob | The MIDI Mix's knob does nothing until it meets the picture's size; then it has it, and the nanoKONTROL2's knob waits in its turn |
+| K9 | Panel, Live: tap **Fade out** | The picture fades out in 2 seconds; the button reads **Fade in** and flashes about twice a second, without moving anything around it. Readable in both halves of the flash? |
+| K10 | Tap it again | The picture fades in; the button is steady while it comes up and reads Fade out afterwards |
+| K10a | Tap it, and tap again half way down; then again half way up | Each time the picture turns round from where it is: no jump to black and none to full |
+| K11 | Launchpad Mini: press the round button **E** (right side, fifth from the top) | The same fade. While the picture is down E **flashes red** by itself and every other light stays steady. **If other lights flash too, or the pads look wrong after plugging in, say so at once and switch Lights off**: that is the flash mode misbehaving |
+| K12 | nanoKONTROL2 with lights on (LED Mode External, L10 below): press **R 7** | The same fade; R 7 flashes while the picture is down, lit while it comes up, dark afterwards |
+| K13 | MIDI Mix: hold Solo and press **Mute 5** | The same fade. No light (this row has none); the panel's button flashes |
+| K14 | Fade out with a controller, then press Blackout twice, then twice again | After the Blackout is off the picture is back and the fade button is steady; its next press fades out |
+| K15 | Launchpad Mini with clips on A1, B1 and C1 | Three colours down the left edge: row 1 amber, row 3 yellow-green, row 5 orange (each bank is two rows of six). Can you tell them apart at Low, Medium and High? The pad that plays is bright green |
+| K16 | Launchpad Mini: the two bottom rows and the strip beside the banks | Row 7: Vibes, previous shader, next shader, then effect on / off, previous, next. Row 8: previous clip, back 10 s, forward 10 s, next clip, then shader controls 1 to 4. Beside the banks, two wide: presets 1 to 8. Do the rows read right now? |
+| K17 | The quarter turn: M 7 (nanoKONTROL2, over Fade), Rec Arm 8 (MIDI Mix), the fifth round button along the top (Launchpad) | The picture turns a quarter each press, back to upright after four |
+
+### Layers: Geometry on the nanoKONTROL2, and mapping mode (D75)
+
+**Never on a controller or a projector.**
+
+| # | Do | See |
+| --- | --- | --- |
+| G1 | nanoKONTROL2, a shader on screen: turn knobs 1 to 8 | Each moves one of the shader's first eight controls |
+| G2 | Press **M 6** once (lights on, LED Mode External) | M 6 flashes; the card says "Geometry is on" and knobs 1 to 3 read Zoom, Position X, Position Y. Turn knob 1: nothing until it passes the picture's size, then the zoom follows. Knobs 4 to 8 do nothing |
+| G3 | Set zoom and position, press M 6 again | M 6 stops flashing. Turn knob 1: the shader's control does NOT jump; it follows again once the knob is back where it stood before G2. Does that wait feel right, or does the knob feel dead? |
+| G4 | Press M 6 and leave it for two minutes | It stops flashing by itself and the knobs are the shader's again |
+| P1 | Without the switch: press the mapping mode button twice (M 8 on the nanoKONTROL2, the last round button along the top of the Launchpad) | Nothing. The log says controllers may not adjust the mapping |
+| P2 | Mix > Projection mapping: switch **Controllers may adjust the mapping** on (full access), add two surfaces, press the button twice | The display shows the outlines, one surface yellow, one corner a pink dot; the button flashes; the card says a controller is in mapping mode |
+| P3 | nanoKONTROL2: turn knob 2 and knob 3. Launchpad: the arrow pads on rows 7 and 8 | The pink corner moves a pixel a step. Too fine, too coarse? Press the step (Cycle; the fourth pad of row 8) for 10 and 50 |
+| P4 | Next corner, next surface (Marker and Track buttons; the first four pads of row 7). Turn knob 2 a quarter turn in one go, then undo | The marks on the display follow; undo takes the whole turn back, not its last click. Does a second between runs feel right? |
+| P5 | Press Blackout twice, Stop, a pad | Each does what it always does and the mode stays on |
+| P6 | Press the mode button twice; and once more, enter it and wait three minutes | The outlines leave the display, the mapped picture comes back, the light stops flashing |
+| P7 | nanoKONTROL2, a shader on screen, knob 2 low. Enter the mode, turn knob 2 far up (it nudges), leave the mode, touch knob 2 | The shader's second control does NOT jump; it follows again once the knob is back where it stood before the mode. The same when the mode ends by itself, and when it is ended from OSC or by the owner's switch while the hand is on the knob |
+| P8 | In the mode, spin knob 2 back and forth for ten seconds with `journalctl -u pvj-web -f` open | The corner follows the knob without a wait you can feel and ends where the knob ended; nothing in the log. Pull the power a second after the last turn: after the start the corner is where it ended |
+| P9 | On a full-access phone: Edit on the display on, choose the second surface and its third corner. Enter the mode from the controller, choose another surface, nudge, leave | The card says a controller is adjusting the mapping; afterwards Edit on the display is still on and the second surface and its third corner are chosen again |
+| P10 | TouchOSC: a momentary button on `/pvj/mapping/mode`, another on `/pvj/mapping/mode/off`, a third on `/pvj/mapping/mode/toggle` | The first enters on the press and the mode stays on when the finger comes up; the second leaves; the third does both, one press each |
+| P11 | Launchpad: with "Presenter codes from a controller" on, hold the third round button along the top for 4 seconds; then hold pad 12 of bank C and the two pads right of it | The code comes from the round button only; the pads right of bank C do nothing |
+| P12 | nanoKONTROL2, a shader on screen. Enter the mode, nudge a corner with knob 2, leave. Turn knob 2 a long way as the shader's knob. Enter the mode again and touch knob 2 lightly | The corner does NOT leap by what the knob was turned in between: the first touch moves nothing, then it moves a step for a step. The same the third time |
+
+### TouchOSC: what the owner's layout can now be wired to (D75)
+
+The layout open in the owner's TouchOSC editor (`touchosc/mastercontrol_tOSC-layout_0001.tosc`: pages Room, Live, Mix, Shaders and Vibes, Tools, and a strip) was built on the addresses the box had. Its controls were read on 2026-10-10 (read only, nothing in it was changed); each control is named after the address it sends. **Nothing here was sent from TouchOSC, and the box still sends nothing back**, so no control can show the box's state.
+
+**Controls that are there and can be wired to something better:**
+
+| Where | Control in the layout | Now | Can be |
+| --- | --- | --- | --- |
+| Strip | `pvj/fadeout` | fades out only; there is no way back from the layout | `/pvj/fade`, sending 1 on press: out, then in at the next press, and up out of a Blackout |
+| Mix | `fliph`, `flipv` | the old names: each press switches the mirror over, so the layout cannot know which way it is | `/pvj/flip/h`, `/pvj/flip/v` as two switches sending 1 and 0 |
+| Tools | `overlay`, `stopoverlay` | two buttons, the old names | one switch on `/pvj/overlay` sending 1 and 0 (the two old ones keep working) |
+
+**Controls the layout does not have yet and the box now takes:**
+
+| Page | Add | Address | Send |
+| --- | --- | --- | --- |
+| Mix | a sixth fader under `pvj/position` | `/pvj/position/y` | -100 to 100 (`pvj/position` stays X) |
+| Mix | Transition (a radio or a row of buttons) | `/pvj/transition` | the name as a string: `cut`, `dip`, `crossfade`, `wipe-from-left` ... |
+| Mix | Duration fader | `/pvj/transition/duration` | 0.1 to 10 |
+| Mix | Effect on / off, previous, next | `/pvj/effect`, `/pvj/effect/prev`, `/pvj/effect/next` | 1 and 0; 1 on press |
+| Mix | Effect amount fader, effect knobs 1 to 8 | `/pvj/effect/amount`, `/pvj/effect/control/1` ... `/8` | 0 to 100; 0 to 1 |
+| Strip or Live | Prev and Next clip (beside the two `pvj/seek` buttons) | `/pvj/clip/prev`, `/pvj/clip/next` | 1 on press |
+| Strip | Fade in, if wanted as its own button | `/pvj/fadein` | no argument, or the seconds |
+| Shaders and Vibes | Previous, next shader (the page has `pvj/vibes/previous` and `/next`, which only step Vibes) | `/pvj/shader/prev`, `/pvj/shader/next` | 1 on press |
+| Shaders and Vibes | Speed, colour turn, brightness | `/pvj/shader/speed`, `/hue`, `/brightness` | 0 to 4, -180 to 180, 0 to 2 |
+| Shaders and Vibes | Shader knobs 1 to 8, presets 1 to 8 | `/pvj/shader/control/<n>`, `/pvj/shader/preset/<n>` | 0 to 1; 1 on press |
+| Shaders and Vibes | A button per shader | `/pvj/shader` | the shader's name as a string (`silk`) |
+| Shaders and Vibes | How long each stays | `/pvj/vibes/dwell` | 15 to 3600 seconds |
+
+Left as they are: the Room page (`pvj/scene/1` to `8`, `pvj/group/...`), Live's pads and banks, `pvj/vibes`, `pvj/vibes/set`, the Mix faders `pvj/opacity`, `pvj/size`, `pvj/position`, `pvj/speed`, `pvj/volume`, `pvj/rotate`, `pvj/loop`, `pvj/mute`, `pvj/mix/reset`, the Tools page's test screen and tones, and the strip's `pvj/seek`, `pvj/pause` (Freeze is pause), `pvj/stop` and `pvj/blackout`.
+
+**The layout's `pvj/fadeout` button as it is:** a plain TouchOSC button sends 1 on press and 0 on release. The box used to read those as seconds (a fade of one second, then a refused 0 in its log); now the 1 is a press with the panel's 2 seconds and the 0 does nothing. For another time use `/pvj/fadeout/seconds` and `/pvj/fadein/seconds`.
+
+To try: O1, send each new address from the layout with a clip playing and look at the screen and the panel; O2, the fade button twice (out, in), then Blackout from the panel and the fade button once (the picture comes up); O3, `/pvj/shader` with a name while Vibes runs (Vibes ends, that shader shows); O4, `journalctl -u pvj-web | grep osc` for a refused value.
+
 ### Controller lights (D53)
+
+**The rows L1, L4 and L5 below describe the Launchpad's first layout.** With D75: after plugging in, pad 1 is amber if A1 holds a clip, E (the fade button) and H (Blackout) are dim red, G (Stop) lights once something plays; Vibes is the first pad of row 7, and Freeze is F on the right.
 
 **Nothing of this has been seen on a real controller.** The messages come from Novation's document for the Launchpad S (that the Mini takes the same ones is not confirmed by Novation), from Korg's guide (nanoKONTROL2: External LED mode, and only with the factory On and Off values and channel) and from a secondary source alone (MIDI Mix). Five minutes; please say what you see at each step, also when it is right.
 
@@ -95,20 +180,61 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 
 ### A pairing code from a controller (D61)
 
-**Never run on a box or with a real controller.** Before: MIDI is on, a Launchpad Mini is plugged in (or give "Show a one-time presenter code" to a button of another controller on its card), a screen is on the box, one phone is paired with full access and a second phone is not paired.
+**Never run on a box or with a real controller.** Before: MIDI is on, a Launchpad Mini is plugged in (or give "Show a one-time guest code" to a button of another controller on its card), a screen is on the box, one phone is paired with full access and a second phone is not paired.
 
 | # | Do | See on the box's display | See on the paired phone (System > People and codes) |
 | --- | --- | --- | --- |
-| C1 | With "A code from a controller" off: hold the eighth pad of the top row for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
-| C2 | Switch "Presenter codes from a controller" on (answer the question). Tap the pad | Nothing | The second switch appears |
-| C3 | Hold the pad for 4 seconds, let go | The address, "One-time presenter code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time presenter code is on the box's display now", and End this code. No digits |
-| C4 | On the second phone open the address, type the code | The code leaves the display within a second or two | "The last one: a presenter code, just now, used by the device ..." and the phone is in Paired devices as Presenter |
+| C1 | With "A code from a controller" off: hold the third round button along the top (Top 3) for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
+| C2 | Switch "Guest codes from a controller" on (answer the question). Tap the button | Nothing | The second switch appears |
+| C3 | Hold the button for 4 seconds, let go | The address, "One-time guest code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time guest code is on the box's display now", and End this code. No digits |
+| C4 | On the second phone open the address, type the code | The code leaves the display within a second or two | "The last one: a guest code, just now, used by the device ..." and the phone is in Paired devices as Guest (can watch) (D80: it was Presenter before) |
 | C5 | Hold again, then press the pad once | The code appears, then goes at the press | "hidden at the controller" |
 | C6 | Hold again, wait 2 minutes | The code goes by itself | "ran out unused" |
 | C7 | Hold the pad for 15 seconds, let go. Then lay something on the pad for a minute | Nothing either time | |
 | C8 | Hold again, then press End this code on the phone | The code goes | "ended from the panel" |
 | C9 | `journalctl -u pvj-web -b \| grep "controller code"` on the Pi | | A line for each code shown and each refusal, and no line with 6 digits in it |
 | C10 | Other controllers: give the action to a button on the card, repeat C3. On a nanoKONTROL2 say whether the button needs holding or two presses | | |
+
+### The owner PIN from the panel, and Log out (D77)
+
+**Never run on a box.** Before: a phone paired with the PIN (owner) and a second phone joined with a guest code; both on System > People and codes (the owner) and System > About and power (the guest).
+
+| # | Do | See on the phone | See on the Pi |
+| --- | --- | --- | --- |
+| P1 | Owner: press **Show** under "The Owner (everything) PIN"; then **Copy**; then leave the page and come back | Four digits in the field, gone by themselves after about 12 seconds; "The PIN is copied" (or "Select the PIN and copy it"); the field empty again on return. Compare the digits with `sudo pvj-pin` | `journalctl -u pvj-web -b \| grep "owner PIN"`: one line per press with the device's id and name and no four digits of a PIN in it |
+| P2 | Guest: About and power > **Log out**, answer Log out; reload the page. Then owner: Log out on your own row under Paired devices, read the question, press Stay; then Log out and answer Log out | The guest is on the pairing screen after the reload, and gone from the owner's list. The owner's question names the PIN (last full-access device) or says "You will need the PIN"; after the real Log out the pairing screen, and the old PIN pairs again | When no device is left and nothing plays: the PIN screen on the display within a few seconds; `journalctl -u pvj-web -b \| grep "logged out"` has a line per logout |
+
+### Owner recovery: codes and the stick (D81)
+
+**Never run on a box, never met a real USB stick.** Before: a phone paired with the PIN (owner), a second phone with nothing, and a clip playing on the Pi's screen.
+
+| # | Do | See on the phone | See on the Pi |
+| --- | --- | --- | --- |
+| R1 | Owner: People and codes, last card, **Make recovery codes**; **Copy**; **Done, I kept them** | Eight codes like `XXXX-XXXX-XXXX`, then "8 of 8 codes left · made (now) by (your device)"; the codes nowhere on the card | `journalctl -u pvj-web -b \| grep recovery`: "8 recovery codes made by device ..."; `sudo grep -c hashes /var/lib/pvj/settings.json` is 1 and the codes themselves are not in the file |
+| R2 | Second phone: open the panel, **I have a recovery code**, type one code in lower case with spaces, **Pair with recovery code**; then try the same code on a third browser | The second phone is an owner (System shows everything); the third try says "wrong or was used already"; the owner's card says "A recovery code was used by ... ; 7 left" | one line "a recovery code was used by device ... ; 7 left", never the code |
+| R3 | With the clip playing: put in a stick that holds an empty file `pvj-recover` at its top (and a clip or two) | On the second phone (logged out first) the new PIN pairs it as an owner; the owner's card shows "The PIN was shown on the box's screen at ..." and, under Clips, the stick's clips still list | Within 3 s the screen shows "Recovery stick found", the panel address and "Owner PIN  dddd" over the clip; it goes the moment the PIN is used or the stick comes out; `sudo pvj-pin` then prints a different PIN |
+| R4 | Switch **A USB stick at the box shows the PIN** off; put the stick in again; then leave the stick in and reboot | Nothing on the card but the switch off | Nothing on the screen; the journal says "switched off; nothing shown". After the reboot with the switch on again and the stick in: one PIN screen for two minutes, then a new PIN |
+| R5 | With a certificate installed and **Owner access only over the secure connection** on: on the second phone over `http://`, **I have a recovery code** with a good code | "This box takes owner codes over https:// only. Open https://... and type the code there"; the code is not spent (the owner's card still says 8 left); over `https://` the same code pairs the phone as an owner | One journal line for the use over https, none for the refusal over http |
+| R6 | After R3, on the Pi's screen the moment the PIN is used; then People and codes on the owner's phone | The device list says "came in with the PIN from a recovery stick" beside the second phone; the card says "The PIN shown for a recovery stick was used by ..." | "The PIN was used by <the phone's name>" for about ten seconds, then the clip alone |
+| R7 | Leave the stick in and `sudo systemctl restart pvj-web` within an hour of R3; then take it out and put it back | Nothing new on the card for the restart; a new notice for the re-insertion | Nothing on the screen after the restart (the journal: "is in at start ... nothing shown"); the PIN screen again when the stick goes out and back in |
+| R8 | On a phone over `http://` with the owner-only switch on: **I have a recovery code** | No code field: "Open https://..." with one sentence why; the link opens the secure page where the field is | Nothing (the code never left the phone) |
+
+### Secure connection (D79)
+
+**Never run on a box or a phone.** You need your computer with `openssl` (a Mac has it), the box reachable at `http://nxlx-mastercontrol.local/` with full access, and the devices below. Everything is in `docs/HTTPS.md`; this is the order to try it in.
+
+| # | Do | See |
+| --- | --- | --- |
+| H1 | On your computer: `python3 tools/boxcert.py make-root` (a passphrase twice) | `~/nxlx-root-ca/root.key` and `root.pem` exist; a second `make-root` refuses. Back the folder up now |
+| H2 | On the box's panel over http://, System > Secure connection: check the names, press **Make the request**, then **Download the request** | The row says "HTTP only · request made"; the file `nxlx-mastercontrol.csr` is on your computer; on the box `sudo ls -la /var/lib/pvj/tls` shows the folder `drwx------ pvj-web` and `key.pem` `-rw-------` |
+| H3 | `python3 tools/boxcert.py sign ~/Downloads/nxlx-mastercontrol.csr`, then on the page **Upload the certificate...** with the file it wrote | "Certificate in use for nxlx-mastercontrol.local, <addresses>, until <a date about 13 months away>"; the row says "On · until ..."; `journalctl -u pvj-web -b \| grep certificate` has one line without any key material |
+| H4 | iPhone: **Download the root certificate**, follow the four steps on the page (the profile, then Settings > General > About > Certificate Trust Settings), then **Does this device trust the box?**, then **Open https://...** and pair with the PIN | "Yes"; Safari shows the lock with no warning at `https://nxlx-mastercontrol.local/`; the pairing works; the page over https says "You are reading this over https://" |
+| H5 | The same on an iPad, an Android phone (Chrome), a Mac (Safari and Chrome; Firefox needs its own import), and Windows if you have one | Each says Yes and opens https:// without a warning. Write down which words on the page did not match what the device showed |
+| H6 | Over https:// on the iPhone, switch **Owner access only over the secure connection** on. Then on any device open `http://nxlx-mastercontrol.local/` and try to pair with the PIN; then try a guest code there | The PIN is refused with the https address in the message; the guest code works; an owner device that is still on http:// sees the notice with the link at the top |
+| H7 | On the Mac over http://, with the switch on, try System > People and codes > Show | Refused: the notice points at https:// |
+| H8 | A short-lived certificate: `boxcert.py sign <the request> --days 1 --out short.pem`, upload it, wait a day (or set a phone's clock two days ahead) | The row turns to "Certificate ends ..." then "Certificate ran out ..."; the phone refuses https:// with its own warning; http:// still opens the page, which says what is wrong; **Back to the one before** restores the long one |
+| H9 | Backup and reset > Reset to factory settings (clips kept) | The confirm says the key and certificate go; afterwards the box is HTTP only, `/var/lib/pvj/tls` is gone, the root on the phones still trusts the next certificate you sign |
+| H10 | `sudo pvj-update` to a newer bundle, or the Updates card | `/var/lib/pvj/tls` is untouched and https:// works after the restart |
 
 ### Runtime folders: who owns what in /run (D45)
 
@@ -198,11 +324,138 @@ L; ls /run/pvj
 
 Send back the output of `L` at every step, R0, and the output of R10. If any line differs from the table, stop and send it: do not "fix" an owner by hand.
 
+### Crossfade (D71)
+
+**Run on the test Pi 4 by a script on 2026-10-09, with nobody at the monitor** (the journal of that afternoon): what a script can see of X2, X3, X4, X10, X11, X12, X14 and X16 held at 2560 x 1440, and a play answered after 0.93 to 1.09 s. **Everything that needs eyes is open**, and so is every row not named. In CI it ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. Ten minutes; the numbers matter more than the look, so please send them.
+
+Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between clips set to **Crossfade**, duration 2s. After each play, `GET /api/status` holds `mix.fallback` once the box has given up, and the panel's journal (`journalctl -u pvj-web`) says "crossfade given up: ..." with the reason.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| X1 | Play A1, then A2 | A1 freezes, then melts into A2 over two seconds; A2 moves from its first frame | How long A1 stood still before the fade began (it should be well under a second), and whether the fade looked smooth or stepped |
+| X2 | The same again, three times, with `journalctl -u pvj-web -f` open | No line "crossfade given up" and no line "no crossfade, a cut instead" | The line, if one comes. "given up" names the still's time, the steps or the dropped frames. "a cut instead" with "error running command" or a permission in it means the player could not write the still into the panel's folder (`/run/pvj/web`, a file of group `pvj`); with "rows are not plain bytes" or "not an 8-bit picture" it means this mpv writes its PNG another way than CI's 0.37 did. Either would make every crossfade a cut, and only a box can show it |
+| X3 | During a fade press **Blackout** | Black at once, no picture left behind | Anything that stayed lit |
+| X4 | During a fade press **Stop** | The screen clears at once | |
+| X5 | With **Freeze** on, play A2 | The frozen picture melts into A2, which plays | |
+| X6 | Put on an effect and a mapping, play A1 then A2 | The outgoing picture keeps its shape and its effect while it fades; nothing is drawn twice or in another place | A photo if a surface jumps |
+| X7 | Play a stream (or a live input), then a clip, then the stream again | The old picture waits for the stream's first frame, then fades | How long it waited |
+| X8 | On the 2560 x 1440 screen: X1 again | Either a fade, or a dip to black from the second play on | Which, and the journal's line |
+| X9 | Restart the player during a fade (`sudo systemctl restart pvj-player`) | The new player starts clean; no old picture over it | |
+| X10 | After all of it: `ls /run/pvj/web` | No `transition-*.png` and no `overlay-63.bgra` | The listing, if there is one |
+| X11 | While A1 plays, play A2 and press **Stop** at once, within the freeze | The screen clears and stays clear; A2 does not start after it | If A2 started, or how long Stop took: this is whether mpv answers while it takes the screenshot, which no test here can show. **Press it DURING the screenshot itself, the first 0.6 s or so after the tap** (the script on 2026-10-09 pressed 0.7 s in and right after the play had answered, both after the screenshot): that number is the one nobody has |
+| X12 | The same with **Blackout**, from the panel and from a MIDI controller (a pad, then the Blackout button straight after) | Dark at once; A2 plays under the dark and is there when you show the picture again | How long the dark took to come from the controller, **and from the panel when pressed within the first half second after the tap, while the player is still taking the screenshot**: that is the unmeasured number (pressed later, it answered in 0.08 to 0.09 s on 2026-10-09) |
+| X13 | During a crossfade at 1920 x 1080, move a MIDI fader for volume and watch a sync client if there is one | The fader answers as always; the client does not drift | Whether the controller felt slow during the fade: every crossfade step scales 8 MB in the panel |
+| X14 | Set the transition to **Wipe from left**, then **Slide off up**; play A1, A2 | An edge that moves evenly; the old picture stands still (wipe) or moves off as one piece (slide) | Whether the edge moved smoothly or in jumps, and the journal's line if the box gave up. A wipe should ask less of the box than a crossfade; say if it did not look so |
+| X15 | X8 again with a wipe on the 2560 x 1440 screen | | Whether a wipe holds where a crossfade gave up |
+| X16 | Run a slow wipe (duration 5s) ten times, then `journalctl -u pvj-player -n 50` | The player never restarts during a wipe (the still's file is replaced and removed while mpv has had its bytes: mpv's manual says it copies them during the command, and CI's 0.37 did) | Any restart of the player, or a line with SIGBUS or "overlay" in it: that would mean this mpv does not copy |
+| X17 | If the box ever stalls for seconds during a transition (a heavy clip, a slow card): look at the screen ten seconds later | No still left over the picture. The panel gives up after two seconds without an answer and sends the removal once more five seconds on | A still that stayed, what was played, and `mix.fallback` from `GET /api/status`: a command that timed out and was run later is the one case nobody could test |
+| X18 | Start a live input, then play a clip, then Stop; after each: `pgrep -af "mpv.*--o=" ` on the box (the live input's helper is an mpv that writes into a pipe) | The helper runs while the live input is on the screen and never afterwards | A helper that is still there under a clip or after a Stop: the device would stay open. The panel decides this by what it loaded last, not by asking the player; whether the player's own `path` is empty right after a Stop was not looked at and is not relied on |
+| X19 | Start a live input (it takes a second or more) and press **Fade out** at once, before its picture is there | The picture stays faded out when the input arrives | If it came up lit: a wish for the level made while something loads must win |
+| X20 | Press **Blackout**, then restart the player (`sudo systemctl restart pvj-player`), wait five seconds, play a clip | The screen stays dark through the restart and under the clip; Show brings the clip up | If the clip came up lit: a new player starts at full brightness, and the panel must put the level back when it sees the new one |
+| X21 | With a rotation of Vibes running and a clip of 1920 x 1080 loading (tap a pad), press **Blackout** at once, ten times over | Dark at once every time, also while the clip is still loading; nothing hangs | How long the dark took when a load was in the way. In the tests a Blackout waits for one write of the level and no more (under half a second against a load of two); whether mpv answers that write while it loads is the player's matter |
+| X22 | Choose a generator (a shader from the Shaders page), start a live input, and choose another generator within a second of starting the input, before the camera's picture is there. Then once more, waiting for the camera's picture before the second generator. After each: `pgrep -af "mpv.*--o="` | The generator is on the screen, not the camera's picture and not a frozen frame of it; the helper is gone | What is on the screen, and whether the helper still runs. The seventh review found that a generator chosen just after a live input could leave the pipe on the screen with its helper stopped (the player went by its `path`, which follows a load a moment late). The tests show the repair against a stand-in for mpv; how late a real mpv's `path` is, is not known here |
+| X23 | With a live input on the screen, restart the player with the panel's **Restart player** button, and once more with `sudo systemctl restart pvj-player`; `pgrep -af "mpv.*--o="` five seconds after each. Then the same with **Blackout** on, and play a clip afterwards | After the panel's restart the helper is gone at once. After the restart from the shell it may run until the next thing is played (nothing tells the panel), and must be gone then. Under Blackout the screen is dark again within ten seconds of the restart and stays dark under the clip | A helper that stays after the panel's restart; a lit screen under Blackout more than ten seconds after a restart, and the journal's line "could not put the picture's level back on the restarted player" if there is one (the panel offers the level to the new player five times, two seconds apart) |
+
+### A shader pad with an effect on (D73 and D74 together): do these two first
+
+**Nothing of this has run on a board.** The two features were tested together only against a stand-in for the player and on CI's software GPU.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| PE1 | Screen at 2560 x 1440. A shader on pad A3, a clip on A1, Transition set to Crossfade, 2s. Tap A3, put the effect Wash on, then tap A1. Do it three times, then once more with Edge Glow | The filtered shader stands still, then melts into the clip, which has the effect on it | `mix.fallback` after each (does the box give up, and with which words: with an effect on it should say "frames were dropping during the change with the effect ... on; taking the effect off may help", not "the clip dropped"); what the Effects card and the line under the Mix picker say; `last.still_ms` |
+| PE2 | From a Launchpad, as fast as the fingers go: a shader pad, effect Next, another shader pad, effect Off, a clip pad. Three times, with `journalctl -u pvj-web -f` open | Each press does what it says, in order; the last thing pressed is on the screen | Anything that did not happen, and every journal line with "dropped", "was not shown" or "did not go on" |
+
+### Shaders on pads (D73)
+
+**Nothing of this has run on a board.** Before: the Shaders and Vibes module on, Live > Edit pads, pad 1 a clip, pad 2 a shader (Shader, then for example Aurora), pad 3 a shader that has a preset, with that preset.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| P1 | Tap pad 2, then pad 1, then pad 2, with the Mix transition on Cut and then on Crossfade | The shader comes at once each time (a cut, also with Crossfade); the clip after it blends from the shader's picture with Crossfade | Whether the pad lit up while its shader was on, and anything that flashed between the two |
+| P2 | Start Vibes, then tap pad 3 | Vibes stops, the shader starts with the preset's values (compare with the Shaders page: the preset is the one marked) | |
+| P3 | The same pads from a MIDI controller, and from OSC if there is a sender | The shader follows the press without a wait you can feel; the controller's light for the pad is on, and brighter or green while its shader plays | How long from the press to the picture for a shader the box had not shown since it started (the first time the GPU looks at it) |
+| P4 | Press a shader pad on the controller and a clip pad straight after it | The clip plays and stays: the shader does not come over it a moment later | If the shader came after the clip |
+| P5 | Delete the shader of pad 2 on the Shaders page (an uploaded one), then tap the pad | The panel says the pad's shader is not on the box any more; the screen keeps what it had | |
+| P7 | **With Vibes running, tap a shader pad on the controller, twenty times over an evening's worth of shaders: also right after the box started, when Vibes shows each shader for the first time and the GPU takes seconds over it** | The pad's shader comes every time; the screen is never black in between (Vibes' picture stays until the pad's is on); Vibes has stopped | Any black screen or a tap that showed nothing, with the time and `journalctl -u pvj-web` around it ("was not shown" is the line of a tap that was dropped). This is the case the fifth read found broken, and no test here runs a real GPU's seconds |
+| P6 | System > At power-up: Pad, pad 2; restart the box | The shader is on the screen after the start, at the level the mix says | The journal line of the autostart if it did not start |
+
+### An effect over a generator (D74)
+
+**Nothing of this has run on a board.** In CI the pair ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. The question for the board is what two shader stages cost. Twenty minutes. The numbers come from two requests while a pair is on: `GET /api/effects` (`on.load`, `on.drops_per_second`, `on.pass_ms`, `on.working`) and `GET /api/shaders` (`playing.pass_ms`, `playing.load`, `playing.drops_per_second`, `playing.effect`, `gpu.busy_percent`). Wait ten seconds after each change before reading: the guard does not count the first three and judges over six.
+
+Before: Shaders and Vibes on, nothing mapped, Effect detail on Automatic. Note the screen's size and rate.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| E1 | Picture detail 540 lines. Play the shader Silk. Put on the effect Wash | The shader with the wash over it, moving as before | Both requests' numbers; the same two numbers for Silk alone first (the effect Off) |
+| E2 | The same shader with Vignette, Kaleido, RGB Halftone and Edge Glow, one after the other | Each effect over the shader | The numbers for each pair; which lights the Effects card shows |
+| E3 | The same four effects over a medium shader (Aurora) and over a heavy one (Nebula) | | The numbers for each pair. This is where frames are expected to drop: say from which pair on |
+| E4 | Picture detail 720 lines, then E1 and E2 again | Softer under Edge Glow, Corner Color Tint and Edge Blowout (Automatic keeps those at 540 lines) | The numbers; whether the three look softer than the others |
+| E5 | Effect detail 540 lines with Picture detail 720, any light effect | The whole shader softer | The numbers beside E4's for the same pair |
+| E6 | Start Vibes on Ambient with Wash on, and let it run for five shaders | The effect stays through every change; the dip to black and back takes the wash with it; no flash of the unfiltered shader | Anything seen without the effect, and for how long; `GET /api/effects` `on.id` after each change |
+| E7 | During E6 with a pair that drops frames (from E3): leave it for a minute | The Effects card turns to "Too heavy with this shader"; Vibes does not leave the shader out and does not end with "the box is dropping frames"; the Shaders page says "An effect is on over it: Vibes does not judge the shader meanwhile". **After about 23 seconds of dropping 2 frames a second or more the box takes the effect off** and the card says "The last effect came off: the picture was dropping frames with it on over the shader for 20 seconds ..." (and adds "Frames are still dropping without it ..." if the shader alone goes on dropping them); the shader plays on and the rotation goes on. The two numbers (2 a second, 20 seconds) are guesses: say whether it came off too soon, too late, or for a pair that looked fine | `GET /api/shaders`: whether any shader's `heavy` is set now that was not before (none should be), and `vibes.last` |
+| E8 | Take the effect off during E7 and wait twenty seconds | Vibes judges the shader by itself again | Whether a shader was marked heavy now, and whether that seems right for the shader alone |
+| E9 | With a pair on: Blackout, Blackout off, Fade out, Fade in, Opacity 50 | Black is black; the pair comes back as it was | Anything lit under Blackout |
+| E10 | With a pair on and Transition set to Crossfade: play a clip | The filtered shader stands still, then melts into the clip, which has the effect on it | `mix.fallback`; how long the shader stood still |
+| E11 | With a pair on: Stop. Then play the shader again | The screen clears; the shader comes back with no effect | |
+| E12 | With an effect on over a clip: play a shader | The shader comes up with the effect on it from its first picture. (Expected and unverified: for a moment the effect runs with the text made for the clip, and the worker hands the GPU a new one at once. If the GPU ever refused that, the screen might be black for a moment before the effect comes off; never seen, and it cannot be made on purpose) | Any flash of black or of the plain shader |
+| E13 | With a pair on, restart the player (`sudo systemctl restart pvj-player`) | Nothing on the screen; the Effects card says the player was restarted | |
+| E14 | With a pair on, move a control of the effect and a control of the shader in turn | Each follows; neither resets the other | Any hitch, and which control made it |
+| E15 | With Vibes running and an effect on: press a controller's effect Next three times quickly, and once more just as Vibes changes its shader | The effect goes three on, then one more: no press is lost, also at the change | Which effect was on before and after each burst |
+| E16 | Press a controller's effect Next and at once Stop on the panel, then play a clip | Nothing goes on over the clip; the Effects card says the effect "did not go on" because the screen was cleared | |
+
+What cannot be made on purpose: a pair the GPU refuses. If the Effects card ever says "the player refused ... over the shader", send the whole sentence and the two names.
+
+### OSC: who may send (D78)
+
+**Never run on a box or with a real TouchOSC.** Before: OSC is switched on (System > OSC), a tablet with TouchOSC is on the same network with the box's address and port 9876 as its target, a control in the layout sends `/pvj/stop`, a clip plays, and a paired full-access phone or laptop has System > OSC open. A second device that can send OSC (a laptop) helps for O3.
+
+| # | Do | See on System > OSC | See on the screen |
+| --- | --- | --- | --- |
+| O1 | With all three switches off, press the control on the tablet | The tablet's address under "Senders in the last ten minutes" with "Allow this one", and `/pvj/stop` under "Last messages" | The clip stops |
+| O2 | Switch "Only these devices may send" on. Play a clip, press the control | "Nobody may send yet"; the tablet's row says "Refused: not in the list of devices that may send" | The clip goes on playing |
+| O3 | Press "Allow this one" beside the tablet, press the control. If there is a second sender, send `/pvj/stop` from it too | The tablet is in the list and its row says the last one was `/pvj/stop`; the second sender is refused | The clip stops for the tablet only |
+| O4 | Press "Remove" beside the tablet's address, play a clip, press the control | Refused again, and the count of refused packets goes up | The clip goes on playing |
+| O5 | Switch the list off and "A sender must be a paired device" on. Press the control before the panel was ever opened on the tablet | "Refused: no paired device at this address" | The clip goes on playing |
+| O6 | Open the panel on the tablet (pair it if needed), go back to TouchOSC, press the control | "Counts now:" names the tablet's address; the message is let in | The clip stops |
+| O7 | Remove the tablet under System > People and codes, play a clip, press the control | Refused at once: "no paired device at this address" | The clip goes on playing |
+| O7b | Pair the tablet again, open the panel on it, press the control (it works); then About and power > Log out on the tablet, play a clip, press the control | Refused at once: "no paired device at this address" | The clip goes on playing |
+| O8 | Switch that off and "A key in the address" on. Press the control | "Refused: no key in the address" | The clip goes on playing |
+| O9 | Press "Show the key", put `/k/<key>` in front of the address in the layout, press the control. Wait 30 seconds | The message is let in, shown as `/pvj/stop` without the key; the key hides itself | The clip stops |
+| O10 | "Make a new key" (answer the question), play a clip, press the control with the old key in the layout | "Refused: wrong key" | The clip goes on playing |
+| O11 | On an operator's and a guest's device, open System | No OSC page with lists or a key | Nothing |
+| O12 | Write down how the tablet's address looked in O1 and whether it changed during the test (a new address from the router) | | |
+
+### Owner, Operator, Guest and the lock on guest controls (D80)
+
+**Never run on a box, with a phone, a projector or a controller.** Before: one phone paired with the PIN (Owner), one with an Operator link, one with a guest code; Projectors and Room on with at least one projector, one scene that switches a group on and one that switches it off; a clip on a pad.
+
+| # | Do | See on the guest's phone | See elsewhere |
+| --- | --- | --- | --- |
+| R1 | Right after the update, open the panel on a phone that was a guest before | A card "Guest controls" on Live (or Room): Previous, Next, Stop, Blackout, a clip to play, scenes, shaders, Projectors on and off. The page's own buttons stay off | Nothing |
+| R2 | Guest: tap a pad, Next, Stop, Blackout twice | Each does it within a second; no error line | The screen follows; the journal (`journalctl -u pvj-web`) has one line per tap with the phone's name |
+| R3 | Guest: tap a scene that switches the wall on | "(name): started" | The projector switches on |
+| R4 | Guest: tap Projectors off | A question "Switch the projectors off?"; nothing happens until "Switch off" | After "Switch off" the projector goes off. Note how long the question stays (it goes by itself after 8 seconds; the box takes the answer for 30) |
+| R5 | Guest: Projectors on, then Projectors off again within five minutes | After the question: a line that the projectors were switched off by a guest a moment ago | The projector stays on |
+| R6 | Operator: Room, "Lock guest controls for a show" | Within a few seconds the card is gone and one line reads "The room is locked for a show: you can watch" | The Owner's People and codes shows "Locked" after a reload |
+| R7 | Restart the box (Owner), open the guest's panel | Still locked | |
+| R8 | Owner: "Open guest controls" | The card is back within a few seconds | |
+| R9 | Guest: tap Next twelve times fast | After ten: "too many guest actions at once; wait a moment" | The Operator's own buttons still work at once |
+| R10 | Operator: System | Schedule, At power-up, Projection mapping (when on) are there; Network, Updates, Remote support, Backup and reset, Look, MIDI, DMX, OSC are not | |
+| R11 | Operator: Media, upload a clip, rename it, delete it; Live, Edit pads, give a pad a clip | Each works | |
+| R12 | Operator: People and codes | "Let someone in" with the guest code only, a card "Guests" with the guest's phone and Remove, "Create a guest link", the lock. No PIN, no operator code, no owner or operator device | Remove the guest: its panel returns to the pairing screen |
+| R13 | A MIDI controller and an OSC sender that worked before the update: every control once | Nothing | Each does what it did before, no more; with guest controls locked too (the lock is for guests only) |
+| R14 | Hold the controller's code pad (switch on first), pair a phone with the code | The phone is a Guest | Paired devices names it Guest (can watch) |
+| R15 | If a phone was paired from a controller before the update: open its panel | It is a guest: the Guest controls card, and "Guest (can watch)" under About and power | The owner's Paired devices names it Guest |
+| R16 | Owner: People and codes, A code from a controller, "A controller's join code pairs": Operator (answer the question). Hold the code pad, pair a phone | The display says "One-time operator code"; the phone is an Operator | Set it back to Guest: that phone stays an Operator, the next one is a Guest |
+| R17 | Operator: Room, set up, edit a scene, tick "Not for guests", save | On the guest's phone the scene is gone from the Guest controls card after a reload | The Operator still starts it |
+| R18 | Operator: System > MIDI controller: teach a pad with Learn, change one control of a drawn layout, switch the lights | Each works | The pad that shows a code reads "Only the owner changes it"; no code action in the lists |
+| R19 | Operator A: People and codes, remove Operator B | B's panel returns to the pairing screen at once | A has no Remove on his own row and sees no owner |
 ### NDI input (D62): one first run on a Pi 4 (2026-10-08); most of this is still to do
 
 **What has run (2026-10-08, the owner's test Pi 4, Debian 13, mpv 0.40, by the coordinator over SSH, nobody looking at the monitor then; the owner looked at the moving source on the monitor afterwards and said "The pi looked good", which is the first look by eye, at a moving source only):** N0, N2, a first look at N4 and N5 judged from the preview picture only, one 61 second run of a moving source, and N9. The figures and what they do not say are in `pvj/NDI.md`, "First run on a Pi 4". **Not done: everything that needs eyes on the monitor, N6 as written (five minutes per size, 60 frames a second, 1080p60, HX), N7, N8, N10, N11, N13 to N18, and N12's question whether a still picture is on the screen.** Two things the image does not have: `socat` (the steps below use a python3 line instead) and memory accounting for the helper's unit (N14). **Before N2: the owner must have decided that NDI's licence covers this box** (`pvj/NDI.md`, "The SDK License Agreement itself"). On 2026-10-08 he decided that for his own test Pi only; on any other box, a venue's above all, stop after N17. **The order: N0, N1, N17 (all three on the box before it opts in), then N2 (the opt-in), N3 to N16, and N18 last.** Sound is built since 2026-10-08 and **nobody has heard it**: N10 is its step, after N5. Do these in that order; stop at the first that fails and send the journal lines (`journalctl -u pvj-ndi -b`). You need the NDI SDK for Linux (from ndi.video, with its licence read and accepted by the owner) and a sender on the same wired network: Resolume's NDI output, or NDI Tools "Test Patterns" and "Screen Capture" on a laptop.
 
-N0. **Before anything: this branch moves the box's settings to schema 15.** After it has run once, a version that only knows schema 14 (master before this merges, or any branch cut from it) refuses to start the panel, correctly, until the newer code is back (LESSONS, the sync branch). An update through the panel that fails goes back with its settings backup; a deploy by hand over SSH does not. So keep a copy of `/var/lib/pvj/settings.json` first, and deploy this branch to the test Pi only when it is next to merge. **After the installer the box has NOT opted in, and must have nothing of NDI:** `id pvj-ndi` and `getent group pvj-ndi` find nothing; `systemctl status pvj-ndi` says the unit could not be found; `ls /etc/systemd/system/pvj-ndi.service /etc/systemd/system/pvj-web.service.d /etc/systemd/system/pvj-player.service.d /run/pvj-ndi /opt/pvj-ndi` finds none of them; `systemctl show -p SupplementaryGroups pvj-web pvj-player` names no `pvj-ndi`; `systemctl is-active pvj-player pvj-web` says active twice; the installer's output has no line about NDI or avahi; `sudo pvj-ndi-runtime status` ends with "NDI is not set up on this box". (A box that ran an earlier build of this branch, when the helper went on every box, has a `pvj-ndi` unit without the mark: **it loses its helper at this install**. The installer must say "removing an NDI helper that nobody set up on this box" and the checks above must then hold, except that `id pvj-ndi` still finds the account; NDI comes back only with the opt-in command of N2. No such box is known. Any line of the installer that starts with WARNING and names NDI is a finding: send it.) Do this once as an update over the running older version too, not only on a fresh image.
+N0. **Before anything: the settings schema.** Since 2026-10-11 this branch makes no schema change (the key `ndi` is read with defaults), so a box can go from master to it and back without touching the settings file. A box that ran the branch before that date (the test Pi) holds a schema 15 file, which neither master nor this branch loads: put the schema 14 copy back first (the hand-off says where it is). Check: `grep -o '"schema": [0-9]*' /var/lib/pvj/settings.json` says 14 before and after the install.
 N1. **A box that did not opt in, in the panel.** System > NDI input, switch on. The row on System says "NDI is not set up on this box" (chip "Set up", not "Problem"); the page says "NDI is not set up on this box" with the licence note and the one command, and no word about a helper that stopped. Add an address under "Addresses to ask": it is saved. `curl` or the browser's network tab: `GET /api/ndi` answers at once with `"setup": false`. `journalctl -u pvj-web -b | grep -i ndi` shows no error.
 N2. **The opt-in: the one command.** First try the x86_64 file on the Pi on purpose: `sudo pvj-ndi-runtime install "<the SDK>/lib/x86_64-linux-gnu/libndi.so.6"` must refuse with "is for x86_64, this box is aarch64" (in the SDK that name is a link to `libndi.so.6.3.2` beside it; on the first run the link itself was refused as "a link" and the real file name had to be given, which did refuse as it should; a link to a plain name in the same folder is followed since then, and that has not been tried on the box yet: try both names), and the checks of N0 must still all hold (a refused file sets nothing up and leaves no `/opt/pvj-ndi`). Unpack the SDK in your own home or on a stick, never in the media folder. If the read-only root is on (`sudo pvj-rootfs status`), switch it off and restart first, or the setup is gone at the next restart; the command says so if it sees it. Then, with something on the screen so the restart can be seen: `sudo pvj-ndi-runtime install "<the SDK folder>"`. Write down everything it prints. It must name the file it took, say whether it installed avahi packages (on Raspberry Pi OS it should not need to), say that it restarts the panel and the player, and end with "NDI is set up on this box: the helper pvj-ndi is installed and was running 3 seconds after its start". If it ends with "NOT running", that is the first finding: send `journalctl -u pvj-ndi -n 50` and go to N3 (the setup is left in place for that). Note how long the screen was dark. Then: `id pvj-ndi` shows the account in group `pvj-ndi` only; `systemctl is-enabled pvj-ndi` says enabled; `systemctl is-active pvj-player pvj-web pvj-ndi` says active three times; `systemctl show -p SupplementaryGroups pvj-web pvj-player` shows each unit's own groups followed by `pvj-ndi` (the drop-in adds, it must not replace: the panel still has `audio video`, the player `video render audio input`); `ls -ld /run/pvj-ndi` is `pvj-ndi pvj-ndi drwxr-x---`; `systemctl cat pvj-web pvj-player` shows the drop-in `50-pvj-ndi.conf` under each. A clip still plays, a MIDI controller and the capture input still work (the groups they need are still there). Reload the NDI page: no "not set up" notice any more. Read `journalctl -u pvj-ndi -n 20`: "loaded the NDI runtime (...)" once the page has been opened with the module on. Run the same command a second time: it must end the same way and change nothing else. **First run, 2026-10-08:** with the folder that holds `lib/aarch64-rpi4-linux-gnueabi` it worked the first time: the library, the group and the account (in no other group), the unit enabled, "was running 3 seconds after its start", `pvj-web` with the groups `audio video pvj-ndi` and `PVJ_NDI_DIR`, `NRestarts` 0. Not done yet: the second run of the command, the clip, MIDI and capture checks, and how long the screen was dark.
 N3. **The sandbox, line by line.** If the runtime does not load or finds nothing, find the line: `sudo systemd-run --pty -p User=pvj-ndi -p Group=pvj-ndi -p ProtectSystem=strict ... python3 -c 'import ctypes; ctypes.CDLL("/opt/pvj-ndi/libndi.so.6")'`, adding the unit's lines one at a time. The ones most likely to matter: `IPAddressDeny=any` with its allow list (does discovery still work? does video arrive?), `PrivateDevices`, `RestrictAddressFamilies`, `ProtectHome` (the runtime's settings folder is pointed at `/opt/pvj-ndi`), and whether `libavahi-client.so.3` is installed and `avahi-daemon` runs. Then try adding `MemoryDenyWriteExecute=yes` and `SystemCallFilter=@system-service`; if both hold through N4 to N8, add them to the unit and to `tests/test_units.py`.

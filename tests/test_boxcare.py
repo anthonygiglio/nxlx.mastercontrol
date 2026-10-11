@@ -3,6 +3,7 @@
 """Settings export and import, the diagnostics file and factory reset (pvj/boxcare.py)."""
 import copy
 import json
+import re
 import os
 import stat
 import subprocess
@@ -125,6 +126,10 @@ class StreamAddressTest(unittest.TestCase):
 
 class ExportTest(Base):
     def test_default_export_holds_no_secret(self):
+        # A PIN of the test's own choosing: a random one is four digits, and "0002" once stood in this file's own
+        # projector id "aaaa0002" (2026-10-08, CI), so the test failed about once in a few thousand runs for nothing.
+        self.auth.set_pin(PIN)
+        self.pin = PIN
         self.h("POST", "/api/access/code", {"role": "view"}, self.full_dev)
         file = self.export()
         text = json.dumps(file)
@@ -137,7 +142,10 @@ class ExportTest(Base):
         secrets += [d["token_hash"] for d in self.settings.data["devices"]]
         secrets += [j["code"] for j in self.auth.list_joins()]
         for secret in secrets:
-            self.assertNotIn(secret, text)
+            if secret.isdigit():        # a join code is digits too: look for it standing by itself, not inside a longer number or word
+                self.assertIsNone(re.search(r"(?<![0-9A-Za-z])%s(?![0-9A-Za-z])" % secret, text), secret)
+            else:
+                self.assertNotIn(secret, text)
         self.assertNotIn("token", text)
         self.assertEqual([p["password"] for p in file["settings"]["projectors"]], ["", ""])
         self.assertEqual([s["url"] for s in file["settings"]["streams"]],
@@ -189,6 +197,27 @@ class ExportTest(Base):
 
 
 class ImportTest(Base):
+    def test_a_shader_pad_and_an_autostart_on_it_come_back_as_exported(self):
+        # D73: a pad that holds a generator shader keeps `file` empty and names the shader in a key of its own
+        d = self.settings.data
+        d["pads"]["banks"][1]["pads"][5] = {"label": "Glow", "file": "", "shader": "nxlx-aurora.fs", "preset": "Slow"}
+        d["autostart"] = dict(d["autostart"], mode="pad", pad=[1, 5])
+        self.settings.save()
+        file = self.export()
+        self.assertEqual(file["settings"]["pads"]["banks"][1]["pads"][5], {"label": "Glow", "file": "", "shader": "nxlx-aurora.fs", "preset": "Slow"})
+        d["pads"]["banks"][1]["pads"][5] = {"label": "", "file": ""}
+        d["autostart"] = dict(d["autostart"], mode="off")
+        self.settings.save()
+        st, out = self.send(file)
+        self.assertEqual((st, out.get("problems")), (200, []), out)
+        self.assertEqual(self.settings.data["pads"]["banks"][1]["pads"][5], {"label": "Glow", "file": "", "shader": "nxlx-aurora.fs", "preset": "Slow"})
+        self.assertEqual((self.settings.data["autostart"]["mode"], self.settings.data["autostart"]["pad"]), ("pad", [1, 5]))
+        empty = copy.deepcopy(file)
+        empty["settings"]["pads"]["banks"][1]["pads"][5] = {"label": "", "file": ""}
+        st, out = self.send(empty)
+        self.assertEqual(st, 400, out)
+        self.assertIn("the pad it starts has no clip and no shader", out["error"])
+
     def test_round_trip_keeps_access_and_a_backup(self):
         from pvj import autostart
         file = self.export()
@@ -678,6 +707,8 @@ class ImportTest(Base):
             ("room", {"groups": [{"name": "Main wall", "projectors": []}]}),
             ("room", {"scenes": [{"name": "Close", "box": {"action": "poweroff"}}]}),
             ("room", []),
+            ("recovery", {"usb": "yes"}),
+            ("recovery", []),
         ]
         self.assertEqual({section for section, _ in bad}, {name for name, _ in boxcare.SECTIONS})      # no section without a bad value
         for section, value in bad:
@@ -697,7 +728,7 @@ class ImportTest(Base):
         before = self.on_disk()
         file["settings"] = {"schema": file["settings"]["schema"], "autostart": {"mode": "pad", "pad": [2, 5]}}
         st, out = self.send(file)                                     # that pad of the box has no clip
-        self.assertEqual((st, out.get("error")), (400, "autostart: the pad it starts has no clip"))
+        self.assertEqual((st, out.get("error")), (400, "autostart: the pad it starts has no clip and no shader"))
         self.assertEqual(self.on_disk(), before)
         file["settings"]["autostart"]["pad"] = [0, 0]                 # this one has
         st, out = self.send(file)
@@ -864,6 +895,31 @@ class ImportTest(Base):
         self.assertEqual(applied, ["osc", "sync"])
         self.assertEqual(self.projector_applies, [["aaaa0001", "aaaa0002"]])      # the background checks follow the new list
         self.assertEqual(out["problems"], ["Mapper: no screen"])         # reported, and the rest still happened
+
+
+    def test_a_crossfade_is_exported_and_imported_in_the_form_an_older_release_reads(self):
+        from pvj import transitions
+        self.settings.data["mix"] = transitions.stored("crossfade", 2.0)
+        self.settings.save()
+        file = self.export()
+        self.assertEqual(file["settings"]["mix"], {"transition": "dip", "style": "crossfade", "duration": 2.0})
+        # the release before this one took a file's mix by `transition` and `duration` alone: here that is a dip
+        self.assertIn(file["settings"]["mix"]["transition"], ("cut", "dip"))
+        self.settings.data["mix"] = {"transition": "cut", "duration": 1.0}
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["mix"], {"transition": "dip", "style": "crossfade", "duration": 2.0})
+        self.assertEqual(self.api.status({}, None, "t")["mix"]["transition"], "crossfade")
+
+    def test_a_transition_from_a_newer_release_is_left_out_with_a_note(self):
+        file = self.export()
+        file["settings"]["mix"] = {"transition": "dip", "style": "ripple", "duration": 3.0}
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["mix"], {"transition": "dip", "duration": 3.0})
+        self.assertTrue(any("ripple" in n and "not known" in n for n in out["notes"]), out["notes"])
+        file["settings"]["mix"] = {"transition": "crossfade", "duration": 3.0}      # never written that way
+        self.assertEqual(self.send(file)[0], 400)
 
 
 class FakeJournal:

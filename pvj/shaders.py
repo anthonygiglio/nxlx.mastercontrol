@@ -32,13 +32,20 @@ import threading
 import time
 import unicodedata
 
+from . import locks, paths
 from .api import ApiError, valid_name
 from .player import PlayerError
 
 MAX_SOURCE = 32 * 1024        # bytes of one ISF file (it must also fit a JSON request)
 MAX_HEADER = 8 * 1024
+# What may stand before the JSON header: blank space and comments (the credit lines of a real file), this much of them.
+# Credits run to a few hundred bytes and a whole licence text to one or two KB; with the header's 8 KB this still
+# leaves 20 KB of the 32 for the code (both limits are counted once line ends are \n: with Windows line ends the file
+# itself is a little larger). No comment that starts after this is looked at when the header is searched for.
+MAX_LEADING = 4 * 1024
 MAX_INPUTS = 24
 MAX_UPLOADS = 64
+UPLOAD_TEMP = r"\.upload-\d+-\d+"         # upload() writes here first: .upload-<process>-<thread>
 MAX_TEXT = 200                # description, credit
 CARRIER_FPS = 30
 HEIGHTS = (360, 540, 720, 1080)         # every drawing height any board may use (a settings file may hold any of them)
@@ -117,6 +124,13 @@ _OWN = re.compile(r"\b(?:pvj_\w*|hook|hooked\w*|texture\d+|texcoord\d+|texture_(
 # (which a file cannot write itself), so the player's own `out_color` and `color` are never touched by a file.
 _RENAMED = "out_color"                  # in the code, spelled exactly so; any other letter case stays refused
 _INPUT_RENAMED = ("color",)             # as an input's name, in any letter case
+# The words of RESERVED that are the player's and this translator's own (not GLSL's, not ISF's). As an input's name
+# they are refused in any letter case, `color` apart (above). Every other reserved word is the language's or ISF's
+# and means something in its exact spelling only: see renamed().
+_PLAYER_WORDS = frozenset("main hook frame random input_size target_size tex_offset pixel_size color".split())
+# The only texts a bool input's DEFAULT may be, besides true, false and the numbers 0 and 1 (D66, the owner's choice).
+_BOOL_TEXT = {"0": False, "1": True, "false": False, "true": True}
+_BLANK = " \t\n\x0b\x0c"               # what may stand between the comments before the header (line ends are \n by then)
 
 
 HIDDEN = ("Cc", "Cf", "Zl", "Zp", "Cs")      # Unicode categories no name or label may hold
@@ -177,10 +191,12 @@ def _input(spec, seen, kind=GENERATOR):
     name = spec.get("NAME")
     if not isinstance(name, str) or not INPUT_NAME.fullmatch(name):
         raise ShaderError("an input name must be 1 to 32 letters, digits or _ and start with a letter")
-    if name.lower() in _INPUT_RENAMED:
-        pass                                # written into the shader under another name, see ident()
-    elif (name.lower() in RESERVED_LOWER or name.lower().startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name
-            or _OWN.fullmatch(name)):
+    low = name.lower()
+    # One rule for a name that is a reserved word in some letter case: renamed() says whether it is written into the
+    # shader under a pvj_in_ name (see there) or refused. The prefixes, a double underscore and the player's own
+    # patterns are refused whatever renamed() says.
+    if (low.startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name or _OWN.fullmatch(name)
+            or (low in RESERVED_LOWER and not renamed(name))):
         raise ShaderError("the input name %s is taken by the shader language or the player" % name)
     if name in seen:
         raise ShaderError("two inputs are called %s" % name)
@@ -209,9 +225,16 @@ def _input(spec, seen, kind=GENERATOR):
             raise ShaderError("input %s has MIN above MAX" % name)
         out.update(min=lo, max=hi, default=min(hi, max(lo, _num(spec.get("DEFAULT", (lo + hi) / 2.0), "DEFAULT of " + name))))
     elif kind == "bool":
+        # true and false, and the numbers 0 and 1 (0.0 and 1.0 are the same numbers), as real files write a switch.
+        # And four texts, letter for letter (_BOOL_TEXT): files written for other ISF hosts carry them. The list is
+        # closed, so a typo is still an error ("TRUE", "yes", " 1", "1.0" and "" are refused). Nothing of the text
+        # goes on: the value is a Python bool from here, and reaches the shader only as `true` or `false`.
         d = spec.get("DEFAULT", False)
-        if not isinstance(d, bool) and d not in (0, 1):
-            raise ShaderError("DEFAULT of %s must be true or false" % name)
+        if isinstance(d, str) and d in _BOOL_TEXT:
+            d = _BOOL_TEXT[d]
+        elif not isinstance(d, bool) and not (isinstance(d, (int, float)) and d in (0, 1)):
+            raise ShaderError("DEFAULT of %s must be true or false (also taken: the numbers 0 and 1, and \"0\", \"1\", \"true\", \"false\" "
+                              "in quotes, in lower case)" % name)
         out["default"] = bool(d)
     elif kind == "long":
         values = spec.get("VALUES")
@@ -269,9 +292,22 @@ def _input(spec, seen, kind=GENERATOR):
     return out
 
 
+def renamed(name):
+    """Whether an input of this name is written into the shader under a pvj_in_ name instead of its own. One rule:
+    the name is a reserved word in another letter case than the one the word is reserved in, and the word is the
+    language's or ISF's (`time` beside ISF's TIME, `Date`, `Float`, `Mix`). GLSL tells letter cases apart, so such a
+    name clashes with nothing; it was refused only because the list is compared in lower case. It is renamed all
+    the same, so that no near-spelling of a built-in word is ever an input's name in the text the GPU gets.
+    A name that IS a reserved word, letter for letter (TIME, float, sin, frame), cannot be renamed, since the code's
+    own uses of the word would be renamed with it, and stays refused; so do the player's own words in any letter
+    case. The one exception is older than the rule: `color`, in any letter case (_INPUT_RENAMED)."""
+    low = name.lower()
+    return low in _INPUT_RENAMED or (low in RESERVED_LOWER and name not in RESERVED and low not in _PLAYER_WORDS)
+
+
 def ident(name):
-    """The name an input has inside the generated shader: its own, or a pvj_ name where the player owns the word."""
-    return "pvj_in_" + name if name.lower() in _INPUT_RENAMED else name
+    """The name an input has inside the generated shader: its own, or a pvj_in_ name (see renamed)."""
+    return "pvj_in_" + name if renamed(name) else name
 
 
 def _no_constant(word):
@@ -324,6 +360,50 @@ def _read_calls(text, keep=True):
     return text
 
 
+def find_header(source):
+    """Where the JSON header comment starts in a file's text (line ends already \\n): the index of its "/*".
+    Before it only blank space, // comments and /* */ comments may stand, at most MAX_LEADING bytes of them
+    (counted in this text: after the byte order mark is dropped and the line ends are made \\n).
+    Blank space is _BLANK and nothing else: space, tab, line break, form feed, vertical tab.
+    The header is the first /* comment whose first character after blank space is {. That comment is the header
+    whatever else it holds: if its JSON cannot be read the file is refused, and no later comment is tried. A comment
+    that begins with anything else is a plain comment and is passed over. A // comment ends at its line break and
+    whatever it holds is comment text, a "/*{" too. Comments do not nest: a "/*{" inside a /* comment is part of
+    that comment, which ends at the first "*/". Raises ShaderError.
+    No pattern, only str.find and plain loops, and no place is looked at more than a few times, so the time is
+    linear in the file's size. No comment that starts after MAX_LEADING is looked at; a run of blank space, a //
+    line or a /* comment that starts before it is read to its end, which may be the end of the file."""
+    i, n, passed = 0, len(source), False
+    while i <= MAX_LEADING:
+        while i < n and source[i] in _BLANK:
+            i += 1
+        if source.startswith("//", i):
+            j = source.find("\n", i)
+            i = n if j < 0 else j + 1
+        elif source.startswith("/*", i):
+            k = i + 2
+            while k < n and source[k] in _BLANK:
+                k += 1
+            if source.startswith("{", k):
+                if len(source[:i].encode("utf-8", "replace")) > MAX_LEADING:
+                    break
+                return i
+            j = source.find("*/", i + 2)
+            if j < 0:
+                raise ShaderError("a /* comment before the JSON header is never closed")
+            i, passed = j + 2, True
+        elif i > MAX_LEADING:
+            break
+        elif passed:
+            # a header that lost its { must not read as "this is no ISF file at all"
+            raise ShaderError("not an ISF file: no /*{ ... }*/ comment with the JSON header stands before the code (a /* comment at the "
+                              "top does not begin with {, so it was read as a plain comment)")
+        else:
+            raise ShaderError("not an ISF file: it must start with a /*{ ... }*/ comment that holds the JSON header (only blank space "
+                              "and comments may stand before it)")
+    raise ShaderError("more than %d KB of blank space and comments stand before the JSON header" % (MAX_LEADING // 1024))
+
+
 def parse(source, kind=GENERATOR):
     """An ISF file from untrusted text: {"description", "credit", "cost", "inputs", "body", "line", "kind"}. `body` is
     the shader code after the JSON comment and `line` the line of the file it starts on. `kind` is what the caller
@@ -345,11 +425,14 @@ def parse(source, kind=GENERATOR):
     source = source.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
     if "//!" in source:
         raise ShaderError("the text //! is not allowed anywhere in the file (the player reads it as a command)")
-    start = len(source) - len(source.lstrip())
-    if not source.startswith("/*", start):
-        raise ShaderError("not an ISF file: it must start with a /*{ ... }*/ comment that holds the JSON header")
+    # The comments before the header (credits, as a rule) are passed over here and go nowhere: `body` starts after
+    # the header, so they never reach the player, and `line` below counts their lines, so the compiler's line numbers
+    # stay those of the file. The stored file is the upload's own bytes (Engine.upload), comments and all.
+    start = find_header(source)
     end = source.find("*/", start + 2)
-    if end < 0 or end - start > MAX_HEADER:
+    # in bytes, as the file's size and MAX_LEADING are: counted in characters, a header of 8,000 three-byte
+    # characters was 24 KB and passed
+    if end < 0 or end - start > MAX_HEADER or len(source[start:end].encode("utf-8", "replace")) > MAX_HEADER:
         raise ShaderError("the JSON header comment is not closed, or is larger than %d KB" % (MAX_HEADER // 1024))
     try:
         head = json.loads(source[start + 2:end], parse_constant=_no_constant, object_pairs_hook=_no_repeats)
@@ -759,12 +842,43 @@ def shader_errors(lines):
     return "; ".join(said[:4])[:500] or "the GPU refused the shader"
 
 
+_DUMP = re.compile(r"shader source:\s*$")
+_NAMED = re.compile(r"^\[\s*\d+\] // (nxlx (?:shader|effect) \d+ \d+)\s*$")
+
+
+def about(lines, desc, strict=False):
+    """Of the player's log, what is not about another shader than `desc`; with `strict`, only what names `desc`. A generator and an effect can be in the
+    player together (D74), each looked at by its own engine under its own lock, and both listen to the one log: a
+    refused generator of a Vibes step must not be taken for a refusal of the effect whose text went to the player
+    in the same moment, nor the other way round. The player prints a refused shader's whole text before the
+    compiler's log, and every text of ours carries its name in a comment (see translate): a stretch of the log from
+    one "shader source:" to the next that names another shader is left out. A stretch that names none is kept
+    while this shader is the only one of the two in the player (a player that prints no text is heard as before).
+    While both are in the player (`strict`) it is left out: a listener that began in the middle of the other
+    shader's text, after its name, hears numbered lines and a complaint with no name, and must not take them for
+    its own. One's own text is always heard whole, since the listener is there before the text is sent."""
+    out, part, owner = [], [], None
+    mine = lambda: owner == desc or (owner is None and not strict)
+    for row in lines:
+        text = str(row[2])
+        if _DUMP.search(text):
+            if mine():
+                out += part
+            part, owner = [], None
+        if owner is None:
+            m = _NAMED.match(text.strip())
+            owner = m.group(1) if m else None
+        part.append(row)
+    return out + (part if mine() else [])
+
+
 # ---- the engine ----------------------------------------------------------------------------------------------------------
 def default_config():
     return {"dwell": DWELL_DEFAULT, "vary": True, "height": DEFAULT_HEIGHT, "disabled": []}
 
 
 class Engine:
+    LOCK = "shaders.engine"        # the place of this engine's lock among the locks (pvj/locks.py)
     """The library of shaders and the one that is on screen. Everything the player reads is written to its runtime
     folder under a fresh name; a shader the GPU refuses is replaced by the one before it, or by black."""
     KIND = GENERATOR            # what its files are read as (effects.py keeps a library of filters the same way)
@@ -776,8 +890,10 @@ class Engine:
         self._clock = clock
         self._tap = tap
         self.dir = os.path.join(os.path.dirname(api.settings.path), "shaders")
+        # What an upload cut off by a power cut left (D70). Nothing is uploading yet: this is the panel starting.
+        paths.remove_leftovers(self.dir, UPLOAD_TEMP)
         self.bundled_dir = BUNDLED_DIR
-        self._lock = threading.RLock()          # one change at a time
+        self._lock = locks.make(self.LOCK, reentrant=True)      # one change at a time; its place: pvj/locks.py
         self._serial = 0
         self._cache = {}                        # path -> (mtime, size, parsed or ShaderError)
         self._checked = set()                   # (source hash, shape of the values) the GPU has taken
@@ -1073,10 +1189,12 @@ class Engine:
         """Wait until the player has drawn a frame with the shader called `desc` or has complained.
         ("ok" | "refused" | "unknown", message)."""
         lines, drawn, listed = [], False, None
+        player = self.api.player       # a generator and an effect together: only what names this shader is its own (see about)
+        both = bool(getattr(player, "source_shader", None) and getattr(player, "effect_shader", None))
         deadline = self._clock() + VERIFY_SECONDS
         while self._clock() < deadline and not drawn:
             lines += tap.drain(0.1)
-            if shader_errors(lines):
+            if shader_errors(about(lines, desc, both)):
                 break
             named = re.compile(re.escape(desc) + r"(?![0-9])")
             mine = [x for x in self._passes() if named.search(str(x.get("desc", "")))]
@@ -1088,7 +1206,7 @@ class Engine:
                 if self._clock() - listed >= 1.0:
                     break
         lines += tap.drain(0.2)
-        message = shader_errors(lines)
+        message = shader_errors(about(lines, desc, both))
         if message:
             return "refused", message
         return ("ok" if drawn else "unknown"), ""
@@ -1106,12 +1224,19 @@ class Engine:
             return None
         return p
 
-    def show(self, sid, values=None, hue=0.0, offset=0.0, epoch=None, cut=True, controls=None, preset=None):
+    NOW = object()          # for `mark`: the level's mark is taken when the shader is shown, not handed in
+
+    def show(self, sid, values=None, hue=0.0, offset=0.0, epoch=None, cut=True, controls=None, preset=None, mark=NOW, alive=None):
         """Put a shader on the screen. With `epoch`, only if nothing else was played since (None is returned then).
         `cut` (a preview from the panel) sets the picture's opacity like any other play; a rotation that fades by
         itself passes False. `controls` are speed, hue and brightness (see clean_controls); `preset` is only the
-        name to remember for the values. Returns {"ok", "epoch", "id", "error"?}; ok False means the GPU refused it
-        and the screen shows the shader before it, or black."""
+        name to remember for the values. `mark` is the level's mark (Api._level_mark) of the moment this was asked
+        for, when that was earlier than now: a tap that was queued for the worker hands in the mark of the tap, so
+        that a Fade out pressed between the tap and the showing stands. `alive` is asked under the player's lock just
+        before the screen is taken: False and it is not taken (None is returned, as for a stale epoch); the rotation
+        hands in "am I still running", so a rotation that was ended while it composed its next shader does not put
+        it on over the wish that ended it. Returns {"ok", "epoch", "id", "error"?}; ok
+        False means the GPU refused it and the screen shows the shader before it, or black."""
         if not self.enabled():
             raise ApiError(409, "turn on the Shaders and Vibes module in System first")
         path, _ = self._path(sid)
@@ -1145,13 +1270,28 @@ class Engine:
                 except OSError:
                     tap = None
             try:
-                if cut:
-                    self.api.fader.cancel()
+                # The fader is not taken here: it is taken when the generator is on the screen and its level is
+                # set, at the end (Api._show_level). Taken here, a generator the GPU then refused had stopped a
+                # fade for nothing, and a clip's dip that it overtook stayed at the level it had reached.
+                marker = getattr(self.api, "_level_mark", None)
+                level_mark = (marker() if marker else None) if mark is Engine.NOW else mark
+                ending = getattr(self.api, "transitions", None)
                 try:
-                    new = player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
-                    fx = getattr(self.api, "effects", None)
-                    if new is not None and fx is not None and fx is not self and fx.on is not None:
-                        fx.sweep()                  # the generator took an effect off the screen: its text goes too
+                    # One step under the player's lock: the generator takes the screen, and with that it is the
+                    # newest wish. A clip's transition does not go on over it, and a clip that was still on its way
+                    # (its still being taken) looks under this same lock and does not load over it (Api.play).
+                    with (getattr(player, "_lock", None) or locks.make("player")):
+                        new = None if (alive is not None and not alive()) else \
+                            player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                        if new is not None:
+                            self._made(new)         # at once, before the GPU's look: see LiveEngine.play_job
+                            if alive is not None and not alive():
+                                # ended between the look at `alive` and the taking of the screen: whoever ended
+                                # it may have read the epoch before this move. Noted in the same step as the move.
+                                self.adopt(epoch, new)
+                        if new is not None and ending is not None:
+                            ending.end("a generator", newer=True)
+                    # An effect that is on stays on, over the generator (D74): nothing of it is touched here.
                 except PlayerError as e:
                     self._cleanup({before["path"]} if before else set())
                     raise ApiError(503, str(e))
@@ -1187,10 +1327,29 @@ class Engine:
                             "digest": digest, "size": size, "preset": preset, "held": state["held"],
                             "checked": True if (verdict == "ok" or key in self._checked) else None}
             self._cleanup({out})
+            fx = getattr(self.api, "effects", None)
+            if fx is not None and fx is not self and fx.on is not None:
+                # An effect is on over what was there before (D74): its worker looks at the new picture now, not at
+                # its next round up to a second away, so that the GPU's word about the effect over this picture is
+                # listened for at once. Noted only: nothing of the effect is waited for here.
+                fx.changer.keep(0)
             if cut:
-                self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
+                show = getattr(self.api, "_show_level", None)
+                if show is not None:
+                    # unless a wish for the level came while the GPU looked at it; after the operator's Fade out
+                    # the shader comes up from black, as a clip does (it has no end and no blend: half the Mix's
+                    # duration, the way a dip comes up)
+                    show(level_mark, rise=True)
+                else:
+                    self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
             self.api._started_playing()
             return {"ok": True, "epoch": new, "id": sid}
+
+    def _made(self, epoch):
+        """This call has just moved the player's epoch to `epoch` itself (see LiveEngine, whose queue goes by it)."""
+
+    def adopt(self, before, after):
+        """The rotation, on its way out, moved the player's epoch from `before` to `after` (see LiveEngine)."""
 
     def refused(self, sid, digest, message):
         """The GPU refused this file (see shaderlive.py, which remembers it until the file changes)."""
@@ -1199,21 +1358,34 @@ class Engine:
         """The controls as this shader may have them (see shaderlive.py: the flash limit of Performance shaders)."""
         return controls
 
-    def off(self, epoch=None):
+    def off(self, epoch=None, adopt=False):
         """The module was switched off, or Vibes was stopped: take the shader off the screen if one is on. With
-        `epoch`, also stop a bare carrier (black, after a refused shader) that this epoch put there."""
+        `epoch`, also stop a bare carrier (black, after a refused shader) that this epoch put there. Returns the
+        player's epoch after its own stop if it stopped something, else None (the worker's queue goes by it). With
+        `adopt` (the rotation's own clearing on its way out) the move is noted for the queue in the same step."""
+        left = None
         with self._lock:
             player = self.api.player
             if epoch is None:
                 epoch = self.playing["epoch"] if self.playing else None
             if epoch is not None:
                 try:                        # the player checks the epoch and stops in one step: a clip started
-                    player.clear_source(epoch)      # in between is never stopped
+                    with (getattr(player, "_lock", None) or locks.make("player")):      # in between is never stopped
+                        cleared = player.clear_source(epoch)
+                        if cleared:
+                            left = player.source_epoch
+                            self._made(left)
+                            if adopt:
+                                self.adopt(epoch, left)
                 except PlayerError:
-                    pass
+                    cleared = False
+                fx = getattr(self.api, "effects", None)
+                if cleared and fx is not None and fx is not self and fx.on is not None:
+                    fx.sweep()              # an effect that was on over the shader went with it (D74): its text goes too
             if self.on_screen() is None:    # nothing of ours is showing (another shader may have taken the screen)
                 self.playing = None
                 self._cleanup({player.source_shader} if player.source_shader else set())
+        return left
 
     # -- uploads --
     def upload(self, name, source, replace=False):

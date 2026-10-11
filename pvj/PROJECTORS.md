@@ -6,7 +6,7 @@ The old panel had Beamer On and Beamer Off buttons. This does the same over the 
 
 ## In the panel
 
-Switch it on under System > Projectors (beta, off by default). Switching it off again asks first: the box stops checking the projectors, and they stay as they are. A full-access device adds a projector (a name, its IP address or name, the port, 4352 unless changed, and the PJLink password if one is set), edits it and removes it. A guest sees the list and the status only.
+Switch it on under Setup > Projectors (beta, off by default). Switching it off again asks first: the box stops checking the projectors, and they stay as they are. A full-access device adds a projector (a name, its IP address or name, the port, 4352 unless changed, and the PJLink password if one is set), edits it and removes it. A guest sees the list and the status only.
 
 **Edit** (next to Remove, full access) opens the same fields in place of the projector's row, filled in, each with its label above it. Use it for a typo in the name or the address, a projector that got a new address, or a changed PJLink password; removing and adding again would lose the names given to the inputs. **Save changes** can be pressed once something is different, and a refusal is shown under the button. What an edit does:
 
@@ -29,7 +29,7 @@ An input name that belongs to a code the new projector does not list is kept and
 
 Switching on takes the projector a minute or so to warm up, and switching off starts a cool-down; during those the projector refuses other commands as "unavailable". An **input change** that is refused that way (the projector is still warming up, or is off) is tried again in the background every 5 seconds for up to 90 seconds; the panel says so, and then says either "Input switched to Matrix." or "Could not switch to Matrix: it was still not ready after 90 seconds (is it switched on?)". Choosing another input in the meantime replaces the first choice: input changes to one projector go out one at a time, and a retry is never sent after a newer choice, so the last choice made is the one that stands. Mutes are not retried.
 
-**Lamp hours and warnings** are also on System > Health, one line per projector: the lamp hours and the projector's own warnings and errors (fan, lamp, temperature, cover, filter, other). A projector that does not answer shows as "?" there, not as a fault, since it may simply be switched off at the wall. A projector that reports an error makes the box's overall health "bad", a warning "warn".
+**Lamp hours and warnings** are also on Setup > Health, one line per projector: the lamp hours and the projector's own warnings and errors (fan, lamp, temperature, cover, filter, other). A projector that does not answer shows as "?" there, not as a fault, since it may simply be switched off at the wall. A projector that reports an error makes the box's overall health "bad", a warning "warn".
 
 ## Schedule and OSC
 

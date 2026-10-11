@@ -4,6 +4,7 @@ import math
 import os
 import re
 import struct
+import shutil
 import tempfile
 import threading
 import time
@@ -250,7 +251,9 @@ class EngineTest(unittest.TestCase):
 
     def setUp(self):
         self.rundir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.rundir, True)
         self.settings = Settings(os.path.join(tempfile.mkdtemp(), "settings.json"))
+        self.addCleanup(shutil.rmtree, os.path.dirname(self.settings.path), True)
         self.settings.load()
 
         class Api:
@@ -459,7 +462,7 @@ class ApiTest(ServerBase):
         self.call("POST", "/api/modules/mapper", {"enabled": True}, token=self.full)
         live = self.call("POST", "/api/devices/invite", {"name": "p", "role": "live"}, token=self.full)[1]["token"]
         view = self.call("POST", "/api/devices/invite", {"name": "g", "role": "view"}, token=self.full)[1]["token"]
-        self.assertEqual(self.post({"action": "add", "type": "quad"}, token=live)[0], 403)
+        self.assertEqual(self.post({"action": "add", "type": "quad"}, token=view)[0], 403)       # the mapping is the Operator's since D80
         st, body, _ = self.post({"action": "add", "type": "quad"})
         self.assertEqual(st, 200)
         self.assertEqual(body["screen"], [1920, 1080])

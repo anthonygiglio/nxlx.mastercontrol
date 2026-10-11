@@ -533,8 +533,8 @@ class ValuesTest(Live):
         self.engine.play("nxlx-silk.fs", controls={"speed": 4.0})    # a calm shader keeps the whole range
         self.assertEqual(speed(), 4.0)
         # the opt-in, for full access only: with it the range is whole again, and switching it off limits what is on at once
-        live = {"id": "p", "role": "live"}
-        self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": True}, live, "t")[0], 403)
+        guest = {"id": "p", "role": "view"}         # the opt-in is the Operator's too since D80
+        self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": True}, guest, "t")[0], 403)
         with self.assertRaises(ApiError):
             self.engine.api_set({"action": "config", "faster": "yes"}, None, "t")
         st = self.engine.api_set({"action": "config", "faster": True}, None, "t")
@@ -1066,7 +1066,7 @@ class SetsTest(Live):
         self.vibes.stop()
         # without Vibes: the neighbour in the active set, put on by the worker (the request does not wait for the GPU)
         self.engine.play("nxlx-silk.fs")
-        self.assertEqual(self.engine.step(1), {"ok": True, "id": "nxlx-ember.fs"})
+        self.assertEqual(self.engine.step(1), {"ok": True, "steps": 1})     # a move: which shader, the worker says when it comes to it
         self.assertEqual(self.engine.state()["playing"]["id"], "nxlx-silk.fs")
         self.pump()
         self.assertEqual(self.engine.state()["playing"]["id"], "nxlx-ember.fs")
@@ -1435,7 +1435,7 @@ class ControllerTest(Live):
         self.cc(8, 127)
         self.assertEqual(self.values()["controls"]["speed"], 4.0)
         self.cc(8, 32)
-        self.assertEqual(self.values()["controls"]["speed"], 1.01)
+        self.assertEqual(self.values()["controls"]["speed"], 0.53)    # the middle of the control is the shader's own pace (D75); 32 is 28 of 60 steps under it
         self.assertTrue(all(path.startswith("/api/shaders/") for path, _, _ in self.calls))
 
     def test_a_pad_toggles_steps_fires_or_resets(self):
@@ -1543,6 +1543,7 @@ class RolesAndSettingsTest(Live):
         self.engine.upload("all.fs", ALL)
         presenter = (("/api/shaders/play", {"id": "all.fs", "values": {"lit": True}, "controls": {"speed": 2}}), ("/api/shaders/values", {"values": {"level": 1.0}}),
                      ("/api/shaders/values", {"controls": {"hue": 30}}), ("/api/shaders/step", {"dir": 1}), ("/api/vibes", {"previous": True}))
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         for path, body in presenter:
             self.assertEqual(self.call("POST", path, body)[0], 401, path)
             self.assertEqual(self.call("POST", path, body, token=view)[0], 403, path)
@@ -1552,15 +1553,15 @@ class RolesAndSettingsTest(Live):
         self.assertEqual((st, body["values"]["level"], body["controls"]["speed"]), (200, 1.0, 2.0))
         owner = (("/api/shaders/presets", {"action": "save", "name": "mine"}), ("/api/shaders", {"action": "set", "op": "add", "name": "Gig", "shaders": ["all.fs"]}),
                  ("/api/shaders", {"action": "heavy", "id": "nxlx-nebula.fs", "on": True}), ("/api/shaders", {"action": "config", "guard": False}))
-        for path, body in owner:
-            for token in (view, live):
+        for path, body in owner:                    # the Operator's since D80 (tests/test_roles.py); never a guest's
+            for token in (view,):
                 self.assertEqual(self.call("POST", path, body, token=token)[0], 403, path)
             self.assertEqual(self.call("POST", path, body, token=full)[0], 200, path)
         self.assertEqual(self.call("POST", "/api/shaders/preset", {"name": "mine"}, token=view)[0], 403)
         self.assertEqual(self.call("POST", "/api/shaders/preset", {"name": "mine"}, token=live)[0], 200)     # a presenter may apply one
         for path, body in (("/api/shaders/presets", {"action": "rename", "id": "all.fs", "name": "mine", "to": "x"}),
                            ("/api/shaders/presets", {"action": "delete", "id": "all.fs", "name": "mine"})):
-            self.assertEqual(self.call("POST", path, body, token=live)[0], 403)
+            self.assertEqual(self.call("POST", path, body, token=view)[0], 403)
         self.assertEqual(self.call("POST", "/api/vibes", {"on": True, "set": "Gig"}, token=live)[0], 200)   # and start a set by name
         self.api.vibes.stop()
         self.api.registry.set_enabled("shaders", False)

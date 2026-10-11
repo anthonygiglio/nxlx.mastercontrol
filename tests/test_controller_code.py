@@ -72,7 +72,7 @@ class AuthTest(unittest.TestCase):
         code = self.digits()
         self.assertTrue(re.fullmatch(r"[0-9]{6}", code))
         _, dev = self.a.pair(code, "phone", "c1")
-        self.assertEqual(dev["role"], "live")
+        self.assertEqual(dev["role"], "view")                                  # a guest since D80
         self.assertEqual(self.settings.data["devices"][-1]["via"], "controller")
         with self.assertRaises(AuthError):                                    # once only
             self.a.pair(code, "second", "c2")
@@ -302,14 +302,14 @@ class HoldTest(unittest.TestCase):
             midi.validate_profile(raw, "korg-nanokontrol2")
 
     def test_the_shipped_layouts(self):
-        """Only the Launchpad Mini had a free pad: its eighth pad of the top row asks for a presenter code. No
+        """Only the Launchpad Mini has a pad for it: the third round button along the top (Top 3, away from the banks) asks for a presenter code. No
         layout asks for a full access code, and the MIDI Mix's Solo (a shift that is held while playing) stays spare."""
         have = {}
         for p in midi.load_profiles(log=lambda *_: None):
             for c in p["controls"]:
                 if c["action"] and c["action"]["action"] in controllercode.ACTION_KINDS:
                     have[(p["id"], c["id"])] = (c["action"]["action"], c["kind"], c["guard"])
-        self.assertEqual(have, {("novation-launchpad-mini", "pad18"): ("code_join", "pad", False)})
+        self.assertEqual(have, {("novation-launchpad-mini", "top3"): ("code_join", "button", False)})
         mix = next(p for p in midi.load_profiles(log=lambda *_: None) if p["id"] == "akai-midimix")
         self.assertIsNone(next(c for c in mix["controls"] if c["send"] == {"type": "note", "channel": 0, "number": 27})["action"])
         for action in controllercode.ACTION_KINDS:
@@ -400,12 +400,12 @@ class BoxTest(BoxBase):
         self.hold()
         code = self.digits()
         text = self.text()
-        self.assertIn("One-time presenter code  " + code, text)
+        self.assertIn("One-time guest code  " + code, text)
         self.assertIn("http://box.local/", text)
         self.assertIn("Works once", text)
         self.assertTrue(self.screen.controller_up())
         st, out, _ = self.call("POST", "/api/pair", {"pin": code, "name": "new phone"})
-        self.assertEqual((st, out["device"]["role"]), (200, "live"))
+        self.assertEqual((st, out["device"]["role"]), (200, "view"))
         self.assertFalse(self.screen.controller_up())
         self.assertEqual(self.player.ipc.shown[-1], ("show-text", "", 1))     # off the display at use, not at the next tick
         self.assertEqual(self.call("POST", "/api/pair", {"pin": code, "name": "again"})[0], 403)
@@ -641,7 +641,7 @@ class BoxTest(BoxBase):
         self.screen.show(["view"], 600)
         self.assertIn("Guest, watch only, code", self.text())
         self.hold()
-        self.assertIn("One-time presenter code", self.text())
+        self.assertIn("One-time guest code", self.text())
         self.assertNotIn("Guest, watch only, code", self.text())
         self.tap()
         self.assertIn("Guest, watch only, code", self.text())                 # what the owner put up is back, for the time it was given

@@ -50,17 +50,18 @@ from urllib.parse import unquote
 from . import dmx as dmx_mod, midi as midi_mod, ndi as ndi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
 from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
+from . import transitions as transitions_mod
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 from .settings import SettingsError, default_control, default_settings, migrate
 
 FORMAT = "nxlx.mastercontrol settings"
 FORMAT_VERSION = 1
-KNOWN_SCHEMA = 15                    # the section checks below know the settings as of this schema (14 changed none of them; 15 is "ndi")
+KNOWN_SCHEMA = 14                    # the section checks below know the settings as of this schema (14 changed none of them; "ndi" and "recovery" came without a schema change)
 MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved mapping is well under this
 MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
 # never exported, never imported. "controller_code" (D61) is a way to hand out access, so a file cannot switch it on
-NEVER = ("auth", "devices", "support", "support_log", "controller_code")
+NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls")
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
@@ -189,10 +190,24 @@ def check_pads(v, care):
         for pad in pads:
             _obj(pad, "a pad")
             item = {"label": _text(pad.get("label", ""), 40, "a pad label"), "file": _media_name(pad.get("file", ""), "a pad's clip")}
-            if "ending" in pad:
+            held = pad.get("shader") not in (None, "")
+            if "ending" in pad and not (held and item["file"] == ""):       # a shader has no end: nothing is kept for it
                 if pad["ending"] not in ("loop", "stop", "hold"):
                     raise ValueError("a pad ends with loop, stop or hold")
                 item["ending"] = pad["ending"]
+            if held:
+                # A pad that holds a generator shader (D73). Its name is checked as a name, not looked up: the file
+                # may come to the box after the settings, and a pad whose shader is not there says so when tapped.
+                sid = pad["shader"]
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or a shader, not both")
+                if not isinstance(sid, str) or not shaders_mod.FILE.fullmatch(sid) or not valid_name(sid):
+                    raise ValueError("a pad's shader is not a shader file name")
+                item["shader"] = sid
+                if pad.get("preset") not in (None, ""):
+                    if not shaderlive_mod.name_ok(pad["preset"]):
+                        raise ValueError("a pad's preset must be a name of 1 to 40 characters")
+                    item["preset"] = pad["preset"]
             clean.append(item)
         name = _text(bank.get("name", ""), 40, "a bank name")
         if not name:
@@ -251,19 +266,28 @@ def check_theme(v, care):
 
 
 def check_mix(v, care):
-    mode, duration = _obj(v).get("transition"), v.get("duration")
-    if mode not in ("cut", "dip"):
+    # A newer transition is kept beside "dip" as `style` (pvj/transitions.py), so that a file from this release is
+    # taken by an older one. A style this release does not know (a file from a newer one) is left out with a note.
+    mode, duration, style = _obj(v).get("transition"), v.get("duration"), v.get("style")
+    if mode not in transitions_mod.OLD:
         raise ValueError("transition must be cut or dip")
     if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
         raise ValueError("duration must be 0.1 to 10 seconds")
-    return {"transition": mode, "duration": float(duration)}
+    if style is not None and style not in transitions_mod.STYLES:
+        care.note("the transition %s is not known to this version; %s is used" % (_printable(style), mode))
+        style = None
+    return transitions_mod.stored(style or mode, duration)
 
 
 def check_osc(v, care):
     port = _obj(v).get("port")
     if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
         raise ValueError("port must be 1024 to 65535")
-    return {"enabled": _flag(v.get("enabled"), "enabled"), "port": port, "allow": osc_mod.validate_allow(v.get("allow", []))}
+    out = {"enabled": _flag(v.get("enabled"), "enabled"), "port": port, "allow": osc_mod.validate_allow(v.get("allow", []))}
+    # The three layers (D78), each checked like a request. The key is never read from a file: the box keeps its own
+    # (BoxCare._osc_layers), and an export never carries one.
+    out.update(osc_mod.validate_layers(v, osc_mod.parse_networks(out["allow"])))
+    return out
 
 
 def check_schedule(v, care):
@@ -447,12 +471,20 @@ def check_ndi(v, care):
     return ndi_mod.validate_saved(v)
 
 
+def check_recovery(v, care):
+    """The stick switch only (D81). The code hashes belong to one box: never in a file, never taken from one."""
+    on = _obj(v).get("usb", True)
+    if not isinstance(on, bool):
+        raise ValueError("usb must be true or false")
+    return {"usb": on}
+
+
 # Every section that is exported and imported, in the order they are checked.
 SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_theme), ("mix", check_mix), ("osc", check_osc),
             ("schedule", check_schedule), ("streams", check_streams), ("control", check_control),
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
             ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
-            ("room", check_room), ("ndi", check_ndi))
+            ("room", check_room), ("recovery", check_recovery), ("ndi", check_ndi))
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
                 projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError, ndi_mod.NdiError)
@@ -477,9 +509,13 @@ def public_settings(data, support_configured=None):
     taking things out: a section this version does not know is named, not copied."""
     out = {"schema": data.get("schema")}
     for name, _check in SECTIONS:
-        if name in ("streams", "projectors") or name not in data:
+        if name in ("streams", "projectors", "recovery") or name not in data:
             continue
         out[name] = _net(copy.deepcopy(data[name]))
+    rec = data.get("recovery") if isinstance(data.get("recovery"), dict) else {}
+    codes = rec.get("codes") if isinstance(rec.get("codes"), dict) else None
+    out["recovery"] = {"usb": rec.get("usb") is not False, "codes_left": len(codes.get("hashes") or []) if codes else None,
+                       "made": codes.get("made") if codes else None}
     out["streams"] = [{"id": s.get("id"), "name": s.get("name"), "from": stream_where(s.get("url")),
                        "has_login": strip_login(s.get("url")) != s.get("url")} for s in data.get("streams", [])]
     out["projectors"] = [{"id": p.get("id"), "name": p.get("name"), "host": p.get("host"), "port": p.get("port"),
@@ -584,6 +620,10 @@ class BoxCare:
         for name, _check in SECTIONS:
             if name in data:
                 out[name] = data[name]
+        if isinstance(out.get("osc"), dict):
+            out["osc"].pop("key", None)          # the key has its own section, never exported (D78); this is for a file not yet moved
+        if "recovery" in out:
+            out["recovery"] = {"usb": self.api.auth.usb_enabled()}      # the switch only: the code hashes stay on the box (D81)
         out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
                                    "password": p.get("password", "") if passwords else ""},
                                   **{k: p[k] for k in ("details", "labels") if k in p})       # what it said it is; input labels
@@ -657,8 +697,8 @@ class BoxCare:
             b, i = a["pad"]
             with self.settings.lock:
                 banks = copy.deepcopy((clean if "pads" in clean else self.settings.data)["pads"]["banks"])
-            if not (b < len(banks) and banks[b]["pads"][i].get("file")):
-                raise bad("autostart: the pad it starts has no clip")
+            if not (b < len(banks) and (banks[b]["pads"][i].get("file") or banks[b]["pads"][i].get("shader"))):
+                raise bad("autostart: the pad it starts has no clip and no shader")
         return clean, list(self._notes), passwords
 
     def _check_themes(self, envelope):
@@ -693,6 +733,22 @@ class BoxCare:
             raise bad("themes: the file's themes and this box's own would be %d together, and %d is the most; remove some under Look first"
                       % (len(after), themes_mod.MAX_ADDED), 409)
         return out
+
+    @staticmethod
+    def _osc_layers(new, current):
+        """The OSC part of an import, for this box (D78), changed in `new`: what the file says about the three locks
+        is taken; what it does not say (a file from an earlier version) stays as this box has it, so an old file
+        cannot switch a lock off; the key is never the file's. It is this box's own, in its own section, and one is
+        made if the file switches the lock on and the box has none."""
+        mine, out = current.get("osc") or {}, dict(new["osc"])
+        for k in ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on"):
+            if k not in out and k in mine:
+                out[k] = copy.deepcopy(mine[k])
+        out.pop("key", None)
+        new["osc"] = out
+        key = osc_mod.stored_key(current)
+        if key or out.get("key_on"):
+            new[osc_mod.KEY_SECTION] = {"key": key or osc_mod.new_key()}
 
     def _keep_secrets(self, clean, current):
         """A file made without passwords: keep the one this box already has for the same projector, and the box's
@@ -807,6 +863,10 @@ class BoxCare:
                 raise bad("the file cannot be brought up to this version's settings: %s" % (e if isinstance(e, SettingsError) else type(e).__name__))
             new = copy.deepcopy(current)
             new.update({k: fresh[k] for k in clean})
+            if "osc" in clean:
+                self._osc_layers(new, current)
+            if "recovery" in clean:              # the file's switch beside the box's own codes and events (D81)
+                new["recovery"] = dict(current.get("recovery") or {}, usb=clean["recovery"]["usb"])
             try:
                 backup = self._backup()
             except OSError as e:
@@ -843,6 +903,7 @@ class BoxCare:
         for s in data.get("streams", []):
             found.update(stream_secrets(s.get("url")))
         found.add((data.get("support") or {}).get("server_key"))
+        found.add(osc_mod.stored_key(data) or None)        # the OSC key (D78), should it ever reach a log line
         try:
             found.update(j["code"] for j in api.auth.list_joins())
         except Exception:
@@ -1022,6 +1083,9 @@ class BoxCare:
                 except Exception:
                     pass
             pin = self._wipe_access()
+            api.auth.forget_address()                     # OSC (D78): no remembered address, sender or message is left
+            if api.osc:
+                api.osc.watch.clear()
             with api.support.lock:                        # one started between the first look and the wipe; none can be now
                 if api.support.session:
                     api.support._end("factory reset", tell_helper=True)
@@ -1041,6 +1105,8 @@ class BoxCare:
             if media == "delete":
                 deleted = self._delete_media(problems)
             problems += api.theme_store.clear(api.themes)      # the owner's added themes go with the settings
+            if api.https is not None:
+                problems += api.https.wipe()                   # the box's key and certificate: HTTP only, as a new box (D79)
             problems += self._apply()
         finally:
             api._upload_lock.release()

@@ -113,7 +113,7 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 
 **Also built (all beta or off by default):** [autostart](AUTOSTART.md), [weekly schedule](SCHEDULE.md), [streams](STREAMS.md), [NDI input](NDI.md) (one short first run on a Pi 4 on 2026-10-08, by SSH; nobody has watched it on a screen yet; needs NDI's runtime from the owner), [projectors](PROJECTORS.md), [projection mapping](MAPPER.md), [shaders and Vibes](SHADERS.md), [remote support](../docs/REMOTE-SUPPORT.md), [DMX](DMX.md) and [MIDI](MIDI.md), each with its own safety notes and a list of what was not verified.
 
-**Not built yet:** crossfade (needs a second player; "Dip to black" and "Cut" work), the desktop screens (Presenter, Wall), AES67/Dante (ST 2110 only through a gateway, see D30), Wi-Fi and hotspot, updates from the network, a panel update button, and shutdown and reboot buttons. The old PHP panel still exists for the legacy Pi 3 line.
+**Not built yet:** a crossfade in which both pictures move (the crossfade that is built blends from a still of the screen, as do the wipes and the slides; see `pvj/transitions.py` and D71), a push, a luma dissolve and ISF transitions, the desktop screens (Presenter, Wall), AES67/Dante (ST 2110 only through a gateway, see D30), Wi-Fi and hotspot, updates from the network, a panel update button, and shutdown and reboot buttons. The old PHP panel still exists for the legacy Pi 3 line.
 
 **Tested:** unit tests for settings, auth, modules and themes; HTTP tests for authentication, CSRF, roles, path confinement and validation; an end-to-end test through HTTP into a real headless mpv; and a real-browser test (Playwright) that pairs, assigns and plays a pad, drags a slider, switches theme, opens a guest link and fails on any CSP violation. Not tested on a real Pi, on real touch hardware, or with a real display.
 
@@ -129,7 +129,7 @@ Releases are signed bundles, installed by `sudo pvj-update`. Nothing is fetched 
 
 **Making a release.** Set the version in `pvj/__init__.py`, commit, then `tools/make-release.sh 4.0.1 --key ~/.ssh/pvj-release`. It writes `dist/pvj-4.0.1.tar.gz`, `.sha256` and `.sig`. The archive is reproducible (same commit, same bytes) and contains only `pvj/`, `bin/` and `install/`, never the legacy code.
 
-**Installing.** Put the three files in a `pvj-update/` folder on a USB stick, plug it in and run `sudo pvj-update usb`; or `sudo pvj-update apply pvj-4.0.1.tar.gz`. `pvj-update check FILE` verifies without installing; `pvj-update status` shows the current and previous release.
+**Installing.** Put the three files in a `pvj-update/` folder on a USB stick, plug it in and run `sudo pvj-update usb`; or `sudo pvj-update apply pvj-4.0.1.tar.gz`. `pvj-update check FILE` verifies without installing (it unpacks the bundle in the install, so it takes the update lock and is refused while an update runs); `pvj-update status` shows the current and previous release.
 
 **What it checks before touching anything:** SHA-256, the OpenSSH Ed25519 signature against your key, safe unpacking (no absolute or `..` paths, no links or device files, no setuid bits, size limits), enough disk space, a newer version, and that the settings format is not being downgraded (`--force` overrides the last two). It then backs up `settings.json`, installs into a new folder under `/opt/pvj/releases`, switches `/opt/pvj/current` atomically, restarts the services and waits for the panel to answer. **If it does not answer, the previous release and your settings are put back automatically.**
 
