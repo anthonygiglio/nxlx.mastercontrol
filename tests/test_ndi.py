@@ -568,7 +568,12 @@ class ServiceTest(unittest.TestCase):
         self.s.handle({"cmd": "configure", "on": True, "addresses": []})
         self.lib.frames.put(frame(64, 16))
         self.assertTrue(self.s.handle({"cmd": "open", "id": self.rid})["ok"])
-        threading.Timer(0.1, self.lib.frames.put, [frame(64, 16)]).start()      # after the first receiver has been let go
+        # The second source's first frame must come after the first receiver has been let go and the second one opened,
+        # not after a tenth of a second (a timer lost that race on a loaded machine, 3 runs in 5 for the reviewer).
+        def second_frame():
+            if wait(lambda: len(self.lib.opened) == 2, 5):
+                self.lib.frames.put(frame(64, 16))
+        threading.Thread(target=second_frame, daemon=True).start()
         self.assertTrue(self.s.handle({"cmd": "open", "id": ndi.source_id("MAD (Out)", "192.168.0.21")})["ok"])
         self.assertEqual((len(self.lib.opened), self.lib.closed), (2, 1))
         st = self.s.handle({"cmd": "configure", "on": False, "addresses": []})
