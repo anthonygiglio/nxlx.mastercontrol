@@ -2149,7 +2149,11 @@ class Api:
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
         full = Auth.allows(device, "full")
-        return self.osc.status(full=full, studio=full and not device.get("remote"))
+        out = self.osc.status(full=full, studio=full and not device.get("remote"))
+        if not Auth.allows(device, "live"):         # D83: a Guest is not told that OSC is open (the review of #124)
+            out.pop("open", None)
+            out.pop("open_text", None)
+        return out
 
     def osc_messages(self, body, device, client):
         """Full access: the last messages (in memory only), newest first."""
@@ -2383,7 +2387,10 @@ class Api:
         if self.osc is not None and Auth.allows(device, "live"):
             try:
                 if osc_mod.is_open(self.settings.data["osc"]):
-                    out = dict(out, osc_open={"state": "warn", "text": osc_mod.OPEN_TEXT})
+                    # a "check", not a failure: the summary says warn unless something is really wrong (the panel's
+                    # own row already said Check; the review of #124 found the summary still said ok)
+                    out = dict(out, osc_open={"state": "warn", "text": osc_mod.OPEN_TEXT},
+                               overall="bad" if out.get("overall") == "bad" else "warn")
             except Exception:
                 pass
         return out

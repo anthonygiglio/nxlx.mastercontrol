@@ -597,7 +597,7 @@ class ApiTest(CareBase):
             st, d = self.h("GET", "/api/osc", device=dev)
             self.assertEqual(st, 200)
             self.assertEqual(set(d), {"enabled", "port", "allow", "listening", "error", "received", "only_on", "paired_on", "key_on",
-                                      "open", "open_text", "paired_default"})
+                                      "paired_default"} | ({"open", "open_text"} if dev is self.live_dev else set()))
             self.assertNotIn(TABLET, json.dumps(d))
             self.assertEqual(self.h("GET", "/api/osc/messages", device=dev)[0], 403)
             self.assertEqual(self.h("POST", "/api/osc/key", {}, dev)[0], 403)
