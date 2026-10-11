@@ -882,14 +882,19 @@ const FX_STRIP = {
 // The Pi build (D71, D77) renamed two controls that were in the list: both are held below by what stands for them.
 const CROSSFADE = 'D71: Crossfade is built, so its button reads "Crossfade" (button: Crossfade), on Play > Pads with the wipes and slides';
 const OWN_ROW = 'D77: the owner\'s own row under Paired devices has Log out (#logoutbtn) in place of Remove';
+// D80 renamed two controls that were in the list (a Presenter is an Operator; a controller's join code pairs a Guest):
+// both are held below by what stands for them.
+const OPERATOR = 'D80: the role is named Operator, so the button that ends its code reads "End the Operator (runs the room) code"';
+const GUEST_PAD = 'D80: a controller\'s join code pairs a Guest, so the Launchpad\'s code pad reads "Guest code (hold)"';
 const MOVED = {
-  owner: Object.assign({ '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, 'button: Remove local': OWN_ROW }, FX_STRIP),
+  owner: Object.assign({ '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, 'button: Remove local': OWN_ROW,
+    'button: End the Presenter (can play and mix) code': OPERATOR, 'button: Pad #.#: Presenter code (hold)': GUEST_PAD }, FX_STRIP),
   // (#nav-room was here while Setup > Room was the Owner's alone: setting the room up is an Operator's since D80, so his index has the row again)
   presenter: Object.assign({ '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE }, FX_STRIP),
   guest: { '#livefxmore': FX_STRIP['#livefxmore'], '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE },
 };
 // What stands for each of them: the list fails if a control that replaced a removed copy is not there.
-const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn'], presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade'], guest: ['button: Crossfade'] };
+const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn', 'button: End the Operator (runs the room) code', 'button: Pad #.#: Guest code (hold)'], presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade'], guest: ['button: Crossfade'] };
 // Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D78 the OSC locks, D79 the Secure
 // connection page): each must be found, and on the screen named here. What shows only while something plays, in
 // the pad editor's sheet (Clip or Shader, D73) or after the box gave up a transition (the reason and Try again, D71)
@@ -899,10 +904,16 @@ const TRANSITIONS = {};
 const ADDED = {
   owner: Object.assign({ '#showpin': 'People and codes', '#copypin': 'People and codes', '#pinvalue': 'People and codes', '#logoutbtn': 'People and codes',
     '#nav-https': 'setup/index', '#httpsrequest': 'Secure connection', '#httpsprobe': 'Secure connection', '#httpsowneronly': 'Secure connection',
-    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC', '#guestlock': 'People and codes' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
-  // D80: the lock on guest controls for an Operator and the Owner; an Operator's guest link
-  presenter: Object.assign({ '#guestlock': 'People and codes', '#makeguestlink': 'People and codes' }, TRANSITIONS),
-  guest: Object.assign({}, TRANSITIONS),
+    '#osconly': 'OSC', '#oscpaired': 'OSC', '#osckey': 'OSC',
+    // D80: the lock, what a controller's join code pairs, a scene's mark "Not for guests"
+    '#guestlock': 'People and codes', '#ctlcode-join': 'People and codes', '#roomsnoguests': 'Setup index > Room' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
+  // D80, an Operator: the lock on guest controls and a guest link; the rows of Setup that are his now, the room's
+  // set-up with a scene's mark, the mapping's own controls, a clip to upload
+  presenter: Object.assign({ '#guestlock': 'People and codes', '#makeguestlink': 'People and codes', '#nav-schedule': 'setup/index', '#nav-autostart': 'setup/index',
+    '#nav-midi': 'setup/index', '#roomsnoguests': 'Setup index > Room', '#mapedit': 'shape/mapping', '#uploadbtn': 'play/' }, TRANSITIONS),
+  // D80, a Guest while guest controls are open (the default): his card on Room > Scenes. Stop and Blackout are the
+  // strip's own buttons, which were in the list before, disabled
+  guest: Object.assign({ '#gplay': 'room/scenes', '#gvibes': 'room/scenes', '#gshow': 'room/scenes', '#gprojon': 'room/scenes', '#gprojoff': 'room/scenes' }, TRANSITIONS),
 };
 // o: { open(token) -> a page loaded with that token (null: the owner's, already paired), prepare: the t for
 // inventory.prepare (its page is the owner's), log(text) }. The box behind it has no player (see inventory.js).
