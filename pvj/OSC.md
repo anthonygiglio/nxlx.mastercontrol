@@ -67,7 +67,7 @@ Off until the Owner switches it on (D82, 2026-10-11). With it on, the box tells 
 
 **When.** The box looks at its state 5 times a second and sends what changed since the last look, each address once with its newest value. `/pvj/state/alive` goes out every 2 seconds, changed or not. Everything goes out again every 30 seconds, and at once when a listed device asks: send `/pvj/state` (any argument or none; with the key lock on, `/k/<key>/pvj/state`) from the device itself. The request must pass every lock, and its sender's address must be in the list; from any other address it does nothing and is answered with nothing.
 
-**Types.** Every number is a float32 (`f`) and every name a string (`s`), one argument per message: what a TouchOSC control binds directly. Several messages travel together as one OSC bundle (a full state is 92 messages in 3 packets; as single messages it would be 92 packets and break the cap). **Whether TouchOSC takes bundles is to be confirmed on the tablet**; it has not been tried. On and off are `1.0` and `0.0`. Each address has the tail and the range of its control address, so `/pvj/opacity` (0 to 100) is `/pvj/state/opacity` (0 to 100).
+**Types.** Every number is a float32 (`f`) and every name a string (`s`), one argument per message: what a TouchOSC control binds directly. Several messages travel together as one OSC bundle (a full state is 132 messages in 5 packets, about 5,000 bytes, and is out within half a second; as single messages it would be 132 packets and break the cap). **Whether TouchOSC takes bundles is to be confirmed on the tablet**; it has not been tried. On and off are `1.0` and `0.0`. Each address has the tail and the range of its control address, so `/pvj/opacity` (0 to 100) is `/pvj/state/opacity` (0 to 100).
 
 | Address | Argument | What it says |
 | --- | --- | --- |
@@ -99,10 +99,15 @@ Off until the Owner switches it on (D82, 2026-10-11). With it on, the box tells 
 | `/pvj/state/shader/hue` | f -180 to 180 | Degrees |
 | `/pvj/state/shader/brightness` | f 0 to 2 | 1 leaves it alone |
 | `/pvj/state/shader/control/<n>` | f 0 to 1 | The n-th input (1 to 8) of the shader on screen, spread as `/pvj/shader/control/<n>` takes it; 0 for one that is not there |
+| `/pvj/state/shader/control/<n>/name` | s | What the panel calls that control: the shader file's LABEL for the input, or its NAME when it has none; at most 40 characters; empty for one that is not there. For the label beside a knob |
+| `/pvj/state/shader/control/<n>/kind` | s | What that control is: `float` (a number over a range: a fader or a knob), `bool` (a switch), `choice` (a list of named values, by position), `int` (a whole number over a range), `event` (a button that fires once; its value is always 0); empty for one that is not there, so a layout can dim it |
 | `/pvj/state/shader/preset/<n>` | f 0/1 | The n-th preset (1 to 8) is the one on now |
 | `/pvj/state/effect` | s | The effect that is on; empty when none |
 | `/pvj/state/effect/on` | f 0/1 | An effect is on |
 | `/pvj/state/effect/amount` | f 0 to 100 | Percent, as `/pvj/effect/amount` |
+| `/pvj/state/effect/control/<n>` | f 0 to 1 | The n-th input (1 to 8) of the effect that is on, spread as `/pvj/effect/control/<n>` takes it; 0 for one that is not there |
+| `/pvj/state/effect/control/<n>/name` | s | What the panel calls that control, as for a shader. An effect file's own input called "amount" is sent as "Amount (the filter's own)", as the panel says it, because `/pvj/effect/amount` is another thing |
+| `/pvj/state/effect/control/<n>/kind` | s | As for a shader |
 | `/pvj/state/vibes` | f 0/1 | Vibes runs |
 | `/pvj/state/vibes/set` | s | The name of its set |
 | `/pvj/state/vibes/dwell` | f 15 to 3600 | Seconds each shader stays |
@@ -112,7 +117,9 @@ Off until the Owner switches it on (D82, 2026-10-11). With it on, the box tells 
 | `/pvj/state/pad/number` | f | That pad's number (1 to 12); 0 when no pad does |
 | `/pvj/state/pad/<bank>/<pad>` | f 0/1 | That pad is the one playing: the light of the button that sends `/pvj/pad/<bank>/<pad>` |
 
-The pad lights, the fade and Blackout come from the same picture of the box the MIDI controllers' lights are worked out from (`pvj/boxstate.py`), so a pad lit on a controller is lit in the layout. Not sent: the inputs of an effect, the Room's scenes and projectors, the overlay's file.
+The pad lights, the fade and Blackout come from the same picture of the box the MIDI controllers' lights are worked out from (`pvj/boxstate.py`), so a pad lit on a controller is lit in the layout. Not sent: the Room's scenes and projectors, the overlay's file.
+
+**The eight controls and their names.** The count is the one `/pvj/shader/control/<n>` and a MIDI controller's knobs use: the file's numbers, switches, choices and events, in the file's order, the first eight. A colour and a point (x and y) have no knob, so they have no place among the eight and no name is sent for them; a number whose MIN is its MAX cannot move and is left out too. The names and kinds are sent when the shader or the effect changes and with every full state, not at every look, so a knob that moves sends its value alone. Like a clip's name, a control's name is read by anyone on the network.
 
 ## Setting up TouchOSC to listen
 

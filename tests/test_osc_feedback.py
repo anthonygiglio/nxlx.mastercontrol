@@ -410,7 +410,7 @@ class StateTest(Base):
         got = {a: args for a, args, _w in decode(self.sock.sent)}
         self.assertEqual(got[fb.PREFIX + "clip/name"], ["05_??x.mp4"])
         self.assertEqual(got[fb.PREFIX + "playing"], [1.0])
-        self.assertEqual(len(got), 92)
+        self.assertEqual(len(got), 1 + len(fb.build(self.api, {"pads": [[""] * 12] * 3}, {})))
         # and whatever else a later address might hold: one message that cannot be built is left out, the rest leave
         del self.sock.sent[:]
         f2 = self.feedback(state=lambda now: [(fb.PREFIX + "a", 1.0), (fb.PREFIX + "b", object()), (fb.PREFIX + "c", "x"), (fb.PREFIX + "d", 1e300)])
@@ -466,6 +466,153 @@ class ShaderStateTest(Live):
         self.assertEqual(osc.parse_packet(fb.pack(sorted(got.items()))[0][0])[0][1].__class__, list)
         for a, v in got.items():
             self.assertIn(type(v), (float, str), a)
+
+    def names(self, got, what="shader"):
+        return ([got[fb.PREFIX + "%s/control/%d/name" % (what, n)] for n in range(1, 9)],
+                [got[fb.PREFIX + "%s/control/%d/kind" % (what, n)] for n in range(1, 9)])
+
+    def show(self, name, source):
+        self.engine.upload(name, source)
+        self.engine.play(name)
+        self.pump()
+        return self.state()[0]
+
+    def test_the_names_and_kinds_of_the_shader_s_controls_as_the_panel_labels_them(self):
+        """D83. The LABEL where the file has one, else the NAME (shaders.js: `i.label || i.name`), in the count of the
+        knobs (nth_control): a colour and a point have no knob, so they have no place among the eight."""
+        got, _snap = self.state()
+        self.assertEqual(self.names(got), (["Level", "lit", "mode", "count", "bang", "steps", "", ""],
+                                           ["float", "bool", "choice", "int", "event", "float", "", ""]))
+        self.assertEqual(got[fb.PREFIX + "shader/control/5"], 0.0, "an event has a name and no value")
+
+    def test_a_shader_with_no_control_three_and_more_than_eight(self):
+        body = "void main() { gl_FragColor = vec4(%s, 0.0, 0.0, 1.0); }"
+        got = self.show("none.fs", '/*{"INPUTS": []}*/\n' + body % "0.5")
+        self.assertEqual(self.names(got), ([""] * 8, [""] * 8))
+        self.assertEqual([got[fb.PREFIX + "shader/control/%d" % n] for n in range(1, 9)], [0.0] * 8)
+        three = '/*{"INPUTS": [{"NAME": "a", "TYPE": "float", "LABEL": "Glow amount"}, {"NAME": "b", "TYPE": "bool", "DEFAULT": true},' \
+                ' {"NAME": "c", "TYPE": "float", "MIN": 1.0, "MAX": 1.0, "LABEL": "Fixed"}, {"NAME": "d", "TYPE": "float"}]}*/\n'
+        got = self.show("three.fs", three + body % "a + d + c + (b ? 1.0 : 0.0)")
+        self.assertEqual(self.names(got), (["Glow amount", "b", "d"] + [""] * 5, ["float", "bool", "float"] + [""] * 5),
+                         "a number that cannot move (MIN is MAX) is no knob, as on a controller")
+        self.assertEqual(got[fb.PREFIX + "shader/control/2"], 1.0)
+        ten = '/*{"INPUTS": [%s]}*/\n' % ", ".join('{"NAME": "k%d", "TYPE": "float", "LABEL": "Knob %d"}' % (n, n) for n in range(1, 11))
+        got = self.show("ten.fs", ten + body % " + ".join("k%d" % n for n in range(1, 11)))
+        self.assertEqual(self.names(got), (["Knob %d" % n for n in range(1, 9)], ["float"] * 8), "the first eight, as the knobs")
+        self.assertNotIn("Knob 9", [v for v in got.values() if isinstance(v, str)])
+        self.assertNotIn(fb.PREFIX + "shader/control/9/name", got)
+
+    def test_a_name_is_cleaned_as_a_clip_s_name_is(self):
+        long = '/*{"INPUTS": [{"NAME": "a", "TYPE": "float", "LABEL": "%s"}, {"NAME": "b", "TYPE": "float", "LABEL": "tab\\there"}]}*/\n' % ("W" * 60)
+        got = self.show("long.fs", long + "void main() { gl_FragColor = vec4(a, b, 0.0, 1.0); }")
+        names = self.names(got)[0]
+        self.assertEqual(names[0], "W" * fb.MAX_NAME)
+        self.assertEqual(re.sub(r"[\x00-\x1f\x7f]", "", names[1]), names[1])
+        self.assertEqual(osc.parse_message(fb.encode("/x", "a\udcffb"))[1], ["a?b"])
+        i = {"name": "n", "type": "float", "label": "L\x00\x1f" + "\u00e9" * 80, "min": 0.0, "max": 1.0, "default": 0.0}
+
+        class Engine:
+            def _path(self, sid):
+                return ("x",)
+
+            def _parsed(self, path):
+                return ({"inputs": [i]},)
+
+            def current_values(self, parsed, on):
+                return {}
+
+            def nth_control(self, parsed, n):
+                return i if n == 1 else None
+        fb._PARSED["shader"].clear()
+        _v, names, kinds = fb._controls("shader", Engine(), {"id": "x"})
+        self.assertEqual((names[0], kinds[0]), ("L" + "\u00e9" * (fb.MAX_NAME - 1), "float"))
+        fb._PARSED["shader"].clear()
+
+    def test_the_effect_s_controls_their_names_and_their_kinds(self):
+        """The effect that is on: its eight values as /pvj/effect/control/<n> takes them, and what the panel calls
+        each (effects.js: the filter's own "amount" is told apart from the effect's Amount)."""
+        from pvj import shaders as S
+        src = '/*{"INPUTS": [{"NAME": "inputImage", "TYPE": "image"}, {"NAME": "amount", "TYPE": "float", "MIN": 0.0, "MAX": 4.0, "DEFAULT": 1.0},' \
+              ' {"NAME": "tint", "TYPE": "color", "DEFAULT": [1.0, 1.0, 1.0, 1.0]}, {"NAME": "soft", "TYPE": "bool", "LABEL": "Soft edge", "DEFAULT": true},' \
+              ' {"NAME": "shape", "TYPE": "long", "VALUES": [0, 1, 2], "LABELS": ["a", "b", "c"], "DEFAULT": 2}]}*/\n' \
+              'void main() { gl_FragColor = IMG_THIS_PIXEL(inputImage) * amount * tint * (soft ? 1.0 : 0.5) * float(shape); }'
+        parsed = S.parse(src, S.FILTER)
+        fx, real = self.api.effects, {}
+        for name in ("_seen", "_path", "_parsed", "current_values"):
+            real[name] = getattr(fx, name)
+            self.addCleanup(setattr, fx, name, real[name])
+        on = {"id": "glow.fs", "digest": "d1", "controls": {"amount": 0.35}, "values": {"amount": 3.0}}
+        fx._seen = lambda: on
+        fx._path = lambda sid: ("/x/" + sid,)
+        fx._parsed = lambda path: (parsed, "d1")
+        fx.current_values = lambda p, rec: dict({i["name"]: i.get("default") for i in p["inputs"]}, **rec["values"])
+        fb._PARSED["effect"].clear()
+        self.addCleanup(fb._PARSED["effect"].clear)
+        got, _snap = self.state()
+        self.assertEqual(self.names(got, "effect"), (["Amount (the filter's own)", "Soft edge", "shape"] + [""] * 5, ["float", "bool", "choice"] + [""] * 5))
+        self.assertEqual([got[fb.PREFIX + "effect/control/%d" % n] for n in range(1, 9)], [0.75, 1.0, 1.0] + [0.0] * 5)
+        self.assertEqual(got[fb.PREFIX + "effect/amount"], 35.0)
+        self.assertEqual(self.names(got)[0][0], "Level", "the shader under it keeps its own names: one cache does not put the other out")
+        self.assertEqual(sorted(len(c) for c in fb._PARSED.values()), [1, 1])
+        fx._seen = lambda: None
+        got, _snap = self.state()
+        self.assertEqual(self.names(got, "effect"), ([""] * 8, [""] * 8))
+        self.assertEqual(got[fb.PREFIX + "effect/control/1"], 0.0)
+
+    def test_names_leave_when_the_shader_changes_and_not_at_every_look(self):
+        f = fb.Feedback(self.api, [T1], nets=lambda: NETS, clock=lambda: self.now[0], log=lambda *_: None, sock=Sock(lambda: self.now[0]))
+        sock = f._sock
+
+        def looks(n):
+            del sock.sent[:]
+            for _ in range(n):
+                f.tick()
+                self.now[0] += 0.2
+            return [a for a, _v, _w in decode(sock.sent)]
+        first = looks(10)
+        self.assertEqual(len([a for a in first if "/control/" in a and a.endswith("/name")]), 16, "everything once: eight names for the shader, eight for the effect")
+        self.send("/pvj/shader/control/1", 0.9)
+        after = looks(10)
+        self.assertIn(fb.PREFIX + "shader/control/1", after)
+        self.assertEqual([a for a in after if "/control/" in a and a.endswith(("/name", "/kind"))], [], "a knob that moves sends its value, never the names again")
+        self.engine.upload("two.fs", '/*{"INPUTS": [{"NAME": "z", "TYPE": "bool"}]}*/\nvoid main() { gl_FragColor = vec4(z ? 1.0 : 0.0); }')
+        self.engine.play("two.fs")
+        self.pump()
+        changed = looks(10)
+        self.assertIn(fb.PREFIX + "shader/control/1/name", changed)
+        self.assertNotIn(fb.PREFIX + "shader/control/8/name", changed, "an empty place that stays empty is not sent again")
+        self.assertNotIn(fb.PREFIX + "effect/control/1/name", changed)
+
+    def test_a_full_state_with_the_longest_names_fits_every_cap(self):
+        """The worst sixteen names a file can give (MAX_NAME characters of four bytes each) with every kind: each
+        datagram within MAX_DATAGRAM, each second within the target's cap, and all of it out within a second."""
+        from pvj import boxstate
+        holder = type("H", (), {"_player_seen": None, "_player_raw": {}})()
+        snap = boxstate.snapshot(self.api, time.monotonic(), True, holder)
+        usual = fb.build(self.api, snap, holder._player_raw)
+        worst = [(a, ("\U0001f39b" * fb.MAX_NAME) if "/control/" in a and a.endswith("/name") else ("choice" if a.endswith("/kind") else v)) for a, v in usual]
+        sizes = {}
+        for label, state in (("usual", usual), ("worst", worst)):
+            now = [1000.0]
+            sock = Sock(lambda: now[0])
+            f = fb.Feedback(self.api, [T1], nets=lambda: NETS, clock=lambda: now[0], log=lambda *_: None, sock=sock, state=lambda t: state)
+            ticks = 0
+            while len(decode(sock.sent)) < len(state) + 1 and ticks < 50:
+                f.tick()
+                now[0] += fb.TICK
+                ticks += 1
+            sent = sock.sent
+            self.assertEqual(len(decode(sent)), len(state) + 1, label)
+            self.assertLessEqual(max(len(d) for d, _w, _t in sent), fb.MAX_DATAGRAM, label)
+            self.assertLessEqual(len(sent), fb.TARGET_PACKETS + fb.TARGET_PACKET_BURST, label)
+            self.assertLessEqual(sum(len(d) for d, _w, _t in sent), fb.TARGET_BYTES + fb.TARGET_BYTE_BURST, label)
+            self.assertLessEqual(sent[-1][2] - sent[0][2], 1.0, label)
+            sizes[label] = (len(state) + 1, len(sent), sum(len(d) for d, _w, _t in sent), round(sent[-1][2] - sent[0][2], 1))
+        self.assertEqual(sizes["usual"][0], 132, "92 before D83: 8 effect values, and a name and a kind for 16 controls")
+        self.assertLessEqual(sizes["usual"][2], 6000, sizes)
+        self.assertLessEqual(sizes["worst"][2], 9000, sizes)
+        if os.environ.get("PVJ_SAY_SIZES"):
+            print(sizes)
 
 
 class CapTest(Base):
@@ -527,7 +674,7 @@ class CapTest(Base):
         self.rules()
         self.server.feedback = f
         f.tick()
-        full = len(decode(self.sock.sent))
+        full = 1 + len(fb.build(self.api, {"pads": [[""] * 12] * 3}, {}))     # every address, and the heartbeat
         del self.sock.sent[:]
         for _ in range(4000):           # four seconds of requests, a thousand a second
             self.server.limiter = osc.RateLimiter(self.clock)
