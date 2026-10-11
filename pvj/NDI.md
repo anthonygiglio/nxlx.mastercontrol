@@ -172,6 +172,10 @@ If the library is taken away by hand on a box that is set up, the page says "The
 | `POST /api/ndi` `{"action": "forget", "id": "<id>"}` | full | Take a source off the allowed list |
 | `POST /api/ndi` `{"action": "add_group" or "remove_group", "group": "Leyline"}` | full | Which NDI groups the box looks in |
 | `POST /api/ndi` `{"action": "add_discovery" or "remove_discovery", "server": "192.168.1.5:5959"}` | full | Which NDI Discovery Servers the box asks |
+| `POST /api/ndi` `{"action": "own_discovery", "on": true}` | full | Also ask the discovery server this box runs |
+| `GET /api/ndi/discovery` | full, never through remote support | The discovery server on this box: set up or not, what listens, what to tell senders |
+| `POST /api/ndi/discovery` `{"network": "wired" or "wifi" or "all", "port": 5959}` | full, never through remote support | Which network it listens on, and the port |
+| `POST /api/modules/ndi-discovery` `{"enabled": true}` | full, never through remote support | Switch the discovery server on or off |
 
 Settings: `"ndi": {"addresses": []}` and, once someone has used the switch, `"sound": true` or `false` (no schema change since 2026-10-11: the key is read with defaults everywhere, as `room` is, so a file from this branch loads on master and a master file loads here; the branch had bumped to 15 before, and the test Pi keeps one such file as a backup; sound needed no new key either, a file without it means off). The switch is the module `inputs-ndi` (off by default, D43).
 
@@ -288,9 +292,40 @@ The owner's words: "make sure to incorporate the NDI group and discovery policie
 - **The group of a found source.** `NDIlib_source_t` has a name and an address and nothing else, so an allowed source does not remember a group. (The SDK's Sender Listener reports groups, and needs a discovery server; not used.)
 - **Whether the file's values add to or replace what the finder is given** is not stated in the documentation. This box gives the groups and the extra addresses only through the finder and the discovery servers only through the file, so the question does not arise for them.
 
-**Where a discovery server runs.** On a machine on the venue's network that is always on and has a fixed address: a small computer in the rack, not a laptop that leaves. NDI's Discovery Server is its own download with its own licence (one copy, no redistribution), so this box does not bundle it. Its documentation gives it a `-bind` address (all addresses by default), a `-port` (5959), and a configuration file; whether the box itself should run one is a separate, later job.
+**Where a discovery server runs.** On a machine on the venue's network that is always on and has a fixed address: a small computer in the rack, not a laptop that leaves. Since D85 that machine can be this box: see "The discovery server on this box" below.
 
 **Checked against the SDK (6.3.2, the owner's copy, read only; nothing of it is in this repository).** `NDIlib_find_create_t` is `show_local_sources`, `p_groups`, `p_extra_ips`, in that order, as `_FindCreate` has it. `NDIlib_source_t`, `NDIlib_recv_create_v3_t`, `NDIlib_video_frame_v2_t`, `NDIlib_audio_frame_v3_t` and the performance structure match the ctypes definitions field for field; the twelve function signatures in `_declare` match; the constants match (UYVY, UYVA, FLTP, the undefined timestamp, colour format "fastest" 100, bandwidth "highest" 100, the frame types and the field types). Nothing was wrong. Noted, not changed: the picture is read with `NDIlib_recv_capture_v2` and the sound with `_v3` on one receiver from two threads (the header allows calls at the same time and does not say whether mixing the two versions is covered); the finder's strings are kept on the library object (safe while the old finder is closed before a new one is opened, as it is).
+
+## The discovery server on this box (D85, 2026-10-11; never run with NDI's program)
+
+The owner's words: "let's proceed with option 2 and build the discovery server and bake into the box."
+
+**What it is.** NDI's own program, `ndi-discovery-server`, run by the box. Senders register with it and receivers ask it. It is closed source and listens on the network. Its licence allows one copy and forbids handing it on, so it is never in this repository or an image and the box never downloads it: root places it from the owner's copy.
+
+**What it is not.** Authentication. Anything that can reach its port can register with it and ask it who is there. It is for a network the owner controls.
+
+**Setting it up (once per box, a keyboard or SSH).** `sudo pvj-ndi-runtime server install "<folder>"`, where the folder is the unpacked NDI SDK for Linux or NDI's Discovery Server for Linux (both keep the program at `bin/<architecture>/ndi-discovery-server`), or the file itself. It is a command of its own, not part of `pvj-ndi-runtime install`: a program that listens on the network is its own decision, and a box can have it without the NDI input. The command:
+
+- refuses first whatever could refuse later (the unit's template, a link where a file goes, an account `pvj-ndisc` that is not what it would make);
+- copies the program to `/opt/pvj-ndi-server/ndi-discovery-server`: never through a link in the last part of the name, never waiting on a pipe, at most 32 MB, and the COPY is checked before it gets its name: an ELF program (not a library, not a script) for this box's processor, root's, writable by nobody else, in a folder that is root's. Nothing is executed;
+- prints the copy's sha256 to compare with the owner's file;
+- makes the account and group `pvj-ndisc` (held to the rules of `pvj-ndi`: no members, no shell, no other group), writes `pvj-ndi-discovery.service` and the panel's drop-in `50-pvj-ndisc.conf` (the mark), starts the supervisor and restarts the panel.
+
+`sudo pvj-ndi-runtime server remove` takes all of it off but the account. An update writes the unit again; an uninstall removes the set-up and, with `--purge`, the program.
+
+**What runs.** The unit runs this project's supervisor (`bin/pvj-ndi-discovery`, `pvj/ndiscovery.py`), not NDI's program directly. The supervisor answers only the panel's account on a socket in `/run/pvj-ndisc`, and does nothing until the panel says the module is on. Then it starts NDI's program with exactly `-bind <address> -port <port>`, both checked again by the supervisor itself (a private or link-local IPv4 address or 0.0.0.0; a port from 1024 to 65535). It checks the program file before every start. If the program ends it is started again after 2 seconds, then 4, up to a minute; a run of 30 seconds resets the pause. Its last line of output is kept for the page. "Off" ends the program.
+
+**The sandbox** (`pvj/systemd/pvj-ndi-discovery.service`; every line the NDI helper's unit has, and less where this needs less): its own account, no capabilities, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, a private 8 MB `/tmp`, no devices, 128 MB and one core at most; it can write only `/run/pvj-ndisc`; it cannot see the box's settings, keys, PIN, control sockets, media or the NDI helper's folders (`InaccessiblePaths`), nor the two places NDI's program would read a configuration of its own from (`/etc/ndi`, `/usr/local/etc/ndi`), so only the two arguments count; IPv4 and Unix sockets only; private and link-local addresses only, both ways, and not 127.0.0.1. It can reach the box's own LAN address, as the NDI helper can (SECURITY.md).
+
+**The page** (Setup, NDI discovery server; the Owner's alone, and never through remote support, the module's switch included): on or off; which network (the wired one by default, the Wi-Fi, or all the box's networks, which is said to include a hotspot); the port (5959); what is listening now; "Senders and receivers on this network should use discovery server <address>:<port>" with a Copy button; and when it is not set up, the one command. No count of what is registered is shown: NDI's documentation gives no way to ask the server that without its private protocol.
+
+**When the address changes.** The box binds the server to the chosen network's address of the moment. Every ten seconds the panel looks again; a new address (a new DHCP lease) makes the supervisor start the program again there, and the line on the page changes. Senders and receivers given the old address must be given the new one: give the box a fixed address. A network with no address (the cable pulled) stops the server; it never moves to another network by itself.
+
+**This box's own input.** NDI input has a switch "Use this box's own discovery server". It is kept as a switch, not as an address: the box's own address of the moment is added to what its finder asks while the server is on. It uses the box's LAN address, since the helper's sandbox does not allow 127.0.0.1.
+
+**Settings.** `"ndi_discovery": {"network": "wired", "port": 5959}` and `"ndi": {"own_discovery": true}`; no schema change. `ndi_discovery` is never exported or imported: which network a listener is on belongs to one box. An older release has no such module, so nothing can start the server there, and keeps both keys through a save (`tests/test_ndi_discovery.py` runs master's code).
+
+**Not verified, because NDI's program was never run** (not on the dev Mac, not in CI, not on the Pi): that it starts under this sandbox at all; that `-bind` and `-port` behave as its documentation says and that it ignores a missing configuration file; that it stays in the foreground without `-service` and prints anything useful when it fails; what it does when its address goes away under it; its memory and processor use; that senders and this box's own input find each other through it. Its help text and the two default configuration paths were read from the file as text, never executed. CI's real-install job sets the unit up with `/usr/bin/true` standing in for the program and leaves the module off, which shows that the account, the unit and the supervisor come up under systemd, and nothing about NDI's program. Device steps N27 to N30.
 
 ## Discovery and the network
 

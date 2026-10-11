@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-11, the box runs NDI's Discovery Server (`ndi-input`, #94, D85; a draft, not merged)
+
+The same session went on, after the coordinator passed on the owner's decisions: a pad stays strict after an address change; an Operator allows sources; mDNS is left as it is until device row N26; and, in his words, "let's proceed with option 2 and build the discovery server and bake into the box."
+
+- **Built:** `pvj/ndiscovery.py` (the installer's checks, root's set-up, the supervisor, the panel's side), `pvj/systemd/pvj-ndi-discovery.service`, `bin/pvj-ndi-discovery`, the module `ndi-discovery`, the routes `/api/ndi/discovery`, the page under Setup, the switch on NDI input, and the installer's part (an update keeps the set-up, an uninstall removes it). D85 has the decisions and why.
+- **Not run:** NDI's program, anywhere. The tests use a shell script in its place; CI's real-install job uses `/usr/bin/true` as the file and leaves the module off. What is unknown is listed in pvj/NDI.md and is device steps N27 to N30.
+- **Read, not run:** NDI's Discovery Server documentation and its example service files (nothing copied). The program's help text and its two default configuration paths were read out of the file as text; the unit hides both paths so that only the arguments count.
+- **Tests:** `tests/test_ndi_discovery.py` (27), committed before the code and seen to fail without it; pins in `tests/test_units.py` for the installer's lines and the new runtime folder; a browser step and menu entries.
+- **Slips:** one push went out with two installer pins of `tests/test_units.py` failing (I had not run that file after editing `install.sh`); fixed in the next commit and the run cancelled. Earlier in the session: a browser step that clicked a pad marked `aria-disabled`, and a first draw of the NDI page's new cards that a "More" left open on another page could suppress; CI found both.
+- **Open for the owner:** see the report (run the discovery server by default on boxes that have it set up, or keep it off; the wired network as the default; whether an Operator may see the page).
+
 ## 2026-10-11, pads hold NDI sources; groups and discovery servers (`ndi-input`, #94, D62 amended; a draft, not merged)
 
 Built on the branch after the hand-over below, by one session. Nothing of it has run on a Pi, with a real sender, with mpv or in a browser on the dev Mac: the Python tests ran here, the browser steps were written and syntax-checked and run in CI only.
