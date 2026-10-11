@@ -320,7 +320,9 @@ class ControlApiTest(ServerBase):
         self.call("POST", "/api/modules/control-midi", {"enabled": True}, token=self.full)
         live = self.call("POST", "/api/devices/invite", {"name": "g", "role": "live"}, token=self.full)[1]["token"]
         self.assertEqual(self.call("GET", "/api/midi", token=live)[0], 200)      # a presenter may look at the controllers; changing them is full
-        self.assertEqual(self.call("POST", "/api/midi", {"enabled": False}, token=live)[0], 403)
+        view = self.call("POST", "/api/devices/invite", {"name": "v", "role": "view"}, token=self.full)[1]["token"]
+        self.assertEqual(self.call("POST", "/api/midi", {"enabled": False}, token=view)[0], 403)      # the Operator's since D80 (tests/test_roles.py)
+        self.assertEqual(self.call("POST", "/api/dmx", {"universe": 4}, token=live)[0], 403)          # DMX stays the Owner's
         self.assertEqual(self.call("GET", "/api/dmx")[0], 401)
 
 
