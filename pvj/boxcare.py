@@ -625,6 +625,8 @@ class BoxCare:
                 out[name] = data[name]
         if isinstance(out.get("osc"), dict):
             out["osc"].pop("key", None)          # the key has its own section, never exported (D78); this is for a file not yet moved
+            for key in (osc_mod.EVER_ON, osc_mod.PAIRED_DEFAULT):
+                out["osc"].pop(key, None)        # this box's own history (D83), not a setting
             if (isinstance(device, dict) and device.get("remote")) or self.api.support.is_remote(client):
                 for key in FEEDBACK_KEYS:        # a support session never reads where the box sends its state (D82); an
                     out["osc"].pop(key, None)    # import of such a file leaves the box's own (_osc_layers)
@@ -751,6 +753,13 @@ class BoxCare:
             if k not in out and k in mine:
                 out[k] = copy.deepcopy(mine[k])
         out.pop("key", None)
+        # D83: whether OSC was ever on is this box's own fact, never the file's, and an import never lowers it. A
+        # file that has OSC on is the owner's own settings and comes as it is (its locks too): no lock is added.
+        if mine.get(osc_mod.EVER_ON) is True or out.get("enabled") or osc_mod.used_before(current):
+            out[osc_mod.EVER_ON] = True
+        elif osc_mod.EVER_ON in mine:
+            out[osc_mod.EVER_ON] = mine[osc_mod.EVER_ON]
+        out.pop(osc_mod.PAIRED_DEFAULT, None)
         new["osc"] = out
         key = osc_mod.stored_key(current)
         if key or out.get("key_on"):

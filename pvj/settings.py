@@ -46,7 +46,7 @@ def default_settings():
         "modules": {"enabled": {}},
         "theme": {"name": "dark-stage", "accent": None},
         "mix": {"transition": "dip", "duration": 1.0},
-        "osc": {"enabled": False, "port": 9876, "allow": []},
+        "osc": {"enabled": False, "port": 9876, "allow": [], "ever_on": False},     # ever_on: D83, osc.EVER_ON
         "schedule": {"enabled": False, "entries": []},
         "streams": [],
         "control": default_control(),

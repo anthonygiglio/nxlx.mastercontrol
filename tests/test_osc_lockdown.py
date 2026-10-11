@@ -595,7 +595,8 @@ class ApiTest(CareBase):
         for dev in (self.live_dev, self.view_dev):
             st, d = self.h("GET", "/api/osc", device=dev)
             self.assertEqual(st, 200)
-            self.assertEqual(set(d), {"enabled", "port", "allow", "listening", "error", "received", "only_on", "paired_on", "key_on"})
+            self.assertEqual(set(d), {"enabled", "port", "allow", "listening", "error", "received", "only_on", "paired_on", "key_on",
+                                      "open", "open_text", "paired_default"})
             self.assertNotIn(TABLET, json.dumps(d))
             self.assertEqual(self.h("GET", "/api/osc/messages", device=dev)[0], 403)
             self.assertEqual(self.h("POST", "/api/osc/key", {}, dev)[0], 403)
@@ -686,7 +687,8 @@ class BoxCareTest(CareBase):
         self.assertTrue(self.auth.paired_addresses(3600))
         st, out = self.h("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, self.full_dev)
         self.assertEqual(st, 200, out)
-        self.assertEqual(self.settings.data["osc"], {"enabled": False, "port": 9876, "allow": []})
+        self.assertEqual(self.settings.data["osc"], {"enabled": False, "port": 9876, "allow": [], "ever_on": False},
+                         "and OSC was never on again (D83): the next switch-on brings the paired lock")
         self.assertNotIn(osc.KEY_SECTION, self.settings.data)
         self.assertNotIn(KEY, read(self.settings.path))
         self.assertNotIn(KEY, read(self.settings.path + ".bak"))
