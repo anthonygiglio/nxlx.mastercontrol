@@ -15,6 +15,7 @@ import unittest
 from pvj import boxcare, osc, oscfeedback as fb, policy, support
 from tests.test_osc import bundle, msg
 from tests.test_osc_lockdown import KEY, LayerBase, OTHER, TABLET
+from tests.test_shader_engine import ALL, Live
 from tests.test_support import LAN, TUNNEL
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -353,6 +354,44 @@ class StateTest(Base):
         self.assertEqual([fb.fade_word(*x) for x in ((None, None), ("out", 60), ("out", 0), ("in", 30), (None, 0))], ["idle", "out", "black", "in", "idle"])
         for path in ("rtsp://user:Stream-Pass-7@cam/1", "http://x/y.mp4", "relative.mp4", None, 5, "/tmp/a://b"):
             self.assertEqual(fb.clip_name(self.api, path), "", path)
+
+
+class ShaderStateTest(Live):
+    """With the Shaders and Vibes module on and a shader on the screen (the engine's own fake player and clock): what
+    goes in over /pvj/shader/... comes back under /pvj/state/shader/... in the same units."""
+
+    def setUp(self):
+        super().setUp()
+        self.engine.upload("all.fs", ALL)
+        self.engine.play("all.fs")
+        self.server = osc.OscServer(self.api, log=lambda *_: None)
+
+    def state(self):
+        from pvj import boxstate
+        holder = type("H", (), {"_player_seen": None, "_player_raw": {}})()
+        snap = boxstate.snapshot(self.api, time.monotonic(), True, holder)
+        return dict(fb.build(self.api, snap, holder._player_raw)), snap
+
+    def send(self, address, value):
+        self.assertEqual(self.server.handle_packet(msg(address, value), "192.168.1.20"), 1, address)
+        self.pump()
+
+    def test_the_shader_s_levels_and_controls_come_back_as_they_went_in(self):
+        for tail, value in (("shader/speed", 2.5), ("shader/hue", -90.0), ("shader/brightness", 1.5), ("shader/control/1", 0.5), ("shader/control/2", 1.0)):
+            self.send("/pvj/" + tail, value)
+        got, snap = self.state()
+        self.assertTrue(snap["shader_on"])
+        self.assertEqual([got[fb.PREFIX + t] for t in ("shader", "shader/speed", "shader/hue", "shader/brightness", "shader/control/2")],
+                         ["all", 2.5, -90.0, 1.5, 1.0])
+        self.assertAlmostEqual(got[fb.PREFIX + "shader/control/1"], 0.5, delta=1 / 127.0)
+        self.assertEqual(got[fb.PREFIX + "shader/control/8"], 0.0, "this shader has six")
+        self.send("/pvj/vibes/dwell", 45)
+        got, snap = self.state()
+        self.assertEqual(got[fb.PREFIX + "vibes/dwell"], 45.0)
+        self.assertEqual((got[fb.PREFIX + "vibes"], bool(got[fb.PREFIX + "vibes/set"])), (0.0, True))
+        self.assertEqual(osc.parse_packet(fb.pack(sorted(got.items()))[0][0])[0][1].__class__, list)
+        for a, v in got.items():
+            self.assertIn(type(v), (float, str), a)
 
 
 class CapTest(Base):

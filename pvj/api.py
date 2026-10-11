@@ -2236,6 +2236,7 @@ class Api:
                 if "add" in body:
                     if len(targets) >= oscfeedback.MAX_TARGETS:
                         raise bad("at most %d devices can be sent the state; remove one first" % oscfeedback.MAX_TARGETS)
+                    oscfeedback._target_form(body["add"])       # the form first: its refusal says more than "no networks"
                     nets = self.osc.local_nets()
                     if not nets:
                         raise ApiError(409, "the box's own network addresses could not be read; try again in a moment")
@@ -2249,6 +2250,12 @@ class Api:
             try:
                 self.osc.apply()
             except osc_mod.OscError as e:
+                with self.settings.lock:
+                    self.settings.data["osc"] = cfg      # keep the last working configuration, as _set_osc does
+                try:
+                    self.osc.apply()
+                except osc_mod.OscError:
+                    pass
                 raise ApiError(409, str(e))
             self.settings.save()
             out = self.osc.feedback_status()

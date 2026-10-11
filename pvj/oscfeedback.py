@@ -262,13 +262,21 @@ def fade_word(label, at):
     return "idle"
 
 
+_PARSED = {}        # (shader id, digest) -> its parsed inputs: the file is read once per shader, not at every look
+
+
 def _shader_controls(api, on):
     """The eight controls of the shader on screen as 0 to 1, as /pvj/shader/control/<n> takes them. A switch is 0 or
     1, a choice its place in the list. 0 for a control that is not there."""
     out = [0.0] * SLOTS
     try:
         engine = api.shaders
-        parsed = engine._parsed(engine._path(on["id"])[0])[0]
+        key = (on["id"], on.get("digest"))
+        parsed = _PARSED.get(key)
+        if parsed is None:
+            parsed = engine._parsed(engine._path(on["id"])[0])[0]
+            _PARSED.clear()
+            _PARSED[key] = parsed
         values = engine.current_values(parsed, on)
         for n in range(1, SLOTS + 1):
             i = engine.nth_control(parsed, n)
