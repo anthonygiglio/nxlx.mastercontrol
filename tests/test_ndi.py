@@ -1569,6 +1569,24 @@ class LaterChoiceWinsTest(NdiApiTest):
         self.api.ndi.stop()                                              # and so does a stop, with nothing playing
         self.assertFalse(self.api.ndi.still(t))
 
+    def test_switching_the_module_off_while_the_pipe_is_on_the_screen_clears_it_and_says_why(self):
+        """Review of b46410c, medium 2: _stop_ndi leaves a source alone exactly when its pipe plays, so the switch-off
+        skipped the clear, kept the note and the speed hold, and the helper went anyway: a black screen with no word."""
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.player.pipe_is = lambda path: path == self.service.fifo        # the real player after the pipe is loaded
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.assertTrue(self.api._speed_held)
+        clears = len([c for c in self.player.calls if c == ("clear",)])
+        self.assertEqual(self.enable(False)[0], 200)
+        self.assertEqual(len([c for c in self.player.calls if c == ("clear",)]), clears + 1, "the screen was not cleared")
+        self.assertIsNone(self.api.ndi.current)
+        self.assertFalse(self.api._speed_held, "the Mix speed was not given back")
+        self.assertEqual(self.api.ndi.ended, {"name": "RESOLUME (Output)", "message": ndi.SWITCHED_OFF})
+        self.assertTrue(wait(lambda: self.service.receiver is None))
+        self.enable()
+        self.assertEqual(self.call("GET", "/api/ndi", token=self.full)[1]["ended"], {"name": "RESOLUME (Output)", "message": ndi.SWITCHED_OFF})
+
     def test_the_capture_helper_is_stopped_when_an_ndi_source_plays_and_the_other_way_round(self):
         """Player.pipe_is (2026-10-11): each live input has a pipe of its own. "A pipe plays" alone (pipe_playing) left
         the capture helper writing into its pipe while the NDI pipe was what played, and the other way round."""

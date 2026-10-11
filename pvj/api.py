@@ -1896,11 +1896,20 @@ class Api:
         if module_id == "projector":       # starts or stops the background status checks
             self.projectors.apply()
         if module_id == "inputs-ndi" and self.ndi is not None:     # the helper looks for sources only while this is on
-            if not self.registry.enabled("inputs-ndi") and self._stop_ndi():
-                try:
-                    self._player_call(self.player.clear)      # the pipe has ended: do not leave its last frame up
-                except ApiError:
-                    pass
+            if not self.registry.enabled("inputs-ndi"):
+                # Off under a source on the screen: the helper lets go whatever the player plays, so the screen is
+                # cleared first (the pipe's last frame must not stay up), then the note and the speed hold go, and
+                # the page is told why the source ended (review of 2026-10-11, M2: _stop_ndi alone left a source
+                # alone exactly when its pipe played, and the screen went black without a word).
+                from . import ndi as ndi_mod
+                if self.ndi.current and self._pipe_plays(self.ndi.fifo):
+                    try:
+                        self._stop_screen()
+                    except ApiError:
+                        pass
+                if self.ndi.stop(reason=ndi_mod.SWITCHED_OFF):
+                    self.log("NDI: %s was taken off the screen: the NDI input was switched off" % (self.ndi.ended or {}).get("name", "a source"))
+                self._hold_speed(False)
             self.ndi.sync()
         if module_id == "room" and not self.registry.enabled("room"):     # off: what a scene had not sent yet is dropped
             self.room.stop()

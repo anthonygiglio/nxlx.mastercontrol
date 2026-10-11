@@ -235,6 +235,7 @@ def validate_saved(cfg):
     return dict({"addresses": out}, **({"sound": cfg["sound"]} if "sound" in cfg else {}))
 
 
+SWITCHED_OFF = "the NDI input was switched off"      # why a source on the screen ended, for the page (Input.stop)
 SOUND_DEFAULT = False                     # off until the sound has been heard on a box (2026-10-11): the owner switches it on (D62)
 
 
@@ -1697,12 +1698,15 @@ class Input:
         except NdiError:
             pass
 
-    def stop(self):
+    def stop(self, reason=None):
         """Nothing of NDI is on the screen any more: have the helper let go of the source. `current` is cleared
-        first and without the lock, so a source being shown again (tick) sees at once that it is no longer wanted."""
+        first and without the lock, so a source being shown again (tick) sees at once that it is no longer wanted.
+        With `reason` (the module switched off under a source on the screen) the page is told why it ended."""
         self.cancel()                      # a source still connecting for an earlier play is no longer wanted either
         had, self.current = self.current, None
         if had:
+            if reason:
+                self.ended = {"name": had["name"], "message": reason}
             self.client_close()
         return bool(had)
 

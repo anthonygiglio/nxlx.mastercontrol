@@ -1522,7 +1522,8 @@
         body: function () { return [streamsCard(full)]; } },
       { id: 'ndi', group: 'show', name: 'NDI\u00ae input', role: 'op', module: 'inputs-ndi', url: '/api/ndi',
         blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Beta: the picture has run once on a Pi 4. Sound from NDI is new and has not been heard on a box yet: it is off until you switch it on.',
-        confirmOff: function (ask) { ask(((S.status && S.status.player) || {}).ndi ? 'The NDI picture comes off the screen now.' : null); },
+        confirmOff: function (ask) { ndiWasOn = !!((S.status && S.status.player) || {}).ndi; ask(ndiWasOn ? 'The NDI picture comes off the screen now.' : null); },
+        offSaid: function () { return ndiWasOn ? 'Switched off. The NDI picture came off the screen because the input was switched off.' : null; },
         body: function () { return ndiCards(full); } },
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'op', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
@@ -2148,7 +2149,7 @@
           redrawSystem();
           return say(r.data.error || 'Could not switch it ' + (on ? 'on' : 'off') + '.', true);
         }
-        say(on ? 'Switched on.' : 'Switched off.');
+        say(on ? 'Switched on.' : (opts.offSaid && opts.offSaid()) || 'Switched off.');      // a page may say what the switch-off took with it
         redrawSystem();
       });
     }
@@ -2967,7 +2968,7 @@
   // link to ndi.video beside the place a source is chosen. The runtime is not part of the box; when it is missing
   // the page says so and how to get it, with the list and the address form still here.
   var NDI_MARK = 'NDI® is a registered trademark of Vizrt NDI AB.';
-  var ndiForm = { address: '' }, ndiTimer = null, ndiBusy = null;      // ndiBusy: the id of a source being connected to
+  var ndiForm = { address: '' }, ndiTimer = null, ndiBusy = null, ndiWasOn = false;      // ndiBusy: the id of a source being connected to; ndiWasOn: a source was on the screen when the switch was asked
   function ndiLink(url, text) { return h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: text }); }
   function ndiSentence(text) { return text ? text.charAt(0).toUpperCase() + text.slice(1) + (/[.!?]$/.test(text) ? '' : '.') : ''; }
   function ndiCards(full) {
