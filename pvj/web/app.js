@@ -81,6 +81,7 @@
         S.failures = 0;
         offlineBanner.hidden = true;
         if (r.status === 401 && S.device) { S.device = null; render(); }
+        if (r.status === 403 && data && data.https) httpsNotice(data);     // owner access is over https:// now (D79)
         if (method === 'POST' && r.ok) pageStateSoon();   // a System page's state line follows what was just changed
         return { ok: r.ok, status: r.status, data: data };
       });
@@ -1167,6 +1168,9 @@
         steps: full && !remote ? [flagStep('support', '/api/support', function (d) { return !!(d.config && d.config.allowed); }, function (v) { return { allowed: v }; }, '/api/support/config')] : null,
         bodyWhenOff: true,
         body: function () { return [supportCard()]; } },
+      { id: 'https', group: 'box', name: 'Secure connection', role: 'full', url: '/api/https',
+        blurb: 'The panel over https://, with a certificate you sign yourself and a root your own devices install once. Guests stay on http://.',
+        body: httpsCards },
       { id: 'backup', group: 'box', name: 'Backup and reset', role: 'full',
         fact: function () { return remote ? 'Settings file, diagnostics' : 'Settings file, diagnostics, factory reset'; },
         blurb: 'Save or load this box\'s settings as a file, make a file for whoever is helping you, or start over.',
@@ -1229,6 +1233,7 @@
     return best ? (best.off === 0 ? '' : best.day + ' ') + best.e.time + ' ' + schedWhat(best.e) : '';
   }
   var SYS_STATE = {
+    https: httpsState,
     health: function (d) {
       var host = /^https?:\/\/([^.\/:]+)\.local/.exec((d.addresses || [])[0] || ''), name = host ? host[1] : 'This box';
       var lines = [['Power', d.power], ['Temperature', d.temperature], ['Player', d.player]];
@@ -2545,6 +2550,220 @@
     return card;
   }
 
+  // ---- the secure connection: https:// with the owner's own root (D79, pvj/httpsbox.py, docs/HTTPS.md) ----
+  var httpsForm = { names: null, trust: null };     // what was typed and what the trust check said, across redraws
+  function httpsState(d) {
+    if (!d.https) return st('setup', d.key ? 'HTTP only · request made' : 'HTTP only');
+    var c = d.certificate || {};
+    if (c.run_out) return st('problem', 'Certificate ran out ' + c.ends);
+    if (c.soon) return st('check', 'Certificate ends ' + c.ends);
+    return st('ready', 'On · until ' + c.ends);
+  }
+  // Which device is this, from its user agent, with the install steps in that platform's own words (docs/HTTPS.md,
+  // "Facts"). Nothing here has met a real phone: the words come from the vendors' pages read on 2026-10-10.
+  function httpsPlatform(ua) {
+    ua = ua || '';
+    // An iPad calls itself a Mac; the touch test tells them apart, and is asked only about this very device.
+    var here = typeof navigator !== 'undefined' && ua === navigator.userAgent;
+    var ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && here && typeof document !== 'undefined' && 'ontouchend' in document);
+    if (/iPhone/.test(ua) || ipad) {
+      return { name: ipad ? 'iPad' : 'iPhone', steps: ['Tap "Download the root certificate". Safari asks to allow the download, then says "Profile Downloaded".',
+        'Open Settings. Tap "Profile Downloaded" near the top (or General, VPN & Device Management), then Install, and enter your passcode.',
+        'Then go to Settings, General, About, Certificate Trust Settings, and turn on the switch under "Enable full trust for root certificates".',
+        'Come back here and tap "Does this device trust the box?".'] };
+    }
+    if (/Android/.test(ua)) {
+      return { name: 'Android', steps: ['Tap "Download the root certificate" and keep the file.',
+        'Open Settings, Security (or Security & privacy), More security settings (or Advanced), Encryption & credentials, Install a certificate, CA certificate. The words differ by phone.',
+        'Android warns that your data could be read; tap "Install anyway", enter your screen lock and choose the downloaded file.',
+        'Chrome trusts it after that; most other apps do not, which is fine for the panel. Come back here and tap "Does this device trust the box?".'] };
+    }
+    if (/CrOS/.test(ua)) {
+      return { name: 'Chromebook', steps: ['Click "Download the root certificate".',
+        'In Chrome open Settings, Privacy and security, Security, Manage certificates, the Authorities tab, Import, and choose the file.',
+        'Tick "Trust this certificate for identifying websites" and press OK.', 'Come back here and press "Does this device trust the box?".'] };
+    }
+    if (/Windows/.test(ua)) {
+      return { name: 'Windows', steps: ['Click "Download the root certificate" and open the file.',
+        'Press "Install Certificate...", choose Current User, then "Place all certificates in the following store", Browse, "Trusted Root Certification Authorities", and finish.',
+        'Windows asks whether to install it and shows the thumbprint: press Yes. Edge and Chrome use it at once; Firefox has its own list (Settings, Privacy & Security, Certificates, View Certificates, Authorities, Import).',
+        'Come back here and press "Does this device trust the box?".'] };
+    }
+    if (/Macintosh|Mac OS X/.test(ua)) {
+      return { name: 'Mac', steps: ['Click "Download the root certificate" and double-click the file: Keychain Access opens and adds it to your login keychain.',
+        'In Keychain Access find it (the name is "NXLX boxes root" unless you named it otherwise), double-click it, unfold Trust and set "When using this certificate" to Always Trust. Close the window and enter your password.',
+        'Safari trusts it at once; restart Chrome. Firefox has its own list (Settings, Privacy & Security, Certificates, View Certificates, Authorities, Import).',
+        'Come back here and press "Does this device trust the box?".'] };
+    }
+    if (/Linux|X11/.test(ua)) {
+      return { name: 'Linux', steps: ['Click "Download the root certificate".',
+        'Chrome and Chromium: Settings, Privacy and security, Security, Manage certificates, Authorities, Import, tick "Trust this certificate for identifying websites". Firefox: Settings, Privacy & Security, Certificates, View Certificates, Authorities, Import.',
+        'Come back here and press "Does this device trust the box?".'] };
+    }
+    return { name: 'this device', steps: ['Click "Download the root certificate" and install it as a trusted root certificate authority the way this device does it.',
+      'Come back here and press "Does this device trust the box?".'] };
+  }
+  // After a change the page is drawn from a fresh answer: the page machinery keeps a new answer for the state line
+  // only, and a redraw alone would show the old one (seen in CI: no Download button after the request was made).
+  function httpsReload() {
+    return api('GET', '/api/https').then(function (r) { keepAnswer({ id: 'https' }, r); if (S.sys === 'https') redrawSystem(); return r; });
+  }
+  var httpsNoticeEl = null;
+  function httpsNotice(data) {     // owner access is only over https:// now: say it once at the top, with the link
+    if (!httpsNoticeEl) {
+      httpsNoticeEl = h('div', { class: 'offline httpsnotice', id: 'httpsnotice', role: 'alert' });
+      document.body.appendChild(httpsNoticeEl);
+    }
+    httpsNoticeEl.textContent = '';
+    httpsNoticeEl.appendChild(h('span', { text: (data.error || 'Owner access is over the secure connection now.') + ' ' }));
+    httpsNoticeEl.appendChild(h('a', { href: data.https, text: data.https }));
+    httpsNoticeEl.hidden = false;
+  }
+  function httpsNames(d) {
+    if (httpsForm.names !== null) return httpsForm.names;
+    return (d.request_names && d.request_names.length ? d.request_names : d.default_names || []).join(', ');
+  }
+  function httpsStateCard(d) {
+    var c = d.certificate, lines = [];
+    if (!d.https) {
+      lines.push(h('div', { class: 'kv', id: 'httpsline', text: 'HTTP only. ' + (d.load_error ? 'The certificate on the box could not be loaded: ' + d.load_error + '.' : 'No certificate is in use yet.') }));
+    } else {
+      lines.push(h('div', { class: 'kv', id: 'httpsline', text: 'HTTPS is on. Certificate for ' + c.names.join(', ') + ', from ' + c.starts + ', ends on ' + c.ends + '.' }));
+      if (c.run_out) lines.push(h('div', { class: 'hint warn', id: 'httpswarn', text: 'The certificate ran out on ' + c.ends + '. Devices will refuse https:// until a new one is uploaded: download the request below, sign it again, upload the certificate.' }));
+      else if (c.soon) lines.push(h('div', { class: 'hint warn', id: 'httpswarn', text: 'The certificate ends in ' + c.days_left + ' days. Download the request below, sign it again and upload the new certificate before then.' }));
+      if (c.chained === false) lines.push(h('div', { class: 'hint warn', id: 'httpschain', text: 'The certificate in use was issued by the root before this one. Devices that installed the new root refuse https:// until a certificate from it is uploaded; devices with the old root keep working meanwhile.' }));
+      if (!c.names_this_host && d.host) lines.push(h('div', { class: 'hint warn', text: 'It does not name ' + d.host + ', which is how you reached the box, so https://' + d.host + '/ would be refused. Use one of its names, or make a new request with this one in it.' }));
+    }
+    if (!d.clock_trusted) lines.push(h('div', { class: 'hint', text: 'The box\'s clock is not set from the network, so dates here are as the box counts them; your device judges the certificate by its own clock.' }));
+    if (d.root_fingerprint) lines.push(h('div', { class: 'hint', id: 'httpsfp', text: 'Root this box trusts, SHA-256: ' + d.root_fingerprint + '. Compare it once with "python3 tools/boxcert.py root" on your computer.' }));
+    lines.push(h('div', { class: 'hint', id: 'httpsyouare', text: d.secure ? 'You are reading this over https://. This device trusts the box.' : 'You are reading this over http://.' + (d.https ? ' Install the root below, then move to ' + d.https_address : '') }));
+    var sw = toggle('httpsowneronly', 'Owner access only over the secure connection', d.owner_only, function (v) {
+      act('POST', '/api/https/owner-only', { on: v }, function () { say(v ? 'From now on the PIN and owner devices work over https:// only.' : 'Owner access works over http:// again.'); httpsReload(); })
+        .then(function (r) { if (!r.ok) { sw.sw.setAttribute('aria-checked', v ? 'false' : 'true'); } });
+    }, d.secure ? (d.this_device_secure ? 'While on: the PIN is refused over http://, owner devices paired over http:// are told to pair again over https://, and guests notice nothing. The way back is the box itself (docs/HTTPS.md).'
+      : 'This device was paired over http://. Log out, pair again here over https://, and then this switch works.')
+      : 'This switch is changed over https:// only, so you cannot lock yourself out. Open ' + d.https_address + ' first.');
+    if (!d.secure || !d.this_device_secure || (!d.https && !d.owner_only)) sw.sw.disabled = true;
+    if (d.owner_only && !d.effective) lines.push(h('div', { class: 'hint warn', id: 'httpsrelief', text: d.relief === 'run_out'
+      ? 'The certificate has run out, so devices refuse https://. The switch stays on: over http:// a device that is already paired as owner can download the request and upload a new certificate here, and nothing else; the PIN is still refused there. If no such device is left, open https:// and click through the browser\'s warning, or use the console (docs/HTTPS.md).'
+      : 'The switch is on but has no effect while no certificate is in use: nobody is locked out.' }));
+    return h('div', { class: 'card', id: 'httpsstate' }, h('h2', { text: 'State' }), h('div', { class: 'list sp' }, lines, sw));
+  }
+  function httpsCertificateCard(d) {
+    var out = h('div', { class: 'msg inmsg', id: 'httpsresult', role: 'status' });
+    var names = h('input', { type: 'text', class: 'text-input', id: 'httpsnames', value: httpsNames(d), autocomplete: 'off', spellcheck: 'false' });
+    names.addEventListener('input', function () { httpsForm.names = names.value; });
+    function request(newKey) {
+      var list = names.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+      act('POST', '/api/https/request', { names: list, new_key: !!newKey }, function (r) {
+        httpsForm.names = null;
+        sayAt(out, 'Request made for ' + r.names.join(', ') + '. Download it, sign it on your computer (python3 tools/boxcert.py sign ' + r.file + '), then upload the certificate here.');
+        httpsReload();
+      });
+    }
+    var pick = h('input', { type: 'file', id: 'httpspick', accept: '.pem,.crt,.cer,application/x-pem-file,application/x-x509-ca-cert', hidden: true });
+    pick.addEventListener('change', function () {
+      var f = pick.files && pick.files[0];
+      pick.value = '';
+      if (!f) return;
+      if (f.size > 64 * 1024) return sayAt(out, f.name + ' is too large to be a certificate.', true);
+      var read = f.text ? f.text() : new Promise(function (res) { var rd = new FileReader(); rd.onload = function () { res(rd.result); }; rd.readAsText(f); });
+      read.then(function (text) {
+        act('POST', '/api/https/certificate', { certificate: text }, function (r) {
+          var c = r.status.certificate;
+          sayAt(out, 'Certificate in use for ' + c.names.join(', ') + ', until ' + c.ends + '.' + (d.secure ? '' : ' Now install the root on this device (next card) and move to ' + r.status.https_address));
+          httpsReload();
+        }).then(function (r) { if (!r.ok) sayAt(out, r.data.error || 'The certificate was refused.', true); });
+      });
+    });
+    var rows = [h('div', { class: 'hint', text: '1. Make the request on the box (its key never leaves it). 2. Download the request and sign it on your computer with tools/boxcert.py. 3. Upload the certificate file it wrote.' }),
+      labelled('Names and addresses this box is reached by', names, 'Comma separated. The .local name first; add any other name you type for this box. No bare host name.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn grow', id: 'httpsrequest', text: d.key ? 'Make the request again' : 'Make the request', onclick: function () { request(false); } }),
+        d.request ? h('a', { class: 'btn grow', id: 'httpsdownload', href: '/api/https/request.csr', download: (d.host || 'box').split('.')[0] + '.csr', text: 'Download the request' }) : null),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn grow', id: 'httpsupload', text: 'Upload the certificate...', onclick: function () { pick.click(); } }),
+        d.previous ? h('button', { class: 'btn grow', id: 'httpsundo', text: 'Back to the one before', onclick: function () {
+          act('POST', '/api/https/undo', {}, function (r) { sayAt(out, 'The earlier certificate is in use again, until ' + r.status.certificate.ends + '.'); httpsReload(); });
+        } }) : null),
+      pick, out];
+    var rootPick = h('input', { type: 'file', id: 'httpsrootpick', accept: '.pem,.crt,.cer', hidden: true });
+    rootPick.addEventListener('change', function () {
+      var f = rootPick.files && rootPick.files[0];
+      rootPick.value = '';
+      if (!f) return;
+      var read = f.text ? f.text() : new Promise(function (res) { var rd = new FileReader(); rd.onload = function () { res(rd.result); }; rd.readAsText(f); });
+      read.then(function (text) {
+        // ask the box what the new one is (a wrong confirm answers 409 with the fingerprint), then confirm in place
+        api('POST', '/api/https/root', { root: text, confirm: '' }).then(function (r) {
+          var m = /confirm: (.+)$/.exec(r.data.error || '');
+          if (r.ok || !m) return sayAt(out, r.data.error || 'The root could not be read.', true);
+          var fp = m[1], control = document.getElementById('httpsrootbtn');
+          if (!control) return;
+          confirmRow('Replace the root this box trusts? Old: ' + (d.root_fingerprint || 'none') + '. New: ' + fp + '. The next certificate must come from the new root; your devices need the new root installed.',
+            'Replace the root', 'Keep it', function () {
+              act('POST', '/api/https/root', { root: text, confirm: fp }, function () { sayAt(out, 'The root was replaced. Now sign this box\'s request with it and upload the certificate.'); httpsReload(); });
+            }, control);
+        });
+      });
+    });
+    if (d.secure && d.this_device_secure && d.root) {
+      rows.push(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'httpsrootbtn', text: 'Replace the root...', onclick: function () { rootPick.click(); } })), rootPick);
+    }
+    if (d.https || d.key) {
+      rows.push(h('div', { class: 'row' },
+        d.https ? h('button', { class: 'btn grow', id: 'httpsremove', text: 'Remove the certificate', onclick: function (e) {
+          confirmRow('Remove the certificate? The box answers on http:// only until a new one is uploaded' + (d.owner_only ? ', and the owner-only switch has no effect meanwhile' : '') + '.', 'Remove it', 'Keep it', function () {
+            act('POST', '/api/https/remove', {}, function () { say('HTTP only now.'); httpsReload(); });
+          }, e.currentTarget);
+        } }) : null,
+        d.key ? h('button', { class: 'btn grow', id: 'httpsnewkey', text: 'New key', onclick: function (e) {
+          confirmRow('Make a new key? The certificate in use stops fitting and is dropped: the box is http:// only until the new request is signed and uploaded.', 'New key', 'Keep the key', function () { request(true); }, e.currentTarget);
+        } }) : null));
+    }
+    return h('div', { class: 'card', id: 'httpscert' }, h('h2', { text: 'Certificate' }), h('div', { class: 'list sp' }, rows));
+  }
+  function httpsDeviceCard(d) {
+    var plat = httpsPlatform(navigator.userAgent);
+    var out = h('div', { class: 'msg inmsg', id: 'httpstrust', role: 'status', text: httpsForm.trust || '' });
+    function probe() {
+      // The fetch below is a cross-origin one (http:// page, https:// box): the page's policy allows exactly that
+      // origin, and only while the box has a certificate that carries this host (pvj/server.py page_csp). In every
+      // other case the answer is known without asking, and asking would only trip the policy.
+      if (d.secure) { httpsForm.trust = 'Yes: you are reading this over https://.'; return sayAt(out, httpsForm.trust); }
+      if (!d.https) { httpsForm.trust = 'No. The box has no certificate in use yet.'; return sayAt(out, httpsForm.trust, true); }
+      if (!(d.certificate && d.certificate.names_this_host)) {
+        httpsForm.trust = 'No. The certificate does not carry ' + (d.host || 'this address') + ', so no device trusts the box by it. Open the box as ' + (d.certificate ? d.certificate.names.join(' or ') : 'one of its names') + ' and check again there.';
+        return sayAt(out, httpsForm.trust, true);
+      }
+      sayAt(out, 'Asking ' + d.https_address + '...');
+      fetch(d.https_address + 'api/https/probe', { mode: 'no-cors', cache: 'no-store', credentials: 'omit' })
+        .then(function () { httpsForm.trust = 'Yes. This device trusts the box. Open ' + d.https_address + ' and pair again there (it is a new address to the browser).'; sayAt(out, httpsForm.trust); },
+          function () { httpsForm.trust = 'No. The root is not installed or not trusted yet on this device; follow the steps above.'; sayAt(out, httpsForm.trust, true); });
+    }
+    var rows = [h('div', { class: 'hint', text: 'Each of your own devices installs the root once and then trusts every box you sign. Guests do not do this; they stay on http://.' })];
+    if (d.root) {
+      rows.push(h('div', { class: 'hint', text: 'On ' + (plat.name === 'this device' ? 'this device' : 'an ' + plat.name).replace('an Mac', 'a Mac').replace('an Windows', 'Windows').replace('an Chromebook', 'a Chromebook').replace('an Linux', 'Linux') + ':'
+        + (/iPhone|iPad/.test(plat.name) ? '' : ' (roughly: the exact words differ by version, and nobody has checked them on a real device yet)') }),
+        h('ol', { class: 'hint', id: 'httpssteps' }, plat.steps.map(function (t) { return h('li', { text: t }); })),
+        h('div', { class: 'row' }, h('a', { class: 'btn grow', id: 'httpsroot', href: '/api/https/root.crt', download: 'nxlx-root.crt', text: 'Download the root certificate' })));
+    } else {
+      rows.push(h('div', { class: 'hint', id: 'httpsnoroot', text: 'The box has no root certificate to give yet: it comes with the certificate file you upload (boxcert.py writes the box\'s certificate followed by the root).' }));
+    }
+    rows.push(h('div', { class: 'row' },
+      h('button', { class: 'btn grow', id: 'httpsprobe', text: 'Does this device trust the box?', onclick: probe }),
+      d.https && !d.secure ? h('a', { class: 'btn grow', id: 'httpsgo', href: d.https_address, text: 'Open ' + d.https_address }) : null), out);
+    return h('div', { class: 'card', id: 'httpsdevices' }, h('h2', { text: d.secure ? 'This device' : 'Your devices' }), h('div', { class: 'list sp' }, rows));
+  }
+  window.pvjHttpsPlatform = httpsPlatform;       // for the browser test: the words per device, with injected user agents
+  function httpsCards() {
+    var d = (S.sysData.https || {}).now;
+    if (!d) return [h('div', { class: 'card', id: 'httpsstate' }, h('div', { class: 'hint', text: 'Checking...' }))];
+    var cards = [httpsStateCard(d), httpsCertificateCard(d), httpsDeviceCard(d)];
+    if (!d.openssl) cards.splice(1, 0, h('div', { class: 'card' }, h('div', { class: 'hint warn', id: 'httpsnoopenssl', text: 'This box has no openssl, so it cannot make a key. Install the openssl package on it (it comes with Debian), then come back.' })));
+    return cards;
+  }
+
   // ---- box care: settings export and import, diagnostics, factory reset (pvj/boxcare.py) ----
   var careForm = { passwords: false, media: '' };   // survives redraws
   function saveFile(name, data) {
@@ -2631,12 +2850,12 @@
       var resetErr = h('div', { class: 'msg inmsg', id: 'resetresult', role: 'alert' });
       cards.push(h('div', { class: 'card', id: 'resetcard' }, h('h2', { text: 'Factory reset' }),
         h('div', { class: 'list sp' },
-          h('div', { class: 'hint', text: 'Every setting goes back to how a new box starts, and every phone, tablet and guest is unpaired. You pair again with the new PIN on the box\'s display.' }),
+          h('div', { class: 'hint', text: 'Every setting goes back to how a new box starts, and every phone, tablet and guest is unpaired. You pair again with the new PIN on the box\'s display. The box\'s own key and certificate for https:// go too: it answers on http:// only, as a new box.' }),
           labelled('What happens to the clips', media),
           h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'resetbtn', text: 'Reset to factory settings', onclick: function (e) {
             if (!media.value) return sayAt(resetErr, 'Choose what happens to the clips first.', true);
             var clips = media.value === 'delete' ? 'ALL CLIPS ON THE BOX ARE DELETED.' : 'The clips stay.';
-            confirmRow('Reset this box to factory settings? All settings are lost and every device is unpaired, this one too. ' + clips + ' This cannot be undone.',
+            confirmRow('Reset this box to factory settings? All settings are lost and every device is unpaired, this one too. ' + clips + ' The https:// certificate and key go too. This cannot be undone.',
               'Reset this box', 'Keep everything', function () {
                 act('POST', '/api/system/factory-reset', { confirm: 'factory-reset', media: media.value }, function () {
                   careForm = { passwords: false, media: '' };

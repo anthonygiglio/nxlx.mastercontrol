@@ -33,7 +33,21 @@ OUTSIDE = {
     ("POST", "/api/media/upload"): "live",
     ("POST", "/api/system/update/upload"): "full",
     ("POST", "/api/system/settings/import"): "full",
+    # the secure connection's own routes (D79, server._https_route): the Owner's, every one that asks who is there
+    ("GET", "/api/https"): "full",
+    ("GET", "/api/https/request.csr"): "full",
+    ("GET", "/api/https/root.crt"): "full",
+    ("POST", "/api/https/request"): "full",
+    ("POST", "/api/https/certificate"): "full",
+    ("POST", "/api/https/undo"): "full",
+    ("POST", "/api/https/remove"): "full",
+    ("POST", "/api/https/root"): "full",
+    ("POST", "/api/https/owner-only"): "full",
 }
+
+# Answered by the server before anyone is asked who they are (D79): it says only whether this request came over the
+# secure connection, so a page over plain http can find out if its device trusts the box. Nothing else belongs here.
+NO_GATE = frozenset([("GET", "/api/https/probe")])
 
 # Every route a presenter (or less) could use on master before D80, 2026-10-10. Frozen: do not add to it.
 LEGACY_LIVE = frozenset(

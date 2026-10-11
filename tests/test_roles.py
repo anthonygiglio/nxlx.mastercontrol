@@ -165,6 +165,16 @@ ROWS = {
     ("POST", "/api/system/settings/import"): STUDIO("owner"),
     ("GET", "/api/system/diagnostics"): KINDS["owner"],
     ("POST", "/api/system/factory-reset"): STUDIO("owner"),
+    # the secure connection (D79, #119): the Owner's, and never through the support tunnel (support.REMOTE_DENY_PREFIX)
+    ("GET", "/api/https"): STUDIO("owner"),
+    ("GET", "/api/https/request.csr"): STUDIO("owner"),
+    ("GET", "/api/https/root.crt"): STUDIO("owner"),
+    ("POST", "/api/https/request"): STUDIO("owner"),
+    ("POST", "/api/https/certificate"): STUDIO("owner"),
+    ("POST", "/api/https/undo"): STUDIO("owner"),
+    ("POST", "/api/https/remove"): STUDIO("owner"),
+    ("POST", "/api/https/root"): STUDIO("owner"),
+    ("POST", "/api/https/owner-only"): STUDIO("owner"),
 }
 
 SCENE, STREAM_SCENE, OFF_SCENE, GROUP = "0a0a0a0a", "0b0b0b0b", "0c0c0c0c", "0d0d0d0d"
@@ -322,7 +332,16 @@ class GateTableTest(RolesBase):
         source = inspect.getsource(server)
         asked = {(m.group(1), path) for m in re.finditer(r'_who\("(GET|POST)", ([^\n]*)', source)
                  for path in re.findall(r'"(/api/[^"]+)"', m.group(2))}
-        self.assertEqual(sorted(asked), sorted(policy.OUTSIDE))
+        # the secure connection's routes (D79) come to one place, _https_route, which asks _who(method, path) for
+        # every path but the probe, before it looks at which one it is
+        https = {k for k in policy.OUTSIDE if k[1] == "/api/https" or k[1].startswith("/api/https/")}
+        self.assertEqual(len(https), 9)
+        self.assertEqual(sorted(asked), sorted(set(policy.OUTSIDE) - https))
+        route = source[source.index("def _https_route("):source.index("def _method_not_allowed(")]
+        self.assertEqual(len(re.findall(r"self\._who\(method, path\)", source)), 1)
+        self.assertIn("device = self._who(method, path)", route)
+        before = route[:route.index("device = self._who(method, path)")]
+        self.assertEqual(re.findall(r'"(/api/[^"]+)"', before), [p for _m, p in policy.NO_GATE])
         # and a request gets its device in two places only: _who (the gate) and _api (Api.handle, the gate again)
         self.assertEqual(len(re.findall(r"device = auth\.authenticate\(", source)), 2)
         self.assertEqual(sorted(routes - set(ROWS)), [], "routes without a row in tests/test_roles.py: decide who may use them")
@@ -1244,8 +1263,8 @@ class ReviewTest(RolesBase):
         """The gate is asked by `_who` for the paths server.py answers itself; a new branch there that forgets `_who`
         would be a path with no check. Every "/api/..." in its source must be a route (answered by Api.handle, which is
         the gate) or a key of policy.OUTSIDE (and then `_who` is asked for it: see the test of the table)."""
-        known = {p for _m, p in self.api.routes()} | {p for _m, p in policy.OUTSIDE}
-        named = set(re.findall(r'"(/api/[^"]+)"', inspect.getsource(server)))
+        known = {p for _m, p in self.api.routes()} | {p for _m, p in policy.OUTSIDE} | {p for _m, p in policy.NO_GATE}
+        named = set(re.findall(r'"(/api/[^"]+)"', inspect.getsource(server))) - {"/api/https/"}      # a prefix: all of it is _https_route's
         self.assertGreaterEqual(len(named), 9)
         self.assertEqual(sorted(named - known), [])
         for path in sorted(p for _m, p in policy.OUTSIDE):
