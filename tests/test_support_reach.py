@@ -483,14 +483,90 @@ class AttackTest(Base):
         self.assertIn(("POST", "/api/network/confirm"), sp.REMOTE_DENY)
         self.assertNotIn(("POST", "/api/network/revert"), sp.REMOTE_DENY)
 
-    def test_known_and_left_open_the_networks_osc_accepts_from(self):
-        """Found and NOT closed here (it was so before D84, through POST /api/osc; D84 says so and asks the owner):
-        a session of the Owner's role can add an address outside the building to the networks OSC accepts from. This
-        test holds the fact still, so whoever closes it changes this test on purpose."""
+    def test_no_network_from_outside_is_added_to_those_osc_accepts_from(self):
+        """Decided after the first build (2026-10-11): an outside network accepted for OSC would be a way in that
+        outlives the session. Through the tunnel one may be removed or narrowed, and one added only if it is private
+        and the box is directly connected to it; by the route and by a file."""
+        self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
+                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+        self.settings.data["osc"]["allow"] = ["192.168.7.0/24", "172.16.0.0/16"]
         dev = self.session("full")
         with mock.patch.object(self.api.osc, "apply", lambda: None):
-            st, out = self.remote("POST", "/api/osc", {"allow": ["203.0.113.9/32"]}, dev)
+            for bad in (["203.0.113.9/32"], ["192.168.7.0/24", "8.8.8.0/24"], ["10.77.0.0/24"], ["10.0.0.0/8"], ["192.168.0.0/16"],
+                        ["192.168.9.0/24"], ["192.168.7.0/23"], ["2001:db8::/32"], ["fe80::/64"]):
+                st, out = self.remote("POST", "/api/osc", {"allow": bad}, dev)
+                self.assertEqual(st, 403, (bad, out))
+                self.assertIn("remote support", out["error"])
+            self.assertEqual(self.settings.data["osc"]["allow"], ["192.168.7.0/24", "172.16.0.0/16"])
+            for ok in (["192.168.7.0/24", "172.16.0.0/16"], ["192.168.7.0/25", "172.16.5.0/24"], ["192.168.7.0/25", "192.168.1.0/24"],
+                       ["192.168.1.64/26"], []):
+                st, out = self.remote("POST", "/api/osc", {"allow": ok}, dev)
+                self.assertEqual(st, 200, (ok, out))
+            self.assertEqual(self.remote("POST", "/api/osc", {"allow": ["192.168.7.0/24"]}, dev)[0], 403, "what he removed he cannot put back")
+            self.assertEqual(self.remote("POST", "/api/osc", {"port": 9911}, dev)[0], 200)       # the rest of the page is his as before
+            self.assertEqual(self.h("POST", "/api/osc", {"allow": ["203.0.113.9/32"]}, self.full_dev)[0], 200, "at the studio the Owner may, as before")
+        # by a file: the outside network does not come, the box's own list stays, and the answer and the log say so
+        self.settings.data["osc"]["allow"] = ["192.168.7.0/24"]
+        file = self.export()
+        file["settings"]["osc"]["allow"] = ["192.168.7.0/24", "203.0.113.0/24"]
+        file["settings"]["osc"]["port"] = 9922
+        out = self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
+        self.assertIn("osc.allow", out["kept_for_support"])
+        self.assertEqual((self.settings.data["osc"]["allow"], self.settings.data["osc"]["port"]), (["192.168.7.0/24"], 9922))
+        self.assertIn("osc.allow", self.did()[-1])
+        file["settings"]["osc"]["allow"] = []
+        out = self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
+        self.assertNotIn("osc.allow", out["kept_for_support"])
+        self.assertEqual(self.settings.data["osc"]["allow"], [], "removing by a file is allowed")
+
+    def test_a_control_that_shows_an_access_code_is_never_set_or_changed_by_a_session(self):
+        """Decided after the first build: the Operator's rule (D80) for every support session whatever its role,
+        except that a session may take such a mapping away. By the route and by a file."""
+        from pvj import midi
+        hub = midi.MidiHub(self.api, self.settings, log=lambda *_: None, open_fn=lambda p: (_ for _ in ()).throw(OSError()),
+                           lister=lambda: [], scan_interval=0.05)
+        self.api.midi = hub
+        self.addCleanup(hub.stop)
+        self.assertEqual(self.h("POST", "/api/modules/control-midi", {"enabled": True}, self.full_dev)[0], 200)
+        self.assertEqual(self.h("POST", "/api/midi", {"enabled": True}, self.full_dev)[0], 200)
+        code = {"kind": "note", "number": 40, "source": "*", "action": "code_owner"}
+        join = dict(code, number=41, action="code_join")
+        plain = {"kind": "note", "number": 50, "source": "*", "action": "blackout"}
+        st, out = self.h("POST", "/api/midi/map", {"add": code}, self.full_dev)
         self.assertEqual(st, 200, out)
+        mine = lambda: [e for e in self.settings.data["control"]["midi"]["map"] if e["action"].startswith("code_")]
+        kept = [dict(e) for e in mine()]
+        self.assertEqual(len(kept), 1)
+        dev = self.session("full")
+        for body in ({"add": join}, {"add": dict(code, number=42)}, {"add": dict(plain, number=40)}):
+            st, out = self.remote("POST", "/api/midi/map", body, dev)
+            self.assertEqual(st, 403, (body, out))
+        self.assertEqual(mine(), kept)
+        st, out = self.remote("POST", "/api/midi/map", {"add": plain}, dev)
+        self.assertEqual(st, 200, out)                                  # a mapping of what a session may do itself: as before
+        self.assertEqual(mine(), kept)
+        for call in (self.api.midi_map,):                               # and with a role below the Owner's, the handler itself
+            with self.assertRaises(ApiError) as e:
+                call({"add": join}, dict(dev, role="live"), TUNNEL)
+            self.assertEqual(e.exception.status, 403)
+        # by a file: a new code control is left out, a changed one too; the one the box has stays
+        file = self.export()
+        m = file["settings"]["control"]["midi"]["map"]
+        m.append(dict(join, id="0a0a0a0a"))
+        for e in m:
+            if e["action"] == "code_owner":
+                e["number"] = 99
+        out = self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
+        self.assertIn("control.midi.map (access code controls)", out["kept_for_support"])
+        self.assertEqual(mine(), [], "the changed one did not come, and the file no longer holds the box's own: removed, which is allowed")
+        self.assertTrue(any(e["action"] == "blackout" for e in self.settings.data["control"]["midi"]["map"]))
+        # he may take one away
+        self.assertEqual(self.h("POST", "/api/midi/map", {"add": code}, self.full_dev)[0], 200)
+        st, out = self.remote("POST", "/api/midi/map", {"remove": mine()[0]["id"]}, dev)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(mine(), [])
+        # and the switch that lets a controller show a code at all stays out of his reach
+        self.assertEqual(self.remote("POST", "/api/access/controller", {"enabled": True, "owner": True}, dev)[0], 403)
 
 
 if __name__ == "__main__":

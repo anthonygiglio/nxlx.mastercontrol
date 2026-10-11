@@ -2217,9 +2217,36 @@ class Api:
             self.support.key_renewed()
         return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/pvj/stop"}
 
+    def remote_allow_refused(self, items, current):
+        """D84: the networks of `items` (what OSC would also accept from) that a support session may not add. A way to
+        control the box from outside the building would outlive the session, so through the tunnel a network can be
+        removed or narrowed, and one added only if it is private or link-local AND a subnet the box is directly
+        connected to now (the rule a state target is held to, D82; the tunnel's own network never counts). A list
+        that cannot be read is left to the usual check."""
+        from . import oscfeedback
+        try:
+            new = osc_mod.parse_networks(osc_mod.validate_allow(items))
+            have = osc_mod.parse_networks(current or [])
+        except (osc_mod.OscError, TypeError, ValueError):
+            return []
+        own = [i.network for i in self.osc.local_nets()]
+        bad = []
+        for n in new:
+            if any(n.version == h.version and n.subnet_of(h) for h in have):
+                continue                        # there already, or narrower than one that is
+            if n.version == 4 and any(n.subnet_of(p) for p in oscfeedback.PRIVATE) and any(n.subnet_of(o) for o in own):
+                continue
+            bad.append(str(n))
+        return bad
+
     def set_osc(self, body, device, client):
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
+        if "allow" in body and ((isinstance(device, dict) and device.get("remote")) or self.support.is_remote(client)):
+            bad = self.remote_allow_refused(body["allow"], self.settings.data["osc"].get("allow"))
+            if bad:
+                raise ApiError(403, "through remote support a network OSC accepts from can be removed or narrowed, and one added only if the "
+                                    "box is directly connected to it: %s cannot be added; ask someone at the studio" % ", ".join(bad))
         with self.osc.lock:                   # one save at a time (OscManager.lock says why)
             out = self._set_osc(body)
         out["feedback"] = self.osc.feedback_status()
@@ -3075,10 +3102,11 @@ class Api:
         return taken
 
     OWNER_MAPPING = "a control that shows an access code is the owner's to set, change or remove (owner access needed)"
+    REMOTE_MAPPING = "a control that shows an access code is never set or changed through remote support; ask someone at the studio"
 
     def set_midi(self, body, device, client):
         self._need_control("control-midi", self.midi)
-        if not Auth.allows(device, "full") and ("standard" in body or ("controller" in body and "lights" not in body and "brightness" not in body)):
+        if (not Auth.allows(device, "full") or device.get("remote") or self.support.is_remote(client)) and ("standard" in body or ("controller" in body and "lights" not in body and "brightness" not in body)):
             # an Operator edits the layout (D80), never a control that shows an access code: switching the standard
             # layout of a controller on or off would add or remove such a control if its layout has one
             profile = self.midi.profile_of(body.get("controller")) if isinstance(body.get("controller"), str) else None
@@ -3123,7 +3151,10 @@ class Api:
         drawn layout do something else, and {"reset": {"controller", "control"?}} goes back to the standard for one
         control or for the whole controller. Both only add or remove the person's own mappings."""
         self._need_control("control-midi", self.midi)
-        owner = Auth.allows(device, "full")
+        # D84: a support session, whatever its role, is held to the Operator's rule for a control that shows an access
+        # code (never set, never changed), with one difference: it may take such a mapping away.
+        remote = bool(device.get("remote")) or self.support.is_remote(client)
+        owner = Auth.allows(device, "full") and not remote
 
         def owners(entries):            # the mappings an Operator leaves exactly as they are
             return [e for e in entries if self._owner_action(e.get("action"))]
@@ -3140,6 +3171,8 @@ class Api:
                         raise ApiError(404, "that controller is not plugged in, or has no built-in layout")
                     if "set" in body and not owner and any(c["id"] == ask.get("control") and self._owner_control(c) for c in profile["controls"]):
                         raise ApiError(403, self.OWNER_MAPPING)
+                    if "reset" in body and remote and any(self._owner_control(c) for c in profile["controls"] if ask.get("control") in (None, c["id"])):
+                        raise ApiError(403, self.REMOTE_MAPPING)          # back to the standard would put a code control back
                     if "set" in body:
                         changed = midi_mod.set_override(current, profile, name, ask.get("control"), ask.get("action"))
                     else:
@@ -3151,12 +3184,14 @@ class Api:
                         raise ApiError(404, "no such mapping")
                     changed = [e for e in current if e["id"] != body["remove"]]
                 elif body.get("clear") is True:
-                    changed = [] if owner else owners(current)       # an Operator's "clear" leaves the owner's
+                    changed = [] if owner or remote else owners(current)       # an Operator's "clear" leaves the owner's
                 else:
                     raise bad("send add, remove or clear")
             except midi_mod.MidiError as e:
                 raise bad(str(e))
-            if not owner and owners(changed) != owners(current):
+            if remote and any(e not in current for e in owners(changed)):
+                raise ApiError(403, self.REMOTE_MAPPING)          # none added, none changed; taking one away is allowed
+            if not owner and not remote and owners(changed) != owners(current):
                 raise ApiError(403, self.OWNER_MAPPING)
             if not owner:                   # nor a mapping of his own in front of one of the Owner's
                 for e in changed:

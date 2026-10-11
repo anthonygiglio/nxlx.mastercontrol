@@ -311,6 +311,7 @@
         'remove an owner\'s device, or touch your recovery codes and the secure connection',
         'start a session, make one longer, or change these support settings',
         'confirm a change of the network: you confirm it here, which shows you can still reach the box',
+        'let OSC in from a network outside the building, or set a controller button that shows an access code',
         'switch the box off, or reset it to factory settings']),
       h('div', { class: 'hint', text: 'Everything support changes is listed afterwards under Advanced, Recent sessions. With "Play and mix only" or "Watch only", support can do no more than that.' }));
   }

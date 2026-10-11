@@ -866,6 +866,35 @@ class BoxCare:
                 "; left as the box has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else "", ", ".join(out["imported"])))
         return out
 
+    def _remote_parts(self, clean, notes):
+        """Two parts of sections a helper's file may otherwise bring, held to what the routes hold him to (D84):
+        the networks OSC accepts from (none added from outside, Api.remote_allow_refused) and the MIDI controls
+        that show an access code (none added or changed, and the standard layouts stay as switched here). Changed
+        in `clean`; returns what was left as the box has it."""
+        kept, current, api = [], self.settings.data, self.api
+        if "osc" in clean:
+            mine = list((current.get("osc") or {}).get("allow") or [])
+            if api.remote_allow_refused(clean["osc"].get("allow", []), mine):
+                clean["osc"]["allow"] = mine
+                kept.append("osc.allow")
+                notes.append("OSC: a network from outside is not added through remote support; the networks OSC accepts from are left as this box has them")
+        if "control" in clean:
+            midi, have = clean["control"]["midi"], (current.get("control") or {}).get("midi") or {}
+            old = list(have.get("map") or [])
+            new = [e for e in midi.get("map", []) if not api._owner_action(e.get("action")) or e in old]
+            if len(new) != len(midi.get("map", [])):
+                midi["map"] = new
+                kept.append("control.midi.map (access code controls)")
+                notes.append("MIDI: a control that shows an access code is not added or changed through remote support; left out")
+            if midi.get("controllers") != have.get("controllers"):
+                if "controllers" in have:
+                    midi["controllers"] = copy.deepcopy(have["controllers"])
+                else:
+                    midi.pop("controllers", None)
+                kept.append("control.midi.controllers")
+                notes.append("MIDI: which standard layouts are on is left as this box has it through remote support (a layout can hold a control that shows an access code)")
+        return kept
+
     def _import(self, raw, device, remote=False):
         clean, notes, passwords = self.check_file(raw)
         kept_for_support = []
@@ -877,6 +906,7 @@ class BoxCare:
                 if clean.pop(name, None) is not None:
                     kept_for_support.append(name)
                     notes.append("%s: not taken from a file through remote support; left as this box has it" % name)
+            kept_for_support += self._remote_parts(clean, notes)
         incoming = dict(self.incoming_themes)
         with self.settings.lock:
             current = self.settings.data
