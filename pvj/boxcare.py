@@ -208,6 +208,14 @@ def check_pads(v, care):
                     if not shaderlive_mod.name_ok(pad["preset"]):
                         raise ValueError("a pad's preset must be a name of 1 to 40 characters")
                     item["preset"] = pad["preset"]
+            elif pad.get("ndi") not in (None, ""):
+                # A pad that holds an NDI source (D62): the id alone, checked as an id and not looked up. Whether it
+                # is allowed on this box is asked when the pad is pressed (the file's `ndi` section says which are).
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or an NDI source, not both")
+                if not isinstance(pad["ndi"], str) or not ndi_mod._ID.fullmatch(pad["ndi"]):
+                    raise ValueError("a pad's NDI source is not a source id")
+                item = {"label": item["label"], "file": "", "ndi": pad["ndi"]}
             clean.append(item)
         name = _text(bank.get("name", ""), 40, "a bank name")
         if not name:

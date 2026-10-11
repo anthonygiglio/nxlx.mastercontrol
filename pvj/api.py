@@ -253,6 +253,8 @@ class Api:
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
         self._ndi_loading = threading.local()     # .on while this thread loads the NDI pipe itself
+        self._ndi_refused = None  # {"id", "message"}: the last refusal of a pad's NDI source, for the pads
+        self._ndi_job, self._ndi_job_lock = None, threading.Lock()      # a controller's press of an NDI pad, connecting (a leaf: held only to start it)
         self._import = {}         # the USB copy running or last run
         self._import_lock = threading.Lock()
         self._care_busy = None    # "an import" or "a factory reset" while boxcare runs one (set and read under _import_lock)
@@ -517,7 +519,7 @@ class Api:
 
     def status(self, body, device, client):
         temps = hardware.temperatures()
-        player = self._public_player_status()
+        player = self._ndi_said(self._public_player_status())
         # What the GPU last refused, for the Live page, where the pads are: a controller's tap of a shader pad
         # answers before the GPU has looked, so its refusal has no answer to ride on (D73). From the engine's own
         # record: the player is asked nothing more.
@@ -636,6 +638,14 @@ class Api:
             self._preview = (time.monotonic(), data, with_text, clean)
             return data
 
+    def _ndi_said(self, status):
+        """The last refusal of a pad's NDI source, for the pads (a controller's tap has no answer to carry it): kept
+        until that source shows or the module goes off."""
+        said = self._ndi_refused
+        if said and self.ndi is not None and self.registry.enabled("inputs-ndi") and status.get("ndi_id") != said["id"]:
+            status["ndi_refused"] = dict(said)
+        return status
+
     def _ndi_on_screen(self):
         """True when what the player reads is the NDI helper's pipe (asked only after a snapshot failed)."""
         if self.ndi is None or not self.ndi.current:
@@ -700,6 +710,7 @@ class Api:
             return status
         if self.ndi is not None and path == self.ndi.fifo:
             status["path"], status["ndi"] = None, (self.ndi.current or {}).get("name") or True
+            status["ndi_id"] = (self.ndi.current or {}).get("id") or ""      # for the pad that holds it
             return status
         for channel, url in getattr(self.player, "TEST_TONES", {}).items():
             if path == url:
@@ -960,7 +971,42 @@ class Api:
         return {"name": new}
 
     def get_pads(self, body, device, client):
-        return {"banks": self.settings.data["pads"]["banks"]}
+        return self._pads_answer(device)
+
+    def _pads_answer(self, device):
+        """The banks, and for anyone above a Guest the names of the NDI sources that pads hold: {"ndi": {id: {"name",
+        "from"}}}. A pad stores the id alone (D62); a Guest, who has no NDI page, gets no names and addresses."""
+        out = {"banks": self.settings.data["pads"]["banks"]}
+        if not policy.is_guest(device):
+            from . import ndi as ndi_mod
+            held = {self.pad_ndi(p) for b in out["banks"] for p in b["pads"]} - {None}
+            if held:
+                out["ndi"] = {r["id"]: {"name": r["name"], "from": r["from"]}
+                              for r in ndi_mod.saved_sources(self.settings.data.get("ndi")) if r["id"] in held}
+        return out
+
+    @staticmethod
+    def pad_ndi(pad):
+        """The id of the NDI source a pad holds, else None (D62, 2026-10-11). Such a pad keeps `file` empty and has
+        the id under `ndi` and nothing else of the source: no name, no address. A pad with a clip is a clip pad and
+        one with a shader is a shader pad, whatever else a hand-edited file put beside them."""
+        if not isinstance(pad, dict) or pad.get("file") or Api.pad_shader(pad):
+            return None
+        sid = pad.get("ndi")
+        return sid if isinstance(sid, str) and re.fullmatch(r"[0-9a-f]{12}", sid) else None
+
+    def _ndi_allowed(self, sid):
+        """The allowed source with this id, {"id", "name", "from"}, or None."""
+        from . import ndi as ndi_mod
+        for row in ndi_mod.saved_sources(self.settings.data.get("ndi")):
+            if row["id"] == sid:
+                return row
+        return None
+
+    def _ndi_bound(self, row):
+        """True when the Owner gave this source's machine as an address to ask (NDI input, "Addresses to ask")."""
+        from . import ndi as ndi_mod
+        return ndi_mod.host_of(row["from"]) in ndi_mod.saved_addresses(self.settings.data.get("ndi"))[0]
 
     @staticmethod
     def pad_shader(pad):
@@ -1005,6 +1051,8 @@ class Api:
         if shader != "":
             if file != "":
                 raise bad("a pad holds a clip or a shader, not both")
+            if body.get("ndi", "") != "":
+                raise bad("a pad holds a clip, a shader or an NDI source, not two of them")
             path, _ = self.shaders._path(shader)            # 400 for a name that is none, 404 for one that is not here
             try:
                 self.shaders._parsed(path)
@@ -1015,10 +1063,38 @@ class Api:
                 pad["preset"] = self._shader_preset(shader, body["preset"])
         elif body.get("preset") not in (None, ""):
             raise bad("a preset belongs to a shader: name the shader too")
+        source = body.get("ndi", "")
+        allow = None
+        if source != "":
+            # An NDI source (D62, 2026-10-11): by the id of a source that is allowed already, or of one the helper
+            # lists NOW, which this makes allowed. Never a name or an address typed into the pad.
+            from . import ndi as ndi_mod
+            if file != "" or shader != "":
+                raise bad("a pad holds a clip, a shader or an NDI source, not two of them")
+            if not isinstance(source, str) or not ndi_mod._ID.fullmatch(source):
+                raise bad("an NDI source is chosen from the list, by its id")
+            self._need_ndi()
+            if self._ndi_allowed(source) is None:
+                rows, why = self.ndi.find()             # outside the settings' lock: it asks the helper
+                seen = [r for r in rows if r["id"] == source]
+                if not seen:
+                    raise ApiError(404, why or "that NDI source is not on the network now: a pad takes a source that is on the list")
+                if seen[0].get("twins"):
+                    raise ApiError(409, "two senders announce '%s' from %s: a pad cannot hold a source the box cannot tell apart"
+                                   % (seen[0]["name"], ndi_mod.host_of(seen[0]["from"])))
+                allow = {"id": source, "name": seen[0]["name"], "from": seen[0]["from"]}
+            pad = {"label": label, "file": "", "ndi": source}
         with self.settings.lock:
+            if allow is not None and self._ndi_allowed(source) is None:
+                rows = ndi_mod.saved_sources(self.settings.data.get("ndi"))
+                if len(rows) >= ndi_mod.MAX_ALLOWED:
+                    raise bad("at most %d NDI sources can be kept for pads; the owner removes one under NDI input" % ndi_mod.MAX_ALLOWED)
+                self._ndi_write(sources=rows + [allow])
+                self.log("pvj-web: NDI source '%s' from %s is allowed for pads, by device %s (from %s)"
+                         % (allow["name"], allow["from"], (device or {}).get("id"), client))
             self.settings.data["pads"]["banks"][bank]["pads"][index] = pad
             self.settings.save()
-        return {"banks": self.settings.data["pads"]["banks"]}
+        return self._pads_answer(device)
 
     def pads_follow_preset(self, sid, was, to):
         """A preset of `sid` was renamed: the pads that start the shader with it follow, as a clip's pads follow the
@@ -1207,6 +1283,9 @@ class Api:
             held = self.pad_shader(banks[pad[0]]["pads"][pad[1]])
             if held:                    # before anything is claimed: see _play_shader_pad
                 return self._play_shader_pad(held, device)
+            source = self.pad_ndi(banks[pad[0]]["pads"][pad[1]])
+            if source:                  # before anything is claimed, too: play_ndi claims for itself
+                return self._play_ndi_pad(source, device)
             name = banks[pad[0]]["pads"][pad[1]]["file"]
             if not name:
                 raise bad("pad is empty")
@@ -2820,6 +2899,86 @@ class Api:
             return False
         return self.ndi.stop()
 
+    NDI_PAD_GUEST = "this pad plays an NDI source; ask an operator to start it"
+
+    def _ndi_pad_check(self, sid):
+        """What can be said at once about a pad's NDI source, before anything is claimed or opened: the source is
+        allowed, on the network now, and the one the pad was given. Returns its allowed row, or raises.
+
+        The pad follows a NAME ON A MACHINE: the id is made of both (ndi.source_id), and the live row's name and
+        machine are compared with the allowed row besides the id (the id is 48 bits of a hash). A sender of the same
+        name on another machine is another source and is refused here, by name, so the operator sees why. Two senders
+        under one id (one name twice on one machine) are refused: the box does not pick one. Opening a source that
+        is not there would wait for seconds (Input.open); the list is asked first and answers at once."""
+        from . import ndi as ndi_mod
+        row = self._ndi_allowed(sid)
+        if row is None:
+            raise ApiError(409, "this pad's NDI source is not allowed any more (the owner removed it): choose a source for the pad again")
+        rows, why = self.ndi.find()
+        if why:
+            raise ApiError(409, why)
+        host = ndi_mod.host_of(row["from"])
+        seen = [r for r in rows if r["id"] == sid]
+        if not seen:
+            other = sorted(ndi_mod.host_of(r["from"]) for r in rows if r["name"] == row["name"])
+            if other:
+                raise ApiError(409, "NDI source '%s' is announced from %s now, not from %s where this pad's source is%s: "
+                               "the pad does not follow a name to another machine. If it is the same sender, choose it for the pad again"
+                               % (row["name"], other[0], host, " (an address the owner gave)" if self._ndi_bound(row) else ""))
+            raise ApiError(409, "NDI source '%s' is not on the network now" % row["name"])
+        if len(seen) > 1 or seen[0].get("twins"):
+            raise ApiError(409, "two senders announce '%s' from %s now: the box does not pick one" % (row["name"], host))
+        if seen[0]["name"] != row["name"] or ndi_mod.host_of(seen[0]["from"]) != host:
+            raise ApiError(409, "NDI source '%s' is not on the network now" % row["name"])
+        return row
+
+    def _play_ndi_pad(self, sid, device):
+        """A pad that holds an NDI source (D62, 2026-10-11). A Guest is refused, as he is refused a stream (D80).
+        Everyone else: the checks that answer at once, then the one road an NDI source has, play_ndi.
+
+        MIDI, OSC and DMX must not wait while a source connects (seconds): their tap is answered "pending" and the
+        source is opened on a thread of its own, through play_ndi all the same; what it refuses is kept for the
+        pads (status: player.ndi_refused), as a shader pad's refusal is. A Room scene has its own thread and its
+        own report, and waits."""
+        if policy.is_guest(device):
+            raise ApiError(403, self.NDI_PAD_GUEST)
+        self._need_ndi()
+        try:
+            row = self._ndi_pad_check(sid)
+        except ApiError as e:
+            self._ndi_refused = {"id": sid, "message": e.message}
+            raise
+
+        def go():
+            try:
+                out = self.play_ndi({"ndi": sid})
+            except ApiError as e:
+                if e.message != self.NDI_OVERTAKEN:         # a later choice stood: nothing to say on the pad
+                    self._ndi_refused = {"id": sid, "message": e.message}
+                raise
+            self._ndi_refused = None
+            return out
+
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS and device.get("id") != "room":
+            with self._ndi_job_lock:
+                job = self._ndi_job
+                if job is not None and job.is_alive():
+                    raise ApiError(409, "an NDI source is connecting; press again in a moment")
+
+                def run():
+                    try:
+                        go()
+                    except ApiError as e:
+                        self.log("pvj-web: a pad's NDI source '%s' was not shown: %s" % (row["name"], e.message))
+                    except Exception as e:
+                        self.log("pvj-web: a pad's NDI source: %s" % type(e).__name__)
+                self._ndi_job = threading.Thread(target=run, name="ndi-pad", daemon=True)
+                self._ndi_job.start()
+            return {"playing": "ndi", "name": row["name"], "pending": True}
+        return go()
+
+    NDI_OVERTAKEN = "something else was played while the source was connecting"
+
     def play_ndi(self, body, again=None):
         """{"ndi": "<id>"}: a source the helper found, by the id the helper gave it; never a name or an address.
         `again` is the entry being shown when the helper asks for it to be loaded again (a sender changed size):
@@ -2886,7 +3045,7 @@ class Api:
                 self.ndi.client_close()
                 if again is not None:
                     return {"playing": None}
-                raise ApiError(409, "something else was played while the source was connecting")
+                raise ApiError(409, self.NDI_OVERTAKEN)
         self._show_level(mark)              # connecting took seconds: a Fade out made meanwhile stands
         self._started_playing(ndi=True)
         return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"],
@@ -2910,21 +3069,29 @@ class Api:
         from . import ndi as ndi_mod
         self._need_ndi()
         action = body.get("action")
-        if action not in ("add_address", "remove_address", "sound"):
-            raise bad("action must be add_address, remove_address or sound")
+        if action not in ("add_address", "remove_address", "sound", "forget"):
+            raise bad("action must be add_address, remove_address, sound or forget")
         if action == "sound":
             if not isinstance(body.get("on"), bool):
                 raise bad("on must be true or false")
             with self.settings.lock:
-                section = self.settings.data.get("ndi")
-                self.settings.data["ndi"] = {"addresses": ndi_mod.saved_addresses(section)[0], "sound": body["on"]}
+                self._ndi_write(sound=body["on"])
                 self.settings.save()
             self.ndi._wanted()                     # read again, so that what is sent next is the new choice
             self.ndi.sync()
             return self.ndi.status()
+        if action == "forget":
+            # Take a source off the allowed list (the Owner's, as this whole route is). Pads that hold it keep
+            # their id and say, when pressed, that the source is not allowed any more: nothing plays by a leftover.
+            with self.settings.lock:
+                rows = ndi_mod.saved_sources(self.settings.data.get("ndi"))
+                left = [r for r in rows if r["id"] != body.get("id")]
+                if len(left) == len(rows):
+                    raise ApiError(404, "no such allowed source")
+                self._ndi_write(sources=left)
+                self.settings.save()
+            return self.ndi.status()
         with self.settings.lock:
-            before = self.settings.data.get("ndi")
-            keep = {"sound": before["sound"]} if isinstance(before, dict) and isinstance(before.get("sound"), bool) else {}
             items = ndi_mod.saved_addresses(self.settings.data.get("ndi"))[0]      # a hand-edited section of the wrong kind counts as empty
             try:
                 address = ndi_mod.clean_address(body.get("address"))
@@ -2940,10 +3107,27 @@ class Api:
                     items.remove(address)
             except ndi_mod.NdiError as e:
                 raise bad(str(e))
-            self.settings.data["ndi"] = dict({"addresses": items}, **keep)      # the choice about sound, if one was made, stays
+            self._ndi_write(addresses=items)       # the choice about sound, if one was made, and the allowed sources stay
             self.settings.save()
         self.ndi.sync()
         return self.ndi.status()
+
+    def _ndi_write(self, **changes):
+        """Write the `ndi` section again with `changes`, keeping every other part of it that can be used: the
+        addresses, the choice about sound if one was made, the allowed sources. The caller holds the settings'
+        lock and saves. (Each writer used to write the keys it knew, which would have dropped the others.)"""
+        from . import ndi as ndi_mod
+        before = self.settings.data.get("ndi")
+        new = {"addresses": ndi_mod.saved_addresses(before)[0]}
+        if isinstance(before, dict) and isinstance(before.get("sound"), bool):
+            new["sound"] = before["sound"]
+        rows = ndi_mod.saved_sources(before)
+        if rows:
+            new["sources"] = rows
+        new.update(changes)
+        if not new.get("sources"):
+            new.pop("sources", None)
+        self.settings.data["ndi"] = new
 
     def play_capture(self, body):
         """{"capture": {"device": "video0", "mode": "720p30"}}: a live input, read by a separate helper process."""

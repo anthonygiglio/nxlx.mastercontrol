@@ -181,7 +181,7 @@ def clean_sources(raw, prefer_hosts=(), keep_id=None):
     announce senders): the source being shown (`keep_id`) first, then senders at an address the owner added
     (`prefer_hosts`), then the rest, each group by name and address. So neither can be pushed out of the list."""
     prefer = {str(h).lower() for h in prefer_hosts}
-    found = {}
+    found, twins = {}, set()
     for n, pair in enumerate(raw):
         if n >= SCAN_ROWS:
             break
@@ -197,8 +197,14 @@ def clean_sources(raw, prefer_hosts=(), keep_id=None):
         host = host_of(where)
         s = {"id": source_id(name, host), "name": name, "from": where, "raw": pair}
         old = found.get(s["id"])
+        if old is not None and pair != old["raw"]:
+            # Two senders with one name on one machine (another port): still one row, always the same one, and the
+            # row says so. A pad does not play such a source: nothing says which of the two was meant (D62, pads).
+            twins.add(s["id"])
         if old is None or (where, pair) < (old["from"], old["raw"]):      # one name twice on one machine: one row, always the same one
             found[s["id"]] = s
+    for sid in twins:
+        found[sid]["twins"] = True
     rows = sorted(found.values(), key=lambda s: (s["id"] != keep_id, host_of(s["from"]) not in prefer, s["name"].lower(), s["name"], s["from"]))
     kept = sorted(rows[:MAX_SOURCES], key=lambda s: (s["name"].lower(), s["name"], s["from"]))
     return kept, len(rows) > MAX_SOURCES or len(raw) > SCAN_ROWS
@@ -217,11 +223,43 @@ def clean_address(text):
     return str(ip)
 
 
+MAX_ALLOWED = 32                          # sources that pads may hold (the "allowed" list, D62)
+
+
+def clean_allowed(row):
+    """One allowed source as it is stored, {"id", "name", "from"}, or NdiError. The id must be the one this name and
+    this machine give (source_id), so a row cannot say one thing and mean another."""
+    if not isinstance(row, dict) or set(row) != {"id", "name", "from"}:
+        raise NdiError("an allowed NDI source is an id, a name and where it is from")
+    sid, name, where = row["id"], row["name"], row["from"]
+    if not (isinstance(sid, str) and _ID.fullmatch(sid) and isinstance(name, str) and clean_name(name) == name
+            and isinstance(where, str) and _WHERE.fullmatch(where) and source_id(name, host_of(where)) == sid):
+        raise NdiError("bad allowed NDI source")
+    return {"id": sid, "name": name, "from": where}
+
+
+def saved_sources(section):
+    """The allowed sources of a stored `ndi` section that can be used. A person may have edited the file: a list
+    of the wrong kind gives none, a bad or repeated row is left out, never an error."""
+    items = section.get("sources") if isinstance(section, dict) else None
+    good, seen = [], set()
+    for row in (items if isinstance(items, list) else [])[:MAX_ALLOWED * 4]:
+        try:
+            row = clean_allowed(row)
+        except NdiError:
+            continue
+        if row["id"] not in seen and len(good) < MAX_ALLOWED:
+            seen.add(row["id"])
+            good.append(row)
+    return good
+
+
 def validate_saved(cfg):
-    """The stored part of the settings (a user-editable file, and a settings import): {"addresses": [...]} and,
-    since sound, "sound": true or false (left out of what is returned when it was left out: it then means true)."""
-    if not isinstance(cfg, dict) or set(cfg) - {"addresses", "sound"}:
-        raise NdiError("ndi must be an object with addresses and sound")
+    """The stored part of the settings (a user-editable file, and a settings import): {"addresses": [...]}; since
+    sound, "sound": true or false; since pads hold sources, "sources": the allowed ones; since groups, "groups",
+    "mdns" and "discovery". Each of the later keys is left out of what is returned when it was left out."""
+    if not isinstance(cfg, dict) or set(cfg) - {"addresses", "sound", "sources", "groups", "mdns", "discovery"}:
+        raise NdiError("ndi must be an object with addresses, sound, sources, groups, mdns and discovery")
     if "sound" in cfg and not isinstance(cfg["sound"], bool):
         raise NdiError("ndi.sound must be true or false")
     items = cfg.get("addresses", [])
@@ -232,7 +270,16 @@ def validate_saved(cfg):
         if clean_address(a) != a or a in out:
             raise NdiError("bad or repeated NDI address")
         out.append(a)
-    return dict({"addresses": out}, **({"sound": cfg["sound"]} if "sound" in cfg else {}))
+    out = dict({"addresses": out}, **({"sound": cfg["sound"]} if "sound" in cfg else {}))
+    if "sources" in cfg:
+        rows = cfg["sources"]
+        if not isinstance(rows, list) or len(rows) > MAX_ALLOWED:
+            raise NdiError("at most %d allowed NDI sources" % MAX_ALLOWED)
+        rows = [clean_allowed(r) for r in rows]
+        if len({r["id"] for r in rows}) != len(rows):
+            raise NdiError("an allowed NDI source is repeated")
+        out["sources"] = rows
+    return out
 
 
 SWITCHED_OFF = "the NDI input was switched off"      # why a source on the screen ended, for the page (Input.stop)
@@ -273,6 +320,7 @@ class Wanted:
     def __init__(self, enabled, data, log=print):
         self._enabled, self._data, self.log, self.problem = enabled, data, log, ""
         self.sound = SOUND_DEFAULT                 # read with the rest at each call
+        self.allowed = []                          # the sources pads may hold, read with the rest
 
     def __call__(self):
         try:
@@ -280,6 +328,7 @@ class Wanted:
             section = data.get("ndi") if isinstance(data, dict) else None
             addresses, problem = saved_addresses(section)
             self.sound = saved_sound(section)
+            self.allowed = saved_sources(section)
             on = bool(self._enabled())
         except Exception as e:
             on, addresses, problem = False, [], "the NDI settings could not be read (%s)" % type(e).__name__
@@ -1347,7 +1396,8 @@ class Service:
                 self.lock.release()
         return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "sound": self.sound,
                 "runtime": self.runtime(),
-                "sources": [{"id": s["id"], "name": s["name"], "from": s["from"]} for s in self.sources()], "cut": self._cut,
+                "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **({"twins": True} if s.get("twins") else {}))
+                            for s in self.sources()], "cut": self._cut,
                 "playing": r.status() if r is not None else None}
 
     def _close_receiver(self):
@@ -1642,6 +1692,46 @@ class Input:
             return {"ok": False, "answered": True, "error": _text(reply.get("error")) or "the NDI helper refused the settings"}
         return reply
 
+    @staticmethod
+    def _rows(st):
+        """The sources in a helper's status, every field checked again: [{"id", "name", "from"}], with "twins": True
+        on a row the helper marked as two senders under one id, or whose id the helper listed twice."""
+        sources, at = [], {}
+        for s in (st.get("sources") if isinstance(st.get("sources"), list) else [])[:MAX_SOURCES]:
+            if isinstance(s, dict) and isinstance(s.get("id"), str) and _ID.fullmatch(s["id"]):
+                name, where = clean_name(s.get("name")), s.get("from")
+                if name and isinstance(where, str) and _WHERE.fullmatch(where) and source_id(name, host_of(where)) == s["id"]:
+                    if s["id"] in at:
+                        at[s["id"]]["twins"] = True
+                        continue
+                    row = {"id": s["id"], "name": name, "from": where}
+                    if s.get("twins") is True:
+                        row["twins"] = True
+                    at[s["id"]] = row
+                    sources.append(row)
+        return sources
+
+    def _allowed(self):
+        """The allowed sources as they are saved, for the page: read through `allowed` of what is wanted, if it has one."""
+        try:
+            return list(getattr(self._wanted, "allowed", None) or [])
+        except Exception:
+            return []
+
+    def find(self):
+        """(the sources on the network now, why there are none to ask for in words or ""). One short question to the
+        helper and nothing else: no settings are sent (status() may, and that can take ten seconds), so a pad's
+        press is answered at once when its source is not there."""
+        if not self.setup:
+            return [], NOT_SET_UP
+        st = self.client.status()
+        if st.get("ok") is not True:
+            return [], "the NDI helper (pvj-ndi) is not running"
+        rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
+        if rt.get("loaded") is not True:
+            return [], _text(rt.get("problem")) or "the NDI runtime has not been loaded yet"
+        return self._rows(st), ""
+
     def status(self):
         """What the page shows. Every string and number from the helper is checked again here."""
         on, addresses = self._wanted()
@@ -1653,12 +1743,7 @@ class Input:
         helper = st.get("ok") is True or st.get("answered") is True
         notice = [x for x in (getattr(self._wanted, "problem", ""), _text(st.get("error")) if st.get("answered") is True else "") if x]
         rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
-        sources = []
-        for s in (st.get("sources") if isinstance(st.get("sources"), list) else [])[:MAX_SOURCES]:
-            if isinstance(s, dict) and isinstance(s.get("id"), str) and _ID.fullmatch(s["id"]):
-                name, where = clean_name(s.get("name")), s.get("from")
-                if name and isinstance(where, str) and _WHERE.fullmatch(where) and source_id(name, host_of(where)) == s["id"]:
-                    sources.append({"id": s["id"], "name": name, "from": where})
+        sources = self._rows(st)
         return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice), "sound": sound, "headroom_db": AUDIO_HEADROOM_DB,
                 "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
                             "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
@@ -1666,6 +1751,7 @@ class Input:
                             "get": "https://ndi.video/"},
                 "sources": sources, "cut": st.get("cut") is True, "max_sources": MAX_SOURCES,
                 "addresses": list(addresses), "max_addresses": MAX_ADDRESSES,
+                "allowed": self._allowed(), "max_allowed": MAX_ALLOWED,
                 "playing": _playing(st.get("playing")) if self.current else None,
                 "ended": dict(self.ended) if self.ended and not self.current else None}
 

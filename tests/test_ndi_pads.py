@@ -386,6 +386,7 @@ class Identities(PadBase):
         from pvj import scheduler
         self.assertTrue(wait(lambda: self.api.room._scene_job is None or not self.api.room._report(self.api.room._scene_job)["running"]))
         sched = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)
+        self.api.room._last_box = None                      # the same scene again within a few seconds is not started twice (BOX_GAP)
         sched._execute({"id": "e", "label": "Show", "action": "scene", "scene": SCENE}, __import__("datetime").datetime(2026, 10, 11, 12, 0))
         self.assertTrue(wait(lambda: self.shown() == 2))
         # with the pad a clip pad again the scene is a guest's
