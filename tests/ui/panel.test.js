@@ -988,15 +988,16 @@ function startServer(env) {          // env: more for the harness's environment 
     // Sound: one switch on the same page, on unless the owner says no; the line beside it says what is arriving.
     // WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
     await page.waitForSelector('#ndisound');
-    assert.strictEqual(await page.getAttribute('#ndisound', 'aria-checked'), 'true', 'sound is on until someone switches it off');
-    assert.strictEqual((await get('/api/ndi')).sound, true);
-    assert(/No source is on the screen/.test(await page.textContent('#ndisoundline')), 'with nothing playing the line says so');
-    await page.click('#ndisound');
-    await page.waitForFunction(() => /Sound is off: sources are shown without their sound/.test(document.getElementById('ndisoundline').textContent));
-    assert.strictEqual((await get('/api/ndi')).sound, false, 'the switch is saved');
+    assert.strictEqual(await page.getAttribute('#ndisound', 'aria-checked'), 'false', 'sound is off until someone switches it on (never heard on a box)');
+    assert.strictEqual((await get('/api/ndi')).sound, false);
+    assert(/Sound is off: sources are shown without their sound/.test(await page.textContent('#ndisoundline')), 'the line says so');
+    assert(/has not been heard on a box yet/.test(await page.textContent('#ndisoundbody')), 'and why');
     await page.click('#ndisound');
     await page.waitForFunction(() => /No source is on the screen/.test(document.getElementById('ndisoundline').textContent));
-    assert.strictEqual((await get('/api/ndi')).sound, true, 'and back on, as it is on a new box');
+    assert.strictEqual((await get('/api/ndi')).sound, true, 'the switch is saved');
+    await page.click('#ndisound');
+    await page.waitForFunction(() => /Sound is off: sources are shown without their sound/.test(document.getElementById('ndisoundline').textContent));
+    assert.strictEqual((await get('/api/ndi')).sound, false, 'and off again, as it is on a new box');
     await onPage(NDI);
     await sysIndex();
     await chip(NDI, 'Set up');

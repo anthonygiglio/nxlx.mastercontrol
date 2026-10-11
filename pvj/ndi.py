@@ -235,7 +235,7 @@ def validate_saved(cfg):
     return dict({"addresses": out}, **({"sound": cfg["sound"]} if "sound" in cfg else {}))
 
 
-SOUND_DEFAULT = True                      # a source's sound is played with its picture unless the owner says no (D62)
+SOUND_DEFAULT = False                     # off until the sound has been heard on a box (2026-10-11): the owner switches it on (D62)
 
 
 def saved_sound(section):

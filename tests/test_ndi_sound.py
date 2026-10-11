@@ -821,9 +821,11 @@ class ServiceSoundTest(unittest.TestCase):
         self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
 
     def test_the_helper_plays_sound_only_when_the_panel_asks_for_it_in_so_many_words(self):
-        """The owner's default is on (SOUND_DEFAULT, kept by the panel, which sends the word every time). The helper
-        itself assumes nothing: a message without the word means no sound."""
-        self.assertTrue(ndi.SOUND_DEFAULT)
+        """The owner's default is OFF (SOUND_DEFAULT, kept by the panel, which sends the word every time) until the
+        sound has been heard on a box (the coordinator's call, 2026-10-11: the one path never run on hardware, and
+        the one that hands mpv's Matroska reader to whoever controls the helper). The helper itself assumes nothing:
+        a message without the word means no sound."""
+        self.assertFalse(ndi.SOUND_DEFAULT)
         self.assertIs(self.s.handle({"cmd": "configure", "on": True, "addresses": []})["sound"], False)
         self.lib.frames.put(frame(64, 16))
         self.lib.sounds.put(sound(4800))
@@ -882,16 +884,17 @@ class SettingsSoundTest(unittest.TestCase):
                 ndi.validate_saved(bad)
 
     def test_what_is_read_from_a_file_a_person_may_have_edited(self):
-        for section, want in (({"addresses": []}, True), (None, True), ({"sound": False}, False), ({"sound": True}, True), ({"sound": "no"}, True),
-                              ({"sound": 0}, True), ("nonsense", True), ([], True)):
+        # anything but a real True means off: the default is off until the sound has been heard on a box (2026-10-11)
+        for section, want in (({"addresses": []}, False), (None, False), ({"sound": False}, False), ({"sound": True}, True), ({"sound": "yes"}, False),
+                              ({"sound": 1}, False), ("nonsense", False), ([], False)):
             self.assertIs(ndi.saved_sound(section), want, section)
-        w = ndi.Wanted(lambda: True, lambda: {"ndi": {"addresses": ["10.0.0.1"], "sound": False}}, log=lambda *_: None)
-        self.assertEqual((w(), w.sound), ((True, ["10.0.0.1"]), False))
+        w = ndi.Wanted(lambda: True, lambda: {"ndi": {"addresses": ["10.0.0.1"], "sound": True}}, log=lambda *_: None)
+        self.assertEqual((w(), w.sound), ((True, ["10.0.0.1"]), True))
         w = ndi.Wanted(lambda: True, lambda: {"ndi": {"addresses": []}}, log=lambda *_: None)
-        self.assertEqual((w(), w.sound), ((True, []), True))
+        self.assertEqual((w(), w.sound), ((True, []), False))
         w = ndi.Wanted(lambda: True, lambda: [].nothing, log=lambda *_: None)             # the settings themselves cannot be read
         w()
-        self.assertIs(w.sound, True)
+        self.assertIs(w.sound, False)
 
     def test_no_new_schema_was_needed(self):
         from pvj import settings
@@ -964,7 +967,7 @@ class PanelSoundTest(unittest.TestCase):
         i.status()
         self.assertEqual(len([m for m in client.sent if m["cmd"] == "configure"]), n)     # and not again while nothing changed
         # a handle made with a plain function (the older tests) asks for the default
-        self.assertIs(ndi.Input(client, s.fifo, lambda: (True, []), log=lambda *_: None).sound_wanted(), True)
+        self.assertIs(ndi.Input(client, s.fifo, lambda: (True, []), log=lambda *_: None).sound_wanted(), False)
 
 
 class ApiSoundTest(ServerBase):
@@ -984,6 +987,7 @@ class ApiSoundTest(ServerBase):
         self.assertEqual(self.call("POST", "/api/modules/inputs-ndi", {"enabled": True}, token=self.full)[0], 200)
 
     def test_a_source_with_sound_is_loaded_as_matroska_and_one_without_as_bare_frames(self):
+        self.assertEqual(self.call("POST", "/api/ndi", {"action": "sound", "on": True}, token=self.full)[0], 200)    # off by default
         self.lib.frames.put(frame(1920, 1080, fps=(60000, 1001)))
         self.lib.sounds.put(sound(4800))
         st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)

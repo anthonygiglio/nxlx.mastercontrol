@@ -1521,7 +1521,7 @@
         blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
         body: function () { return [streamsCard(full)]; } },
       { id: 'ndi', group: 'show', name: 'NDI\u00ae input', role: 'op', module: 'inputs-ndi', url: '/api/ndi',
-        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip, with its sound through the sound output of the box. Beta: the picture has run once on a Pi 4 with nobody watching the screen; the sound has never been heard.',
+        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Beta: the picture has run once on a Pi 4. Sound from NDI is new and has not been heard on a box yet: it is off until you switch it on.',
         confirmOff: function (ask) { ask(((S.status && S.status.player) || {}).ndi ? 'The NDI picture comes off the screen now.' : null); },
         body: function () { return ndiCards(full); } },
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'op', module: 'mapper', url: '/api/mapper',
@@ -2994,7 +2994,7 @@
     }
     function drawSound(d) {
       soundBody.textContent = '';
-      var hint = 'The sound a source sends is played with its picture through the box\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
+      var hint = 'Sound from NDI is new and has not been heard on a box yet, so it is off until you switch it on. On: the sound a source sends is played with its picture through the box\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
         d.headroom_db + ' dB below full scale, so a sender at that level sounds quieter than a clip. Off: picture only.';
       if (!full) { soundBody.appendChild(h('div', { class: 'hint', id: 'ndisoundstate', text: (d.sound ? 'Sound is on. ' : 'Sound is off. ') + hint })); return; }
       soundBody.appendChild(toggle('ndisound', 'Play a source\'s sound', d.sound, function (v, sw) {
