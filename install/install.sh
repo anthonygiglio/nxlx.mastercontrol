@@ -95,6 +95,11 @@ NDI_MARK="$ROOT/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf"
 NDI_PLAYER_DROPIN="$ROOT/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf"
 NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi.service"      # the link "systemctl enable" makes
 NDI_TMPFILES="$ROOT/etc/tmpfiles.d/pvj-ndi.conf"                                  # root's pipe folder and pipe (M3, 2026-10-11)
+# The NDI discovery server is opt-in per box too (D85): these exist only where root ran "pvj-ndi-runtime server install"
+# (pvj/ndiscovery.py). The panel's second drop-in is the mark of that; this installer never writes it.
+NDISC_UNIT="$ROOT/etc/systemd/system/pvj-ndi-discovery.service"
+NDISC_MARK="$ROOT/etc/systemd/system/pvj-web.service.d/50-pvj-ndisc.conf"
+NDISC_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi-discovery.service"
 JOURNAL_CONF="$ROOT/etc/systemd/journald.conf.d/50-pvj-persistent-log.conf"
 UPD_USB_UNIT="$ROOT/etc/systemd/system/pvj-update-usb@.service"
 UPD_INBOX_UNIT="$ROOT/etc/systemd/system/pvj-update-inbox@.service"
@@ -113,7 +118,10 @@ uninstall() {
 	fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 		systemctl disable --now pvj-ndi.service 2>/dev/null || true
+		systemctl disable --now pvj-ndi-discovery.service 2>/dev/null || true
 	fi
+	# The discovery server's set-up, where there is one: its mark first (it lies in the same folder as the NDI mark).
+	run rm -f "$NDISC_MARK" "$NDISC_UNIT" "$NDISC_WANTS" || log "WARNING: could not remove everything of the discovery server's set-up; look at $NDISC_MARK and $NDISC_UNIT and remove them by hand"
 	# A box that was set up for NDI: the mark first, then the rest; the two folders only if nothing else is in them.
 	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
 	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
@@ -122,7 +130,7 @@ uninstall() {
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
 	# The owner's copy of NDI's library is theirs: it goes only with --purge.
-	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi"; fi
+	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi" "${ROOT}/opt/pvj-ndi-server"; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
 	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place (remove them with deluser and delgroup if you want them gone)."
@@ -426,6 +434,14 @@ elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || 
 		if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
 	fi
 fi
+# The NDI discovery server (D85), only where root set it up: its unit is written again from the new release's
+# template. A box without the mark gets nothing. If this fails the install goes on with the unit as it was.
+NDISC_SET_UP=0
+if [ -f "$NDISC_MARK" ] && [ ! -L "$NDISC_MARK" ]; then
+	NDISC_SET_UP=1
+	log "this box has the discovery server set up: writing its unit again"
+	run python3 -B "$RELEASE/bin/pvj-ndi-runtime" server refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the discovery server's unit again; it stays as it was. To repair: sudo pvj-ndi-runtime server install <the folder with the program>"
+fi
 # USB automount: udev starts pvj-usb@<partition>.service, which mounts by label.
 run mkdir -p "$(dirname "$USB_RULE")"
 if [ "$DRY" = 0 ]; then
@@ -459,6 +475,12 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 		else
 			systemctl try-restart pvj-ndi.service || true
 		fi
+	fi
+	# The discovery server's supervisor, only where it is set up: it moves to the new program; try-restart starts
+	# nothing. It runs nothing of its own until its module is on.
+	if [ "$NDISC_SET_UP" = 1 ] && [ -f "$NDISC_UNIT" ]; then
+		systemctl enable pvj-ndi-discovery.service || log "could not enable the discovery server's supervisor"
+		systemctl try-restart pvj-ndi-discovery.service || true
 	fi
 	# With --no-start: what was stopped above for the runtime folder is started again, and nothing else.
 	if [ "$START" = 0 ] && [ ${#RUN_WAS_ACTIVE[@]} -gt 0 ]; then systemctl start "${RUN_WAS_ACTIVE[@]}" || true; fi

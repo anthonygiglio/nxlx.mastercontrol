@@ -382,6 +382,47 @@ grep -q "removing an NDI helper that nobody set up" "$OUT" || fail "the installe
 nothing_of_ndi
 services_and_their_files
 
+step "the NDI discovery server's set-up (D85), with a stand-in for NDI's program: the account, the unit, the supervisor idle"
+# NDI's program is never on this machine. /usr/bin/true is a program of this processor, which is all the installer's
+# checks ask of a file; it is placed, never started here (the module stays off, so the supervisor runs nothing).
+if getent passwd pvj-ndisc >/dev/null; then fail "the account pvj-ndisc exists before anyone set the discovery server up"; fi
+if /usr/local/bin/pvj-ndi-runtime server install /etc/hostname; then fail "a file that is not a program was accepted as the discovery server"; fi
+if [ -e /opt/pvj-ndi-server ] || [ -e /etc/systemd/system/pvj-ndi-discovery.service ]; then fail "a refused file left something of the discovery server behind"; fi
+/usr/local/bin/pvj-ndi-runtime server install "$(readlink -f /usr/bin/true)" 2>&1 | tee "$OUT"
+grep -q "^sha256 " "$OUT" || fail "the command did not print the program's sha256"
+is /opt/pvj-ndi-server "root:root 755 directory"
+is /opt/pvj-ndi-server/ndi-discovery-server "root:root 755 regular file"
+[ "$(id -nG pvj-ndisc)" = pvj-ndisc ] || fail "the account pvj-ndisc is in: $(id -nG pvj-ndisc)"
+[ "$(getent passwd pvj-ndisc | cut -d: -f7)" = /usr/sbin/nologin ] || fail "the account pvj-ndisc has a shell"
+is /etc/systemd/system/pvj-ndi-discovery.service "root:root 644 regular file"
+sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/pvj/systemd/pvj-ndi-discovery.service" | cmp - /etc/systemd/system/pvj-ndi-discovery.service || fail "the discovery server's unit is not the template"
+systemctl is-enabled --quiet pvj-ndi-discovery.service || fail "pvj-ndi-discovery is not enabled after the set-up"
+if ! wait_for 40 systemctl is-active --quiet pvj-ndi-discovery.service; then
+	systemctl status pvj-ndi-discovery.service --no-pager -l >&2 || true
+	journalctl -b --no-pager -u pvj-ndi-discovery -n 40 >&2 || true
+	fail "pvj-ndi-discovery is not active after the set-up"
+fi
+wait_for 40 test -S /run/pvj-ndisc/ndisc.sock || fail "the supervisor made no socket"
+is /run/pvj-ndisc "pvj-ndisc:pvj-ndisc 750 directory"
+[ "$(systemctl show -p User --value pvj-ndi-discovery.service)" = pvj-ndisc ] || fail "the supervisor does not run as its own account"
+if pgrep -f /opt/pvj-ndi-server/ndi-discovery-server >/dev/null; then fail "the program runs although its module is off"; fi
+wait_for 40 systemctl is-active --quiet pvj-web.service || fail "the panel did not come back after the set-up"
+refused pvj-ndisc cat /run/pvj/web/pin
+refused pvj-ndisc cat /var/lib/pvj/settings.json
+refused pvj-ndisc ls /run/pvj/web
+installer
+grep -q "this box has the discovery server set up" "$OUT" || fail "the installer did not see the discovery server's set-up"
+wait_for 40 systemctl is-active --quiet pvj-ndi-discovery.service || fail "pvj-ndi-discovery is not active after a later install"
+/usr/local/bin/pvj-ndi-runtime server remove 2>&1 | tee "$OUT"
+for path in /etc/systemd/system/pvj-ndi-discovery.service /etc/systemd/system/pvj-web.service.d/50-pvj-ndisc.conf \
+	/etc/systemd/system/multi-user.target.wants/pvj-ndi-discovery.service /opt/pvj-ndi-server; do
+	if [ -e "$path" ] || [ -L "$path" ]; then fail "after 'server remove' there is still $path"; fi
+done
+if systemctl is-active --quiet pvj-ndi-discovery.service; then fail "pvj-ndi-discovery still runs after 'server remove'"; fi
+wait_for 40 systemctl is-active --quiet pvj-web.service || fail "the panel did not come back after 'server remove'"
+nothing_of_ndi
+services_and_their_files
+
 step "final listing"
 listing
 
