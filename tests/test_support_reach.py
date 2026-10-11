@@ -40,6 +40,8 @@ REFUSED = {
     ("POST", "/api/support/config"), ("POST", "/api/support/start"), ("POST", "/api/support/extend"),
     # power-off and factory reset
     ("POST", "/api/system/poweroff"), ("POST", "/api/system/factory-reset"),
+    # the confirm of a network change: only someone at the studio can show that the studio still reaches the box
+    ("POST", "/api/network/confirm"),
 }
 # OPENED by D84 to a support session of the Owner's role: route -> a body the real handler takes.
 OPENED = {
@@ -183,18 +185,33 @@ class LogTest(Base):
         for secret in (key["key"], self.api.osc.key(), "192.168.1.77"):
             self.assertNotIn(secret, text, "what was done, never the value")
         self.assertEqual(len([x for x in self.lines if "remote support support-1: " in x]), 8, "and each is a line in the journal")
+        self.assertEqual([d.get("n", 1) for d in entry["did"]], [1] * 8, "said once each: an opened route is not also counted as a route that was used")
         # the owner reads it on the Remote support page, and a support login does not
         seen = self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0]
         self.assertEqual([d["what"] for d in seen["did"]], did)
         self.assertNotIn("log", self.remote("GET", "/api/support", {}, dev)[1])
 
-    def test_the_log_of_one_session_is_bounded_and_a_studio_device_leaves_nothing_in_it(self):
+    def test_the_log_of_one_session_is_bounded_and_cannot_be_flushed(self):
+        """The same thing again is one line with a count; when the list is full the first lines stay and the rest
+        are counted. So what a helper did first cannot be pushed out of sight by forty harmless things after it."""
         dev = self.session("full")
-        for n in range(sp.DID_KEEP + 15):
+        self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, TUNNEL)
+        for n in range(90):
             self.assertEqual(self.remote("POST", "/api/guests", {"locked": n % 2 == 0}, dev)[0], 200)
-        self.assertEqual(len(self.did()), sp.DID_KEEP)
+        entry = self.settings.data["support_log"][0]
+        self.assertEqual([d.get("n", 1) for d in entry["did"]], [1, 45, 45])
+        self.assertEqual(len([x for x in self.lines if "remote support support-1: " in x]), 3, "a repeat is counted, not written again")
+        saved = json.load(open(self.settings.path))["support_log"][0]["did"]
+        self.assertEqual([d["what"] for d in saved], self.did(), "every line is on the disk at once; a repeat's count goes with the next save")
+        self.assertIn("imported a settings file", self.did()[0])
+        for n in range(sp.DID_KEEP + 15):
+            self.api.support.note(dev, "thing %d" % n)
+        entry = self.settings.data["support_log"][0]
+        self.assertEqual((len(entry["did"]), entry["did_more"]), (sp.DID_KEEP, 18))
+        self.assertIn("imported a settings file", self.did()[0], "the first line is still the first")
         self.api.support.note(dev, "x" * 500 + "\n\x00")
-        self.assertEqual(self.did()[-1], "x" * sp.DID_TEXT)
+        self.assertEqual(self.settings.data["support_log"][0]["did_more"], 19)
+        self.assertLessEqual(max(len(w) for w in self.did()), sp.DID_TEXT)
         before = self.did()
         self.assertEqual(self.h("POST", "/api/guests", {"locked": False}, self.full_dev)[0], 200)       # the owner, at the studio
         self.api.support.note(self.full_dev, "not a support login")
@@ -202,6 +219,44 @@ class LogTest(Base):
         self.h("POST", "/api/support/stop", device=self.full_dev)
         self.api.support.note(dev, "after the end")                     # no session: nothing to write to, and no error
         self.assertEqual(self.did(), before)
+
+
+class EveryChangeTest(Base):
+    def test_every_post_a_session_is_answered_leaves_a_line(self):
+        """Not only the routes D84 opened: every POST that a support session of the Owner's role is answered (the table
+        of every route, with the handlers stubbed as tests.test_roles does) is in the session's log by its route, and
+        never by its body. A new route is covered by itself. The few that change nothing are named in NOT_A_CHANGE."""
+        from tests.test_roles import GUEST_BODIES
+        real = self.api.routes()
+        dev = self.session("full")
+        stubbed = {k: (need, (lambda b, d, c: {})) for k, (need, _h) in real.items()}
+        self.api.routes = lambda: stubbed
+        self.api.set_module = lambda *a: {}
+        for key in sp.NOT_A_CHANGE:
+            self.assertTrue(key in real or key in policy.OUTSIDE, key)
+        missing = []
+        for (method, path), row in sorted(ROWS.items()):
+            if method != "POST" or row[FULL] != 200 or (method, path) not in stubbed and path != "/api/modules/*":
+                continue
+            path = path.replace("*", "shaders")
+            body = (GUEST_BODIES.get((method, path)) or [[{}]])[0][0]
+            before = sum(d.get("n", 1) for d in self.settings.data["support_log"][0].get("did", [])) + self.settings.data["support_log"][0].get("did_more", 0)
+            st, out = self.h(method, path, dict(body, secret="Body-Sentinel-91"), dev, TUNNEL)
+            self.assertEqual(st, 200, (path, out))
+            entry = self.settings.data["support_log"][0]
+            after = sum(d.get("n", 1) for d in entry.get("did", [])) + entry.get("did_more", 0)
+            quiet = (method, path) in sp.NOT_A_CHANGE or (method, path) in sp.REMOTE_OWNER_OPENED      # the opened ones speak in their real handlers
+            if after - before != (0 if quiet else 1):
+                missing.append(path)
+        self.assertEqual(missing, [])
+        self.assertNotIn("Body-Sentinel-91", json.dumps(self.settings.data["support_log"]) + "\n".join(self.lines))
+        self.assertTrue(any(l.endswith("used /api/osc") for l in self.lines), "the change that D84 leaves open is at least in the owner's list")
+        # a GET, a refused request and a studio device leave nothing
+        n = len(self.lines)
+        self.h("GET", "/api/status", {}, dev, TUNNEL)
+        self.h("POST", "/api/pin/show", {}, dev, TUNNEL)
+        self.h("POST", "/api/osc", {}, self.full_dev, LAN)
+        self.assertEqual([l for l in self.lines[n:] if "remote support support-" in l], [])
 
 
 class ImportTest(Base):
@@ -409,6 +464,24 @@ class AttackTest(Base):
         with self.assertRaises(ApiError):
             self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, TUNNEL)
         self.assertNotIn(token, json.dumps(self.settings.data))
+
+    def test_two_more_ways_to_shut_the_owner_out_the_clock_and_the_network(self):
+        """The clock set far forward: only a device that joined with a guest code and went unused is dropped by time
+        (auth._idle); an Owner's and an Operator's never are. The network: a helper may propose a change and take it
+        back, and it goes back by itself unless someone AT THE STUDIO confirms it."""
+        owner = dict(self.settings.data["devices"][0])
+        self.auth._now = lambda: 2082758400            # the year 2036, the latest a clock is taken
+        self.auth._prune_idle()
+        ids = [d["id"] for d in self.settings.data["devices"]]
+        self.assertIn(owner["id"], ids)
+        self.assertIn(self.live_dev["id"], ids)
+        self.assertIsNotNone(self.auth.authenticate(self.full))
+        for role in ("live", "full"):
+            dev = self.session(role)
+            st, out = self.remote("POST", "/api/network/confirm", {}, dev)
+            self.assertEqual(st, 403, out)
+        self.assertIn(("POST", "/api/network/confirm"), sp.REMOTE_DENY)
+        self.assertNotIn(("POST", "/api/network/revert"), sp.REMOTE_DENY)
 
     def test_known_and_left_open_the_networks_osc_accepts_from(self):
         """Found and NOT closed here (it was so before D84, through POST /api/osc; D84 says so and asks the owner):

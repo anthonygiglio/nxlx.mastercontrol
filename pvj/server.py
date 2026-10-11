@@ -341,6 +341,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     result = api.update_upload(name, length, self.rfile.read1, check=still_paired)
                 else:
                     result = api.upload(name, length, self.rfile.read1, replace, check=still_paired)
+                # D84: what a support login changed is in its session's log (these two paths are answered here)
+                api.support.note(device, "uploaded a software update" if update else "uploaded a clip")
                 self._json(200, result)
             except ApiError as e:
                 self.close_connection = True  # an unread body must not be parsed as the next request

@@ -71,6 +71,11 @@ REMOTE_DENY = {
     ("GET", "/api/qr.svg"): "the QR code carries a way to pair",
     # nobody remote can switch the box back on (a restart is allowed: it ends the session and the box comes back)
     ("POST", "/api/system/poweroff"): "nobody remote can switch the box back on",
+    # a network change stays pending until someone confirms it, and goes back by itself otherwise (netcfg.py): the
+    # confirm is the proof that the studio still reaches the box, which a helper in the tunnel cannot give. He may
+    # make the change and take it back; someone at the studio confirms it. (Added by D84: found while trying to
+    # lock the owner out.)
+    ("POST", "/api/network/confirm"): "a network change is confirmed from the studio: only that shows the studio still reaches the box",
     # a reset removes every paired device, the owner's too (see boxcare.py)
     ("POST", "/api/system/factory-reset"): "a reset removes every device, the owner's too",
 }
@@ -95,6 +100,9 @@ REMOTE_OWNER_OPENED = {
     ("POST", "/api/devices/revoke"): "a Guest's or an Operator's device only: never an Owner's",
 }
 DID_KEEP, DID_TEXT = 40, 240      # what a session did, kept with its entry in the support log: lines, characters each
+# POSTs of a support login that change nothing on the box, so they are no line in what a session did
+NOT_A_CHANGE = {("POST", "/api/support/login"), ("POST", "/api/support/stop"), ("POST", "/api/logout"), ("POST", "/api/media/info"),
+                ("POST", "/api/system/settings/export"), ("POST", "/api/theme/export")}
 
 
 class SupportApiError(Exception):
@@ -265,30 +273,57 @@ class SupportManager:
 
     # -- sessions ---------------------------------------------------------------------------------------------
     def note(self, device, text, key=False):
-        """What a support login just changed, into the journal and into its session's entry of the support log (the
-        last DID_KEEP lines, each short): the owner reads on the Remote support page what was done. `key`: the
-        login saw or made the OSC key, so the page says to make a new one. Nothing for a device that is no support
-        login. Never a secret: the caller says what was done, not the value."""
+        """What a support login just changed, into its session's entry of the support log (`did`) and the journal:
+        the owner reads on the Remote support page what was done. `key`: the login saw or made the OSC key, so the
+        page says to make a new one. Nothing for a device that is no support login. Never a secret: the caller says
+        what was done, not the value.
+
+        The same thing done again is one line with a count (kept in memory until the next save: a fader dragged
+        through the tunnel must not write the settings file ten times a second, nor fill the journal). When the
+        list is full the FIRST lines stay and the rest are counted: a helper cannot push what he did out of the
+        owner's sight by doing something harmless forty times."""
         if not (isinstance(device, dict) and device.get("remote")):
             return
         text = "".join(c for c in str(text) if c.isprintable())[:DID_TEXT]
-        self.log("pvj-web: remote support %s: %s" % (device.get("id"), text))
         with self.lock:
             s = self.session
             if not s:
                 return
+            again = False
             with self.settings.lock:
                 for entry in self.settings.data.get("support_log", []):
-                    if entry.get("id") == s["id"]:
-                        did = list(entry.get("did", []))
+                    if entry.get("id") != s["id"]:
+                        continue
+                    did = [dict(d) for d in entry.get("did", [])]
+                    same = next((d for d in did if d.get("what") == text), None)
+                    if same is not None:
+                        same["n"] = int(same.get("n", 1)) + 1
+                        same["last"] = int(self._now())
+                        again = not (key and not entry.get("osc_key"))
+                    elif len(did) < DID_KEEP:
                         did.append({"at": int(self._now()), "what": text})
-                        entry["did"] = did[-DID_KEEP:]
-                        if key:
-                            entry["osc_key"] = True
-                try:
-                    self.settings.save()
-                except OSError:
-                    pass
+                    else:
+                        entry["did_more"] = int(entry.get("did_more", 0)) + 1
+                    entry["did"] = did
+                    if key:
+                        entry["osc_key"] = True
+                if not again:
+                    try:
+                        self.settings.save()
+                    except OSError:
+                        pass
+        if not again:
+            self.log("pvj-web: remote support %s: %s" % (device.get("id"), text))
+
+    def used(self, device, method, path):
+        """Every other request of a support login that changed something (Api.handle and the server's own uploads
+        call this after a POST that went well): the route, never its body. The routes D84 opened say more, in their
+        own words, and are not said twice."""
+        if not (isinstance(device, dict) and device.get("remote")) or method != "POST":
+            return
+        if (method, path) in NOT_A_CHANGE or (method, path) in REMOTE_OWNER_OPENED:
+            return
+        self.note(device, "used %s" % path)
 
     def key_renewed(self):
         """A new OSC key was made at the studio: no past session knows the key any more, so the page stops saying so."""

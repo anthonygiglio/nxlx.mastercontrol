@@ -3505,6 +3505,7 @@ class Api:
             finally:
                 for finish in after:
                     finish(done)
+            self.support.used(device, method, path)      # D84: what a support login changed is in its session's log
             return 200, out
         except ApiError as e:
             payload = dict(getattr(e, "extra", None) or {}, error=e.message)

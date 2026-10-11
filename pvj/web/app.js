@@ -310,6 +310,7 @@
         'pair a device, make a code, a link or an invitation, or see or change the PIN',
         'remove an owner\'s device, or touch your recovery codes and the secure connection',
         'start a session, make one longer, or change these support settings',
+        'confirm a change of the network: you confirm it here, which shows you can still reach the box',
         'switch the box off, or reset it to factory settings']),
       h('div', { class: 'hint', text: 'Everything support changes is listed afterwards under Advanced, Recent sessions. With "Play and mix only" or "Watch only", support can do no more than that.' }));
   }
@@ -333,10 +334,10 @@
         !c.allowed ? 'Remote support is off. Nothing can reach this box from outside until you switch it on above and start a session.' :
         d.configured ? 'Ready. No session is open, and nothing can reach this box until you start one.' : 'Switched on, but not set up yet.' }));
       var last = (d.log || [])[0];
-      if (!d.active && last && last.ended && last.osc_key) body.appendChild(h('div', { class: 'hint warn', id: 'supportoldkey', role: 'status',
-        text: 'In the last session support was shown the OSC key, or made a new one, so support knows it. Make a new key now: Setup > OSC, "A key in the address", Make a new key. Then put the new key into your TouchOSC layout.' }));
+      if ((d.log || []).some(function (e) { return e.ended && e.osc_key; })) body.appendChild(h('div', { class: 'hint warn', id: 'supportoldkey', role: 'status',
+        text: 'In an earlier session support was shown the OSC key, or made a new one, so support knows it. Make a new key now: Setup > OSC, "A key in the address", Make a new key. Then put the new key into your TouchOSC layout.' }));
       if (last && last.ended && last.did && last.did.length && !d.active) body.appendChild(h('div', { class: 'state', id: 'supportlastdid',
-        text: 'The last session is over. Support changed ' + plural(last.did.length, 'thing') + ' in it; the list is under Advanced, Recent sessions.' }));
+        text: 'The last session is over. What support changed in it is listed under Advanced, Recent sessions (' + plural(last.did.length + (last.did_more || 0), 'line') + ').' }));
       if (d.available === false) body.appendChild(h('div', { class: 'hint warn', id: 'supportwhy', text: 'It cannot start on this box: ' + (d.why || 'a part it needs is missing') + '. Tell whoever looks after the box.' }));
       if (d.active) {
         body.appendChild(h('div', { class: 'hint', text: 'Read this code to your support contact. They open http://' + d.address + '/ through the support connection and type it.' }));
@@ -402,8 +403,8 @@
             (e.ended ? ' · ' + (e.reason || 'ended') + ' · ' + (e.logins || 0) + ' sign-ins' : '') })));
           // D84: what support changed in that session, in the box's own words
           if (e.did && e.did.length) inner.appendChild(h('ul', { class: 'hint supportdid' }, e.did.map(function (x) {
-            return h('li', { text: new Date(x.at * 1000).toLocaleTimeString() + ' · support ' + x.what });
-          })));
+            return h('li', { text: new Date(x.at * 1000).toLocaleTimeString() + ' · support ' + x.what + (x.n > 1 ? ' (' + x.n + ' times)' : '') });
+          }).concat(e.did_more ? [h('li', { text: 'and ' + plural(e.did_more, 'more thing') + ' not listed here; the box\'s journal has them' })] : [])));
         });
       }
       var adv = h('details', { class: 'fold', id: 'supportadv', open: supportAdv }, h('summary', { text: 'Advanced: support server settings' }), inner);
@@ -1758,8 +1759,8 @@
       if (!c.allowed) return st('off', 'Not allowed');
       if (d.available === false) return st('problem', 'Not available on this box');
       if (d.active) return st('active', 'Session open, ' + mins(d.seconds_left) + ' left');
-      var last = (d.log || [])[0];          // D84: a session that is over, in which support saw or made the OSC key
-      if (last && last.ended && last.osc_key) return st('check', 'Support knows the OSC key: make a new one');
+      // D84: a session that is over, in which support saw or made the OSC key (any of them: a later session hides nothing)
+      if ((d.log || []).some(function (e) { return e.ended && e.osc_key; })) return st('check', 'Support knows the OSC key: make a new one');
       return d.configured ? st('ready', 'Allowed, no session open') : st('setup', 'Allowed, but the support server is not filled in');
     },
     about: function (d) {

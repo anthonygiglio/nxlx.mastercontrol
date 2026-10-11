@@ -147,7 +147,7 @@ ROWS = {
     ("GET", "/api/network"): KINDS["owner"],
     ("POST", "/api/network/plan"): KINDS["owner"],
     ("POST", "/api/network/apply"): KINDS["owner"],
-    ("POST", "/api/network/confirm"): KINDS["owner"],
+    ("POST", "/api/network/confirm"): STUDIO("owner"),      # D84: confirmed from the studio, never through the support tunnel
     ("POST", "/api/network/revert"): KINDS["owner"],
     ("POST", "/api/network/scan"): KINDS["owner"],
     ("POST", "/api/system/reboot"): KINDS["owner"],
