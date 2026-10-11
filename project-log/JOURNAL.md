@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-11, OSC's safer defaults and the names of the eight controls (`osc-defaults`, #124, D83; a draft, not merged)
+
+The owner's words: "Yes, proceed with the OSC recommendations" and "the shader control names should match those from the shader that's playing, same for effects." Built in that order of need: the names first, because he is waiting to test his tablet layout against them.
+
+- **The names (pushed first, fd3f1e7).** `/pvj/state/shader/control/<n>/name` and `/kind`, `/pvj/state/effect/control/<n>`, `/name` and `/kind`, n = 1 to 8, from `oscfeedback._controls`. The name is what the panel shows (LABEL, else NAME), the count is the knobs' own. A full state is now 132 messages in 5 datagrams, 5,124 bytes, out in 0.4 seconds; 7,740 bytes at worst. The caps are as they were.
+- **The first switch-on (19638b7 and after).** `ever_on` under `osc`, written once at the first start of this code; the paired-device lock comes on with the first switch-on of a box where OSC never was on; a box where it is on or was set up keeps its settings exactly. "OSC is open" on the OSC page, its row in Setup and the health page.
+- **Tests.** `tests/test_osc_feedback.py` (6 new: a shader with 0, 3 and more than 8 controls, an effect, cleaning, names on change only, the caps with the longest names), `tests/test_osc_defaults.py` (20: first switch-on, an existing open box, the warning by role, files, and rollback against master's own code at 106d77f). Each was seen to fail with the code taken out (`git stash` of the changed modules, or master's `oscfeedback.py` put back). A browser step for the note and the warning's three places.
+- **Slips.** The first cap test counted `clip/name` among the control names. The first run of the new tests asked for port 0 through the route, which refuses it. Four older tests compared the OSC section with a literal and had to learn the new key. A full run of the suite on the Mac was started in the background and overlapped a second run, which timed out; CI is the full run that counts.
+
+Not done and not known: nothing met a box, a tablet or TouchOSC. The browser test was not run here. Rows D1 to D7 in `tools/DEVICE-TESTING.md`.
+
 ## 2026-10-11, the box sends its state back over OSC (`osc-replies`, #123, D82; a draft, not merged)
 
 The owner's answer to "Should the box send its state back to TouchOSC, so the layout shows what is really playing?" was "Yes, build it" (2026-10-10). Built as D82 says, with the threat model written and pushed before the code: off by default; at most 4 targets that the Owner adds at the studio (a private IPv4 address on a subnet the box is connected to, a port from 1024 up), checked again at every send; state under `/pvj/state/...` as floats and strings; on change 5 times a second, a heartbeat every 2 seconds, everything every 30 seconds and on `/pvj/state` from a listed target; at most 20 datagrams and 12,000 bytes a second to one target and 60 and 36,000 to all; the key never in a packet; one thread, a socket that never waits, time to live 1. The state is the controller lights' own (`pvj/boxstate.py`). The panel has the card "Send state back" on Setup > OSC for the Owner. `pvj/OSC.md` has the true rule in place of "no replies", the state table and "Setting up TouchOSC to listen".
