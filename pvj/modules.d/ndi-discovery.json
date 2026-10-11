@@ -1,0 +1,18 @@
+{
+  "id": "ndi-discovery",
+  "name": "NDI discovery server",
+  "version": "0.1.0",
+  "type": "optional",
+  "channel": "beta",
+  "requires": [
+    "core"
+  ],
+  "boards": [
+    "pi4",
+    "pi5",
+    "x86"
+  ],
+  "status": "ready",
+  "default_enabled": false,
+  "description": "Run NDI®'s own Discovery Server on this box, so that senders and receivers on a network you control find each other through it. The program is proprietary and is not part of this box: its owner puts it in place (see pvj/NDI.md). It is not a password: whatever can reach it can register with it and ask it. NDI® is a registered trademark of Vizrt NDI AB."
+}

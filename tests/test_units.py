@@ -226,7 +226,10 @@ class RuntimeFolderTest(unittest.TestCase):
         # the NDI helper's folder is the one that is NOT reached through group pvj (D62)
         self.assertEqual(folders["pvj-ndi"], {("pvj-ndi.service", "pvj-ndi", "0750", "no")})
         self.assertEqual("/run/pvj-ndi", p.NDI_DIR)
-        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi"})
+        # and the NDI discovery server's supervisor has a folder and an account of its own (D85)
+        self.assertEqual(folders["pvj-ndisc"], {("pvj-ndi-discovery.service", "pvj-ndisc", "0750", "no")})
+        self.assertEqual("/run/pvj-ndisc", p.NDISC_DIR)
+        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi", "pvj-ndisc"})
         self.assertEqual(["/run/" + d for d in want], [p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR])
         self.assertEqual("/run/pvj-update", p.UPDATE_DIR)
 
@@ -346,7 +349,7 @@ class RuntimeFolderTest(unittest.TestCase):
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR, p.NDI_PIPE_DIR, p.NDI_PIPE_DIR + "/" + p.NDI_FIFO,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
                  p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
-                 p.RUN + "/<name>", p.NDI_DIR, p.NDI_CONFIG_DIR}
+                 p.RUN + "/<name>", p.NDI_DIR, p.NDI_CONFIG_DIR, p.NDISC_DIR}
         files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*")) + glob.glob(os.path.join(NDI_UNITS, "*"))
         seen = set()
         for path in files:

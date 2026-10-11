@@ -336,7 +336,7 @@ def validate_saved(cfg):
     """The stored part of the settings (a user-editable file, and a settings import): {"addresses": [...]}; since
     sound, "sound": true or false; since pads hold sources, "sources": the allowed ones; since groups, "groups",
     "mdns" and "discovery". Each of the later keys is left out of what is returned when it was left out."""
-    if not isinstance(cfg, dict) or set(cfg) - {"addresses", "sound", "sources", "groups", "mdns", "discovery"}:
+    if not isinstance(cfg, dict) or set(cfg) - {"addresses", "sound", "sources", "groups", "mdns", "discovery", "own_discovery"}:
         raise NdiError("ndi must be an object with addresses, sound, sources, groups, mdns and discovery")
     if "sound" in cfg and not isinstance(cfg["sound"], bool):
         raise NdiError("ndi.sound must be true or false")
@@ -372,6 +372,10 @@ def validate_saved(cfg):
             if clean_discovery(d) != d or servers.count(d) != 1:
                 raise NdiError("bad or repeated NDI discovery server")
         out["discovery"] = list(servers)
+    if "own_discovery" in cfg:             # this box's input also asks the discovery server this box runs (D85)
+        if not isinstance(cfg["own_discovery"], bool):
+            raise NdiError("ndi.own_discovery must be true or false")
+        out["own_discovery"] = cfg["own_discovery"]
     if "mdns" in cfg:
         # Kept for a later release only: NDI documents no setting that stops a finder using mDNS (NDI.md), so
         # nothing reads this yet. A file that carries it still loads.
@@ -422,6 +426,7 @@ class Wanted:
         self.allowed = []                          # the sources pads may hold, read with the rest
         self.groups = []                           # the NDI groups to look in, read with the rest (none: NDI's default)
         self.discovery = []                        # the NDI Discovery Servers to ask, read with the rest
+        self.own_discovery = False                 # also the server this box runs, at its address of the moment (D85)
 
     def __call__(self):
         try:
@@ -432,6 +437,7 @@ class Wanted:
             self.allowed = saved_sources(section)
             self.groups = saved_groups(section)
             self.discovery = saved_discovery(section)
+            self.own_discovery = isinstance(section, dict) and section.get("own_discovery") is True
             on = bool(self._enabled())
         except Exception as e:
             on, addresses, problem = False, [], "the NDI settings could not be read (%s)" % type(e).__name__
@@ -1774,6 +1780,7 @@ class Input:
         # helper reads it and cannot write it), or None where there is none: a desk, the tests, a box whose NDI
         # set-up is older than the discovery setting.
         self.config_dir, self.config_problem = config_dir, ""
+        self.own_server = None             # a function giving this box's own discovery server as "address:port", or None
         # False on a box where nobody ran the opt-in command (server.py): there is no helper and never was, so its
         # socket is not even tried, and the page says how to set NDI up in place of "the helper is not running".
         self.setup = setup
@@ -1851,8 +1858,18 @@ class Input:
         return list(g) if isinstance(g, list) else []
 
     def _discovery(self):
+        """The discovery servers to ask: the saved ones and, when the owner said so and the box runs one now, the
+        box's own (`own_server` is given by the panel: pvj/ndiscovery.py, D85). Each is checked again here."""
         d = getattr(self._wanted, "discovery", None)
-        return list(d) if isinstance(d, list) else []
+        out = list(d) if isinstance(d, list) else []
+        if getattr(self._wanted, "own_discovery", False) is True and self.own_server is not None:
+            try:
+                own = self.own_server()
+                if own and clean_discovery(own) == own and own not in out and len(out) < MAX_DISCOVERY:
+                    out.append(own)
+            except Exception:
+                pass
+        return out
 
     def write_config(self):
         """Write the library's configuration file if it does not say what the owner wants; returns the discovery
@@ -1940,6 +1957,8 @@ class Input:
                 "addresses": list(addresses), "max_addresses": MAX_ADDRESSES,
                 "allowed": self._allowed(), "max_allowed": MAX_ALLOWED,
                 "discovery": self._discovery(), "max_discovery": MAX_DISCOVERY, "discovery_now": now, "discovery_port": DISCOVERY_PORT,
+                "discovery_saved": list(getattr(self._wanted, "discovery", None) or []),      # without the box's own, which is not removed by hand
+                "own_discovery": getattr(self._wanted, "own_discovery", False) is True,
                 "groups": self._groups(), "max_groups": MAX_GROUPS,
                 # what the helper says it looks in now (checked again): the page shows it beside what was asked for
                 "groups_now": [g for g in (st.get("groups") if isinstance(st.get("groups"), list) else [])[:MAX_GROUPS]
@@ -2165,6 +2184,7 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
     argv = sys.argv[1:] if argv is None else argv
     dest = os.path.join(LIB_DIR, LIB_NAME)
     usage = ("usage: pvj-ndi-runtime install <the unpacked NDI SDK folder, or libndi.so.6> | status | remove\n"
+             "       pvj-ndi-runtime server install <NDI's folder, or ndi-discovery-server> | status | remove\n"
              "install: sets NDI up on this box. It copies NDI's library into place, then installs and starts the NDI\n"
              "  helper (the service pvj-ndi with an account of its own; avahi-daemon if it is missing) and restarts the\n"
              "  panel and the player. Until it has been run, a box has nothing of NDI on it and nothing of it runs.\n"
@@ -2175,6 +2195,9 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
              "NDI(R) is a registered trademark of Vizrt NDI AB.")
     if argv and argv[0] == "refresh":      # the installer's call for a box that opted in; never sets a box up
         return setup.refresh_main(argv[1:], out)
+    if argv and argv[0] == "server":       # NDI's discovery server on this box (pvj/ndiscovery.py, D85)
+        from . import ndiscovery
+        return ndiscovery.server_main(argv[1:], out)
     if len(argv) == 1 and argv[0] == "status":
         print(runtime_problem(dest) or "the NDI runtime is in place: %s" % dest, file=out)
         print("NDI is set up on this box (the helper pvj-ndi is installed)" if setup.opted_in()

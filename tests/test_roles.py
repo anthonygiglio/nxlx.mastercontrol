@@ -78,6 +78,9 @@ ROWS = {
     # and the sound switch are the Owner's, and a full support session's, as Streams (the owner's choice in D63).
     ("GET", "/api/ndi"): KINDS["op"],
     ("POST", "/api/ndi"): KINDS["owner"],
+    # the NDI discovery server on the box (D85): the Owner's, and never through the support tunnel (support.REMOTE_DENY_PREFIX)
+    ("GET", "/api/ndi/discovery"): STUDIO("owner"),
+    ("POST", "/api/ndi/discovery"): STUDIO("owner"),
     ("GET", "/api/schedule"): KINDS["read"],
     ("GET", "/api/preview.jpg"): KINDS["read"],
     ("POST", "/api/play"): KINDS["guest"],

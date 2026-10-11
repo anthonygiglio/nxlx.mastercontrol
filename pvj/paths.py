@@ -158,6 +158,14 @@ def ndi_pipe_dir(env=None):
     return _env(env).get("PVJ_NDI_PIPE_DIR") or NDI_PIPE_DIR
 
 
+NDISC_DIR = "/run/pvj-ndisc"              # the NDI discovery server's supervisor: its socket for the panel (pvj/ndiscovery.py, D85)
+
+
+def ndisc_dir(env=None):
+    """The discovery server's supervisor's folder, or None on a box where it is not set up (the panel's drop-in names it)."""
+    return _env(env).get("PVJ_NDISC_DIR") or None
+
+
 NDI_CONFIG_DIR = "/run/pvj-ndi-config"    # the NDI library's configuration file: the panel writes it, the helper reads it (pvj/ndisetup.py)
 
 

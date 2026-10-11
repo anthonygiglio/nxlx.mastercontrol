@@ -655,7 +655,14 @@ def build(env=None, player=None):
     api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
                             ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log,
                             pipe_owner=ndi_mod.pipe_owner, setup=bool(env.get("PVJ_NDI_DIR")),
-                            config_dir=paths.ndi_config_dir(env))      # root makes the pipe (M3, 2026-10-11)
+                            config_dir=paths.ndi_config_dir(env))
+    # The NDI discovery server's supervisor (D85): only on a box where root set it up (the panel's drop-in names its folder).
+    from . import ndiscovery as ndisc_mod
+    ndisc_dir = paths.ndisc_dir(env)
+    api.ndisc = ndisc_mod.Manager(ndi_mod.Client(os.path.join(ndisc_dir, ndisc_mod.SOCKET)) if ndisc_dir else None,
+                                  lambda: settings.data, lambda: registry.enabled("ndi-discovery"),
+                                  lambda: ndisc_mod.box_addresses(api._run_ip()), log=ndi_log)
+    api.ndi.own_server = api._own_discovery      # root makes the pipe (M3, 2026-10-11)
     try:                                     # whatever the helper answers, the panel starts
         api.ndi.sync()
     except Exception as e:
@@ -734,8 +741,12 @@ def main(argv=None):
     ndi_stop = threading.Event()
 
     def ndi_watch():                         # a sender that changes size: the helper says so, the pipe is loaded again
+        n = 0
         while not ndi_stop.wait(1.0):
+            n += 1
             try:
+                if n % 10 == 0:              # the discovery server follows its network's address (DHCP)
+                    api.ndisc_tick()
                 api.ndi_tick()
             except Exception as e:
                 print("pvj-web: NDI watch: %s" % e, file=sys.stderr)

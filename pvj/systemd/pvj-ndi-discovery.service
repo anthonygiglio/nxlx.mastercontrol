@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The NDI discovery server on this box (D85). Opt-in: this unit exists only on a box where root ran
+# "pvj-ndi-runtime server install <NDI's folder>" (pvj/ndiscovery.py writes it from this template).
+#
+# What runs here is this project's small supervisor (bin/pvj-ndi-discovery). It does nothing until the panel says the
+# module is on; then it starts NDI's own closed program, ndi-discovery-server, from root's folder /opt/pvj-ndi-server,
+# with the address and the port the Owner chose, and starts it again with a growing pause if it ends.
+[Unit]
+Description=nxlx.mastercontrol NDI discovery server (unprivileged, runs the owner's copy of NDI's program)
+After=network.target
+ConditionPathExists=@PVJ_DIR@/bin/pvj-ndi-discovery
+StartLimitIntervalSec=0
+
+[Service]
+# An account and a group of its own: not the panel's, not the player's, not the NDI helper's. Not in group "pvj".
+# The panel is given the extra group "pvj-ndisc" by a drop-in, which lets it into this folder to ask and to tell;
+# the supervisor answers only the panel's account.
+User=pvj-ndisc
+Group=pvj-ndisc
+UMask=0027
+RuntimeDirectory=pvj-ndisc
+RuntimeDirectoryMode=0750
+Environment=PVJ_NDISC_DIR=/run/pvj-ndisc
+Environment=HOME=/tmp
+ExecStart=@PVJ_DIR@/bin/pvj-ndi-discovery
+Restart=always
+RestartSec=2
+
+# Sandbox: at least what the NDI helper has (pvj-ndi.service), and tighter where this program needs less. Not run
+# on a device yet (tools/DEVICE-TESTING.md): a line that is wrong would keep the server from being reached.
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,size=8M,mode=1777 /var/tmp:rw,nosuid,nodev,size=8M,mode=1777
+PrivateDevices=yes
+ReadWritePaths=/run/pvj-ndisc
+# The box's settings, keys, PIN, control sockets and media; the NDI helper's folders; and the two places NDI's
+# program would read a configuration of its own from, so that only the arguments given here count.
+InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj -/run/pvj-ndi -/run/pvj-ndi-pipe -/run/pvj-ndi-config -/run/pvj-sysd -/run/pvj-supportd -/opt/pvj-ndi -/etc/ndi -/usr/local/etc/ndi -/media -/mnt
+MemoryMax=128M
+TasksMax=64
+CPUQuota=100%
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+# AF_UNIX: the panel's socket. AF_INET: the port it listens on. AF_NETLINK: the list of the box's interfaces, which
+# a program that binds to an address may ask for. No IPv6: the page offers IPv4 addresses only.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+# Private and link-local addresses only, both ways: nothing from or to the internet, whatever asks.
+IPAddressDeny=any
+IPAddressAllow=link-local 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Not set, on purpose, until tried on a device: MemoryDenyWriteExecute (the supervisor is Python, and what NDI's
+# program needs is not known) and SystemCallFilter.
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

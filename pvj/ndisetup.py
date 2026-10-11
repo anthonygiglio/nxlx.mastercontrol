@@ -212,7 +212,7 @@ JUST_MADE = ("; it was made a moment ago by this command and is not what was ask
              "changed it), so the setup stops here. Remove it before trying again: sudo deluser %s; sudo delgroup %s" % (ACCOUNT, GROUP))
 
 
-def check_account(user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall, tail=NOTHING_YET):
+def check_account(user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall, tail=NOTHING_YET, name=None):
     """Refuses, and changes nothing. A group or an account pvj-ndi that is already there must be what this setup
     would have made. Anything else is refused, not repaired: the helper loads closed-source code that reads the
     network, and whoever is in its group can enter its folder (the socket, the pipe).
@@ -224,7 +224,9 @@ def check_account(user=_user, group=_group, groups=grp.getgrall, users=pwd.getpw
     pipe and talk to the socket's folder without anyone having decided that.
 
     The account: not root, a uid of its own, no login shell, pvj-ndi as its own group and no other group.
-    What is not there yet is fine. `tail` ends each refusal: before anything is made, or after (ensure_account)."""
+    What is not there yet is fine. `tail` ends each refusal: before anything is made, or after (ensure_account).
+    `name` is another account held to the same rules (the discovery server's, pvj/ndiscovery.py)."""
+    ACCOUNT = GROUP = name or globals()["ACCOUNT"]
     g = group(GROUP)
     if g is not None:
         if g.gr_gid == 0:
@@ -256,12 +258,14 @@ def check_account(user=_user, group=_group, groups=grp.getgrall, users=pwd.getpw
         raise SetupError("the account %s is also in %s and must be in no other group%s" % (ACCOUNT, ", ".join(others), tail))
 
 
-def ensure_account(run=_run, say=print, user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall):
+def ensure_account(run=_run, say=print, user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall, name=None):
     """The helper's group and account, made if they are missing: a system account without a home or a shell, whose
     only group is pvj-ndi. What is already there is checked (check_account) before anything is made. What was made
     is checked again, because a box's own rules for new accounts (extra groups, a shell) can change what useradd
     makes; that refusal says that something was made, and how to remove it."""
-    check_account(user, group, groups, users)
+    ACCOUNT = GROUP = name or globals()["ACCOUNT"]
+    just_made = JUST_MADE if name is None else JUST_MADE.replace(globals()["ACCOUNT"], name)
+    check_account(user, group, groups, users, name=name)
     made = False
     if group(GROUP) is None:
         say("creating system group %s" % GROUP)
@@ -273,7 +277,7 @@ def ensure_account(run=_run, say=print, user=_user, group=_group, groups=grp.get
         if run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--gid", GROUP, ACCOUNT]) != 0 or user(ACCOUNT) is None:
             raise SetupError("could not create the account %s" % ACCOUNT)
         made = True
-    check_account(user, group, groups, users, tail=JUST_MADE if made else NOTHING_YET)
+    check_account(user, group, groups, users, tail=just_made if made else NOTHING_YET, name=name)
 
 
 def _systemd_runs():

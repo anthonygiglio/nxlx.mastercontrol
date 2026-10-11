@@ -252,6 +252,7 @@ class Api:
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
+        self.ndisc = None         # ndiscovery.Manager or None (the NDI discovery server's supervisor; D85)
         self._ndi_loading = threading.local()     # .on while this thread loads the NDI pipe itself
         self._ndi_refused = None  # {"id", "message"}: the last refusal of a pad's NDI source, for the pads
         self._ndi_job, self._ndi_job_lock = None, threading.Lock()      # a controller's press of an NDI pad, connecting (a leaf: held only to start it)
@@ -1991,6 +1992,13 @@ class Api:
                     self.log("NDI: %s was taken off the screen: the NDI input was switched off" % (self.ndi.ended or {}).get("name", "a source"))
                 self._hold_speed(False)
             self.ndi.sync()
+        if module_id == "ndi-discovery":       # the server listens only while this is on (D85)
+            self.log("pvj-web: the NDI discovery server was switched %s by device %s (from %s)"
+                     % ("on" if self.registry.enabled("ndi-discovery") else "off", (device or {}).get("id"), client))
+            if self.ndisc is not None:
+                self.ndisc.sync()
+            if self.ndi is not None:
+                self.ndi.sync()                # this box's own input may be set to use it
         if module_id == "room" and not self.registry.enabled("room"):     # off: what a scene had not sent yet is dropped
             self.room.stop()
         for mid, manager in (("control-dmx", self.dmx), ("control-midi", self.midi)):
@@ -3070,8 +3078,19 @@ class Api:
         from . import ndi as ndi_mod
         self._need_ndi()
         action = body.get("action")
-        if action not in ("add_address", "remove_address", "sound", "forget", "add_group", "remove_group", "add_discovery", "remove_discovery"):
-            raise bad("action must be add_address, remove_address, sound, forget, add_group, remove_group, add_discovery or remove_discovery")
+        if action not in ("add_address", "remove_address", "sound", "forget", "add_group", "remove_group", "add_discovery", "remove_discovery", "own_discovery"):
+            raise bad("action must be add_address, remove_address, sound, forget, add_group, remove_group, add_discovery, remove_discovery or own_discovery")
+        if action == "own_discovery":
+            # "Use this box's own discovery server" (D85): this box's input asks the server this box runs, at whatever
+            # address that server has now. Kept as a switch, not as an address, so it follows the server.
+            if not isinstance(body.get("on"), bool):
+                raise bad("on must be true or false")
+            with self.settings.lock:
+                self._ndi_write(own_discovery=body["on"])
+                self.settings.save()
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
         if action in ("add_discovery", "remove_discovery"):
             # NDI Discovery Servers this box asks (the Owner's). The library reads them from its own file when it
             # starts, so the helper starts again; a source on the screen ends and is started again by hand.
@@ -3184,12 +3203,68 @@ class Api:
         if servers:
             new["discovery"] = servers
         new.update(changes)
-        for key in ("groups", "discovery"):
+        if isinstance(before, dict) and before.get("own_discovery") is True and "own_discovery" not in changes:
+            new["own_discovery"] = True
+        for key in ("groups", "discovery", "own_discovery"):
             if not new.get(key):
                 new.pop(key, None)
         if not new.get("sources"):
             new.pop("sources", None)
         self.settings.data["ndi"] = new
+
+    # ---- the NDI discovery server on this box (pvj/ndiscovery.py, D85): the Owner's, and never through remote support ----
+    def _need_ndisc(self):
+        if self.ndisc is None:
+            raise ApiError(404, "the NDI discovery server is not available")
+
+    def get_ndisc(self, body, device, client):
+        """The page: set up or not, the program in place or not, which network and port, what is listening now and
+        what to tell senders and receivers. Answered with the module off too, so the page can say what to do first."""
+        self._need_ndisc()
+        out = self.ndisc.status()
+        out["module"] = self.registry.enabled("ndi-discovery")
+        section = self.settings.data.get("ndi")
+        out["own"] = isinstance(section, dict) and section.get("own_discovery") is True      # this box's own input uses it
+        return out
+
+    def set_ndisc(self, body, device, client):
+        """{"network": "wired" | "wifi" | "all", "port": n}: which of the box's networks the server listens on, and
+        the port. The address is found again at every look (DHCP), and the server is started again on a new one."""
+        from . import ndiscovery, ndi as ndi_mod
+        self._need_ndisc()
+        with self.settings.lock:
+            new = dict(ndiscovery.saved(self.settings.data.get("ndi_discovery")))
+            for key in ("network", "port"):
+                if key in body:
+                    new[key] = body[key]
+            if set(body) - {"network", "port"}:
+                raise bad("only network and port can be set")
+            try:
+                new = ndiscovery.validate_saved(new)
+            except ndi_mod.NdiError as e:
+                raise bad(str(e))
+            self.settings.data["ndi_discovery"] = new
+            self.settings.save()
+        self.log("pvj-web: the NDI discovery server is set to %s, port %d, by device %s (from %s)"
+                 % (new["network"], new["port"], (device or {}).get("id"), client))
+        self.ndisc.sync()
+        if self.ndi is not None:
+            self.ndi.sync()
+        return self.get_ndisc({}, device, client)
+
+    def ndisc_tick(self):
+        """Every few seconds (server.py): the chosen network's address may have changed; the server follows it, and
+        so does this box's own input when it is set to use the box's own server."""
+        if self.ndisc is None:
+            return False
+        changed = self.ndisc.tick()
+        if changed and self.ndi is not None and self.registry.enabled("inputs-ndi"):
+            self.ndi.sync()
+        return changed
+
+    def _own_discovery(self):
+        """This box's own server as "address:port" for this box's own NDI input, or None (ndi.Input asks)."""
+        return self.ndisc.own_server() if self.ndisc is not None else None
 
     def play_capture(self, body):
         """{"capture": {"device": "video0", "mode": "720p30"}}: a live input, read by a separate helper process."""
@@ -3886,6 +3961,8 @@ class Api:
             # network and the sound switch are system matters, the Owner's (and a support session's, as Streams: D63).
             ("GET", "/api/ndi"): ("live", self.get_ndi),
             ("POST", "/api/ndi"): ("full", self.set_ndi),
+            ("GET", "/api/ndi/discovery"): ("full", self.get_ndisc),       # the discovery server on this box (D85): the Owner's
+            ("POST", "/api/ndi/discovery"): ("full", self.set_ndisc),
             ("GET", "/api/streams"): ("view", self.get_streams),
             ("POST", "/api/streams"): ("full", self.set_streams),
             ("GET", "/api/schedule"): ("view", self.get_schedule),
