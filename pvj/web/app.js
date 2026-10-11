@@ -204,9 +204,17 @@
       if (/[01OIL]/.test(bare)) return say('Recovery codes never have 0, O, 1, I or L in them. Read the paper again.', true);
       join(code.value, go, 'recovery');
     });
-    var entry = h('div', { id: 'recoveryentry', hidden: true }, h('div', { class: 'k', text: 'Owner: recovery code' }), code, go);
+    // While "Owner access only over the secure connection" is on, a code typed here over http:// would cross the
+    // network in the clear before the box refused it: the page learns that from hello and offers the link instead.
+    var hello = S.hello || {};
+    var httpsOnly = !!(hello.owner_https_only && hello.https && location.protocol === 'http:');
+    var entry = h('div', { id: 'recoveryentry', hidden: true }, h('div', { class: 'k', text: 'Owner: recovery code' }),
+      httpsOnly ? h('div', { class: 'hint', id: 'recoveryhttps' },
+        'This box takes owner codes over https:// only, so the code is not typed here: over http:// it would cross the network in the clear. ',
+        h('a', { id: 'recoveryhttpslink', href: hello.https, text: 'Open ' + hello.https }),
+        ' and type it there; accept the browser\'s warning if this phone has not got the box\'s root certificate.') : [code, go]);
     var open = h('button', { class: 'btn plain small', id: 'recoverylink', text: 'I have a recovery code', 'aria-expanded': 'false', onclick: function () {
-      entry.hidden = !entry.hidden; open.setAttribute('aria-expanded', entry.hidden ? 'false' : 'true'); if (!entry.hidden) code.focus();
+      entry.hidden = !entry.hidden; open.setAttribute('aria-expanded', entry.hidden ? 'false' : 'true'); if (!entry.hidden && !httpsOnly) code.focus();
     } });
     var help = h('details', { class: 'fold', id: 'lockedout' }, h('summary', { class: 'k', text: 'Locked out?' }),
       h('div', { class: 'hint', text: 'If every owner phone is lost: a recovery code from the sheet the owner printed (above). ' +
@@ -4649,11 +4657,13 @@
         });
       });
     }
+    // how an owner came in, when it was not the PIN typed by hand (D81): read with the recovery card's notices
+    function viaWords(v) { return v === 'recovery' ? ' · came in with a recovery code' : v === 'stick' ? ' · came in with the PIN from a recovery stick' : ''; }
     function drawDevices() {
       devices.textContent = '';
       S.devices.forEach(function (d) {
         var me = !!S.device && d.id === S.device.id;
-        devices.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role) + (me ? ' · this device' : ''),
+        devices.appendChild(listRow({ cls: 'device-entry', data: d.id, name: d.name, state: roleName(d.role) + viaWords(d.via) + (me ? ' · this device' : ''),
           primary: me ? h('button', { class: 'btn plain', id: 'logoutbtn', text: 'Log out', 'aria-label': 'Log out this device', onclick: function (e) {
             var control = e.currentTarget;
             ownQuestion(function (question) { if (control.isConnected) logOutHere(control, question); });
@@ -4711,6 +4721,7 @@
     function when(t) { return t ? new Date(t * 1000).toLocaleString() : '?'; }
     function eventWords(e) {
       if (e.kind === 'code') return 'A recovery code was used by "' + (e.name || 'a device') + '" at ' + when(e.t) + '; ' + plural(e.left, 'code') + ' left.';
+      if (e.kind === 'stick-used') return 'The PIN shown for a recovery stick was used by "' + (e.name || 'a device') + '" at ' + when(e.t) + '.';
       return 'The PIN was shown on the box\'s screen at ' + when(e.t) + ' because a recovery stick was put in.';
     }
     function draw(d) {
@@ -5163,7 +5174,7 @@
     var first = m ? api('POST', '/api/session', { token: m[1] }).then(function () { history.replaceState(null, '', location.pathname); }) : Promise.resolve();
     first.then(function () { return api('GET', '/api/status'); }).then(function (r) {
       if (r.ok) { S.device = r.data.device; S.status = r.data; return loadAll().then(render); }
-      return api('GET', '/api/hello').then(function (h2) { S.remote = !!(h2.ok && h2.data.remote); render(); });
+      return api('GET', '/api/hello').then(function (h2) { S.hello = h2.ok ? h2.data : {}; S.remote = !!(h2.ok && h2.data.remote); render(); });
     });
     setInterval(poll, 1000);
     document.addEventListener('input', function (e) { if (e.target && e.target.type === 'range') fillRanges(); }, true);

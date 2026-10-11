@@ -422,8 +422,16 @@ class Api:
 
     # --- handlers ------------------------------------------------------
     def hello(self, body, device, client):
-        return {"name": "nxlx.mastercontrol", "paired": bool(device), "board": self.board["kind"],
-                "remote": self.support.is_remote(client)}
+        """What an unpaired stranger may learn: the name, whether this caller is paired, the board, whether it came
+        through the support tunnel; and, while "Owner access only over the secure connection" bites, that fact and
+        the https address, so the pairing page does not send an owner code over plain http (D81; review of #122, M2)."""
+        out = {"name": "nxlx.mastercontrol", "paired": bool(device), "board": self.board["kind"],
+               "remote": self.support.is_remote(client)}
+        box = getattr(self, "https", None)
+        if box is not None and box.effective():
+            out["owner_https_only"] = True
+            out["https"] = box.https_address()
+        return out
 
     def pair(self, body, device, client):
         try:

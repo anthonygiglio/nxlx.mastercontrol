@@ -529,9 +529,15 @@ class RecoveryOverTlsTest(__import__("tests.test_https", fromlist=["HttpsBase"])
     def test_with_the_switch_on_codes_are_made_and_redeemed_over_tls_only(self):
         plain, _ = self.pair("owner, plain")
         self.full = plain
+        self.assertEqual(set(self.call("GET", "/api/hello")[1]), {"name", "paired", "board", "remote"})
         self.assertEqual(self.install(self.request_and_sign())[0], 200)               # as HttpsTest.switched_on
+        self.assertNotIn("owner_https_only", self.call("GET", "/api/hello")[1])      # a certificate alone does not say so
         secure = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "owner, tls"})[1]["token"]
         self.assertEqual(self.scall("POST", "/api/https/owner-only", {"on": True}, token=secure)[0], 200)
+        hello = self.call("GET", "/api/hello")[1]                                    # a stranger over http learns two facts, nothing else new (M2)
+        self.assertEqual(set(hello), {"name", "paired", "board", "remote", "owner_https_only", "https"})
+        self.assertIs(hello["owner_https_only"], True)
+        self.assertTrue(hello["https"].startswith("https://"), hello)
         for method, path in (("GET", "/api/recovery"), ("POST", "/api/recovery/codes"), ("POST", "/api/recovery/cancel")):
             st, body, _ = self.call(method, path, {} if method == "POST" else None, token=secure)
             self.assertEqual(st, 403, (path, body))

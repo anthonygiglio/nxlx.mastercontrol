@@ -1711,6 +1711,21 @@ function startServer(env) {          // env: more for the harness's environment 
     await again.waitForFunction(() => /wrong or was used/.test(document.getElementById('msg').textContent));
     await again.close();
     await againCtx.close();
+    // over plain http while the owner-only switch is on, the code is not asked for at all (review of #122, M2): the
+    // page learns it from hello (stubbed here: this box has no certificate) and offers the https address instead
+    const httpsCtx = await browser.newContext({ viewport: { width: 320, height: 844 } });
+    const onHttp = await httpsCtx.newPage();
+    await onHttp.route('**/api/hello', (route) => route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ name: 'nxlx.mastercontrol', paired: false, board: 'x86', remote: false, owner_https_only: true, https: 'https://nxlx-mastercontrol.local/' }) }));
+    await onHttp.goto(base);
+    await onHttp.click('#recoverylink');
+    await onHttp.waitForSelector('#recoveryhttps');
+    assert.strictEqual(await onHttp.locator('#recoverycode').count(), 0, 'no code field over http while the switch is on');
+    assert.strictEqual(await onHttp.getAttribute('#recoveryhttpslink', 'href'), 'https://nxlx-mastercontrol.local/', 'the link to the secure address');
+    assert(/in the clear/.test(await onHttp.textContent('#recoveryhttps')), 'one sentence why');
+    assert.strictEqual(await onHttp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the https hint fits at 320');
+    await onHttp.close();
+    await httpsCtx.close();
     await lost.close();
     await lostCtx.close();
     await sysIndex();
