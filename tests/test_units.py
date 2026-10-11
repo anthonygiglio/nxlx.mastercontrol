@@ -654,7 +654,7 @@ class NdiUnitTest(unittest.TestCase):
         # Review L4: a unit without the mark (a setup cut short, or a box that ran this branch while the helper went
         # on every box) is disabled and removed by the next install; the mark decides, nothing else.
         block = self.sh[self.sh.index("NDI_OPTED_IN=0"):self.sh.index("# USB automount")]
-        orphan = block[block.index('elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ]; then'):]
+        orphan = block[block.index('elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ] || [ -e "$NDI_TMPFILES" ] || [ -L "$NDI_TMPFILES" ]; then'):]
         self.assertIn("systemctl disable --now pvj-ndi.service", orphan)
         self.assertNotIn("userdel", orphan)
         self.assertLess(self.sh.index('elif [ -e "$NDI_UNIT" ]'), self.sh.index("\tsystemctl daemon-reload\n\tfix_run_folder"))
@@ -664,7 +664,7 @@ class NdiUnitTest(unittest.TestCase):
         self.assertEqual(len(rm), 3, rm)
         for line in rm:
             self.assertRegex(line, r' \|\| log "WARNING: could not remove', line)
-        self.assertIn('run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN" "$NDI_WANTS" || log', orphan)       # N3: the link "enable" made goes too
+        self.assertIn('run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_WANTS" || log', orphan)       # N3: the link "enable" made goes too, and root's pipe lines (M3)
         self.assertEqual(self.sh.count('NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi.service"'), 1)
         # and the mark is asked for once more right before that rm: a setup that finished meanwhile is left alone
         again = orphan.index("if ndi_mark; then")
@@ -772,11 +772,12 @@ class NdiUnitTest(unittest.TestCase):
 
     def test_uninstall_takes_the_helper_and_the_drop_ins_the_mark_first(self):
         body = self.sh[self.sh.index("uninstall() {"):self.sh.index('if [ "$UNINSTALL" = 1 ]')]
-        self.assertIn('run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log', body)
+        self.assertIn('run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log', body)
         self.assertIn("systemctl disable --now pvj-ndi.service", body)
         self.assertEqual(self.sh.count('NDI_MARK="$ROOT' + self.setup.WEB_DROPIN + '"'), 1)       # the installer and the opt-in agree on the three paths
         self.assertEqual(self.sh.count('NDI_PLAYER_DROPIN="$ROOT' + self.setup.PLAYER_DROPIN + '"'), 1)
         self.assertEqual(self.sh.count('NDI_UNIT="$ROOT' + self.setup.UNIT_PATH + '"'), 1)
+        self.assertEqual(self.sh.count('NDI_TMPFILES="$ROOT' + self.setup.TMPFILES_PATH + '"'), 1)      # and on the fourth (M3, 2026-10-11)
 
     def test_no_ndi_file_is_in_the_repository(self):
         for root, _dirs, files in os.walk(REPO):

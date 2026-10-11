@@ -318,7 +318,16 @@ class Base(unittest.TestCase):
         return r
 
     def stream(self):
-        return blocks(bytes(self.got))
+        # The reader runs in its own thread: on a slow machine a whole Segment may not have arrived yet when this is
+        # asked (CI, 2026-10-11: "NoneType is not iterable" from `blocks`), so it is asked again for up to 3 s.
+        end = time.monotonic() + 3
+        while True:
+            try:
+                return blocks(bytes(self.got))
+            except (TypeError, ValueError):
+                if time.monotonic() > end:
+                    raise
+                time.sleep(0.05)
 
 
 class ReceiverSoundTest(Base):
