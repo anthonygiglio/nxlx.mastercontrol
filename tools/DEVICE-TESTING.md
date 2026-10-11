@@ -116,6 +116,7 @@ Run over SSH. Each line says what "good" looks like. Write down anything else.
 | P9 | On a full-access phone: Edit on the display on, choose the second surface and its third corner. Enter the mode from the controller, choose another surface, nudge, leave | The card says a controller is adjusting the mapping; afterwards Edit on the display is still on and the second surface and its third corner are chosen again |
 | P10 | TouchOSC: a momentary button on `/pvj/mapping/mode`, another on `/pvj/mapping/mode/off`, a third on `/pvj/mapping/mode/toggle` | The first enters on the press and the mode stays on when the finger comes up; the second leaves; the third does both, one press each |
 | P11 | Launchpad: with "Presenter codes from a controller" on, hold the third round button along the top for 4 seconds; then hold pad 12 of bank C and the two pads right of it | The code comes from the round button only; the pads right of bank C do nothing |
+| P12 | nanoKONTROL2, a shader on screen. Enter the mode, nudge a corner with knob 2, leave. Turn knob 2 a long way as the shader's knob. Enter the mode again and touch knob 2 lightly | The corner does NOT leap by what the knob was turned in between: the first touch moves nothing, then it moves a step for a step. The same the third time |
 
 ### TouchOSC: what the owner's layout can now be wired to (D75)
 
