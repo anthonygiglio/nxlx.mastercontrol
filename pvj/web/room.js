@@ -19,7 +19,7 @@
   var draft = { group: blankGroup(), scene: blankScene() };     // what is being typed; survives redraws
 
   function blankGroup() { return { id: '', name: '', projectors: [] }; }
-  function blankScene() { return { id: '', name: '', rows: {}, box: { action: 'leave', file: '', loop: true, bank: 0, index: 0, stream: '' } }; }
+  function blankScene() { return { id: '', name: '', noGuests: false, rows: {}, box: { action: 'leave', file: '', loop: true, bank: 0, index: 0, stream: '' } }; }
   function row(gid) {
     if (!draft.scene.rows[gid]) draft.scene.rows[gid] = { power: 'leave', input: '', picture: 'leave', sound: 'leave' };
     return draft.scene.rows[gid];
@@ -45,9 +45,9 @@
     });
     var amb = ambience();
     var root = h('div', { class: 'screen', id: 'roomscreen' },
-      h('div', { class: 'top' }, h('h1', { text: 'Room' }), live ? null : h('div', { class: 'pill k', id: 'roomviewonly', text: 'View only' })),
+      h('div', { class: 'top' }, h('h1', { text: 'Room' }), live ? null : h('div', { class: 'pill k', id: 'roomviewonly', text: c.guestOpen && c.guestOpen() ? 'Guest' : 'Watching' })),
       h('div', { id: 'msg', class: 'msg' + (c.state.msgErr ? ' err' : ''), role: 'status', text: c.state.msg }),
-      amb, scenes, groups, letin, setup);
+      amb, scenes, groups, c.guestLock ? c.guestLock() : null, letin, setup);
     var shownLive = null, shownSetup = null, last = null;
 
     // ---- ambience: the Vibes rotation, under the name staff use for it ----
@@ -59,7 +59,7 @@
       follow = null;
       if (!V) return null;
       if (!c.moduleOn('shaders')) {
-        if (!full || !c.openShaders) return null;
+        if (!c.owner() || !c.openShaders) return null;      // the way to the module's switch, which is the Owner's
         return h('div', { class: 'card room-amb', id: 'roomamboff' }, h('div', { class: 'row wrap' },
           h('span', { class: 'hint grow', text: 'Ambience (Vibes) is switched off.' }),
           h('button', { class: 'btn', id: 'roomambopen', text: 'Open Shaders and Vibes', onclick: c.openShaders })));
@@ -349,15 +349,15 @@
       setup.appendChild(h('div', { class: 'field', text: 'Scenes' }));
       var slist = h('div', { class: 'list', id: 'roomslist' });
       d.scenes.forEach(function (s) {
-        slist.appendChild(h('div', { class: 'item room-sitem' }, h('span', {}, s.name, h('br'), h('span', { class: 'addr', text: describe(s, d) })),
+        slist.appendChild(h('div', { class: 'item room-sitem' }, h('span', {}, s.name, h('br'), h('span', { class: 'addr', text: describe(s, d) + (s.no_guests === true ? ' · Not for guests' : '') })),
           h('div', { class: 'row' },
-            c.moduleOn('control-midi') ? h('button', { class: 'btn small', text: 'MIDI', 'aria-label': 'Learn a MIDI control for ' + s.name, onclick: function () { learn(s); } }) : null,
+            c.moduleOn('control-midi') && c.owner() ? h('button', { class: 'btn small', text: 'MIDI', 'aria-label': 'Learn a MIDI control for ' + s.name, onclick: function () { learn(s); } }) : null,
             h('button', { class: 'btn small', text: 'Edit', 'aria-label': 'Edit scene ' + s.name, onclick: function () {
               keep();
               var rows = {};
               s.groups.forEach(function (r) { rows[r.group] = { power: r.power, input: r.input, picture: r.picture, sound: r.sound }; });
               var b = s.box;
-              draft.scene = { id: s.id, name: s.name, rows: rows, box: { action: b.action, file: b.file || '', loop: b.loop !== false,
+              draft.scene = { id: s.id, name: s.name, noGuests: s.no_guests === true, rows: rows, box: { action: b.action, file: b.file || '', loop: b.loop !== false,
                 bank: b.pad ? b.pad[0] : 0, index: b.pad ? b.pad[1] : 0, stream: b.stream || '' } };
               drawSetup(last, true);
             } }),
@@ -408,11 +408,17 @@
       }, 'roomsbox');
       params();
       setup.appendChild(kind); setup.appendChild(file); setup.appendChild(loop); setup.appendChild(bank); setup.appendChild(index); setup.appendChild(stream);
+      // "Not for guests" (D80): guests may apply every scene while guest controls are open, except one marked here
+      var noGuests = h('input', { type: 'checkbox', id: 'roomsnoguests', checked: draft.scene.noGuests });
+      noGuests.addEventListener('change', function () { draft.scene.noGuests = noGuests.checked; });
+      setup.appendChild(h('label', { class: 'row', id: 'roomsnoguestsrow' }, noGuests, h('span', { text: 'Not for guests' })));
+      setup.appendChild(h('div', { class: 'hint', text: 'While guest controls are open a guest can apply every scene, with what it switches and mutes. Tick this for a scene only staff should start. A scene that plays a stream is never a guest\'s.' }));
       setup.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn on pri small', id: 'roomssave', text: draft.scene.id ? 'Save scene' : 'Add scene', onclick: function () {
           keep();
           var out = { name: draft.scene.name, groups: [], box: { action: b.action } };
           if (draft.scene.id) out.id = draft.scene.id;
+          if (draft.scene.noGuests) out.no_guests = true;
           targets.forEach(function (g) {
             var r = row(g.id);
             if (r.power === 'leave' && !r.input && r.picture === 'leave' && r.sound === 'leave') return;
@@ -435,8 +441,8 @@
         scenes.textContent = '';
         scenes.appendChild(h('h2', { text: 'Scenes' }));
         scenes.appendChild(h('div', { class: 'hint warn', id: 'roommsg' },
-          h('div', { text: 'Projectors is switched off, so the room can do nothing.' + (c.can('full') ? '' : ' Ask the owner to switch it on.') }),
-          c.can('full') && c.switchFeature ? h('div', { class: 'row' }, h('button', { class: 'btn', id: 'roomprojon', text: 'Switch Projectors on', onclick: function () {
+          h('div', { text: 'Projectors is switched off, so the room can do nothing.' + (c.owner() ? '' : ' Ask the owner to switch it on.') }),
+          c.owner() && c.switchFeature ? h('div', { class: 'row' }, h('button', { class: 'btn', id: 'roomprojon', text: 'Switch Projectors on', onclick: function () {
             c.switchFeature('projectors', true).then(function (r) {
               if (!r.ok) return c.say(r.data.error || 'Could not switch Projectors on.', true);
               c.say('Projectors is switched on.');

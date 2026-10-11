@@ -180,14 +180,14 @@ Before: the box runs a version with D53 installed **by the installer** (an updat
 
 ### A pairing code from a controller (D61)
 
-**Never run on a box or with a real controller.** Before: MIDI is on, a Launchpad Mini is plugged in (or give "Show a one-time presenter code" to a button of another controller on its card), a screen is on the box, one phone is paired with full access and a second phone is not paired.
+**Never run on a box or with a real controller.** Before: MIDI is on, a Launchpad Mini is plugged in (or give "Show a one-time guest code" to a button of another controller on its card), a screen is on the box, one phone is paired with full access and a second phone is not paired.
 
 | # | Do | See on the box's display | See on the paired phone (System > People and codes) |
 | --- | --- | --- | --- |
 | C1 | With "A code from a controller" off: hold the third round button along the top (Top 3) for 4 seconds, let go | Nothing | "No code has been shown from a controller since the box started." |
-| C2 | Switch "Presenter codes from a controller" on (answer the question). Tap the button | Nothing | The second switch appears |
-| C3 | Hold the button for 4 seconds, let go | The address, "One-time presenter code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time presenter code is on the box's display now", and End this code. No digits |
-| C4 | On the second phone open the address, type the code | The code leaves the display within a second or two | "The last one: a presenter code, just now, used by the device ..." and the phone is in Paired devices as Presenter |
+| C2 | Switch "Guest codes from a controller" on (answer the question). Tap the button | Nothing | The second switch appears |
+| C3 | Hold the button for 4 seconds, let go | The address, "One-time guest code" with 6 digits, a QR code, "Hides in ... s" counting down. Note whether it reads well from where you stand | Within 5 seconds: "A one-time guest code is on the box's display now", and End this code. No digits |
+| C4 | On the second phone open the address, type the code | The code leaves the display within a second or two | "The last one: a guest code, just now, used by the device ..." and the phone is in Paired devices as Guest (can watch) (D80: it was Presenter before) |
 | C5 | Hold again, then press the pad once | The code appears, then goes at the press | "hidden at the controller" |
 | C6 | Hold again, wait 2 minutes | The code goes by itself | "ran out unused" |
 | C7 | Hold the pad for 15 seconds, let go. Then lay something on the pad for a minute | Nothing either time | |
@@ -408,8 +408,34 @@ What cannot be made on purpose: a pair the GPU refuses. If the Effects card ever
 | O8 | Switch that off and "A key in the address" on. Press the control | "Refused: no key in the address" | The clip goes on playing |
 | O9 | Press "Show the key", put `/k/<key>` in front of the address in the layout, press the control. Wait 30 seconds | The message is let in, shown as `/pvj/stop` without the key; the key hides itself | The clip stops |
 | O10 | "Make a new key" (answer the question), play a clip, press the control with the old key in the layout | "Refused: wrong key" | The clip goes on playing |
-| O11 | On a presenter's and a guest's device, open System | No OSC page with lists or a key | Nothing |
+| O11 | On an operator's and a guest's device, open System | No OSC page with lists or a key | Nothing |
 | O12 | Write down how the tablet's address looked in O1 and whether it changed during the test (a new address from the router) | | |
+
+### Owner, Operator, Guest and the lock on guest controls (D80)
+
+**Never run on a box, with a phone, a projector or a controller.** Before: one phone paired with the PIN (Owner), one with an Operator link, one with a guest code; Projectors and Room on with at least one projector, one scene that switches a group on and one that switches it off; a clip on a pad.
+
+| # | Do | See on the guest's phone | See elsewhere |
+| --- | --- | --- | --- |
+| R1 | Right after the update, open the panel on a phone that was a guest before | A card "Guest controls" on Live (or Room): Previous, Next, Stop, Blackout, a clip to play, scenes, shaders, Projectors on and off. The page's own buttons stay off | Nothing |
+| R2 | Guest: tap a pad, Next, Stop, Blackout twice | Each does it within a second; no error line | The screen follows; the journal (`journalctl -u pvj-web`) has one line per tap with the phone's name |
+| R3 | Guest: tap a scene that switches the wall on | "(name): started" | The projector switches on |
+| R4 | Guest: tap Projectors off | A question "Switch the projectors off?"; nothing happens until "Switch off" | After "Switch off" the projector goes off. Note how long the question stays (it goes by itself after 8 seconds; the box takes the answer for 30) |
+| R5 | Guest: Projectors on, then Projectors off again within five minutes | After the question: a line that the projectors were switched off by a guest a moment ago | The projector stays on |
+| R6 | Operator: Room, "Lock guest controls for a show" | Within a few seconds the card is gone and one line reads "The room is locked for a show: you can watch" | The Owner's People and codes shows "Locked" after a reload |
+| R7 | Restart the box (Owner), open the guest's panel | Still locked | |
+| R8 | Owner: "Open guest controls" | The card is back within a few seconds | |
+| R9 | Guest: tap Next twelve times fast | After ten: "too many guest actions at once; wait a moment" | The Operator's own buttons still work at once |
+| R10 | Operator: System | Schedule, At power-up, Projection mapping (when on) are there; Network, Updates, Remote support, Backup and reset, Look, MIDI, DMX, OSC are not | |
+| R11 | Operator: Media, upload a clip, rename it, delete it; Live, Edit pads, give a pad a clip | Each works | |
+| R12 | Operator: People and codes | "Let someone in" with the guest code only, a card "Guests" with the guest's phone and Remove, "Create a guest link", the lock. No PIN, no operator code, no owner or operator device | Remove the guest: its panel returns to the pairing screen |
+| R13 | A MIDI controller and an OSC sender that worked before the update: every control once | Nothing | Each does what it did before, no more; with guest controls locked too (the lock is for guests only) |
+| R14 | Hold the controller's code pad (switch on first), pair a phone with the code | The phone is a Guest | Paired devices names it Guest (can watch) |
+| R15 | If a phone was paired from a controller before the update: open its panel | It is a guest: the Guest controls card, and "Guest (can watch)" under About and power | The owner's Paired devices names it Guest |
+| R16 | Owner: People and codes, A code from a controller, "A controller's join code pairs": Operator (answer the question). Hold the code pad, pair a phone | The display says "One-time operator code"; the phone is an Operator | Set it back to Guest: that phone stays an Operator, the next one is a Guest |
+| R17 | Operator: Room, set up, edit a scene, tick "Not for guests", save | On the guest's phone the scene is gone from the Guest controls card after a reload | The Operator still starts it |
+| R18 | Operator: System > MIDI controller: teach a pad with Learn, change one control of a drawn layout, switch the lights | Each works | The pad that shows a code reads "Only the owner changes it"; no code action in the lists |
+| R19 | Operator A: People and codes, remove Operator B | B's panel returns to the pairing screen at once | A has no Remove on his own row and sees no owner |
 
 ### What to send back
 

@@ -254,10 +254,10 @@ class ManualDisplayTest(unittest.TestCase):
         self.assertIn("Full access PIN  " + self.auth.current_pin, text)
         codes = {j["role"]: j["code"] for j in self.auth.list_joins()}
         self.assertIn("Guest, watch only, code  " + codes["view"], text)
-        self.assertIn("Presenter, play and mix, code  " + codes["live"], text)
+        self.assertIn("Operator, runs the room, code  " + codes["live"], text)
         self.assertIn("http://nxlx-mastercontrol.local/", text)
         self.assertIn("Hides in 60 s", text)
-        self.assertIn("guest QR on the left, presenter QR on the right", text)
+        self.assertIn("guest QR on the left, operator QR on the right", text)
 
     def test_only_what_was_asked_for_is_shown(self):
         self.p.show(["view"], 30)
@@ -408,6 +408,7 @@ class AccessApiTest(ServerBase):
         code = self.post("/api/access/code", {"role": "view"})[1]["codes"][0]["code"]
         st, body, _ = self.call("POST", "/api/pair", {"pin": code, "name": "guest"})
         self.assertEqual((st, body["device"]["role"]), (200, "view"))
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         self.assertEqual(self.call("POST", "/api/play", {"file": "a.mp4"}, token=body["token"])[0], 403)
         self.assertEqual(self.call("GET", "/api/access", token=body["token"])[0], 403)
 
@@ -524,15 +525,15 @@ class PresenterGuestCodeTest(AccessApiTest):
         self.as_live("/api/access/code", {"role": "view", "minutes": 60, "replace": True})
         self.assertIn("in the place of the one the owner made", lines[-1])
         self.as_live("/api/access/code", {"role": "view", "minutes": 15, "uses": 3, "replace": True})
-        self.assertIn("guest code made by presenter device %s" % did, lines[-1])
+        self.assertIn("guest code made by operator device %s" % did, lines[-1])
         self.assertIn("15 minutes, 3 uses, in the place of the one the presenter made", lines[-1])
         self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 120})
-        self.assertIn("guest code put on the room screen for 120 s by presenter device %s" % did, lines[-1])
+        self.assertIn("guest code put on the room screen for 120 s by operator device %s" % did, lines[-1])
         self.assertNotIn("was made for it", lines[-1])
         self.as_live("/api/access/screen", {"show": False})
-        self.assertIn("guest code taken off the room screen by presenter device %s" % did, lines[-1])
+        self.assertIn("guest code taken off the room screen by operator device %s" % did, lines[-1])
         self.as_live("/api/access/cancel", {"role": "view"})
-        self.assertIn("guest code ended by presenter device %s" % did, lines[-1])
+        self.assertIn("guest code ended by operator device %s" % did, lines[-1])
         self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 60})
         self.assertIn("a guest code was made for it", lines[-1])
         self.as_live("/api/access/cancel", {"role": "view"})
@@ -610,12 +611,18 @@ class PresenterGuestCodeTest(AccessApiTest):
             self.post("/api/access/screen", {"show": False})
 
     def test_never_a_permanent_link_and_never_device_removal(self):
+        """Since D80 an Operator makes a guest link and removes guests and other Operators; never a link above a
+        guest, never the removal of himself or an Owner, and he sees no Owner's device (tests/test_roles.py)."""
         devices = [d["id"] for d in self.auth.list_devices()]
-        for role in ("view", "live"):
+        roles = {d["id"]: d["role"] for d in self.auth.list_devices()}
+        for role in ("live", "full"):
             self.assertEqual(self.as_live("/api/devices/invite", {"name": "x", "role": role})[0], 403)
-        self.assertEqual(self.call("GET", "/api/devices", token=self.live)[0], 403)
+        seen = self.call("GET", "/api/devices", token=self.live)[1]["devices"]
+        self.assertEqual([d["id"] for d in seen], [d for d in devices if roles[d] != "full"])
+        mine = self.auth.authenticate(self.live)["id"]
         for did in devices:
-            self.assertEqual(self.as_live("/api/devices/revoke", {"id": did})[0], 403)
+            if roles[did] == "full" or did == mine:
+                self.assertEqual(self.as_live("/api/devices/revoke", {"id": did})[0], 403)
         self.assertEqual([d["id"] for d in self.auth.list_devices()], devices)
 
     def test_limits_minutes_uses_and_one_code_that_is_not_replaced_by_accident(self):

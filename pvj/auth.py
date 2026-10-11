@@ -47,7 +47,8 @@ MAX_DEVICES = 200                               # paired devices in all
 FULL_RESERVED = 20                              # of those, places only a full-access device can take
 GUEST_IDLE_DAYS = 7                             # a device that joined with a guest code goes when unused this long
 SEEN_EVERY = 86400                              # its last use is saved at most this often (seconds)
-CONTROLLER_KINDS = {"join": "live", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs
+CONTROLLER_KINDS = {"join": "view", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs. "join" is a
+                                                        # GUEST since D80: the Operator is close to an owner, and nobody has to be there for this code
 CONTROLLER_SECONDS = 120                        # it works for this long
 CONTROLLER_PER_HOUR = 6                         # and this many are made in any hour, of both kinds together
 PER_CLIENT_FAILS, PER_CLIENT_WINDOW = 5, 60.0
@@ -89,7 +90,10 @@ def controller_setting(section):
     the first switch is turned on."""
     c = section if isinstance(section, dict) else {}
     on = c.get("enabled") is True
-    return {"enabled": on, "owner": on and c.get("owner") is True}
+    out = {"enabled": on, "owner": on and c.get("owner") is True}
+    if c.get("join") == "live":          # the join kind pairs an Operator: the owner's choice (D80). Absent: a Guest. An
+        out["join"] = "live"             # older release drops the key and pairs what it always paired
+    return out
 
 
 def generate_pin():
@@ -216,7 +220,7 @@ class Auth:
                     # The device first, the code second: if the device cannot be added (the list filled up this
                     # instant, the settings could not be saved) the code is still good and still on the display.
                     # Two requests with the same code cannot both get here: this runs under `_pair_lock`.
-                    token, device = self._add_device(name, role, via="controller")
+                    token, device = self._add_device(name, role, via="controller", chosen=role == "live")
                     self._end_controller("used")
                     self.controller_last["device"] = device["name"]
                     return token, device
@@ -280,7 +284,7 @@ class Auth:
                 self._presenter_made = [x for x in self._presenter_made if t - x < 3600.0]
                 if len(self._presenter_made) >= PRESENTER_CODES_PER_HOUR:
                     wait = int(3600.0 - (t - self._presenter_made[0])) + 1
-                    raise JoinLimit("%d guest codes were made in the last hour, which is the most a presenter may; "
+                    raise JoinLimit("%d guest codes were made in the last hour, which is the most an operator may; "
                                     "use the code that is active, wait %d minutes, or ask the owner"
                                     % (PRESENTER_CODES_PER_HOUR, -(-wait // 60)), retry_after=wait)
             for c in same:                      # one live code per role: a new one replaces the old
@@ -328,6 +332,13 @@ class Auth:
         c = controller_setting(self.settings.data.get("controller_code"))
         return c["enabled"], c["owner"]
 
+    def controller_role(self, kind):
+        """The role a controller code of this kind pairs now: the owner kind an Owner; the join kind a Guest, or an
+        Operator when the owner chose so (`controller_code.join`, D80)."""
+        if kind == "join":
+            return controller_setting(self.settings.data.get("controller_code")).get("join", "view")
+        return CONTROLLER_KINDS[kind]
+
     def _end_controller(self, how):
         """Forget the active code and keep what became of it. Call with `_pair_lock` held."""
         c, self._controller = self._controller, None
@@ -345,6 +356,8 @@ class Auth:
             self._end_controller("expired")
         elif not on or (c["kind"] == "owner" and not owner):
             self._end_controller("switched off")
+        elif c.get("role", CONTROLLER_KINDS[c["kind"]]) != self.controller_role(c["kind"]):
+            self._end_controller("switched off")           # the owner changed what the join kind pairs: the code that says the other is over
 
     def _match_controller(self, given):
         """The role of the controller code if `given` is it, else None. It is NOT used up here: pair() ends it once
@@ -354,7 +367,7 @@ class Auth:
         c = self._controller
         if not hmac.compare_digest(c["code"] if c else "x" * JOIN_LENGTH, given) or c is None:
             return None
-        role = CONTROLLER_KINDS[c["kind"]]
+        role = c["role"]
         self._prune_idle()
         if not self._room_for(role, "controller"):
             raise TooManyDevices(self.FULL_TEXT)
@@ -384,14 +397,15 @@ class Auth:
             if len(self._controller_made) >= CONTROLLER_PER_HOUR:
                 raise JoinLimit("too many codes were shown from a controller in the last hour",
                                 retry_after=int(3600.0 - (t - self._controller_made[0])) + 1)
-            if not self._room_for(CONTROLLER_KINDS[kind], "controller"):
+            role = self.controller_role(kind)
+            if not self._room_for(role, "controller"):
                 raise TooManyDevices(self.FULL_TEXT)
             self._end_controller("replaced")
             while True:
                 code = "%0*d" % (JOIN_LENGTH, secrets.randbelow(10 ** JOIN_LENGTH))
                 if code not in self._joins:
                     break
-            self._controller = {"code": code, "kind": kind, "expires": t + CONTROLLER_SECONDS, "shown": int(self._now())}
+            self._controller = {"code": code, "kind": kind, "role": role, "expires": t + CONTROLLER_SECONDS, "shown": int(self._now())}
             self._controller_made.append(t)
 
     def controller_digits(self):
@@ -401,6 +415,11 @@ class Auth:
             self._prune_controller()
             c = self._controller
             return (c["kind"], c["code"], max(0, int(c["expires"] - self._clock()))) if c else None
+
+    def controller_pairs(self):
+        """The role the code on the display pairs, for the display's own words; None when there is none."""
+        with self._pair_lock:
+            return self._controller["role"] if self._controller else None
 
     def controller_status(self):
         """What a full-access device may know: whether a code is on the display, its kind, when it was shown and
@@ -452,7 +471,7 @@ class Auth:
         presenter that joined with a code shown from a controller (anyone at the controller can make those, so
         they must not pile up). A presenter from a join code or a link, and every full-access device, stays."""
         return ((device.get("via") == "code" and device["role"] == "view")
-                or (device.get("via") == "controller" and device["role"] == "live"))
+                or (device.get("via") == "controller" and device["role"] != "full"))
 
     def _idle(self, device, now):
         return self._expires(device) and now - device.get("seen", device["created"]) > GUEST_IDLE_DAYS * 86400
@@ -467,14 +486,17 @@ class Auth:
                 self.settings.data["devices"] = keep
                 self.settings.save()
 
-    def _add_device(self, name, role, via=None):
+    def _add_device(self, name, role, via=None, chosen=False):
         """`via`: "code" for a device that joined with a join code (kept in its record; a guest that joined so is
-        the only kind that expires)."""
+        the only kind that expires). `chosen`: an Operator from a controller's code, paired while the owner's
+        setting said that code pairs an Operator (see role_of)."""
         token = secrets.token_urlsafe(24)
         device = {"id": secrets.token_hex(4), "name": str(name or "device")[:40], "role": role,
                   "token_hash": _token_hash(token), "created": int(self._now())}
         if via:
             device["via"] = via
+        if chosen:
+            device["join"] = "live"
         with self.settings.lock:
             if not self._room_for(role, via):
                 raise TooManyDevices(self.FULL_TEXT)
@@ -550,8 +572,21 @@ class Auth:
         return [dict(self._public(d), last_seen=self.last_seen.get(d["id"])) for d in self.settings.data["devices"]]
 
     @staticmethod
+    def role_of(device):
+        """The role a stored device has. One rule beside the record (D80, the owner on 2026-10-10: "Old presenters are
+        moved up to Guests"): a `live` device paired with a controller's code is a Guest, unless it was paired while
+        the owner's setting said that code pairs an Operator (the record then has "join": "live"). Before D80 anyone
+        at the controller could make such a presenter with no owner there. The record is not rewritten: an older
+        release reads the same file and gives the device what it had."""
+        if device["role"] == "live" and device.get("via") == "controller" and device.get("join") != "live":
+            return "view"
+        return device["role"]
+
+    @staticmethod
     def _public(device):
-        return {k: device[k] for k in ("id", "name", "role", "created")}
+        out = {k: device[k] for k in ("id", "name", "role", "created")}
+        out["role"] = Auth.role_of(device)
+        return out
 
     @staticmethod
     def allows(device, needed):

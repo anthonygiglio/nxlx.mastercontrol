@@ -55,6 +55,9 @@ REMOTE_DENY = {
     ("POST", "/api/theme/add"), ("POST", "/api/theme/remove"),
     # the OSC key is a secret of the studio's own network (D78); the rest of the OSC page stays readable for support
     ("POST", "/api/osc/key"),
+    # the lock on guest controls (D80): who may play with the room is decided in the room, by an Operator or an Owner
+    # who stands in it; a support session, of whatever role, neither opens the room to guests nor shuts them out
+    ("POST", "/api/guests"),
 }
 REMOTE_DENY_PREFIX = ("/api/access", "/api/https")      # /api/https: the box's key, certificate and the owner-only switch (D79)
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}

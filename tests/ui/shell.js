@@ -767,14 +767,15 @@ async function stripText(pg, post, get) {
   return looked;
 }
 
-// What each role has, with every module on (tests/ui/signal-pages.js setUp). A presenter has no page of Setup that
-// is for the owner, and the mapping card without its page; a guest has no way to let anyone in.
+// What each role has, with every module on (tests/ui/signal-pages.js setUp). "presenter" is the key of the `live`
+// device, which the panel calls an Operator since D80: he has the daily pages of Setup (Room's set-up, Schedule, At
+// power-up, MIDI controller) and the Mapping page, and none that is the Owner's; a guest has no way to let anyone in.
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
   owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'sync', 'midi', 'dmx', 'osc',
     'network', 'updates', 'support', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
-  presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'access', 'streams', 'sync', 'about'].map((x) => 'setup/' + x)),
+  presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
 };
 // pages: { owner, presenter, guest }, each a page that has just been loaded. post(url, body): as the owner.
@@ -797,7 +798,11 @@ async function roles(pages, post) {
     // staff and guests land on the Room; the owner on the pads
     assert.strictEqual(s.screen, who === 'owner' ? 'play/pads' : 'room/scenes', 'where a ' + who + ' lands');
     assert.deepStrictEqual(s.tabNames, ['Play', 'Shape', 'Room', 'Setup'], 'the areas a ' + who + ' has');
-    assert.deepStrictEqual(s.disabled, who === 'guest' ? STRIP.concat(SPEED) : s.disabled.filter((b) => b === 'prev' || b === 'next'), 'which of the strip\'s controls a ' + who + ' cannot use');
+    // a guest, guest controls being open (D80, the default): Stop and Blackout are his, Previous and Next with a
+    // playlist, and every other control of the strip is disabled; locked, all of them (panel.test.js locks and looks)
+    const steps = s.disabled.filter((b) => b === 'prev' || b === 'next');
+    assert.deepStrictEqual(s.disabled, who === 'guest' ? STRIP.concat(SPEED).filter((b) => b !== 'stop' && b !== 'black' && (steps.indexOf(b) >= 0 || (b !== 'prev' && b !== 'next'))) : steps,
+      'which of the strip\'s controls a ' + who + ' cannot use');
     assert.deepStrictEqual(await screens(pg), MENUS[who], 'the screens a ' + who + ' has');
     // a desk has the columns the role has: at 1366 px the Room of a guest is two columns, of the others three
     await pg.setViewportSize({ width: 1366, height: 800 });
@@ -809,10 +814,12 @@ async function roles(pages, post) {
     assert.deepStrictEqual((await see(pg)).cols, ['effect', 'picture', 'sound'], 'the columns of a ' + who + '\'s Shape at 1366 px');
     await pg.setViewportSize({ width: 390, height: 844 });
   }
-  // a presenter's mapping is the card without the page and its switch; a guest's Sound is Volume and Audio alone;
-  // both have Test pattern on Mapping, which a guest cannot press
+  // an Operator's mapping is the page (the mapping is his since D80) without its switch, which is the Owner's; a
+  // guest's Sound is Volume and Audio alone; both have Test pattern on Mapping, which a guest cannot press
   await go(pages.presenter, 'shape/mapping');
-  assert(await pages.presenter.evaluate(() => !!document.querySelector('#plainpage #mapcard') && !document.getElementById('sysswitch') && !!document.querySelector('#plainpage #testpattern')), 'a presenter has the mapping card, Test pattern and no switch');
+  await pages.presenter.waitForSelector('#syspage #mapcard', { timeout: 15000 });      // (a page reads its module's state before it draws its body)
+  assert(await pages.presenter.evaluate(() => !!document.querySelector('#syspage #mapcard') && !document.getElementById('sysswitch') && !!document.querySelector('#syspage #testpattern') && !document.querySelector('#syspage #testpattern').disabled),
+    'an operator has the mapping page with its card and Test pattern, and no switch');
   await go(pages.guest, 'shape/mapping');
   assert(await pages.guest.evaluate(() => { const t = document.querySelector('#plainpage #testpattern'); return !!t && t.disabled; }), 'a guest sees Test pattern on Mapping, and cannot press it');
   await go(pages.guest, 'shape/sound');
@@ -884,7 +891,7 @@ const LAYOUTS = {
   'button: E: Vibes: Ambient': LAYOUT('"E: Fade out / in" (the Launchpad\'s round buttons E to H are the screen\'s four; Vibes: Ambient is on Top 1)'),
   'button: F: Vibes: Show': LAYOUT('"F: Freeze / resume" (Vibes: Show is on Top 2)'),
   'button: Pad #.#: Effect control #': LAYOUT('nothing: the effect\'s controls as presses are gone from the Launchpad (D75, "Cost")'),
-  'button: Pad #.#: Presenter code (hold)': LAYOUT('"Top #: Presenter code (hold)" (Top 3)'),
+  'button: Pad #.#: Presenter code (hold)': LAYOUT('"Top #: Guest code (hold)" (Top 3; D80: a controller\'s join code pairs a Guest)'),
   'button: Play: Pause / resume': LAYOUT('"Play: Freeze / resume" (the panel\'s word for it)'),
   'button: R #: Fade in': LAYOUT('"R #: Fade out / in" (one fade button, on R 7 of the nanoKONTROL2)'),
   'button: R #: Fade out': LAYOUT('"R #: Fade out / in"'),
@@ -898,15 +905,19 @@ const LAYOUTS = {
   'button: Top #: Vibes on / off': LAYOUT('"Pad #.#: Vibes on / off" (row 7)'),
 };
 // what stands for them, by the card they are on
-const LAYOUT_NOW = ['button: E: Fade out / in', 'button: F: Freeze / resume', 'button: Top #: Presenter code (hold)', 'button: Play: Freeze / resume', 'button: R #: Fade out / in',
+const LAYOUT_NOW = ['button: E: Fade out / in', 'button: F: Freeze / resume', 'button: Top #: Guest code (hold)', 'button: Play: Freeze / resume', 'button: R #: Fade out / in',
   'button: Pad #.#: Next clip', 'button: Pad #.#: Previous clip', 'button: Pad #.#: Next shader', 'button: Pad #.#: Previous shader', 'button: Pad #.#: Vibes on / off'];
+// D80 renamed a control that was in the list (a Presenter is an Operator): it is held below by what stands for it.
+const OPERATOR = 'D80: the role is named Operator, so the button that ends its code reads "End the Operator (runs the room) code"';
 const MOVED = {
-  owner: Object.assign({ '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, 'button: Remove local': OWN_ROW, '#fadein': ONE_FADE }, FX_STRIP, LAYOUTS),
-  presenter: Object.assign({ '#nav-room': 'the row "Room" of a presenter\'s System index led to the Room screen\'s own cards; they are the screens of the Room area now', '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, '#fadein': ONE_FADE }, FX_STRIP),
+  owner: Object.assign({ '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, 'button: Remove local': OWN_ROW, '#fadein': ONE_FADE,
+    'button: End the Presenter (can play and mix) code': OPERATOR }, FX_STRIP, LAYOUTS),
+  // (#nav-room was here while Setup > Room was the Owner's alone: setting the room up is an Operator's since D80, so his index has the row again)
+  presenter: Object.assign({ '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, '#fadein': ONE_FADE }, FX_STRIP),
   guest: { '#livefxmore': FX_STRIP['#livefxmore'], '#shaderslink': LINK, 'button: Crossfade (soon)': CROSSFADE, '#fadein': ONE_FADE },
 };
 // What stands for each of them: the list fails if a control that replaced a removed copy is not there.
-const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn', '#fade'].concat(LAYOUT_NOW), presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#fade'], guest: ['button: Crossfade', '#fade'] };
+const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn', '#fade', 'button: End the Operator (runs the room) code'].concat(LAYOUT_NOW), presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#fade'], guest: ['button: Crossfade', '#fade'] };
 // Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D78 the OSC locks, D79 the Secure
 // connection page, D75 the controllers' new presses and the mapping mode switch): each must be found, and on the screen named here. What shows only while something plays, in
 // the pad editor's sheet (Clip or Shader, D73) or after the box gave up a transition (the reason and Try again, D71)
@@ -920,9 +931,16 @@ const ADDED = {
     // D75: the layers' buttons and the new presses on the standard layouts, and the owner's switch for mapping mode on the Mapping desk
     'button: M #: Geometry': 'MIDI controller', 'button: M #: Mapping mode': 'MIDI controller', 'button: M #: Rotate': 'MIDI controller', 'button: Top #: Mapping mode': 'MIDI controller',
     'button: Top #: Rotate': 'MIDI controller', 'button: Top #: Overlay': 'MIDI controller', 'button: Top #: Sound off / on': 'MIDI controller',
-    'button: Pad #.#: Back # s': 'MIDI controller', 'button: Pad #.#: Forward # s': 'MIDI controller', '#mapremote': 'Mapping' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
-  presenter: Object.assign({}, TRANSITIONS),
-  guest: Object.assign({}, TRANSITIONS),
+    'button: Pad #.#: Back # s': 'MIDI controller', 'button: Pad #.#: Forward # s': 'MIDI controller', '#mapremote': 'Mapping',
+    // D80: the lock, what a controller's join code pairs, a scene's mark "Not for guests"
+    '#guestlock': 'People and codes', '#ctlcode-join': 'People and codes', '#roomsnoguests': 'Setup index > Room' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
+  // D80, an Operator: the lock on guest controls and a guest link; the rows of Setup that are his now, the room's
+  // set-up with a scene's mark, the mapping's own controls, a clip to upload
+  presenter: Object.assign({ '#guestlock': 'People and codes', '#makeguestlink': 'People and codes', '#nav-schedule': 'setup/index', '#nav-autostart': 'setup/index',
+    '#nav-midi': 'setup/index', '#roomsnoguests': 'Setup index > Room', '#mapedit': 'shape/mapping', '#uploadbtn': 'play/' }, TRANSITIONS),
+  // D80, a Guest while guest controls are open (the default): his card on Room > Scenes. Stop and Blackout are the
+  // strip's own buttons, which were in the list before, disabled
+  guest: Object.assign({ '#gplay': 'room/scenes', '#gvibes': 'room/scenes', '#gshow': 'room/scenes', '#gprojon': 'room/scenes', '#gprojoff': 'room/scenes' }, TRANSITIONS),
 };
 // o: { open(token) -> a page loaded with that token (null: the owner's, already paired), prepare: the t for
 // inventory.prepare (its page is the owner's), log(text) }. The box behind it has no player (see inventory.js).

@@ -1232,6 +1232,7 @@ class ApiTest(ServerBase):
         self.assertEqual(self.post("/api/projector", {"id": pid, "action": "on"})[0], 200)
         live = self.post("/api/devices/invite", {"name": "g", "role": "live"})[1]["token"]
         view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         self.assertEqual(self.post("/api/projector", {"id": pid, "action": "input", "input": "31"}, token=view)[0], 403)
         st, body, _ = self.post("/api/projector", {"id": pid, "action": "input", "input": "31"}, token=live)
         self.assertEqual((st, body["results"][pid], self.fake.input), (200, {"ok": True, "pending": False}, "31"))
@@ -1382,6 +1383,7 @@ class ApiTest(ServerBase):
         view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
         live = self.post("/api/devices/invite", {"name": "g", "role": "live"})[1]["token"]
         self.assertEqual(self.call("GET", "/api/projectors", token=view)[0], 200)
+        self.settings.data["guest_controls"] = {"locked": True}       # a guest who only watches; what he may do while open is tests/test_roles.py
         self.assertEqual(self.post("/api/projector", {"id": "all", "action": "on"}, token=view)[0], 403)
         self.assertEqual(self.post("/api/projectors", {"add": {"host": "192.168.0.5"}}, token=live)[0], 403)
 

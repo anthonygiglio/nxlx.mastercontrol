@@ -1340,7 +1340,9 @@ function startServer(env) {          // env: more for the harness's environment 
         throw new Error('room ' + role + ': not on Room > Walls with the painting wall warming up: ' + JSON.stringify(seen) + ' problems: ' + problems.join('; '));
       }
       assert.strictEqual(await staff.locator('#roomalloff').count(), role === 'view' ? 0 : 1, role + ': All off');
-      assert.strictEqual(await staff.locator('#roomsetup').count(), 0, role + ': no set-up');
+      assert.strictEqual(await staff.locator('#roomsetup:visible').count(), 0, role + ': no set-up among the Room\'s screens (it is Setup > Room, the Owner\'s and since D80 the Operator\'s)');
+      assert.strictEqual(await staff.locator('#roomsetup').count(), role === 'view' ? 0 : 1, role + ': the set-up is built for an Operator since D80, never for a guest');
+      assert.strictEqual(await staff.locator('#guestlockcard #guestlock').count(), role === 'view' ? 0 : 1, role + ': the lock on guest controls, on Room > Guests');
       assert.strictEqual(await staff.locator('#roomambience, #roomamboff').count(), 0, role + ': nothing about ambience while Shaders and Vibes is off');
       // Letting a guest in is a screen of Room for staff (a presenter), and not there for a guest
       assert.strictEqual(await staff.locator('#roomletin').count(), role === 'view' ? 0 : 1, role + ': Let someone in');
@@ -1678,9 +1680,9 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === 'rgb(0, 0, 0)');
     await onPage('Look');
     await sys('People and codes');
-    assert.deepStrictEqual(await page.$$eval('#linkrole option', (os) => os.map((o) => o.textContent)), ['Guest (can watch)', 'Presenter (can play and mix)'], 'the link roles, in the one vocabulary');
+    assert.deepStrictEqual(await page.$$eval('#linkrole option', (os) => os.map((o) => o.textContent)), ['Guest (can watch)', 'Operator (runs the room)'], 'the link roles, in the one vocabulary');
     assert(/Owner \(everything\)/.test(await page.textContent('#devicescard')), 'this device is named Owner (everything) in the list');
-    assert(!/watch only|View only|\(play and mix\)/.test(await page.textContent('#sysbody')), 'no other names for the roles on People and codes: ' + await page.textContent('#sysbody'));
+    assert(!/watch only|View only|\(play and mix\)|[Pp]resenter/.test(await page.textContent('#sysbody')), 'no other names for the roles on People and codes: ' + await page.textContent('#sysbody'));
     // The owner PIN (D77): not on the screen until Show, then the box's own PIN, gone again by itself; Copy; this
     // device marked in the list with Log out, whose question (as the last owner device) shows the PIN; all of it
     // at 320 px without anything leaving its card.
@@ -1721,6 +1723,8 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#confirmyes');
     await page.waitForSelector('#ctlcode-owner');
     assert.deepStrictEqual(await get('/api/access').then((a) => [a.controller.enabled, a.controller.owner, a.controller.status.active]), [true, false, false], 'on, without the full access kind');
+    await page.waitForSelector('#ctlcode-join');
+    assert.strictEqual(await page.inputValue('#ctlcode-join'), 'view', 'a controller\'s join code pairs a guest unless the owner chooses an operator');
     assert(/No code has been shown from a controller/.test(await page.textContent('#ctlcodelast')), 'the card says nothing was shown yet');
     await page.click('#ctlcode-owner');
     await page.waitForSelector('#ctlcodecard #confirmrow');
@@ -1840,8 +1844,36 @@ function startServer(env) {          // env: more for the harness's environment 
     guest.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push('guest: ' + m.text()); });
     await guest.goto(guestLink.replace(/^https?:\/\/[^/]+/, base));
     await guest.waitForSelector('.pads');
-    assert(await guest.isDisabled('#black'), 'view-only guest cannot blackout');
-    assert(await guest.isDisabled('#stop'), 'view-only guest cannot stop');
+    // Guest controls (D80): open unless locked. A card of the guest's own (at the top of Play > Pads on a box without the
+    // Room, of Room > Scenes with it), and in the strip the four controls the box takes from a guest; the owner locks
+    // and the guest reads one plain line, with every control of the strip disabled
+    const stripOf = () => guest.$$eval('#wstp button[id], #wstp input', (els) => els.filter((e) => !e.disabled).map((e) => e.id).sort());
+    await guest.waitForSelector('#padsscreen > #guestcard #guesthint');
+    assert.strictEqual(await guest.locator('#guestcard button:disabled').count(), 0, 'nothing disabled among the guest controls');
+    assert.strictEqual(await guest.locator('#gstop, #gblack, #gprev, #gnext').count(), 0, 'Stop, Blackout, Previous and Next are the strip\'s: no second copy in the guest\'s card');
+    assert.deepStrictEqual((await stripOf()).filter((id) => id !== 'prev' && id !== 'next'), ['black', 'stop', 'wsmore'], 'a guest with guest controls open has Stop and Blackout in the strip (Previous and Next with a playlist), and nothing else');
+    {     // a guest's Blackout is taken by the box, on and off again (Stop is not pressed here: it would end what the next steps look at)
+      assert(!(await guest.isDisabled('#stop')), 'a guest can press Stop');
+      const dark = guest.waitForResponse((r) => r.url().endsWith('/api/blackout') && r.request().method() === 'POST');
+      await guest.click('#black');
+      assert.strictEqual((await dark).status(), 200, 'a guest\'s Blackout');
+      await guest.waitForSelector('#black:text-is("Show")', { timeout: 20000 });
+      await guest.waitForTimeout(2100);
+      const light = guest.waitForResponse((r) => r.url().endsWith('/api/blackout') && r.request().method() === 'POST');
+      await guest.click('#black');
+      assert.strictEqual((await light).status(), 200, 'a guest takes the blackout off again');
+      await guest.waitForSelector('#black:text-is("Blackout")', { timeout: 20000 });
+    }
+    assert.strictEqual(await post('/api/guests', { locked: true }), 200);
+    await guest.waitForSelector('#guestlocked:has-text("The room is locked for a show: you can watch")', { timeout: 20000 });
+    assert.strictEqual(await guest.locator('#guestcard').count(), 0, 'no guest controls while they are locked');
+    assert.deepStrictEqual(await stripOf(), ['wsmore'], 'locked: a guest can press nothing in the strip but More');
+    assert(await guest.isDisabled('#black'), 'a guest who only watches cannot blackout');
+    assert(await guest.isDisabled('#stop'), 'a guest who only watches cannot stop');
+    assert.strictEqual(await post('/api/guests', { locked: false }), 200);
+    await guest.waitForSelector('#guestcard #guesthint', { timeout: 20000 });
+    assert(!(await guest.isDisabled('#stop')) && !(await guest.isDisabled('#black')), 'open again: Stop and Blackout are back');
+    assert(await guest.isDisabled('#freeze') && await guest.isDisabled('#fade') && await guest.isDisabled('#seek'), 'a guest never has Freeze, the fades or the place in the clip');
     assert(!(await guest.isVisible('text=Edit pads')), 'view-only guest cannot edit pads');
     assert.strictEqual(await guest.evaluate(() => location.hash), '', 'token removed from the URL');
     // A guest's Setup has only what a guest can use: no disabled lists
@@ -1901,7 +1933,11 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await scanner.inputValue('#joincode'), joinCode, 'the scanned code is filled in');
     await scanner.click('#joinbtn');
     await scanner.waitForSelector('.pads');
-    assert(await scanner.isDisabled('#black'), 'a guest code gives view-only access');
+    // a guest code gives a guest's access (D80): his own card, Stop and Blackout while guest controls are open, and
+    // nothing of the Operator's
+    await scanner.waitForSelector('#guestcard #guesthint');
+    assert(await scanner.isDisabled('#freeze') && await scanner.isDisabled('#fade') && await scanner.isDisabled('#seek'), 'a guest code gives a guest\'s access: no Freeze, no fade, no place in the clip');
+    assert(!(await scanner.isDisabled('#black')) && !(await scanner.isVisible('text=Edit pads')), 'a guest has Blackout while guest controls are open, and never Edit pads');
     await scanCtx.close();
 
     // Shaders and Vibes: one page holds everything about shaders. Switch the module on there, start the rotation with
@@ -2632,19 +2668,16 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(!(await presenter.isDisabled('#vibes')), 'a presenter can use the Vibes button');
     await go(presenter, 'play/shaders');
     await presenter.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
-    assert.deepStrictEqual(await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id)), ['shadernow', 'shadercard'], 'a presenter gets no settings and no links to MIDI and DMX');
-    assert.strictEqual(await presenter.locator('#syspage .switch').count(), 0, 'no module switch and no rotation switches for a presenter');
-    assert.strictEqual(await presenter.locator('#shaderupload, #vibesdwell, #vibesvary, #shaderpage button:has-text("Remove")').count(), 0, 'no upload, settings or Remove for a presenter');
-    assert.strictEqual(await presenter.locator('#shaderheight, #shaderguard, #setadd, #setlist, #shaderpage [data-midi], #shaderpage button:has-text("Put it back")').count(), 0, 'no picture detail, guard, sets to edit or MIDI teaching for a presenter');
+    // An Operator (D80; "presenter" in the names below is the same live-role device): the settings of the page are his,
+    // the module's switch and the links to MIDI and DMX stay the Owner's
+    assert((await presenter.$$eval('#shaderpage .card', (cs) => cs.map((x) => x.id))).includes('shadercard'), 'an operator gets the shader list');
+    assert.strictEqual(await presenter.locator('#sysswitch, #shaderdmx').count(), 0, 'no module switch and no DMX for an operator (MIDI teaching is his since the owner\'s answer of 2026-10-10)');
     assert.strictEqual(await presenter.locator('#shadercard button[aria-label^="Play "]').count(), (await get('/api/shaders')).shaders.length, 'a presenter can play each shader');
-    assert(/in Vibes/.test(await presenter.textContent('#shadercard [data-shader="nxlx-tide.fs"]')), 'a presenter reads whether a shader is in Vibes');
-    assert.strictEqual(await presenter.locator('#syspage button:disabled').count(), 0, 'nothing disabled on a presenter\'s Shaders page');
     await presenter.click('#shadercard [data-shader="nxlx-tide.fs"] button[aria-label="Play Tide"]');
     await presenter.waitForFunction(() => (document.getElementById('shaderplaying') || {}).textContent === 'Tide');
     await presenter.waitForSelector('#shin-speed');                  // a presenter gets the controls
     // a presenter moves controls and applies presets, and saves none
-    await presenter.waitForSelector('#nopresets:has-text("Someone with full access saves them")');
-    assert.strictEqual(await presenter.locator('#presetsave, #presetname, #presetmore').count(), 0, 'a presenter cannot save, rename or delete a preset');
+    await presenter.waitForSelector('#nopresets:has-text("None yet. Set the controls as you like them, then save.")');     // saving a preset is the Operator's since D80
     assert.strictEqual(await post('/api/shaders/presets', { action: 'save', id: 'nxlx-tide.fs', name: 'Calm' }), 200);       // the owner saves one
     await presenter.waitForSelector('#presetrow [data-preset="Calm"]', { timeout: 20000 });
     {
@@ -2674,8 +2707,15 @@ function startServer(env) {          // env: more for the harness's environment 
     await presenter.waitForSelector('.pads:visible');
     await go(presenter, 'setup/index');
     await presenter.waitForSelector('#sysindex');
-    assert.deepStrictEqual(await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent)),
-      ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'Streams', 'Boxes in step', 'About and power'], 'the rows a presenter sees');
+    {     // an Operator's rows (D80): what a presenter had, the daily pages that were the owner's, and nothing system critical
+      const rows = await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent));
+      for (const name of ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'At power-up', 'Streams', 'Boxes in step', 'About and power']) {
+        assert(rows.includes(name), 'an operator sees ' + name + ': ' + rows.join(', '));
+      }
+      for (const name of ['Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'DMX lighting desk', 'OSC']) {
+        assert(!rows.includes(name), 'an operator does not see ' + name + ': ' + rows.join(', '));
+      }
+    }
     assert.strictEqual(await presenter.locator('#notbuilt').count(), 0, 'a presenter gets no list of modules');
     // A presenter's People and codes (D48): the guest code and nothing else. The owner has a guest code and a
     // presenter code active; the presenter sees the first, is asked before replacing or ending it, and never sees
@@ -2731,9 +2771,9 @@ function startServer(env) {          // env: more for the harness's environment 
       ['/api/access/code', { role: 'live' }], ['/api/access/code', { role: 'view', minutes: 121, replace: true }], ['/api/access/code', { role: 'view', uses: 21, replace: true }],
       ['/api/access/cancel', { all: true }], ['/api/access/cancel', { role: 'live' }], ['/api/access/cancel', { code: digits }],
       ['/api/access/screen', { show: true, items: ['pin'] }], ['/api/access/screen', { show: true, items: ['view', 'live'] }],
-      ['/api/devices/invite', { name: 'x', role: 'view' }], ['/api/devices/revoke', { id: 'x' }], ['/api/pin/rotate', {}], ['/api/pin/unlock', {}]
+      ['/api/devices/invite', { name: 'x', role: 'live' }], ['/api/pin/rotate', {}], ['/api/pin/unlock', {}]
     ].map((x) => fetch(x[0], { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(x[1]) }).then((r) => r.status))), ownersPresenter);
-    assert.deepStrictEqual(refused, [403, 400, 400, 403, 403, 403, 403, 403, 403, 403, 403, 403], 'what a presenter is refused');
+    assert.deepStrictEqual(refused, [403, 400, 400, 403, 403, 403, 403, 403, 403, 403, 403], 'what an operator is refused (D80: also a link above a guest; whom he may remove is in tests/test_roles.py)');
     assert.strictEqual(await presenter.evaluate(() => fetch('/api/qr.svg?for=live').then((r) => r.status)), 403, 'no QR code of the presenter code for a presenter');
     assert.strictEqual(await presenter.evaluate(() => fetch('/api/access/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"role":"view","replace":true}' }).then((r) => r.status)), 403,
       'and nothing without the request header (CSRF)');
@@ -2763,8 +2803,13 @@ function startServer(env) {          // env: more for the harness's environment 
         await presenter.click(`.navrow:has(.navname:text-is("${name}"))`);
         await presenter.waitForSelector(marker);
         await fitsOn(presenter, `a presenter's ${name} page at ${width}`);
-        assert.strictEqual(await presenter.locator('#sysswitch, .addform, .addopen, .savebar, #powercard, #audiodev, #syncroles, #devicescard, #syspage button:text-is("Remove"), #syspage button:text-is("Edit")').count(), 0,
-          `nothing to set the box up with on a presenter's ${name} page`);
+        // An Operator (D80): the sound output is his, and so are the guests on People and codes (a card of its own, with Remove);
+        // nothing else on these pages sets the box up
+        assert.strictEqual(await presenter.locator('#sysswitch, .addform, .addopen, #powercard, #syncroles, #devicescard, #syspage button:text-is("Edit")').count(), 0,
+          `nothing to set the box up with on an operator's ${name} page`);
+        if (name !== 'Sound') assert.strictEqual(await presenter.locator('.savebar, #audiodev').count(), 0, `no setting to save on an operator's ${name} page`);
+        assert.strictEqual(await presenter.locator('#syspage button:text-is("Remove")').count(), await presenter.locator('#guestdevices button:text-is("Remove")').count(),
+          `Remove only for guests and operators on an operator's ${name} page`);
         await back(presenter);
         await presenter.waitForSelector('#sysindex');
       }
@@ -2813,7 +2858,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await fitsOn(page, "the owner's Room screen with the picture detail line");
       const staff = await open(tokens[0], 'ambience presenter');
       await staff.waitForSelector('#roomambset:visible');
-      assert.strictEqual(await staff.locator('#roomambdetail, #roomambuse').count(), 0, 'a presenter is not told about the picture detail');
+      assert.strictEqual(await staff.locator('#roomambdetail').count(), 1, 'the picture detail is the Operator\'s too since D80');
       await page.click('#roomambuse');
       await page.waitForFunction(() => document.getElementById('roomambdetail').hidden, null, { timeout: 15000 });
       assert.strictEqual((await get('/api/shaders')).config.height, usual, 'Use ' + usual + ' on Room applies on tap');
