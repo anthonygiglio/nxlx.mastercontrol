@@ -1232,6 +1232,10 @@ class Receiver:
             self._queued += n / float(rate)
         self._apts = until
 
+    def _fill_due(self, upto):
+        """Whether _fill would write silence now. Called with the lock held."""
+        return self.audio is not None and upto - (self._apts or 0.0) > max(AUDIO_WINDOW, 2 * self._block + 0.1)
+
     def _fill(self, upto):
         """The writer's question, asked with the lock held and after the queue was taken: has the sound left a
         stretch open before the picture at `upto`? Then (start, samples) of silence for it, and the count moved past
@@ -1374,11 +1378,21 @@ class Receiver:
                 if self.state == "ready":
                     self.state = "playing"
             while not self._stop.is_set():
-                blocks, buf, at, fill, again = (), None, 0.0, None, False
+                blocks, buf, at, fill, again, quiet = (), None, 0.0, None, False, False
                 with self._cond:
                     while self._pending is None and not self._queue and not self._stop.is_set():
                         if kept is not None and self._clock() - kept_at >= STILL_AGAIN_SECONDS:
                             again = True
+                            break
+                        if mkv and self._fill_due(self._clock() - self._t0):
+                            # Neither a picture nor sound came, and the sound track has fallen behind the clock:
+                            # silence is written for it NOW, not when something next comes. The sound's times in
+                            # the stream then never jump. A stream whose sound went on 6 s after it had stopped
+                            # was given one second of silence and a jump of five: mpv takes a jump of 5 s or more
+                            # in the sound's times for a new beginning and starts both tracks again, and under a
+                            # picture that stands it waits for a picture that never comes ("Reset playback due to
+                            # audio timestamp reset"; core-idle, no sound: CI's mpv 0.40, 2026-10-12).
+                            quiet = True
                             break
                         self._cond.wait(0.05 if kept is not None else 0.25)
                     if self._queue:
@@ -1386,9 +1400,9 @@ class Receiver:
                         self._queue.clear()
                     if self._pending is not None:
                         buf, self._pending, at = self._pending, None, self._at
-                    if mkv and (buf is not None or blocks):
+                    if mkv and (buf is not None or blocks or quiet):
                         fill = self._fill(self._clock() - self._t0)
-                if buf is None and not blocks and not again:
+                if buf is None and not blocks and not again and not quiet:
                     break
                 if mkv and not self._write_sound(fd, blocks, fill):
                     if buf is not None:

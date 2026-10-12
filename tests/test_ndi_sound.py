@@ -697,6 +697,31 @@ class ReceiverSoundTest(Base):
         self.assertTrue(any(audio[1][2]))
         self.assertEqual(r.status()["audio"]["counts"]["received"], 1)                   # the silence is not a block of the sender's
 
+    def test_under_a_picture_that_stands_sound_that_stops_for_seconds_leaves_no_jump_in_the_sounds_times(self):
+        """One picture, a tenth of a second of sound, nothing for six seconds, then sound (CI's stand-in "after a
+        long gap", and what a sender does whose sound is switched on late). The stream had one second of silence
+        and a jump of five; mpv 0.40 starts both tracks again at a jump of 5 s and then waits for a picture."""
+        r = self.start_with_sound()
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.now[0] += 0.1
+        self.lib.sounds.put(sound(4800))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))
+        for _ in range(24):                                                              # six seconds with nothing from the sender
+            self.now[0] += 0.25
+            time.sleep(0.08)
+        for k in range(2, 6):
+            self.now[0] += 0.1
+            self.lib.sounds.put(sound(4800))
+            self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == k), k)
+        audio = [b for b in self.stream() if b[0] == 2]
+        ends = [b[1] + len(b[2]) / 8 / 48000.0 for b in audio]
+        jumps = [round(b[1] - e, 3) for e, b in zip(ends, audio[1:]) if abs(b[1] - e) > 0.001]
+        self.assertEqual(jumps, [], [round(b[1], 3) for b in audio])                     # each block begins where the one before ended
+        self.assertAlmostEqual(audio[0][1], 0.0, places=3)
+        self.assertGreater(ends[-1], 6.2)
+        self.assertGreater(r.status()["audio"]["counts"]["filled"], 5)                   # as time passed, not in one piece at the end
+        self.assertEqual(len([b for b in self.stream(whole=True) if b[0] == 1]), 2)      # and no picture was written for it
+
     def test_a_player_that_reads_nothing_for_seconds_after_opening_the_pipe_gets_a_stream_that_begins_whole(self):
         """The stream's clock began when the pipe was opened: a player that then read nothing for 4.7 seconds was
         given a first picture at time 0, and the next picture and the first sound seconds after it."""
