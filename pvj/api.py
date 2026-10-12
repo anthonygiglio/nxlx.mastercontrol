@@ -3105,6 +3105,8 @@ class Api:
             if again is not None and self.ndi.current is not again:
                 return {"playing": None}
             ticket = self.ndi.ticket()
+            if again is None:
+                self.ndi._stuck_once = False       # a press is a first time: its one "shown again" is its own
             # The tap: the newest wish from now on, as a clip's tap is (D71, transitions.claim). A clip tapped after
             # this, whose load may come later still (after its dip), is newer than this source: the source then
             # gives way at `ready` and is never loaded over the clip's way down.

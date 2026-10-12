@@ -1539,3 +1539,13 @@ Why: D62's groups and discovery settings point the box at a discovery server; a 
 Rejected: bundling the program (the licence); the panel starting a unit through the root helper (a new root action reachable from the panel, where a socket and an idle supervisor need none); DynamicUser (the panel could not reach its socket); binding to every address by default; following the address to another network when the chosen one loses its own; reading registrations out of the server's private protocol.
 
 Cost and what is not known: a second closed program on the box; an idle Python supervisor on boxes that set it up; a changed address means telling every sender again. **NDI's program has never been run by this project**: that it starts under this sandbox, that its arguments behave as documented, and everything a real network shows are device steps N27 to N30. See [pvj/NDI.md](../pvj/NDI.md) and SECURITY.md.
+
+## D86. NDI with sound: the player's buffering pause is off for that load, and a picture that stands is written once more (2026-10-12)
+
+A source whose picture stands while its sound goes on (one test picture and a tone; a paused video) is played like this: the Matroska stream is loaded with mpv's `cache-pause=no`, and the helper writes a picture that no other has followed for half a second once more (the stream's first picture at once, a millisecond after itself).
+
+Why both. mpv takes a picture track that has run dry for a slow network and pauses everything until a picture comes: no sound for as long as the picture stands, and afterwards everything as late as it stood, for good. That is a player's rule, and it is the player's option that ends it. The second picture is for two other things: mpv 0.38 and later do not finish opening a stream until its picture track has two blocks with different times, and every mpv shows a picture only once it has the one after it.
+
+Rejected: writing the still again and again at a slow rate and leaving the pause on (measured: it plays, but about as late as the gap between the repeats, and it costs 4 MB a time for as long as the picture stands); a rule in the panel that waits for mpv's clock to move (while a picture stands, mpv's `time-pos` stands by design).
+
+Cost and what is not known: one more buffer of the frame's size in the helper, and one more frame written per still. Measured on the test Pi with mpv 0.40 run by hand, without a screen or a sound device; the box's own player has not shown it yet, and mpv 0.37 only through CI. See [pvj/NDI.md](../pvj/NDI.md).

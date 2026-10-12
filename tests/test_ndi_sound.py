@@ -1455,7 +1455,7 @@ class RealMpvTest(Base):
             pictures = sorted(os.listdir(out))
             written = st["counts"]["shown"]
             self.assertGreaterEqual(len(pictures), written - 5, tail)                    # a frame or two may be left out where the stream starts or ends
-            self.assertLessEqual(len(pictures), written, tail)
+            self.assertLessEqual(len(pictures), written + 2, tail)                       # and the first picture is in the stream twice, and a picture that stood once more
             self.assertGreater(len(pictures), 20, tail)
             for name in (pictures[0], pictures[len(pictures) // 2], pictures[-1]):
                 red, green, blue = png_pixel(os.path.join(out, name), w // 2, h // 2)
@@ -1537,7 +1537,7 @@ class RealMpvTest(Base):
         self.assertTrue(r.first.wait(3))
         self.assertEqual(r.decide(), "matroska")
         cmd = [MPV, "--no-config", "--no-terminal", "--idle=no", "--log-file=" + log, "--msg-level=all=v", "--vo=null", "--ao=null",
-               "--demuxer=mkv", "--cache=no", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=" + limit] + mkv_only() + [self.fifo]
+               "--demuxer=mkv", "--cache=no", "--cache-pause=no", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=" + limit] + mkv_only() + [self.fifo]
         mpv = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: mpv.poll() is None and mpv.kill())
         try:

@@ -135,7 +135,7 @@ class Ipc:
                         return msg.get("data")
             raise PlayerError("no reply from mpv")
         except (ConnectionRefusedError, FileNotFoundError):
-            raise PlayerError("player is not running")
+            raise PlayerError("player is not running")       # these words are Player.NOT_RUNNING
         except OSError as e:
             raise PlayerError("ipc error: %s" % e)
         finally:
@@ -574,12 +574,15 @@ class Player:
                         return True
                     time.sleep(0.02)
                 return False
-            except PlayerError:
+            except PlayerError as e:
                 # No answer is not "let go": a player that is busy (stuck on the stream) answers late or not at
-                # all and still has the pipe. Only a player that is not there holds nothing.
-                return not self.is_running()
+                # all and still has the pipe. Only a player that is not there (nothing listens on its socket: the
+                # one error Ipc.request gives these words) holds nothing. Not is_running(): that asks over the
+                # same socket and would take a player that is silent for one that is gone.
+                return str(e) == self.NOT_RUNNING
 
     RELEASE_SECONDS = 1.5
+    NOT_RUNNING = "player is not running"
 
     def quit(self):
         """End the mpv process (the service's unit starts a new one). What was loaded goes with it."""

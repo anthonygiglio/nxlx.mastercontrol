@@ -2670,7 +2670,7 @@ class PlayerLetsGoTest(NdiApiTest):
         self.assertEqual(set(new.got), {2})
 
     def test_the_player_is_told_to_let_go_only_of_the_pipe_it_was_given_last_and_asked_until_it_is_idle(self):
-        from pvj.player import Player, PlayerError
+        from pvj.player import Ipc as Ipc_real, Player, PlayerError
         sent, idle = [], [False, False, True]
 
         class Ipc:
@@ -2679,7 +2679,7 @@ class PlayerLetsGoTest(NdiApiTest):
             def request(self, *a):
                 sent.append(a)
                 if self.down:
-                    raise PlayerError("down")
+                    raise PlayerError(self.down)
                 if a == ("get_property", "idle-active"):
                     return idle.pop(0) if len(idle) > 1 else idle[0]
                 if a == ("get_property", "path"):
@@ -2709,11 +2709,14 @@ class PlayerLetsGoTest(NdiApiTest):
         p.path = "/media/a.mp4"
         self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # mpv plays a clip: nothing is stopped
         self.assertEqual(sent[-1], ("get_property", "path"))
-        p._pipe, p.ipc.down = True, True
-        p.is_running = lambda: True
+        p._pipe, p.ipc.down = True, "no reply from mpv"
         self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), False)      # no answer from a player that is there: not "let go"
-        p.is_running = lambda: False
+        p.ipc.down = Player.NOT_RUNNING
         self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), True)       # a player that is not there holds nothing
+        try:                                                                    # and these are the words the real Ipc gives for it
+            Ipc_real(os.path.join(tempfile.mkdtemp(), "none.sock")).request("get_property", "pid")
+        except PlayerError as e:
+            self.assertEqual(str(e), Player.NOT_RUNNING)
 
     def test_a_player_that_does_not_confirm_it_let_go_is_not_written_over_and_the_page_says_so(self):
         self.enable()
