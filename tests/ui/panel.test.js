@@ -1155,7 +1155,8 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForFunction(() => fetch('/api/ndi/discovery').then((r) => r.json()).then((d) => d.network === 'all' && d.port === 6000));
       const before = page.viewportSize();
       await page.setViewportSize({ width: 320, height: before.height });
-      const dsOut = await page.$$eval('#ndisccard *, #ndiscsetcard *, #ndiscnotecard *', (els) => els.filter((e) => { const card = e.closest('.card').getBoundingClientRect(), r = e.getBoundingClientRect();
+      // asked and measured in one step in the page: between two steps the saved answer draws the cards again (seen in CI, 2026-10-12)
+      const dsOut = await page.evaluate(() => Array.from(document.querySelectorAll('#ndisccard *, #ndiscsetcard *, #ndiscnotecard *')).filter((e) => { const card = e.closest('.card').getBoundingClientRect(), r = e.getBoundingClientRect();
         return r.width && (r.right > card.right + 1 || r.left < card.left - 1); }).map((e) => e.textContent.slice(0, 40)));
       assert.deepStrictEqual(dsOut, [], 'text sticks out of the discovery server cards at 320 px: ' + JSON.stringify(dsOut));
       await fitsPhone('NDI discovery server, not set up');
