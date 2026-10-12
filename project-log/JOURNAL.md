@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-11, winding down on the Mac: what merged, what the Pi runs, the move
+
+The owner asked to wind everything down, back it up and prepare the move to his HP. No builder was running by then.
+
+- **Merged today:** #120 (roles, D80), #122 (owner recovery, D81), #123 (OSC replies, D82), #124 (OSC defaults and control names, D83), #94 (NDI input, pads, groups, discovery server; D62 amended, D85), #125 (remote sessions, D84). Each had an independent review and re-checks until nothing above Low was open; the reviews' outcomes are comments on the pull requests.
+- **The test Pi:** master 87c4f6a since 01:38 UTC on 2026-10-12, by the checklist the reviewer wrote for a box that still had the NDI trial's helper: the installer rewrote the helper's unit and made `/run/pvj-ndi-pipe` and `/run/pvj-ndi-config` without a reboot; `pvj-ndi-runtime install` and `server install` placed the owner's copies (checksums equal to his download). Both NDI modules were left off. The owner's OSC settings were read before and after the deploy of f36f8f0 and were the same.
+- **A slip of the coordinator's:** after #94 merged, master's own CI was red on two rollback tests that used `origin/master` as "the release before NDI": on master they compared the code with itself. The deployed tree was the tested one, but master should not have been left to show red; the tests are pinned to the commit before NDI since #125. A lesson is in LESSONS.md.
+- **Two tests that failed by chance** on #125's last run and are mended there: a four digit PIN "found" inside the timestamp of a diagnostics file, and a process that ended between a test's two looks.
+- **HANDOFF.md** has a new section "State on 2026-10-11"; the 2026-10-08 section under it is kept as history.
+- **Open:** see that section's "Queued" and "Not yet tried by a person on hardware".
+
 ## 2026-10-11, what a remote support session may do (`support-reach`, #125, D84; a draft, security review before any merge)
 
 The owner asked what an Owner may do from a remote support session, suggested "everything since it is a 'phone for help' solution", was advised "nearly everything", and said "proceed with ... your recommendations for the remote sessions". The principle is D84's first line: anything that ends when the session ends, nothing that outlives it or locks the owner out.
