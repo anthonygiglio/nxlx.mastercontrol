@@ -706,9 +706,18 @@ class ReceiverSoundTest(Base):
         self.now[0] += 0.1
         self.lib.sounds.put(sound(4800))
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))
+        def due():
+            with r._cond:
+                return r._fill_due(self.now[0] - r._t0)
         for _ in range(24):                                                              # six seconds with nothing from the sender
+            # The writer looks at the clock when it wakes (every quarter second of REAL time), and this clock is
+            # the test's: so it is woken at each step and waited for. Without that, a loaded machine let more
+            # than a second of this clock pass between two looks, and the writer then rightly wrote its one
+            # bounded jump (that is test_a_writer_that_was_away..., below), which is not what is asked here.
             self.now[0] += 0.25
-            time.sleep(0.08)
+            with r._cond:
+                r._cond.notify_all()
+            self.assertTrue(wait(lambda: not due(), 5))
         for k in range(2, 6):
             self.now[0] += 0.1
             self.lib.sounds.put(sound(4800))
@@ -721,6 +730,26 @@ class ReceiverSoundTest(Base):
         self.assertGreater(ends[-1], 6.2)
         self.assertGreater(r.status()["audio"]["counts"]["filled"], 5)                   # as time passed, not in one piece at the end
         self.assertEqual(len([b for b in self.stream(whole=True) if b[0] == 1]), 2)      # and no picture was written for it
+
+    def test_a_writer_that_was_away_for_seconds_writes_one_second_of_silence_and_one_jump_never_all_of_it(self):
+        """The bound: silence is for a hole of up to a second (AUDIO_QUEUE_SECONDS). A writer that could not look
+        for five seconds does not write five seconds of silence in one piece; the times jump once."""
+        r = self.start_with_sound()
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.now[0] += 0.1
+        self.lib.sounds.put(sound(4800))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))
+        self.now[0] += 5.0                                                               # one step: nothing looked meanwhile
+        with r._cond:
+            r._cond.notify_all()
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["filled"] >= 1))
+        time.sleep(0.4)
+        audio = [b for b in self.stream() if b[0] == 2]
+        ends = [b[1] + len(b[2]) / 8 / 48000.0 for b in audio]
+        jumps = [round(b[1] - e, 2) for e, b in zip(ends, audio[1:]) if abs(b[1] - e) > 0.001]
+        self.assertEqual(jumps, [4.0], [round(b[1], 3) for b in audio])
+        self.assertLessEqual(sum(len(b[2]) for b in audio[1:]) / 8 / 48000.0, ndi.AUDIO_QUEUE_SECONDS)
+        self.assertEqual(r.status()["audio"]["counts"]["filled"], 1)                     # and not again and again after it
 
     def test_a_player_that_reads_nothing_for_seconds_after_opening_the_pipe_gets_a_stream_that_begins_whole(self):
         """The stream's clock began when the pipe was opened: a player that then read nothing for 4.7 seconds was
