@@ -3360,7 +3360,7 @@
     function drawOwnState(d) {
       if (!mod('ndi-discovery') || !full || ownSrv === undefined) return;
       var ds = ownSrv, own = !!d.own_discovery, on = ds ? !!ds.module : moduleOn('ndi-discovery');
-      var at = ds && on && ds.state === 'running' && ds.listening ? ds.listening.address + ':' + ds.listening.port : '';
+      var at = ds && on && ds.state === 'running' && ds.listening ? ds.tell || ds.listening.address + ':' + ds.listening.port : '';      // the address to give a sender (never 0.0.0.0 for "all the box's networks")
       var key = JSON.stringify([own, on, at, ds && ds.setup, ds && SYS_STATE.ndisc(ds).text]);
       if (key === ownDrawn) return;          // drawn again only when it changed: it can hold a button (D59)
       ownDrawn = key;
