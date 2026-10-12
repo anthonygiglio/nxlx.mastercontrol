@@ -510,6 +510,24 @@ class Player:
         with self._lock:
             return bool(self.pipe_playing) and self._pipe_path == path
 
+    def release_pipe(self, path):
+        """Have mpv let go of `path` if that pipe is what was loaded last: its stream is closed and the player is
+        idle (black). For a live input whose pipe is one pipe for every source (the NDI input's, root's, never
+        unlinked): before the next source is opened the old reader has to be gone, and mpv does not reliably let
+        go by itself at the end of a stream (on the Pi, 2026-10-12, it still read the pipe seconds after the
+        writer had closed). mpv answers before it has closed the stream; the helper is the one that sees the pipe
+        without a reader and waits for that (ndi.Service._clear_pipe). What the panel loaded last stays what it
+        was: this is the beginning of loading that pipe again, not something else taking the screen. Returns
+        whether mpv was told."""
+        with self._lock:
+            if not (self._pipe and self._pipe_path == path):
+                return False
+            try:
+                self.ipc.request("stop")
+            except PlayerError:
+                return False                # a player that is down holds no pipe
+            return True
+
     def quit(self):
         """End the mpv process (the service's unit starts a new one). What was loaded goes with it."""
         with self._lock:

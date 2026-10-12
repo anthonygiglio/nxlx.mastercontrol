@@ -2187,6 +2187,17 @@ class OldPlayer:
         self.thread.join(3)
 
 
+def sent_all(test):
+    """The fake library has one queue of frames for every source: a frame of the source before that is still on
+    its way would be the first frame of the next one, in the wrong size. Wait until the last sender is done and
+    its frames were taken."""
+    sender = getattr(test, "sender", None)
+    if sender is not None:
+        sender.join(5)
+    wait(test.lib.frames.empty)
+    time.sleep(0.15)                                                 # and the one a receiver was just handed is through
+
+
 class PipeReuseTest(unittest.TestCase):
     """Since the review of 2026-10-11 (M3) the pipe is one pipe for every source: root's, made once, never unlinked.
     Until then every source had a pipe of its own, and that alone kept the reader of the last source and the writer
@@ -2219,6 +2230,7 @@ class PipeReuseTest(unittest.TestCase):
 
     def open(self, sid, shape, frames=2):
         """Open `sid`; its frames come once the helper has connected to it, as a sender's do."""
+        sent_all(self)                                               # the source before has had all of its frames
         n = len(self.lib.opened)
 
         def send():
@@ -2226,7 +2238,8 @@ class PipeReuseTest(unittest.TestCase):
                 for _ in range(frames):
                     self.lib.frames.put(frame(shape[0], shape[1], fill=shape[2]))
                     time.sleep(0.03)
-        threading.Thread(target=send, daemon=True).start()
+        self.sender = threading.Thread(target=send, daemon=True)
+        self.sender.start()
         began = time.monotonic()
         reply = self.s.handle({"cmd": "open", "id": sid})
         self.assertTrue(reply["ok"], reply)
@@ -2327,6 +2340,318 @@ class PipeReuseTest(unittest.TestCase):
         held.close()
         self.assertLess(time.monotonic() - began, 2.0)
         self.assertFalse([t for t in threading.enumerate() if t.name.startswith("ndi-")])
+
+
+class LostPlayerTest(NdiApiTest):
+    """What the owner would see if a source's writer still met the wrong reader (a player that would not let go of
+    the source before within the bound): before, the source ended with "the player stopped reading the input",
+    which the watch took for "something else was played", so the screen stayed black, the pad went dark and
+    nothing was said or tried. The panel knows better: the pipe is still what it loaded last."""
+
+    def setUp(self):
+        super().setUp()
+        self.service._pipe_clear = 0.2
+        self.mad = ndi.source_id("MAD (Out)", "192.168.0.21")
+        self.players = []
+        self.addCleanup(lambda: [p.leave() for p in self.players])
+
+    def reader(self, **kw):
+        p = OldPlayer(self.service.fifo, **kw)
+        self.players.append(p)
+        self.assertTrue(p.opened.wait(3))
+        return p
+
+    def play(self, sid, w, fill, frames=3):
+        sent_all(self)
+        n = len(self.lib.opened)
+
+        def send():
+            if wait(lambda: len(self.lib.opened) == n + 1, 5):
+                for _ in range(frames):
+                    self.lib.frames.put(frame(w, 16, fill=fill))
+                    time.sleep(0.03)
+        self.sender = threading.Thread(target=send, daemon=True)
+        self.sender.start()
+        return self.call("POST", "/api/play", {"ndi": sid}, token=self.full)
+
+    def lose_the_player(self):
+        """A plays; B is pressed while the player will not let go of A; then the player's load of B closes the old
+        reader, and B's writer, which was writing into it, is left without one."""
+        self.enable()
+        self.assertEqual(self.play(self.rid, 64, 0xA1)[0], 200)
+        old = self.reader()
+        self.assertTrue(wait(lambda: len(old.got) >= 64 * 16 * 2))
+        self.assertEqual(self.play(self.mad, 128, 0xB2)[0], 200)
+        self.assertTrue(wait(lambda: len(old.late) > 0), "the model did not reach the case it is for")
+        sent_all(self)
+        old.leave()                                                  # the load of B: the old stream is closed
+        self.lib.frames.put(frame(128, 16, fill=0xB2))
+        self.lib.frames.put(frame(128, 16, fill=0xB2))
+        self.assertTrue(wait(lambda: self.service.receiver.status()["message"] == ndi.PLAYER_LEFT))
+        self.api.ndi._retry_at = 0.0
+
+    def test_a_source_that_lost_the_player_while_its_pipe_is_what_plays_is_shown_again(self):
+        self.player.pipe_is = lambda path: path == self.service.fifo       # the panel's own record: the pipe was loaded last
+        self.lose_the_player()
+        loads = len([c for c in self.player.calls if c[0] == "play_pipe"])
+        threading.Timer(0.1, lambda: [self.lib.frames.put(frame(128, 16, fill=0xB2)) for _ in range(3)]).start()
+        self.assertTrue(self.api.ndi_tick())
+        self.assertEqual(self.api.ndi.current, {"id": self.mad, "name": "MAD (Out)"})
+        self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), loads + 1)
+        new = self.reader()
+        self.assertTrue(wait(lambda: len(new.got) >= 128 * 16 * 2))
+        self.assertEqual(set(new.got), {0xB2})
+        self.assertEqual(self.service.receiver.status()["state"], "playing")
+        self.assertFalse(self.api.ndi_tick())                        # not again within the pause
+
+    def test_when_the_panel_loaded_something_else_since_it_is_over_quietly_as_before(self):
+        self.player.pipe_is = lambda path: False
+        self.lose_the_player()
+        self.assertFalse(self.api.ndi_tick())
+        self.assertEqual((self.api.ndi.current, self.api.ndi.ended), (None, None))
+
+    def test_a_player_that_loses_the_pipe_every_time_is_loaded_less_and_less_often(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        now, replays, logged = [50.0], [], []
+
+        class Left:
+            def status(self):
+                return {"ok": True, "configured": True, "playing": {"id": "ab12cd34ef56", "name": "x", "state": "stopped", "message": ndi.PLAYER_LEFT,
+                                                                    "counts": {}, "width": 64, "height": 16, "fps": 30.0}}
+        i = ndi.Input(Left(), os.path.join(d, "f"), lambda: (True, []), log=logged.append, clock=lambda: now[0])
+        i.current = {"id": "ab12cd34ef56", "name": "x"}
+        at = []
+        for _ in range(400):
+            if i.tick(replays.append, loaded=lambda: True):
+                at.append(now[0])
+            now[0] += 1.0
+        self.assertEqual([round(b - a) for a, b in zip(at, at[1:])][:6], [3, 6, 12, 24, 48, 60])
+        self.assertEqual(i.current["id"], "ab12cd34ef56")
+
+
+class HelperRestartTest(NdiApiTest):
+    """The helper ends under a source (a crash in the library, or its own exit when the discovery servers change:
+    Service.on_unload) and systemd starts a new one, which knows nothing. Who brings the picture back, and when not."""
+
+    def setUp(self):
+        super().setUp()
+        self.players = []
+        self.addCleanup(lambda: [p.leave() for p in self.players])
+
+    def reader(self):
+        p = OldPlayer(self.service.fifo, stays=False)                # a player goes idle at the end of the stream: black
+        self.players.append(p)
+        self.assertTrue(p.opened.wait(3))
+        return p
+
+    def die(self):
+        self.service.close()                                         # every thread of the process gone, its end of the pipe closed
+        self.client.down = True
+
+    def back(self, sources=True):
+        """A new process: nothing configured, nothing loaded, and the senders not found yet unless `sources`."""
+        self.lib = FakeLib([(b"RESOLUME (Output)", b"192.168.0.20:5961")] if sources else [])
+        self.service = ndi.Service(self.ndidir, "x", loader=lambda path: self.lib, log=lambda *_: None, first_frame=0.3, problem=lambda path: None)
+        self.addCleanup(self.service.close)
+        self.client.service, self.client.down = self.service, False
+        self.api.ndi._retry_at = 0.0
+
+    def lit(self, on_screen):
+        """What a pad holding the source goes by: the status names the source's id only while the pipe is what the player plays."""
+        self.player.status = lambda: {"running": True, "path": self.service.fifo if on_screen else None}
+        return self.call("GET", "/api/status", token=self.full)[1]["player"].get("ndi_id")
+
+    def test_a_source_that_was_playing_comes_back_by_itself_and_its_pad_says_what_is_true_meanwhile(self):
+        self.enable()
+        for turn in range(3):                                        # every time, not once
+            if turn == 0:
+                self.lib.frames.put(frame(64, 16))
+                self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+            old = self.reader()
+            self.lib.frames.put(frame(64, 16, fill=7))
+            self.assertTrue(wait(lambda: len(old.got) >= 64 * 16 * 2))
+            self.assertEqual(self.lit(True), self.rid)
+            self.die()
+            self.assertTrue(old.gone.wait(3), "the player was not given the end when the helper went")
+            self.assertFalse(self.api.ndi_tick())                    # no helper: nothing to ask, nothing forgotten
+            self.assertEqual(self.api.ndi.current["id"], self.rid)
+            self.assertIsNone(self.lit(False))                       # black: the pad is not lit while nothing of it is on the screen
+            self.back(sources=False)
+            self.assertTrue(self.api.ndi_tick())                     # the new helper is told the settings; the sender is not found yet
+            self.assertEqual((self.service.on, self.api.ndi.current["id"]), (True, self.rid))
+            self.lib.raw = [(b"RESOLUME (Output)", b"192.168.0.20:5961")]
+            self.assertFalse(self.api.ndi_tick())                    # not before the pause is over
+            self.api.ndi._retry_at = 0.0
+            self.lib.frames.put(frame(64, 16, fill=9))
+            loads = len([c for c in self.player.calls if c[0] == "play_pipe"])
+            self.assertTrue(self.api.ndi_tick())
+            self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), loads + 1)
+            self.assertEqual(self.api.ndi.current, {"id": self.rid, "name": "RESOLUME (Output)"})
+            self.assertEqual(self.lit(True), self.rid)
+        new = self.reader()
+        self.lib.frames.put(frame(64, 16, fill=9))
+        self.assertTrue(wait(lambda: len(new.got) >= 64 * 16 * 2))
+        self.assertEqual(set(new.got), {9})
+
+    def dies_while_connecting(self):
+        """The helper goes while it is asked for a source: the question gets no answer."""
+        real = self.client.request
+
+        def request(message, timeout=None):
+            if message.get("cmd") == "open":
+                self.die()
+            return real(message, timeout)
+        self.client.request = request
+        return lambda: setattr(self.client, "request", real)
+
+    def test_a_restart_while_the_watch_is_bringing_the_source_back_is_tried_again(self):
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.die()
+        self.back()
+        undo = self.dies_while_connecting()                          # and it goes again, in the middle of the watch's own open
+        self.assertTrue(self.api.ndi_tick())
+        self.assertEqual(self.api.ndi.current["id"], self.rid)       # still wanted
+        undo()
+        self.back()
+        self.lib.frames.put(frame(64, 16))
+        loads = len([c for c in self.player.calls if c[0] == "play_pipe"])
+        self.assertTrue(self.api.ndi_tick())
+        self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), loads + 1)
+        self.assertEqual(self.api.ndi.current["id"], self.rid)
+
+    def test_a_restart_while_a_first_press_is_still_connecting_is_answered_and_not_brought_back(self):
+        """Not what one would wish, and written down as it is: a press whose source never reached the screen is
+        not "what plays", so nothing remembers it. The press is answered with the reason and has to be made again."""
+        self.enable()
+        undo = self.dies_while_connecting()
+        st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
+        self.assertEqual((st, body["error"]), (409, "the NDI helper (pvj-ndi) is not running"))
+        self.assertIsNone(self.api.ndi.current)
+        undo()
+        self.back()
+        self.assertFalse(self.api.ndi_tick())
+        self.assertFalse([c for c in self.player.calls if c[0] == "play_pipe"])
+
+    def test_a_restart_while_another_source_is_pressed_brings_back_the_one_that_was_playing(self):
+        self.enable()
+        self.lib.raw.append((b"MAD (Out)", b"192.168.0.21:5961"))
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        undo = self.dies_while_connecting()
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": ndi.source_id("MAD (Out)", "192.168.0.21")}, token=self.full)[0], 409)
+        undo()
+        self.back()
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.api.ndi_tick())
+        self.assertEqual(self.api.ndi.current, {"id": self.rid, "name": "RESOLUME (Output)"})
+
+
+class PlayerLetsGoTest(NdiApiTest):
+    """What the Pi showed on 2026-10-12: Scan Converter's picture changed size with every clip, each change was
+    opened again on the same pipe, and twice out of twice the new source ended at once with "the player stopped
+    reading the input" and was gone from the screen without a word. The player there did not let go of the pipe by
+    itself after the writer had closed: so here the player's stand-in holds its end until it is TOLD to let go."""
+
+    def holding(self):
+        """Not in setUp: the tests this class inherits run against the plain fake player."""
+        self.said = []
+        self.service.log = self.said.append
+        self.readers, self.released = [], []
+
+        def release_pipe(path):
+            self.released.append(path)
+            for r in self.readers:
+                r.leave()
+            return True
+        self.player.release_pipe = release_pipe
+        self.player.pipe_is = lambda path: path == self.service.fifo
+        self.addCleanup(lambda: [r.leave() for r in self.readers])
+        self.enable()
+
+    def load(self):
+        """The player opens the pipe for the load it was just given, and keeps it until it is told otherwise."""
+        r = OldPlayer(self.service.fifo)
+        self.readers.append(r)
+        self.assertTrue(r.opened.wait(3))
+        return r
+
+    def send(self, w, fill, n=3):
+        for _ in range(n):
+            self.lib.frames.put(frame(w, 16, fill=fill))
+            time.sleep(0.03)
+
+    def test_a_source_that_changes_size_again_and_again_comes_back_every_time(self):
+        self.holding()
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        reader, width = self.load(), 64
+        for turn, w in enumerate((128, 96, 160, 64), 2):
+            self.send(width, turn - 1)
+            self.assertTrue(wait(lambda: len(reader.got) >= width * 16 * 2))
+            wait(self.lib.frames.empty)
+            time.sleep(0.15)
+            self.lib.frames.put(frame(w, 16, fill=turn))             # the next clip: another size
+            self.assertTrue(wait(lambda: self.service.receiver.state == "changed"))
+            self.api.ndi._retry_at = 0.0
+            threading.Timer(0.1, self.send, [w, turn]).start()
+            self.assertTrue(self.api.ndi_tick())
+            self.assertEqual(self.api.ndi.current["id"], self.rid)
+            self.assertIn(("play_pipe", self.service.fifo, w, 16, 29.97, "uyvy422"), self.player.calls)
+            self.assertEqual(bytes(reader.late), b"", "the new size's frames went into the stream of the old size")
+            reader, width = self.load(), w
+            self.send(w, turn)
+            self.assertTrue(wait(lambda: len(reader.got) >= w * 16 * 2), "turn %d: no picture" % turn)
+            self.assertEqual(set(reader.got), {turn})
+            self.assertEqual(self.service.receiver.status()["state"], "playing")
+            self.assertFalse(self.api.ndi_tick())                    # and it is left alone
+        self.assertEqual(len(self.released), 5)                      # before every open
+        self.assertFalse([m for m in self.said if "still held" in m], self.said)
+
+    def test_a_pad_switch_from_one_source_to_another_does_not_wait_for_a_player_that_holds_on(self):
+        self.holding()
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        old = self.load()
+        self.send(64, 1)
+        self.assertTrue(wait(lambda: len(old.got) >= 64 * 16 * 2))
+        wait(self.lib.frames.empty)
+        time.sleep(0.15)
+        threading.Timer(0.1, self.send, [128, 2]).start()
+        began = time.monotonic()
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": ndi.source_id("MAD (Out)", "192.168.0.21")}, token=self.full)[0], 200)
+        self.assertLess(time.monotonic() - began, 1.5)               # not the two seconds a player that will not let go costs
+        self.assertEqual((self.released, bytes(old.late)), ([self.service.fifo] * 2, b""))      # asked before every open; the player knows whether it holds it
+        new = self.load()
+        self.send(128, 2)
+        self.assertTrue(wait(lambda: len(new.got) >= 128 * 16 * 2))
+        self.assertEqual(set(new.got), {2})
+
+    def test_the_player_is_told_to_let_go_only_of_the_pipe_it_was_given_last(self):
+        from pvj.player import Player, PlayerError
+        sent = []
+
+        class Ipc:
+            def request(self, *a):
+                sent.append(a)
+                if self.down:
+                    raise PlayerError("down")
+                return 41
+            down = False
+        p = Player.__new__(Player)
+        p.ipc, p._lock = Ipc(), threading.RLock()
+        self.assertFalse(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))        # nothing was loaded
+        p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/pvj-capture/capture.fifo"
+        self.assertFalse(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))        # the capture input's pipe plays: not ours to end
+        self.assertEqual(sent, [])
+        p._pipe_path = "/run/pvj-ndi-pipe/ndi.fifo"
+        self.assertTrue(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))
+        self.assertEqual(sent, [("stop",)])
+        self.assertTrue(p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo"))             # still what the panel loaded last (the watch goes by it)
+        p.ipc.down = True
+        self.assertFalse(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))
 
 
 if __name__ == "__main__":

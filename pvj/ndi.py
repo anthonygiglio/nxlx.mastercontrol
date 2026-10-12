@@ -1385,8 +1385,8 @@ class Receiver:
 
     def close(self):
         """Stop the threads and give the connection back. Never called from those threads, and never with a lock
-        they need (LESSONS: do not join a thread while holding its lock). The pipe is not this object's to remove:
-        the Service made it and the Service takes it away.
+        they need (LESSONS: do not join a thread while holding its lock). The pipe is nobody's to remove
+        (root's on a box, M3): this object closes its end of it, and the Service wakes a reader left waiting.
 
         The connection is never given back while a thread may still be inside the library with it (the picture's or
         the sound's). The last of them out gives it back itself; if one will not come out, the connection is left
@@ -1485,7 +1485,8 @@ class Service:
                     and self.config_dir and config_discovery(self.config_dir) == discovery):
                 # The discovery servers changed, and the file says what the panel asks. The library reads its file
                 # once, when it starts: so this process ends (after this answer) and a new one loads the library
-                # with the new file. A source on the screen ends with it, and somebody starts it again by hand.
+                # with the new file. A source on the screen ends with it (black), and the panel's watch shows it
+                # again once the new process has found the sender (Input.tick; a test holds that it does).
                 # Where the file does not say what is asked (a box whose NDI set-up was not refreshed), nothing is
                 # restarted and the status says which servers are really in force.
                 self._close_receiver()
@@ -1737,7 +1738,8 @@ def pipe_to_write(st):
 
 
 def helper_uid():
-    """The uid of the helper's account, whose pipe the player may be told to read; our own where there is none (a desk)."""
+    """The uid of the helper's account; our own where there is none (a desk). Since M3 (2026-10-11) the pipe is
+    root's and not this account's, and the panel expects root (pipe_owner); nothing in the program asks this now."""
     import pwd
     try:
         return pwd.getpwnam("pvj-ndi").pw_uid
@@ -2105,9 +2107,17 @@ class Input:
             self.client_close()
         return bool(had)
 
-    def tick(self, replay):
+    def tick(self, replay, loaded=None):
         """Called about once a second. When the helper says the source changed size or rate, or the helper came
-        back after a fall, show the source again (`replay(id)`), at most once every RETRY_SECONDS."""
+        back after a fall, show the source again (`replay(id)`), at most once every RETRY_SECONDS.
+
+        `loaded` (the panel's own record: whether the NDI pipe is what it loaded into the player last) settles
+        what "the player stopped reading" means. If the panel loaded something else since, the player went on and
+        the source is over, quietly. If the pipe is still what the panel loaded, nothing took the screen: the
+        writer lost a reader that was not the one meant for it (the pipe is one pipe for every source, and a
+        player that would not let go of the source before in time is let through, Service._clear_pipe), and the
+        screen is black with the player waiting on a pipe nobody writes. Then the source is shown again, as after
+        a change of size. The helper's word alone never decides this; without `loaded` it is as it always was."""
         cur = self.current
         if not cur or self._clock() < self._retry_at:
             return False
@@ -2117,7 +2127,11 @@ class Input:
         if st.get("configured") is not True:       # the helper started again and knows nothing yet
             self.sync()
         p = _playing(st.get("playing"))
-        if p is not None and p["id"] == cur["id"] and p["state"] in ("refused", "stopped"):
+        lost = bool(p is not None and p["id"] == cur["id"] and p["state"] == "stopped" and p["message"] == PLAYER_LEFT
+                    and loaded is not None and loaded())
+        if lost:
+            pass                                   # shown again below
+        elif p is not None and p["id"] == cur["id"] and p["state"] in ("refused", "stopped"):
             # It ended for a reason no retry cures (a format this input does not show), or the player went on to
             # something else without a word to us. Either way it is no longer what plays; the reason stays for the page.
             if self.current is cur:
@@ -2125,16 +2139,24 @@ class Input:
                 self.ended = None if p["message"] in ("", PLAYER_LEFT) else {"name": cur["name"], "message": p["message"]}
             self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
             return False
-        if p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):
+        elif p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):
             self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
             return False                           # on the screen: playing, a still picture, or waiting for the sender
         # Try again later and later (a sender switched off for the night must not be asked every 3 seconds for
         # ever), and write the reason down when it changes, not at every try: the journal is kept on the card.
+        waited = self._retry_wait
         self._retry_at = self._clock() + self._retry_wait
         self._retry_wait = min(self._retry_wait * 2, self.RETRY_MAX)
         try:
             replay(cur["id"])
-            self._retry_at, self._retry_wait, self._retry_said = self._clock() + self.RETRY_SECONDS, self.RETRY_SECONDS, ""
+            if lost:
+                # A player that loses the pipe again and again (it cannot play what is in it) is not loaded every
+                # three seconds for ever: the pause grows as for a source that is gone, and is three seconds again
+                # once a look finds the source on the screen (above).
+                self._retry_at, self._retry_said = self._clock() + waited, ""
+                self.log("pvj-web: NDI source %s lost the player while its pipe was what plays; shown again" % cur["name"])
+            else:
+                self._retry_at, self._retry_wait, self._retry_said = self._clock() + self.RETRY_SECONDS, self.RETRY_SECONDS, ""
         except Exception as e:                     # the source may be gone for now; a later tick tries again
             said = str(e)[:200]
             if said != self._retry_said:

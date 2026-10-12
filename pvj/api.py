@@ -3107,6 +3107,17 @@ class Api:
                 if claim:
                     claim()
                 wish = self.transitions.claim()
+            # The NDI pipe is one pipe for every source. If it is what plays (another source, or this one before a
+            # change of size), the player is told to let go of it BEFORE the helper is asked: the helper lets the
+            # new source's writer through only once it has seen the pipe without a reader (Service._clear_pipe),
+            # and the player does not reliably let go by itself. The picture of the source before is over either
+            # way: the helper closes it as the first thing it does for the new one.
+            release = getattr(self.player, "release_pipe", None)
+            if release is not None:
+                try:
+                    release(self.ndi.fifo)
+                except PlayerError:
+                    pass
             try:
                 p = self.ndi.open(sid)
             except ndi_mod.NdiError as e:
@@ -3159,7 +3170,7 @@ class Api:
         if self.ndi is None or not self.ndi.current or not self.registry.enabled("inputs-ndi"):
             return False
         cur = self.ndi.current
-        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur))
+        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur), loaded=lambda: self._pipe_plays(self.ndi.fifo))
 
     def get_ndi(self, body, device, client):
         self._need_ndi()
