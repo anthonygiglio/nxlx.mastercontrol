@@ -19,6 +19,11 @@
  * The sound is 48000 samples a second, two channels, 32-bit floats, one plane a channel, 1600 samples a block
  * (a thirtieth of a second): a square wave at a tenth of full scale, 500 Hz on the left and 250 Hz on the right.
  *
+ * Nothing comes in the first second after a receiver is made, as a connection to a real sender takes a moment. It
+ * also keeps the tests away from something they are not about: a helper that has its first picture at once can
+ * open the pipe while the player still holds it open from the source before (see pvj/NDI.md, "What the tests
+ * prove"), and what happens then is a question of its own.
+ *
  * Build:  cc -shared -fPIC -pthread -O2 -o libndi.so.6 standin.c
  */
 #define _POSIX_C_SOURCE 200809L
@@ -100,13 +105,14 @@ typedef struct {
 #define PROGRESSIVE 1
 /* one picture and one block of sound both last a thirtieth of a second: number k begins at k * 1e9 / 30 ns */
 #define TICK(k) ((int64_t)(k) * 100000000 / 3)
+#define CONNECT_NS 1000000000 /* nothing comes before a receiver is this old */
 #define RESYNC_NS 500000000 /* sound more than this late is not caught up with: the count starts again at the clock */
 
 enum { MODE_MOVING, MODE_SOUND, MODE_STILL };
 
 typedef struct {
 	int mode;
-	int64_t began;      /* the clock when the receiver was made */
+	int64_t began;      /* the clock when the first picture is due: CONNECT_NS after the receiver was made */
 	int64_t next_video; /* the number of the next picture */
 	int64_t next_audio; /* the number of the next block of sound */
 	int still_sent;
@@ -202,9 +208,11 @@ static int capture(standin_recv *r, standin_video *video, standin_audio *audio, 
 		pthread_mutex_lock(&r->lock);
 		if (video != NULL) {
 			if (r->mode == MODE_STILL) {
-				if (!r->still_sent) {
+				if (!r->still_sent && now >= r->began) {
 					r->still_sent = 1;
 					n = 0;
+				} else if (!r->still_sent && r->began < wake) {
+					wake = r->began;
 				}
 			} else {
 				int64_t due = r->began + TICK(r->next_video);
@@ -290,7 +298,7 @@ void *NDIlib_recv_create_v3(const standin_recv_create *settings)
 		r->mode = MODE_SOUND;
 	else
 		r->mode = MODE_MOVING;
-	r->began = now_ns();
+	r->began = now_ns() + CONNECT_NS;
 	pthread_mutex_init(&r->lock, NULL);
 	return r;
 }
