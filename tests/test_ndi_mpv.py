@@ -241,6 +241,26 @@ class NdiOnARealMpv(ServerBase):
     def test_17_a_moving_source_whose_picture_stops_with_sound_after_a_short_gap(self):
         self.known("a moving source whose picture stopped, its sound after a short gap", mpvword.case_goes_still, THEN_STILL_GAP, seconds=30)
 
+    # ---- sound against picture on a moving source, by mpv's own account (mpvword: the bounds and what they do not show)
+    def test_30_sync_a_moving_source_with_its_sound(self):
+        self.must(mpvword.case_sync, SOUND)
+
+    def test_31_sync_first_sound_late_by_a_fifth_of_a_second(self):
+        # on the code before the sound track began at 0 this gave avsync 0.206 for 1.8 seconds (measured 2026-10-12)
+        self.must(mpvword.case_sync, "PVJ-STANDIN (moving with sound late by 0.2 s)")
+
+    def test_32_sync_first_sound_late_by_eight_tenths_of_a_second(self):
+        self.must(mpvword.case_sync, "PVJ-STANDIN (moving with sound late by 0.8 s)")
+
+    def test_33_sync_first_sound_late_by_five_seconds(self):
+        self.must(mpvword.case_sync, "PVJ-STANDIN (moving with sound late by 5 s)")
+
+    def test_34_sync_after_a_re_open_at_another_size(self):
+        self.must(mpvword.case_sync_resized, BIG_CHANGES_SOUND)
+
+    def test_35_sync_across_a_pause_of_twenty_seconds(self):
+        self.must(mpvword.case_sync_paused, "PVJ-STANDIN (moving with sound pauses 20 s)")
+
     # ---- the hand-overs
     def test_20_the_same_source_twice_in_a_row(self):
         self.must(mpvword.case_twice, STILL)

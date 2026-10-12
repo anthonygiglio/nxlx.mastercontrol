@@ -32,7 +32,9 @@ BIG = (BIG_SOUND, "PVJ-STANDIN (big one still then sound)", "PVJ-STANDIN (big at
 THEN_STILL = "PVJ-STANDIN (moving then still with sound)"
 STILL_SHORT_GAP, STILL_LONG_GAP = "PVJ-STANDIN (one still then sound after a short gap)", "PVJ-STANDIN (one still then sound after a long gap)"
 THEN_STILL_GAP = "PVJ-STANDIN (moving then still with sound after a short gap)"
-ONLY_HERE = (AT_ONCE_A, AT_ONCE_B, THEN_STILL, STILL_SHORT_GAP, STILL_LONG_GAP, THEN_STILL_GAP)      # for this file and tests/test_ndi_mpv.py
+PAUSES = "PVJ-STANDIN (moving with sound pauses 20 s)"
+LATE = tuple("PVJ-STANDIN (moving with sound late by %s)" % t for t in ("0.2 s", "0.8 s", "5 s"))
+ONLY_HERE = (AT_ONCE_A, AT_ONCE_B, THEN_STILL, STILL_SHORT_GAP, STILL_LONG_GAP, THEN_STILL_GAP, PAUSES) + LATE      # for this file and tests/test_ndi_mpv.py
 ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES) + ONLY_HERE[2:] + BIG
 
 
@@ -303,6 +305,47 @@ class StandIn(unittest.TestCase):
         self.assertGreater(min(t for t in times if t >= 1.5), 1.75)
         self.assertGreater(len([t for t in times if t >= 1.8]), 15)
         self.assertTrue(st["ok"])
+
+    def test_a_moving_source_whose_sound_is_late_by_a_fifth_of_a_second_has_pictures_first(self):
+        self.on(True)
+        lib = self.s.lib
+        row = [s for s in self.s.sources() if s["name"] == LATE[0]][0]
+        handle = lib.recv_open(row["raw"])
+        self.addCleanup(lib.recv_close, handle)
+        began, first_sound, first_picture = time.monotonic(), None, None
+        while time.monotonic() - began < 1.6 and (first_sound is None or first_picture is None):
+            f = lib.recv_capture(handle, 20)
+            if f is not None and f.kind == "video":
+                first_picture = first_picture or time.monotonic()
+                lib.recv_free(handle, f)
+            a = lib.recv_audio(handle, 20)
+            if a is not None and a is not ndi.AUDIO_LOST:
+                first_sound = first_sound or time.monotonic()
+                lib.recv_free_audio(handle, a)
+        self.assertIsNotNone(first_picture)
+        self.assertIsNotNone(first_sound)
+        self.assertAlmostEqual(first_sound - first_picture, 0.23, delta=0.08)
+
+    def test_the_bounds_for_sound_against_picture_name_each_breach(self):
+        from tests.ndi_standin import mpvword
+
+        def sample(n, avsync, total, drops=0):
+            return (n * 0.5, {"time-pos": n * 0.5, "audio-pts": n * 0.5 + 0.01, "avsync": avsync, "total-avsync-change": total,
+                              "frame-drop-count": drops, "decoder-frame-drop-count": "(property unavailable)", "estimated-frame-number": n * 15})
+        good = mpvword.sync_numbers([sample(n, 0.004, 0.001) for n in range(21)])
+        self.assertEqual(mpvword.sync_breaches(good, 16), [])
+        self.assertEqual((good["moving"], good["frames"], good["drops"]), (20, 300, 0))
+        old = mpvword.sync_numbers([sample(n, 0.206 if n < 4 else 0.0, 0.0 if n < 4 else 0.206) for n in range(21)])
+        said = " ".join(mpvword.sync_breaches(old, 16))
+        self.assertIn("avsync was as far as 0.206", said)
+        self.assertIn("total-avsync-change grew by 0.206", said)
+        dropped = mpvword.sync_numbers([sample(n, 0.0, 0.0, drops=n) for n in range(21)])
+        self.assertIn("20 of 300 frames were dropped", " ".join(mpvword.sync_breaches(dropped, 16)))
+        stood = mpvword.sync_numbers([(n * 0.5, dict(sample(n, 0.5, 0.0)[1], **{"time-pos": 1.0})) for n in range(21)])
+        self.assertEqual(stood["moving"], 0, "samples where the picture's clock stands are not sync samples")
+        none = mpvword.sync_numbers([(n * 0.5, dict(sample(n, "(property unavailable)", 0.0)[1])) for n in range(21)])
+        self.assertIn("mpv gave no avsync in 20 of the 20", " ".join(mpvword.sync_breaches(none, 16)))
+        self.assertIn("worst |avsync| 0.004", mpvword.sync_line("x", good))
 
     def test_the_sounds_clock_is_judged_at_real_time_and_from_its_last_start(self):
         from tests.ndi_standin import mpvword

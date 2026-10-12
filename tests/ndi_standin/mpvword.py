@@ -158,6 +158,93 @@ def not_playing(a, b, pipe, size=(WIDTH, HEIGHT), audio=None, moving=True, clock
     return ""
 
 
+# ---- sound against picture, by mpv's own account -----------------------------------------------------------------------
+# What mpv believes of its own sync, and nothing more: with the helper stamping picture and sound as they ARRIVE, mpv
+# reads 0.000 even if the sender's sound and picture were out of step. So this guards the box's own pipeline (the
+# helper's times, the player's options) and nothing upstream. The bounds were measured on mpv 0.40 (2026-10-12): the
+# stream as it was before the sound track began at 0 gave total-avsync-change 0.206 where this one gives under 0.02.
+SYNC_ASKED = ("path", "time-pos", "audio-pts", "avsync", "total-avsync-change", "frame-drop-count", "decoder-frame-drop-count",
+              "estimated-frame-number")
+AVSYNC_MAX = 0.040                     # |avsync| in every sample taken while the picture moves
+AVSYNC_CHANGE_MAX = 0.02               # how much total-avsync-change may grow over a case: the discriminator
+SOUND_PICTURE_MAX = 0.1                # |audio-pts - time-pos|
+DROPS_MAX = 0.01                       # dropped frames (the output's and the decoder's) as a share of the frames in the case
+BACK_IN_SYNC = 0.5                     # after a picture that stood moves again: from this long after, avsync is inside the bound
+
+
+def sync_samples(path, seconds, every=0.5):
+    """[(clock, {property: value})] from the mpv at `path`, one every `every` seconds for `seconds`."""
+    out, began = [], time.monotonic()
+    while True:
+        out.append((time.monotonic(), ask(path, *SYNC_ASKED)))
+        left = began + len(out) * every - time.monotonic()
+        if time.monotonic() - began >= seconds:
+            return out
+        if left > 0:
+            time.sleep(left)
+
+
+def moving_samples(samples):
+    """The samples in which the picture's clock went on since the sample before (a picture that stands has no sync to
+    speak of), each with the clock of the sample."""
+    out = []
+    for (_, a), (when, b) in zip(samples, samples[1:]):
+        if number(a["time-pos"]) and number(b["time-pos"]) and b["time-pos"] > a["time-pos"]:
+            out.append((when, b))
+    return out
+
+
+def sync_numbers(samples):
+    """What a case's samples say, as plain numbers for the log: the worst |avsync| and |audio-pts - time-pos| among the
+    samples where the picture moved, how much total-avsync-change grew, the frames dropped and the frames there were.
+    None where mpv gave no number at all."""
+    moved = [m for _, m in moving_samples(samples)]
+    sync = [abs(m["avsync"]) for m in moved if number(m["avsync"])]
+    apart = [abs(m["audio-pts"] - m["time-pos"]) for m in moved if number(m["audio-pts"])]
+    total = [m["total-avsync-change"] for _, m in samples if number(m["total-avsync-change"])]
+    drops = 0
+    for key in ("frame-drop-count", "decoder-frame-drop-count"):
+        got = [m[key] for _, m in samples if number(m[key])]
+        drops += max(0, got[-1] - got[0]) if got else 0
+    frames = [m["estimated-frame-number"] for _, m in samples if number(m["estimated-frame-number"])]
+    return {"samples": len(samples), "moving": len(moved), "no_avsync": len(moved) - len(sync), "no_sound_clock": len(moved) - len(apart),
+            "worst_avsync": max(sync) if sync else None, "worst_apart": max(apart) if apart else None,
+            "avsync_change": (total[-1] - total[0]) if total else None, "drops": drops,
+            "frames": (frames[-1] - frames[0]) if frames else 0}
+
+
+def sync_breaches(n, least_moving):
+    """Why a case's numbers are outside the bounds, as a list of plain sentences; empty when they are inside."""
+    out = []
+    if n["moving"] < least_moving:
+        out.append("the picture moved in only %d of %d samples (at least %d expected)" % (n["moving"], n["samples"], least_moving))
+    if n["no_avsync"] or n["worst_avsync"] is None:
+        out.append("mpv gave no avsync in %d of the %d samples where the picture moved" % (n["no_avsync"], n["moving"]))
+    elif n["worst_avsync"] > AVSYNC_MAX:
+        out.append("avsync was as far as %.3f (the bound is %.3f)" % (n["worst_avsync"], AVSYNC_MAX))
+    if n["avsync_change"] is None:
+        out.append("mpv gave no total-avsync-change")
+    elif abs(n["avsync_change"]) >= AVSYNC_CHANGE_MAX:
+        out.append("total-avsync-change grew by %.3f (the bound is under %.2f)" % (n["avsync_change"], AVSYNC_CHANGE_MAX))
+    if n["no_sound_clock"] or n["worst_apart"] is None:
+        out.append("mpv had no audio-pts in %d of the %d samples where the picture moved" % (n["no_sound_clock"], n["moving"]))
+    elif n["worst_apart"] > SOUND_PICTURE_MAX:
+        out.append("audio-pts and time-pos were as far apart as %.3f (the bound is %.1f)" % (n["worst_apart"], SOUND_PICTURE_MAX))
+    if n["frames"] <= 0:
+        out.append("mpv counted no frames")
+    elif n["drops"] >= DROPS_MAX * n["frames"]:
+        out.append("%d of %d frames were dropped (the bound is under 1 in 100)" % (n["drops"], n["frames"]))
+    return out
+
+
+def sync_line(what, n):
+    def f(v):
+        return "none" if v is None else "%.3f" % v
+    return ("SYNC %s: worst |avsync| %s, total-avsync-change grew %s, worst |audio-pts - time-pos| %s, %d of %d frames dropped; "
+            "the picture moved in %d of %d samples" % (what, f(n["worst_avsync"]), f(n["avsync_change"]), f(n["worst_apart"]), n["drops"],
+                                                      n["frames"], n["moving"], n["samples"]))
+
+
 class Rig:
     """A panel and a player to ask. A subclass says where they are: `socket` (mpv's control socket), `pipe` (the
     path the player is told to read), and the four questions below. The rest is the same wherever it runs."""
@@ -219,6 +306,33 @@ class Rig:
         if out.get("sound") is not (container == "matroska"):
             raise Failed("POST /api/play for %r says sound %s; the pipe was to carry %s" % (name, out.get("sound"), container))
         return sid
+
+    def started(self, what, name, within):
+        """Wait until mpv's picture clock moves on the pipe (playback has started), at most `within` seconds; then
+        one second more, from where sound against picture is sampled."""
+        def moves():
+            a = ask(self.socket, "path", "time-pos")
+            time.sleep(0.25)
+            b = ask(self.socket, "path", "time-pos")
+            return b["path"] == self.pipe and number(a["time-pos"]) and number(b["time-pos"]) and b["time-pos"] > a["time-pos"]
+        if not wait(moves, within, every=0.1):
+            raise Failed("STUCK, %s: %r did not start within %s seconds by mpv's own word: %s"
+                         % (what, name, within, json.dumps(self.look(), sort_keys=True)))
+        time.sleep(1.0)
+
+    def sync(self, what, name, seconds=15, within=10, judged=True):
+        """Sound against picture for a moving source with sound: every half second from one second after playback
+        started, for `seconds`. The numbers are printed whatever they are; outside the bounds it raises (unless
+        `judged` is False: then a breach is printed as such and nothing more). Returns the numbers."""
+        self.started(what, name, within)
+        n = sync_numbers(sync_samples(self.socket, seconds))
+        self.say(sync_line(what, n))
+        bad = sync_breaches(n, least_moving=int(0.8 * (n["samples"] - 1)))
+        if bad and judged:
+            raise Failed("OUT OF SYNC, %s: %s. %s" % (what, "; ".join(bad), sync_line(what, n)))
+        if bad:
+            self.say("SYNC BREACH, printed and not judged here (the bounds were measured on mpv 0.40): %s: %s" % (what, "; ".join(bad)))
+        return n
 
     def watch(self, what, name, seconds=10, late=None, **want):
         """After a hand-over: look at mpv every second for `seconds`, and judge by the END of that time (a source
@@ -408,6 +522,88 @@ def case_goes_still(rig, name, seconds=20):
     rig.watch("a moving source with sound whose picture stopped", name, seconds=seconds, audio=True)
 
 
-CASES = {"still": (case_still, 1), "twice": (case_twice, 1), "follow": (case_follow, 2), "sound": (case_sound, 1),
+def case_sync(rig, name, seconds=15, within=10, judged=True):
+    """A moving source with its sound: mpv's own account of sound against picture stays inside the bounds."""
+    rig.sound("on")
+    rig.start(name, "matroska")
+    rig.sync("sound against picture, %s" % name, name, seconds=seconds, within=within, judged=judged)
+    rig.watch("after its sync was looked at", name, seconds=3, audio=True)
+
+
+def case_syncinfo(rig, name):
+    """The same numbers on record from an mpv the bounds were not measured on: printed, not judged."""
+    case_sync(rig, name, seconds=10, judged=False)
+
+
+def case_sync_resized(rig, name):
+    """A source with sound that changes size: the panel opens it again, and the stream after the re-open is in sync."""
+    rig.sound("on")
+    rig.start(name, "matroska")
+    rig.watch("a source with sound that changed size, before its sync is looked at", name, seconds=12, size=size_of(name, True), audio=True)
+    rig.sync("sound against picture after a re-open at another size, %s" % name, name, seconds=12, within=5)
+
+
+def case_sync_paused(rig, name, still=20.0):
+    """A clip that is paused and goes on: five seconds moving, `still` seconds with no picture, moving again. The
+    sound must have played throughout (audio-pts at real time over the whole case), and from BACK_IN_SYNC seconds
+    after the picture is seen to move again, avsync must be inside the bound. "Moves again" is the helper's own
+    count of pictures received going on after it stood (asked with every sample, so seen within a quarter of a
+    second where the page is asked directly; a panel asked over HTTP keeps the helper's answer for a second)."""
+    what = "sound against picture across a pause, %s" % name
+    rig.sound("on")
+    rig.start(name, "matroska")
+    rig.started(what, name, 10)
+    samples, received, began = [], [], time.monotonic()
+    while time.monotonic() - began < 4.0 + still + 8.0:
+        samples.append((time.monotonic(), ask(rig.socket, *SYNC_ASKED)))
+        p = rig.page().get("playing")
+        received.append(p.get("counts", {}).get("received") if isinstance(p, dict) else None)
+        left = began + len(samples) * 0.25 - time.monotonic()
+        if left > 0:
+            time.sleep(left)
+    # the pause, by the helper's count: it stands for at least half the pause, and then goes on
+    stood_from = resumed = None
+    for i in range(1, len(samples)):
+        same = received[i] is not None and received[i] == received[i - 1]
+        if same and stood_from is None:
+            stood_from = samples[i - 1][0]
+        elif not same and stood_from is not None:
+            if samples[i - 1][0] - stood_from >= still / 2:
+                resumed = i
+                break
+            stood_from = None
+    before = sync_numbers(samples[:12])                      # the three seconds before the pause
+    rig.say(sync_line(what + ", before the pause", before))
+    looks = [(when, {"audio-pts": m["audio-pts"]}) for when, m in samples]
+    played, took, since = sound_rate(looks)
+    rig.say("SYNC %s: the sound's clock went on by %.1f seconds in %.1f seconds of the case" % (what, played, took))
+    bad = []
+    if since is None or since > samples[0][0] + 0.5 or played < 0.9 * took - 0.5:
+        bad.append("the sound did not play throughout: audio-pts went on by %.1f in the last %.1f seconds it had a clock for, of %.1f"
+                   % (played, took, samples[-1][0] - samples[0][0]))
+    if resumed is None:
+        bad.append("the picture was not seen to stand for %.0f seconds and then move again (by the helper's count of pictures received: %s)"
+                   % (still / 2, received[::8]))
+    else:
+        at = samples[resumed][0]
+        after = [(when, m) for when, m in samples[resumed:] if when >= at + BACK_IN_SYNC]
+        n = sync_numbers(after)
+        rig.say(sync_line(what + ", from %.1f s after it moved again" % BACK_IN_SYNC, n))
+        if n["no_avsync"] or n["worst_avsync"] is None:
+            bad.append("after the pause mpv gave no avsync in %d of %d samples where the picture moved" % (n["no_avsync"], n["moving"]))
+        elif n["worst_avsync"] > AVSYNC_MAX:
+            bad.append("from %.1f s after the picture moved again avsync was as far as %.3f (the bound is %.3f)" % (BACK_IN_SYNC, n["worst_avsync"], AVSYNC_MAX))
+        if n["moving"] < 8:
+            bad.append("after the pause the picture moved in only %d samples" % n["moving"])
+    if before["worst_avsync"] is None or before["worst_avsync"] > AVSYNC_MAX:
+        bad.append("before the pause avsync was %s (the bound is %.3f)" % (before["worst_avsync"], AVSYNC_MAX))
+    whole = sync_numbers(samples)
+    rig.say(sync_line(what + ", the whole case (for the record; a pause is not judged by these)", whole))
+    if bad:
+        raise Failed("OUT OF SYNC, %s: %s" % (what, "; ".join(bad)))
+
+
+CASES = {"sync": (case_sync, 1), "syncinfo": (case_syncinfo, 1), "syncresized": (case_sync_resized, 1), "syncpaused": (case_sync_paused, 1),
+         "still": (case_still, 1), "twice": (case_twice, 1), "follow": (case_follow, 2), "sound": (case_sound, 1),
          "soundon": (case_soundon, 1), "size": (case_size, 1), "restart": (case_restart, 1), "stuck": (case_stuck, 1), "chain": (case_chain, 0),
          "gostill": (case_goes_still, 1)}

@@ -24,6 +24,12 @@
  *                    a real sender (measured on the Pi, 2026-10-12: 11 ms, and 4.7 s after a switch of the sound);
  *                    without this the sound began at the picture's own time and no test saw a player that waits
  *                    for the picture to reach the sound's time before it plays any
+ *   "late by 0.2 s" / "late by 0.8 s" / "late by 5 s"
+ *                    the same for a moving picture: its first sound comes that long after its first picture (for
+ *                    0.8 s and 5 s the sound shows itself for a tenth of a second first, as above; 0.2 s is inside
+ *                    the time the helper waits for sound anyway)
+ *   "pauses 20 s"    five seconds of the moving picture, twenty seconds with no picture, then it moves again (a
+ *                    clip that was paused); its sound goes on throughout
  *   "big"            1280 x 720 (changing to 1264 x 704) in place of 320 x 180 (changing to 256 x 144). A big
  *                    picture is 1.8 MB, more than a pipe holds (1 MiB for an account without privileges), so the
  *                    helper's writer is in the middle of a picture most of the time, as it is with a real sender
@@ -144,7 +150,8 @@ typedef struct {
 	int big;
 	int64_t gap_from;   /* "after a ... gap": no block of sound whose number is from this one ... */
 	int64_t gap_to;     /* ... up to and not including this one; both 0 for no gap */
-	int64_t stops;      /* "then still": the number of the first picture that is never sent; -1 for never */
+	int64_t stops;      /* "then still", "pauses": the number of the first picture that is not sent; -1 for never */
+	int64_t resumes;    /* "pauses": the number of the first picture that is sent again; -1 for never */
 	pthread_mutex_t lock; /* the picture's caller and the sound's caller are two threads */
 } standin_recv;
 
@@ -167,6 +174,10 @@ static const standin_source SOURCES[] = {
 	{"PVJ-STANDIN (one still then sound after a short gap)", "10.255.255.1:5976"},
 	{"PVJ-STANDIN (one still then sound after a long gap)", "10.255.255.1:5977"},
 	{"PVJ-STANDIN (moving then still with sound after a short gap)", "10.255.255.1:5978"},
+	{"PVJ-STANDIN (moving with sound late by 0.2 s)", "10.255.255.1:5979"},
+	{"PVJ-STANDIN (moving with sound late by 0.8 s)", "10.255.255.1:5980"},
+	{"PVJ-STANDIN (moving with sound late by 5 s)", "10.255.255.1:5981"},
+	{"PVJ-STANDIN (moving with sound pauses 20 s)", "10.255.255.1:5982"},
 };
 #define SOURCE_COUNT ((uint32_t)(sizeof SOURCES / sizeof SOURCES[0]))
 static int finder_token;
@@ -265,7 +276,12 @@ static int capture(standin_recv *r, standin_video *video, standin_audio *audio, 
 				} else if (!r->still_sent && r->began < wake) {
 					wake = r->began;
 				}
-			} else if (r->stops < 0 || r->next_video < r->stops) {
+			} else if (r->stops >= 0 && now >= r->began + TICK(r->stops)
+				   && (r->resumes < 0 || now < r->began + TICK(r->resumes))) {
+				/* the picture stands: nothing now; a caller that waits is woken when it moves again */
+				if (r->resumes >= 0 && r->began + TICK(r->resumes) < wake)
+					wake = r->began + TICK(r->resumes);
+			} else {
 				int64_t due = r->began + TICK(r->next_video);
 				if (now >= due) {
 					n = (now - r->began) * 3 / 100000000; /* the picture of this moment: a late caller skips */
@@ -358,6 +374,21 @@ void *NDIlib_recv_create_v3(const standin_recv_create *settings)
 	r->changes = -1;
 	r->big = strstr(name, "big") != NULL;
 	r->stops = strstr(name, "then still") != NULL ? STOP_AFTER : -1;
+	r->resumes = -1;
+	if (strstr(name, "pauses 20 s") != NULL) {
+		r->stops = STOP_AFTER;
+		r->resumes = STOP_AFTER + 600;
+	}
+	if (strstr(name, "late by 0.2 s") != NULL) {
+		r->gap_from = 0;
+		r->gap_to = 6;
+	} else if (strstr(name, "late by 0.8 s") != NULL) {
+		r->gap_from = 3;
+		r->gap_to = 24;
+	} else if (strstr(name, "late by 5 s") != NULL) {
+		r->gap_from = 3;
+		r->gap_to = 150;
+	}
 	if (strstr(name, "after a short gap") != NULL) {
 		r->gap_from = 3; /* blocks are a thirtieth of a second: 0.1 s of sound, then none until 0.8 s */
 		r->gap_to = 24;
