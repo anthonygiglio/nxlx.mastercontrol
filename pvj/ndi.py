@@ -1181,6 +1181,12 @@ class Receiver:
                         return
                     data, n = data[4 * planes * k:], n - k
                 self._apts = here
+                if here > 0:
+                    # And a first block that begins AFTER the stream did is led up to by silence from the stream's
+                    # beginning (a second of it at most, as after any gap): the sound track then begins where the
+                    # picture's does. A player given a picture at 0 and its first sound at 0.2 begins both at once
+                    # and is 0.2 s out of step, which mpv takes two seconds to put right (measured, NDI.md).
+                    self._silence(min(here, AUDIO_QUEUE_SECONDS), here)
             lead = self._apts - here
             if lead < -AUDIO_WINDOW:
                 # A gap: the sound stopped and is back. Up to a second of silence leads up to it (more is a jump in

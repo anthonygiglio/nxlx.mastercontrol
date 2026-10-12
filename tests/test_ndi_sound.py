@@ -348,12 +348,15 @@ class ReceiverSoundTest(Base):
             self.now[0] += 0.033
             self.lib.sounds.put(sound(480, value=0.5))                                   # 10 ms of sound
             self.lib.frames.put(frame(64, 16, fill=1 + k))
-            self.assertTrue(wait(lambda: len([b for b in self.stream() if b[0] == 1]) == 1 + k and len([b for b in self.stream() if b[0] == 2]) == k), k)
+            self.assertTrue(wait(lambda: len([b for b in self.stream() if b[0] == 1]) == 1 + k and len([b for b in self.stream() if b[0] == 2]) == 1 + k), k)
         got = self.stream()
         tree = ebml_tree(bytes(self.got))
         self.assertEqual(find(tree, 0x18538067, 0x1654AE6B, 0xAE, 0xE0, 0x2EB524), b"UYVY")
         video = [b for b in got if b[0] == 1]
         audio = [b for b in got if b[0] == 2]
+        # the sound track begins where the picture's does: silence from 0 up to the first block (23 ms)
+        self.assertEqual((round(audio[0][1], 3), audio[0][2]), (0.0, bytes(int(round(0.023 * 48000)) * 8)))
+        audio = audio[1:]
         self.assertEqual([b[2] for b in video], [bytes([n]) * 2048 for n in (1, 2, 3, 4)])      # whole frames, in order, untouched
         self.assertEqual([round(b[1], 3) for b in video], [0.0, 0.033, 0.066, 0.099])           # where each arrived on the helper's clock
         self.assertEqual([len(b[2]) for b in audio], [480 * 2 * 4] * 3)
@@ -679,6 +682,20 @@ class ReceiverSoundTest(Base):
     def test_sound_that_comes_unevenly_stays_in_step_with_the_picture(self):
         pictures, sounds, _ = self.sender(1600, 4.0, jitter=(0.0, 0.012, -0.008, 0.02, 0.003, -0.012))
         self.in_step(pictures, sounds, 0.025)                        # as far as the unevenness itself, never more and more
+
+    def test_sound_that_begins_a_little_after_the_picture_is_led_up_to_by_silence_from_the_streams_beginning(self):
+        """mpv 0.40 given a picture at 0 and its first sound at 0.211 began both at once: `avsync` 0.206, over 40 ms
+        for 1.8 seconds (the Pi, 2026-10-12). The sound track begins at 0, with silence."""
+        r = self.start_with_sound()
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.now[0] += 0.311                                                             # the first block: 100 ms that began at 0.211
+        self.lib.sounds.put(sound(4800))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))
+        audio = [b for b in self.stream() if b[0] == 2]
+        self.assertEqual([round(b[1], 3) for b in audio], [0.0, 0.211])
+        self.assertEqual(audio[0][2], bytes(int(round(0.211 * 48000)) * 8))              # silence, exactly up to the sound
+        self.assertTrue(any(audio[1][2]))
+        self.assertEqual(r.status()["audio"]["counts"]["received"], 1)                   # the silence is not a block of the sender's
 
     def test_a_player_that_reads_nothing_for_seconds_after_opening_the_pipe_gets_a_stream_that_begins_whole(self):
         """The stream's clock began when the pipe was opened: a player that then read nothing for 4.7 seconds was
