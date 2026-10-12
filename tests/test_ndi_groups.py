@@ -127,7 +127,7 @@ class ConfigFile(unittest.TestCase):
             unit = f.read()
         self.assertIn("Environment=NDI_CONFIG_DIR=%s\n" % paths.NDI_CONFIG_DIR, unit)
         rw = [l for l in unit.splitlines() if l.startswith("ReadWritePaths=")]
-        self.assertEqual(rw, ["ReadWritePaths=/run/pvj-ndi /run/pvj-ndi-pipe"], "the helper must not be able to write its own configuration")
+        self.assertEqual(rw, ["ReadWritePaths=/run/pvj-ndi -/run/pvj-ndi-pipe"], "the helper must not be able to write its own configuration")
         self.assertIn("d %s 0750 pvj-web pvj-ndi -\n" % paths.NDI_CONFIG_DIR, ndisetup.TMPFILES_TEXT)
         self.assertIn("Environment=PVJ_NDI_CONFIG_DIR=%s\n" % paths.NDI_CONFIG_DIR, ndisetup.WEB_TEXT)
         self.assertIn("ReadWritePaths=-%s\n" % paths.NDI_CONFIG_DIR, ndisetup.WEB_TEXT)

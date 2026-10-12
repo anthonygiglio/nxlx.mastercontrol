@@ -50,7 +50,9 @@ TemporaryFileSystem=/tmp:rw,nosuid,nodev,size=8M,mode=1777 /var/tmp:rw,nosuid,no
 PrivateDevices=yes
 # And root's pipe folder (pvj/ndisetup.py, tmpfiles): the pipe is written through it; the folder itself is root's,
 # so the helper cannot add, rename or remove a name there.
-ReadWritePaths=/run/pvj-ndi /run/pvj-ndi-pipe
+# The dash: root's pipe folder is made by tmpfiles (at boot, at the set-up, and by the installer after an update).
+# A box updated from a release that had no such folder must still get its helper started (the review of 8cfde96).
+ReadWritePaths=/run/pvj-ndi -/run/pvj-ndi-pipe
 # Bounds, so that a library gone wrong (or taken over) cannot starve the player. How they were chosen, none of
 # them measured on a device: memory, three buffers of the largest frame taken (3840 x 2160, 16.6 MB each) plus the
 # library's own decoding, with room, and what it writes to /run and its /tmp counts against the same figure;

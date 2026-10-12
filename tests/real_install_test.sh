@@ -338,6 +338,27 @@ systemctl restart pvj-ndi.service
 wait_for 40 systemctl is-active --quiet pvj-ndi.service || fail "pvj-ndi did not come back with its program"
 wait_for 40 test -S /run/pvj-ndi/ndi.sock || fail "pvj-ndi made no socket after its program came back"
 
+step "an update over a box that an earlier release set up: the folders its tmpfiles lines name are made, and NDI works without a reboot"
+# An earlier release of the helper had no pipe folder of root's and no folder for NDI's configuration file. The
+# installer writes their lines again; it must also make them, before it starts the helper and the panel again.
+systemctl stop pvj-ndi.service
+rm -rf /run/pvj-ndi-pipe /run/pvj-ndi-config
+rm -f /etc/tmpfiles.d/pvj-ndi.conf
+installer
+if grep -q "systemd-tmpfiles could not make the NDI folders" "$OUT"; then fail "the installer could not make the NDI folders"; fi
+is /etc/tmpfiles.d/pvj-ndi.conf "root:root 644 regular file"
+is /run/pvj-ndi-pipe "root:pvj-ndi 750 directory"
+is /run/pvj-ndi-pipe/ndi.fifo "root:pvj-ndi 660 fifo"
+is /run/pvj-ndi-config "pvj-web:pvj-ndi 750 directory"
+wait_for 40 systemctl is-active --quiet pvj-ndi.service || fail "pvj-ndi is not active after an update over an older set-up"
+wait_for 40 test -S /run/pvj-ndi/ndi.sock || fail "pvj-ndi made no socket after an update over an older set-up"
+runuser -u pvj-web -- touch /run/pvj-ndi-config/probe || fail "the panel's account cannot write NDI's configuration folder"
+rm -f /run/pvj-ndi-config/probe
+refused pvj-ndi touch /run/pvj-ndi-config/x
+refused pvj-ndi rm /run/pvj-ndi-pipe/ndi.fifo
+ndi_page
+grep -q '"helper": true' "$OUT" || fail "after an update over an older set-up the panel cannot reach the helper"
+
 step "a later plain install keeps an opted-in box opted in and writes its unit again"
 echo "# a line from an older version" >> /etc/systemd/system/pvj-ndi.service
 rm "$NDI_PLAYER_DROPIN"

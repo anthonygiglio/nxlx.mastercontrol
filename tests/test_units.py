@@ -634,7 +634,7 @@ class NdiUnitTest(unittest.TestCase):
                            ("RestrictNamespaces", "yes"), ("RestrictRealtime", "yes"), ("RestrictSUIDSGID", "yes"),
                            ("LockPersonality", "yes"), ("SystemCallArchitectures", "native")):
             self.assertEqual(n[key], [value], key)
-        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi", "/run/pvj-ndi-pipe"])
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi", "-/run/pvj-ndi-pipe"])
         self.assertEqual(sorted(words(n, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
         self.assertEqual(words(n, "InaccessiblePaths"), ["-/var/lib/pvj", "-/etc/pvj", "-/run/pvj"])
         for key in ("DeviceAllow", "BindPaths", "StateDirectory", "ExecStartPre", "ExecStartPost", "EnvironmentFile"):
@@ -808,7 +808,7 @@ class NdiUnitTest(unittest.TestCase):
         self.assertEqual(words(n, "TemporaryFileSystem"), ["/tmp:rw,nosuid,nodev,size=8M,mode=1777", "/var/tmp:rw,nosuid,nodev,size=8M,mode=1777"])
         env = dict(w.split("=", 1) for w in words(n, "Environment"))
         self.assertEqual(env["HOME"], "/tmp")              # a home in the bounded private /tmp, not in /run
-        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi", "/run/pvj-ndi-pipe"])
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi", "-/run/pvj-ndi-pipe"])
         self.assertEqual(n["Restart"], ["always"])         # the helper ends itself when the module goes off, and comes back clean
 
     def test_the_system_bus_stays_reachable_and_the_unit_says_why(self):

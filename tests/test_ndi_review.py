@@ -34,11 +34,11 @@ class UpdateOverAnOlderSetUp(unittest.TestCase):
         at = self.sh.index(make)
         self.assertGreater(at, refresh, "the folders are made after their lines were written")
         self.assertLess(at, self.sh.index("systemctl restart pvj-ndi.service"), "and before the helper is started")
-        self.assertLess(at, self.sh.index("systemctl restart pvj-web.service"), "and before the panel is, whose drop-in names one of them")
+        self.assertLess(at, self.sh.index("systemctl restart pvj-player.service pvj-web.service"), "and before the panel is, whose drop-in names one of them")
         line = [l for l in self.sh.splitlines() if make in l][0]
         block = self.sh[self.sh.rindex("\nif ndi_mark; then", 0, at):at]
         self.assertNotIn("\nfi\n", block, "only behind the mark")
-        self.assertIn('[ "$REAL" = 1 ] && [ "$DRY" = 0 ]', self.sh[self.sh.rindex("\n", 0, self.sh.rindex("if ", 0, at)):at + len(line)], "only on a real install")
+        self.assertIn('if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -f "$NDI_TMPFILES" ]; then', line, "only on a real install")
         self.assertIn("|| log", line, "a failure is said and does not end the install")
 
     def test_a_folder_that_tmpfiles_makes_is_never_a_reason_for_a_unit_not_to_start(self):

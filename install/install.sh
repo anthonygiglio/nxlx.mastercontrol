@@ -416,6 +416,9 @@ if ndi_mark; then
 	log "this box has NDI set up: writing the NDI helper's unit again"
 	# --root is empty on a real box and the staged folder with --stage (where no account is touched).
 	run python3 -B "$RELEASE/bin/pvj-ndi-runtime" refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the NDI helper's unit again; it stays as it was. To repair: sudo pvj-ndi-runtime install <the NDI SDK folder>"
+	# The folders those lines name (root's pipe folder and pipe, the folder of NDI's configuration file) are made
+	# now, as at boot: a release may have added one, and the helper and the panel are started again further down.
+	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -f "$NDI_TMPFILES" ]; then systemd-tmpfiles --create "$NDI_TMPFILES" || log "systemd-tmpfiles could not make the NDI folders; NDI works again after a restart of the box"; fi
 elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ] || [ -e "$NDI_TMPFILES" ] || [ -L "$NDI_TMPFILES" ]; then
 	# Something of the helper without the mark: a setup that was cut short, or a box that ran this branch while it
 	# still put the helper on every box. Nobody opted this box in, so it goes (the account pvj-ndi, if any, stays).

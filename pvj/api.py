@@ -520,7 +520,7 @@ class Api:
 
     def status(self, body, device, client):
         temps = hardware.temperatures()
-        player = self._ndi_said(self._public_player_status())
+        player = self._ndi_said(self._public_player_status(), device)
         # What the GPU last refused, for the Live page, where the pads are: a controller's tap of a shader pad
         # answers before the GPU has looked, so its refusal has no answer to ride on (D73). From the engine's own
         # record: the player is asked nothing more.
@@ -639,10 +639,13 @@ class Api:
             self._preview = (time.monotonic(), data, with_text, clean)
             return data
 
-    def _ndi_said(self, status):
+    def _ndi_said(self, status, device=None):
         """The last refusal of a pad's NDI source, for the pads (a controller's tap has no answer to carry it): kept
-        until that source shows or the module goes off."""
+        until that source shows or the module goes off. Not for a Guest: the words can name a sender's address, and
+        to him such a pad is "not available" (the review of 8cfde96)."""
         said = self._ndi_refused
+        if policy.is_guest(device):
+            return status
         if said and self.ndi is not None and self.registry.enabled("inputs-ndi") and status.get("ndi_id") != said["id"]:
             status["ndi_refused"] = dict(said)
         return status
@@ -1096,6 +1099,9 @@ class Api:
                          % (allow["name"], allow["from"], (device or {}).get("id"), client))
             self.settings.data["pads"]["banks"][bank]["pads"][index] = pad
             self.settings.save()
+        if allow is not None and self.ndi is not None:      # the helper keeps an allowed source in its list while it is there
+            self.ndi._wanted()
+            self.ndi.sync()
         return self._pads_answer(device)
 
     def pads_follow_preset(self, sid, was, to):
@@ -3162,6 +3168,8 @@ class Api:
                     raise ApiError(404, "no such allowed source")
                 self._ndi_write(sources=left)
                 self.settings.save()
+            self.ndi._wanted()
+            self.ndi.sync()
             return self.ndi.status()
         with self.settings.lock:
             items = ndi_mod.saved_addresses(self.settings.data.get("ndi"))[0]      # a hand-edited section of the wrong kind counts as empty

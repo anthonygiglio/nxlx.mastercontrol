@@ -205,7 +205,10 @@ def clean_sources(raw, prefer_hosts=(), keep_id=None):
             found[s["id"]] = s
     for sid in twins:
         found[sid]["twins"] = True
-    rows = sorted(found.values(), key=lambda s: (s["id"] != keep_id, host_of(s["from"]) not in prefer, s["name"].lower(), s["name"], s["from"]))
+    # `keep_id`: one id, or several (the source on the screen and the sources pads hold: the review of 8cfde96 found
+    # that a crowd of announced names pushed every pad's source out of the list).
+    keep = {keep_id} if isinstance(keep_id, str) else set(keep_id or ())
+    rows = sorted(found.values(), key=lambda s: (s["id"] not in keep, host_of(s["from"]) not in prefer, s["name"].lower(), s["name"], s["from"]))
     kept = sorted(rows[:MAX_SOURCES], key=lambda s: (s["name"].lower(), s["name"], s["from"]))
     return kept, len(rows) > MAX_SOURCES or len(raw) > SCAN_ROWS
 
@@ -1408,6 +1411,7 @@ class Service:
         self.lib, self.lib_error, self.version = None, "", ""
         self.configured, self.on, self.addresses = False, False, []
         self.groups = []                           # the NDI groups the finder looks in (none: the library's default)
+        self.allowed = []                          # ids of the sources pads hold: never cut from the list while present
         # The discovery servers the library was started with: read from its configuration file (which the panel's
         # side writes; this helper can only read it) at the moment the library is loaded, the only moment the
         # library reads it. None until then.
@@ -1443,6 +1447,12 @@ class Service:
         try:
             checked = validate_saved({"addresses": addresses, "groups": message.get("groups", []), "discovery": message.get("discovery", [])})
             addresses, groups, discovery = checked["addresses"], checked["groups"], checked["discovery"]
+            # The ids of the sources pads hold, so that they are kept in the list while they are there. Ids only:
+            # the helper learns no name and no address it did not find by itself.
+            allowed = message.get("allowed", [])
+            if (not isinstance(allowed, list) or len(allowed) > MAX_ALLOWED or len(set(map(str, allowed))) != len(allowed)
+                    or not all(isinstance(a, str) and _ID.fullmatch(a) for a in allowed)):
+                raise NdiError("bad list of allowed NDI sources")
         except NdiError as e:
             return {"ok": False, "error": str(e)}
         with self.lock:
@@ -1480,6 +1490,9 @@ class Service:
                     r = self.receiver
                 if r is not None and r.state not in ENDED:
                     r._end("changed", "sound was switched %s" % ("on" if sound else "off"))
+            if allowed != self.allowed:
+                with self._find_lock:
+                    self.allowed, self._sources_at = list(allowed), None      # the list is read again with them in front
             self.configured, self.on, self.addresses, self.sound, self.groups = True, on, addresses, sound, groups
         return self.status()
 
@@ -1493,7 +1506,7 @@ class Service:
                     r = self.receiver
                 try:
                     self._sources, self._cut = clean_sources(self.lib.find_sources(self._finder), self.addresses,
-                                                             r.source["id"] if r is not None else None)
+                                                             set(self.allowed) | ({r.source["id"]} if r is not None else set()))
                 except Exception as e:
                     self.log("pvj-ndi: reading the sources: %s" % e)
                     self._sources, self._cut = [], False
@@ -1529,7 +1542,7 @@ class Service:
             finally:
                 self.lock.release()
         return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "sound": self.sound,
-                "groups": list(self.groups), "discovery": list(self.discovery or []),
+                "groups": list(self.groups), "discovery": list(self.discovery or []), "allowed": list(self.allowed),
                 "runtime": self.runtime(),
                 "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **({"twins": True} if s.get("twins") else {}))
                             for s in self.sources()], "cut": self._cut,
@@ -1824,7 +1837,8 @@ class Input:
         try:
             on, addresses = self._wanted()
             reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses, "sound": self.sound_wanted(),
-                                         "groups": self._groups(), "discovery": self.write_config()}, timeout=10)
+                                         "groups": self._groups(), "discovery": self.write_config(),
+                                         "allowed": [r["id"] for r in self._allowed()]}, timeout=10)
         except Exception as e:             # never out of here: this runs while the panel starts
             if not isinstance(e, NdiError):
                 self.log("pvj-web: the NDI helper was not told the settings: %s" % type(e).__name__)
@@ -1934,7 +1948,8 @@ class Input:
         st = self.client.status() if self.setup else {"ok": False}
         sound = self.sound_wanted()
         if st.get("ok") and (st.get("configured") is not True or st.get("on") is not on or st.get("addresses") != list(addresses)
-                             or ("sound" in st and st.get("sound") is not sound) or st.get("groups", []) != self._groups()):
+                             or ("sound" in st and st.get("sound") is not sound) or st.get("groups", []) != self._groups()
+                             or st.get("allowed", []) != [r["id"] for r in self._allowed()]):
             st = self.sync()
         helper = st.get("ok") is True or st.get("answered") is True
         notice = [x for x in (getattr(self._wanted, "problem", ""), _text(st.get("error")) if st.get("answered") is True else "",

@@ -44,6 +44,7 @@ SERVER_NAME = "ndi-discovery-server"
 SERVER_DIR = "/opt/pvj-ndi-server"            # root's; nothing else is in it
 SERVER_PATH = SERVER_DIR + "/" + SERVER_NAME
 SERVER_MAX_BYTES = 32 * 1024 * 1024           # NDI's program is about 1 MB (6.3.2); a file far larger is not it
+CONFIG_BESIDE = "ndi-discovery-service.v1.json"      # NDI's program also reads this name lying beside it; the box never writes one
 ET_EXEC, ET_DYN = 2, 3                        # an ELF program (a position-independent one is ET_DYN)
 ACCOUNT = GROUP = "pvj-ndisc"
 UNIT = "pvj-ndi-discovery.service"
@@ -101,6 +102,13 @@ def server_problem(path=SERVER_PATH, owner_uids=(0,), machine=None):
     if (not stat.S_ISREG(st.st_mode) or st.st_uid not in owner_uids or st.st_mode & 0o022 or st.st_size > SERVER_MAX_BYTES
             or not stat.S_ISDIR(folder.st_mode) or folder.st_uid not in owner_uids or folder.st_mode & 0o022):
         return "NDI's discovery server program is not a plain file that only root can change; install it again with pvj-ndi-runtime"
+    extra = beside(path)
+    if extra:
+        # NDI's program reads a configuration file lying beside it (ndi-discovery-service.v1.json), which would
+        # count for more than the arguments it is given. The box writes nothing into this folder but the program,
+        # so anything else there is somebody else's, and the program is not started with it.
+        return ("%s lies beside NDI's program in %s and this box did not put it there; remove it (the program is not started while it is there)"
+                % (", ".join(extra), os.path.dirname(path)))
     found, want = elf_machine(path), machine if machine is not None else box_machine()
     if found is None or _elf_type(path) not in (ET_EXEC, ET_DYN):
         return "the file is not a program (NDI's discovery server is one)"
@@ -108,6 +116,17 @@ def server_problem(path=SERVER_PATH, owner_uids=(0,), machine=None):
         return "NDI's discovery server program is for %s, this box is %s" % (ELF_MACHINES.get(found[0], "another processor"),
                                                                            ELF_MACHINES.get(want, "another kind"))
     return None
+
+
+def beside(path):
+    """The other names in the program's folder, sorted (at most a few are named); [] when it is alone there. The
+    name being judged and this module's own temporary copy of the moment do not count."""
+    folder, me = os.path.dirname(path), os.path.basename(path)
+    try:
+        names = sorted(n for n in os.listdir(folder) if n not in (me, SERVER_NAME) and not (n.startswith(".ndisc-") and me.startswith(".ndisc-")))
+    except OSError:
+        return []
+    return [_text(n, 80) for n in names[:4]]
 
 
 def install_server(source, dest_dir=SERVER_DIR, machine=None, chown=True):
@@ -530,7 +549,8 @@ class Service:
             return
         try:
             child = self._popen(self.argv(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                close_fds=True, cwd="/", env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"})
+                                close_fds=True, cwd="/", env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"},
+                                start_new_session=True)      # a session and a process group of its own: _end takes all of it
         except (OSError, ValueError) as e:
             self.state, self.message, self.child = "failed", "the program could not be started (%s)" % (getattr(e, "strerror", None) or type(e).__name__), None
             self._again(gen, pause)
@@ -554,7 +574,7 @@ class Service:
                                 self.child, self.state = None, "failed"
                                 self.message = "NDI's program listened somewhere other than the address chosen (%s) and was stopped; it is not started again until the setting is changed or switched off and on" % self.bind
                                 try:
-                                    child.kill()
+                                    os.killpg(child.pid, 9)
                                 except OSError:
                                     pass
         except (OSError, ValueError):
@@ -591,16 +611,34 @@ class Service:
         self._wake.set()
         child, self.child = self.child, None
         if child is not None:
-            try:
-                child.terminate()
-                try:
-                    child.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-                    child.wait(timeout=3)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
+            self._end(child)
             self.log("pvj-ndi-discovery: NDI's discovery server was stopped")
+
+    @staticmethod
+    def _end(child):
+        """End the program and whatever it started: its whole process group (it is the leader of a session of its
+        own), politely and then for good. A group that is gone already is fine."""
+        import signal
+        for sig, pause in ((signal.SIGTERM, 3), (signal.SIGKILL, 3)):
+            try:
+                os.killpg(child.pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+            except OSError:
+                try:
+                    child.kill() if sig == signal.SIGKILL else child.terminate()
+                except OSError:
+                    pass
+            try:
+                child.wait(timeout=pause)
+                if sig == signal.SIGTERM:
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)       # the leader went; nothing of its group stays
+                    except OSError:
+                        pass
+                return
+            except subprocess.TimeoutExpired:
+                continue
 
     def status(self):
         with self.lock:
