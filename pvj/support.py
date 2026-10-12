@@ -50,7 +50,8 @@ DEFAULTS_FILE = "/etc/pvj/support.json"
 
 # D84. The principle: a helper in a remote session with the Owner's role may do anything that ends when the session
 # ends, and nothing that outlives it or locks the owner out. (A remote Owner session can already upload a software
-# update, that is, run any code on the box. So what is refused below is not about limiting a trusted helper in the
+# update signed by a key this box trusts: pvj-update checks the signature against /etc/pvj/allowed_signers, and no
+# route changes the signers. So what is refused below is not about limiting a trusted helper in the
 # moment; it is about a way in that would still be there after Stop, and about the owner's own way in.)
 #
 # Never over the tunnel, whatever the role: route -> why. A route that is not here and not under a prefix below is
@@ -99,10 +100,21 @@ REMOTE_OWNER_OPENED = {
     ("POST", "/api/guests"): "the lock on guest controls: a switch the owner or an Operator sets back",
     ("POST", "/api/devices/revoke"): "a Guest's or an Operator's device only: never an Owner's",
 }
-DID_KEEP, DID_TEXT = 40, 240      # what a session did, kept with its entry in the support log: lines, characters each
+# What a session did, kept with its entry in the support log (SupportManager.note): the major lines, the routine
+# lines (one per route, so a few hundred covers every route there is), and the characters of one line.
+MAJOR_KEEP, DID_KEEP, DID_TEXT = 200, 200, 400
 # POSTs of a support login that change nothing on the box, so they are no line in what a session did
 NOT_A_CHANGE = {("POST", "/api/support/login"), ("POST", "/api/support/stop"), ("POST", "/api/logout"), ("POST", "/api/media/info"),
                 ("POST", "/api/system/settings/export"), ("POST", "/api/theme/export")}
+
+
+def upload_line(update, result):
+    """The log line for a file a support login uploaded: its name, and for an update its sha256, so the owner can
+    tell afterwards which bundle it was. Neither is a secret."""
+    name = "".join(c for c in str(result.get("name", "")) if c.isprintable())[:80]
+    if update:
+        return "uploaded a software update: %s, sha256 %s" % (name, result.get("sha256", "?"))
+    return "uploaded a clip: %s" % name
 
 
 class SupportApiError(Exception):
@@ -272,19 +284,23 @@ class SupportManager:
         return self._key
 
     # -- sessions ---------------------------------------------------------------------------------------------
-    def note(self, device, text, key=False):
-        """What a support login just changed, into its session's entry of the support log (`did`) and the journal:
-        the owner reads on the Remote support page what was done. `key`: the login saw or made the OSC key, so the
-        page says to make a new one. Nothing for a device that is no support login. Never a secret: the caller says
-        what was done, not the value.
+    def note(self, device, text, key=False, major=True):
+        """What a support login just did, into its session's entry of the support log and the journal: the owner reads
+        it on the Remote support page. Never a secret: the caller says what was done, not the value.
 
-        The same thing done again is one line with a count (kept in memory until the next save: a fader dragged
-        through the tunnel must not write the settings file ten times a second, nor fill the journal). When the
-        list is full the FIRST lines stay and the rest are counted: a helper cannot push what he did out of the
-        owner's sight by doing something harmless forty times."""
+        Two lists (the security review of #125: one list of forty let sixty routine lines push an update off it).
+        `major`: what the owner must be able to read whatever else was done: what the opened routes changed, an
+        update or a settings file brought in, a device removed, and everything the session was REFUSED. Never
+        capped by routine lines; the first MAJOR_KEEP stay, and if even that fills, `major_more` counts the rest and
+        the page says so. `did` (major=False): routine use, one line per route with a count.
+
+        The same line again is a count, kept in memory until the next save: a fader dragged through the tunnel, or
+        a refused request sent a thousand times, writes neither the settings file nor the journal each time.
+        `key`: the login saw or made the OSC key, so the page says to make a new one."""
         if not (isinstance(device, dict) and device.get("remote")):
             return
         text = "".join(c for c in str(text) if c.isprintable())[:DID_TEXT]
+        which, keep, more = ("major", MAJOR_KEEP, "major_more") if major else ("did", DID_KEEP, "did_more")
         with self.lock:
             s = self.session
             if not s:
@@ -294,17 +310,18 @@ class SupportManager:
                 for entry in self.settings.data.get("support_log", []):
                     if entry.get("id") != s["id"]:
                         continue
-                    did = [dict(d) for d in entry.get("did", [])]
-                    same = next((d for d in did if d.get("what") == text), None)
+                    lines = [dict(d) for d in entry.get(which, [])]
+                    same = next((d for d in lines if d.get("what") == text), None)
                     if same is not None:
                         same["n"] = int(same.get("n", 1)) + 1
                         same["last"] = int(self._now())
                         again = not (key and not entry.get("osc_key"))
-                    elif len(did) < DID_KEEP:
-                        did.append({"at": int(self._now()), "what": text})
+                    elif len(lines) < keep:
+                        lines.append({"at": int(self._now()), "what": text})
                     else:
-                        entry["did_more"] = int(entry.get("did_more", 0)) + 1
-                    entry["did"] = did
+                        entry[more] = int(entry.get(more, 0)) + 1
+                        again = entry[more] > 1         # said once in the journal that the list is full, then counted
+                    entry[which] = lines
                     if key:
                         entry["osc_key"] = True
                 if not again:
@@ -315,6 +332,14 @@ class SupportManager:
         if not again:
             self.log("pvj-web: remote support %s: %s" % (device.get("id"), text))
 
+    def refused(self, device, what):
+        """A support login (or a request through the tunnel with no login at all) was refused something no session may
+        do: a major line. `what` names the request or the rule, never what was sent."""
+        if not (isinstance(device, dict) and device.get("remote")):
+            device = {"id": "support (not signed in)", "remote": True}
+            what = "%s, not signed in" % what
+        self.note(device, "was refused %s" % what)
+
     def used(self, device, method, path):
         """Every other request of a support login that changed something (Api.handle and the server's own uploads
         call this after a POST that went well): the route, never its body. The routes D84 opened say more, in their
@@ -323,7 +348,7 @@ class SupportManager:
             return
         if (method, path) in NOT_A_CHANGE or (method, path) in REMOTE_OWNER_OPENED:
             return
-        self.note(device, "used %s" % path)
+        self.note(device, "used %s" % path, major=False)
 
     def key_renewed(self):
         """A new OSC key was made at the studio: no past session knows the key any more, so the page stops saying so."""

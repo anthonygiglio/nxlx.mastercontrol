@@ -9,6 +9,7 @@ or a path unchecked.
 """
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -1708,7 +1709,7 @@ class Api:
                 if stale or (om and not m.group(2) and om.group(1) != m.group(1)):
                     os.unlink(os.path.join(inbox, old))     # a new bundle replaces any other; crashed uploads go
             fd, tmp = tempfile.mkstemp(prefix=".upload-", dir=inbox)
-            got = 0
+            got, digest = 0, hashlib.sha256()
             with os.fdopen(fd, "wb") as out:
                 while got < length:
                     if check:
@@ -1717,6 +1718,7 @@ class Api:
                     if not chunk:
                         break
                     out.write(chunk)
+                    digest.update(chunk)
                     got += len(chunk)
                 out.flush()
                 os.fsync(out.fileno())
@@ -1725,7 +1727,7 @@ class Api:
             os.chmod(tmp, 0o640)
             os.replace(tmp, os.path.join(inbox, name))
             tmp = None
-            return {"name": name, "size": length}
+            return {"name": name, "size": length, "sha256": digest.hexdigest()}     # the sha256: for the support log (D84)
         except (TimeoutError, ConnectionError):
             raise ApiError(400, "upload interrupted")
         except OSError as e:
@@ -2061,6 +2063,8 @@ class Api:
             if target is None:
                 raise ApiError(404, "no such device")
             if target["role"] == "full":
+                if remote:
+                    self.support.refused(device, "removing an owner's device")
                 raise ApiError(403, "an owner's device is never removed through remote support; ask someone at the studio" if remote
                                else "an operator cannot remove an owner (owner access needed)")
             if did == device.get("id"):
@@ -2249,6 +2253,7 @@ class Api:
         if "allow" in body and ((isinstance(device, dict) and device.get("remote")) or self.support.is_remote(client)):
             bad = self.remote_allow_refused(body["allow"], self.settings.data["osc"].get("allow"))
             if bad:
+                self.support.refused(device, "adding a network OSC accepts from")
                 raise ApiError(403, "through remote support a network OSC accepts from can be removed or narrowed, and one added only if the "
                                     "box is directly connected to it: %s cannot be added; ask someone at the studio" % ", ".join(bad))
         with self.osc.lock:                   # one save at a time (OscManager.lock says why)
@@ -3137,6 +3142,8 @@ class Api:
             # layout of a controller on or off would add or remove such a control if its layout has one
             profile = self.midi.profile_of(body.get("controller")) if isinstance(body.get("controller"), str) else None
             if profile is None or any(self._owner_control(c) for c in profile["controls"]):
+                if device.get("remote"):
+                    self.support.refused(device, "switching a standard MIDI layout that has a control that shows an access code")
                 raise ApiError(403, "the standard layout of this controller has a control that shows an access code, "
                                     "or the controller is not plugged in: switching it is the owner's (owner access needed)")
         known = self.midi.known_sources()
@@ -3172,6 +3179,16 @@ class Api:
         return self.midi.status()
 
     def midi_map(self, body, device, client):
+        """See _midi_map. What a support session is refused here is a line in its log (D84), written after the
+        settings lock is let go."""
+        try:
+            return self._midi_map(body, device, client)
+        except ApiError as e:
+            if e.message == self.REMOTE_MAPPING:
+                self.support.refused(device, "setting a MIDI control that shows an access code")
+            raise
+
+    def _midi_map(self, body, device, client):
         """Add, remove or clear mappings. {"add": {kind, number, channel, source, action, ...}}, {"remove": id}, {"clear": true}.
         For a recognised controller: {"set": {"controller", "control", "action": {...}}} makes one control of its
         drawn layout do something else, and {"reset": {"controller", "control"?}} goes back to the standard for one
@@ -3196,7 +3213,7 @@ class Api:
                     if profile is None:
                         raise ApiError(404, "that controller is not plugged in, or has no built-in layout")
                     if "set" in body and not owner and any(c["id"] == ask.get("control") and self._owner_control(c) for c in profile["controls"]):
-                        raise ApiError(403, self.OWNER_MAPPING)
+                        raise ApiError(403, self.REMOTE_MAPPING if remote else self.OWNER_MAPPING)
                     if "reset" in body and remote and any(self._owner_control(c) for c in profile["controls"] if ask.get("control") in (None, c["id"])):
                         raise ApiError(403, self.REMOTE_MAPPING)          # back to the standard would put a code control back
                     if "set" in body:
@@ -3222,7 +3239,7 @@ class Api:
             if not owner:                   # nor a mapping of his own in front of one of the Owner's
                 for e in changed:
                     if e not in current and (e.get("kind"), e.get("number")) in self._owner_numbers(current, e.get("source")):
-                        raise ApiError(403, self.OWNER_MAPPING)
+                        raise ApiError(403, self.REMOTE_MAPPING if remote else self.OWNER_MAPPING)
             self.settings.data["control"]["midi"]["map"] = changed
             try:
                 self.settings.save()
@@ -3506,6 +3523,10 @@ class Api:
         try:                      # requests through the support tunnel: only support's login, never some things
             self.support.guard(method, path, device, client)
         except support_mod.SupportApiError as e:
+            # D84, the security review: what a session was refused is in its log. Only for what no session may do
+            # (REMOTE_DENY and the prefixes), asked through the tunnel; the route is named, never what was sent.
+            if self.support.is_remote(client) and (key in support_mod.REMOTE_DENY or path.startswith(support_mod.REMOTE_DENY_PREFIX)):
+                self.support.refused(device, "%s %s" % (method, path))
             raise ApiError(e.status, e.message)
         if need is None:
             return body
@@ -3534,6 +3555,7 @@ class Api:
     def set_guests(self, body, device, client):
         """{"locked": true | false}: an Operator or an Owner locks or opens guest controls for the whole box. Kept in
         the settings; a guest's next request sees it."""
+        self._remote_owner(device, client, "the lock on guest controls")      # D84: as the other opened handlers ask
         locked = body.get("locked")
         if not isinstance(locked, bool) or len(body) != 1:
             raise bad("send locked: true or false")
