@@ -16,6 +16,14 @@
  *   "changes size"   four seconds at the first size, then a smaller one for good: every receiver made for that
  *                    source after the first, in the same process, is small from its start (a sender that changed
  *                    stays changed)
+ *   "then still"     five seconds of the moving picture, then no picture ever again; its sound goes on
+ *   "after a short gap" / "after a long gap"
+ *                    the sound shows itself for a tenth of a second (so the helper knows the source has sound),
+ *                    then there is none until 0.8 s (short) or 6 s (long) after the first picture, then it goes on.
+ *                    So the first sound the player is given comes clearly AFTER the first picture, as it does from
+ *                    a real sender (measured on the Pi, 2026-10-12: 11 ms, and 4.7 s after a switch of the sound);
+ *                    without this the sound began at the picture's own time and no test saw a player that waits
+ *                    for the picture to reach the sound's time before it plays any
  *   "big"            1280 x 720 (changing to 1264 x 704) in place of 320 x 180 (changing to 256 x 144). A big
  *                    picture is 1.8 MB, more than a pipe holds (1 MiB for an account without privileges), so the
  *                    helper's writer is in the middle of a picture most of the time, as it is with a real sender
@@ -107,6 +115,7 @@ typedef struct {
 #define BIG_LESS_WIDTH 1264
 #define BIG_LESS_HEIGHT 704
 #define CHANGE_AFTER 120 /* pictures: four seconds */
+#define STOP_AFTER 150   /* pictures: five seconds */
 #define PAD 16
 #define SOURCE_COUNT_MAX 32
 #define RATE 48000
@@ -133,6 +142,9 @@ typedef struct {
 	int still_sent;
 	int changes;        /* "changes size": the picture number from which it is the smaller size; -1 for never */
 	int big;
+	int64_t gap_from;   /* "after a ... gap": no block of sound whose number is from this one ... */
+	int64_t gap_to;     /* ... up to and not including this one; both 0 for no gap */
+	int64_t stops;      /* "then still": the number of the first picture that is never sent; -1 for never */
 	pthread_mutex_t lock; /* the picture's caller and the sound's caller are two threads */
 } standin_recv;
 
@@ -151,6 +163,10 @@ static const standin_source SOURCES[] = {
 	{"PVJ-STANDIN (big at once B with sound)", "10.255.255.1:5972"},
 	{"PVJ-STANDIN (big changes size)", "10.255.255.1:5973"},
 	{"PVJ-STANDIN (big changes size with sound)", "10.255.255.1:5974"},
+	{"PVJ-STANDIN (moving then still with sound)", "10.255.255.1:5975"},
+	{"PVJ-STANDIN (one still then sound after a short gap)", "10.255.255.1:5976"},
+	{"PVJ-STANDIN (one still then sound after a long gap)", "10.255.255.1:5977"},
+	{"PVJ-STANDIN (moving then still with sound after a short gap)", "10.255.255.1:5978"},
 };
 #define SOURCE_COUNT ((uint32_t)(sizeof SOURCES / sizeof SOURCES[0]))
 static int finder_token;
@@ -249,7 +265,7 @@ static int capture(standin_recv *r, standin_video *video, standin_audio *audio, 
 				} else if (!r->still_sent && r->began < wake) {
 					wake = r->began;
 				}
-			} else {
+			} else if (r->stops < 0 || r->next_video < r->stops) {
 				int64_t due = r->began + TICK(r->next_video);
 				if (now >= due) {
 					n = (now - r->began) * 3 / 100000000; /* the picture of this moment: a late caller skips */
@@ -265,6 +281,10 @@ static int capture(standin_recv *r, standin_video *video, standin_audio *audio, 
 			int64_t due = r->began + TICK(r->next_audio + 1); /* a block is ready when its last sample exists */
 			if (now - due > RESYNC_NS) {
 				r->next_audio = (now - r->began) * 3 / 100000000 - 1;
+				due = r->began + TICK(r->next_audio + 1);
+			}
+			if (r->next_audio >= r->gap_from && r->next_audio < r->gap_to) {
+				r->next_audio = r->gap_to; /* the gap: these blocks are never sent */
 				due = r->began + TICK(r->next_audio + 1);
 			}
 			if (now >= due)
@@ -337,6 +357,14 @@ void *NDIlib_recv_create_v3(const standin_recv_create *settings)
 	r->began = now_ns() + (strstr(name, "at once") != NULL ? 0 : CONNECT_NS);
 	r->changes = -1;
 	r->big = strstr(name, "big") != NULL;
+	r->stops = strstr(name, "then still") != NULL ? STOP_AFTER : -1;
+	if (strstr(name, "after a short gap") != NULL) {
+		r->gap_from = 3; /* blocks are a thirtieth of a second: 0.1 s of sound, then none until 0.8 s */
+		r->gap_to = 24;
+	} else if (strstr(name, "after a long gap") != NULL) {
+		r->gap_from = 3;
+		r->gap_to = 180; /* until 6 s */
+	}
 	if (strstr(name, "changes size") != NULL) {
 		uint32_t i, which = 0;
 		for (i = 0; i < SOURCE_COUNT && i < SOURCE_COUNT_MAX; i++)

@@ -619,13 +619,16 @@ box play "$NDI_SOUND" matroska || ndi_fail "sound on: the stand-in's picture and
 # time, or when GET /api/ndi gives a reason in "ended". It is bad when the page says neither (SILENT LOSS) or says
 # it plays while mpv does not (STUCK); the line that begins REASON says which, with mpv's words second by second.
 #
-# THE ONE SWITCH. Some of these fail today because of that fault (the hand-over of the pipe; being mended on the
-# branch ndi-pipe-reuse). Each step but the chain starts clean (a new helper, a new player), so that one finding
+# TWO KINDS OF STEP. A hand-over that passed on the code before the mending (the run of 6671dcc) is asked with
+# ndi_must and is fatal. The four that failed there (1, 2b, 3b and the chain) are asked with ndi_case and are under
+# THE ONE SWITCH below, until a run on the mended code has been read: no run had got past the helper's restart when
+# this was written. They failed because of that fault (the hand-over of the pipe; mended on the branch
+# ndi-pipe-reuse). Each step but the chain starts clean (a new helper, a new player), so that one finding
 # does not make the next; the chain at the end cleans nothing, because carry-over is what it is for. While it says "no", a step that fails prints a line beginning FINDING, the run goes on and
 # stays green, and its last line lists every finding. Set it to "yes" (here, or PVJ_NDI_FINDINGS_FATAL=yes in the
 # environment) and the first of them fails the run: that is how to see that the fault is mended, and what this
 # becomes once it is.
-NDI_FINDINGS_FATAL="${PVJ_NDI_FINDINGS_FATAL:-no}"
+NDI_FINDINGS_FATAL="${PVJ_NDI_FINDINGS_FATAL:-yes}"       # "yes" since the mending (2026-10-12); "no" brings the FINDING lines back
 NDI_FINDINGS=""
 ndi_case() {       # ndi_case "what is handed over" box_check-arguments...
 	local words="$1"
@@ -641,6 +644,15 @@ ndi_case() {       # ndi_case "what is handed over" box_check-arguments...
 	if [ "$NDI_FINDINGS_FATAL" = yes ]; then ndi_fail "$words"; fi
 	echo "FINDING: $words. The line above that begins REASON says what mpv and the page said. Not fatal while NDI_FINDINGS_FATAL is 'no'."
 	NDI_FINDINGS="$NDI_FINDINGS [$words]"
+}
+ndi_must() {       # ndi_must "what is handed over" box_check-arguments...: a hand-over that passed before; always fatal
+	local words="$1"
+	shift
+	if box "$@"; then
+		echo "GOOD: $words"
+		return 0
+	fi
+	ndi_fail "$words"
 }
 helper_is_new() {  # helper_is_new OLD_PID: the helper runs, as another process
 	local pid
@@ -672,7 +684,7 @@ ndi_case "one still picture then only sound, with sound on" case still "$NDI_STI
 
 step "hand-over 2: the same source played twice in a row (sound off)"
 ndi_clean
-ndi_case "the same source played twice in a row" case twice "$NDI_STILL"
+ndi_must "the same source played twice in a row" case twice "$NDI_STILL"
 
 step "hand-over 2b: from the stuck state of hand-over 1, nothing cleaned: the same source with sound off, then sound switched on (1280 x 720)"
 ndi_clean
@@ -680,7 +692,7 @@ ndi_case "the same source with sound off straight after its stuck load with soun
 
 step "hand-over 3: source A, then source B at once, sound off (1280 x 720; both have their first picture the moment they are opened)"
 ndi_clean
-ndi_case "one source straight after another" case follow "$NDI_BIG_A" "$NDI_BIG_B"
+ndi_must "one source straight after another" case follow "$NDI_BIG_A" "$NDI_BIG_B"
 
 step "hand-over 3b: source A with sound, then source B with sound at once (1280 x 720, Matroska on both sides)"
 ndi_clean
@@ -689,32 +701,32 @@ ndi_case "one source with sound straight after another with sound" case follow "
 
 step "hand-over 4: sound switched on, and off again, under a playing source"
 ndi_clean
-ndi_case "sound switched on and off under a playing source" case sound "$NDI_SOUND"
+ndi_must "sound switched on and off under a playing source" case sound "$NDI_SOUND"
 
 step "hand-over 4b: the same under a 1280 x 720 source, in both directions: off, on, off; then on, off, on"
 ndi_clean
-ndi_case "sound switched on and off under a big playing source" case sound "$NDI_BIG_SOUND"
+ndi_must "sound switched on and off under a big playing source" case sound "$NDI_BIG_SOUND"
 ndi_clean
-ndi_case "sound switched off and on under a big source that played with sound" case soundon "$NDI_BIG_SOUND"
+ndi_must "sound switched off and on under a big source that played with sound" case soundon "$NDI_BIG_SOUND"
 
 step "hand-over 5: a source that changes size while it plays, sound off (1280 x 720, then 1264 x 704)"
 ndi_clean
-ndi_case "a source that changed size while it played" case size "$NDI_BIG_CHANGES"
+ndi_must "a source that changed size while it played" case size "$NDI_BIG_CHANGES"
 
 step "hand-over 5b: a source with sound that changes size while it plays (Matroska on both sides; the Pi lost this one)"
 ndi_clean
 box sound on || ndi_fail "sound could not be switched on"
-ndi_case "a source with sound that changed size while it played" case size "$NDI_BIG_CHANGES_SOUND"
+ndi_must "a source with sound that changed size while it played" case size "$NDI_BIG_CHANGES_SOUND"
 
 step "hand-over 5c: the small source that changes size, sound off (320 x 180, then 256 x 144: pictures that fit the pipe whole)"
 ndi_clean
-ndi_case "a small source that changed size while it played" case size "$NDI_CHANGES"
+ndi_must "a small source that changed size while it played" case size "$NDI_CHANGES"
 
 step "hand-over 6: the helper restarted under a playing source, judged by mpv's own word"
 ndi_clean
 box play "$NDI_MOVING" raw || ndi_fail "sound off: the stand-in's picture did not play before the helper's restart"
 systemctl restart pvj-ndi.service
-ndi_case "the helper restarted under a playing source" case restart "$NDI_MOVING"
+ndi_must "the helper restarted under a playing source" case restart "$NDI_MOVING"
 
 step "hand-over 7, the chain: eight hand-overs back to back with sound, nothing cleaned between them (what one leaves, the next meets)"
 ndi_clean

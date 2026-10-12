@@ -107,8 +107,95 @@ jobs:
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
+      - name: The mpv of this job (Ubuntu's, NOT the Pi's; the job ndi-mpv runs the Pi's)
+        run: mpv --version | head -n 1
       - name: Real install as root and the owners of the runtime folders
         run: sudo PVJ_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
+
+  ndi-mpv:
+    # The NDI input against the mpv the Pi runs. On 2026-10-12 a mended hand-over of the pipe was green in real-install
+    # (Ubuntu's mpv 0.37) and still stuck on the owner's Pi (Debian 13 "trixie", mpv 0.40): a green run on another mpv
+    # proved nothing for the box. So this job runs in the Pi's own distribution and FAILS if its mpv is not 0.40.x:
+    # when Debian moves on, the Pi will at its next upgrade, and somebody must look at both.
+    # No systemd here (that stays in real-install): the helper's real code with the stand-in for NDI's library, a real
+    # pipe, the panel's real Api, and a real mpv started by the real Player (tests/test_ndi_mpv.py). The container is
+    # x86_64, not a Pi: the same mpv release, not the same processor, GPU or sound.
+    name: "ndi-mpv (Debian 13, the Pi's mpv)"
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 60
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install python3, mpv, a C compiler and git (three tries; a slow mirror is given up on)
+        timeout-minutes: 10
+        run: |
+          for n in 1 2 3; do
+            if apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update \
+              && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends python3 mpv gcc libc6-dev git ca-certificates; then
+              exit 0
+            fi
+            echo "attempt $n failed"
+            sleep 5
+          done
+          exit 1
+      - uses: actions/checkout@v4
+      - name: The mpv here must be the Pi's (0.40.x), or this job says nothing about the Pi
+        run: |
+          said="$(mpv --version | head -n 1)"
+          echo "$said"
+          cat /etc/debian_version
+          python3 --version
+          case "$said" in
+            "mpv v0.40."*|"mpv 0.40."*) echo "the Pi's release of mpv" ;;
+            *) echo "::error::this job is for mpv 0.40.x (the Pi, Debian 13) and apt gave: $said"; exit 1 ;;
+          esac
+      - name: An account without privileges for the tests (in a container the job is root, and tests of refusals need not to be)
+        run: |
+          useradd --create-home ci
+          chown -R ci: .
+      - name: NDI against this mpv (the stand-in library, the real helper code, the real Api, the real Player; findings are printed, see the test's top)
+        timeout-minutes: 20
+        # PVJ_NDI_FINDINGS_FATAL=yes since the mending (2026-10-12): the cases that failed on master's pvj fail the job
+        # here too. Without it they are printed as FINDING and skipped.
+        run: su ci -c "PVJ_NDI_MPV_TEST=1 PVJ_NDI_MPV_WANT=0.40. PVJ_NDI_FINDINGS_FATAL=yes python3 -X faulthandler -m unittest -v tests.test_ndi_mpv"
+      - name: The still-with-sound cases on the pvj code that was stuck on the Pi (master at 5f62763) must FAIL there, or they judge nothing
+        # The same tests and the same stand-in, with the pvj folder of the commit before the hand-over of the pipe and
+        # the player's options for a standing picture were mended. A case that passes on that code would have been
+        # green while the Pi was stuck. A failure only counts when it is the judge's own (STUCK, SILENT LOSS or NOT
+        # BACK in what the test printed), not when the old code and the new tests do not fit together.
+        timeout-minutes: 15
+        run: |
+          su ci -c "git fetch --depth=1 origin 5f6276307febe1ca1da9b4942de6734224f49133"
+          su ci -c "rm -rf /tmp/stuck && mkdir /tmp/stuck && cp -a tests /tmp/stuck/ && git archive 5f6276307febe1ca1da9b4942de6734224f49133 pvj | tar -x -C /tmp/stuck"
+          bad=0
+          for t in test_13_one_still_picture_then_only_sound_for_thirty_five_seconds test_15_one_still_picture_then_sound_after_a_short_gap test_16_one_still_picture_then_sound_after_a_long_gap; do
+            if su ci -c "cd /tmp/stuck && PVJ_NDI_MPV_TEST=1 PVJ_NDI_FINDINGS_FATAL=yes python3 -m unittest tests.test_ndi_mpv.NdiOnARealMpv.$t" > /tmp/stuck/out.txt 2>&1; then
+              echo "::error::$t PASSES on the code that was stuck on the Pi: it does not judge what the Pi showed"
+              tail -n 40 /tmp/stuck/out.txt
+              bad=1
+            elif grep -q -E "AssertionError: on mpv.*(STUCK|SILENT LOSS|NOT BACK)" /tmp/stuck/out.txt; then
+              echo "AS IT MUST: $t fails on the code that was stuck on the Pi:"
+              grep -E "AssertionError: on mpv" /tmp/stuck/out.txt | cut -c1-700
+            else
+              echo "::error::$t failed on the old code for another reason than the judge's (the old code and these tests do not fit?)"
+              tail -n 60 /tmp/stuck/out.txt
+              bad=1
+            fi
+          done
+          exit "$bad"
+      - name: The whole suite on this mpv, for information (it may fail for reasons of the container; its result does not decide the job until a run was read)
+        # First run 2026-10-12 (Python 3.13, mpv 0.40, no rollback commits fetched): it did not finish. After 35 minutes
+        # it stood in a test server's shutdown, with 2,751 tests passed, 6 errors and 2 failures whose names were not
+        # printed. So it runs with -v now, to name them; it still does not decide the job.
+        continue-on-error: true
+        timeout-minutes: 40
+        run: |
+          start="$(date +%s)"
+          code=0
+          su ci -c "timeout -s ABRT 2100 python3 -X faulthandler -m unittest discover -s tests -t . -v" || code=$?
+          echo "THE WHOLE SUITE ON $(mpv --version | head -n 1): exit $code after $(( $(date +%s) - start )) seconds"
+          exit "$code"
 
   panel-ui:
     runs-on: ubuntu-latest
