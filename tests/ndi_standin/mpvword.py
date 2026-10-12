@@ -275,6 +275,7 @@ class Rig:
 def case_still(rig, name, seconds=10, late=None):
     """One still picture and then only sound, with sound on: what NDI's Test Patterns sends. On the Pi the helper
     said "still" and wrote sound, and mpv had the pipe as its path with no track and no clock, for minutes."""
+    rig.sound("on")
     rig.start(name, "matroska")
     rig.watch("one still picture then only sound, sound on", name, seconds=seconds, late=late, audio=True)
 

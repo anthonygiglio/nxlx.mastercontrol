@@ -19,10 +19,11 @@ screen, a sound device, a Raspberry Pi's processor.
 It runs only where it is asked for (PVJ_NDI_MPV_TEST=1): it takes minutes, and its answer belongs to one mpv. There,
 a missing mpv or C compiler is a failure, not a skip.
 
-The known fault uses the same convention and the same switch as the real-install test: while
-PVJ_NDI_FINDINGS_FATAL is not "yes", a case that is known to fail today prints a line beginning FINDING and is
-counted as skipped, with the reason; set to "yes", it fails. A case that passed when it was written is fatal from
-the start."""
+Two kinds of case, as in the real-install test. A case that passed on master's pvj is asked with `must` and is
+always fatal. A case that failed there (the faults the Pi showed) is asked with `known` and is under the one switch:
+with PVJ_NDI_FINDINGS_FATAL=yes it fails like any other, and CI's job sets that since the mending; without it, it
+prints a line beginning FINDING and is counted as skipped, with the reason. CI's job also runs the still cases on
+the pvj code from before the mending, where they must fail."""
 import os
 import shutil
 import subprocess
@@ -46,6 +47,8 @@ MPV = shutil.which("mpv")
 
 MOVING, SOUND, STILL = "PVJ-STANDIN (moving)", "PVJ-STANDIN (moving with sound)", "PVJ-STANDIN (one still then sound)"
 THEN_STILL = "PVJ-STANDIN (moving then still with sound)"
+STILL_SHORT_GAP, STILL_LONG_GAP = "PVJ-STANDIN (one still then sound after a short gap)", "PVJ-STANDIN (one still then sound after a long gap)"
+THEN_STILL_GAP = "PVJ-STANDIN (moving then still with sound after a short gap)"
 BIG_SOUND, BIG_CHANGES_SOUND = "PVJ-STANDIN (big moving with sound)", "PVJ-STANDIN (big changes size with sound)"
 BIG_A_SOUND, BIG_B_SOUND = "PVJ-STANDIN (big at once A with sound)", "PVJ-STANDIN (big at once B with sound)"
 SHOWN = ("path", "idle-active", "core-idle", "pause", "eof-reached", "time-pos", "audio-pts", "track-list/count", "track-list", "video-params",
@@ -220,16 +223,30 @@ class NdiOnARealMpv(ServerBase):
         self.known("one still picture then only sound, with sound on", mpvword.case_still, STILL, seconds=35)
 
     def test_14_a_moving_source_with_sound_whose_picture_stops(self):
-        # Not known to fail and not known to pass when it was written (no mpv on the machine it was written on); of
-        # the same kind as the one above (the picture ends, the sound goes on), so a finding until a run was read.
+        # STUCK on mpv 0.40 with master's pvj (the first run of this job, 2026-10-12): when the picture stopped, mpv
+        # paused for its cache and the sound stopped with it (audio-pts stood at 4.88 for 30 seconds).
         self.known("a moving source with sound whose picture stopped", mpvword.case_goes_still, THEN_STILL, seconds=30)
+
+    # Sound that comes clearly AFTER the first picture, as a real sender's does (the Pi, 2026-10-12: 11 ms, and 4.7 s
+    # after a switch of the sound). There mpv 0.40 did not start the sound at all: it waits until the picture has
+    # reached the first sound's time, and a still picture never does (cured by initial-audio-sync=no). These are
+    # judged by audio-pts at real time, never by time-pos. CI's job runs them a second time on origin/master's pvj,
+    # where they must FAIL: a case that passes on the code that was stuck on the Pi judges nothing.
+    def test_15_one_still_picture_then_sound_after_a_short_gap(self):
+        self.known("one still picture then sound that comes 0.8 s after it", mpvword.case_still, STILL_SHORT_GAP, seconds=35)
+
+    def test_16_one_still_picture_then_sound_after_a_long_gap(self):
+        self.known("one still picture then sound that comes 6 s after it", mpvword.case_still, STILL_LONG_GAP, seconds=40, late=14)
+
+    def test_17_a_moving_source_whose_picture_stops_with_sound_after_a_short_gap(self):
+        self.known("a moving source whose picture stopped, its sound after a short gap", mpvword.case_goes_still, THEN_STILL_GAP, seconds=30)
 
     # ---- the hand-overs
     def test_20_the_same_source_twice_in_a_row(self):
         self.must(mpvword.case_twice, STILL)
 
     def test_21_a_then_b_at_once_both_with_sound(self):
-        # a SILENT LOSS on the real-install job (mpv 0.37) on 2026-10-12
+        # a SILENT LOSS on mpv 0.37 and on 0.40 with master's pvj (2026-10-12)
         def case(rig):
             rig.sound("on")
             mpvword.case_follow(rig, BIG_A_SOUND, BIG_B_SOUND)
@@ -248,7 +265,8 @@ class NdiOnARealMpv(ServerBase):
         self.must(case)
 
     def test_25_the_chain_with_nothing_cleaned_between_its_links(self):
-        # holds the still link and what follows it: two of its links failed on the real-install job on 2026-10-12
+        # Two of its links failed on mpv 0.40 with master's pvj (2026-10-12): the still one was the Pi's own picture
+        # of the fault (the pipe as mpv's path, track-list/count 0), and the source after it was lost without a word.
         self.known("the chain of hand-overs with nothing cleaned between them", mpvword.case_chain)
 
 

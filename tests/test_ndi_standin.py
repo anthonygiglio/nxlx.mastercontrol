@@ -30,7 +30,10 @@ BIG_SOUND, BIG_CHANGES_SOUND = "PVJ-STANDIN (big moving with sound)", "PVJ-STAND
 BIG = (BIG_SOUND, "PVJ-STANDIN (big one still then sound)", "PVJ-STANDIN (big at once A)", "PVJ-STANDIN (big at once B)",
        "PVJ-STANDIN (big at once A with sound)", "PVJ-STANDIN (big at once B with sound)", "PVJ-STANDIN (big changes size)", BIG_CHANGES_SOUND)
 THEN_STILL = "PVJ-STANDIN (moving then still with sound)"
-ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES, THEN_STILL) + BIG
+STILL_SHORT_GAP, STILL_LONG_GAP = "PVJ-STANDIN (one still then sound after a short gap)", "PVJ-STANDIN (one still then sound after a long gap)"
+THEN_STILL_GAP = "PVJ-STANDIN (moving then still with sound after a short gap)"
+ONLY_HERE = (AT_ONCE_A, AT_ONCE_B, THEN_STILL, STILL_SHORT_GAP, STILL_LONG_GAP, THEN_STILL_GAP)      # for this file and tests/test_ndi_mpv.py
+ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES) + ONLY_HERE[2:] + BIG
 
 
 def picture(n):
@@ -72,7 +75,7 @@ class OneSetOfNames(unittest.TestCase):
             sh = f.read()
         for name in ALL:
             self.assertIn('{"%s", "10.255.255.1:' % name, c)
-            if name not in (AT_ONCE_A, AT_ONCE_B, THEN_STILL):     # these are for the unit test and tests/test_ndi_mpv.py
+            if name not in ONLY_HERE:
                 self.assertIn('="%s"\n' % name, sh)
         for want in ('pvj-ndi-runtime install "$NDI_STANDIN"', 'box play "$NDI_MOVING" raw', "systemctl restart pvj-ndi.service\n",
                      'box back "$NDI_MOVING" 20', 'box play "$NDI_SOUND" matroska', 'case still "$NDI_STILL"', 'case twice "$NDI_STILL"',
@@ -281,6 +284,39 @@ class StandIn(unittest.TestCase):
         self.assertGreater(first["counts"]["shown"], 100)
         self.assertGreaterEqual(p["audio"]["counts"]["written"] - first["audio"]["counts"]["written"], 15)
         self.assertEqual(p["message"], "")
+
+    def test_sound_after_a_gap_shows_itself_then_is_silent_until_its_time_and_then_goes_on(self):
+        st = self.on(True)
+        lib = self.s.lib
+        row = [s for s in self.s.sources() if s["name"] == STILL_SHORT_GAP][0]
+        handle = lib.recv_open(row["raw"])
+        self.addCleanup(lib.recv_close, handle)
+        began, times = time.monotonic(), []
+        while time.monotonic() - began < 2.6:
+            a = lib.recv_audio(handle, 100)
+            if a is not None and a is not ndi.AUDIO_LOST:
+                times.append(time.monotonic() - began)
+                lib.recv_free_audio(handle, a)
+        # the receiver's first second is quiet; then 0.1 s of sound, none until 0.8 s, then thirty blocks a second
+        early = [t for t in times if t < 1.5]
+        self.assertEqual(len(early), 3, times[:8])
+        self.assertGreater(min(t for t in times if t >= 1.5), 1.75)
+        self.assertGreater(len([t for t in times if t >= 1.8]), 15)
+        self.assertTrue(st["ok"])
+
+    def test_the_sounds_clock_is_judged_at_real_time_and_from_its_last_start(self):
+        from tests.ndi_standin import mpvword
+
+        def looks(pts):
+            return [(float(n), {"audio-pts": v}) for n, v in enumerate(pts)]
+        self.assertEqual(mpvword.sound_rate(looks([None, 0.5, 1.5, 2.5, 3.5])), (3.0, 3.0, 1.0))
+        played, took, since = mpvword.sound_rate(looks([5.0, 6.0, 0.2, 1.2, 2.2]))       # opened again: only the last stretch counts
+        self.assertEqual((played, took, since), (2.0, 2.0, 2.0))
+        self.assertEqual(mpvword.sound_rate(looks([1.0, 2.0, "(property unavailable)"])), (0.0, 0.0, None))
+        played, took, _ = mpvword.sound_rate(looks([0.0, 0.3, 0.6, 0.9]))               # it moves, at a third of real time
+        self.assertLess(played, 0.9 * took - 0.5)                                       # the rule in Rig.watch
+        self.assertTrue(mpvword.trying({"playing": None, "ended": {"message": "the NDI helper has no source open; trying again"}}))
+        self.assertFalse(mpvword.trying({"playing": None, "ended": {"message": "the source sends interlaced video"}}))
 
     def test_one_still_then_only_sound_one_picture_is_written_and_the_sound_goes_on(self):
         out, reader = self.play(STILL, True, 0)
