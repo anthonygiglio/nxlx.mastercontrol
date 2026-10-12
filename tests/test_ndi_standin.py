@@ -24,6 +24,8 @@ CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 WIDTH, HEIGHT, FPS = 320, 180, 30.0
 FRAME = 2 * WIDTH * HEIGHT
 MOVING, SOUND, STILL = "PVJ-STANDIN (moving)", "PVJ-STANDIN (moving with sound)", "PVJ-STANDIN (one still then sound)"
+AT_ONCE_A, AT_ONCE_B, CHANGES = "PVJ-STANDIN (at once A)", "PVJ-STANDIN (at once B)", "PVJ-STANDIN (changes size)"
+ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES)
 
 
 def picture(n):
@@ -63,11 +65,13 @@ class OneSetOfNames(unittest.TestCase):
             c = f.read()
         with open(os.path.join(REPO, "tests", "real_install_test.sh")) as f:
             sh = f.read()
-        for name in (MOVING, SOUND, STILL):
+        for name in ALL:
             self.assertIn('{"%s", "10.255.255.1:' % name, c)
             self.assertIn('="%s"\n' % name, sh)
         for want in ('pvj-ndi-runtime install "$NDI_STANDIN"', 'box play "$NDI_MOVING" raw', "systemctl restart pvj-ndi.service\n",
-                     'box back "$NDI_MOVING" 20', 'box play "$NDI_SOUND" matroska', 'box still "$NDI_STILL"', "pvj-ndi-runtime remove"):
+                     'box back "$NDI_MOVING" 20', 'box play "$NDI_SOUND" matroska', 'case still "$NDI_STILL"', 'case twice "$NDI_STILL"',
+                     'case follow "$NDI_AT_ONCE_A" "$NDI_AT_ONCE_B"', 'case sound "$NDI_SOUND"', 'case size "$NDI_CHANGES"',
+                     'case restart "$NDI_MOVING"', "pvj-ndi-runtime remove"):
             self.assertIn(want, sh[sh.index('step "an NDI picture all the way'):], want)
 
     def test_the_stand_in_has_no_line_of_ndis_headers_and_says_so(self):
@@ -169,9 +173,9 @@ class StandIn(unittest.TestCase):
         os.chmod(self.path, 0o644)
         self.assertIsNone(ndi.runtime_problem(self.path, owner_uids=(os.getuid(),)))
 
-    def test_the_finder_reports_three_sources_at_a_private_address(self):
+    def test_the_finder_reports_its_six_sources_at_a_private_address(self):
         st = self.on(False)
-        self.assertEqual(sorted(s["name"] for s in st["sources"]), sorted([MOVING, SOUND, STILL]))
+        self.assertEqual(sorted(s["name"] for s in st["sources"]), sorted(ALL))
         self.assertEqual({ndi.host_of(s["from"]) for s in st["sources"]}, {"10.255.255.1"})
         self.assertFalse(st["cut"])
         self.assertIn("STAND-IN", st["runtime"]["version"])
@@ -221,6 +225,28 @@ class StandIn(unittest.TestCase):
         self.assertGreaterEqual(p["counts"]["shown"], 2)
         self.assertEqual(p["audio"]["problem"], "")
         self.assertEqual(p["audio"]["counts"]["refused"], 0)
+
+    def test_an_at_once_source_has_its_picture_without_the_quiet_first_second(self):
+        st = self.on(False)
+        began = time.monotonic()
+        out = self.s.handle({"cmd": "open", "id": [s["id"] for s in st["sources"] if s["name"] == AT_ONCE_B][0]})
+        self.assertTrue(out["ok"], out)
+        self.assertLess(time.monotonic() - began, 0.5, "a first picture at once")
+        began = time.monotonic()
+        out = self.s.handle({"cmd": "open", "id": [s["id"] for s in st["sources"] if s["name"] == MOVING][0]})
+        self.assertGreater(time.monotonic() - began, 0.9, "and the others after their quiet second")
+
+    def test_the_source_that_changes_size_ends_as_changed_and_is_the_new_size_from_then_on(self):
+        out, reader = self.play(CHANGES, False, 0)
+        self.assertEqual((out["playing"]["width"], out["playing"]["height"]), (WIDTH, HEIGHT))
+        self.assertTrue(self.wait(lambda: self.playing()["state"] == "changed", 7.0), self.playing())
+        self.assertEqual(self.playing()["message"], "the source changed to 256 x 144 at 30.0 frames a second")
+        out, reader = self.play(CHANGES, False, 2 * 256 * 144)
+        self.assertEqual((out["playing"]["width"], out["playing"]["height"]), (256, 144))
+        self.assertTrue(reader.full.wait(6))
+        got = bytes(reader.data)
+        n = (got[0] * 205) & 255
+        self.assertEqual(got, bytes((b + 3 * y + 5 * n) & 255 for y in range(144) for b in range(512)))
 
     def test_one_still_then_only_sound_one_picture_is_written_and_the_sound_goes_on(self):
         out, reader = self.play(STILL, True, 0)

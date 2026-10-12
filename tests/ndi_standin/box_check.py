@@ -7,13 +7,21 @@ device asks, and of the player over its control socket, as root. Nothing here re
 
     PVJ_TOKEN=<a paired device's token> python3 -B box_check.py play NAME raw|matroska
                                                                back NAME SECONDS
-                                                               still NAME
                                                                sound on|off
+                                                               case still NAME | twice NAME | follow A B | sound NAME
+                                                                    | size NAME | restart NAME
                                                                dump
 
 Exit 0: everything asked held. Exit 1: something did not; the reason is the line that begins "REASON:", and what
-the panel and the player said last is printed under it. `still` judges only what must hold and REPORTS the rest
-(see its text): what the player does with one still picture and then only sound was an open question."""
+the panel and the player said last is printed under it.
+
+"It plays" is never taken from the helper's counts alone (2026-10-12, measured on the owner's Pi: the helper said
+"still" and wrote sound steadily while mpv sat with the pipe as its path, no track and no clock, for minutes; and a
+source ended with the page saying neither that it plays nor why it does not). It is asked of mpv: the pipe is its
+path, it has a track list with a picture track of the right size, and its clock moves. Each `case` is one way a
+source is handed over, and ends in one of two good ways within its time: mpv plays, or GET /api/ndi gives a reason
+in "ended". The two bad ways are named in the REASON line: SILENT LOSS (the page says neither) and STUCK (the page
+says it plays and mpv does not)."""
 import json
 import os
 import socket
@@ -26,10 +34,11 @@ BASE = os.environ.get("PVJ_PANEL", "http://127.0.0.1")
 PLAYER = os.environ.get("PVJ_PLAYER_SOCKET", "/run/pvj/player/player.sock")
 PIPE = os.environ.get("PVJ_NDI_PIPE", "/run/pvj-ndi-pipe/ndi.fifo")
 WIDTH, HEIGHT, FRAMES_A_SECOND = 320, 180, 30
-REPLACED = "the input pipe was replaced"        # what every source ended with on a box until 2026-10-12
-ASKED = ("path", "idle-active", "core-idle", "pause", "eof-reached", "playback-time", "video-params", "audio-params",
-         "vo-configured", "current-vo", "current-ao", "video-codec", "audio-codec-name", "estimated-frame-number",
-         "frame-drop-count", "demuxer-cache-state/underrun", "paused-for-cache", "mpv-version")
+SMALL = (256, 144)                              # what "PVJ-STANDIN (changes size)" changes to
+ASKED = ("path", "idle-active", "core-idle", "pause", "eof-reached", "playback-time", "time-pos", "audio-pts", "track-list/count",
+         "track-list", "video-params", "audio-params", "vo-configured", "current-vo", "current-ao", "video-codec", "audio-codec-name",
+         "estimated-frame-number", "frame-drop-count", "demuxer-cache-state/underrun", "paused-for-cache", "seeking", "mpv-version")
+LOOKED = ("path", "idle-active", "core-idle", "time-pos", "audio-pts", "track-list/count", "track-list", "video-params", "audio-params", "eof-reached")
 
 
 class Failed(Exception):
@@ -150,17 +159,90 @@ def written(st):
     return a.get("counts", {}).get("written", 0) if isinstance(a, dict) else 0
 
 
-def start(name, container):
+def start(name, container, size=(WIDTH, HEIGHT)):
     sid = source(name)
     code, out = http("POST", "/api/play", {"ndi": sid}, timeout=40)
     if code != 200 or not isinstance(out, dict):
         raise Failed("POST /api/play for %r answered HTTP %s: %s" % (name, code, out))
     print("POST /api/play: %s" % json.dumps(out, sort_keys=True))
-    if (out.get("playing"), out.get("width"), out.get("height")) != ("ndi", WIDTH, HEIGHT):
+    if (out.get("playing"), out.get("width"), out.get("height")) != ("ndi", size[0], size[1]):
         raise Failed("POST /api/play for %r did not answer with the stand-in's picture: %s" % (name, out))
     if out.get("sound") is not (container == "matroska"):
         raise Failed("POST /api/play for %r says sound %s; the pipe was to carry %s" % (name, out.get("sound"), container))
     return sid
+
+
+def look():
+    """What mpv says of itself now, in a few plain fields."""
+    m = player(*LOOKED)
+    tracks = m["track-list"] if isinstance(m["track-list"], list) else []
+    # the size of a picture track is what the stream says (demux-w, demux-h); where an mpv does not give those for a
+    # track it has, what its decoder puts out (video-params). A track that is not there has neither.
+    vp = m["video-params"] if isinstance(m["video-params"], dict) else {}
+    video = [(t.get("demux-w") or vp.get("w"), t.get("demux-h") or vp.get("h")) for t in tracks if isinstance(t, dict) and t.get("type") == "video"]
+    return {"path": m["path"], "idle-active": m["idle-active"], "core-idle": m["core-idle"], "time-pos": m["time-pos"], "audio-pts": m["audio-pts"],
+            "track-list/count": m["track-list/count"], "video-tracks": ["%sx%s" % wh for wh in video],
+            "audio-tracks": len([t for t in tracks if isinstance(t, dict) and t.get("type") == "audio"]),
+            "audio-params": m["audio-params"] if not isinstance(m["audio-params"], dict)
+            else "%s Hz, %s channels" % (m["audio-params"].get("samplerate"), m["audio-params"].get("channel-count")),
+            "eof-reached": m["eof-reached"]}
+
+
+def number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def not_playing(a, b, size=(WIDTH, HEIGHT), audio=None, moving=True, clock=True):
+    """"" when mpv plays by its own word, else why not. `a` and `b` are two looks about a second apart. `audio`:
+    True, the sound must be there; False, it must not; None, either. `moving`: its clock must have gone on between
+    the looks (for one still picture and then sound: the picture's or the sound's clock). `clock`: it must have one."""
+    if b["path"] != PIPE:
+        return "mpv has not got the pipe loaded (its path is %r, idle-active %r)" % (b["path"], b["idle-active"])
+    if not number(b["track-list/count"]) or b["track-list/count"] < 1:
+        return "mpv has the pipe as its path and no track (track-list/count %r): it has not opened it" % (b["track-list/count"],)
+    if "%sx%s" % size not in b["video-tracks"]:
+        return "mpv has no picture track of %d x %d (its picture tracks: %s)" % (size[0], size[1], b["video-tracks"] or "none")
+    if audio is True and (b["audio-tracks"] < 1 or not isinstance(b["audio-params"], str) or b["audio-params"].startswith("(")):
+        return "mpv has no sound (sound tracks %d, audio-params %r)" % (b["audio-tracks"], b["audio-params"])
+    if audio is False and b["audio-tracks"]:
+        return "mpv still has a sound track; the stream without sound has not been loaded"
+    if clock and not number(b["time-pos"]) and not number(b["audio-pts"]):
+        return "mpv has no clock (time-pos %r, audio-pts %r)" % (b["time-pos"], b["audio-pts"])
+    if moving and not any(number(a[k]) and number(b[k]) and b[k] > a[k] + 0.2 for k in ("time-pos", "audio-pts")):
+        return ("mpv's clock does not move (time-pos %r -> %r, audio-pts %r -> %r, core-idle %r)"
+                % (a["time-pos"], b["time-pos"], a["audio-pts"], b["audio-pts"], b["core-idle"]))
+    return ""
+
+
+def watch(what, name, seconds=10, **want):
+    """After a hand-over: look at mpv every second for `seconds`, and judge by the END of that time (a source that
+    plays for three seconds and is then lost has not played). Good: mpv plays, or the page gives a reason in "ended".
+    Anything else raises with what mpv and the page said."""
+    began, before, first, why, said = time.monotonic(), look(), None, "not looked at yet", []
+    while time.monotonic() - began < seconds:
+        time.sleep(1.0)
+        now = look()
+        why = not_playing(before, now, **want)
+        if not why and first is None:
+            first = time.monotonic() - began
+        said.append("%.0fs %s" % (time.monotonic() - began, why or "plays"))
+        before = now
+    st = ndi()
+    p, e = st.get("playing"), st.get("ended")
+    if not why:
+        print("PLAYS %s: %r, by mpv's own word from %.0f seconds on and still after %d: %s"
+              % (what, name, first, seconds, json.dumps(before, sort_keys=True)))
+        return "plays"
+    page = "the page says playing=%s ended=%s" % (json.dumps(p, sort_keys=True), json.dumps(e, sort_keys=True))
+    if not p and isinstance(e, dict) and e.get("message"):
+        print("ENDED WITH A REASON %s: %r does not play and the page says why: \"%s\"" % (what, name, e["message"]))
+        return "ended"
+    kind = "SILENT LOSS" if not p and not e else "STUCK"
+    history = "; ".join(said)
+    raise Failed("%s, %s: after %d seconds %s. %s. %s. Second by second: %s. mpv's last word: %s"
+                 % (kind, what, seconds, why,
+                    "It did play, from second %.0f, and then stopped" % first if first is not None else "It never played in that time",
+                    page, history, json.dumps(before, sort_keys=True)))
 
 
 def on_the_screen(name, sid, container, least):
@@ -213,6 +295,11 @@ def on_the_screen(name, sid, container, least):
         if ap.get("samplerate") != 48000 or m["audio-codec-name"] != "pcm_f32le":
             raise Failed("the player does not decode the stand-in's sound: audio-params=%s audio-codec-name=%r"
                          % (json.dumps(m["audio-params"]), m["audio-codec-name"]))
+    a = look()
+    time.sleep(1.0)
+    why = not_playing(a, look(), audio=container == "matroska")
+    if why:
+        raise Failed("%r: the helper says playing and %s" % (name, why))
     print("OK %r: the helper says playing, %d pictures shown and counting (%s), GET /api/status names it, and the player (vo %s) has %s "
           "loaded at %s x %s %s, playback-time %s -> %s" % (name, shown(then), container, m["current-vo"], m["path"], vp.get("w"), vp.get("h"),
                                                              vp.get("pixelformat"), before["playback-time"], m["playback-time"]))
@@ -246,39 +333,63 @@ def back(name, seconds):
     on_the_screen(name, sid, "raw", FRAMES_A_SECOND)
 
 
-def still(name):
-    """One still picture and then only sound, as NDI's Test Patterns sends. What must hold: the helper writes it as
-    Matroska and never says the pipe was replaced. What is REPORTED, not judged, because nobody had seen it: whether
-    the player stays in playback with its picture track while only sound arrives. With the null output of this
-    machine that is the player's state, not a picture on a screen."""
+def case_still(name):
+    """One still picture and then only sound, with sound on: what NDI's Test Patterns sends. On the Pi the helper
+    said "still" and wrote sound, and mpv had the pipe as its path with no track and no clock, for minutes."""
     start(name, "matroska")
-    rows, last = [], {}
-    for second in range(1, 11):
-        time.sleep(1.0)
-        st = ndi()
-        p = st.get("playing") if isinstance(st.get("playing"), dict) else {}
-        if REPLACED in str(p.get("message")) or REPLACED in str((st.get("ended") or {}).get("message")):
-            ended(st, name)
-        m = player("path", "idle-active", "core-idle", "eof-reached", "playback-time", "video-params", "vo-configured", "estimated-frame-number")
-        vp = m["video-params"] if isinstance(m["video-params"], dict) else None
-        last = {"second": second, "helper": p.get("state"), "message": p.get("message"), "shown": shown(st), "sound_written": written(st),
-                "ended": st.get("ended"), "mpv_path": m["path"], "idle-active": m["idle-active"], "core-idle": m["core-idle"],
-                "eof-reached": m["eof-reached"], "playback-time": m["playback-time"], "vo-configured": m["vo-configured"],
-                "frame": m["estimated-frame-number"], "video-params": "%sx%s %s" % (vp.get("w"), vp.get("h"), vp.get("pixelformat")) if vp else m["video-params"]}
-        rows.append(last)
-        print("STILL %s" % json.dumps(last, sort_keys=True))
-        sys.stdout.flush()
-    times = [r["playback-time"] for r in rows if isinstance(r["playback-time"], (int, float))]
-    kept = (last.get("helper") in ("playing", "still") and last.get("mpv_path") == PIPE and last.get("idle-active") is False
-            and str(last.get("video-params")).startswith("%dx%d" % (WIDTH, HEIGHT)) and len(times) >= 2 and times[-1] > times[0] + 5)
-    if kept:
-        print("STILL-REPORT: KEPT. Ten seconds after one still picture and then only sound, the player is still in playback on the pipe "
-              "(not idle), keeps the picture's track (video-params %s) and its clock runs on with the sound (%s -> %s); the helper says %r "
-              "with %s picture shown and %s blocks of sound written. This is mpv with the null video output: it does not show that a "
-              "screen keeps the picture." % (last.get("video-params"), times[0], times[-1], last.get("helper"), last.get("shown"), last.get("sound_written")))
-    else:
-        print("STILL-REPORT: FINDING, NOT KEPT (or not as expected). After one still picture and then only sound the last look was: %s. "
-              "This step does not fail on it; it is to be read and decided on." % json.dumps(last, sort_keys=True))
+    watch("one still picture then only sound, sound on", name, audio=True)
+
+
+def case_twice(name):
+    """The same source played twice in a row, sound off (bare frames). The source sends one picture and then
+    nothing, so mpv's clock cannot move: it must have the pipe open with the picture's track and a clock."""
+    start(name, "raw")
+    time.sleep(3.0)
+    start(name, "raw")
+    watch("the same source played a second time", name, moving=False)
+
+
+def case_follow(first, second):
+    """Source A, and source B at once: both have their first picture the moment they are opened, so B's writer can
+    meet the reader that A left."""
+    start(first, "raw")
+    time.sleep(2.0)
+    sid = start(second, "raw")
+    if watch("one source straight after another", second) != "plays":
+        return
+    code, st = http("GET", "/api/status", timeout=20)
+    pl = st.get("player") if isinstance(st, dict) else None
+    if not isinstance(pl, dict) or pl.get("ndi_id") != sid:
+        raise Failed("one source straight after another: mpv plays, and GET /api/status does not name %r: HTTP %s, player=%s"
+                     % (second, code, json.dumps(pl)))
+
+
+def case_sound(name):
+    """Sound switched on and off again under a playing source: the helper ends it as "changed" and the panel loads
+    it again, first with its sound (Matroska), then without (bare frames)."""
+    sound("off")
+    start(name, "raw")
+    watch("before the switch", name, seconds=4, audio=False)
+    sound("on")
+    watch("sound switched on under a playing source", name, audio=True)
+    sound("off")
+    watch("sound switched off again under a playing source", name, audio=False)
+
+
+def case_size(name):
+    """A source that changes size while it plays (Scan Converter does at every clip): four seconds at 320 x 180,
+    then 256 x 144. The panel opens it again; mpv must then play the new size."""
+    start(name, "raw")
+    watch("a source that changed size", name, seconds=15, size=SMALL)
+
+
+def case_restart(name):
+    """Asked right after the helper was restarted under a playing source: the panel brings the source back."""
+    watch("the helper restarted under a playing source", name)
+
+
+CASES = {"still": (case_still, 1), "twice": (case_twice, 1), "follow": (case_follow, 2), "sound": (case_sound, 1),
+         "size": (case_size, 1), "restart": (case_restart, 1)}
 
 
 def sound(word):
@@ -295,8 +406,8 @@ def main(argv):
             play(argv[1], argv[2])
         elif argv[:1] == ["back"] and len(argv) == 3:
             back(argv[1], float(argv[2]))
-        elif argv[:1] == ["still"] and len(argv) == 2:
-            still(argv[1])
+        elif argv[:1] == ["case"] and len(argv) >= 2 and argv[1] in CASES and len(argv) == 2 + CASES[argv[1]][1]:
+            CASES[argv[1]][0](*argv[2:])
         elif argv[:1] == ["sound"] and len(argv) == 2 and argv[1] in ("on", "off"):
             sound(argv[1])
         elif argv == ["dump"]:

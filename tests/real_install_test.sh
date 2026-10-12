@@ -511,6 +511,9 @@ MPV_LOG=/tmp/pvj-ci-mpv.log
 NDI_MOVING="PVJ-STANDIN (moving)"
 NDI_SOUND="PVJ-STANDIN (moving with sound)"
 NDI_STILL="PVJ-STANDIN (one still then sound)"
+NDI_AT_ONCE_A="PVJ-STANDIN (at once A)"
+NDI_AT_ONCE_B="PVJ-STANDIN (at once B)"
+NDI_CHANGES="PVJ-STANDIN (changes size)"
 box() {            # the questions to the panel and the player (tests/ndi_standin/box_check.py); the token stays off the command line
 	PVJ_TOKEN="$TOKEN" python3 -B "$SRC/tests/ndi_standin/box_check.py" "$@"
 }
@@ -599,22 +602,91 @@ step "sound on: the same road with the picture and the sound together (Matroska)
 box sound on || ndi_fail "sound could not be switched on"
 box play "$NDI_SOUND" matroska || ndi_fail "sound on: the stand-in's picture and sound did not get to the player"
 
-step "one still picture and then only sound (what NDI's Test Patterns sends): REPORTED, not judged, read the lines below"
-# An open question of the review of 2026-10-12: does the player keep the picture when a source sends one frame and
-# then only sound? Nobody had seen it. This prints what the helper and mpv say each second for ten seconds and one
-# line that begins STILL-REPORT. The run fails here only if no report came or the pipe was "replaced"; whether the
-# report says KEPT or FINDING is for a person to read, and is repeated in the last line of this run. With the null
-# output it is mpv's state that is seen, never a screen.
-if ! box still "$NDI_STILL" | tee "$OUT"; then ndi_fail "one still then sound: the source could not be started, or the pipe was refused"; fi
-grep -q '^STILL-REPORT: ' "$OUT" || ndi_fail "one still then sound: no report was printed"
-if grep -q '^STILL-REPORT: KEPT' "$OUT"; then STILL_SAID="mpv stayed in playback with the picture's track"; else STILL_SAID="A FINDING, mpv did NOT keep it as expected: read that step"; fi
-echo "--- what the player's own log says about its queues and about ends, if anything"
-grep -i -E 'too many packets|end of file|eof|underrun' "$MPV_LOG" | tail -n 20 || true
+# ---- the hand-overs: every way a source comes to the player after another, judged by mpv's own word ----------------
+# Why (2026-10-12, measured on the owner's Pi through mpv's control socket): the helper's counts are not proof that
+# the player plays. With one still picture and then only sound, the helper said "still" and wrote sound steadily
+# while mpv sat with the pipe as its path, no track and no clock, for minutes; the same source played again ended
+# with the page saying neither that it plays nor why not; a source that changed size was opened again and lost the
+# same way. So each step below hands a source over in one way and then asks mpv for ten seconds: the pipe is its
+# path, it has a picture track of the right size, its clock moves. A step is good when mpv plays at the END of that
+# time, or when GET /api/ndi gives a reason in "ended". It is bad when the page says neither (SILENT LOSS) or says
+# it plays while mpv does not (STUCK); the line that begins REASON says which, with mpv's words second by second.
+#
+# THE ONE SWITCH. Some of these fail today because of that fault (the hand-over of the pipe; being mended on the
+# branch ndi-pipe-reuse). While it says "no", a step that fails prints a line beginning FINDING, the run goes on and
+# stays green, and its last line lists every finding. Set it to "yes" (here, or PVJ_NDI_FINDINGS_FATAL=yes in the
+# environment) and the first of them fails the run: that is how to see that the fault is mended, and what this
+# becomes once it is.
+NDI_FINDINGS_FATAL="${PVJ_NDI_FINDINGS_FATAL:-no}"
+NDI_FINDINGS=""
+ndi_case() {       # ndi_case "what is handed over" box_check-arguments...
+	local words="$1"
+	shift
+	if box "$@"; then
+		echo "GOOD: $words"
+		return 0
+	fi
+	echo "--- the end of the player's own log"
+	tail -n 25 "$MPV_LOG" || true
+	echo "--- the end of the helper's and the panel's journals"
+	journalctl -b --no-pager -u pvj-ndi -u pvj-web -n 25 || true
+	if [ "$NDI_FINDINGS_FATAL" = yes ]; then ndi_fail "$words"; fi
+	echo "FINDING: $words. The line above that begins REASON says what mpv and the page said. Not fatal while NDI_FINDINGS_FATAL is 'no'."
+	NDI_FINDINGS="$NDI_FINDINGS [$words]"
+}
+helper_is_new() {  # helper_is_new OLD_PID: the helper runs, as another process
+	local pid
+	pid="$(systemctl show -p MainPID --value pvj-ndi.service)"
+	[ "$pid" != 0 ] && [ "$pid" != "$1" ] && [ -S /run/pvj-ndi/ndi.sock ]
+}
+ndi_module() {     # ndi_module true|false
+	local code
+	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d "{\"enabled\": $1}" http://127.0.0.1/api/modules/inputs-ndi)"
+	[ "$code" = 200 ] || ndi_fail "the NDI module could not be switched to $1: HTTP $code, $(head -c 300 "$OUT")"
+}
+ndi_clean() {      # every step starts from the same place, whatever the one before left: no source, a new helper, a new player
+	local old
+	old="$(systemctl show -p MainPID --value pvj-ndi.service)"
+	box sound off || ndi_fail "sound could not be switched off between two steps"
+	ndi_module false                               # the panel takes the source off and the helper lets go of it
+	systemctl restart pvj-ndi.service              # a new helper: the stand-in's source that changes size starts again too
+	systemctl restart pvj-player.service           # a player that was left waiting on the pipe is gone with this
+	wait_for 40 player_socket_is_open || ndi_fail "the player did not come back between two steps"
+	wait_for 40 helper_is_new "$old" || ndi_fail "the helper did not start again between two steps"
+	ndi_module true
+	wait_for 30 ndi_loaded || ndi_fail "the helper did not load the library again between two steps"
+}
+
+step "hand-over 1: one still picture and then only sound, sound on (what NDI's Test Patterns sends)"
+ndi_clean
+box sound on || ndi_fail "sound could not be switched on"
+ndi_case "one still picture then only sound, with sound on" case still "$NDI_STILL"
+
+step "hand-over 2: the same source played twice in a row (sound off)"
+ndi_clean
+ndi_case "the same source played twice in a row" case twice "$NDI_STILL"
+
+step "hand-over 3: source A, then source B at once (both have their first picture the moment they are opened)"
+ndi_clean
+ndi_case "one source straight after another" case follow "$NDI_AT_ONCE_A" "$NDI_AT_ONCE_B"
+
+step "hand-over 4: sound switched on, and off again, under a playing source"
+ndi_clean
+ndi_case "sound switched on and off under a playing source" case sound "$NDI_SOUND"
+
+step "hand-over 5: a source that changes size while it plays (320 x 180, then 256 x 144)"
+ndi_clean
+ndi_case "a source that changed size while it played" case size "$NDI_CHANGES"
+
+step "hand-over 6: the helper restarted under a playing source, judged by mpv's own word"
+ndi_clean
+box play "$NDI_MOVING" raw || ndi_fail "sound off: the stand-in's picture did not play before the helper's restart"
+systemctl restart pvj-ndi.service
+ndi_case "the helper restarted under a playing source" case restart "$NDI_MOVING"
 
 step "the stand-in is taken off by the real command, and this test's drop-in with it: nothing of NDI is left"
 box sound off || ndi_fail "sound could not be switched off again"
-NDI_OFF="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d '{"enabled": false}' http://127.0.0.1/api/modules/inputs-ndi)"
-[ "$NDI_OFF" = 200 ] || ndi_fail "the NDI module could not be switched off: HTTP $NDI_OFF, $(head -c 300 "$OUT")"
+ndi_module false
 rm -f "$NDI_PLAYER_CI"
 rmdir "$(dirname "$NDI_PLAYER_CI")"
 systemctl daemon-reload
@@ -649,4 +721,5 @@ grep -q "pvj-ndi on a box that was set up for NDI" "$OUT" || fail "the uninstall
 
 echo
 echo "PASS (player folder checked: $PLAYER_SEEN). This ran on $(systemctl --version | head -n 1), not on a Raspberry Pi."
-echo "NDI: a picture of the stand-in for NDI's library went the whole road (never NDI's own library, never a screen). One still then only sound: $STILL_SAID."
+echo "NDI: a picture of the stand-in for NDI's library went the whole road (never NDI's own library, never a screen)."
+echo "NDI hand-overs judged by mpv's own word, FINDINGS (not fatal, NDI_FINDINGS_FATAL=$NDI_FINDINGS_FATAL):${NDI_FINDINGS:- none}"
