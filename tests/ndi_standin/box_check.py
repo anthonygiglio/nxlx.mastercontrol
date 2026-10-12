@@ -106,8 +106,11 @@ def dump():
 
 
 def ended(st, name):
-    """Raise if the panel says the source ended; the words are the helper's."""
+    """Raise if the panel says the source ended for good; the words are the helper's. "...; trying again" is not an
+    end: the panel's watch is bringing the source back, and whoever asks waits for that up to a time of its own."""
     p, e = st.get("playing"), st.get("ended")
+    if mpvword.trying(st):
+        return
     if isinstance(p, dict) and p.get("state") in ("stopped", "refused"):
         raise Failed("%r did not play: it %s with \"%s\"" % (name, p["state"], p.get("message")))
     if not p and isinstance(e, dict):
@@ -127,22 +130,30 @@ def written(st):
 
 def on_the_screen(name, sid, container, least):
     """The helper says "playing" and counts frames written to the pipe; the count grows; the panel's status names
-    the source; the player has the pipe loaded, is not idle, decodes the stand-in's size and its clock moves."""
+    the source; the player has the pipe loaded, is not idle, decodes the stand-in's size and its clock moves.
+    The counts are the helper's for ONE opening of the source and start again at 0 when the panel opens it again
+    (after the helper was restarted, after a "changed"): two counts are compared only within one opening."""
     def playing():
         st = ndi()
         ended(st, name)
         p = st.get("playing")
         return st if isinstance(p, dict) and p.get("id") == sid and p.get("state") == "playing" and shown(st) >= least else None
-    first = wait(playing, 25)
-    if first is None:
-        st = ndi()
-        raise Failed("%r did not reach \"playing\" with %d pictures shown in 25 seconds; the panel says playing=%s ended=%s helper=%s"
-                     % (name, least, json.dumps(st.get("playing")), json.dumps(st.get("ended")), st.get("helper")))
-    before = player("playback-time", "estimated-frame-number")
-    time.sleep(2.0)
-    then = ndi()
-    ended(then, name)
-    p = then.get("playing") or {}
+    for _ in range(4):
+        first = wait(playing, 25)
+        if first is None:
+            st = ndi()
+            raise Failed("%r did not reach \"playing\" with %d pictures shown in 25 seconds; the panel says playing=%s ended=%s helper=%s"
+                         % (name, least, json.dumps(st.get("playing")), json.dumps(st.get("ended")), st.get("helper")))
+        before = player("playback-time", "estimated-frame-number")
+        time.sleep(2.0)
+        then = ndi()
+        ended(then, name)
+        p = then.get("playing") or {}
+        if p and shown(then) >= shown(first):
+            break
+        print("the source was opened again between two looks (its count went from %d to %s); looking again" % (shown(first), shown(then) if p else "none"))
+    else:
+        raise Failed("%r was opened again and again: four times in a row its count of pictures started again within two seconds" % name)
     if p.get("state") != "playing" or shown(then) - shown(first) < FRAMES_A_SECOND:
         raise Failed("%r did not go on playing: two seconds later the state is %r and %d more pictures were shown (about %d expected)"
                      % (name, p.get("state"), shown(then) - shown(first), 2 * FRAMES_A_SECOND))
@@ -191,25 +202,39 @@ def play(name, container):
 
 
 def back(name, seconds):
-    """After the helper was restarted under a playing source: the panel brings it back by itself. Nothing is asked
-    for here but what the page asks (GET /api/ndi) and the player's own word."""
+    """After the helper was restarted under a playing source: the panel's watch brings it back by itself, within
+    `seconds` (the stated deadline). Nothing is asked for here but what the page asks (GET /api/ndi) and the
+    player's own word. Meanwhile the page may say "...; trying again", which is waited through; and the first
+    answers may still be the helper's from before its restart (the panel keeps an answer for a second), so "back"
+    is only believed after the source was seen NOT playing, or its count of pictures was seen to start again."""
     began = time.monotonic()
     sid = source(name)
+    seen = {"gone": False, "count": None, "said": []}
 
     def again():
         st = ndi()
         ended(st, name)
         p = st.get("playing")
-        if not (isinstance(p, dict) and p.get("id") == sid and p.get("state") == "playing" and shown(st) >= 10):
+        on = isinstance(p, dict) and p.get("id") == sid and p.get("state") == "playing"
+        note = "%.1fs %s" % (time.monotonic() - began, ("playing, %d shown" % shown(st)) if on else
+                             ((st.get("ended") or {}).get("message") or (p or {}).get("state") or "nothing playing"))
+        if not seen["said"] or seen["said"][-1].split(" ", 1)[1].split(",")[0] != note.split(" ", 1)[1].split(",")[0]:
+            seen["said"].append(note)
+        if not on or (seen["count"] is not None and shown(st) < seen["count"]):
+            seen["gone"] = True
+        seen["count"] = shown(st) if on else None
+        if not (seen["gone"] and on and shown(st) >= 10):
             return None
         return st if player("path")["path"] == PIPE else None
     st = wait(again, seconds, every=0.25)
     took = time.monotonic() - began
     if st is None:
         now = ndi()
-        raise Failed("%r did not come back by itself within %s seconds of the helper's restart; the panel says playing=%s ended=%s helper=%s"
-                     % (name, seconds, json.dumps(now.get("playing")), json.dumps(now.get("ended")), now.get("helper")))
-    print("BACK %r: playing again %.1f seconds after the helper's restart was asked about, without anyone asking for it" % (name, took))
+        raise Failed("%r did not come back by itself within %s seconds of the helper's restart (%s); the panel says playing=%s ended=%s helper=%s. What the page said, in order: %s"
+                     % (name, seconds, "it was seen gone" if seen["gone"] else "it was never seen gone: the page said playing all along, with a count that never started again",
+                        json.dumps(now.get("playing")), json.dumps(now.get("ended")), now.get("helper"), "; ".join(seen["said"])))
+    print("BACK %r: playing again, at least ten pictures into a new opening, %.1f seconds after the helper's restart, without anyone asking for it. "
+          "What the page said, in order: %s" % (name, took, "; ".join(seen["said"])))
     on_the_screen(name, sid, "raw", FRAMES_A_SECOND)
 
 

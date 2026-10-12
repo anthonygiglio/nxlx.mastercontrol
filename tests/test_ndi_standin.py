@@ -16,6 +16,7 @@ import threading
 import time
 import unittest
 
+import tests  # noqa: F401  (the package: its lock checker and its temp folder, also when this file is started alone)
 from pvj import ndi
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

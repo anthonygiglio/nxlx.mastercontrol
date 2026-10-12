@@ -23,8 +23,33 @@ CHAIN = ("PVJ-STANDIN (big moving with sound)", "PVJ-STANDIN (big at once A with
          "PVJ-STANDIN (big changes size with sound)", "PVJ-STANDIN (one still then sound)", "PVJ-STANDIN (big moving with sound)")
 
 
+TRYING = "; trying again"              # how the page's "ended" closes while the panel's watch is still bringing a source back
+
+
 class Failed(Exception):
     pass
+
+
+def trying(st):
+    """The page says the source is not on the screen now and that the panel is trying again: not an end."""
+    e = st.get("ended")
+    return not st.get("playing") and isinstance(e, dict) and str(e.get("message", "")).endswith(TRYING)
+
+
+def sound_rate(looks):
+    """(seconds of sound played, seconds of wall clock they took, when that began) over the last stretch of `looks`
+    ([(clock, look)]) in which audio-pts was a number and never went back (a source that is opened again begins at
+    0 again). (0, 0, None) when the last look has no audio-pts."""
+    run = []
+    for when, seen in looks:
+        pts = seen["audio-pts"]
+        if not number(pts) or (run and pts < run[-1][1]):
+            run = []
+        if number(pts):
+            run.append((when, pts))
+    if not run:
+        return 0.0, 0.0, None
+    return run[-1][1] - run[0][1], run[-1][0] - run[0][0], run[0][0]
 
 
 def size_of(name, changed=False):
@@ -195,12 +220,20 @@ class Rig:
             raise Failed("POST /api/play for %r says sound %s; the pipe was to carry %s" % (name, out.get("sound"), container))
         return sid
 
-    def watch(self, what, name, seconds=10, **want):
+    def watch(self, what, name, seconds=10, late=None, **want):
         """After a hand-over: look at mpv every second for `seconds`, and judge by the END of that time (a source
-        that plays for three seconds and is then lost has not played). Good: mpv plays, or the page gives a reason
-        in "ended". Anything else raises with what mpv and the page said."""
+        that plays for three seconds and is then lost has not played). Good: mpv plays, or the page gives a final
+        reason in "ended" ("...; trying again" is not final: a source the panel is still bringing back when the time
+        is up is NOT BACK). Anything else raises with what mpv and the page said.
+
+        Where sound is expected (audio=True) and the clock must move, the SOUND must have played at about real time:
+        from no later than `late` seconds into the look (the time a hand-over may take; by default six tenths of
+        it) to its end, audio-pts must have gone on by nine tenths of the wall clock. "It moves" is not enough: at
+        30 seconds it must be near 30."""
         want.setdefault("size", size_of(name))
+        late = 0.6 * seconds if late is None else late
         began, before, first, why, said = time.monotonic(), self.look(), None, "not looked at yet", []
+        looks = [(began, before)]
         while time.monotonic() - began < seconds:
             time.sleep(1.0)
             now = self.look()
@@ -209,6 +242,14 @@ class Rig:
                 first = time.monotonic() - began
             said.append("%.0fs %s" % (time.monotonic() - began, why or "plays"))
             before = now
+            looks.append((time.monotonic(), now))
+        if not why and want.get("audio") is True and want.get("moving", True):
+            played, took, since = sound_rate(looks)
+            if since is None or since - began > late + 1.0 or played < 0.9 * took - 0.5:
+                why = ("mpv's sound did not play at real time: in the last %.1f seconds it had a sound clock for, audio-pts went on by %.1f "
+                       "(that stretch began %s seconds into the look; it may begin %.1f in at the latest)"
+                       % (took, played, "%.1f" % (since - began) if since is not None else "never", late))
+                said.append("at the end: " + why)
         st = self.page()
         p, e = st.get("playing"), st.get("ended")
         if not why:
@@ -216,10 +257,13 @@ class Rig:
                      % (what, name, first, seconds, json.dumps(before, sort_keys=True)))
             return "plays"
         page = "the page says playing=%s ended=%s" % (json.dumps(p, sort_keys=True), json.dumps(e, sort_keys=True))
-        if not p and isinstance(e, dict) and e.get("message"):
+        if trying(st):
+            kind = "NOT BACK"
+        elif not p and isinstance(e, dict) and e.get("message"):
             self.say("ENDED WITH A REASON %s: %r does not play and the page says why: \"%s\"" % (what, name, e["message"]))
             return "ended"
-        kind = "SILENT LOSS" if not p and not e else "STUCK"
+        else:
+            kind = "SILENT LOSS" if not p and not e else "STUCK"
         if len(said) > 14:                 # a long look: the first and the last seconds say it
             said = said[:6] + ["..."] + said[-6:]
         raise Failed("%s, %s: after %d seconds %s. %s. %s. Second by second: %s. mpv's last word: %s"
@@ -228,11 +272,11 @@ class Rig:
                         page, "; ".join(said), json.dumps(before, sort_keys=True)))
 
 
-def case_still(rig, name, seconds=10):
+def case_still(rig, name, seconds=10, late=None):
     """One still picture and then only sound, with sound on: what NDI's Test Patterns sends. On the Pi the helper
     said "still" and wrote sound, and mpv had the pipe as its path with no track and no clock, for minutes."""
     rig.start(name, "matroska")
-    rig.watch("one still picture then only sound, sound on", name, seconds=seconds, audio=True)
+    rig.watch("one still picture then only sound, sound on", name, seconds=seconds, late=late, audio=True)
 
 
 def case_twice(rig, name):
