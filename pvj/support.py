@@ -57,11 +57,14 @@ REMOTE_DENY = {
     ("POST", "/api/osc/key"),
     # where the box sends its state over OSC (D82): a new way out of the box is opened by the Owner in the room
     ("POST", "/api/osc/feedback"),
+    # the NDI discovery server (D85): a program listening on the network is opened by the Owner in the room. Its
+    # switch is here; its own routes are in REMOTE_DENY_PREFIX below.
+    ("POST", "/api/modules/ndi-discovery"),
     # the lock on guest controls (D80): who may play with the room is decided in the room, by an Operator or an Owner
     # who stands in it; a support session, of whatever role, neither opens the room to guests nor shuts them out
     ("POST", "/api/guests"),
 }
-REMOTE_DENY_PREFIX = ("/api/access", "/api/https", "/api/recovery")   # /api/https: the box's key, certificate and the owner-only switch (D79); /api/recovery: the ways back in (D81)
+REMOTE_DENY_PREFIX = ("/api/access", "/api/https", "/api/recovery", "/api/ndi/discovery")   # /api/https: the box's key, certificate and the owner-only switch (D79); /api/recovery: the ways back in (D81)
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
 
 

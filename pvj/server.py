@@ -647,6 +647,26 @@ def build(env=None, player=None):
     from . import capture as capture_mod
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
     api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
+    # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
+    # `pvj-ndi-runtime install` writes for the panel's unit (pvj/ndisetup.py). Without it this box has no helper, the
+    # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.
+    from . import ndi as ndi_mod
+    ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
+    api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
+                            ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log,
+                            pipe_owner=ndi_mod.pipe_owner, setup=bool(env.get("PVJ_NDI_DIR")),
+                            config_dir=paths.ndi_config_dir(env))
+    # The NDI discovery server's supervisor (D85): only on a box where root set it up (the panel's drop-in names its folder).
+    from . import ndiscovery as ndisc_mod
+    ndisc_dir = paths.ndisc_dir(env)
+    api.ndisc = ndisc_mod.Manager(ndi_mod.Client(os.path.join(ndisc_dir, ndisc_mod.SOCKET)) if ndisc_dir else None,
+                                  lambda: settings.data, lambda: registry.enabled("ndi-discovery"),
+                                  lambda: ndisc_mod.box_addresses(api._run_ip()), log=ndi_log)
+    api.ndi.own_server = api._own_discovery      # root makes the pipe (M3, 2026-10-11)
+    try:                                     # whatever the helper answers, the panel starts
+        api.ndi.sync()
+    except Exception as e:
+        print("pvj-web: NDI helper not told the settings: %s" % e, file=sys.stderr)
     from . import httpsbox as httpsbox_mod
     api.https = httpsbox_mod.HttpsBox(os.path.join(state, "tls"), settings, openssl=env.get("PVJ_OPENSSL", "openssl"),
                                       addresses=lambda: [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
@@ -718,6 +738,19 @@ def main(argv=None):
     api.scheduler.start()
     api.autostart.start()
     api.pinscreen.start()
+    ndi_stop = threading.Event()
+
+    def ndi_watch():                         # a sender that changes size: the helper says so, the pipe is loaded again
+        n = 0
+        while not ndi_stop.wait(1.0):
+            n += 1
+            try:
+                if n % 10 == 0:              # the discovery server follows its network's address (DHCP)
+                    api.ndisc_tick()
+                api.ndi_tick()
+            except Exception as e:
+                print("pvj-web: NDI watch: %s" % e, file=sys.stderr)
+    threading.Thread(target=ndi_watch, name="ndi-watch", daemon=True).start()
     print("pvj-web: listening on %s:%d%s; pairing PIN %s (also in %s/pin)"
           % (host, port, " and https on %d (%s)" % (tls_port, "certificate loaded" if api.https.context else "no certificate yet") if tlsd else "",
              auth.current_pin, rundir), flush=True)
@@ -736,6 +769,9 @@ def main(argv=None):
         api.pinscreen.stop()
         if api.capture:
             api.capture.stop()
+        ndi_stop.set()
+        if api.ndi:
+            api.ndi.stop()
         api.dmx.stop()
         api.midi.stop()
         api.room.stop()

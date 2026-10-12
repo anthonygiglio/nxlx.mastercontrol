@@ -73,6 +73,14 @@ ROWS = {
     ("GET", "/api/audio"): KINDS["read"],
     ("GET", "/api/autostart"): KINDS["read"],
     ("GET", "/api/streams"): KINDS["read"],
+    # NDI (D62, after D80): the list of senders and choosing one (through /api/play, below) are running the room, the
+    # Operator's; a controller or a support session below full gains nothing. Addresses the box asks on the network
+    # and the sound switch are the Owner's, and a full support session's, as Streams (the owner's choice in D63).
+    ("GET", "/api/ndi"): KINDS["op"],
+    ("POST", "/api/ndi"): KINDS["owner"],
+    # the NDI discovery server on the box (D85): the Owner's, and never through the support tunnel (support.REMOTE_DENY_PREFIX)
+    ("GET", "/api/ndi/discovery"): STUDIO("owner"),
+    ("POST", "/api/ndi/discovery"): STUDIO("owner"),
     ("GET", "/api/schedule"): KINDS["read"],
     ("GET", "/api/preview.jpg"): KINDS["read"],
     ("POST", "/api/play"): KINDS["guest"],
@@ -198,7 +206,8 @@ GUEST_BODIES = {
         [{"pad": [0, 0]}, {"file": "a.mp4"}, {"file": "a.mp4", "loop": False}],
         [{"stream": "x"}, {"preset": "p"}, {"usb": "STICK/a.mp4"}, {"usb_drive": "STICK"}, {"capture": "/dev/video0"},
          {"slideshow": {"source": "media"}}, {"pad": [0, 0], "file": "a.mp4"}, {"file": "a.mp4", "ending": "next"},
-         {"pad": [0, 0], "stream": "x"}, {"file": ["a.mp4"]}, {}]),
+         {"pad": [0, 0], "stream": "x"}, {"file": ["a.mp4"]}, {},
+         {"ndi": "x"}, {"pad": [0, 0], "ndi": "x"}]),      # an NDI source is a network source, refused to a guest like a stream (D80)
     ("POST", "/api/control"): (
         [{"action": "next"}, {"action": "prev"}, {"action": "stop"}],
         [{"action": a, "value": v} for a, v in (("volume", 130), ("opacity", 0), ("size", 10), ("position", 5), ("rotate", 90),

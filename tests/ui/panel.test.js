@@ -400,15 +400,16 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
-      'At power-up', 'Streams', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
+      'At power-up', 'Streams', 'NDI\u00ae input', 'NDI\u00ae discovery server', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
       'Network', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
-    assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (5)');
-    assert(!(await page.isVisible('#notbuilt >> text=NDI')), 'the list of what is not built starts folded');
+    assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (4)');
+    assert(!(await page.isVisible('#notbuilt >> text=AES67 and Dante audio')), 'the list of what is not built starts folded');
     await page.click('#notbuilt summary');
-    assert(await page.isVisible('#notbuilt >> text=NDI'), 'NDI is listed as not built yet');
-    assert(await page.isVisible('#notbuilt >> text=Receive NDI from Resolume'), 'with its description');
+    assert(await page.isVisible('#notbuilt >> text=AES67 and Dante audio'), 'AES67 and Dante audio is listed as not built yet');
+    assert(await page.isVisible('#notbuilt >> text=Dante devices interoperate through AES67 mode'), 'with its description');
+    assert.strictEqual(await page.locator('#notbuilt >> text=NDI').count(), 0, 'the NDI input is built: it has a row of its own');
     assert.strictEqual(await page.locator('#notbuilt button').count(), 0, 'what is not built has no switch');
     await page.click('#notbuilt summary');
     await page.waitForFunction(() => document.querySelector('#nav-health .navstate').textContent.length > 8, null, { timeout: 8000 });   // the box's name and "all well", or the worst problem
@@ -1002,6 +1003,148 @@ function startServer(env) {          // env: more for the harness's environment 
     await onPage('Streams');
     await sysIndex();
     await chip('Streams', 'Set up');
+    // NDI input: off before; switched on in a harness that, like a box where nobody ran the opt-in command, has nothing of
+    // NDI set up: the page says so in plain words and names the one command, with the trademark sentence and the link NDI
+    // asks for, and its address form is on the same page:
+    // a public address is refused under the button, a private one is added, and Remove asks first.
+    // WRITTEN AND SYNTAX-CHECKED ONLY: this step had not been run when it was committed (no Playwright on the dev Mac).
+    const NDI = 'NDI® input';
+    await sysIndex();
+    await chip(NDI, 'Off');
+    await sys(NDI);
+    await switchOn(NDI);
+    await page.waitForSelector('#ndiruntime');
+    assert(/NDI is not set up on this box/.test(await page.textContent('#ndinotsetup')), 'a box that did not opt in says so in plain words');
+    assert(!/is not running/.test(await page.textContent('#ndiruntime')), 'and does not speak of a helper that stopped: there never was one');
+    assert.strictEqual(await page.textContent('#ndicommand'), 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"', 'the one command is named');
+    assert.strictEqual((await get('/api/ndi')).setup, false, 'the route says the same');
+    assert((await page.textContent('#ndimark')).includes('NDI® is a registered trademark of Vizrt NDI AB.'), 'the trademark sentence is beside the list of sources');
+    assert.deepStrictEqual(await page.$$eval('#ndimark a', (as) => as.map((a) => [a.getAttribute('href'), a.getAttribute('rel'), a.getAttribute('target')])),
+      [['https://ndi.video/', 'noopener noreferrer', '_blank'], ['https://ndi.video/tools/', 'noopener noreferrer', '_blank']], 'the links NDI asks for, opened apart from the panel');
+    assert.strictEqual(await page.locator('.ndi-entry').count(), 0, 'no source is listed without the helper');
+    assert(await page.isVisible('#ndiaddress'), 'the address form is on the same page, open while the list is empty');
+    assert.strictEqual(await page.textContent('label[for="ndiaddress"]'), 'Address');
+    await page.fill('#ndiaddress', '8.8.8.8');
+    await page.click('#ndiaddradd');
+    await page.waitForFunction(() => /private network/.test(document.getElementById('ndiaddrerr').textContent));
+    await page.fill('#ndiaddress', '192.168.1.20');
+    await page.click('#ndiaddradd');
+    await page.waitForSelector('.ndiaddr-entry:has-text("192.168.1.20")');
+    assert.deepStrictEqual((await get('/api/ndi')).addresses, ['192.168.1.20'], 'the address is saved');
+    await page.waitForTimeout(2300);                                             // the list of sources is asked again every 2 seconds
+    assert.strictEqual(await page.locator('.ndiaddr-entry').count(), 1, 'the refresh of the sources leaves the address list alone');
+    await onPage(NDI);
+    await page.click('.ndiaddr-entry .morebtn');
+    await page.click('.ndiaddr-entry .moreacts button:has-text("Remove")');
+    await page.waitForSelector('#confirmrow:has-text("Remove 192.168.1.20? The box stops asking it for sources.")');
+    await page.click('#confirmno');
+    assert.strictEqual((await get('/api/ndi')).addresses.length, 1, '"Keep it" removes nothing');
+    await page.click('.ndiaddr-entry .moreacts button:has-text("Remove")');
+    await page.click('#confirmyes');
+    await page.waitForFunction(() => document.querySelectorAll('.ndiaddr-entry').length === 0);
+    assert.strictEqual(await post('/api/play', { ndi: 'RESOLUME (Output)' }), 409, 'a name is never played, only an id');
+    // Sound: one switch on the same page, on unless the owner says no; the line beside it says what is arriving.
+    // WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    await page.waitForSelector('#ndisound');
+    assert.strictEqual(await page.getAttribute('#ndisound', 'aria-checked'), 'false', 'sound is off until someone switches it on (never heard on a box)');
+    assert.strictEqual((await get('/api/ndi')).sound, false);
+    assert(/Sound is off: sources are shown without their sound/.test(await page.textContent('#ndisoundline')), 'the line says so');
+    assert(/has not been heard on a box yet/.test(await page.textContent('#ndisoundbody')), 'and why');
+    await page.click('#ndisound');
+    await page.waitForFunction(() => /No source is on the screen/.test(document.getElementById('ndisoundline').textContent));
+    assert.strictEqual((await get('/api/ndi')).sound, true, 'the switch is saved');
+    await page.click('#ndisound');
+    await page.waitForFunction(() => /Sound is off: sources are shown without their sound/.test(document.getElementById('ndisoundline').textContent));
+    assert.strictEqual((await get('/api/ndi')).sound, false, 'and off again, as it is on a new box');
+    // Which senders this box looks for (D62, 2026-10-11): groups and discovery servers, the Owner's, with the honest
+    // words beside them. WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    {
+      await page.waitForSelector('#ndiscopecard');
+      assert.strictEqual(await page.textContent('#ndiscopecard h2'), 'Which senders this box looks for');
+      assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this box.', 'not set up is said as that, not as "no senders in a group"');
+      assert(/They are not a password and they encrypt nothing/.test(await page.textContent('#ndiscopenote')), 'the honest words are beside the settings');
+      assert(/NDI documents no setting that stops that/.test(await page.textContent('#ndiscopenote')), 'and that the box goes on listening on the local network');
+      assert.strictEqual(await page.textContent('#ndigroupempty'), "No group set: the box looks in NDI's default group, Public.");
+      assert.strictEqual(await page.textContent('#ndidiscoveryempty'), 'No discovery server set.');
+      await page.click('#ndigroupopen');
+      await page.fill('#ndigroup', 'a,b');
+      await page.click('#ndigroupadd');
+      await page.waitForFunction(() => /no comma/.test(document.getElementById('ndigrouperr').textContent));
+      await page.fill('#ndigroup', 'Leyline Staff');
+      await page.click('#ndigroupadd');
+      await page.waitForSelector('.ndigroup-entry:has-text("Leyline Staff")');
+      assert.deepStrictEqual((await get('/api/ndi')).groups, ['Leyline Staff'], 'the group is saved exactly as typed');
+      await page.click('#ndidiscopen');
+      await page.fill('#ndidiscovery', '8.8.8.8');
+      await page.click('#ndidiscoveryadd');
+      await page.waitForFunction(() => /private network/.test(document.getElementById('ndidiscoveryerr').textContent));
+      await page.fill('#ndidiscovery', '192.168.1.5:5959');
+      await page.click('#ndidiscoveryadd');
+      await page.waitForSelector('.ndidisc-entry:has-text("192.168.1.5:5959")');
+      const scoped = await get('/api/ndi');
+      assert.deepStrictEqual([scoped.discovery, scoped.discovery_now], [['192.168.1.5:5959'], []], 'saved, and not said to be in force on a box that cannot hand it to NDI');
+      assert(!/pvj-ndi-runtime refresh/.test(scoped.notice), 'a box with no NDI set-up at all is not told to refresh one: ' + scoped.notice);
+      assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this box.', 'and the line still says why nothing is looked for');
+      assert.strictEqual(await page.textContent('#ndiallowedempty'), 'No pad holds an NDI source yet.');
+      const before = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: before.height });
+      const scopeOut = await page.$$eval('#ndiscopecard *, #ndiallowedcard *', (els) => els.filter((e) => { const card = e.closest('.card').getBoundingClientRect(), r = e.getBoundingClientRect();
+        return r.width && (r.right > card.right + 1 || r.left < card.left - 1); }).map((e) => e.textContent.slice(0, 40)));
+      assert.deepStrictEqual(scopeOut, [], 'text sticks out of the NDI cards at 320 px: ' + JSON.stringify(scopeOut));
+      await fitsPhone('NDI input with a group and a discovery server');
+      await page.setViewportSize(before);
+      assert.strictEqual(await post('/api/ndi', { action: 'remove_group', group: 'Leyline Staff' }), 200);
+      assert.strictEqual(await post('/api/ndi', { action: 'remove_discovery', server: '192.168.1.5:5959' }), 200);
+    }
+    await onPage(NDI);
+    await sysIndex();
+    await chip(NDI, 'Set up');
+    await sys(NDI);
+    await switchOff(NDI);
+    assert(!(await moduleIsOn('inputs-ndi')), 'the NDI input is off again, as it is on a new box');
+    // The NDI discovery server on the box (D85): the Owner's page. The harness, like a box where nobody ran the command,
+    // has nothing of it set up: the page says so with the one command, the settings are kept all the same, and the
+    // honest words are on the page. WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    {
+      const DS = 'NDI® discovery server';
+      await sysIndex();
+      await chip(DS, 'Off');
+      assert(!(await moduleIsOn('ndi-discovery')), 'the discovery server is off on a new box');
+      await sys(DS);
+      await switchOn(DS);
+      await page.waitForSelector('#ndiscnotsetup');
+      assert(/is not set up on this box, so nothing listens/.test(await page.textContent('#ndiscnotsetup')), 'a box without the set-up says so');
+      assert.strictEqual(await page.textContent('#ndisccommand'), 'sudo pvj-ndi-runtime server install "/path/to/NDI SDK for Linux"', 'the one command is named');
+      const ds = await get('/api/ndi/discovery');
+      assert.deepStrictEqual([ds.setup, ds.supervisor, ds.listening, ds.network, ds.port, ds.module], [false, false, null, 'wired', 5959, true]);
+      assert(/not a password: anything that can reach it can register with it/.test(await page.textContent('#ndiscnote')), 'what a discovery server is not');
+      assert(/never part of nxlx\.mastercontrol and the box never downloads it/.test(await page.textContent('#ndiscnote')), 'and where the program comes from');
+      assert((await page.textContent('#ndiscmark')).includes('NDI® is a registered trademark of Vizrt NDI AB.'), 'the trademark sentence');
+      assert.deepStrictEqual(await page.$$eval('#ndiscnetwork option', (os) => os.map((o) => o.value)), ['wired', 'wifi', 'all']);
+      assert(!(await page.isVisible('#ndiscallwarn')), 'no warning while one network is chosen');
+      await page.selectOption('#ndiscnetwork', 'all');
+      assert(await page.isVisible('#ndiscallwarn'), 'choosing every network says what that means');
+      await page.fill('#ndiscport', '80');
+      await page.click('#ndiscsave');
+      await page.waitForFunction(() => /1024 to 65535/.test(document.getElementById('ndiscerr').textContent));
+      await page.fill('#ndiscport', '6000');
+      await page.click('#ndiscsave');
+      await page.waitForFunction(() => fetch('/api/ndi/discovery').then((r) => r.json()).then((d) => d.network === 'all' && d.port === 6000));
+      const before = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: before.height });
+      const dsOut = await page.$$eval('#ndisccard *, #ndiscsetcard *, #ndiscnotecard *', (els) => els.filter((e) => { const card = e.closest('.card').getBoundingClientRect(), r = e.getBoundingClientRect();
+        return r.width && (r.right > card.right + 1 || r.left < card.left - 1); }).map((e) => e.textContent.slice(0, 40)));
+      assert.deepStrictEqual(dsOut, [], 'text sticks out of the discovery server cards at 320 px: ' + JSON.stringify(dsOut));
+      await fitsPhone('NDI discovery server, not set up');
+      await page.setViewportSize(before);
+      assert.strictEqual(await post('/api/ndi/discovery', { network: 'wired', port: 5959 }), 200);
+      await onPage(DS);
+      await sysIndex();
+      await chip(DS, 'Set up');
+      await sys(DS);
+      await switchOff(DS);
+      assert(!(await moduleIsOn('ndi-discovery')), 'the discovery server is off again, as it is on a new box');
+    }
     // Schedule: switch the module on, add an entry, turn the schedule on and off, remove the entry
     await sys('Schedule');
     await switchOn('Schedule');
@@ -3381,6 +3524,133 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await post('/api/pads', { bank: 0, index: 5, label: '', file: '' }), 200);
       assert.strictEqual(await post('/api/pads', { bank: 0, index: 6, label: '', file: '' }), 200);
       assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
+      await page.reload();
+      await go(page, 'play/pads');
+      await page.waitForSelector('.pads:visible');
+    }
+
+    // A pad can hold an NDI source (D62, 2026-10-11): the pad editor's third kind. The harness has no NDI helper (as a
+    // box where nobody ran the opt-in command), so the empty states are the box's own answers, and the source, the
+    // saved pad and what plays are given to the page as the box would give them (the routes below).
+    // WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
+    {
+      const SRC = { id: '0123456789ab', name: 'STAGE-LAPTOP-WITH-A-LONG-NAME (Resolume Arena Output 1)', from: '192.168.100.200:5961' };
+      const AWAY = { id: 'ba9876543210', name: 'CAMERA (Out)', from: '192.168.1.30:5961' };
+      const NOTE = "A pad follows a sender's name at one machine's address, not the sender itself. Anyone on the network can announce a name, and an address can change hands. On a network you do not control, give the sender's address under NDI input.";
+      const before = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: before.height });
+      await go(page, 'play/pads');
+      await page.waitForSelector('.pads:visible');
+      await page.click('text=Edit pads');
+      await page.click('.pad >> nth=7');
+      await page.waitForSelector('#padkind');
+      assert.deepStrictEqual(await page.$$eval('#padkind button', (bs) => bs.map((b) => b.textContent)), ['Clip', 'Shader', 'NDI source'], 'the three kinds of pad');
+      await page.click('#padkindndi');
+      assert.strictEqual(await page.textContent('#padndioff'), 'NDI is off. Turn on NDI input in Setup, then give the pad a source.', 'with NDI off the editor says where to switch it on');
+      assert(!(await page.isVisible('#padending')), 'an NDI source has no ending to choose');
+      await fitsPhone('the pad editor on NDI source, NDI off');
+      await page.click('.sheet button:text-is("Cancel")');
+      assert.strictEqual(await post('/api/modules/inputs-ndi', { enabled: true }), 200);
+      await page.reload();
+      await go(page, 'play/pads');
+      await page.waitForSelector('.pads:visible');
+      await page.click('text=Edit pads');
+      await page.click('.pad >> nth=7');
+      await page.click('#padkindndi');
+      await page.waitForSelector('#padndiempty');
+      assert(/NDI is not set up on this box yet/.test(await page.textContent('#padndiempty')), 'a box without NDI set up says so in the editor');
+      // a source on the network, one at an address the owner gave that is away, and two senders under one name
+      await page.route('**/api/ndi', async (route) => {
+        if (route.request().method() !== 'GET') return route.continue();
+        const response = await route.fetch();
+        const body = await response.json();
+        Object.assign(body, { setup: true, helper: true, runtime: { present: true, loaded: true, version: 'fake', problem: '' },
+          sources: [SRC, { id: 'cccccccccccc', name: 'TWICE (Out)', from: '192.168.1.40:5961', twins: true }], allowed: [AWAY], addresses: ['192.168.1.30'] });
+        await route.fulfill({ response, json: body });
+      });
+      await page.click('#padkindclip');
+      await page.click('#padkindndi');
+      await page.waitForSelector('#padndi .padndirow');
+      assert.deepStrictEqual(await page.$$eval('#padndi .padndirow', (rs) => rs.map((r) => [r.getAttribute('data-ndi'), r.querySelector('.t.s').textContent, r.disabled])), [
+        [SRC.id, '192.168.100.200:5961 · found by its announcement · on the network now', false],
+        ['cccccccccccc', '192.168.1.40:5961 · found by its announcement · two senders use this name here: not for a pad', true],
+        [AWAY.id, '192.168.1.30:5961 · an address the owner gave · not on the network now', false]], 'each source with where it comes from');
+      assert.strictEqual(await page.textContent('#padndinote'), NOTE, 'the honest line about names');
+      assert.strictEqual(await page.locator('#padndi input, #padndi textarea').count(), 0, 'nothing is typed into the pad: a source is chosen from the list');
+      const sheetOut = await page.evaluate(() => { const box = document.querySelector('.sheet').getBoundingClientRect();
+        return Array.from(document.querySelectorAll('#padkind *, #padndi *')).filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > box.right + 1 || r.left < box.left - 1); }).map((e) => e.textContent.slice(0, 40))
+          .concat(document.documentElement.scrollWidth > window.innerWidth ? ['the page is wider than the phone'] : []); });
+      assert.deepStrictEqual(sheetOut, [], 'text sticks out of the pad editor at 320 px: ' + JSON.stringify(sheetOut));
+      // choosing it saves the id and nothing else of the source (the box's answer is given: the harness has no sender)
+      const banks = (await get('/api/pads')).banks;
+      banks[0].pads[7] = { label: SRC.name.slice(0, 40), file: '', ndi: SRC.id };
+      let sent = null;
+      await page.route('**/api/pads', async (route) => {
+        if (route.request().method() === 'POST') sent = route.request().postDataJSON();
+        await route.fulfill({ status: 200, json: { banks, ndi: { [SRC.id]: { name: SRC.name, from: SRC.from } } } });
+      });
+      await page.click('#padndi .padndirow >> nth=0');
+      await page.waitForSelector('.pad.ndi');
+      assert.deepStrictEqual(sent, { bank: 0, index: 7, label: SRC.name.slice(0, 40), ndi: SRC.id }, 'the pad is given the id, never a name or an address');
+      await page.click('text=Done editing');
+      const ndiPad = page.locator('.pad >> nth=7');
+      assert.strictEqual(await ndiPad.locator('.padkind').textContent(), 'NDI');
+      assert.strictEqual(await ndiPad.getAttribute('title'), 'NDI source: ' + SRC.name + ', from ' + SRC.from);
+      const padOut = await page.evaluate(() => Array.from(document.querySelectorAll('.pad')).map((el) => {
+        const b = el.getBoundingClientRect(), t = el.querySelector('.t').getBoundingClientRect(), n = el.querySelector('.n').getBoundingClientRect();
+        return { text: el.textContent, inside: t.right <= b.right + 0.5 && n.right <= b.right + 0.5 && t.bottom <= b.bottom + 0.5, page: document.documentElement.scrollWidth <= window.innerWidth };
+      }).filter((x) => !x.inside || !x.page));
+      assert.deepStrictEqual(padOut, [], 'an NDI pad whose text sticks out at 320 px: ' + JSON.stringify(padOut));
+      // the playing pad lights by the source's id, and a refusal is said under the pads as a shader's is
+      let state = 'playing';
+      await page.route('**/api/status', async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        if (state === 'playing') Object.assign(body.player, { running: true, path: null, ndi: SRC.name, ndi_id: SRC.id });
+        if (state === 'other') Object.assign(body.player, { running: true, path: null, ndi: 'ANOTHER (Out)', ndi_id: 'dddddddddddd' });
+        if (state === 'refused') body.player.ndi_refused = { id: SRC.id, message: "NDI source '" + SRC.name + "' is not on the network now" };
+        await route.fulfill({ response, json: body });
+      });
+      await page.waitForSelector('.pad.ndi.on');
+      assert.strictEqual(await ndiPad.getAttribute('aria-pressed'), 'true');
+      await page.waitForFunction(() => /^NDI: STAGE-LAPTOP/.test(document.getElementById('np').textContent));
+      state = 'other';
+      await page.waitForFunction(() => !document.querySelector('.pad.ndi.on'));
+      state = 'refused';
+      await page.waitForSelector('#padrefused');
+      assert.strictEqual(await page.textContent('#padrefused'), "A pad's NDI source was not shown. NDI source '" + SRC.name + "' is not on the network now.");
+      assert(await ndiPad.evaluate((el) => el.classList.contains('refused')), 'the pad is marked');
+      await fitsPhone('Play > Pads with an NDI pad refused');
+      state = 'none';
+      await page.waitForFunction(() => !document.getElementById('padrefused') && !document.querySelector('.pad.refused'));
+      // a press with the box's real answer (no helper here): the reason is said, in a sentence
+      await ndiPad.click();
+      await page.waitForFunction(() => /not allowed any more|NDI is not set up|not running|empty/i.test(document.getElementById('msg').textContent));
+      // a guest sees such a pad as not available, and his tap is answered in place and never sent
+      const guestToken = await page.evaluate(() => fetch('/api/devices/invite', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'NDI guest', role: 'view' }) }).then((r) => r.json()).then((d) => d.token));
+      const guestCtx = await browser.newContext({ viewport: { width: 320, height: 700 } });
+      const gp = await guestCtx.newPage();
+      const asked = [];
+      await gp.route('**/api/pads', (route) => route.fulfill({ status: 200, json: { banks } }));
+      await gp.route('**/api/play', (route) => { asked.push(route.request().postData()); return route.continue(); });
+      await gp.goto(base + '/#token=' + guestToken);
+      await gp.waitForFunction(() => !!document.querySelector('main.ws'), null, { timeout: 15000 });
+      await go(gp, 'play/pads');
+      await gp.waitForSelector('.pad.ndi.na');
+      const guestPad = gp.locator('.pad >> nth=7');
+      assert.strictEqual(await guestPad.getAttribute('aria-disabled'), 'true');
+      assert.strictEqual(await guestPad.locator('.padkind').textContent(), 'Operator');
+      assert.strictEqual(await guestPad.locator('.t').textContent(), SRC.name.slice(0, 40), 'the label the operator gave; no address');
+      assert.strictEqual(await guestPad.getAttribute('title'), 'This pad plays an NDI source. Ask an operator to start it.');
+      await guestPad.click({ force: true });        // marked aria-disabled, which Playwright will not click by itself; a finger can
+      await gp.waitForFunction(() => /This pad plays an NDI source\. Ask an operator to start it\./.test(document.getElementById('msg').textContent));
+      assert.deepStrictEqual(asked, [], 'the guest\'s tap on an NDI pad is not sent');
+      await guestCtx.close();
+      await page.unroute('**/api/status');
+      await page.unroute('**/api/pads');
+      await page.unroute('**/api/ndi');
+      assert.strictEqual(await post('/api/modules/inputs-ndi', { enabled: false }), 200);
+      await page.setViewportSize(before);
       await page.reload();
       await go(page, 'play/pads');
       await page.waitForSelector('.pads:visible');

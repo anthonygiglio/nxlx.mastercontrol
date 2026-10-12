@@ -81,6 +81,12 @@ def number(body, key, lo, hi, integer=False):
     return int(v) if integer else float(v)
 
 
+# Seen on the Pi 4 on 2026-10-08: with a still NDI source the picture IS on the screen (a camera pointed at the
+# monitor showed it) and mpv still answers a snapshot with "error running command". Why is not known. So the words
+# say what is known: the snapshot failed, the screen is not in doubt.
+NDI_NO_SNAPSHOT = ("no snapshot of this NDI source could be made (the player could not copy its picture, which happens "
+                   "with a still source); the picture on the screen is not affected")
+OVERTAKEN = object()          # what Api._as_newest returns when its `ready` check said the wish was overtaken
 PREVIEW_MIN_INTERVAL = 3.0    # seconds: a snapshot stalls playback for about a quarter second on a Pi 4, so viewers share one frame
 PREVIEW_MAX_BYTES = 8 * 1024 * 1024
 MAX_UPLOAD_BYTES = int(os.environ.get("PVJ_MAX_UPLOAD_MB", "8192")) * 1024 * 1024
@@ -224,6 +230,11 @@ class Api:
         self._media_lock = threading.Lock()   # rename, delete and publishing an upload never interleave
         self.mix = {"opacity": 100, "blackout": False, "size": 100, "position": 0, "position_y": 0, "rotate": 0,
                     "flip_h": False, "flip_v": False}
+        # True while a live source (NDI, the capture input, a stream) is what plays: the player is then held at speed 1
+        # whatever the Mix speed is, and the Mix speed (levels["speed"]) comes back with the next clip.
+        self._speed_held = False
+        self._speed_held_at = 0.0
+        self._speed_lock = locks.make("speed.hold", reentrant=True)      # looking at the hold and setting the player's speed are one step; its place: pvj/locks.py
         self.levels = {"volume": 100.0, "speed": 1.0}    # what was last set here (mpv's own start values until then); a
         self.fader = Fader(self._apply_opacity)          # MIDI fader reads them for pickup without asking the player
         self.transitions = transitions_mod.Transitions(self, log=lambda line: self.log(line))   # the crossfade (D71)
@@ -240,6 +251,11 @@ class Api:
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.capture = None       # Capture or None (live input from a USB capture device)
+        self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
+        self.ndisc = None         # ndiscovery.Manager or None (the NDI discovery server's supervisor; D85)
+        self._ndi_loading = threading.local()     # .on while this thread loads the NDI pipe itself
+        self._ndi_refused = None  # {"id", "message"}: the last refusal of a pad's NDI source, for the pads
+        self._ndi_job, self._ndi_job_lock = None, threading.Lock()      # a controller's press of an NDI pad, connecting (a leaf: held only to start it)
         self._import = {}         # the USB copy running or last run
         self._import_lock = threading.Lock()
         self._care_busy = None    # "an import" or "a factory reset" while boxcare runs one (set and read under _import_lock)
@@ -281,13 +297,18 @@ class Api:
         mark = getattr(self.fader, "mark", None)
         return mark() if mark else None
 
-    def _as_newest(self, why, fn, *args):
+    def _as_newest(self, why, fn, *args, ready=None):
         """Another way of playing, a Stop, a Next: this is the newest wish from now on, and its own change of what
         plays is ONE STEP with that under the player's lock. A clip that is still on its way (its still is being
         taken, it waits its turn, its dip goes down) loads nothing after it, and a play that is asked for after it
         comes after it: an older wish's change can never land on a newer wish's picture. The still of a transition
-        goes too (the player's brightness does not reach it). Returns what `fn` returned."""
+        goes too (the player's brightness does not reach it). Returns what `fn` returned.
+        `ready`, if given, is asked under the same lock before anything is ended: False means this wish was
+        overtaken while it was being prepared (an NDI source that took seconds to connect), nothing is done, and
+        OVERTAKEN is returned."""
         with self._player_lock():
+            if ready is not None and not ready():
+                return OVERTAKEN
             self.transitions.end(why, newer=True)
             return self._player_call(fn, *args)
 
@@ -444,7 +465,14 @@ class Api:
             names = []
         return names
 
+    PLAYER_LOADS = ("play", "play_pipe", "clear")
+
     def _player_call(self, fn, *args):
+        # Whatever loads or clears the player first makes a still-connecting NDI source worthless, and waits while
+        # an NDI play is in the middle of loading its pipe (ndi.Input.screen), so the later choice always stays.
+        if (self.ndi is not None and getattr(fn, "__self__", None) is self.player and getattr(fn, "__name__", "") in self.PLAYER_LOADS
+                and not getattr(self._ndi_loading, "on", False)):
+            self.ndi.cancel()
         try:
             return fn(*args)
         except PlayerError as e:
@@ -492,7 +520,7 @@ class Api:
 
     def status(self, body, device, client):
         temps = hardware.temperatures()
-        player = self._public_player_status()
+        player = self._ndi_said(self._public_player_status(), device)
         # What the GPU last refused, for the Live page, where the pads are: a controller's tap of a shader pad
         # answers before the GPU has looked, so its refusal has no answer to ride on (D73). From the engine's own
         # record: the player is asked nothing more.
@@ -581,6 +609,11 @@ class Api:
                     # That is not a fault: say so in its own way, so the panel can say "nothing is on the screen".
                     if self._nothing_on_screen():
                         raise ApiError(409, "nothing is on the screen right now")
+                    # An NDI source of which mpv cannot make a snapshot (a still source: seen on a Pi 4, where this
+                    # was a 503 "mpv: error running command" while the picture was on the screen). Not "nothing on
+                    # the screen" and not a player that is down: said as what it is.
+                    if self._ndi_on_screen():
+                        raise ApiError(409, NDI_NO_SNAPSHOT)
                     raise
                 fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
                 try:
@@ -606,6 +639,26 @@ class Api:
             self._preview = (time.monotonic(), data, with_text, clean)
             return data
 
+    def _ndi_said(self, status, device=None):
+        """The last refusal of a pad's NDI source, for the pads (a controller's tap has no answer to carry it): kept
+        until that source shows or the module goes off. Not for a Guest: the words can name a sender's address, and
+        to him such a pad is "not available" (the review of 8cfde96)."""
+        said = self._ndi_refused
+        if policy.is_guest(device):
+            return status
+        if said and self.ndi is not None and self.registry.enabled("inputs-ndi") and status.get("ndi_id") != said["id"]:
+            status["ndi_refused"] = dict(said)
+        return status
+
+    def _ndi_on_screen(self):
+        """True when what the player reads is the NDI helper's pipe (asked only after a snapshot failed)."""
+        if self.ndi is None or not self.ndi.current:
+            return False
+        try:
+            return self.player.status().get("path") == self.ndi.fifo
+        except Exception:
+            return False
+
     def _nothing_on_screen(self):
         """True when the player runs and plays nothing (asked only after a snapshot failed)."""
         try:
@@ -629,6 +682,13 @@ class Api:
         """Player status with stream passwords hidden and the saved stream's name added."""
         status = dict(self.player.status())
         path = status.get("path")
+        # A live source that ended by itself (a stream that ran out, a sender that went, a player that was started
+        # again) leaves no live source playing: the hold on the speed ends here, and the Mix speed is applied.
+        if (self._speed_held and status.get("running") and not self._live_path(path)
+                and time.monotonic() - self._speed_held_at >= self.SPEED_SETTLE):
+            self._hold_speed(False)
+            if not self._speed_held:
+                status["speed"] = self.levels["speed"]
         if path == getattr(self.player, "TEST_PATTERN", None):
             status["path"], status["test_pattern"] = None, True
             effect = self.effects.current()               # the colour bars are a picture too, and take an effect (seen on the Pi 4)
@@ -646,9 +706,15 @@ class Api:
         effect = self.effects.current()                   # an effect over the picture: its name, for the Live screen
         if effect is not None:
             status["effect"] = effect["id"][:-3]
+        if self._speed_held:                              # a live source: it plays at 1, and the Mix speed waits
+            status["speed_held"], status["speed_level"] = True, self.levels["speed"]
         if self.capture is not None and path == self.capture.fifo:
             cur = self.capture.status(devices=False)["current"] or {}
             status["path"], status["capture"] = None, cur or True
+            return status
+        if self.ndi is not None and path == self.ndi.fifo:
+            status["path"], status["ndi"] = None, (self.ndi.current or {}).get("name") or True
+            status["ndi_id"] = (self.ndi.current or {}).get("id") or ""      # for the pad that holds it
             return status
         for channel, url in getattr(self.player, "TEST_TONES", {}).items():
             if path == url:
@@ -909,7 +975,43 @@ class Api:
         return {"name": new}
 
     def get_pads(self, body, device, client):
-        return {"banks": self.settings.data["pads"]["banks"]}
+        return self._pads_answer(device)
+
+    def _pads_answer(self, device):
+        """The banks, and for anyone above a Guest the names of the NDI sources that pads hold: {"ndi": {id: {"name",
+        "from"}}}. A pad stores the id alone (D62); a Guest, who has no NDI page, gets no such list and no addresses
+        (he sees a pad's label like anyone, and the editor fills it with the source's name)."""
+        out = {"banks": self.settings.data["pads"]["banks"]}
+        if not policy.is_guest(device):
+            from . import ndi as ndi_mod
+            held = {self.pad_ndi(p) for b in out["banks"] for p in b["pads"]} - {None}
+            if held:
+                out["ndi"] = {r["id"]: {"name": r["name"], "from": r["from"]}
+                              for r in ndi_mod.saved_sources(self.settings.data.get("ndi")) if r["id"] in held}
+        return out
+
+    @staticmethod
+    def pad_ndi(pad):
+        """The id of the NDI source a pad holds, else None (D62, 2026-10-11). Such a pad keeps `file` empty and has
+        the id under `ndi` and nothing else of the source: no name, no address. A pad with a clip is a clip pad and
+        one with a shader is a shader pad, whatever else a hand-edited file put beside them."""
+        if not isinstance(pad, dict) or pad.get("file") or Api.pad_shader(pad):
+            return None
+        sid = pad.get("ndi")
+        return sid if isinstance(sid, str) and re.fullmatch(r"[0-9a-f]{12}", sid) else None
+
+    def _ndi_allowed(self, sid):
+        """The allowed source with this id, {"id", "name", "from"}, or None."""
+        from . import ndi as ndi_mod
+        for row in ndi_mod.saved_sources(self.settings.data.get("ndi")):
+            if row["id"] == sid:
+                return row
+        return None
+
+    def _ndi_bound(self, row):
+        """True when the Owner gave this source's machine as an address to ask (NDI input, "Addresses to ask")."""
+        from . import ndi as ndi_mod
+        return ndi_mod.host_of(row["from"]) in ndi_mod.saved_addresses(self.settings.data.get("ndi"))[0]
 
     @staticmethod
     def pad_shader(pad):
@@ -954,6 +1056,8 @@ class Api:
         if shader != "":
             if file != "":
                 raise bad("a pad holds a clip or a shader, not both")
+            if body.get("ndi", "") != "":
+                raise bad("a pad holds a clip, a shader or an NDI source, not two of them")
             path, _ = self.shaders._path(shader)            # 400 for a name that is none, 404 for one that is not here
             try:
                 self.shaders._parsed(path)
@@ -964,10 +1068,41 @@ class Api:
                 pad["preset"] = self._shader_preset(shader, body["preset"])
         elif body.get("preset") not in (None, ""):
             raise bad("a preset belongs to a shader: name the shader too")
+        source = body.get("ndi", "")
+        allow = None
+        if source != "":
+            # An NDI source (D62, 2026-10-11): by the id of a source that is allowed already, or of one the helper
+            # lists NOW, which this makes allowed. Never a name or an address typed into the pad.
+            from . import ndi as ndi_mod
+            if file != "" or shader != "":
+                raise bad("a pad holds a clip, a shader or an NDI source, not two of them")
+            if not isinstance(source, str) or not ndi_mod._ID.fullmatch(source):
+                raise bad("an NDI source is chosen from the list, by its id")
+            self._need_ndi()
+            if self._ndi_allowed(source) is None:
+                rows, why = self.ndi.find()             # outside the settings' lock: it asks the helper
+                seen = [r for r in rows if r["id"] == source]
+                if not seen:
+                    raise ApiError(404, why or "that NDI source is not on the network now: a pad takes a source that is on the list")
+                if seen[0].get("twins"):
+                    raise ApiError(409, "two senders announce '%s' from %s: a pad cannot hold a source the box cannot tell apart"
+                                   % (seen[0]["name"], ndi_mod.host_of(seen[0]["from"])))
+                allow = {"id": source, "name": seen[0]["name"], "from": seen[0]["from"]}
+            pad = {"label": label, "file": "", "ndi": source}
         with self.settings.lock:
+            if allow is not None and self._ndi_allowed(source) is None:
+                rows = ndi_mod.saved_sources(self.settings.data.get("ndi"))
+                if len(rows) >= ndi_mod.MAX_ALLOWED:
+                    raise bad("at most %d NDI sources can be kept for pads; the owner removes one under NDI input" % ndi_mod.MAX_ALLOWED)
+                self._ndi_write(sources=rows + [allow])
+                self.log("pvj-web: NDI source '%s' from %s is allowed for pads, by device %s (from %s)"
+                         % (allow["name"], allow["from"], (device or {}).get("id"), client))
             self.settings.data["pads"]["banks"][bank]["pads"][index] = pad
             self.settings.save()
-        return {"banks": self.settings.data["pads"]["banks"]}
+        if allow is not None and self.ndi is not None:      # the helper keeps an allowed source in its list while it is there
+            self.ndi._wanted()
+            self.ndi.sync()
+        return self._pads_answer(device)
 
     def pads_follow_preset(self, sid, was, to):
         """A preset of `sid` was renamed: the pads that start the shader with it follow, as a clip's pads follow the
@@ -1142,6 +1277,8 @@ class Api:
             return self.play_slideshow(body)
         if "capture" in body:
             return self.play_capture(body)
+        if "ndi" in body:
+            return self.play_ndi(body)
         if "usb_drive" in body:
             return self.play_usb_drive(body)
         if "pad" in body:
@@ -1154,6 +1291,9 @@ class Api:
             held = self.pad_shader(banks[pad[0]]["pads"][pad[1]])
             if held:                    # before anything is claimed: see _play_shader_pad
                 return self._play_shader_pad(held, device)
+            source = self.pad_ndi(banks[pad[0]]["pads"][pad[1]])
+            if source:                  # before anything is claimed, too: play_ndi claims for itself
+                return self._play_ndi_pad(source, device)
             name = banks[pad[0]]["pads"][pad[1]]["file"]
             if not name:
                 raise bad("pad is empty")
@@ -1229,6 +1369,8 @@ class Api:
                 # goes (see _stop_capture for how it is decided; not by "is this still the newest wish": a Next a
                 # moment later is newer, and the helper would have stayed with the device open).
                 self._stop_capture()
+                self._stop_ndi()                # the same for the NDI helper (_stop_ndi decides by the same rule)
+                self._hold_speed(False)         # a clip, not a live source: the Mix speed is the player's again
                 # The level, by the one rule (see _show_level): only if nobody has taken the fader since the mark.
                 # The look and the write are one step under the lock a level is written under, so a Blackout that
                 # comes at this moment either was seen or comes after and has the last word.
@@ -1326,7 +1468,7 @@ class Api:
         mark = self._level_mark()
         self._as_newest("another play", self.player.play, [match[0]["url"]], False, None, False, self.spawn)
         self._show_level(mark)
-        self._started_playing()
+        self._started_playing(live=True)
         return {"playing": match[0]["name"]}
 
     def get_streams(self, body, device, client):
@@ -1371,8 +1513,13 @@ class Api:
         if action == "seek":
             self._player_call(p.seek, number(body, "value", -3600, 3600))
         elif action == "speed":
-            self._player_call(p.speed, number(body, "value", 0.1, 4))
-            self.levels["speed"] = float(body["value"])
+            value = number(body, "value", 0.1, 4)
+            with self._speed_lock:                 # one step with _hold_speed: a play cannot come between the look and the call
+                if self._speed_held:               # a live source plays: the speed is kept for the next clip, not applied
+                    self.levels["speed"] = float(value)
+                    return {"ok": True, "speed_held": True}
+                self._player_call(p.speed, value)
+                self.levels["speed"] = float(body["value"])
         elif action == "volume":
             self._player_call(p.volume, number(body, "value", 0, 130))
             self.levels["volume"] = float(body["value"])
@@ -1424,6 +1571,8 @@ class Api:
         elif action == "stop":
             self._stop_screen()
             self._stop_capture()
+            self._stop_ndi()
+            self._hold_speed(False)         # nothing live plays any more: the Mix speed is the player's again
             self.shaders.tidy()             # the text of a shader that was on does not stay in the runtime folder
             if self.effects.on is not None:     # a Stop takes the effect off (the player did); its text goes too. Only
                 self.effects.sweep()            # then: a Stop with no effect on does nothing more than it did before
@@ -1777,6 +1926,7 @@ class Api:
         if not on:
             self._stop_screen()
             self._stop_capture()
+            self._stop_ndi()
             return {"test_pattern": False}
         mark = self._level_mark()
         self._as_newest("another play", self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
@@ -1809,6 +1959,7 @@ class Api:
             # also when the player did not answer (it may have gone all the same, and Player.quit has put the pipe
             # down as not playing before it asked): a helper must never be left writing into a pipe nobody reads
             self._stop_capture()
+            self._stop_ndi()
         return {"ok": True}
 
     def get_modules(self, body, device, client):
@@ -1831,6 +1982,29 @@ class Api:
             self.sync.apply()
         if module_id == "projector":       # starts or stops the background status checks
             self.projectors.apply()
+        if module_id == "inputs-ndi" and self.ndi is not None:     # the helper looks for sources only while this is on
+            if not self.registry.enabled("inputs-ndi"):
+                # Off under a source on the screen: the helper lets go whatever the player plays, so the screen is
+                # cleared first (the pipe's last frame must not stay up), then the note and the speed hold go, and
+                # the page is told why the source ended (review of 2026-10-11, M2: _stop_ndi alone left a source
+                # alone exactly when its pipe played, and the screen went black without a word).
+                from . import ndi as ndi_mod
+                if self.ndi.current and self._pipe_plays(self.ndi.fifo):
+                    try:
+                        self._stop_screen()
+                    except ApiError:
+                        pass
+                if self.ndi.stop(reason=ndi_mod.SWITCHED_OFF):
+                    self.log("NDI: %s was taken off the screen: the NDI input was switched off" % (self.ndi.ended or {}).get("name", "a source"))
+                self._hold_speed(False)
+            self.ndi.sync()
+        if module_id == "ndi-discovery":       # the server listens only while this is on (D85)
+            self.log("pvj-web: the NDI discovery server was switched %s by device %s (from %s)"
+                     % ("on" if self.registry.enabled("ndi-discovery") else "off", (device or {}).get("id"), client))
+            if self.ndisc is not None:
+                self.ndisc.sync()
+            if self.ndi is not None:
+                self.ndi.sync()                # this box's own input may be set to use it
         if module_id == "room" and not self.registry.enabled("room"):     # off: what a scene had not sent yet is dropped
             self.room.stop()
         for mid, manager in (("control-dmx", self.dmx), ("control-midi", self.midi)):
@@ -2705,13 +2879,426 @@ class Api:
                     return want
         return "auto"
 
-    def _started_playing(self, capture=False):
+    def _started_playing(self, capture=False, ndi=False, live=False):
         """Something is about to be on screen: take any on-screen pairing PIN off it at once, and stop a live input
-        that is no longer shown (its helper must not keep the device busy)."""
+        that is no longer shown (its helper must not keep the device, or the NDI source, busy).
+
+        A live source (NDI, the capture input, a stream: `live`) plays at speed 1 whatever the Mix speed is. A source
+        that arrives in real time cannot be played faster than it comes: on a Pi 4 an NDI source at 1.86 made mpv
+        drop some 4800 frames in five minutes (2026-10-08). The Mix speed is kept, not changed, and is given back to
+        the player when the next thing that is not live is played."""
         if self.pinscreen is not None:
             self.pinscreen.clear()
         if not capture:
             self._stop_capture()
+        if not ndi:
+            self._stop_ndi()
+        self._hold_speed(bool(live or capture or ndi))
+
+    SPEED_SETTLE = 3.0                             # seconds a hold must have lasted before "nothing live plays" is believed
+
+    def _hold_speed(self, live):
+        """Hold the player at speed 1 for a live source, or give the Mix speed back to it. The hold ends only when
+        the player has really taken the Mix speed: if it would not, the hold stays and is tried again (the status
+        tries, about once a second while a page is open)."""
+        with self._speed_lock:
+            if live:
+                self._speed_held, self._speed_held_at = True, time.monotonic()
+                try:
+                    self._player_call(self.player.speed, 1)
+                except ApiError:
+                    pass                           # no player: it starts at 1 anyway
+            elif self._speed_held:
+                try:
+                    self._player_call(self.player.speed, self.levels["speed"])
+                except ApiError:
+                    return
+                self._speed_held = False
+
+    def _live_path(self, path):
+        """Whether what the player says it plays is a live source (NDI, the capture input, a saved stream)."""
+        if not isinstance(path, str):
+            return False
+        if (self.capture is not None and path == self.capture.fifo) or (self.ndi is not None and path == self.ndi.fifo):
+            return True
+        return any(s.get("url") == path for s in self.settings.data.get("streams", []))
+
+    # ---- NDI input (pvj/ndi.py, D62) ----
+    def _need_ndi(self):
+        if self.ndi is None:
+            raise ApiError(404, "the NDI input is not available")
+        if not self.registry.enabled("inputs-ndi"):
+            raise ApiError(409, "turn on the NDI input in System first")
+
+    def _stop_ndi(self):
+        """Have the NDI helper let go of its source, unless its pipe is what the player plays: decided as
+        _stop_capture decides, by what this side last loaded. Not under the NDI input's lock, which its play holds
+        for the seconds the helper takes to connect (a clip must not wait for that): every caller has just loaded
+        or cleared the player, which made any ticket older (_player_call) and any wish older (D71), so a play of a
+        source that is half way finds itself overtaken at its own `ready` and lets go of the source itself."""
+        if self.ndi is None or self._pipe_plays(self.ndi.fifo):
+            return False
+        return self.ndi.stop()
+
+    NDI_PAD_GUEST = "this pad plays an NDI source; ask an operator to start it"
+
+    def _ndi_pad_check(self, sid):
+        """What can be said at once about a pad's NDI source, before anything is claimed or opened: the source is
+        allowed, on the network now, and the one the pad was given. Returns its allowed row, or raises.
+
+        The pad follows a NAME ON A MACHINE: the id is made of both (ndi.source_id), and the live row's name and
+        machine are compared with the allowed row besides the id (the id is 48 bits of a hash). A sender of the same
+        name on another machine is another source and is refused here, by name, so the operator sees why. Two senders
+        under one id (one name twice on one machine) are refused: the box does not pick one. Opening a source that
+        is not there would wait for seconds (Input.open); the list is asked first and answers at once."""
+        from . import ndi as ndi_mod
+        row = self._ndi_allowed(sid)
+        if row is None:
+            raise ApiError(409, "this pad's NDI source is not allowed any more (the owner removed it): choose a source for the pad again")
+        rows, why = self.ndi.find()
+        if why:
+            raise ApiError(409, why)
+        host = ndi_mod.host_of(row["from"])
+        seen = [r for r in rows if r["id"] == sid]
+        if not seen:
+            other = sorted(ndi_mod.host_of(r["from"]) for r in rows if r["name"] == row["name"])
+            if other:
+                raise ApiError(409, "NDI source '%s' is announced from %s now, not from %s where this pad's source is%s: "
+                               "the pad does not follow a name to another machine. If it is the same sender, choose it for the pad again"
+                               % (row["name"], other[0], host, " (an address the owner gave)" if self._ndi_bound(row) else ""))
+            raise ApiError(409, "NDI source '%s' is not on the network now" % row["name"])
+        if len(seen) > 1 or seen[0].get("twins"):
+            raise ApiError(409, "two senders announce '%s' from %s now: the box does not pick one" % (row["name"], host))
+        if seen[0]["name"] != row["name"] or ndi_mod.host_of(seen[0]["from"]) != host:
+            raise ApiError(409, "NDI source '%s' is not on the network now" % row["name"])
+        return row
+
+    def _play_ndi_pad(self, sid, device):
+        """A pad that holds an NDI source (D62, 2026-10-11). A Guest is refused, as he is refused a stream (D80).
+        Everyone else: the checks that answer at once, then the one road an NDI source has, play_ndi.
+
+        MIDI, OSC and DMX must not wait while a source connects (seconds): their tap is answered "pending" and the
+        source is opened on a thread of its own, through play_ndi all the same; what it refuses is kept for the
+        pads (status: player.ndi_refused), as a shader pad's refusal is. A Room scene has its own thread and its
+        own report, and waits."""
+        if policy.is_guest(device):
+            raise ApiError(403, self.NDI_PAD_GUEST)
+        self._need_ndi()
+        try:
+            row = self._ndi_pad_check(sid)
+        except ApiError as e:
+            self._ndi_refused = {"id": sid, "message": e.message}
+            raise
+
+        def go():
+            try:
+                out = self.play_ndi({"ndi": sid})
+            except ApiError as e:
+                if e.message != self.NDI_OVERTAKEN:         # a later choice stood: nothing to say on the pad
+                    self._ndi_refused = {"id": sid, "message": e.message}
+                raise
+            self._ndi_refused = None
+            return out
+
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS and device.get("id") != "room":
+            with self._ndi_job_lock:
+                job = self._ndi_job
+                if job is not None and job.is_alive():
+                    raise ApiError(409, "an NDI source is connecting; press again in a moment")
+
+                def run():
+                    try:
+                        go()
+                    except ApiError as e:
+                        self.log("pvj-web: a pad's NDI source '%s' was not shown: %s" % (row["name"], e.message))
+                    except Exception as e:
+                        self.log("pvj-web: a pad's NDI source: %s" % type(e).__name__)
+                self._ndi_job = threading.Thread(target=run, name="ndi-pad", daemon=True)
+                self._ndi_job.start()
+            return {"playing": "ndi", "name": row["name"], "pending": True}
+        return go()
+
+    NDI_OVERTAKEN = "something else was played while the source was connecting"
+
+    def play_ndi(self, body, again=None):
+        """{"ndi": "<id>"}: a source the helper found, by the id the helper gave it; never a name or an address.
+        `again` is the entry being shown when the helper asks for it to be loaded again (a sender changed size):
+        it is dropped if something else was played meanwhile.
+
+        A live source is cut to: no crossfade brings it in (as with the capture input and a stream, the player
+        is told to read the pipe and any transition on its way is ended by _as_newest). A clip that follows it
+        may crossfade from it: the still is taken of whatever is on the screen (pvj/transitions.py), and where the
+        player cannot copy the picture (seen on a Pi 4 with a still NDI source: NDI_NO_SNAPSHOT) the clip is cut to."""
+        from . import ndi as ndi_mod
+        self._need_ndi()
+        sid = body.get("ndi")
+        mark = self._level_mark()
+        with self.ndi.lock:                # open, load and note as one step: a double tap cannot cross two sources
+            if again is not None and self.ndi.current is not again:
+                return {"playing": None}
+            ticket = self.ndi.ticket()
+            # The tap: the newest wish from now on, as a clip's tap is (D71, transitions.claim). A clip tapped after
+            # this, whose load may come later still (after its dip), is newer than this source: the source then
+            # gives way at `ready` and is never loaded over the clip's way down.
+            with self._player_lock():
+                claim = getattr(self.player, "claim_screen", None)
+                if claim:
+                    claim()
+                wish = self.transitions.claim()
+            try:
+                p = self.ndi.open(sid)
+            except ndi_mod.NdiError as e:
+                raise ApiError(409, str(e))
+            # Connecting takes seconds. If anything was played, cleared or stopped meanwhile (_player_call and
+            # stop() both cancel the ticket; a clip's tap and _as_newest make a newer wish), that later choice
+            # stands: the source is let go and the screen is not touched. The look at both and the loading are one
+            # step under the player's lock (`ready` in _as_newest), the lock every change of what plays takes.
+            failed = [None]
+            # Matroska only when the owner wants sound AND the helper says the pipe carries it: what the helper
+            # answers never widens, by itself, what the player will parse.
+            with_sound = p.get("container") == "matroska" and self.ndi.sound_wanted()
+
+            def ready():
+                if not (self.ndi.still(ticket) and self.transitions.newest(wish) and (again is None or self.ndi.current is again)):
+                    return False
+                try:
+                    self.ndi.check_pipe()
+                except ndi_mod.NdiError as e:
+                    failed[0] = ApiError(409, str(e))
+                    return False
+                self.ndi.current = {"id": p["id"], "name": p["name"]}
+                self._ndi_loading.on = True      # this load must not cancel its own ticket (_player_call)
+                return True
+
+            try:
+                loaded = self._as_newest("another play", self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"],
+                                         "matroska" if with_sound else "uyvy422", ready=ready) is not OVERTAKEN
+            except ApiError as e:
+                failed[0] = e
+                loaded = False
+            finally:
+                self._ndi_loading.on = False
+            if failed[0] is not None:
+                self.ndi.stop()
+                self.ndi.client_close()
+                raise failed[0]
+            if not loaded:
+                self.ndi.client_close()
+                if again is not None:
+                    return {"playing": None}
+                raise ApiError(409, self.NDI_OVERTAKEN)
+        self._show_level(mark)              # connecting took seconds: a Fade out made meanwhile stands
+        self._started_playing(ndi=True)
+        return {"playing": "ndi", "name": p["name"], "width": p["width"], "height": p["height"], "fps": p["fps"],
+                "sound": bool(with_sound)}
+
+    def ndi_tick(self):
+        """About once a second (server.py): show the source again when the helper says it changed size or rate."""
+        if self.ndi is None or not self.ndi.current or not self.registry.enabled("inputs-ndi"):
+            return False
+        cur = self.ndi.current
+        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur))
+
+    def get_ndi(self, body, device, client):
+        self._need_ndi()
+        return self.ndi.status()
+
+    def set_ndi(self, body, device, client):
+        """Add or remove one address the helper also asks for sources (for networks where mDNS does not pass), or
+        switch a source's sound on or off: {"action": "sound", "on": true}. A source that is on the screen is opened
+        again by the helper's "changed", so the switch is heard (or not) within a second or two."""
+        from . import ndi as ndi_mod
+        self._need_ndi()
+        action = body.get("action")
+        if action not in ("add_address", "remove_address", "sound", "forget", "add_group", "remove_group", "add_discovery", "remove_discovery", "own_discovery"):
+            raise bad("action must be add_address, remove_address, sound, forget, add_group, remove_group, add_discovery, remove_discovery or own_discovery")
+        if action == "own_discovery":
+            # "Use this box's own discovery server" (D85): this box's input asks the server this box runs, at whatever
+            # address that server has now. Kept as a switch, not as an address, so it follows the server.
+            if not isinstance(body.get("on"), bool):
+                raise bad("on must be true or false")
+            with self.settings.lock:
+                self._ndi_write(own_discovery=body["on"])
+                self.settings.save()
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
+        if action in ("add_discovery", "remove_discovery"):
+            # NDI Discovery Servers this box asks (the Owner's). The library reads them from its own file when it
+            # starts, so the helper starts again; a source on the screen ends and is started again by hand.
+            with self.settings.lock:
+                servers = ndi_mod.saved_discovery(self.settings.data.get("ndi"))
+                try:
+                    server = ndi_mod.clean_discovery(body.get("server"))
+                except ndi_mod.NdiError as e:
+                    raise bad(str(e))
+                if action == "add_discovery":
+                    if server in servers:
+                        raise bad("that discovery server is already in the list")
+                    if len(servers) >= ndi_mod.MAX_DISCOVERY:
+                        raise bad("at most %d discovery servers" % ndi_mod.MAX_DISCOVERY)
+                    servers.append(server)
+                else:
+                    if server not in servers:
+                        raise ApiError(404, "no such discovery server")
+                    servers.remove(server)
+                self._ndi_write(discovery=servers)
+                self.settings.save()
+            self.log("pvj-web: NDI discovery servers are now %s, by device %s (from %s)"
+                     % (", ".join(servers) or "none", (device or {}).get("id"), client))
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
+        if action in ("add_group", "remove_group"):
+            # Which NDI groups this box looks in (the Owner's, as this whole route is). None means NDI's own default
+            # group, "public". It decides what the box LOOKS for; it is not a password (NDI.md).
+            with self.settings.lock:
+                groups = ndi_mod.saved_groups(self.settings.data.get("ndi"))
+                try:
+                    group = ndi_mod.clean_group(body.get("group"))
+                except ndi_mod.NdiError as e:
+                    raise bad(str(e))
+                if action == "add_group":
+                    if group in groups:
+                        raise bad("that group is already in the list")
+                    if len(groups) >= ndi_mod.MAX_GROUPS:
+                        raise bad("at most %d groups" % ndi_mod.MAX_GROUPS)
+                    groups.append(group)
+                else:
+                    if group not in groups:
+                        raise ApiError(404, "no such group")
+                    groups.remove(group)
+                self._ndi_write(groups=groups)
+                self.settings.save()
+            self.log("pvj-web: NDI groups to look in are now %s, by device %s (from %s)"
+                     % (", ".join(groups) or "NDI's default (public)", (device or {}).get("id"), client))
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
+        if action == "sound":
+            if not isinstance(body.get("on"), bool):
+                raise bad("on must be true or false")
+            with self.settings.lock:
+                self._ndi_write(sound=body["on"])
+                self.settings.save()
+            self.ndi._wanted()                     # read again, so that what is sent next is the new choice
+            self.ndi.sync()
+            return self.ndi.status()
+        if action == "forget":
+            # Take a source off the allowed list (the Owner's, as this whole route is). Pads that hold it keep
+            # their id and say, when pressed, that the source is not allowed any more: nothing plays by a leftover.
+            with self.settings.lock:
+                rows = ndi_mod.saved_sources(self.settings.data.get("ndi"))
+                left = [r for r in rows if r["id"] != body.get("id")]
+                if len(left) == len(rows):
+                    raise ApiError(404, "no such allowed source")
+                self._ndi_write(sources=left)
+                self.settings.save()
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
+        with self.settings.lock:
+            items = ndi_mod.saved_addresses(self.settings.data.get("ndi"))[0]      # a hand-edited section of the wrong kind counts as empty
+            try:
+                address = ndi_mod.clean_address(body.get("address"))
+                if action == "add_address":
+                    if address in items:
+                        raise bad("that address is already in the list")
+                    if len(items) >= ndi_mod.MAX_ADDRESSES:
+                        raise bad("at most %d addresses" % ndi_mod.MAX_ADDRESSES)
+                    items.append(address)
+                else:
+                    if address not in items:
+                        raise ApiError(404, "no such address")
+                    items.remove(address)
+            except ndi_mod.NdiError as e:
+                raise bad(str(e))
+            self._ndi_write(addresses=items)       # the choice about sound, if one was made, and the allowed sources stay
+            self.settings.save()
+        self.ndi.sync()
+        return self.ndi.status()
+
+    def _ndi_write(self, **changes):
+        """Write the `ndi` section again with `changes`, keeping every other part of it that can be used: the
+        addresses, the choice about sound if one was made, the allowed sources. The caller holds the settings'
+        lock and saves. (Each writer used to write the keys it knew, which would have dropped the others.)"""
+        from . import ndi as ndi_mod
+        before = self.settings.data.get("ndi")
+        new = {"addresses": ndi_mod.saved_addresses(before)[0]}
+        if isinstance(before, dict) and isinstance(before.get("sound"), bool):
+            new["sound"] = before["sound"]
+        rows = ndi_mod.saved_sources(before)
+        if rows:
+            new["sources"] = rows
+        groups = ndi_mod.saved_groups(before)
+        if groups:
+            new["groups"] = groups
+        servers = ndi_mod.saved_discovery(before)
+        if servers:
+            new["discovery"] = servers
+        new.update(changes)
+        if isinstance(before, dict) and before.get("own_discovery") is True and "own_discovery" not in changes:
+            new["own_discovery"] = True
+        for key in ("groups", "discovery", "own_discovery"):
+            if not new.get(key):
+                new.pop(key, None)
+        if not new.get("sources"):
+            new.pop("sources", None)
+        self.settings.data["ndi"] = new
+
+    # ---- the NDI discovery server on this box (pvj/ndiscovery.py, D85): the Owner's, and never through remote support ----
+    def _need_ndisc(self):
+        if self.ndisc is None:
+            raise ApiError(404, "the NDI discovery server is not available")
+
+    def get_ndisc(self, body, device, client):
+        """The page: set up or not, the program in place or not, which network and port, what is listening now and
+        what to tell senders and receivers. Answered with the module off too, so the page can say what to do first."""
+        self._need_ndisc()
+        out = self.ndisc.status()
+        out["module"] = self.registry.enabled("ndi-discovery")
+        section = self.settings.data.get("ndi")
+        out["own"] = isinstance(section, dict) and section.get("own_discovery") is True      # this box's own input uses it
+        return out
+
+    def set_ndisc(self, body, device, client):
+        """{"network": "wired" | "wifi" | "all", "port": n}: which of the box's networks the server listens on, and
+        the port. The address is found again at every look (DHCP), and the server is started again on a new one."""
+        from . import ndiscovery, ndi as ndi_mod
+        self._need_ndisc()
+        with self.settings.lock:
+            new = dict(ndiscovery.saved(self.settings.data.get("ndi_discovery")))
+            for key in ("network", "port"):
+                if key in body:
+                    new[key] = body[key]
+            if set(body) - {"network", "port"}:
+                raise bad("only network and port can be set")
+            try:
+                new = ndiscovery.validate_saved(new)
+            except ndi_mod.NdiError as e:
+                raise bad(str(e))
+            self.settings.data["ndi_discovery"] = new
+            self.settings.save()
+        self.log("pvj-web: the NDI discovery server is set to %s, port %d, by device %s (from %s)"
+                 % (new["network"], new["port"], (device or {}).get("id"), client))
+        self.ndisc.sync()
+        if self.ndi is not None:
+            self.ndi.sync()
+        return self.get_ndisc({}, device, client)
+
+    def ndisc_tick(self):
+        """Every few seconds (server.py): the chosen network's address may have changed; the server follows it, and
+        so does this box's own input when it is set to use the box's own server."""
+        if self.ndisc is None:
+            return False
+        changed = self.ndisc.tick()
+        if changed and self.ndi is not None and self.registry.enabled("inputs-ndi"):
+            self.ndi.sync()
+        return changed
+
+    def _own_discovery(self):
+        """This box's own server as "address:port" for this box's own NDI input, or None (ndi.Input asks)."""
+        return self.ndisc.own_server() if self.ndisc is not None else None
 
     def play_capture(self, body):
         """{"capture": {"device": "video0", "mode": "720p30"}}: a live input, read by a separate helper process."""
@@ -2754,8 +3341,17 @@ class Api:
                 # What plays is what this side last loaded (Player.pipe_playing, set and cleared under the player's
                 # lock with each load), not what the player says its path is: that changes a moment after a load,
                 # and the wait for it gives up after three seconds without a word.
-                if not getattr(self.player, "pipe_playing", False):
+                if not self._pipe_plays(self.capture.fifo):
                     self.capture.stop()
+
+    def _pipe_plays(self, fifo):
+        """Whether `fifo` is the pipe the player last loaded (Player.pipe_is; a player without it: whether any pipe
+        is). The capture input and the NDI input each have their own, so the one's helper is not left running
+        because the other's pipe is what plays."""
+        pipe_is = getattr(self.player, "pipe_is", None)
+        if pipe_is is not None:
+            return bool(pipe_is(fifo))
+        return bool(getattr(self.player, "pipe_playing", False))
 
     def get_inputs(self, body, device, client):
         if self.capture is None:
@@ -3394,6 +3990,13 @@ class Api:
             ("POST", "/api/midi/learn"): ("live", self.midi_learn),       # that shows an access code stays the Owner's, checked in
             ("POST", "/api/midi/map"): ("live", self.midi_map),           # the handlers; the module's switch is the Owner's
             ("POST", "/api/midi/lights"): ("live", self.midi_lights),
+            # NDI (D62, under D80): choosing a source the owner has allowed is running the room, the Operator's, through
+            # /api/play; the list is his too (a Guest has no page for it). Adding addresses the box asks on the
+            # network and the sound switch are system matters, the Owner's (and a support session's, as Streams: D63).
+            ("GET", "/api/ndi"): ("live", self.get_ndi),
+            ("POST", "/api/ndi"): ("full", self.set_ndi),
+            ("GET", "/api/ndi/discovery"): ("full", self.get_ndisc),       # the discovery server on this box (D85): the Owner's
+            ("POST", "/api/ndi/discovery"): ("full", self.set_ndisc),
             ("GET", "/api/streams"): ("view", self.get_streams),
             ("POST", "/api/streams"): ("full", self.set_streams),
             ("GET", "/api/schedule"): ("view", self.get_schedule),

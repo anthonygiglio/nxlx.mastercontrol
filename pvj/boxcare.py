@@ -47,7 +47,7 @@ import subprocess
 import time
 from urllib.parse import unquote
 
-from . import dmx as dmx_mod, midi as midi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
+from . import dmx as dmx_mod, midi as midi_mod, ndi as ndi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
 from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
 from . import transitions as transitions_mod
@@ -56,12 +56,12 @@ from .settings import SettingsError, default_control, default_settings, migrate
 
 FORMAT = "nxlx.mastercontrol settings"
 FORMAT_VERSION = 1
-KNOWN_SCHEMA = 14                    # the section checks below know the settings as of this schema (14 changed none of them)
+KNOWN_SCHEMA = 14                    # the section checks below know the settings as of this schema (14 changed none of them; "ndi" and "recovery" came without a schema change)
 MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved mapping is well under this
 MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
 # never exported, never imported. "controller_code" (D61) is a way to hand out access, so a file cannot switch it on
-NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls")
+NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls", "ndi_discovery")      # ndi_discovery (D85): which network a listener is on belongs to this box
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
@@ -208,6 +208,14 @@ def check_pads(v, care):
                     if not shaderlive_mod.name_ok(pad["preset"]):
                         raise ValueError("a pad's preset must be a name of 1 to 40 characters")
                     item["preset"] = pad["preset"]
+            elif pad.get("ndi") not in (None, ""):
+                # A pad that holds an NDI source (D62): the id alone, checked as an id and not looked up. Whether it
+                # is allowed on this box is asked when the pad is pressed (the file's `ndi` section says which are).
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or an NDI source, not both")
+                if not isinstance(pad["ndi"], str) or not ndi_mod._ID.fullmatch(pad["ndi"]):
+                    raise ValueError("a pad's NDI source is not a source id")
+                item = {"label": item["label"], "file": "", "ndi": pad["ndi"]}
             clean.append(item)
         name = _text(bank.get("name", ""), 40, "a bank name")
         if not name:
@@ -469,6 +477,11 @@ def check_room(v, care):
     return room_mod.validate(_obj(v))
 
 
+def check_ndi(v, care):
+    """The addresses the NDI input also asks for sources, by its own rules (private IPv4 literals, a bounded list)."""
+    return ndi_mod.validate_saved(v)
+
+
 def check_recovery(v, care):
     """The stick switch only (D81). The code hashes belong to one box: never in a file, never taken from one."""
     on = _obj(v).get("usb", True)
@@ -482,10 +495,10 @@ SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_th
             ("schedule", check_schedule), ("streams", check_streams), ("control", check_control),
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
             ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
-            ("room", check_room), ("recovery", check_recovery))
+            ("room", check_room), ("recovery", check_recovery), ("ndi", check_ndi))
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
-                projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError)
+                projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError, ndi_mod.NdiError)
 
 
 def _printable(v):
