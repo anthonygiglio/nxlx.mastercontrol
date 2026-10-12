@@ -466,4 +466,8 @@ The Secure connection page's "Does this device trust the box?" fetched `https://
 - **A short log line cuts off its own point (2026-10-11).** The import's line listed fifteen sections and lost "left as the box has it: recovery" at 160 characters. Put what matters first.
 - **`timeout` is not a command on this Mac (2026-10-11).** A test run wrapped in `timeout 110 ...` printed nothing and looked like a quiet pass for half a session. No output from a test run is not a pass: look for the "Ran N tests" line.
 - **An address in a test must not be one the fixture already uses (2026-10-11).** "The diagnostics file never holds the target's address" failed because the same address was a stream's in the fixture.
+- **A cap on a log is a way to hide in it (2026-10-11, the security review of #125).** "The first forty lines stay" protected the first lines and exposed the last: sixty harmless routes filled the list and the update after them was a count. Sort a log by what the reader must not miss, and cap only the rest.
+- **What was refused is evidence too (2026-10-11).** The log said what a session changed and nothing about what it tried. A refusal costs one line and a count.
+- **"Can run any code" was wrong, and wrong in the alarming direction (2026-10-11).** The updater checks a signature and no route changes the signers. A threat model's framing sentence is a claim like any other: check it against the code before building an argument on it.
+- **A note written while a lock is held takes the locks the note needs in the wrong order (2026-10-11).** `midi_map` refuses under the settings lock and the support log takes its own lock first; the refusal is noted by a wrapper after the lock is let go.
 

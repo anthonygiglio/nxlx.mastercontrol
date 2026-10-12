@@ -302,7 +302,8 @@
     return h('div', { class: 'list sp', id: 'supportreach' },
       list('supportcan', 'With "Everything", support can', [
         'play, mix and change every setting you can change, and restart the box',
-        'install an update, and load a settings file',
+        'install an update signed by a key this box trusts, and load a settings file',
+        'point the box at other machines: boxes in step, projector addresses, streams, and what the schedule and power-up play. These stay after the session, so read the list of what support did afterwards',
         'add and remove looks, lock and open guest controls',
         'remove a guest\'s or an operator\'s device',
         'see and renew the OSC key, and choose where the box sends its state (make a new key afterwards: support knows the one it saw)']),
@@ -313,7 +314,7 @@
         'confirm a change of the network: you confirm it here, which shows you can still reach the box',
         'let OSC in from a network outside the building, or set a controller button that shows an access code',
         'switch the box off, or reset it to factory settings']),
-      h('div', { class: 'hint', text: 'Everything support changes is listed afterwards under Advanced, Recent sessions. With "Play and mix only" or "Watch only", support can do no more than that.' }));
+      h('div', { class: 'hint', text: 'Everything support does is listed afterwards under Advanced, Recent sessions, with what it was refused. A copy of your settings from before support\'s first settings file is kept on the box. With "Play and mix only" or "Watch only", support can do no more than that.' }));
   }
   function supportCard() {
     var body = h('div', { class: 'list sp', id: 'supportbody' }, h('div', { class: 'hint', text: 'Loading...' }));
@@ -337,8 +338,10 @@
       var last = (d.log || [])[0];
       if ((d.log || []).some(function (e) { return e.ended && e.osc_key; })) body.appendChild(h('div', { class: 'hint warn', id: 'supportoldkey', role: 'status',
         text: 'In an earlier session support was shown the OSC key, or made a new one, so support knows it. Make a new key now: Setup > OSC, "A key in the address", Make a new key. Then put the new key into your TouchOSC layout.' }));
-      if (last && last.ended && last.did && last.did.length && !d.active) body.appendChild(h('div', { class: 'state', id: 'supportlastdid',
-        text: 'The last session is over. What support changed in it is listed under Advanced, Recent sessions (' + plural(last.did.length + (last.did_more || 0), 'line') + ').' }));
+      var lastN = last ? (last.major || []).length + (last.major_more || 0) : 0, lastNo = last ? (last.major || []).filter(function (x) { return /^was refused /.test(x.what); }).length : 0;
+      if (last && last.ended && !d.active && (lastN || (last.did || []).length)) body.appendChild(h('div', { class: 'state', id: 'supportlastdid',
+        text: 'The last session is over. What support did in it is listed under Advanced, Recent sessions: ' + plural(lastN - lastNo, 'change') + ' worth reading' +
+          (lastNo ? ', ' + plural(lastNo, 'thing') + ' support tried and was refused' : '') + ', and routine use.' }));
       if (d.available === false) body.appendChild(h('div', { class: 'hint warn', id: 'supportwhy', text: 'It cannot start on this box: ' + (d.why || 'a part it needs is missing') + '. Tell whoever looks after the box.' }));
       if (d.active) {
         body.appendChild(h('div', { class: 'hint', text: 'Read this code to your support contact. They open http://' + d.address + '/ through the support connection and type it.' }));
@@ -402,10 +405,14 @@
         d.log.slice(0, 5).forEach(function (e) {
           inner.appendChild(h('div', { class: 'item' }, h('span', { text: new Date(e.started * 1000).toLocaleString() + ' · ' + e.by + ' · ' + e.minutes + ' min · ' + e.role +
             (e.ended ? ' · ' + (e.reason || 'ended') + ' · ' + (e.logins || 0) + ' sign-ins' : '') })));
-          // D84: what support changed in that session, in the box's own words
-          if (e.did && e.did.length) inner.appendChild(h('ul', { class: 'hint supportdid' }, e.did.map(function (x) {
-            return h('li', { text: new Date(x.at * 1000).toLocaleTimeString() + ' · support ' + x.what + (x.n > 1 ? ' (' + x.n + ' times)' : '') });
-          }).concat(e.did_more ? [h('li', { text: 'and ' + plural(e.did_more, 'more thing') + ' not listed here; the box\'s journal has them' })] : [])));
+          // D84: what support did in that session, in the box's own words. First the lines that matter whatever else
+          // was done (what the opened routes changed, an update or a settings file, a device removed, and everything
+          // support was refused); then routine use, one line per kind of request with a count.
+          function line(x) { return h('li', { text: new Date(x.at * 1000).toLocaleTimeString() + ' \u00b7 support ' + x.what + (x.n > 1 ? ' (' + x.n + ' times)' : '') }); }
+          if (e.major && e.major.length) inner.appendChild(h('ul', { class: 'hint supportdid supportmajor' }, e.major.map(line)
+            .concat(e.major_more ? [h('li', { class: 'warn', text: 'This list is full: ' + plural(e.major_more, 'more line') + ' of this kind are not shown. The box\'s journal has them.' })] : [])));
+          if (e.did && e.did.length) inner.appendChild(h('ul', { class: 'hint supportdid' }, e.did.map(line)
+            .concat(e.did_more ? [h('li', { text: 'and ' + plural(e.did_more, 'more kind') + ' of routine request not listed here; the box\'s journal has them' })] : [])));
         });
       }
       var adv = h('details', { class: 'fold', id: 'supportadv', open: supportAdv }, h('summary', { text: 'Advanced: support server settings' }), inner);
