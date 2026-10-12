@@ -406,6 +406,7 @@ class Player:
             self._pipe = False
             self._play_pipe(path, width, height, fps, fmt)       # raises if the pipe was not loaded: then it is not what plays
             self._pipe, self._pipe_pid, self._pipe_path = True, self.ipc.request("get_property", "pid"), path
+            self._pipe_since = time.monotonic()
 
     def _play_pipe(self, path, width, height, fps, fmt="yuyv422"):
         if not self.is_running():
@@ -516,6 +517,27 @@ class Player:
         with self._lock:
             return bool(self.pipe_playing) and self._pipe_path == path
 
+    PIPE_OPENING_SECONDS = 5.0
+
+    def pipe_stuck(self, path):
+        """Whether mpv has `path` loaded and has NOT opened it: no track, PIPE_OPENING_SECONDS after the load. mpv
+        gives the pipe as its `path` from the moment it is told to load it, also while it is still reading the
+        beginning of the stream and nothing is on the screen (on the Pi, 2026-10-12, for minutes: a stream mpv
+        0.40 would not finish opening). `track-list/count` is 0 for exactly that long and 1 or 2 from "Opening
+        done" on (measured there the same day, mpv 0.40 run by hand), for bare frames and for the stream with sound.
+
+        True: stuck. False: mpv has opened it. None: not this pipe, too early to say, or mpv did not answer."""
+        with self._lock:
+            if not (self.pipe_playing and self._pipe_path == path):
+                return None
+            if time.monotonic() - getattr(self, "_pipe_since", 0.0) < self.PIPE_OPENING_SECONDS:
+                return None
+            try:
+                n = self.ipc.request("get_property", "track-list/count")
+            except PlayerError:
+                return None
+            return not (isinstance(n, int) and not isinstance(n, bool) and n >= 1)
+
     def release_pipe(self, path):
         """Have mpv let go of `path` if that pipe is what was loaded last: its stream is closed and the player is
         idle (black). For a live input whose pipe is one pipe for every source (the NDI input's, root's, never
@@ -532,8 +554,8 @@ class Player:
         Whether mpv holds the pipe is asked of mpv too (its `path`), not only of what this side remembers having
         loaded: a panel that started again remembers nothing while its mpv still reads the pipe.
 
-        Returns True when mpv said it is idle (or is down, and so holds nothing), False when it did not say so in
-        time (the caller must not go on to a new writer then), None when mpv does not have the pipe and nothing
+        Returns True when mpv said it is idle (or is not running, and so holds nothing), False when it did not say
+        so in time or did not answer (the caller must not go on to a new writer then), None when mpv does not have the pipe and nothing
         was done."""
         with self._lock:
             held = bool(self._pipe and self._pipe_path == path)
@@ -544,17 +566,18 @@ class Player:
                     held = False                # idle (no path to give) or down: either way it has no pipe
             if not held:
                 return None
+            end = time.monotonic() + self.RELEASE_SECONDS
             try:
                 self.ipc.request("stop")
-                end = time.monotonic() + self.RELEASE_SECONDS
-                while True:
+                while time.monotonic() < end:          # looked at before each question: one that is slow is the last
                     if self.ipc.request("get_property", "idle-active") is True:
                         return True
-                    if time.monotonic() >= end:
-                        return False
                     time.sleep(0.02)
+                return False
             except PlayerError:
-                return True                 # a player that went down holds no pipe
+                # No answer is not "let go": a player that is busy (stuck on the stream) answers late or not at
+                # all and still has the pipe. Only a player that is not there holds nothing.
+                return not self.is_running()
 
     RELEASE_SECONDS = 1.5
 

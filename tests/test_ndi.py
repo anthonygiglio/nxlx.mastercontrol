@@ -3,6 +3,7 @@
 """The NDI input above its seam, against a fake library and fake frames (D62). The real library was never loaded:
 nothing here says that NDI works, only that what this project wrote does what it says with what it is given."""
 import ctypes
+import errno
 import io
 import json
 import os
@@ -2307,6 +2308,20 @@ class PipeReuseTest(unittest.TestCase):
         self.assertTrue(wait(lambda: len(new.got) >= self.size(self.B)))
         self.assertEqual(set(new.got), {self.B[2]})
 
+    def test_a_pipe_that_cannot_be_opened_is_not_taken_for_a_pipe_without_a_reader(self):
+        real = os.open
+
+        def refused(path, flags, *a, **kw):
+            if path == self.s.fifo and flags & os.O_WRONLY:
+                raise PermissionError(errno.EACCES, "Permission denied")
+            return real(path, flags, *a, **kw)
+        self.lib.frames.put(frame(64, 16))
+        with mock.patch("pvj.ndi.os.open", refused):
+            self.assertRaises(PermissionError, self.s._pipe_free)
+            reply = self.s.handle({"cmd": "open", "id": self.ida})
+        self.assertEqual((reply["ok"], reply["error"]), (False, "the NDI pipe cannot be written to: Permission denied"))
+        self.assertIsNone(self.s.receiver)
+
     def test_over_a_player_that_will_not_let_go_nothing_is_written_and_the_open_says_why(self):
         self.s.close()
         self.s = self.service(pipe_clear=0.3)
@@ -2695,7 +2710,10 @@ class PlayerLetsGoTest(NdiApiTest):
         self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # mpv plays a clip: nothing is stopped
         self.assertEqual(sent[-1], ("get_property", "path"))
         p._pipe, p.ipc.down = True, True
-        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), True)       # a player that is down holds nothing
+        p.is_running = lambda: True
+        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), False)      # no answer from a player that is there: not "let go"
+        p.is_running = lambda: False
+        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), True)       # a player that is not there holds nothing
 
     def test_a_player_that_does_not_confirm_it_let_go_is_not_written_over_and_the_page_says_so(self):
         self.enable()
@@ -2762,6 +2780,90 @@ class PlayerLetsGoTest(NdiApiTest):
         self.assertEqual(released, [])                               # the player was not told to let go
         self.assertEqual(self.api.ndi.current["id"], self.rid)
         self.assertEqual(self.service.receiver.status()["id"], self.rid)       # and the helper still has what plays
+
+
+class PlayerDidNotOpenTest(NdiApiTest):
+    """The other half of "never playing and nothing on the screen" (the Pi, 2026-10-12): mpv had the pipe as its
+    path and no track for minutes, the helper wrote and said "still", and the page said all was well."""
+
+    def start(self):
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.said = [None]
+        self.player.pipe_stuck = lambda path: self.said[0]
+        self.player.status = lambda: {"running": True, "path": self.service.fifo}
+
+    def picture_for_the_next_open(self):
+        n = len(self.lib.opened)
+        threading.Thread(target=lambda: wait(lambda: len(self.lib.opened) > n, 5) and self.lib.frames.put(frame(64, 16)), daemon=True).start()
+
+    def loads(self):
+        return len([c for c in self.player.calls if c[0] == "play_pipe"])
+
+    def test_a_load_that_never_opened_is_said_on_the_page_shown_again_once_and_then_ended_with_the_reason(self):
+        self.start()
+        loads = self.loads()
+        self.assertNotIn("ndi_opening", self.call("GET", "/api/status", token=self.full)[1]["player"])       # too early to say
+        self.assertFalse(self.api.ndi_tick())
+        self.said[0] = True
+        self.assertIs(self.call("GET", "/api/status", token=self.full)[1]["player"].get("ndi_opening"), True)
+        self.picture_for_the_next_open()
+        self.assertTrue(self.api.ndi_tick())                         # shown again
+        self.assertEqual((self.loads(), self.api.ndi.current["id"]), (loads + 1, self.rid))
+        self.said[0] = None                                          # the new load: too early to say
+        self.api.ndi._retry_at = 0.0
+        self.assertFalse(self.api.ndi_tick())
+        self.assertEqual(self.api.ndi.current["id"], self.rid)
+        self.said[0] = True                                          # and it did not open either
+        self.assertFalse(self.api.ndi_tick())
+        self.assertEqual(self.loads(), loads + 1)                    # once, not again and again
+        self.assertIsNone(self.api.ndi.current)
+        self.assertIsNone(self.service.receiver)                     # the helper let go: the stuck player gets the end
+        page = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertEqual((page["playing"], page["ended"]), (None, {"name": "RESOLUME (Output)", "message": ndi.PLAYER_STUCK}))
+
+    def test_a_load_that_opened_after_being_shown_again_is_a_first_time_the_next_time(self):
+        self.start()
+        loads = self.loads()
+        self.said[0] = True
+        self.picture_for_the_next_open()
+        self.assertTrue(self.api.ndi_tick())
+        self.said[0] = False                                         # this time the player opened it
+        self.api.ndi._retry_at = 0.0
+        self.assertFalse(self.api.ndi_tick())
+        self.assertNotIn("ndi_opening", self.call("GET", "/api/status", token=self.full)[1]["player"])
+        self.api.ndi._retry_at = 0.0
+        self.said[0] = True                                          # much later, stuck again: shown again, not ended
+        self.picture_for_the_next_open()
+        self.assertTrue(self.api.ndi_tick())
+        self.assertEqual((self.loads(), self.api.ndi.current["id"]), (loads + 2, self.rid))
+
+    def test_the_player_says_stuck_only_for_its_own_pipe_after_some_seconds_and_by_mpvs_tracks(self):
+        from pvj.player import Player, PlayerError
+        tracks, sent = [0], []
+
+        class Ipc:
+            def request(self, *a):
+                if a == ("get_property", "pid"):
+                    return 41
+                sent.append(a)
+                if isinstance(tracks[0], Exception):
+                    raise tracks[0]
+                return tracks[0]
+        p = Player.__new__(Player)
+        p.ipc, p._lock = Ipc(), threading.RLock()
+        p._pipe, p._pipe_pid, p._pipe_path, p._pipe_since = True, 41, "/run/pvj-ndi-pipe/ndi.fifo", time.monotonic()
+        self.assertIsNone(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"))          # just loaded: too early
+        self.assertEqual(sent, [])
+        p._pipe_since -= Player.PIPE_OPENING_SECONDS + 0.1
+        self.assertIs(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"), True)
+        self.assertEqual(sent, [("get_property", "track-list/count")])
+        self.assertIsNone(p.pipe_stuck("/run/pvj-capture/capture.fifo"))       # not this pipe
+        tracks[0] = 2
+        self.assertIs(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"), False)
+        tracks[0] = PlayerError("no answer")
+        self.assertIsNone(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"))
 
 
 if __name__ == "__main__":

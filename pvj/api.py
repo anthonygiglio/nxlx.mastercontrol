@@ -716,6 +716,10 @@ class Api:
         if self.ndi is not None and path == self.ndi.fifo:
             status["path"], status["ndi"] = None, (self.ndi.current or {}).get("name") or True
             status["ndi_id"] = (self.ndi.current or {}).get("id") or ""      # for the pad that holds it
+            if self._ndi_stuck():
+                # mpv's path alone says "playing" for a load that never opened: nothing is on the screen. The
+                # watch (ndi_tick) shows the source again once, and ends it with the reason if that does not help.
+                status["ndi_opening"] = True
             return status
         for channel, url in getattr(self.player, "TEST_TONES", {}).items():
             if path == url:
@@ -3188,7 +3192,20 @@ class Api:
         if self.ndi is None or not self.ndi.current or not self.registry.enabled("inputs-ndi"):
             return False
         cur = self.ndi.current
-        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur), loaded=lambda: self._pipe_plays(self.ndi.fifo))
+        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur), loaded=lambda: self._pipe_plays(self.ndi.fifo),
+                             stuck=lambda: self._ndi_stuck(None))
+
+    def _ndi_stuck(self, unknown=False):
+        """Whether the player has the NDI pipe loaded and has not opened it (Player.pipe_stuck): True, False, or
+        `unknown` when it cannot be said (too early, another player, no answer)."""
+        ask = getattr(self.player, "pipe_stuck", None)
+        if ask is None or self.ndi is None:
+            return unknown
+        try:
+            said = ask(self.ndi.fifo)
+        except PlayerError:
+            return unknown
+        return unknown if said is None else bool(said)
 
     def get_ndi(self, body, device, client):
         self._need_ndi()

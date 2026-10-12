@@ -111,6 +111,7 @@ AUDIO_LOST = "lost"                       # what recv_audio answers while the co
 MIN_TURN = 0.1                            # a call into the library that came back with nothing sooner than this is waited out
 AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
 CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
+PLAYER_STUCK = "the player did not open the NDI picture, also not when it was given it again"
 PIPE_HELD = "the player still holds the NDI pipe from the picture before"
 PLAYER_LEFT = "the player stopped reading the input"      # something else was played: an end, not a fault
 SOURCES_CACHE = 1.0
@@ -1575,16 +1576,21 @@ class Service:
         """The pipe is let go of, never unlinked: on a box it is root's (the review of 2026-10-11, M3), and a pipe
         holds nothing once every writer has closed. A reader still waiting on it (an old player blocked in opening
         it, a player waiting for a first byte) is woken: a writer that opens and closes gives it the end."""
-        self._pipe_free()
+        try:
+            self._pipe_free()
+        except OSError:
+            pass                                   # no pipe to wake anybody on
 
     def _pipe_free(self):
         """Whether nobody reads the pipe at this moment: opening it for writing without waiting is refused (ENXIO)
         exactly then. Where somebody does read it, the open and close are the wake of _remove_pipe: that reader is
-        given the end. Nothing is ever written here. Anything else that goes wrong is not a reader's doing and is
-        left for the writer to say."""
+        given the end. Nothing is ever written here. Only ENXIO means "no reader": anything else that goes wrong
+        (the pipe is not there, or may not be opened) is raised, and Service.open refuses with it."""
         try:
             fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
-        except OSError:
+        except OSError as e:
+            if e.errno != errno.ENXIO:
+                raise                              # no pipe, not ours to open: not "no reader"; the caller says it
             return True
         os.close(fd)
         return False
@@ -1684,7 +1690,12 @@ class Service:
                 self._close_receiver()
                 return {"ok": False, "error": st["message"] or "%s sent no picture in %d seconds" % (match[0]["name"], self._first_frame)}
             self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
-            if not self._clear_pipe(r):
+            try:
+                clear = self._clear_pipe(r)
+            except OSError as e:
+                self._close_receiver()
+                return {"ok": False, "error": "the NDI pipe cannot be written to: %s" % (e.strerror or "an error")}
+            if not clear:
                 # Never a new writer while a reader of the source before may be there. The panel, which owns the
                 # player, has it let go before it asks (Player.release_pipe) and asks again (Input.tick).
                 over = r.status()
@@ -1903,6 +1914,7 @@ class Input:
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = locks.make("ndi", reentrant=True)      # open, load in the player and note, as one step (like the capture input); its place: pvj/locks.py
         self._retry_at, self._retry_wait, self._retry_said = 0.0, self.RETRY_SECONDS, ""
+        self._stuck_once = False           # the source was shown again once because the player had not opened it
         self.ended = None                  # {"name", "message"}: why the last source ended by itself, for the page
         self._ticket = 0
         # The ticket's own lock, a leaf: never held over a call. Whoever decides what the screen shows next does so
@@ -2158,7 +2170,7 @@ class Input:
             self.client_close()
         return bool(had)
 
-    def tick(self, replay, loaded=None):
+    def tick(self, replay, loaded=None, stuck=None):
         """Called about once a second. When the helper says the source changed size or rate, or the helper came
         back after a fall, show the source again (`replay(id)`), at most once every RETRY_SECONDS.
 
@@ -2167,7 +2179,13 @@ class Input:
         the source is over, quietly. If the pipe is still what the panel loaded, nothing took the screen: the
         player lost the pipe by itself (it gave up on the stream, or a reader came and went that no load of the
         panel's accounts for), and the screen is black with the player waiting on a pipe nobody writes. Then the source is shown again, as after
-        a change of size. The helper's word alone never decides this; without `loaded` it is as it always was."""
+        a change of size. The helper's word alone never decides this; without `loaded` it is as it always was.
+
+        `stuck` (the player's own word: True when it has the pipe loaded and has not opened it some seconds after
+        the load, False when it has opened it, None when it cannot say) settles the opposite case: the helper
+        writes and says "playing", and nothing is on the screen. Then the source is shown again, ONCE; if the
+        player has not opened it after that either, the source is ended with the reason (PLAYER_STUCK) and the
+        helper lets go of it, which also gives the player the end of the stream it is stuck on."""
         cur = self.current
         if not cur or self._clock() < self._retry_at:
             return False
@@ -2192,8 +2210,21 @@ class Input:
             self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
             return False
         elif p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):
-            self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
-            return False                           # on the screen: playing, a still picture, or waiting for the sender
+            opened = stuck() if (stuck is not None and p["id"] == cur["id"]) else False
+            if opened is True and self._stuck_once:
+                if self.current is cur:
+                    self.current, self.ended = None, {"name": cur["name"], "message": PLAYER_STUCK}
+                    self.client_close()
+                self._stuck_once, self._retry_wait, self._retry_said = False, self.RETRY_SECONDS, ""
+                self.log("pvj-web: NDI source %s: the player did not open it, twice; ended" % cur["name"])
+                return False
+            if opened is not True:
+                if opened is False:
+                    self._stuck_once = False       # the player has it open: the next time is a first time again
+                self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
+                return False                       # on the screen: playing, a still picture, or waiting for the sender
+            self._stuck_once, self._retry_said = True, PLAYER_STUCK
+            self.log("pvj-web: NDI source %s: the player has not opened it; shown again once" % cur["name"])
         # Try again later and later (a sender switched off for the night must not be asked every 3 seconds for
         # ever), and write the reason down when it changes, not at every try: the journal is kept on the card.
         waited = self._retry_wait
