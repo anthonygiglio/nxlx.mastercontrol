@@ -320,15 +320,15 @@ class Supervisor(unittest.TestCase):
         self.assertEqual((self.s.status()["state"], self.s.status()["on"], self.runs()), ("off", False, []))
         out = self.s.handle({"cmd": "configure", "on": True, "bind": "192.168.1.9", "port": 5959})
         self.assertEqual((out["ok"], out["state"], out["bind"], out["port"]), (True, "running", "192.168.1.9", 5959))
-        self.assertTrue(wait(lambda: self.runs() == ["-bind 192.168.1.9 -port 5959"]))
-        self.assertEqual(self.s.argv(), [self.program, "-bind", "192.168.1.9", "-port", "5959"])
-        self.assertTrue(wait(lambda: self.s.status()["last"] == "fake discovery server -bind 192.168.1.9 -port 5959"))
+        self.assertTrue(wait(lambda: self.runs() == ["-service -bind 192.168.1.9 -port 5959"]))
+        self.assertEqual(self.s.argv(), [self.program, "-service", "-bind", "192.168.1.9", "-port", "5959"])
+        self.assertTrue(wait(lambda: self.s.status()["last"] == "fake discovery server -service -bind 192.168.1.9 -port 5959"))
         child = self.s.child
         # the same again changes nothing; another address starts it again there; off ends it
         self.s.handle({"cmd": "configure", "on": True, "bind": "192.168.1.9", "port": 5959})
         self.assertIs(self.s.child, child)
         self.s.handle({"cmd": "configure", "on": True, "bind": "10.0.0.4", "port": 6000})
-        self.assertTrue(wait(lambda: self.runs()[-1:] == ["-bind 10.0.0.4 -port 6000"]))
+        self.assertTrue(wait(lambda: self.runs()[-1:] == ["-service -bind 10.0.0.4 -port 6000"]))
         self.assertIsNotNone(child.poll(), "the first one was not ended")
         child = self.s.child
         out = self.s.handle({"cmd": "configure", "on": False})
@@ -372,6 +372,26 @@ class Supervisor(unittest.TestCase):
         time.sleep(0.5)
         self.assertEqual(len(self.runs()), n, "it was started again after it was switched off")
 
+    def test_a_program_that_says_it_listens_elsewhere_is_stopped_and_not_started_again(self):
+        """It has never been run here, so whether it honours -bind in service mode is not known. If it says it
+        listens on another address than the one chosen, it is ended and stays ended."""
+        self.write("echo 'Listening... [0.0.0.0:5959]'\nexec sleep 30")
+        self.s.handle({"cmd": "configure", "on": True, "bind": "192.168.1.9", "port": 5959})
+        self.assertTrue(wait(lambda: self.s.status()["state"] == "failed"))
+        st = self.s.status()
+        self.assertIn("listened somewhere other than the address chosen (192.168.1.9)", st["message"])
+        self.assertEqual(st["last"], "Listening... [0.0.0.0:5959]")
+        time.sleep(0.4)
+        self.assertEqual((len(self.runs()), self.s.child), (1, None), "it was started again")
+        # the address it was given, or no address at all in the line, is fine; so is 0.0.0.0 when that was chosen
+        for line, bind in (("Listening... [192.168.1.9:5959]", "192.168.1.9"), ("Listening... [5959]", "192.168.1.9"), ("Listening... [0.0.0.0:5959]", "0.0.0.0")):
+            self.s.handle({"cmd": "configure", "on": False})
+            self.write("echo '%s'\nexec sleep 30" % line)
+            self.s.handle({"cmd": "configure", "on": True, "bind": bind, "port": 5959})
+            self.assertTrue(wait(lambda: self.s.status()["last"] == line))
+            time.sleep(0.1)
+            self.assertEqual(self.s.status()["state"], "running", line)
+
     def test_a_line_the_program_prints_is_made_plain(self):
         self.assertEqual(D.clean_line(b"ok \x1b[31mred\x00\xff\n"), "ok  [31mred")
         self.assertEqual(len(D.clean_line(b"x" * 5000)), D.MAX_LINE)
@@ -383,7 +403,7 @@ class Choice(unittest.TestCase):
 
     def test_the_address_is_the_chosen_networks_and_never_all_of_them_unless_chosen(self):
         rows = D.box_addresses(self.IP)
-        self.assertEqual(rows, [("eth0", "192.168.1.9"), ("wlan0", "10.0.0.7"), ("wg0", "10.9.0.2")])
+        self.assertEqual(rows, [("eth0", "192.168.1.9"), ("wlan0", "10.0.0.7")])       # never the support tunnel (wg*) or another tunnel
         self.assertEqual((D.address_for("wired", rows), D.address_for("wifi", rows), D.address_for("all", rows)), ("192.168.1.9", "10.0.0.7", "0.0.0.0"))
         self.assertIsNone(D.address_for("wired", [("wlan0", "10.0.0.7")]))       # no cable: it does not move to the Wi-Fi by itself
         self.assertEqual(D.box_addresses(None), [])
@@ -483,7 +503,7 @@ class Panel(PadBase):
 
     def test_switched_on_it_listens_on_the_wired_address_and_the_page_says_what_to_tell_senders(self):
         self.assertEqual(self.switch(True)[0], 200)
-        self.assertTrue(wait(lambda: self.runs() == ["-bind 192.168.1.9 -port 5959"]))
+        self.assertTrue(wait(lambda: self.runs() == ["-service -bind 192.168.1.9 -port 5959"]))
         p = self.page()
         self.assertEqual((p["state"], p["listening"], p["tell"], p["bind"]), ("running", {"address": "192.168.1.9", "port": 5959}, "192.168.1.9:5959", "192.168.1.9"))
         self.assertIn("the NDI discovery server was switched on by device", " ".join(self.lines))
@@ -492,20 +512,20 @@ class Panel(PadBase):
             self.assertEqual(self.h("POST", "/api/ndi/discovery", bad, self.owner)[0], 400, bad)
         st, p = self.h("POST", "/api/ndi/discovery", {"network": "wifi", "port": 6000}, self.owner)
         self.assertEqual((st, p["tell"], self.settings.data["ndi_discovery"]), (200, "10.0.0.7:6000", {"network": "wifi", "port": 6000}))
-        self.assertTrue(wait(lambda: self.runs()[-1:] == ["-bind 10.0.0.7 -port 6000"]))
+        self.assertTrue(wait(lambda: self.runs()[-1:] == ["-service -bind 10.0.0.7 -port 6000"]))
         st, p = self.h("POST", "/api/ndi/discovery", {"network": "all"}, self.owner)
         self.assertEqual((p["bind"], p["tell"]), ("0.0.0.0", "192.168.1.9:6000"))
-        self.assertTrue(wait(lambda: self.runs()[-1:] == ["-bind 0.0.0.0 -port 6000"]))
+        self.assertTrue(wait(lambda: self.runs()[-1:] == ["-service -bind 0.0.0.0 -port 6000"]))
         self.assertEqual(self.switch(False)[0], 200)
         self.assertEqual((self.sup.child, self.page()["state"]), (None, "off"))
 
     def test_the_address_changes_and_the_server_follows_it(self):
         self.switch(True)
-        self.assertTrue(wait(lambda: self.runs() == ["-bind 192.168.1.9 -port 5959"]))
+        self.assertTrue(wait(lambda: self.runs() == ["-service -bind 192.168.1.9 -port 5959"]))
         self.assertFalse(self.api.ndisc_tick())                                 # nothing changed: nothing is restarted
         self.addrs[0] = ("eth0", "192.168.1.77")                                # a new lease
         self.assertTrue(self.api.ndisc_tick())
-        self.assertTrue(wait(lambda: self.runs()[-1:] == ["-bind 192.168.1.77 -port 5959"]))
+        self.assertTrue(wait(lambda: self.runs()[-1:] == ["-service -bind 192.168.1.77 -port 5959"]))
         self.assertEqual(self.page()["tell"], "192.168.1.77:5959")
         self.addrs[:] = [("wlan0", "10.0.0.7")]                                 # the cable is pulled: it stops, and does not move to the Wi-Fi
         self.assertTrue(self.api.ndisc_tick())
@@ -584,12 +604,18 @@ class Panel(PadBase):
         subprocess.run(["tar", "-x", "-C", old], input=tar, check=True)
         copy = os.path.join(old, "settings.json")
         shutil.copy(self.settings.path, copy)
+        self.assertFalse(os.path.exists(os.path.join(old, "pvj", "modules.d", "ndi-discovery.json")), "master has no such module: this is the older release")
+        self.assertFalse(os.path.exists(os.path.join(old, "pvj", "ndiscovery.py")))
+        with open(copy) as f:
+            self.assertIs(json.load(f)["modules"]["enabled"]["ndi-discovery"], True)      # the file says the module is on
         script = ("import sys, json\nfrom pvj.settings import Settings\nfrom pvj.modules import Registry\ns = Settings(sys.argv[1])\ns.load()\n"
-                  "r = Registry(s, 'x86')\nids = [m['id'] for m in r.list()] if hasattr(r, 'list') else []\n"
-                  "s.data['mix'] = {'transition': 'dip', 'duration': 2.0}\ns.save()\nprint(json.dumps([s.data['schema'], 'ndi-discovery' in ids]))\n")
+                  "r = Registry(s, 'x86')\ntry:\n    on = bool(r.enabled('ndi-discovery'))\nexcept Exception as e:\n    on = type(e).__name__\n"
+                  "s.data['mix'] = {'transition': 'dip', 'duration': 2.0}\ns.save()\nprint(json.dumps([s.data['schema'], on]))\n")
         run = subprocess.run([sys.executable, "-c", script, copy], cwd=old, capture_output=True, text=True, env=dict(os.environ, PYTHONPATH=old))
         self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(json.loads(run.stdout.strip().splitlines()[-1]), [self.settings.data["schema"], False])      # master has no such module: nothing can start it
+        got = json.loads(run.stdout.strip().splitlines()[-1])
+        self.assertEqual(got[0], self.settings.data["schema"])
+        self.assertIs(got[1], False, "an older release must not count a module it does not have as on")
         with open(copy) as f:
             kept = json.load(f)
         self.assertEqual((kept["ndi_discovery"], kept["ndi"]["own_discovery"]), ({"network": "wifi", "port": 6000}, True))

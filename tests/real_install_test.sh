@@ -407,9 +407,45 @@ is /run/pvj-ndisc "pvj-ndisc:pvj-ndisc 750 directory"
 [ "$(systemctl show -p User --value pvj-ndi-discovery.service)" = pvj-ndisc ] || fail "the supervisor does not run as its own account"
 if pgrep -f /opt/pvj-ndi-server/ndi-discovery-server >/dev/null; then fail "the program runs although its module is off"; fi
 wait_for 40 systemctl is-active --quiet pvj-web.service || fail "the panel did not come back after the set-up"
+is /run/pvj-ndisc/ndisc.sock "pvj-ndisc:pvj-ndisc 660 socket"
 refused pvj-ndisc cat /run/pvj/web/pin
 refused pvj-ndisc cat /var/lib/pvj/settings.json
 refused pvj-ndisc ls /run/pvj/web
+refused "$A" touch /run/pvj-ndisc/x
+# the panel reaches the supervisor (the drop-in's group, the socket, the supervisor's list of who may ask)
+ndisc_get() {
+	local code
+	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1/api/ndi/discovery)"
+	[ "$code" = 200 ] || fail "GET /api/ndi/discovery answered HTTP $code, $(head -c 300 "$OUT")"
+}
+ndisc_post() {     # ndisc_post PATH JSON
+	local code
+	code="$(curl -sS -m 30 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d "$2" "http://127.0.0.1$1")"
+	[ "$code" = 200 ] || fail "POST $1 answered HTTP $code, $(head -c 300 "$OUT")"
+}
+wait_for 40 panel_answers || fail "the panel does not answer after the discovery server's set-up"
+ndisc_get
+cat "$OUT"
+echo
+grep -q '"setup": true' "$OUT" || fail "the panel does not see the discovery server's set-up"
+grep -q '"supervisor": true' "$OUT" || fail "the panel cannot reach the supervisor it was given the group for"
+grep -q '"installed": true' "$OUT" || fail "the supervisor does not accept the program root placed"
+grep -q '"state": "off"' "$OUT" || fail "the server is not off before anyone switched it on"
+# Switched on, the stand-in program is started under the unit's sandbox and ends at once (it is /usr/bin/true): the
+# supervisor says so and starts it again with a pause, and nothing else on the box goes down with it.
+ndisc_post /api/ndi/discovery '{"network": "all", "port": 5959}'
+ndisc_post /api/modules/ndi-discovery '{"enabled": true}'
+restarted() { ndisc_get; grep -q '"restarts": [1-9]' "$OUT"; }
+wait_for 40 restarted || fail "the program that ends was not started again: $(head -c 400 "$OUT")"
+cat "$OUT"
+echo
+grep -q '"state": "failed"' "$OUT" || grep -q '"state": "running"' "$OUT" || fail "the page is not told that the program ended or runs"
+systemctl is-active --quiet pvj-ndi-discovery.service || fail "the supervisor went down with the program it runs"
+systemctl is-active --quiet pvj-web.service || fail "the panel went down with the discovery server's program"
+ndisc_post /api/modules/ndi-discovery '{"enabled": false}'
+ndisc_get
+grep -q '"state": "off"' "$OUT" || fail "switched off, the server is not off: $(head -c 300 "$OUT")"
+ndisc_post /api/ndi/discovery '{"network": "wired", "port": 5959}'
 installer
 grep -q "this box has the discovery server set up" "$OUT" || fail "the installer did not see the discovery server's set-up"
 wait_for 40 systemctl is-active --quiet pvj-ndi-discovery.service || fail "pvj-ndi-discovery is not active after a later install"

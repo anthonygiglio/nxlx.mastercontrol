@@ -3082,7 +3082,7 @@
           : !d.bind ? NAMES[d.network] + ' has no address now, so the server is stopped. It starts by itself when that network is back; it does not move to another network.'
             : 'Starting...';
       state.appendChild(h('div', { class: 'hint' + (d.state === 'running' ? '' : ' warn'), id: 'ndiscstate', role: 'status', text: line }));
-      if (d.state === 'failed' && d.last) state.appendChild(h('div', { class: 'hint', id: 'ndisclast', text: 'Its last words: ' + d.last }));
+      if (d.last) state.appendChild(h('div', { class: 'hint', id: 'ndisclast', text: 'NDI\'s program last said: ' + d.last }));
       if (d.tell) {
         var tell = h('input', { class: 'text-input mono', id: 'ndisctell', readonly: true, value: d.tell, 'aria-label': 'This discovery server\'s address' });
         state.appendChild(h('div', { class: 'fieldwrap', id: 'ndisctellwrap' }, h('div', { class: 'field', id: 'ndisctellline', text: 'Senders and receivers on this network should use discovery server ' + d.tell }),

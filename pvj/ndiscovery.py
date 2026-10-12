@@ -445,7 +445,8 @@ def box_addresses(ip_json):
                 out.append((name, clean_bind(a.get("local"))))
             except (NdiError, AttributeError):
                 pass
-    return [(n, a) for n, a in out if a != ALL]
+    # Not the remote support tunnel or any other tunnel: a discovery server is for the room's network.
+    return [(n, a) for n, a in out if a != ALL and not n.startswith(("wg", "tun", "tap", "docker", "veth", "br-"))]
 
 
 def address_for(network, addresses):
@@ -482,8 +483,20 @@ class Service:
         self._wake = threading.Event()
 
     def argv(self):
-        """Exactly this and nothing else is ever run: the program root placed, the checked address, the checked port."""
-        return [self.program, "-bind", clean_bind(self.bind), "-port", str(clean_port(self.port))]
+        """Exactly this and nothing else is ever run: the program root placed, "-service", the checked address, the
+        checked port. "-service" is how NDI's own systemd unit starts the program (its example unit: Type=simple,
+        ExecStart=... -service; the program's help calls it "service mode for linux/unix"): no console is waited on.
+        Whether the program honours -bind and -port in that mode has not been seen (it has never been run here):
+        _watch compares where the program SAYS it listens with what was asked, and stops it if they differ."""
+        return [self.program, "-service", "-bind", clean_bind(self.bind), "-port", str(clean_port(self.port))]
+
+    def _elsewhere(self, line):
+        """Under the lock. True when a line the program printed says it listens on an address that is not the one it
+        was given (it prints "Listening... [...]"). A line without an address says nothing either way."""
+        if "isten" not in line or self.bind in (None, ALL):
+            return False
+        found = re.findall(r"(?<![0-9.])[0-9]{1,3}(?:\.[0-9]{1,3}){3}(?![0-9.])", line)
+        return bool(found) and self.bind not in found
 
     def configure(self, message):
         on = message.get("on")
@@ -534,6 +547,16 @@ class Service:
                     with self.lock:
                         if gen == self.gen:
                             self.last = line
+                            if self._elsewhere(line):
+                                # It listens where nobody chose: it is ended and NOT started again. The Owner sees why.
+                                self.log("pvj-ndi-discovery: NDI's program says %r, not the address it was given (%s); stopping it" % (line, self.bind))
+                                self.gen += 1
+                                self.child, self.state = None, "failed"
+                                self.message = "NDI's program listened somewhere other than the address chosen (%s) and was stopped; it is not started again until the setting is changed or switched off and on" % self.bind
+                                try:
+                                    child.kill()
+                                except OSError:
+                                    pass
         except (OSError, ValueError):
             pass
         code = child.wait()
