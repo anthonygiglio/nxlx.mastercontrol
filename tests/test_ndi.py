@@ -2367,6 +2367,58 @@ class PipeReuseTest(unittest.TestCase):
         self.assertFalse([t for t in threading.enumerate() if t.name.startswith("ndi-")])
 
 
+class RetryPauseTest(unittest.TestCase):
+    """The watch alone, against a helper that says what the test tells it to and a clock the test moves."""
+
+    def setUp(self):
+        self.now, self.says, self.replays = [1000.0], [None], []
+        sid = self.sid = ndi.source_id("A (Out)", "192.168.0.20")
+
+        class Client:
+            def status(_):
+                state, message = self.says[0]
+                return {"ok": True, "configured": True, "playing": {"id": sid, "name": "A (Out)", "state": state, "message": message}}
+
+            def request(_, message, timeout=None):
+                return {"ok": True}
+        self.input = ndi.Input(Client(), "/nowhere/ndi.fifo", lambda: (True, []), log=lambda *_: None, clock=lambda: self.now[0], setup=True)
+        self.input.current = {"id": sid, "name": "A (Out)"}
+
+    def run_for(self, seconds, plays_for):
+        """A player that reads the pipe for `plays_for` seconds after every load and then lets go. One tick a second."""
+        end, loaded_at = self.now[0] + seconds, self.now[0] - 1000
+        while self.now[0] < end:
+            self.says[0] = ("playing", "") if self.now[0] - loaded_at < plays_for else ("stopped", ndi.PLAYER_LEFT)
+            before = len(self.replays)
+            self.input.tick(lambda sid: self.replays.append(self.now[0]), loaded=lambda: True, stuck=lambda: None)
+            if len(self.replays) > before:
+                loaded_at = self.now[0]
+            self.now[0] += 1.0
+
+    def test_a_player_that_gives_up_at_once_is_loaded_less_and_less_often(self):
+        self.run_for(300, plays_for=0)
+        gaps = [round(b - a) for a, b in zip(self.replays, self.replays[1:])]
+        self.assertEqual(gaps[:6], [3, 6, 12, 24, 48, 60], gaps)
+
+    def test_a_player_that_reads_for_some_seconds_and_then_gives_up_is_loaded_less_and_less_often_too(self):
+        """The review of 2026-10-12, medium 1: every look that found the source "playing" made the pause three
+        seconds again, so this player was stopped, opened and loaded every few seconds for ever."""
+        self.run_for(300, plays_for=4)
+        gaps = [round(b - a) for a, b in zip(self.replays, self.replays[1:])]
+        self.assertLessEqual(len(self.replays), 9, gaps)
+        self.assertGreaterEqual(min(gaps[3:]), 24, gaps)
+        self.assertEqual(max(gaps), 60, gaps)
+
+    def test_a_source_that_has_played_for_half_a_minute_is_tried_at_once_again_when_it_is_lost(self):
+        self.run_for(40, plays_for=0)                                # the pause has grown
+        self.assertGreater(self.input._retry_wait, 20)
+        self.run_for(200, plays_for=1e9)                             # then it plays
+        self.assertEqual(self.input._retry_wait, ndi.Input.RETRY_SECONDS)
+        n = len(self.replays)
+        self.run_for(3, plays_for=0)
+        self.assertEqual(len(self.replays), n + 1)                   # lost: shown again at the next look
+
+
 class LostPlayerTest(NdiApiTest):
     """A source whose writer lost its reader ended with "the player stopped reading the input", which the watch took
     for "something else was played": the screen stayed black, the pad went dark and nothing was said or tried (seen
@@ -2694,7 +2746,10 @@ class PlayerLetsGoTest(NdiApiTest):
         del sent[:]
         p._pipe_path = "/run/pvj-ndi-pipe/ndi.fifo"
         self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), True)
-        self.assertEqual(sent, [("stop",)] + [("get_property", "idle-active")] * 3)       # asked until mpv itself says it holds nothing
+        self.assertEqual(sent, [("stop",)] + [("get_property", "idle-active")] * 3)
+        # mpv is idle now: the panel's record no longer says that the pipe plays (the open that follows may fail)
+        self.assertEqual((p._pipe, p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo")), (False, False))
+        p._pipe = True       # asked until mpv itself says it holds nothing
         self.assertTrue(p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo"))                # still what the panel loaded last (the watch goes by it)
         idle[:] = [False]
         p.RELEASE_SECONDS = 0.2

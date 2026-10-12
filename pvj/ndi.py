@@ -1954,6 +1954,7 @@ class Input:
     """The panel's handle on the NDI helper: keeps it told of the switch and the saved addresses, opens a source for
     the player, and notices when the helper says the picture changed size."""
 
+    PLAYED_SECONDS = 30.0                  # on the screen this long without a break: a source that plays; the pause is 3 s again
     RETRY_SECONDS, RETRY_MAX = 3.0, 60.0   # between tries to show a source again: 3 s, then twice as long each time, to a minute
 
     def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic, pipe_owner=os.getuid, setup=True, config_dir=None):
@@ -1970,6 +1971,7 @@ class Input:
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = locks.make("ndi", reentrant=True)      # open, load in the player and note, as one step (like the capture input); its place: pvj/locks.py
         self._retry_at, self._retry_wait, self._retry_said = 0.0, self.RETRY_SECONDS, ""
+        self._on_screen_since = None       # the clock at the first look, since the last try, that found the source on the screen
         self._stuck_once = False           # the source was shown again once because the player had not opened it
         self.ended = None                  # {"name", "message"}: why the last source ended by itself, for the page
         self._ticket = 0
@@ -2277,13 +2279,24 @@ class Input:
             if opened is not True:
                 if opened is False:
                     self._stuck_once = False       # the player has it open: the next time is a first time again
-                self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
-                return False                       # on the screen: playing, a still picture, or waiting for the sender
+                # On the screen: playing, a still picture, or waiting for the sender. The pause between tries is
+                # three seconds again only once it has been there for PLAYED_SECONDS without a break. One look
+                # that finds it there is not that: a player that reads the pipe for a second and gives up, again
+                # and again (or a helper that says "playing" and "the player left" in turn), was otherwise stopped,
+                # opened and loaded every three seconds for ever.
+                now = self._clock()
+                if self._on_screen_since is None:
+                    self._on_screen_since = now
+                if now - self._on_screen_since >= self.PLAYED_SECONDS:
+                    self._retry_wait = self.RETRY_SECONDS
+                self._retry_said = ""
+                return False
             self._stuck_once, self._retry_said = True, PLAYER_STUCK
             self.log("pvj-web: NDI source %s: the player has not opened it; shown again once" % cur["name"])
         # Try again later and later (a sender switched off for the night must not be asked every 3 seconds for
         # ever), and write the reason down when it changes, not at every try: the journal is kept on the card.
         waited = self._retry_wait
+        self._on_screen_since = None
         self._retry_at = self._clock() + self._retry_wait
         self._retry_wait = min(self._retry_wait * 2, self.RETRY_MAX)
         try:
@@ -2291,7 +2304,7 @@ class Input:
             if lost:
                 # A player that loses the pipe again and again (it cannot play what is in it) is not loaded every
                 # three seconds for ever: the pause grows as for a source that is gone, and is three seconds again
-                # once a look finds the source on the screen (above).
+                # once the source has been on the screen for PLAYED_SECONDS (above).
                 self._retry_at, self._retry_said = self._clock() + waited, ""
                 self.log("pvj-web: NDI source %s lost the player while its pipe was what plays; shown again" % cur["name"])
             else:

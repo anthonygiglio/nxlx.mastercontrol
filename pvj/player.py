@@ -553,9 +553,8 @@ class Player:
         a load that is still opening. mpv answers before it has closed the stream, so mpv is then asked until it
         says it is idle (`idle-active`: no file is loaded or being opened), for RELEASE_SECONDS at most. That is
         the panel's own confirmation; the helper has a second one, which needs no word of mpv's: it sees the pipe
-        without a reader before it lets the next writer through (ndi.Service._clear_pipe). What the panel loaded
-        last stays what it was: this is the beginning of loading that pipe again, not something else taking the
-        screen.
+        without a reader before it lets the next writer through (ndi.Service._clear_pipe). Once mpv is idle the panel's record says so too (`pipe_playing` is False): if the open
+        that follows fails, the record must not go on saying that the pipe plays while the screen is black.
 
         Whether mpv holds the pipe is asked of mpv too (its `path`), not only of what this side remembers having
         loaded: a panel that started again remembers nothing while its mpv still reads the pipe.
@@ -577,6 +576,7 @@ class Player:
                 self.ipc.request("stop")
                 while time.monotonic() < end:          # looked at before each question: one that is slow is the last
                     if self.ipc.request("get_property", "idle-active") is True:
+                        self._pipe = False             # mpv is idle: no pipe plays, whatever is loaded next
                         return True
                     time.sleep(0.02)
                 return False
@@ -585,7 +585,10 @@ class Player:
                 # all and still has the pipe. Only a player that is not there (nothing listens on its socket: the
                 # one error Ipc.request gives these words) holds nothing. Not is_running(): that asks over the
                 # same socket and would take a player that is silent for one that is gone.
-                return str(e) == self.NOT_RUNNING
+                if str(e) == self.NOT_RUNNING:
+                    self._pipe = False
+                    return True
+                return False
 
     RELEASE_SECONDS = 1.5
     NOT_RUNNING = "player is not running"
