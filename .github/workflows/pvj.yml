@@ -101,7 +101,7 @@ jobs:
     # over an old shared folder, restarts, a crash and a reinstall (D45). The runner is thrown away afterwards.
     # Not a test of a Raspberry Pi: no display, and not the box's systemd.
     runs-on: ubuntu-latest
-    timeout-minutes: 15       # about two
+    timeout-minutes: 25       # about ten since the NDI hand-over steps (each looks at mpv for ten seconds)
     steps:
       - uses: actions/checkout@v4
       - name: Install mpv

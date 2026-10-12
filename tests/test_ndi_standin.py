@@ -25,7 +25,10 @@ WIDTH, HEIGHT, FPS = 320, 180, 30.0
 FRAME = 2 * WIDTH * HEIGHT
 MOVING, SOUND, STILL = "PVJ-STANDIN (moving)", "PVJ-STANDIN (moving with sound)", "PVJ-STANDIN (one still then sound)"
 AT_ONCE_A, AT_ONCE_B, CHANGES = "PVJ-STANDIN (at once A)", "PVJ-STANDIN (at once B)", "PVJ-STANDIN (changes size)"
-ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES)
+BIG_SOUND, BIG_CHANGES_SOUND = "PVJ-STANDIN (big moving with sound)", "PVJ-STANDIN (big changes size with sound)"
+BIG = (BIG_SOUND, "PVJ-STANDIN (big one still then sound)", "PVJ-STANDIN (big at once A)", "PVJ-STANDIN (big at once B)",
+       "PVJ-STANDIN (big at once A with sound)", "PVJ-STANDIN (big at once B with sound)", "PVJ-STANDIN (big changes size)", BIG_CHANGES_SOUND)
+ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES) + BIG
 
 
 def picture(n):
@@ -67,11 +70,14 @@ class OneSetOfNames(unittest.TestCase):
             sh = f.read()
         for name in ALL:
             self.assertIn('{"%s", "10.255.255.1:' % name, c)
-            self.assertIn('="%s"\n' % name, sh)
+            if name not in (AT_ONCE_A, AT_ONCE_B):         # the small "at once" pair is the unit test's only
+                self.assertIn('="%s"\n' % name, sh)
         for want in ('pvj-ndi-runtime install "$NDI_STANDIN"', 'box play "$NDI_MOVING" raw', "systemctl restart pvj-ndi.service\n",
                      'box back "$NDI_MOVING" 20', 'box play "$NDI_SOUND" matroska', 'case still "$NDI_STILL"', 'case twice "$NDI_STILL"',
-                     'case follow "$NDI_AT_ONCE_A" "$NDI_AT_ONCE_B"', 'case sound "$NDI_SOUND"', 'case size "$NDI_CHANGES"',
-                     'case restart "$NDI_MOVING"', "pvj-ndi-runtime remove"):
+                     'case stuck "$NDI_BIG_STILL"', 'case follow "$NDI_BIG_A" "$NDI_BIG_B"', 'case follow "$NDI_BIG_A_SOUND" "$NDI_BIG_B_SOUND"',
+                     'case sound "$NDI_SOUND"', 'case sound "$NDI_BIG_SOUND"', 'case soundon "$NDI_BIG_SOUND"', 'case size "$NDI_BIG_CHANGES"',
+                     'case size "$NDI_BIG_CHANGES_SOUND"', 'case size "$NDI_CHANGES"', 'case restart "$NDI_MOVING"', "case chain\n",
+                     "pvj-ndi-runtime remove"):
             self.assertIn(want, sh[sh.index('step "an NDI picture all the way'):], want)
 
     def test_the_stand_in_has_no_line_of_ndis_headers_and_says_so(self):
@@ -173,7 +179,25 @@ class StandIn(unittest.TestCase):
         os.chmod(self.path, 0o644)
         self.assertIsNone(ndi.runtime_problem(self.path, owner_uids=(os.getuid(),)))
 
-    def test_the_finder_reports_its_six_sources_at_a_private_address(self):
+    def test_the_chain_in_the_boxs_questions_names_only_sources_the_stand_in_has(self):
+        sys.path.insert(0, os.path.join(REPO, "tests", "ndi_standin"))
+        try:
+            import box_check
+        finally:
+            sys.path.pop(0)
+        self.assertLessEqual(set(box_check.CHAIN), set(ALL))
+        self.assertEqual((box_check.size_of(BIG_SOUND), box_check.size_of(BIG_SOUND, True)), ((1280, 720), (1264, 704)))
+
+    def test_a_big_source_with_sound_is_1280_by_720_in_matroska_and_changes_to_1264_by_704(self):
+        out, reader = self.play(BIG_CHANGES_SOUND, True, 0)
+        self.assertEqual((out["playing"]["width"], out["playing"]["height"], out["playing"]["container"]), (1280, 720, "matroska"))
+        self.assertTrue(self.wait(lambda: self.playing()["counts"]["shown"] >= 10), self.playing())
+        self.assertTrue(self.wait(lambda: self.playing()["state"] == "changed", 7.0), self.playing())
+        self.assertEqual(self.playing()["message"], "the source changed to 1264 x 704 at 30.0 frames a second")
+        out, reader = self.play(BIG_CHANGES_SOUND, True, 0)
+        self.assertEqual((out["playing"]["width"], out["playing"]["height"], out["playing"]["container"]), (1264, 704, "matroska"))
+
+    def test_the_finder_reports_its_sources_at_a_private_address(self):
         st = self.on(False)
         self.assertEqual(sorted(s["name"] for s in st["sources"]), sorted(ALL))
         self.assertEqual({ndi.host_of(s["from"]) for s in st["sources"]}, {"10.255.255.1"})

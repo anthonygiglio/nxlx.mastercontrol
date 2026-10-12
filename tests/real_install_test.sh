@@ -511,9 +511,16 @@ MPV_LOG=/tmp/pvj-ci-mpv.log
 NDI_MOVING="PVJ-STANDIN (moving)"
 NDI_SOUND="PVJ-STANDIN (moving with sound)"
 NDI_STILL="PVJ-STANDIN (one still then sound)"
-NDI_AT_ONCE_A="PVJ-STANDIN (at once A)"
-NDI_AT_ONCE_B="PVJ-STANDIN (at once B)"
 NDI_CHANGES="PVJ-STANDIN (changes size)"
+# 1280 x 720: a picture is 1.8 MB, more than the pipe holds, so the writer is in the middle of a picture most of the time
+NDI_BIG_SOUND="PVJ-STANDIN (big moving with sound)"
+NDI_BIG_STILL="PVJ-STANDIN (big one still then sound)"
+NDI_BIG_A="PVJ-STANDIN (big at once A)"
+NDI_BIG_B="PVJ-STANDIN (big at once B)"
+NDI_BIG_A_SOUND="PVJ-STANDIN (big at once A with sound)"
+NDI_BIG_B_SOUND="PVJ-STANDIN (big at once B with sound)"
+NDI_BIG_CHANGES="PVJ-STANDIN (big changes size)"
+NDI_BIG_CHANGES_SOUND="PVJ-STANDIN (big changes size with sound)"
 box() {            # the questions to the panel and the player (tests/ndi_standin/box_check.py); the token stays off the command line
 	PVJ_TOKEN="$TOKEN" python3 -B "$SRC/tests/ndi_standin/box_check.py" "$@"
 }
@@ -613,7 +620,8 @@ box play "$NDI_SOUND" matroska || ndi_fail "sound on: the stand-in's picture and
 # it plays while mpv does not (STUCK); the line that begins REASON says which, with mpv's words second by second.
 #
 # THE ONE SWITCH. Some of these fail today because of that fault (the hand-over of the pipe; being mended on the
-# branch ndi-pipe-reuse). While it says "no", a step that fails prints a line beginning FINDING, the run goes on and
+# branch ndi-pipe-reuse). Each step but the chain starts clean (a new helper, a new player), so that one finding
+# does not make the next; the chain at the end cleans nothing, because carry-over is what it is for. While it says "no", a step that fails prints a line beginning FINDING, the run goes on and
 # stays green, and its last line lists every finding. Set it to "yes" (here, or PVJ_NDI_FINDINGS_FATAL=yes in the
 # environment) and the first of them fails the run: that is how to see that the fault is mended, and what this
 # becomes once it is.
@@ -666,23 +674,51 @@ step "hand-over 2: the same source played twice in a row (sound off)"
 ndi_clean
 ndi_case "the same source played twice in a row" case twice "$NDI_STILL"
 
-step "hand-over 3: source A, then source B at once (both have their first picture the moment they are opened)"
+step "hand-over 2b: from the stuck state of hand-over 1, nothing cleaned: the same source with sound off, then sound switched on (1280 x 720)"
 ndi_clean
-ndi_case "one source straight after another" case follow "$NDI_AT_ONCE_A" "$NDI_AT_ONCE_B"
+ndi_case "the same source with sound off straight after its stuck load with sound, then sound on" case stuck "$NDI_BIG_STILL"
+
+step "hand-over 3: source A, then source B at once, sound off (1280 x 720; both have their first picture the moment they are opened)"
+ndi_clean
+ndi_case "one source straight after another" case follow "$NDI_BIG_A" "$NDI_BIG_B"
+
+step "hand-over 3b: source A with sound, then source B with sound at once (1280 x 720, Matroska on both sides)"
+ndi_clean
+box sound on || ndi_fail "sound could not be switched on"
+ndi_case "one source with sound straight after another with sound" case follow "$NDI_BIG_A_SOUND" "$NDI_BIG_B_SOUND"
 
 step "hand-over 4: sound switched on, and off again, under a playing source"
 ndi_clean
 ndi_case "sound switched on and off under a playing source" case sound "$NDI_SOUND"
 
-step "hand-over 5: a source that changes size while it plays (320 x 180, then 256 x 144)"
+step "hand-over 4b: the same under a 1280 x 720 source, in both directions: off, on, off; then on, off, on"
 ndi_clean
-ndi_case "a source that changed size while it played" case size "$NDI_CHANGES"
+ndi_case "sound switched on and off under a big playing source" case sound "$NDI_BIG_SOUND"
+ndi_clean
+ndi_case "sound switched off and on under a big source that played with sound" case soundon "$NDI_BIG_SOUND"
+
+step "hand-over 5: a source that changes size while it plays, sound off (1280 x 720, then 1264 x 704)"
+ndi_clean
+ndi_case "a source that changed size while it played" case size "$NDI_BIG_CHANGES"
+
+step "hand-over 5b: a source with sound that changes size while it plays (Matroska on both sides; the Pi lost this one)"
+ndi_clean
+box sound on || ndi_fail "sound could not be switched on"
+ndi_case "a source with sound that changed size while it played" case size "$NDI_BIG_CHANGES_SOUND"
+
+step "hand-over 5c: the small source that changes size, sound off (320 x 180, then 256 x 144: pictures that fit the pipe whole)"
+ndi_clean
+ndi_case "a small source that changed size while it played" case size "$NDI_CHANGES"
 
 step "hand-over 6: the helper restarted under a playing source, judged by mpv's own word"
 ndi_clean
 box play "$NDI_MOVING" raw || ndi_fail "sound off: the stand-in's picture did not play before the helper's restart"
 systemctl restart pvj-ndi.service
 ndi_case "the helper restarted under a playing source" case restart "$NDI_MOVING"
+
+step "hand-over 7, the chain: eight hand-overs back to back with sound, nothing cleaned between them (what one leaves, the next meets)"
+ndi_clean
+ndi_case "the chain of hand-overs with nothing cleaned between them" case chain
 
 step "the stand-in is taken off by the real command, and this test's drop-in with it: nothing of NDI is left"
 box sound off || ndi_fail "sound could not be switched off again"
